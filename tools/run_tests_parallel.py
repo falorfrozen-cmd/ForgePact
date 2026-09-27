@@ -20,7 +20,10 @@ Modules are started longest first, from durations recorded in
 `PARALLEL_GROUP = "<name>"` at top level shares a concurrency cap with the
 other modules in that group (`--group-limit <name>=<n>`, default 1), for
 suites that drive something that does not tolerate many copies, such as a
-headless browser.
+headless browser. A module that sets `PARALLEL_EXCLUSIVE = True` at top level
+runs with no other worker beside it: exclusive modules start only after every
+other module has finished, one at a time, for a suite that measures timing
+and would otherwise measure the CPU the other workers take.
 
 Standard library only.
 """
@@ -39,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / "build"  # test-durations.json, and test-logs/ for failing modules
 GROUP_RE = re.compile(r"""^PARALLEL_GROUP\s*=\s*["']([\w-]+)["']""", re.M)
+EXCLUSIVE_RE = re.compile(r"^PARALLEL_EXCLUSIVE\s*=\s*True\b", re.M)
 
 
 def iter_tests(suite):
@@ -108,13 +112,20 @@ def order(modules, start_dir, durations):
     return sorted(modules, key=key)
 
 
-def group_of(name, start_dir):
+def module_text(name, start_dir):
     try:
-        text = (Path(start_dir) / f"{name}.py").read_text(encoding="utf-8")
+        return (Path(start_dir) / f"{name}.py").read_text(encoding="utf-8")
     except OSError:
-        return None
-    match = GROUP_RE.search(text)
+        return ""
+
+
+def group_of(name, start_dir):
+    match = GROUP_RE.search(module_text(name, start_dir))
     return match.group(1) if match else None
+
+
+def exclusive_of(name, start_dir):
+    return EXCLUSIVE_RE.search(module_text(name, start_dir)) is not None
 
 
 # ---------------------------------------------------------------- worker side
@@ -157,6 +168,10 @@ def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys
     durations = load_durations(state)
     pending = order(shard(ids), start_dir, durations)
     groups = {name: group_of(name, start_dir) for name in pending}
+    exclusive = {name for name in pending if exclusive_of(name, start_dir)}
+    # Exclusive modules last, in the same longest-first order among themselves.
+    pending = ([n for n in pending if n not in exclusive]
+               + [n for n in pending if n in exclusive])
     running, results = {}, []
     began = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="forgepact-tests-") as work:
@@ -210,6 +225,8 @@ def run_parallel(start_dir, jobs, verbose, group_limits, state=STATE, stream=sys
                 for name in list(pending):
                     if len(running) >= jobs:
                         break
+                    if name in exclusive and (running or any(n not in exclusive for n in pending)):
+                        break  # it starts alone, once everything else is done
                     group = groups[name]
                     if group and sum(groups[n] == group for n in running) >= group_limits.get(group, 1):
                         continue

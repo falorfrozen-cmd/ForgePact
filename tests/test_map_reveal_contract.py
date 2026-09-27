@@ -26,12 +26,17 @@ if str(SRC_DIR) not in sys.path:
 
 import forgepact
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel_source import panel_file, panel_source
+
 
 class TestMapRevealContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.plugin_code = PLUGIN_SRC.read_text(encoding="utf-8")
         cls.panel_code = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        # The page itself (markup and script) is the Svelte project in panel/src.
+        cls.page = panel_source()
         cls.header = (FORGEPACT_INCLUDE_DIR / "MapRevealManager.hpp").read_text(encoding="utf-8")
 
     # ---- defaults ----------------------------------------------------------
@@ -308,13 +313,14 @@ class TestMapRevealContract(unittest.TestCase):
 
     # ---- panel -------------------------------------------------------------
     def test_both_controls_render_in_the_panel(self):
-        self.assertIn('id="map_reveal"', self.panel_code)
-        self.assertIn('id="map_reveal_packs"', self.panel_code)
+        self.assertIn('id="map_reveal"', self.page)
+        self.assertIn('id="map_reveal_packs"', self.page)
 
     def test_child_row_is_disabled_while_parent_is_off(self):
-        self.assertIn("syncRevealPacks", self.panel_code)
-        idx = self.panel_code.index("function syncRevealPacks")
-        body = self.panel_code[idx:idx + 600]
+        self.assertIn("syncRevealPacks", self.page)
+        sync = panel_file("mods-sync.js")
+        idx = sync.index("function syncRevealPacks")
+        body = sync[idx:idx + 600]
         self.assertIn("box.disabled=!parentOn", body)
 
     def test_turning_the_parent_on_restates_the_child(self):
@@ -331,14 +337,14 @@ class TestMapRevealContract(unittest.TestCase):
         # Caught live 2026-09-11: with the panel server gone the fetch throws,
         # so anything after `await` never runs - the child row stayed enabled
         # and read "on" beneath a switched-off parent.
-        idx = self.panel_code.index("document.getElementById('map_reveal').onchange")
-        body = self.panel_code[idx:idx + 900]
+        idx = self.page.index("document.getElementById('map_reveal').onchange")
+        body = self.page[idx:idx + 900]
         self.assertLess(body.index("syncRevealPacks"), body.index("await j('/api/set'"))
 
     def test_description_explains_why_monsters_were_missing(self):
         # The honest bit: it is not a visibility flag, the packs do not exist.
-        idx = self.panel_code.index('id="map_reveal_packs_row"')
-        row = self.panel_code[idx:idx + 900]
+        idx = self.page.index('id="map_reveal_packs_row"')
+        row = self.page[idx:idx + 900]
         self.assertIn("do not exist", row)
 
 

@@ -161,6 +161,89 @@ class FixtureSuiteTests(unittest.TestCase):
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertIn("FileExistsError", run.stderr)
 
+    # Every module marks itself running for a while; an ordinary one leaves a
+    # done marker when it ends. An exclusive module asserts, on entry and all
+    # through its run, that no other module is running and every ordinary
+    # module is done. The padding makes it the largest file, so with no
+    # recorded durations it is the first the runner would pick.
+    NORMAL = """
+        import os, time, unittest
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        NAME = os.path.splitext(os.path.basename(__file__))[0]
+        class Normal(unittest.TestCase):
+            def test_busy(self):
+                mark = os.path.join(HERE, "running-" + NAME)
+                open(mark, "w").close()
+                try:
+                    time.sleep(1.0)
+                finally:
+                    os.remove(mark)
+                open(os.path.join(HERE, "done-" + NAME), "w").close()
+    """
+    EXCLUSIVE = """
+        import os, time, unittest
+        PARALLEL_EXCLUSIVE = {flag}
+        HERE = os.path.dirname(os.path.abspath(__file__))
+        NAME = os.path.splitext(os.path.basename(__file__))[0]
+        # {padding}
+        class Exclusive(unittest.TestCase):
+            def others(self):
+                return [f for f in os.listdir(HERE) if f.startswith("running-") and f != "running-" + NAME]
+            def test_alone(self):
+                mark = os.path.join(HERE, "running-" + NAME)
+                open(mark, "w").close()
+                try:
+                    done = [f for f in os.listdir(HERE) if f.startswith("done-test_normal_")]
+                    self.assertEqual(len(done), {normals}, "an ordinary module had not finished")
+                    for _ in range(12):
+                        self.assertEqual(self.others(), [])
+                        time.sleep(0.1)
+                finally:
+                    os.remove(mark)
+    """
+
+    def run_exclusive(self, flag="True", exclusives=1, normals=3, jobs="4"):
+        files = {f"test_normal_{i}.py": self.NORMAL for i in range(normals)}
+        body = self.EXCLUSIVE.format(flag=flag, normals=normals, padding="x" * 4000)
+        files.update({f"test_exclusive_{i}.py": body for i in range(exclusives)})
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            tmp = Path(tmp)
+            write_suite(tmp, files)
+            return subprocess.run([sys.executable, str(SCRIPT), "-j", jobs, "--start-dir", str(tmp),
+                                   "--state-dir", str(tmp / "state")],
+                                  capture_output=True, text=True)
+
+    def test_an_exclusive_module_runs_last_and_alone(self):
+        run = self.run_exclusive()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(tail(run.stderr), ("Ran 4 tests", "OK"))
+
+    def test_two_exclusive_modules_never_overlap_each_other(self):
+        run = self.run_exclusive(exclusives=2)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(tail(run.stderr), ("Ran 5 tests", "OK"))
+
+    def test_the_exclusive_probe_does_fail_on_an_ordinary_module(self):
+        # Positive control: the same module with the flag off is scheduled
+        # as any other, first by size and beside the rest, and the probe
+        # says so; ordinary modules still share the workers.
+        run = self.run_exclusive(flag="False")
+        self.assertEqual(run.returncode, 1, run.stderr)
+        self.assertIn("an ordinary module had not finished", run.stderr)
+
+    def test_only_a_top_level_true_marks_a_module_exclusive(self):
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            tmp = Path(tmp)
+            write_suite(tmp, {
+                "test_yes.py": "PARALLEL_EXCLUSIVE = True\n",
+                "test_no.py": "PARALLEL_EXCLUSIVE = False\n",
+                "test_nested.py": "class C:\n    PARALLEL_EXCLUSIVE = True\n",
+                "test_plain.py": "import unittest\n",
+            })
+            self.assertTrue(runner.exclusive_of("test_yes", tmp))
+            for name in ("test_no", "test_nested", "test_plain", "test_absent"):
+                self.assertFalse(runner.exclusive_of(name, tmp), name)
+
 
 class CoverageTests(unittest.TestCase):
     def test_the_real_suite_loads_exactly_what_serial_discovery_runs(self):

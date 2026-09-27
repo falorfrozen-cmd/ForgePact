@@ -32,7 +32,7 @@ none of these diagnostic hooks or the recorder. See
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100× |
-| **Mining Ore Amount** | Loot → Mining Ore Amount, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
+| **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
@@ -46,7 +46,7 @@ none of these diagnostic hooks or the recorder. See
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
-| **Gems of Incarnation** | Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
+| **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 
@@ -66,7 +66,7 @@ likely, still random, still capped by the game's own rules. The vanilla value is
 on first touch, so moving the slider twice never compounds. `x1` restores vanilla
 exactly.
 
-**Mining Ore Amount** is a separate quantity control, not a drop-chance multiplier.
+**Mining Ore Multiplier** is a separate quantity control, not a drop-chance multiplier.
 It changes the amount of Copper, Iron, Gold, Ruby, Jade or Tarethium ore in a
 normal mining reward. It preserves the chosen ore type and is scoped to the
 mining call. By design it rewrites only the ore stack's quantity, so mining XP,
@@ -97,10 +97,29 @@ Fragments and reads no drop rate, so the slider cannot scale it. See
 
 ### Using the panel
 
-Use the sidebar to move between **Setup**, **Modifiers**, **World**, **Loot** and
-**Mods**. On narrow windows these become tabs across the top. The header shows
+Use the tabs along the top to move between **Setup**, **Modifiers**, **World**, **Loot** and
+**Mods**. The header shows
 whether the game is running and whether your latest setting has saved. **Auto-apply**
 and **Apply all now** keep their existing behavior.
+
+The screenshots below are the panel at 1280 wide in its default **Ledger** theme,
+taken from the test sandbox, which reports the game open without the mod plugin
+(hence the warning icon).
+
+![The Modifiers tab](assets/panel/modifiers-1280.png)
+**Modifiers**: the character multipliers in four groups (Utility, Offense, Defense & Sustain, Critical Strikes), each slider with its own switch.
+
+![The World tab](assets/panel/world-1280.png)
+**World**: Monster Density, Monster Rarity and Enemy Movement Speed beside the Satanic Zone mods.
+
+![The Loot tab](assets/panel/loot-1280.png)
+**Loot**: the drop-rate multipliers, keys included, each with its own switch.
+
+![The Mods tab, Quality of Life](assets/panel/mods-qol-1280.png)
+**Mods › Quality of Life**: every mod not tied to a forged item, one card each.
+
+![The Mods tab, Items](assets/panel/mods-items-1280.png)
+**Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
@@ -118,24 +137,44 @@ embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
 main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
-has two sub-tabs at the top, showing one card at a time: **Quality of Life**,
+has two sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard and the timed skill countdown), and **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
 Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
-using the arrow keys) switches which card you see, and the panel remembers
+using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
 Reveal full map; its switch is unavailable while the parent is off. All
 settings still use the existing local configuration and game plugin. The
 panel adds no UI dependencies.
 
-The reusable icon pack lives in `src/panel_icons.py`, beside `forgepact.py`.
-Keep both files together when copying the Python source. To export the 69
-individual SVGs and an offline preview gallery, run from the ForgePact folder:
+**Enabled mods**, just under the Apply controls, lists every mod you have
+turned on, with its current value, and says how many are on (**Nothing is on**
+when none are). Each entry has a **Turn off** button that switches that mod
+off exactly as its own control would, and the entry disappears. Settings that
+are only options of another mod (map population, the auto-prospect material
+move, the gem mod filter) and the Satanic Zone modifiers are not listed.
+
+Every slider now has its own on/off switch, like Monster Density's. Turning a
+slider off keeps the value you set, while the game plays as if the slider were
+at its default; its value box reads **off**. Turning it back on sends your
+value again, and Apply all leaves a switched-off slider at the default.
+
+**Theme**, in the **Appearance** card at the end of the Setup tab, picks the
+panel's colour theme: click it (or press Enter on it) and a short list opens
+with a small colour preview of each theme. Your choice is saved with the panel's other settings, so it is still
+there the next time you open ForgePact.
+
+The icon pack (the SVG sprite and which setting uses which icon) lives in
+`panel/src/icons.js` and is compiled into the panel's page by `npm --prefix panel
+run build`, so a packaged panel carries it with no separate file. To export the
+69 individual SVGs and an offline preview gallery, run from the ForgePact folder
+(after `npm --prefix panel ci`; a relative path resolves against the folder you
+run it from):
 
 ```powershell
-py src/panel_icons.py "C:\path\to\ForgePact-Icon-Pack"
+npm --prefix panel run icons -- "C:\path\to\ForgePact-Icon-Pack"
 ```
 
 Special content is spawned through the game's **own** mechanic: ForgePact multiplies
@@ -551,9 +590,10 @@ its `## Ship design` describes this mod and what has not been observed live.
 
 ## Gems of Incarnation
 
-Mods tab → **Mythic Gems of Incarnation** and **Max-roll Gems of Incarnation**,
-and under them **Filter...**, the mod filter. Both switches are off by default;
-the filter starts with every mod.
+Loot → **Gems of Incarnation**, the tab's last card: **Mythic Gems of
+Incarnation** and **Max-roll Gems of Incarnation**, and under them
+**Filter...**, the mod filter. Both switches are off by default; the filter
+starts with every mod.
 
 A Gem of Incarnation goes into the Incarnation tree's sockets. The game rolls
 most of them Superior with one or two mods; 1 in 50 comes out Mythic, with 4 or
@@ -576,7 +616,14 @@ most of them Superior with one or two mods; 1 in 50 comes out Mythic, with 4 or
   the gems have both. Tick many, and each gem has as many of them as fit in its
   4-5 mods. The rarest mod, +All Skills, is on under 1 in 100 Mythic gems, so
   gems filtered for it often repeat the same few rolls. Everything ticked means
-  no filter. The filter works with Mythic Gems of Incarnation on.
+  no filter, and saving with nothing ticked is refused. The filter works with
+  Mythic Gems of Incarnation on. The list is drawn like the World tab's Satanic
+  Zone Mods: a search (by a mod's name or its group) and an **All mods** /
+  **Enabled** / **Disabled** filter, which only show and hide rows - **Tick
+  all**, **Untick all**, a group's **all** / **none** and **Save filter** still
+  act on every mod, shown or not. Until you press **Save filter**, the row says
+  **Unsaved changes** while the ticks differ from the saved filter; closing and
+  reopening the list discards the change.
 - **Max-roll Gems of Incarnation.** Each mod on a gem has a tier, and the tier
   sets its range. Every mod on every gem - new, owned, in the Vault - shows its
   best tier's top value, and its range reads as that tier's (in the ALT view
@@ -689,7 +736,15 @@ load there anyway.
 
 ## 📦 Source layout
 
-- `src/forgepact.py` — the control panel (Python; packaged with PyInstaller for releases).
+- `src/forgepact.py` — the control panel's backend (Python; packaged with PyInstaller for
+  releases): the local HTTP server, its `/api` routes, the plugin commands, the launcher
+  and backups. It serves the built frontend from `panel/dist` (`PANEL_DIST`; the
+  `FORGEPACT_PANEL_DIST` environment variable points it elsewhere).
+- `panel/` — the control panel's frontend: a Svelte 5 + Vite project (`src/App.svelte`,
+  one component per tab under `src/tabs/`, the stylesheet in `src/app.css`). `npm --prefix
+  panel run build` writes the static page to `panel/dist/` (not tracked). Its browser
+  tests (`npm --prefix panel test`, `run e2e`, `run oracle:replay`) drive the installed
+  Microsoft Edge headless through `playwright-core`; nothing downloads a browser.
 - `plugin/ModuleMain.cpp` — **the mod plugin** (BloodPactPlugin). This is the active
   implementation: it hooks the GameMaker runtime through YYToolkit and receives the
   panel's commands over `bp_ipc`.
@@ -710,10 +765,12 @@ load there anyway.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
   the running plugin and prints only its reply, `ghidra/ImportSymbols.java` names the
-  stripped game binary in Ghidra from the game's own script table, and
-  `itemtruth_memrun.py` launches the game to the main menu, queues Item Truth checks and
-  samples the game's private memory from outside (with a positive control for the
-  research build).
+  stripped game binary in Ghidra from the game's own script table, `panel_smoke.py`
+  starts a packaged `ForgePact.exe` and checks it opens its window and serves the built
+  panel, `package_size.py` builds the exe from a git ref or a working tree in a
+  temporary directory and prints its size, and `itemtruth_memrun.py` launches the game
+  to the main menu, queues Item Truth checks and samples the game's private memory from
+  outside (with a positive control for the research build).
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
   words: object, script and variable names with their indices, the special-content gates
   and what opens each, measured values and crash thresholds, our own commands and hooks,
@@ -754,6 +811,35 @@ documented contracts and does not compile it, so a green test run does not confi
 plugin actually builds.
 
 ### Packaging the panel
+
+The panel's page is built first, with Node 20.19+ or 22.12+:
+
+```
+npm --prefix panel ci
+npm --prefix panel run build      # writes panel/dist/
+py build_release.py
+```
+
+`build_release.py` refuses to package while `panel/dist/index.html` is missing, and
+otherwise bundles `panel/dist` inside `ForgePact.exe` (PyInstaller `--add-data`), where
+the frozen panel serves it from its unpack directory. The page loads nothing from the
+network: every script, stylesheet and font is in the build. `forgepact-release.yml` runs
+the same two `npm` steps before the contract tests. To check a finished package, `py
+tools/panel_smoke.py --exe dist/ForgePact/ForgePact.exe` starts it, finds its port, fetches
+the page, one script and `/api/state`, looks for the `ForgePact` window, prints one line
+(`window=found url=… index=ok assets=ok api=ok`) and stops only the processes it started.
+
+For working on the page, run the backend and Vite's dev server side by side: `py
+src/forgepact.py` (listens on `127.0.0.1:8780`) and `npm --prefix panel run dev` (serves
+the page on `127.0.0.1:5178` and forwards `/api` to 8780), so an edit to a `.svelte` file
+shows without a rebuild.
+
+The panel's redesign is drawn in Figma, at
+<https://www.figma.com/design/75EleO8U3zngY8JU9adWpk>, which is the design's source.
+The fonts it uses, IBM Plex Sans and IBM Plex Mono, are already bundled: the two variable `.woff2`
+files sit under `panel/src/fonts/`, each beside its licence (SIL Open Font License 1.1),
+and `CREDITS.md` lists them. `panel/src/fonts.css` declares them and `app.css` applies them
+across the page, so the build carries them and never fetches a font from the network.
 
 `src/offline_launcher.py` is a normal Python import bundled into ForgePact.exe.
 Keep it beside `src/forgepact.py` when running from source. Its launch engine is
@@ -817,7 +903,7 @@ Enhanced Defense, +20% Movement Speed, +20% All Resistances, +5 Light Radius)
 with two mining mechanics that ForgePact runs while it is worn:
 
 - **4× ore.** Every mining node gives exactly four times its ore. The helmet
-  replaces the Mining Ore Amount slider rather than stacking with it; take it
+  replaces the Mining Ore Multiplier slider rather than stacking with it; take it
   off and the slider applies again. By design it rewrites only ore amounts, so
   mining time and XP are left to the game (not measured separately).
 - **Vein Resonance.** Finishing a dig also digs the two nearest veins within

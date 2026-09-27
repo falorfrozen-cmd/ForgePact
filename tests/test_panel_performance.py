@@ -16,7 +16,10 @@ Three separate problems, all of which only show up over a long session:
    moment there is.
 3. Both UIs polled on a fixed timer with no hidden-window gate. The shared
    adaptive policy is a pure function so it can be asserted structurally
-   always, and executed through `node` when one is installed.
+   always, and executed through `node` when one is installed. It lives in
+   `panel/src/poll-policy.js` (read through `panel_source.py`); the Python
+   side keeps `forgepact.POLL_WATCHED_FIELDS`, and the two lists are held
+   equal here.
 """
 
 import inspect
@@ -42,6 +45,9 @@ if str(SRC_DIR) not in sys.path:
 
 import forgepact
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from panel_source import js_for_node, panel_file, panel_source
+
 MARKER = "BloodPact plugin loaded"
 
 # The pairs both apps must agree on, asserted by parsing each source rather
@@ -55,7 +61,7 @@ def naive_boot_count(path: Path) -> int:
 
 
 def js_constants(source: str) -> dict:
-    """`const NAME = <int>;` pairs declared anywhere in a Python source file."""
+    """`const NAME = <int>;` pairs declared anywhere in a source file (JS or Python)."""
     return {m.group(1): int(m.group(2))
             for m in re.finditer(r"const\s+(POLL_[A-Z_]+)\s*=\s*(\d+)\s*;", source)}
 
@@ -517,21 +523,26 @@ class PollPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8")
+        cls.policy = panel_file("poll-policy.js")
+        cls.page = panel_source()
 
     def test_the_policy_is_a_named_constant_concatenated_into_the_page(self):
-        self.assertTrue(hasattr(forgepact, "POLL_POLICY_JS"))
-        self.assertIn("pollDelayMs(", forgepact.POLL_POLICY_JS)
+        # The policy is one module, and the page's poll loop imports it
+        # rather than carrying a second copy.
+        self.assertIn("pollDelayMs(", self.policy)
         for name in POLL_CONSTANTS:
-            self.assertIn(name, forgepact.POLL_POLICY_JS)
-        self.assertIn(forgepact.POLL_POLICY_JS, forgepact.HTML)
+            self.assertIn(name, self.policy)
+        self.assertIn("from './poll-policy.js'", panel_file("panel.js"))
+        self.assertEqual(self.page.count("function pollDelayMs("), 1)
+        self.assertEqual(self.page.count("function pollNextChangeAt("), 1)
 
     def test_the_fixed_five_second_timer_is_gone(self):
-        self.assertNotIn("setInterval(async()=>{const s=await j('/api/state')", forgepact.HTML)
-        self.assertNotIn(",5000)", forgepact.HTML)
+        self.assertNotIn("setInterval(async()=>{const s=await j('/api/state')", self.page)
+        self.assertNotIn(",5000)", self.page)
 
     def test_a_hidden_window_is_gated(self):
-        self.assertIn("document.hidden", forgepact.HTML)
-        self.assertIn("visibilitychange", forgepact.HTML)
+        self.assertIn("document.hidden", self.page)
+        self.assertIn("visibilitychange", self.page)
 
     def test_a_failed_boot_still_schedules_the_poll(self):
         # boot() does ~40 unguarded DOM lookups after its first await. With the
@@ -542,22 +553,26 @@ class PollPolicyTests(unittest.TestCase):
         #
         # Asserted on the source because the failure is "the scheduler was never
         # reached", which a DOM-less node run of pollDelayMs cannot observe.
-        self.assertIn("boot().catch(", forgepact.HTML)
-        self.assertIn(".finally(()=>{pollPrev=ST;schedulePoll()})", forgepact.HTML)
-        self.assertNotIn("boot().then(()=>{pollPrev=ST;schedulePoll()})", forgepact.HTML)
+        self.assertIn("boot().catch(", self.page)
+        self.assertIn(".finally(()=>{pollPrev=ST;schedulePoll()})", self.page)
+        self.assertNotIn("boot().then(()=>{pollPrev=ST;schedulePoll()})", self.page)
 
     def test_the_watched_fields_are_declared(self):
         self.assertEqual(forgepact.POLL_WATCHED_FIELDS,
                          ["gameRunning", "ipcOk", "lastApplied", "queued"])
         for field in forgepact.POLL_WATCHED_FIELDS:
-            self.assertIn(f'"{field}"', forgepact.POLL_POLICY_JS)
+            self.assertIn(f'"{field}"', self.policy)
+        # Declared in both languages, and the two lists are the same list.
+        declared = re.search(r"POLL_WATCHED_FIELDS = (\[[^\]]*\]);", self.policy)
+        self.assertIsNotNone(declared, "POLL_WATCHED_FIELDS not declared in poll-policy.js")
+        self.assertEqual(json.loads(declared.group(1)), forgepact.POLL_WATCHED_FIELDS)
 
     def test_both_apps_share_the_same_constants(self):
         if not LAUNCHER_SRC.is_file():
             raise unittest.SkipTest(
                 f"{LAUNCHER_SRC} is not checked out; the shared poll policy's "
                 "constants can only be compared inside a full toolkit checkout")
-        mine = js_constants(self.source)
+        mine = js_constants(self.policy)
         theirs = js_constants(LAUNCHER_SRC.read_text(encoding="utf-8"))
         for name in POLL_CONSTANTS:
             self.assertIn(name, mine)
@@ -566,7 +581,7 @@ class PollPolicyTests(unittest.TestCase):
                              f"{name} differs between the panel and the launcher")
 
     def test_the_delay_truth_table_executes(self):
-        got = run_node(forgepact.POLL_POLICY_JS, DELAY_DRIVER)
+        got = run_node(js_for_node(self.policy), DELAY_DRIVER)
         self.assertIsNone(got["hiddenNow"])
         self.assertIsNone(got["hiddenLater"])
         self.assertEqual(got["freshChange"], got["fast"])
@@ -589,7 +604,7 @@ console.log(JSON.stringify({
   firstPayload: pollNextChangeAt(null, A, false, 9000, 100)
 }));
 """
-        got = run_node(forgepact.POLL_POLICY_JS, driver)
+        got = run_node(js_for_node(self.policy), driver)
         self.assertEqual(got["identical"], 100, "an identical payload must not reset the clock")
         self.assertEqual(got["unwatched"], 100, "an unwatched field must not reset the clock")
         self.assertEqual(got["watched"], 9000, "a watched field difference resets the clock")
@@ -615,11 +630,11 @@ class VersionStampTests(unittest.TestCase):
         # Rendered from /api/state, never embedded in HTML, so there is no
         # second literal that can go stale.
         self.assertEqual(self.source.count(forgepact.__version__), 1)
-        self.assertNotIn(forgepact.__version__, forgepact.HTML)
+        self.assertNotIn(forgepact.__version__, panel_source())
 
     def test_the_state_payload_carries_the_version(self):
         self.assertIn('"version": __version__', self.source)
-        self.assertIn("ST.version", forgepact.HTML)
+        self.assertIn("ST.version", panel_source())
 
     def test_the_boot_marker_stays_contiguous(self):
         # THE TRAP. plugin_boot_count() counts occurrences of this literal and

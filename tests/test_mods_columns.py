@@ -5,8 +5,9 @@ The cards used to sit in a CSS `columns:2` container, where the browser's own
 balancing could leave the right column taller. `setupModsColumns` now splits
 the cards between two explicit columns at the earliest point where the left
 column is at least as tall as the right. The function is taken out of the
-panel's page source and executed through `node` against a stub DOM, so the
-tests exercise the shipped code rather than a copy of its rule.
+panel's source (`panel/src/mods-columns.js`, through `panel_source.py`) and
+executed through `node` against a stub DOM, so the tests exercise the shipped
+code rather than a copy of its rule.
 """
 
 import re
@@ -17,14 +18,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import forgepact
+from panel_source import panel_file, panel_source
 from test_panel_performance import run_node
 
 
 def setup_source() -> str:
-    match = re.search(r"function setupModsColumns\(grid\)\{.*?\n\}\n", forgepact.HTML, re.S)
+    match = re.search(r"function setupModsColumns\(grid\)\{.*?\n\}\n", panel_file("mods-columns.js"), re.S)
     if not match:
-        raise AssertionError("setupModsColumns not found in the panel page")
+        raise AssertionError("setupModsColumns not found in panel/src/mods-columns.js")
     return match.group(0)
 
 
@@ -105,13 +106,13 @@ class ModsColumnsTests(unittest.TestCase):
         self.assertEqual(self.got["shrunk"], [[0, 1], [2, 3]])
 
     def test_css_columns_are_gone_and_the_narrow_layout_stacks(self):
-        css = forgepact.HTML
+        css = panel_file("app.css")
         self.assertNotIn(".mods-grid{columns:", css)
         self.assertIn(".mods-grid{display:flex", css)
         self.assertIn(".mods-grid{flex-direction:column", css)
 
     def test_both_mods_cards_are_balanced(self):
-        self.assertIn("setupModsColumns(grid);", forgepact.HTML)
+        self.assertIn("setupModsColumns(grid);", panel_source())
 
 
 if __name__ == "__main__":

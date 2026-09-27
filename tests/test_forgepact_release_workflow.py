@@ -86,6 +86,9 @@ class StepOrderIsTheGuardrail(unittest.TestCase):
             ("draft_guard_1", ".draft"),
             ("checkout_tag", "ref: refs/tags/"),
             ("cut_release_check", "cut_release.py --check"),
+            ("setup_node", "actions/setup-node"),
+            ("npm_ci", "npm ci"),
+            ("npm_run_build", "npm run build"),
             ("unittest_discover", "unittest discover"),
             ("fetch_toolchain", "fetch_toolchain.py"),
             ("compile_line", "compile-line"),
@@ -109,6 +112,36 @@ class StepOrderIsTheGuardrail(unittest.TestCase):
         self.assertNotEqual(second_draft_at, -1, "no second draft check after packaging")
         self.assertLess(package_at, second_draft_at)
         self.assertLess(second_draft_at, upload_at)
+
+
+class ThePanelIsBuiltBeforeItIsTested(unittest.TestCase):
+    """The panel's frontend (panel/, Svelte + Vite) is not tracked as built
+    files: build_release.py refuses to package without panel/dist, and the
+    contract tests read it, so the tag's own tree is built with Node first."""
+
+    def step(self, marker):
+        text = workflow_text()
+        at = text.find(marker)
+        self.assertNotEqual(at, -1, f"{marker!r} is missing from the workflow")
+        start = text.rfind("\n      - ", 0, at)
+        self.assertNotEqual(start, -1)
+        end = text.find("\n      - ", at)
+        return text[start:end if end != -1 else len(text)]
+
+    def test_the_node_steps_run_in_the_tagged_panel(self):
+        for marker in ("run: npm ci", "run: npm run build"):
+            self.assertIn("working-directory: ForgePact/panel", self.step(marker), marker)
+
+    def test_npm_ci_installs_from_the_lockfile(self):
+        lines = run_lines(workflow_text())
+        self.assertTrue(any(line.strip() == "npm ci" for line in lines),
+                        "npm install would resolve new versions at release time")
+
+    def test_setup_node_caches_on_the_panel_lockfile(self):
+        step = self.step("actions/setup-node")
+        self.assertIn("node-version: '22'", step)
+        self.assertIn("cache: npm", step)
+        self.assertIn("cache-dependency-path: ForgePact/panel/package-lock.json", step)
 
 
 class UploadIsGatedAndClobbers(unittest.TestCase):

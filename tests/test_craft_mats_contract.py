@@ -1919,6 +1919,13 @@ class CraftMatsContractTests(unittest.TestCase):
         import forgepact  # noqa: E402 - the panel, imported only here
         return forgepact
 
+    def panel_page(self):
+        # The page itself (markup and script) is the Svelte project in panel/src.
+        if str(Path(__file__).resolve().parent) not in sys.path:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import panel_source  # noqa: E402
+        return panel_source
+
     def test_panel_toggle_defaults_off_and_emits_craftmats(self):
         forgepact = self.panel_module()
         panel = (SRC_DIR / "forgepact.py").read_text(encoding="utf-8-sig")
@@ -1936,12 +1943,15 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("f\"craftmats {1 if cfg['mod_craft_mats'] else 0}\"", panel)
         live = panel[panel.index('elif key == "mod_restart_anytime":'):]
         self.assertLess(live.index('elif key == "mod_craft_mats":'), live.index('elif key == "mod_skill_timer_style":'))
-        # Every site restartanytime's switch has, this one has too.
+        # Every site restartanytime's switch has, this one has too - in the
+        # Python and in the page.
+        page = self.panel_page().panel_source()
         self.assertEqual(panel.count("mod_craft_mats"), panel.count("mod_restart_anytime"))
-        self.assertIn('id="mod_craft_mats"', forgepact.HTML)
-        self.assertIn('id="mcmval"', forgepact.HTML)
+        self.assertEqual(page.count("mod_craft_mats"), page.count("mod_restart_anytime"))
+        self.assertIn('id="mod_craft_mats"', page)
+        self.assertIn('id="mcmval"', page)
         # A Quality of Life row, just after the Auto-prospect group.
-        qol = forgepact.HTML[forgepact.HTML.index('id="qolCard"'):forgepact.HTML.index('id="itemsCard"')]
+        qol = page[page.index('id="qolCard"'):page.index('id="itemsCard"')]
         self.assertLess(qol.index('id="mod_auto_prospect_bag_row"'), qol.index('id="mod_craft_mats"'))
         self.assertLess(qol.index('id="mod_craft_mats"'), qol.index('id="mod_toggle_indicator"'))
 
@@ -1953,8 +1963,7 @@ class CraftMatsContractTests(unittest.TestCase):
         return label.group(1), label.group(2)
 
     def test_panel_text_is_player_facing_and_short(self):
-        forgepact = self.panel_module()
-        title, span = self.craft_span(forgepact.HTML)
+        title, span = self.craft_span(self.panel_page().panel_file("tabs/Mods.svelte"))
         self.assertEqual(title, "Craft from the stash")
         text = re.sub(r"<[^>]+>", "", span)
         self.assertLessEqual(len(text), 300, text)
