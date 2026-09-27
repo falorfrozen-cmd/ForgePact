@@ -31,7 +31,7 @@ none of these diagnostic hooks or the recorder. See
 | --- | --- |
 | **Monster Density** | 1–5× more enemies in 0.5 steps (1, 1.5, 2 …), through the game's own `Enemy_Creator` spawners |
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
-| **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100× |
+| **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |

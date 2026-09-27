@@ -118,6 +118,31 @@ also get new plugin commands for the stash, the bag and your skills.
   still cannot find one, it tells you so instead of opening an empty window.
   This was rare: it needs all five ports busy, and a PC whose free-port range
   has been changed from Windows' default.
+- **Remove owned relics from drop pool did not see the relics you wear
+  (#93).** It never looked in the five equipped relic slots, so a relic at
+  10 out of 10 that you were wearing could still drop again. It now reads
+  those five slots, and a maxed relic you wear is held back like any other.
+- **A high Gold drop multiplier froze the game (#77).** The multiplier
+  dropped that many coins instead of one bigger coin, and for gold from
+  monsters it was applied twice: at 100x one monster's gold became 10,000
+  coins, and the game stalled for several seconds when they dropped and
+  again when you picked them up. The Gold multiplier now raises the amount
+  of the one coin the game drops, so 100x gives one coin worth 100 times as
+  much. This also means gold from monsters now comes out at the multiplier
+  you set: before, 10x gave about 100 times the gold, and now it gives 10
+  times.
+- **Timed skill countdown showed nothing on Mana Orb (#83).** Mana Orb now
+  shows its countdown over its skill-bar slot. It was checked in-game with
+  the Chosen One upgrade, where the orb follows you; a Mana Orb without
+  Chosen One was not checked.
+- **Craft from the stash gave one vague reason for every refused craft
+  (#80).** Every refusal said `unreadable`, whatever stopped it. Each reason
+  now has its own name in the log: the stash counts had already been used
+  for an earlier craft, could not be matched to what the recipe needs, the
+  recipe could not be identified, or belonged to another recipe. A craft is
+  also refused, with nothing moved from the stash, when the game's own item
+  hash step did not run after a stack was changed; before, that move still
+  counted as done.
 
 ## How to update
 
