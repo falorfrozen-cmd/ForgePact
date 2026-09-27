@@ -461,6 +461,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/CraftMatsMod.hpp>
 #include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
+#include <ForgePact/PetLootUnstickMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
@@ -9283,6 +9284,103 @@ static void PetQuestCollectorStats()
                      " - the first refusal of the session is logged above with the raw fields",
                   g_PetQuestNoMethodFn, g_PetQuestBadBind);
         Out(d);
+    }
+}
+
+// ---- pet moves on from loot it cannot pick up (#94, PetLootUnstickMod.hpp) --
+// The game's own companion loot pickup, not the quest collector above. Static
+// reading (docs/pet-loot-stuck-research.md): Companion_obj replaces its
+// `lootTarget` only once that instance has ceased to exist, so an item the
+// pickup keeps failing on pins the pet. This tick never picks anything up. It
+// watches the pet's target from outside, and when the same target has sat
+// within reach for kPetLootStuckFrames it does the three things the game
+// itself would read next: holds the item back through its own
+// `itemCompanionTimer` (ground items only; a coin has none), drops the pet's
+// `lootTarget`, and empties `lootList`, which the game rebuilds on its next
+// half-second scan without the held item.
+static bool g_PetLootAssetsResolved = false;
+static int  g_PetLootCompanionObjIdx = -1;
+static int  g_PetLootGroundObjIdx = -1;
+static int  g_PetLootCoinObjIdx = -1;
+
+static void ResolvePetLootUnstickAssets()
+{
+    if (g_PetLootAssetsResolved) return;
+    g_PetLootAssetsResolved = true;
+    auto assetIndex = [](const char* name, HeroSiege::Objects::GameObject fallback) -> int {
+        try {
+            const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }).ToDouble();
+            if (i >= 0) return i;
+        } catch (...) {}
+        return (int)fallback;
+    };
+    g_PetLootCompanionObjIdx = assetIndex("Companion_obj", HeroSiege::Objects::GameObject::Companion_obj);
+    g_PetLootGroundObjIdx = assetIndex("Loot_Ground_obj", HeroSiege::Objects::GameObject::Loot_Ground_obj);
+    g_PetLootCoinObjIdx = assetIndex("Coin_obj", HeroSiege::Objects::GameObject::Coin_obj);
+}
+
+// Is this object `family` or a child of it? The pet's scan collects by
+// family (a collision list over the parent object), so a child's target
+// must count as the parent.
+static bool PetLootIsOf(int objIdx, int family)
+{
+    if (objIdx < 0 || family < 0) return false;
+    if (objIdx == family) return true;
+    try {
+        return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)objIdx), RValue((double)family) }).ToBoolean();
+    } catch (...) { return false; }
+}
+
+// Called once per frame from FrameCallback while `petunstick 1` is on. The
+// watch's clock is g_RuntimeFrame, one per FrameCallback, so frames the mod
+// spent switched off are a gap and a run never straddles off and on.
+static void PetLootUnstickTick()
+{
+    ResolvePetLootUnstickAssets();
+    ForgePact::PetLootUnstickMod& mod = ForgePact::PetLootUnstickMod::Instance();
+    try {
+        // No pet out (menus, town without a companion): nothing to watch.
+        int n = 0;
+        try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_PetLootCompanionObjIdx) }).ToDouble(); }
+        catch (...) { n = 0; }
+        if (n <= 0) { mod.Reset(); return; }
+        RValue pet = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_PetLootCompanionObjIdx), RValue(0.0) });
+
+        // The game writes `lootTarget` as a real: -4 (noone) at Create, an
+        // instance id after. Read the number, whatever kind carries it, and
+        // let instance_exists say whether it names something.
+        const double targetId = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootTarget") }).ToDouble();
+        if (!(targetId >= 0.0)) { mod.Reset(); return; }
+        RValue target = RValue(targetId);
+        if (!g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean()) { mod.Reset(); return; }
+
+        const double tx = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("x") }).ToDouble();
+        const double ty = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("y") }).ToDouble();
+        const double px = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("x") }).ToDouble();
+        const double py = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("y") }).ToDouble();
+        const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
+        if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+
+        // Give it up. The item first, so a throw below still leaves it held.
+        const int oi = (int)g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("object_index") }).ToDouble();
+        if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
+            g_Yytk->CallBuiltin("variable_instance_set",
+                { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
+            mod.NoteHeldBack();
+        } else if (PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
+            // No timer on a coin: only the target is dropped, so a coin that
+            // sticks again is counted again.
+            mod.NoteCoinReleased();
+        }
+        g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) });
+        // Empty the list rather than destroy it: it is the game's, and its
+        // next scan refills it. Anything but a list id is left alone.
+        const double lootList = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootList") }).ToDouble();
+        if (lootList >= 0.0) {
+            g_Yytk->CallBuiltin("ds_list_clear", { RValue(lootList) });
+        }
+    } catch (...) {
+        mod.Reset();
     }
 }
 
@@ -38858,7 +38956,7 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"
@@ -38869,6 +38967,19 @@ static void RunCommand(const std::string& line)
     }
 #endif
 
+    // `petunstick 1` / `petunstick 0` (#94), the pet quest collector's
+    // neighbour. It sits out here rather than as one more `else if` below:
+    // that chain is at MSVC's nesting limit (C1061). Turning it off prints
+    // what the mod did, so a report can tell "did nothing" from "did the
+    // wrong thing"; the counters are cheap and ship.
+    if (lc == "petunstick") {
+        std::string pv = Lower(rest);
+        while (!pv.empty() && std::isspace((unsigned char)pv.back())) pv.pop_back();
+        const bool enable = (pv == "1" || pv == "true" || pv == "on");
+        ForgePact::PetLootUnstickMod::Instance().SetEnabled(enable);
+        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().StatLine());
+        return;
+    }
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
@@ -40151,6 +40262,14 @@ void FrameCallback(FWFrame& FrameContext)
     // relicfilter this needs no arm/defer lifecycle.
     if (ForgePact::PetQuestCollectorMod::Instance().IsEnabled()) {
         PetQuestCollectorTick();
+    }
+
+    // Pet moves on from loot it cannot pick up, toggled by `petunstick 1`
+    // (#94): gives the game's own companion loot pickup a nudge when the pet
+    // has sat on one item too long (see PetLootUnstickMod.hpp). No hook;
+    // everything goes through CallBuiltin.
+    if (ForgePact::PetLootUnstickMod::Instance().IsEnabled()) {
+        PetLootUnstickTick();
     }
 
 #ifndef FORGEPACT_RELEASE
