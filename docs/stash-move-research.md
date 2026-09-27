@@ -125,9 +125,13 @@ reading** unless it says otherwise.
   tab. Only the game's own input reaches that walk: `GridAddItem` called by
   name searches the one grid array it is handed, so a by-name placement into
   a full tab answers `success=false` whatever the walk would do. Live 1's
-  check `grid-move-tab-full` is therefore the measurement only when it is the
-  hand quick-move gesture (the step-7 gesture that moved an item) repeated
-  against a full tab on show, reading which tab the item lands on; the
+  check `grid-move-tab-full` is therefore the measurement only when it is a
+  single-input quick move - a right-click or a shift-click on the bag cell,
+  with no destination cell chosen, that moved an item into the stash in the
+  gesture checks - repeated against a full tab on show, reading which tab
+  the item lands on. Click, move, click never qualifies: it picks the item
+  up and places it into a chosen cell, which does not reach the walk, and
+  a full tab has no empty cell to choose. The
   by-name placement into the same full tab is the instrument check
   `tab-full-byname`, expected to answer `success=false` by construction and
   never evidence about the walk.
@@ -369,14 +373,23 @@ entry (#14), so `undefined` on both maps is the expected answer there. When
 research) - the measurement for `targetTabRule`, and not a by-name line.
 Only the game's own input reaches the processor's tab walk, so this repeats,
 with the full tab of `tab-full-byname` shown (free cells 0 by `menulayout`),
-the hand gesture that quick-moved an item in the gesture checks, on
-`<K_J2>` (its cell point confirmed on a screenshot). Then read the bag, the
-shown tab, and each other stash grid tab in order (`hs_stash_tab` and
-`menulayout`) until `<K_J2>` is found, and the two lookup lines with
-`<K_J2>`. `pass` with the tab quoted: stayed in the bag, the shown tab, or
-tab `<n>` (a spill). `not-run (no full tab in the slot)`, `not-run
-(instrument: no gesture quick-moved an item)` or `not-run (instrument: cell
-point unconfirmed)` otherwise.
+a single-input quick move on `<K_J2>` (its cell point confirmed on a
+screenshot). The qualifying gesture is `gesture-rightclick`, else
+`gesture-shiftclick`: the first with verdict `pass` whose item was read in a
+stash cell afterwards. `gesture-clickclick` never qualifies, whatever its
+verdict: it picks the item up and places it into a chosen cell, and on a
+full tab there is no empty cell to choose, so the drop either does nothing
+or lands on an occupied cell and swaps - an answer from the instrument, not
+the game. Before the gesture, record the shown tab's cell list; after it,
+read the bag, the shown tab, and each other stash grid tab in order
+(`hs_stash_tab` and `menulayout`) until `<K_J2>` is found, and the two
+lookup lines with `<K_J2>`. A stash key that left its cell, or now appears
+in the bag, means the input swapped rather than quick-moved. `pass` with the
+tab quoted (stayed in the bag, the shown tab, or tab `<n>`, a spill) and the
+shown tab's cell list unchanged apart from `<K_J2>`. `not-run (no full tab
+in the slot)`, `not-run (instrument: no single-input quick-move moved an
+item)`, `not-run (instrument: cell point unconfirmed)` or `not-run
+(instrument: a stash item was displaced - <key> from <cell>)` otherwise.
 
 ## Live procedure
 
@@ -389,8 +402,9 @@ positive controls first (the marker, the hook line and a rising
 `CheckPlayerInteraction`, then the dispatcher control, then the two lookup
 controls, which gate every grid block), the grid block into the personal
 tab, the full-tab instrument check by name, the stack block into the
-Materials tab, the bag sub-tab as a source, the three hand gestures, the
-full tab through the gesture that quick-moved an item, the close and reopen,
+Materials tab, the three hand gestures from the bag's grid page, the full
+tab through a single-input quick move (right-click or shift-click, never
+click-move-click), the bag sub-tab as a source, the close and reopen,
 and the saved files. No person at the keyboard. Every by-name call follows
 the recording rule under § Instrument, and each check is `pass`,
 `not-observed` (with what was supplied) or `not-run (instrument: ...)`.
@@ -412,11 +426,11 @@ supplied shape for every by-name call.
 | grid-move-byname | `<K_J>` in a stash grid cell and in no bag cell | | | | |
 | grid-move-map | the two lookup lines for `<K_J>` after the block (map 9 a struct, map 0 `undefined`) | | | | |
 | tab-full-byname | the by-name placement of `<K_J2>` into a full tab on show: `success=false`, both sides unchanged (instrument check) | | | | |
-| grid-move-tab-full | where `<K_J2>` lands when the gesture that quick-moved an item meets a full tab on show | | - | | |
+| grid-move-tab-full | where `<K_J2>` lands when a single-input quick move (the right-click or shift-click that moved an item into the stash; never click, move, click) meets a full tab on show, and the shown tab's cells before and after | | - | | |
 | stack-move-byname | the stash sum for `<K_M>`'s kind and the bag cell | | | | |
 | bag-subtab-source | whether the bag's Materials sub-tab lists cells | - | - | | |
-| gesture-rightclick | rows and movement on a right-click | | - | | |
-| gesture-shiftclick | rows and movement on a shift-click | | - | | |
+| gesture-rightclick | rows and movement on a right-click, and where the item went | | - | | |
+| gesture-shiftclick | rows and movement on a shift-click, and where the item went | | - | | |
 | gesture-clickclick | rows and movement on click, move, click | | - | | |
 | close-survives | the game after the stash close | - | - | | |
 | reopen-shows | the moved keys in the stash after a reopen | - | - | | |
