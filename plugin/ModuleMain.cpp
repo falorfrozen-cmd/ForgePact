@@ -24208,15 +24208,24 @@ static void CmNothingDone(ForgePact::CraftMatsMoveReport& r, int64_t sourceCount
 }
 
 // The inline edit Live 1k measured on a stash entry and on a bag stack: the
-// definition's `o` set, then ItemCheckHash(item) by name.
-static bool CmSetCount(CInstance* save, const RValue& item, int64_t count)
+// definition's `o` set, then ItemCheckHash(item) by name. When that call did
+// not dispatch, no hash was made for the new count (issue #80): `o` is put
+// back, which the item's hash was made for, the core is told the item's key,
+// and the edit reads as not made - the take is never confirmed, so the press
+// is refused before the game's call.
+static bool CmSetCount(CInstance* save, const RValue& item, const std::string& key, int64_t count)
 {
-    RValue def, res;
-    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def)) return false;
-    try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)count) }); }
-    catch (...) { return false; }
-    CmCall(kCmCheckHashName, save, { item }, res);
-    return true;
+    RValue def, was, res;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def) || !CmMember(def, "o", was)) return false;
+    const auto setO = [&](const RValue& o) {
+        try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), o }); return true; }
+        catch (...) { return false; }
+    };
+    if (!setO(RValue((double)count))) return false;
+    if (CmCall(kCmCheckHashName, save, { item }, res)) return true;
+    setO(was);
+    ForgePact::CraftMatsMod::Instance().OnHashFailed(key);
+    return false;
 }
 
 // The bag's own stack of a material in the grid the game prefers for it: its
@@ -24331,7 +24340,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     CmNewUnit unit;
     if (stacked) {
         int64_t sc = -1, sb = -1;
-        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackBefore + t.amount)) {
+        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackKey, stackBefore + t.amount)) {
             CmNothingDone(r, have);
             return out;
         }
@@ -24368,7 +24377,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
                 if (CmCellArray(t.entry, cellsNow)) CmCall(kCmGridRemoveName, save, { cellsNow, RValue(key) }, removed);
             }
         } else {
-            CmSetCount(save, source, have - t.amount);
+            CmSetCount(save, source, key, have - t.amount);
         }
     }
     auto sourceRead = [&]() {
@@ -24391,9 +24400,9 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     if (!sourceDone) {
         RValue res;
         if (t.whole && r.sourceEntryGone && !r.sourceCellGone) CmCall(kCmAddToMapName, save, { map9, RValue(key), source }, res);
-        if (!t.whole && destRose) CmSetCount(save, source, have);
+        if (!t.whole && destRose) CmSetCount(save, source, key, have);
         if (stacked) {
-            CmSetCount(save, stackItem, stackBefore);
+            CmSetCount(save, stackItem, stackKey, stackBefore);
         } else {
             CmCall(kCmGridRemoveName, save, { unit.grid, RValue(unit.key) }, res);
             if (CmCellsHold(unit.grid, unit.key) == 0) CmCall(kCmRemoveFromMapName, save, { map0, RValue(unit.key) }, res);
