@@ -108,6 +108,17 @@ also get new plugin commands for the stash, the bag and your skills.
   Point at either one, or tab to it, to read the same message; click it to go
   to Setup.
 
+## Fixed
+
+- **Blank panel window when ForgePact's ports were all in use.** ForgePact
+  tries five ports of its own (8780, 8801, 8899, 9133 and 9777). When all five
+  were taken, it let Windows pick any free port, and Windows could pick one the
+  panel window is not allowed to open, such as 6000 or 10080. The window then
+  stayed blank. ForgePact now skips those ports and asks for another. If it
+  still cannot find one, it tells you so instead of opening an empty window.
+  This was rare: it needs all five ports busy, and a PC whose free-port range
+  has been changed from Windows' default.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
