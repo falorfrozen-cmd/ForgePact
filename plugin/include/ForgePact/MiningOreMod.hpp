@@ -110,9 +110,18 @@ inline bool Working() { return multiplier > 1 || rewardMultiplier || rolls > 1; 
 
 #ifndef FORGEPACT_RELEASE
 // Research: the node's state before and after each extra run, so a run that
-// pays nothing records what was supplied. At most eight a session.
-inline constexpr size_t kMaxSnapshots = 8;
+// pays nothing records what was supplied. The budget is one dig's worst case
+// (every extra run at rolls 10, plus the dig's done line), and `miningrolls
+// dig` starts it afresh. Past it, the first extra run's pair, an unpaid run's
+// pair and the done line are still kept, up to a hard ceiling for digs that
+// `dig` did not queue.
+inline constexpr size_t kMaxSnapshots = 2 * (kMaxRolls - 1) + 1;
+inline constexpr size_t kMaxSnapshotLines = 64;
 inline std::vector<std::string> snapshots;
+// Which caller installed the shared CombatText detour first: "experience" (the
+// slider) or "rolls". Read from the plugin, so a check need not assume it from
+// the order its commands ran in.
+inline std::string combatTextFirst;
 inline std::string DescribeNodeValue(const RValue& v) {
     if (v.m_Kind == VALUE_UNDEFINED) return "undef";
     if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
@@ -123,17 +132,21 @@ inline std::string DescribeNodeValue(const RValue& v) {
     }
     return "k" + std::to_string(v.m_Kind);
 }
-inline void Snapshot(CInstance* node, const std::string& label) {
-    if (!node || snapshots.size() >= kMaxSnapshots) return;
+inline std::string NodeLine(const RValue& self, const std::string& label) {
     std::string line = label + ":";
-    const RValue self = node->ToRValue();
     for (const char* name : {"hp", "miningQue", "miningActive", "stop", "range", "miningPlayer", "sprite_index"}) {
         try {
             if (!g_Yytk->CallBuiltin("variable_instance_exists", {self, RValue(name)}).ToBoolean()) { line += std::string(" ") + name + "=-"; continue; }
             line += std::string(" ") + name + "=" + DescribeNodeValue(g_Yytk->CallBuiltin("variable_instance_get", {self, RValue(name)}));
         } catch (...) { line += std::string(" ") + name + "=!"; }
     }
+    return line;
+}
+// True when the line was kept: within the budget, or `always` below the ceiling.
+inline bool KeepSnapshot(const std::string& line, bool always) {
+    if (snapshots.size() >= (always ? kMaxSnapshotLines : kMaxSnapshots)) return false;
     snapshots.push_back(line);
+    return true;
 }
 #endif
 
@@ -181,7 +194,9 @@ inline void ExtraRolls(CInstance* S, CInstance* O, int argc, RValue** A) {
             oreStacksSeen = 0;
             if (!Rearm(S)) break;
 #ifndef FORGEPACT_RELEASE
-            Snapshot(S, "before extra roll " + std::to_string(k));
+            // Read every time: an unpaid run keeps its before line past the budget.
+            const std::string before = NodeLine(S->ToRValue(), "before extra roll " + std::to_string(k));
+            const bool keptBefore = KeepSnapshot(before, k == 1);
 #endif
             ++extraRuns;
             {
@@ -191,7 +206,12 @@ inline void ExtraRolls(CInstance* S, CInstance* O, int argc, RValue** A) {
                 originalStep(S, O, discarded, argc, A);
             }
 #ifndef FORGEPACT_RELEASE
-            Snapshot(S, "after extra roll " + std::to_string(k));
+            {
+                const bool keep = k == 1 || !oreRewardSeen;
+                if (!oreRewardSeen && !keptBefore) KeepSnapshot(before, true);
+                if (keep || snapshots.size() < kMaxSnapshots)
+                    KeepSnapshot(NodeLine(S->ToRValue(), "after extra roll " + std::to_string(k)), keep);
+            }
 #endif
             if (!oreRewardSeen) {
                 ++extraRunsUnpaid;
@@ -330,6 +350,30 @@ inline bool Install() {
     return ready;
 }
 
+// The step/loot pair and the four pass-through detours; empty when all six
+// are native, otherwise the first that is not.
+inline std::string HookPassThrough() {
+    if (!Install()) return installFailure.empty() ? "the mining step/loot hooks are unavailable" : installFailure;
+    for (size_t i = 0; i < silencedScripts.size(); ++i) {
+        SilencedScript& script = silencedScripts[i];
+        const bool ok = HookOneScript(script.name, script.hookId, (PVOID)kSilencedHooks[i], &script.original, &script.native);
+        if (!(ok && script.native)) return std::string(script.name) + (ok ? " came up table-only" : " could not be hooked");
+    }
+    return std::string();
+}
+
+#ifndef FORGEPACT_RELEASE
+// Research: `miningrolls dig` at rolls 1 installs these six alone, without
+// CombatText, so the Experience slider can still be the first to install the
+// shared detour afterwards. Once a session, like every install here.
+inline bool passThroughTried = false;
+inline std::string passThroughFailure;
+inline const std::string& InstallPassThrough() {
+    if (!passThroughTried) { passThroughTried = true; passThroughFailure = HookPassThrough(); }
+    return passThroughFailure;
+}
+#endif
+
 // Everything the extra rolls need, once a session: the step/loot pair (whose
 // result sets the multiplier's readiness as it always has), the four
 // pass-through detours and the shared CombatText detour. All seven must be
@@ -337,13 +381,14 @@ inline bool Install() {
 inline bool InstallRolls() {
     if (rollsInstallTried) return rollsReady;
     rollsInstallTried = true;
-    std::string failure;
-    if (!Install()) failure = installFailure.empty() ? "the mining step/loot hooks are unavailable" : installFailure;
-    for (size_t i = 0; failure.empty() && i < silencedScripts.size(); ++i) {
-        SilencedScript& script = silencedScripts[i];
-        const bool ok = HookOneScript(script.name, script.hookId, (PVOID)kSilencedHooks[i], &script.original, &script.native);
-        if (!(ok && script.native)) failure = std::string(script.name) + (ok ? " came up table-only" : " could not be hooked");
-    }
+#ifndef FORGEPACT_RELEASE
+    std::string failure = InstallPassThrough();
+    // The slider is CombatText's only other caller.
+    if (failure.empty() && combatTextFirst.empty())
+        combatTextFirst = CombatText::installTried ? "experience" : "rolls";
+#else
+    std::string failure = HookPassThrough();
+#endif
     if (failure.empty() && !CombatText::Install())
         failure = std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CombatText))
             + (CombatText::installed ? " came up table-only" : " could not be hooked");
@@ -407,15 +452,8 @@ inline void ReleaseDig(bool completed) {
     queuedDig.active = false;
     try {
         if (!g_Yytk->CallBuiltin("instance_exists", {queuedDig.inst}).ToBoolean()) return;
-        if (snapshots.size() < kMaxSnapshots) {
-            std::string line = std::string(completed ? "dig done" : "dig released") + " node "
-                + std::to_string((long long)queuedDig.id) + ":";
-            for (const char* name : {"hp", "miningQue", "miningActive", "stop", "range", "miningPlayer", "sprite_index"})
-                line += std::string(" ") + name + "=" + DescribeNodeValue(
-                    g_Yytk->CallBuiltin("variable_instance_exists", {queuedDig.inst, RValue(name)}).ToBoolean()
-                        ? g_Yytk->CallBuiltin("variable_instance_get", {queuedDig.inst, RValue(name)}) : RValue());
-            snapshots.push_back(line);
-        }
+        KeepSnapshot(NodeLine(queuedDig.inst, std::string(completed ? "dig done" : "dig released") + " node "
+            + std::to_string((long long)queuedDig.id)), true);
         g_Yytk->CallBuiltin("variable_instance_set", {queuedDig.inst, RValue("miningActivateDistance"), RValue(queuedDig.savedDistance)});
         if (!completed) g_Yytk->CallBuiltin("variable_instance_set", {queuedDig.inst, RValue("miningQue"), RValue(false)});
     } catch (...) {}
@@ -436,7 +474,10 @@ inline void DigTick() {
 inline void Dig() {
     // The pass-through detours' own counters are the positive control for
     // the silenced counts, so the research dig installs them even at rolls 1.
-    const bool counters = InstallRolls();
+    // CombatText waits for rolls above 1, which leaves the Experience slider
+    // free to install it first (`combatTextFirst` in `miningrolls stat`).
+    const bool counters = rolls > 1 ? InstallRolls() : InstallPassThrough().empty();
+    const std::string& countersFailure = rolls > 1 ? rollsFailure : passThroughFailure;
     if (queuedDig.active) { Out("miningrolls: dig - node " + std::to_string((long long)queuedDig.id) + " is still queued"); return; }
     try {
         RValue player;
@@ -478,9 +519,11 @@ inline void Dig() {
         g_Yytk->CallBuiltin("variable_instance_set", {best, RValue("miningActivateDistance"), RValue(kDigReach)});
         g_Yytk->CallBuiltin("variable_instance_set", {best, RValue("miningQue"), RValue(true)});
         queuedDig = { true, CurrentRoomKey(), bestId, digFrame, saved, best };
+        // Each queued dig gets the whole snapshot budget.
+        snapshots.clear();
         Out("miningrolls: dig queued node " + std::to_string((long long)bestId) + " at "
             + std::to_string((int)bestDistance) + " px (rolls=" + std::to_string(rolls)
-            + (counters ? "" : "; pass-through counters unavailable - " + rollsFailure) + ")");
+            + (counters ? "" : "; pass-through counters unavailable - " + countersFailure) + ")");
     } catch (...) { Out("miningrolls: dig failed - nothing queued"); }
 }
 
@@ -514,6 +557,10 @@ inline void RollsStat() {
     for (const auto& script : silencedScripts)
         line += std::string(" ") + script.name + "=" + std::to_string(script.passed) + "/" + std::to_string(script.silenced);
     line += " CombatText=" + std::to_string(CombatText::passedCalls) + "/" + std::to_string(CombatText::silencedCalls);
+    // Before the rolls reach it, an installed CombatText can only be the slider's.
+    line += " combatTextFirst=" + (!combatTextFirst.empty() ? combatTextFirst
+        : CombatText::installTried ? std::string("experience") : std::string("none"));
+    line += " snapshots=" + std::to_string(snapshots.size());
     if (rollsUnavailable) line += " unavailable=\"" + rollsFailure + "\"";
     Out(line);
     for (const auto& snapshot : snapshots) Out("miningrolls: node " + snapshot);
