@@ -43,6 +43,7 @@ none of these diagnostic hooks or the recorder. See
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
+| **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
@@ -883,6 +884,48 @@ density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
 
 Measurements, the rules and what is not known yet:
 [`docs/far-sleep-research.md`](docs/far-sleep-research.md).
+
+## Extra packs as you approach (lighter frames at high density)
+
+Mods → Quality of Life → **Extra packs as you approach** (plugin command
+`densityroll 1|0`, `densityroll <px>` for a reach between 1,500 and 20,000 px,
+`densityroll stat` for its state). Off by default, and it only matters with
+Monster Density above 1x.
+
+Monster Density works by copying every spawner in a zone: at 5x each one gets
+four copies. Without this switch all of them are made within the first seconds
+in the zone, and each one then keeps a timer in the game that asks, over and
+over, whether a player has come near - about 1,500 spawners in Act_01_01 at 5x.
+With it on, a copy is made only when a player comes within about 3,000 px of
+where it belongs; until then it waits in ForgePact's own list and costs the
+game nothing. A spawner releases its pack when a player comes within 1,050 px,
+so each copy is in place well before its pack could appear. The idle monsters
+that stand in a zone before you arrive come with their spawner too, so a
+copy's appear when it is made, still far outside the screen.
+
+- **Measured.** Act_01_01 at 5x, a fresh game, the same spot: with the switch
+  on, 120 of 1,260 copies had been made and the rest were waiting; the zone
+  held 430 spawners and 460 monsters instead of 1,570 and 939. Within 1,500 px
+  of the player the counts were identical (34 spawners, 184 monsters). The
+  game's timer pass fell from 8.7% to 2.1% of the frame, and all of the game's
+  own work per frame from 84.0% to 69.7% of a 60 fps frame.
+- **Moving.** Three teleports of about 4,500 px each, onto ground where
+  nothing had been made yet: every copy within reach (200 to 300 each time)
+  was there at the first check, 3 to 4 seconds later. Switching the mod off
+  there, which makes every copy still waiting, did not change the number of
+  spawners within 1,500 px of the player.
+- **When it steps aside.** With Reveal full map's **Really spawn every pack on
+  arrival (heavy)**, every copy is made at once as before, because that pass
+  needs all of them. While the Beacon or Tyrant's Crown has monsters hunting
+  you, the reach grows to their wake radius plus 500 px (4,500 px by default;
+  the whole zone for a whole-map hunt), so the hunt finds what it would find
+  without the switch. A zone you come back to gets its spawners back from the
+  game's own zone memory, copies included, exactly as without the switch.
+- **Pack markers.** A copy made on approach is not marked as a new pack on the
+  map.
+
+How it works and the measurements:
+[`docs/population-performance-analysis.md`](docs/population-performance-analysis.md#8-rolling-density-copies-2026-09-28).
 
 ## 🔧 How to use
 

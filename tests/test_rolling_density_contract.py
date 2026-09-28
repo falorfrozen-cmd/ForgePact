@@ -7,7 +7,7 @@ tests/density_population_harness.cpp runs the production DensityCopiesTick
 with a reach against a controlled runner (test_adaptive_population.py); the
 pack markers' side is tests/pack_markers_harness.cpp (`copy/...`). This file
 pins what those cannot see: the switch is a player command that starts off,
-the reach follows the map-fill and Beacon settings, the budget sees only the
+the reach follows the map-fill and hunt settings, the budget sees only the
 due copies, and the panel sends `densityroll 1|0`.
 """
 import re
@@ -20,6 +20,11 @@ PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 QUEUE = ROOT / "plugin" / "include" / "ForgePact" / "DeferredDensityCopies.hpp"
 MARKERS = ROOT / "plugin" / "include" / "ForgePact" / "PackMarkers.hpp"
 PANEL = ROOT / "src" / "forgepact.py"
+README = ROOT / "README.md"
+# forgepact-notes-cleanup.yml deletes release-notes-v*.md from main once that
+# version is published (the release page keeps the text); the notes check
+# reads them while they exist.
+NOTES = ROOT / "release-notes-v2.1.0.md"
 
 
 def _body(source: str, signature: str) -> str:
@@ -74,13 +79,18 @@ class RollingDensityPluginTests(unittest.TestCase):
         self.assertIn("if(DensityRolling() && g_DensityCopyMade)g_DensityCopyMade(", tick)
         self.assertIn("ForgePact::PackMarkers::Instance().NoteCopy(objectIndex);", self.code)
 
-    def test_the_reach_follows_map_fill_and_the_beacon(self):
+    def test_the_reach_follows_map_fill_and_the_hunt(self):
         refresh = _code(_body(self.plugin, "static void DensityRollRefresh()"))
         self.assertIn("if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();",
                       refresh)
-        self.assertIn("else if (g_BeSpawnNear && BeaconActive())", refresh)
-        self.assertIn("g_BeWakeRadius < 0 ? std::numeric_limits<double>::infinity() : (std::max)(reach, g_BeWakeRadius + 500.0)",
-                      refresh)
+        # Any hunt (Beacon or Tyrant's Crown) keeps monsters within the wake
+        # radius hunting, so the reach covers it; a whole-map hunt, or
+        # `beaconspawn` with the radius off, needs every copy.
+        self.assertIn("else if (HuntPolicy() != 0) {", refresh)
+        self.assertIn("if (g_BeWakeRadius < 0.0 || (g_BeWakeRadius == 0.0 && g_BeSpawnNear && BeaconActive()))", refresh)
+        self.assertIn("else if (g_BeWakeRadius > 0.0) reach = (std::max)(reach, g_BeWakeRadius + 500.0);", refresh)
+        self.assertNotIn("PacksEnabled() ||", refresh)
+        self.assertNotIn("MarksEnabled", refresh)   # pack markers do not need the copies
         frame = _code(_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
         self.assertIn("if (g_Setup && (g_RuntimeFrame % 60) == 0) DensityRollRefresh();", frame)
 
@@ -127,6 +137,31 @@ class RollingDensityPanelTests(unittest.TestCase):
     def test_the_live_switch_sends_one_or_zero(self):
         self.assertIn("""send_cmds([f"densityroll {1 if cfg['density_rolling'] else 0}"], cfg)""", self.source)
         self.assertRegex(self.source, r'"mod_far_sleep", "density_rolling", "mod_craft_mats"')
+
+
+class RollingDensityPlayerTextTests(unittest.TestCase):
+    """The player-facing text names the switch the panel shows and says it
+    starts off, the Beacon/Tyrant and fill-the-map exceptions included."""
+
+    def test_the_readme_has_the_row_and_the_section(self):
+        readme = README.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("| **Extra Packs As You Approach** | Mods → Quality of Life, off by default;", readme)
+        self.assertIn("## Extra packs as you approach (lighter frames at high density)", readme)
+        self.assertIn("(#extra-packs-as-you-approach-lighter-frames-at-high-density)", readme)
+        section = readme[readme.index("## Extra packs as you approach"):]
+        section = section[:section.index("\n## ", 1)]
+        for phrase in ("`densityroll 1|0`", "Off by default", "Really spawn every pack on",
+                       "Beacon or Tyrant's Crown"):
+            self.assertIn(phrase, section)
+
+    def test_the_release_notes_while_they_exist(self):
+        if not NOTES.is_file():
+            self.skipTest("release notes already published and removed from main")
+        notes = NOTES.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertTrue(notes.startswith("# ForgePact 2.1.0\n"))
+        self.assertIn("- **Extra packs as you approach.** A new switch in Mods → Quality of Life, off\n  by default;",
+                      notes)
+        self.assertIn("press **Install Mod Plugin** once after updating", notes)
 
 
 if __name__ == "__main__":

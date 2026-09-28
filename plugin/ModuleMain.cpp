@@ -38665,9 +38665,11 @@ static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
 
 // ---- Rolling density copies: the reach and the command --------------------
 // The effective reach, once a second and on every `densityroll`. Filling the
-// map (`reveal spawn`) needs every copy at once, so it switches rolling off;
-// the Beacon's `beaconspawn` makes awake spawners within its wake radius give
-// birth, so copies must exist that far out (all of them for a whole-map hunt).
+// map (`reveal spawn`) needs every copy at once, so it switches rolling off.
+// While a hunt is on (Beacon, or Tyrant's Crown for rares and champions) the
+// monsters within the wake radius keep stepping and hunting, and `beaconspawn`
+// makes the spawners there give birth - every spawner when the radius is off -
+// so the copies must exist that far out (all of them for a whole-map hunt).
 static void DensityRollCopyMade(int objectIndex) { ForgePact::PackMarkers::Instance().NoteCopy(objectIndex); }
 static void DensityRollRefresh()
 {
@@ -38677,8 +38679,11 @@ static void DensityRollRefresh()
         auto& reveal = ForgePact::MapRevealManager::Instance();
         reach = g_DensityRollReach;
         if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();
-        else if (g_BeSpawnNear && BeaconActive())
-            reach = g_BeWakeRadius < 0 ? std::numeric_limits<double>::infinity() : (std::max)(reach, g_BeWakeRadius + 500.0);
+        else if (HuntPolicy() != 0) {
+            if (g_BeWakeRadius < 0.0 || (g_BeWakeRadius == 0.0 && g_BeSpawnNear && BeaconActive()))
+                reach = std::numeric_limits<double>::infinity();
+            else if (g_BeWakeRadius > 0.0) reach = (std::max)(reach, g_BeWakeRadius + 500.0);
+        }
     }
     g_DensityReachNow = reach;
 }
@@ -38700,7 +38705,7 @@ static void DensityRollCommand(const std::string& rest)
     const size_t pending = g_DensityCopies.Pending();
     std::string line = std::string("densityroll: ") + (g_DensityRollReach > 0.0 ? "on" : "off");
     line += DensityRolling() ? ", reach " + std::to_string(std::llround(g_DensityReachNow)) + " px"
-        : (g_DensityRollReach > 0.0 ? ", every copy at once (filling the map or a whole-map Beacon)" : "");
+        : (g_DensityRollReach > 0.0 ? ", every copy at once (filling the map or a whole-map hunt)" : "");
     line += " | copies waiting " + std::to_string(pending) + ", due " + std::to_string(DeferredDensityPending())
         + ", made " + std::to_string(g_DensityCopyCompleted);
     Out(line);
@@ -40683,7 +40688,7 @@ void FrameCallback(FWFrame& FrameContext)
     // again near a player (FarSleep.hpp). Nothing runs while it is off and
     // nothing it put to sleep is left asleep.
     if (g_Setup) FarSleepTick();
-    // Rolling density copies: the reach follows the map-fill and Beacon
+    // Rolling density copies: the reach follows the map-fill and hunt
     // settings, re-read once a second.
     if (g_Setup && (g_RuntimeFrame % 60) == 0) DensityRollRefresh();
 
