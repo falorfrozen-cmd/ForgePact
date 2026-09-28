@@ -57,7 +57,10 @@ each has already cost a shipped mistake.
 - **A player-visible change adds player-language notes to
   `release-notes-vX.Y.Z.md`.** Player language, symptom before fix, and never
   claim a fix that is not real — release notes are read by players deciding
-  whether to update. The tag workflow (`forgepact-tag.yml`) composes the
+  whether to update. Each file carries a `Release date: YYYY-MM-DD` line:
+  a version ending in `.0` is a Friday release, dated a Friday and not
+  tagged before that date; any other version is a hotfix and ships any day
+  (`tools/cut_release.py` and `tools/forgepact_tag.py` enforce both). The tag workflow (`forgepact-tag.yml`) composes the
   draft release body from these files, newest first, so writing the file in
   the PR is what makes tagging need no extra step later. When a version has
   no file yet, the workflow falls back to GitHub's own generated notes under
