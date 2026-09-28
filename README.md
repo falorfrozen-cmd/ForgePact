@@ -49,6 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
+| **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -819,6 +820,39 @@ moves an item between the bag and the stash. How each was measured, and
 what it does not cover, is in
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md).
 
+## Frame profiler (where the game's frame time goes)
+
+`frameprof` measures what the game itself spends its frames on, so a slow
+scene can be pinned on the code that makes it slow instead of guessed at. It
+changes nothing in the game and costs nothing until you start it. There is no
+panel switch: send it with `tools/ipc.ps1` (or anything that writes
+`bp_ipc\cmd.txt`) while the game runs.
+
+- **`frameprof start [seconds] [rate]`** samples the game's frame thread for
+  `seconds` (1-600, default 30) at `rate` samples a second (20-2000, default
+  250). Play normally meanwhile, where the game is slow. It answers
+  `frameprof: sampling the frame thread ...`.
+- **`frameprof stop`** ends a capture early; **`frameprof stat`** says whether
+  one is running and names the last report.
+
+When a capture ends, a short summary appears in `out.txt`: frames per second,
+the median and worst frames, how the frame thread's time split between game
+code, the graphics driver, the GameMaker runtime, mods and waiting, and the
+heaviest events, scripts and built-ins. Three files land in `bp_ipc\perf\`:
+`frameprof-<date>-<time>.json` (the full report), `.stacks.txt` (every call
+stack with its sample count, in the format flame-graph tools read) and `.txt`
+(the summary). `py tools/frameprof_report.py` turns the newest capture into a
+page you can open in a browser: the numbers, the heaviest code, the slow frames
+and what ran during each, a per-second chart with the monster count, CPU per
+thread and a chart of the call stacks.
+
+How it works: a background thread pauses the game's frame thread 250 times a
+second for well under a tenth of a millisecond, notes where it is, and lets it
+go; the rest of the work happens on another CPU core. The report states what
+the pauses cost (under about 2% of the frame thread's time on a quiet PC), and
+the profiler slows itself down whenever they add up to more than 3%. Design,
+measurements and limits: [`docs/frame-profiler.md`](docs/frame-profiler.md).
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs
@@ -927,9 +961,10 @@ load there anyway.
   stripped game binary in Ghidra from the game's own script table, `panel_smoke.py`
   starts a packaged `ForgePact.exe` and checks it opens its window and serves the built
   panel, `package_size.py` builds the exe from a git ref or a working tree in a
-  temporary directory and prints its size, and `itemtruth_memrun.py` launches the game
+  temporary directory and prints its size, `itemtruth_memrun.py` launches the game
   to the main menu, queues Item Truth checks and samples the game's private memory from
-  outside (with a positive control for the research build).
+  outside (with a positive control for the research build), and `frameprof_report.py`
+  turns a `frameprof` capture into a summary and a self-contained HTML page.
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
   words: object, script and variable names with their indices, the special-content gates
   and what opens each, measured values and crash thresholds, our own commands and hooks,
