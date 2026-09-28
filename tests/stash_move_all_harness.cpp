@@ -47,6 +47,20 @@
 // (Phase B, B0) too, before the header had them; the first error line was
 // `error C2039: 'StashMoveGrid': is not a member of 'ForgePact'` (on its
 // using-declaration), 2026-09-28.
+//
+// The round-2 review (C0): an item's route was fixed by the plan, from the
+// shown tab's stack sums read before the run, so a second bag item of one
+// stackable identity the tab lacked went down the cell route after the first
+// had made the stack, the game merged one unit and the bag cell stayed - a
+// duplicate. The route is now decided again at the point of use from the sum
+// re-read just before the item's call (RouteAtUse); a held modifier is no key
+// edge (Alt+F4 must not start a run as the game closes); an owner step that
+// did not take is unconfirmed; and after a loss the state line says so. The
+// in-game button's decisions (whether its node should exist, and a press
+// consumed once under the key's guard) are pinned here too. Written before
+// the header had any of them; the first error line was `error C2039:
+// 'StashMoveButtonStep': is not a member of 'ForgePact'` (on its
+// using-declaration), 2026-09-28.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -57,6 +71,7 @@
 // PRODUCTION_STASHMOVEALL
 
 using ForgePact::StashMoveAllMod;
+using ForgePact::StashMoveButtonStep;
 using ForgePact::StashMoveCell;
 using ForgePact::StashMoveItem;
 using ForgePact::StashMoveOutcome;
@@ -234,22 +249,22 @@ static void BaselineKeyOffIsNothing()
 {
     StashMoveAllMod mod;
     bool ok = true;
-    for (int i = 0; i < 3; ++i) ok = ok && !mod.KeyEdge(true, true, true);
-    ok = ok && !mod.KeyEdge(false, true, true) && !mod.KeyEdge(true, true, true);
+    for (int i = 0; i < 3; ++i) ok = ok && !mod.KeyEdge(true, true, true, false);
+    ok = ok && !mod.KeyEdge(false, true, true, false) && !mod.KeyEdge(true, true, true, false);
     // Negative control: on, the same presses start one run per press. The key
     // was last seen held while off, so turning on starts nothing until it is
     // released and pressed again.
     mod.SetEnabled(true);
-    bool heldAtSwitchOn = mod.KeyEdge(true, true, true);
-    mod.KeyEdge(false, true, true);
-    bool first = mod.KeyEdge(true, true, true);
-    bool held = mod.KeyEdge(true, true, true);
-    bool released = mod.KeyEdge(false, true, true);
-    bool again = mod.KeyEdge(true, true, true);
-    mod.KeyEdge(false, true, true);
-    bool background = mod.KeyEdge(true, false, true);
-    mod.KeyEdge(false, true, true);
-    bool noStash = mod.KeyEdge(true, true, false);
+    bool heldAtSwitchOn = mod.KeyEdge(true, true, true, false);
+    mod.KeyEdge(false, true, true, false);
+    bool first = mod.KeyEdge(true, true, true, false);
+    bool held = mod.KeyEdge(true, true, true, false);
+    bool released = mod.KeyEdge(false, true, true, false);
+    bool again = mod.KeyEdge(true, true, true, false);
+    mod.KeyEdge(false, true, true, false);
+    bool background = mod.KeyEdge(true, false, true, false);
+    mod.KeyEdge(false, true, true, false);
+    bool noStash = mod.KeyEdge(true, true, false, false);
     Check("baseline/key_press_with_the_switch_off_is_nothing",
           ok && !heldAtSwitchOn && first && !held && !released && again && !background && !noStash,
           "off=" + std::to_string(ok) + " heldAtSwitchOn=" + std::to_string(heldAtSwitchOn) + " first=" + std::to_string(first) + " held=" + std::to_string(held)
@@ -447,7 +462,19 @@ static void TargetUnconfirmedStopsAndTurnsOff()
     StashMovePlan after = mod.Plan(MixedView(1));
     ok = ok && after.refused && after.reason == "off for this session";
     ok = ok && StashMoveAllMod::SummaryLine(t) == "stashmoveall: moved 1 of 4 from bag tab 0 to stash tab 1; skipped 0; stopped";
-    ok = ok && !mod.KeyEdge(true, true, true);
+    ok = ok && !mod.KeyEdge(true, true, true, false);
+    // The state line tells "turned itself off after a loss" apart from "off",
+    // and names the loss; turning on again answers with the same reason.
+    const std::string reason = "item 0-0-10-18: the game answered success=true but the bag cell still holds it";
+    ok = ok && mod.OffReason() == reason
+        && mod.StateLine() == "stashmoveall: state=off-for-this-session reason=" + reason
+        && mod.OffForSessionLine() == "stashmoveall: off for this session - " + reason
+                                      + "; turn it on again after restarting the game";
+    // Negative control: switched off by hand, the state line is plain off.
+    StashMoveAllMod byHand;
+    byHand.SetEnabled(true);
+    byHand.SetEnabled(false);
+    ok = ok && byHand.StateLine() == "stashmoveall: state=off key=F4" && byHand.OffReason().empty();
     Check("target/unconfirmed_item_stops_the_run_and_turns_the_mod_off", ok,
           StashMoveAllMod::SummaryLine(t) + " " + Joined(t.lines));
 }
@@ -790,6 +817,264 @@ static void TargetLines()
     Check("target/lines_name_what_moved_and_what_stayed", ok, Joined(t.lines) + " " + StashMoveAllMod::SummaryLine(t));
 }
 
+// ---- the route at the point of use (round-2 review, C0) --------------------
+
+// The report the round-2 adapter handed the core for the second item of an
+// identity the shown tab lacked when the run was planned: it went down the
+// planned cell route, StashAddToStack found the stack the first item had just
+// made and merged one unit, nothing was placed and nothing cleared the bag cell.
+static StashMoveReport MergedWherePlannedACell()
+{
+    StashMoveReport r;
+    r.answered = true;
+    r.accepted = true;
+    r.answer = "StashAddToStack answered true (merged, not placed)";
+    r.sourceHasKey = 1;
+    r.destinationHasKey = 0;
+    r.shownTabChanged = 0;
+    return r;
+}
+
+// Two bag items of one stackable identity, and none of it on the shown tab
+// when the run is planned: both are planned as cells. The first is placed and
+// makes the stack; the second, re-read at the point of use, finds that stack
+// and merges into it by its whole count, confirmed on the sum.
+static bool SecondItemOfOneIdentity(int stashTab, int itemClass, std::string& detail)
+{
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveView v;
+    v.stashListed = true;
+    v.bagTab = stashTab == StashMoveAllMod::kMaterialsTab ? StashMoveAllMod::kBagMaterialsView : 0;
+    v.stashTab = stashTab;
+    v.cells = { Cell(0, 0, "0-0-81-" + std::to_string(itemClass), itemClass, true, 5, false),
+                Cell(1, 0, "0-0-82-" + std::to_string(itemClass), itemClass, true, 3, false) };
+    StashMovePlan p = mod.Plan(v);
+    bool ok = !p.refused && p.items.size() == 2 && p.items[0].route == StashMoveRoute::Cell
+        && p.items[1].route == StashMoveRoute::Cell;
+    StashMoveTally t = mod.Begin(p);
+    // The first: its identity is still not on the tab (the sum re-reads 0).
+    const StashMoveItem first = StashMoveAllMod::RouteAtUse(p.items[0], stashTab, 0);
+    ok = ok && first.route == StashMoveRoute::Cell;
+    StashMoveResult one;
+    ok = ok && StashMoveAllMod::MayCall(first, 1, one);
+    ok = ok && mod.Record(t, StashMoveAllMod::Decide(first, PlacedCell(0, 0)));
+    // The second: the first's 5 units are on the tab now.
+    const StashMoveItem second = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5);
+    ok = ok && second.route == StashMoveRoute::Stack && second.cell.count == 3;
+    const StashMoveResult merged = StashMoveAllMod::Decide(second, Stacked(5, 8));
+    ok = ok && merged.outcome == StashMoveOutcome::Moved && merged.route == StashMoveRoute::Stack
+        && StashMoveAllMod::ItemLine(merged) == "stashmoveall: item " + second.cell.key + " -> stack";
+    ok = ok && mod.Record(t, merged) && t.moved == 2 && !t.stopped && mod.IsEnabled();
+    // Negative control: the planned route, decided before the run, cannot
+    // confirm the merge the game did in its place - the round-2 duplicate.
+    ok = ok && StashMoveAllMod::Decide(p.items[1], MergedWherePlannedACell()).outcome == StashMoveOutcome::Unconfirmed;
+    // The whole-count rule still holds at the point of use: not measured,
+    // more than one unit is a skip and one unit merges.
+    const StashMoveRoutes noWhole = Flipped(false, false, true, false);
+    const StashMoveItem many = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5, noWhole);
+    StashMoveItem unit = p.items[1];
+    unit.cell.count = 1;
+    ok = ok && many.route == StashMoveRoute::None && many.refusal == "whole-stack merge not measured"
+        && StashMoveAllMod::RouteAtUse(unit, stashTab, 5, noWhole).route == StashMoveRoute::Stack;
+    detail = Keys(p) + " second=" + std::to_string((int)second.route) + " " + Joined(t.lines);
+    return ok;
+}
+
+static void TargetSecondItemMergesAtUseOnMaterials()
+{
+    std::string detail;
+    bool ok = SecondItemOfOneIdentity(StashMoveAllMod::kMaterialsTab, StashMoveAllMod::kMaterialClass, detail);
+    // The Materials tab's own rule at the point of use: a sum of 0 is a new
+    // identity, placed only while newMaterialRoute is measured.
+    StashMoveItem it;
+    it.cell = Cell(0, 0, "0-0-83-14", 14, true, 4, false);
+    it.route = StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, 0, Flipped(false, false, false, true)).refusal
+        == "a new kind stays in the bag";
+    Check("target/second_item_of_one_identity_merges_at_the_point_of_use_on_materials", ok, detail);
+}
+
+static void TargetSecondItemMergesAtUseOnAPage()
+{
+    std::string detail;
+    // A stackable key (class 12) on the personal page.
+    bool ok = SecondItemOfOneIdentity(0, 12, detail);
+    Check("target/second_item_of_one_identity_merges_at_the_point_of_use_on_a_page", ok, detail);
+}
+
+static void TargetUnreadableStackSumAtUseSkips()
+{
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveItem it;
+    it.cell = Cell(0, 0, "0-0-84-12", 12, true, 2, false);
+    it.route = StashMoveRoute::Cell;
+    // The sum could not be re-read: a skip that calls nothing, whatever the
+    // plan said, and the run goes on.
+    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(it, 3, -1);
+    bool ok = atUse.route == StashMoveRoute::None && atUse.refusal == "its stack on the shown tab could not be read";
+    StashMoveResult skip;
+    ok = ok && !StashMoveAllMod::MayCall(atUse, 1, skip) && skip.outcome == StashMoveOutcome::Skipped
+        && skip.answer == "its stack on the shown tab could not be read";
+    StashMoveItem stacked = it;
+    stacked.route = StashMoveRoute::Stack;
+    ok = ok && StashMoveAllMod::RouteAtUse(stacked, 3, -1).route == StashMoveRoute::None;
+    // A count that did not read is never merged: the merge passes it.
+    StashMoveItem noCount = it;
+    noCount.cell.count = -1;
+    ok = ok && StashMoveAllMod::RouteAtUse(noCount, 3, 4).route == StashMoveRoute::None;
+    StashMoveTally t;
+    ok = ok && mod.Record(t, skip) && t.skipped == 1 && !t.stopped && mod.IsEnabled();
+    // Negative controls: a sum of 0 is a cell; a non-stackable needs no sum;
+    // a planned skip stays a skip with its own reason.
+    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, 0).route == StashMoveRoute::Cell;
+    StashMoveItem ring;
+    ring.cell = Cell(1, 0, "0-0-85-7", 7);
+    ring.route = StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(ring, 3, -1).route == StashMoveRoute::Cell;
+    StashMoveItem refused;
+    refused.cell = Cell(2, 0, "0-0-86-7", 7);
+    refused.refusal = "not taken by the Materials tab";
+    const StashMoveItem still = StashMoveAllMod::RouteAtUse(refused, StashMoveAllMod::kMaterialsTab, 3);
+    ok = ok && still.route == StashMoveRoute::None && still.refusal == "not taken by the Materials tab";
+    Check("target/unreadable_stack_sum_at_the_point_of_use_skips", ok, atUse.refusal + " " + Joined(t.lines));
+}
+
+static void TargetHeldModifierIsNoKeyEdge()
+{
+    // Alt+F4 closes the game window; with the stash open and the switch on it
+    // must not start a run in the same moment. Any held modifier (Alt, Ctrl,
+    // Shift) makes the press no edge, and releasing the modifier while the key
+    // is still down does not turn the old press into one.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.KeyEdge(false, true, true, false);
+    bool withAlt = mod.KeyEdge(true, true, true, true);
+    bool altReleased = mod.KeyEdge(true, true, true, false);
+    mod.KeyEdge(false, true, true, false);
+    // Negative control: the same press with no modifier is one run.
+    bool plain = mod.KeyEdge(true, true, true, false);
+    mod.KeyEdge(false, true, true, false);
+    bool heldThrough = mod.KeyEdge(true, true, true, true);
+    Check("target/a_held_modifier_is_no_key_edge", !withAlt && !altReleased && plain && !heldThrough,
+          "withAlt=" + std::to_string(withAlt) + " altReleased=" + std::to_string(altReleased)
+          + " plain=" + std::to_string(plain) + " heldThrough=" + std::to_string(heldThrough));
+}
+
+static void TargetOwnerStepThatDidNotTakeIsUnconfirmed()
+{
+    // A shared page and a new Materials identity end with the owner step 0 to
+    // 9 after the bag cell is cleared; its measured signature is the key then
+    // answering nothing on map 0. Not dispatched, or the key still answering
+    // there, or the lookup not made, is unconfirmed - never moved.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveItem it;
+    it.cell = Cell(0, 0, "0-0-87-18", 18);
+    it.route = StashMoveRoute::Cell;
+    auto owned = [](int dispatched, int onMap0) {
+        StashMoveReport r = PlacedCell(2, 1);
+        r.validateAnswer = "true";
+        r.ownerStep = 1;
+        r.ownerDispatched = dispatched;
+        r.ownerAnswer = dispatched == 1 ? "undefined" : "not dispatched (ChangeItemOwner threw)";
+        r.keyOnMap0 = onMap0;
+        return r;
+    };
+    const StashMoveResult notRun = StashMoveAllMod::Decide(it, owned(0, 1));
+    const StashMoveResult stayed = StashMoveAllMod::Decide(it, owned(1, 1));
+    const StashMoveResult unread = StashMoveAllMod::Decide(it, owned(1, -1));
+    bool ok = notRun.outcome == StashMoveOutcome::Unconfirmed
+        && notRun.answer == "the game answered success=true and placed it, but the owner step was not dispatched: "
+                            "not dispatched (ChangeItemOwner threw)"
+        && stayed.outcome == StashMoveOutcome::Unconfirmed
+        && stayed.answer == "the game answered success=true and placed it, but the key still answers on map 0 after "
+                            "the owner step (ChangeItemOwner answered undefined)"
+        && unread.outcome == StashMoveOutcome::Unconfirmed;
+    // The answers enter the result: a moved item names what ValidateItem and
+    // the owner step answered, so "ran and did nothing" is not success.
+    const StashMoveResult took = StashMoveAllMod::Decide(it, owned(1, 0));
+    ok = ok && took.outcome == StashMoveOutcome::Moved
+        && took.answer == "success=true; ValidateItem answered true; ChangeItemOwner answered undefined";
+    // Negative control: the personal page runs no owner step, so none is asked of it.
+    ok = ok && StashMoveAllMod::Decide(it, PlacedCell(2, 1)).outcome == StashMoveOutcome::Moved;
+    StashMoveTally t;
+    ok = ok && !mod.Record(t, stayed) && t.stopped && mod.OffThisSession()
+        && mod.StateLine().rfind("stashmoveall: state=off-for-this-session reason=item 0-0-87-18: ", 0) == 0;
+    Check("target/owner_step_that_did_not_take_is_unconfirmed", ok,
+          notRun.answer + " | " + stayed.answer + " | " + took.answer + " | " + mod.StateLine());
+}
+
+// ---- the in-game button (the core's side) ---------------------------------
+
+static void BaselineButtonOffCreatesNothing()
+{
+    // Off, nothing is created whatever the game shows, a node left from an
+    // earlier "on" is removed, and a press is not kept for later.
+    StashMoveAllMod mod;
+    bool ok = mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(false, false, false, false) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(true, true, true, true) == StashMoveButtonStep::Remove;
+    mod.NoteButtonPress();
+    ok = ok && !mod.TakeButtonPress(true, true, false);
+    // Negative control: on, the same scene creates it.
+    mod.SetEnabled(true);
+    ok = ok && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Create
+        && !mod.TakeButtonPress(true, true, false);   // the press made while off was dropped
+    Check("baseline/button_off_creates_nothing", ok, "");
+}
+
+static void TargetButtonExistsOnlyWithTheStashAndSortListed()
+{
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // (stash listed, Sort listed, Sort visible, node exists) -> the step.
+    bool ok = mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Create
+        && mod.ButtonStep(true, true, true, true) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(false, true, true, true) == StashMoveButtonStep::Remove
+        && mod.ButtonStep(false, false, false, false) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(true, false, false, true) == StashMoveButtonStep::Remove
+        && mod.ButtonStep(true, false, false, false) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(true, true, false, true) == StashMoveButtonStep::Remove
+        && mod.ButtonStep(true, true, false, false) == StashMoveButtonStep::Keep;
+    // A loss turns the mod off for the session, and the node goes with it.
+    mod.TurnOffForSession("item k: test");
+    ok = ok && mod.ButtonStep(true, true, true, true) == StashMoveButtonStep::Remove
+        && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Keep;
+    Check("target/button_exists_only_with_the_stash_and_sort_listed", ok, "");
+}
+
+static void TargetButtonPressRunsOnceUnderTheKeyGuard()
+{
+    // The adapter records a press (from the activation's detour or the frame
+    // poll) and the frame tick takes it: one run per press, and only under
+    // the key's own guard - the game in front, the stash listed, no modifier
+    // held. A press the guard refuses is dropped, never kept for later.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonPress();
+    bool first = mod.TakeButtonPress(true, true, false);
+    bool again = mod.TakeButtonPress(true, true, false);
+    mod.NoteButtonPress();
+    mod.NoteButtonPress();
+    bool twice = mod.TakeButtonPress(true, true, false);
+    bool twiceAgain = mod.TakeButtonPress(true, true, false);
+    mod.NoteButtonPress();
+    bool modifier = mod.TakeButtonPress(true, true, true);
+    bool afterModifier = mod.TakeButtonPress(true, true, false);
+    mod.NoteButtonPress();
+    bool background = mod.TakeButtonPress(false, true, false);
+    mod.NoteButtonPress();
+    bool noStash = mod.TakeButtonPress(true, false, false);
+    bool ok = first && !again && twice && !twiceAgain && !modifier && !afterModifier && !background && !noStash;
+    Check("target/button_press_runs_once_under_the_key_guard", ok,
+          "first=" + std::to_string(first) + " again=" + std::to_string(again) + " twice=" + std::to_string(twice)
+          + " twiceAgain=" + std::to_string(twiceAgain) + " modifier=" + std::to_string(modifier)
+          + " afterModifier=" + std::to_string(afterModifier) + " background=" + std::to_string(background)
+          + " noStash=" + std::to_string(noStash));
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -811,6 +1096,14 @@ int main()
     TargetSocketableTabAndSocketViewAreRefused();
     TargetShownTabRoom();
     TargetLines();
+    TargetSecondItemMergesAtUseOnMaterials();
+    TargetSecondItemMergesAtUseOnAPage();
+    TargetUnreadableStackSumAtUseSkips();
+    TargetHeldModifierIsNoKeyEdge();
+    TargetOwnerStepThatDidNotTakeIsUnconfirmed();
+    BaselineButtonOffCreatesNothing();
+    TargetButtonExistsOnlyWithTheStashAndSortListed();
+    TargetButtonPressRunsOnceUnderTheKeyGuard();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

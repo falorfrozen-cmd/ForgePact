@@ -199,6 +199,45 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
 
+    # ---- the route at the point of use (round-2 review) ----------------------
+
+    def test_target_second_item_of_one_identity_merges_at_the_point_of_use_on_materials(self):
+        # Two bag items of one identity the Materials tab lacked when the run
+        # was planned: the first is placed, the second re-reads the sum at its
+        # call and merges by its whole count. Negative control: the planned
+        # cell route cannot confirm the one-unit merge the game did in its
+        # place (the round-2 duplicate).
+        self.assertScenario("target/second_item_of_one_identity_merges_at_the_point_of_use_on_materials")
+
+    def test_target_second_item_of_one_identity_merges_at_the_point_of_use_on_a_page(self):
+        self.assertScenario("target/second_item_of_one_identity_merges_at_the_point_of_use_on_a_page")
+
+    def test_target_unreadable_stack_sum_at_the_point_of_use_skips(self):
+        # With its negative controls: a sum of 0 is a cell, a non-stackable
+        # needs no sum, a planned skip keeps its reason.
+        self.assertScenario("target/unreadable_stack_sum_at_the_point_of_use_skips")
+
+    def test_target_a_held_modifier_is_no_key_edge(self):
+        # Alt+F4 closes the game; it must not start a run. Negative control:
+        # the same press with no modifier is one run.
+        self.assertScenario("target/a_held_modifier_is_no_key_edge")
+
+    def test_target_owner_step_that_did_not_take_is_unconfirmed(self):
+        # With its negative control: the personal page asks for no owner step.
+        self.assertScenario("target/owner_step_that_did_not_take_is_unconfirmed")
+
+    # ---- the in-game button (the core's side) --------------------------------
+
+    def test_baseline_button_off_creates_nothing(self):
+        # With its negative control: on, the same scene creates the node.
+        self.assertScenario("baseline/button_off_creates_nothing")
+
+    def test_target_button_exists_only_with_the_stash_and_sort_listed(self):
+        self.assertScenario("target/button_exists_only_with_the_stash_and_sort_listed")
+
+    def test_target_button_press_runs_once_under_the_key_guard(self):
+        self.assertScenario("target/button_press_runs_once_under_the_key_guard")
+
 
 if __name__ == "__main__":
     unittest.main()

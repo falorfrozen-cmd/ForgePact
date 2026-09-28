@@ -145,8 +145,9 @@ class StashMoveAllContractTests(unittest.TestCase):
     def test_nothing_is_reached_by_address(self):
         for word in ADDRESSES:
             self.assertNotIn(word, self.code, word)
-        # The only hex literal is the key state's high bit.
-        self.assertEqual(re.findall(r"0x[0-9A-Fa-f]+", self.code), ["0x8000"])
+        # The only hex literal is the key state's high bit (the hotkey's and
+        # the modifiers').
+        self.assertEqual(set(re.findall(r"0x[0-9A-Fa-f]+", self.code)), {"0x8000"})
         self.assertIn("static constexpr int kSmaHotkey = VK_F4;", self.code)
 
     # ---- the frame path -------------------------------------------------------
@@ -166,10 +167,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertLess(down, tick.index("SmaGameInForeground()"))
         self.assertLess(down, tick.index("HeroSiege::Objects::GameObject::UI_Stash_obj"))
         self.assertIn("listed = fg && CmInstance(", tick)
-        self.assertIn("if (mod.KeyEdge(down, fg, listed)) StashMoveAllRun();", tick)
+        self.assertIn("if (mod.KeyEdge(down, fg, listed, modifier)) StashMoveAllRun();", tick)
         # The first frame on only notes the key.
-        self.assertIn("if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false); return; }", tick)
-        self.assertIn("return press && foreground && stashListed;", self.header)
+        self.assertIn("if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false, false); return; }", tick)
+        self.assertIn("return press && foreground && stashListed && !modifier;", self.header)
         fg = self.body("static bool SmaGameInForeground(")
         self.assertIn("GetForegroundWindow()", fg)
         self.assertIn("pid == GetCurrentProcessId()", fg)
@@ -188,11 +189,11 @@ class StashMoveAllContractTests(unittest.TestCase):
         first_call = one.index("SmaCall(")
         for read in ("SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) != 1", "ApItemFromFingerprint(s.bag",
                      'SmaTab(s.window, "stashTabSelected") == plan.stashTab', "Mod::Room(SmaGrid(arr)",
-                     "Mod::MayCall(it, room, skip)"):
+                     "Mod::MayCall(use, room, skip)"):
             self.assertLess(one.index(read), first_call, read)
         # After the calls: the tab on show, its own array, the bag cell - then
         # the core decides.
-        decide = one.index("Mod::Decide(it, r)")
+        decide = one.index("Mod::Decide(use, r)")
         last_owner = one.rindex("SmaCall(kSmaOwner", 0, decide)
         tab_now = one.index('const int tabNow = SmaTab(s.window, "stashTabSelected");')
         self.assertLess(last_owner, tab_now)
@@ -210,7 +211,9 @@ class StashMoveAllContractTests(unittest.TestCase):
         # the whole count.
         self.assertLess(one.index("SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);"),
                         one.index("SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaCharacterOwner), RValue(kSmaStashOwner)"))
-        self.assertIn("if (!personal && SmaBagCellHolds(s, it.cell.x, it.cell.y, key) == 0) {", one)
+        owner = one[one.index("if (!personal) {"):]
+        self.assertLess(owner.index("if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key) == 0) {"),
+                        owner.index("SmaCall(kSmaOwner"))
         self.assertIn("r.accepted && before >= 0 && after - before == count", one)
         self.assertIn("RValue((double)count)", one)
 
@@ -218,20 +221,121 @@ class StashMoveAllContractTests(unittest.TestCase):
         record = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"),
                                "bool Record(StashMoveTally& t, const StashMoveResult& r)")
         self.assertIn("if (r.outcome == StashMoveOutcome::Skipped) { ++t.skipped; return true; }", record)
-        self.assertIn("TurnOffForSession();", record)
+        self.assertIn("TurnOffForSession(reason);", record)
         self.assertIn("if (on && m_OffThisSession.load()) return false;", self.header)
         one_verb = self.body("static void StashMoveCommand(")
-        self.assertIn("if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) mod.TurnOffForSession();", one_verb)
+        self.assertIn('if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) mod.TurnOffForSession("item " + res.key + ": " + res.answer);', one_verb)
         # A refusal is printed with the core's refusal line, which says nothing
         # was called; the switch turned on again after a loss is refused.
         self.assertIn('return verb + ": refused - " + reason + "; nothing was called";', self.header)
         cmd = self.body("static void StashMoveAllCommand(")
-        self.assertIn('if (!mod.SetEnabled(true)) { Out(ForgePact::StashMoveAllMod::RefusalLine("stashmoveall", "off for this session")); return; }', cmd)
+        self.assertIn("if (!mod.SetEnabled(true)) { Out(mod.OffForSessionLine()); Out(mod.StateLine()); return; }", cmd)
         # The undo runs only for a placed item whose bag cell did not clear.
         one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
         undo = one[one.index("out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute"):]
         self.assertIn("r.sourceHasKey == 1 && CmCellsHold(now, key) == 1", undo)
         self.assertIn("SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);", undo)
+
+    # ---- the round-2 review's fixes --------------------------------------------
+
+    def test_cell_route_rereads_the_stack_sum_before_stash_add_to_stack(self):
+        # The route is decided at the point of use: before the item's first
+        # call, a stackable's sum is re-read on the shown array and the core's
+        # RouteAtUse decides, whatever the plan said; the branch taken is the
+        # one it answers, and the outcome is decided on that item.
+        one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
+        reread = one.index("before = arrRead ? SmaStackSum(s, arr, cls, base) : -1;")
+        at_use = one.index("use = Mod::RouteAtUse(use, plan.stashTab, before);")
+        self.assertLess(reread, at_use)
+        self.assertIn("if (it.cell.stackable) {", one[:reread])
+        self.assertLess(at_use, one.index("SmaCall(kSmaAddToStack"))
+        self.assertLess(at_use, one.index("SmaCall("))
+        self.assertIn("const bool cellRoute = use.route == ForgePact::StashMoveRoute::Cell;", one)
+        self.assertLess(at_use, one.index("const bool cellRoute = use.route"))
+        self.assertNotIn("it.route == ForgePact::StashMoveRoute::Cell", one)
+        self.assertIn("Mod::Decide(use, r)", one)
+        self.assertNotIn("Mod::Decide(it, r)", one)
+        # The core's helper decides with the same rules as the plan.
+        at = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"),
+                           "static StashMoveItem RouteAtUse(")
+        self.assertIn("RouteFor(TabOf(stashTab), planned.cell, read, stackSumNow > 0, routes, item);", at)
+        self.assertIn("RouteFor(tab, c, c.destinationStackRead, c.destinationHasStack, routes, item);", self.header)
+
+    def test_key_edge_ignores_a_held_modifier(self):
+        # Alt+F4 closes the game: any held Alt, Ctrl or Shift is no edge.
+        held = self.body("static bool SmaModifierHeld(")
+        for key in ("VK_MENU", "VK_CONTROL", "VK_SHIFT"):
+            self.assertIn(key, held, key)
+        self.assertIn("GetAsyncKeyState", held)
+        tick = self.body("static void StashMoveAllTick(")
+        down = tick.index("if (down) {")
+        self.assertLess(down, tick.index("modifier = SmaModifierHeld();"))
+        self.assertIn("if (mod.KeyEdge(down, fg, listed, modifier)) StashMoveAllRun();", tick)
+        self.assertIn("bool KeyEdge(bool down, bool foreground, bool stashListed, bool modifier)", self.header)
+        self.assertIn("return press && foreground && stashListed && !modifier;", self.header)
+
+    def test_off_after_loss_is_reported_distinctly(self):
+        # After a loss the state line says so, with the reason; turning on
+        # again answers with the reason and stays off; every switch and a loss
+        # print the state line, whose last copy the panel reads.
+        self.assertIn('"stashmoveall: state=off-for-this-session reason=" + m_OffReason', self.header)
+        self.assertIn('return LossLine("stashmoveall", m_OffReason);', self.header)
+        cmd = self.body("static void StashMoveAllCommand(")
+        self.assertIn("if (!mod.SetEnabled(true)) { Out(mod.OffForSessionLine()); Out(mod.StateLine()); return; }", cmd)
+        self.assertEqual(cmd.count("Out(mod.StateLine());"), 4)
+        run = self.body("static void StashMoveAllRun(")
+        self.assertIn("if (t.stopped) Out(mod.StateLine());", run)
+        one = self.body("static void StashMoveCommand(")
+        self.assertIn("if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) Out(mod.StateLine());", one)
+        # The panel reads the last state line and shows the loss.
+        import forgepact  # noqa: E402
+        source = (ROOT / "src" / "forgepact.py").read_text(encoding="utf-8")
+        self.assertIn('"stash_move_all_session": stash_move_all_session(cfg)', source)
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(forgepact, "ipc_dir", return_value=Path(d)):
+            out = Path(d) / "out.txt"
+            read = forgepact.stash_move_all_session
+            self.assertEqual(read({}), "")   # no log: the plugin has said nothing
+            out.write_bytes(b"BloodPact plugin loaded\r\nstashmoveall: state=on key=F4\r\nping\r\n")
+            self.assertEqual(read({}), "on")
+            with out.open("ab") as fh:
+                fh.write(b"stashmoveall: off for this session - item k: x; turn it on again after restarting the game\r\n"
+                         b"stashmoveall: state=off-for-this-session reason=item k: x\r\n")
+            self.assertEqual(read({}), "off-after-loss")
+            with out.open("ab") as fh:
+                fh.write(b"stashmoveall: state=off key=F4\r\n")
+            self.assertEqual(read({}), "off")
+            # Only the tail is read: a state line older than 64 KB is not this
+            # read's to report.
+            out.write_bytes(b"stashmoveall: state=off-for-this-session reason=old\r\n" + b"." * (70 * 1024))
+            self.assertEqual(read({}), "")
+        js = panel_file("panel.js")
+        self.assertIn("off (this session)", js)
+        self.assertIn("stash_move_all_session", js)
+
+    def test_owner_step_answer_enters_the_report(self):
+        # "Ran and did nothing" is told apart from success: the second
+        # ValidateItem's answer and the owner step's dispatch, answer and the
+        # key's map 0 lookup after it go into the report the core decides on.
+        one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
+        self.assertIn("r.validateAnswer = SmaAnswerText(kSmaValidate, vc, res);", one)
+        self.assertIn("r.ownerStep = 1;", one)
+        self.assertIn("r.ownerDispatched = ownerRan ? 1 : 0;", one)
+        self.assertIn("r.ownerAnswer = SmaAnswerText(kSmaOwner, oc, res);", one)
+        self.assertIn("r.keyOnMap0 = SmaKeyOnMap0(s, key);", one)
+        self.assertLess(one.index("r.keyOnMap0 = SmaKeyOnMap0(s, key);"), one.index("Mod::Decide(use, r)"))
+        lookup = self.body("static int SmaKeyOnMap0(")
+        self.assertIn("ApCallScript(kApFromFpName, s.bag, { RValue(key), RValue(0.0) }, item)", lookup)
+        self.assertIn("return item.m_Kind == VALUE_UNDEFINED ? 0 : -1;", lookup)
+        for field in ("validateAnswer", "ownerStep", "ownerDispatched", "ownerAnswer", "keyOnMap0"):
+            self.assertIn(field, self.header, field)
+        decide = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"),
+                               "static StashMoveResult Decide(")
+        self.assertIn("if (r.ownerStep == 1) {", decide)
+        self.assertIn("if (r.ownerDispatched != 1)", decide)
+        self.assertIn("if (r.keyOnMap0 == 1)", decide)
+        self.assertIn("if (r.keyOnMap0 != 0)", decide)
 
     # ---- the panel ------------------------------------------------------------
 

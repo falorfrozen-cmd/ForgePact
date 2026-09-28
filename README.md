@@ -636,9 +636,11 @@ itself.
   item not where the game said it put it, or still in your backpack as well,
   or the stash tab on show changed - the run stops, ForgePact takes the item
   back out of the stash tab when it can, and the mod turns itself off until
-  the game is restarted (`off for this session`).
+  the game is restarted (`off for this session`); the panel then shows
+  `off (this session)` beside the switch.
 - F4 does something only while the switch is on, the game is the window in
-  front and the stash is open.
+  front and the stash is open, and never with Alt, Ctrl or Shift held - so
+  Alt + F4 still only closes the game.
 - Each press writes one line per item and a summary to the log, for example
   `stashmoveall: moved 5 of 7 from bag tab 0 to stash tab 1; skipped 2`.
   Tools can run the same move with the `stashmoveall run` command, or move

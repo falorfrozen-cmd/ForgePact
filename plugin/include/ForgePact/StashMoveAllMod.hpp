@@ -24,7 +24,12 @@ namespace ForgePact {
 // - the switch, off by default, and off for the rest of the session after a
 //   loss (SetEnabled refuses to turn it back on);
 // - the hotkey: one run per press, only while the switch is on, the game is
-//   the foreground window and the stash window is listed (KeyEdge);
+//   the foreground window, the stash window is listed and no modifier is
+//   held, so Alt+F4 closing the game starts nothing (KeyEdge);
+// - the in-game Move all button: whether its node should exist (on, the stash
+//   window and the bag's Sort button listed, Sort visible) and a press the
+//   adapter records, taken once by the frame tick under the key's own guard
+//   (ButtonStep, NoteButtonPress, TakeButtonPress);
 // - the plan over the shown bag tab's occupied cells: each item once, in
 //   row-major order (row, then column) by its first cell, so a multi-cell
 //   item is planned by its top-left cell (Plan);
@@ -43,6 +48,12 @@ namespace ForgePact {
 //   other class there is a skip that calls nothing; the Unique tab (-5), the
 //   Socketable tab while no socketable path is measured, and any number not
 //   listed here refuse the run (TabOf, Plan);
+// - the route again at the point of use: a stackable's route is decided once
+//   more from the stack sum the adapter re-reads on the shown tab just before
+//   its call, whatever the plan said, because an earlier item of the same run
+//   may have made that stack (round-2 review: two bag items of one identity
+//   the tab lacked duplicated a unit) - a sum above 0 merges, 0 places, a sum
+//   that could not be read is a skip (RouteAtUse);
 // - never overflow (the owner's 2026-09-28 rule): before each item's call the
 //   adapter re-reads the shown stash tab's room for it - a free block of the
 //   item's footprint on the shown tab's own cells (Room), or a stack of its
@@ -52,17 +63,20 @@ namespace ForgePact {
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
 //   when the stash tab on show is still the planned one, the source cell no
 //   longer holds the key, and either the destination holds it (a cell) or the
-//   stack rose by exactly the item's count (a stack); skipped when the game
-//   answered no and every side read unchanged; unconfirmed otherwise, a read
-//   that could not be made and a shown tab that changed included. Only the
+//   stack rose by exactly the item's count (a stack), and, where the route
+//   ends with the owner step, the key answering nothing on map 0 after it;
+//   skipped when the game answered no and every side read unchanged;
+//   unconfirmed otherwise, a read that could not be made, a shown tab that
+//   changed and an owner step that did not take included. Only the
 //   shown tab is re-read: the other stash tabs have no container readable by
 //   name (RUNTIME_DATA_MODELS § 17), so no-spill rests on the route - each
 //   routine is handed only the shown tab's array - and on the room check
 //   (owner, 2026-09-28, "Accept");
 // - that a skip continues and an unconfirmed item stops the run and turns the
-//   mod off for the session (Record);
+//   mod off for the session, keeping the reason (Record);
 // - the lines: one per item, one per run, the refusal and loss lines, and the
-//   switch and state lines, each starting with its verb.
+//   switch and state lines, each starting with its verb; after a loss the
+//   state line reads off-for-this-session with the reason, never plain off.
 //
 // It is game-independent on purpose: it names no runtime interface, builtin,
 // log call or runtime value type, so tests/stash_move_all_harness.cpp compiles
@@ -79,6 +93,9 @@ enum class StashMoveTab : int { Unsupported = 0, Grid, Materials, Socketable, Un
 enum class StashMoveRoute : int { None = 0, Stack, Cell };
 
 enum class StashMoveOutcome : int { Moved = 1, Skipped, Unconfirmed };
+
+// What the frame tick does with the in-game button's node this frame.
+enum class StashMoveButtonStep : int { Keep = 0, Create, Remove };
 
 // One occupied cell of the bag tab on show, as the adapter read it.
 struct StashMoveCell {
@@ -157,6 +174,14 @@ struct StashMoveReport {
     int64_t     stackBefore = -1;      // the destination stack's count (stack route)
     int64_t     stackAfter = -1;
     int         shownTabChanged = -1;  // 1 stashTabSelected moved off the planned tab, 0 unchanged
+    // The placement's follow-ups (cell route), so "ran and did nothing" is
+    // told apart from success: the second ValidateItem's answer, and the owner
+    // step 0 to 9 a shared page and a new Materials identity end with.
+    std::string validateAnswer;        // ValidateItem's answer (self the stash grid), as text
+    int         ownerStep = 0;         // 1 the route ends with the owner step, 0 it runs none
+    int         ownerDispatched = -1;  // 1 ChangeItemOwner was dispatched and returned, 0 not, -1 not tried
+    std::string ownerAnswer;           // its answer, or why it was not dispatched
+    int         keyOnMap0 = -1;        // after it: 1 the key still answers on map 0, 0 nothing there, -1 unread
 };
 
 struct StashMoveResult {
@@ -218,14 +243,44 @@ public:
 
     // One call per frame with the key's state. True on the press that should
     // start a run: the key went down while the switch is on, the game is the
-    // foreground window and the stash window is listed. Off, nothing; the
-    // key's state is still remembered, so turning the switch on while the key
-    // is held starts nothing until it is released and pressed again.
-    bool KeyEdge(bool down, bool foreground, bool stashListed) {
+    // foreground window, the stash window is listed and no modifier (Alt,
+    // Ctrl, Shift) is held - Alt+F4 closes the game, and a run started as it
+    // closes would move items the stash's own close never saves. Off,
+    // nothing; the key's state is still remembered, so turning the switch on
+    // while the key is held starts nothing until it is released and pressed
+    // again, and releasing a modifier while the key is held is no edge either.
+    bool KeyEdge(bool down, bool foreground, bool stashListed, bool modifier) {
         if (!IsEnabled()) { m_KeyWasDown = down; return false; }
         bool press = down && !m_KeyWasDown;
         m_KeyWasDown = down;
-        return press && foreground && stashListed;
+        return press && foreground && stashListed && !modifier;
+    }
+
+    // ---- the in-game Move all button -----------------------------------------
+
+    // What the frame tick does with the button's node: it exists exactly while
+    // the switch is on, the stash window is listed and the bag's Sort button
+    // (the node it sits beside) is listed and visible. Off, nothing is
+    // created, and a node left from before is removed.
+    StashMoveButtonStep ButtonStep(bool stashListed, bool sortListed, bool sortVisible, bool nodeExists) const {
+        const bool wanted = IsEnabled() && stashListed && sortListed && sortVisible;
+        if (wanted == nodeExists) return StashMoveButtonStep::Keep;
+        return wanted ? StashMoveButtonStep::Create : StashMoveButtonStep::Remove;
+    }
+
+    // The adapter saw the button pressed (the activation's detour, or the
+    // frame poll). Nothing moves here: the press waits for the frame tick,
+    // so nothing moves inside a game script call. Off, it is not kept.
+    void NoteButtonPress() {
+        if (IsEnabled()) m_ButtonPressed.store(true);
+    }
+
+    // The frame tick takes a recorded press once, under the key's own guard:
+    // the game in front, the stash listed, no modifier held. Presses recorded
+    // before one tick are one run; a press the guard refuses is dropped.
+    bool TakeButtonPress(bool foreground, bool stashListed, bool modifier) {
+        const bool pressed = m_ButtonPressed.exchange(false);
+        return pressed && IsEnabled() && foreground && stashListed && !modifier;
     }
 
     static StashMoveTab TabOf(int tab) {
@@ -285,42 +340,79 @@ public:
             StashMoveItem item;
             item.cell = c;
             Footprint(cells, c.key, item.width, item.height);
-            const bool many = c.count > 1;
-            // A stackable whose stack on the shown tab is unknown is a skip:
-            // the game's stack routine would merge into one the read missed.
-            const char* unread = "its stack on the shown tab could not be read";
-            if (tab == StashMoveTab::Grid) {
-                if (c.stackable && !c.destinationStackRead) {
-                    item.refusal = unread;
-                } else if (c.stackable && c.destinationHasStack) {
-                    if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
-                    else item.route = StashMoveRoute::Stack;
-                } else {
-                    item.route = StashMoveRoute::Cell;
-                }
-            } else {
+            if (tab != StashMoveTab::Grid) {
                 const bool materials = tab == StashMoveTab::Materials;
                 const int mine = materials ? kMaterialClass : kSocketClass;
                 if (c.itemClass != mine) {
                     item.refusal = std::string("not taken by the ") + (materials ? "Materials" : "Socketable") + " tab";
-                } else if (!c.destinationStackRead) {
-                    item.refusal = unread;
-                } else if (c.destinationHasStack) {
-                    // The one-unit merge is measured on the Materials tab
-                    // (stackMoveRoute); the Socketable tab's only by its path.
-                    if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
-                    else if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
-                    else item.route = StashMoveRoute::Stack;
-                } else {
-                    const bool placed = materials ? routes.newMaterial : routes.socketNew;
-                    if (placed) item.route = StashMoveRoute::Cell;
-                    else item.refusal = "a new kind stays in the bag";
+                    plan.items.push_back(item);
+                    continue;
                 }
             }
+            RouteFor(tab, c, c.destinationStackRead, c.destinationHasStack, routes, item);
             plan.items.push_back(item);
         }
         if (plan.items.empty()) return refuse("nothing to move");
         return plan;
+    }
+
+    // The route of an item the shown tab takes, from what is known of its
+    // identity's stack there: `stackRead` false when it could not be read,
+    // else `hasStack`. A stackable whose stack is unknown is a skip, since the
+    // game's stack routine would merge into one the read missed; a special
+    // tab's merge and new-identity placement only where the research
+    // reproduced them by name.
+    static void RouteFor(StashMoveTab tab, const StashMoveCell& c, bool stackRead, bool hasStack,
+                         const StashMoveRoutes& routes, StashMoveItem& item) {
+        item.route = StashMoveRoute::None;
+        item.refusal.clear();
+        const bool many = c.count > 1;
+        const char* unread = "its stack on the shown tab could not be read";
+        if (tab == StashMoveTab::Grid) {
+            if (c.stackable && !stackRead) {
+                item.refusal = unread;
+            } else if (c.stackable && hasStack) {
+                if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+                else item.route = StashMoveRoute::Stack;
+            } else {
+                item.route = StashMoveRoute::Cell;
+            }
+            return;
+        }
+        const bool materials = tab == StashMoveTab::Materials;
+        if (!stackRead) {
+            item.refusal = unread;
+        } else if (hasStack) {
+            // The one-unit merge is measured on the Materials tab
+            // (stackMoveRoute); the Socketable tab's only by its path.
+            if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
+            else if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+            else item.route = StashMoveRoute::Stack;
+        } else {
+            const bool placed = materials ? routes.newMaterial : routes.socketNew;
+            if (placed) item.route = StashMoveRoute::Cell;
+            else item.refusal = "a new kind stays in the bag";
+        }
+    }
+
+    // The route decided again at the point of use (round-2 review). The plan
+    // read the shown tab's stacks once, before the run; an earlier item of the
+    // same run may since have made the stack a later item of its identity
+    // joins. So just before a stackable's call the adapter re-reads that
+    // identity's sum on the shown tab and this decides with it, whatever the
+    // plan said: above 0 the stack routine with the item's whole count, 0 the
+    // placement, -1 (unread) a skip that calls nothing. `planned.cell.count`
+    // is the count re-read at the same moment; one that did not read (below
+    // 1) is never merged, since the merge passes it. A planned skip stays one
+    // with its own reason, and a non-stackable keeps its placement: it needs
+    // no sum.
+    static StashMoveItem RouteAtUse(const StashMoveItem& planned, int stashTab, int64_t stackSumNow,
+                                    const StashMoveRoutes& routes = kMeasuredRoutes) {
+        if (planned.route == StashMoveRoute::None || !planned.cell.stackable) return planned;
+        StashMoveItem item = planned;
+        const bool read = stackSumNow >= 0 && (stackSumNow == 0 || planned.cell.count >= 1);
+        RouteFor(TabOf(stashTab), planned.cell, read, stackSumNow > 0, routes, item);
+        return item;
     }
 
     // The columns and rows one key's cells cover in the bag; 1 by 1 when it
@@ -439,11 +531,27 @@ public:
         } else {
             if (r.destinationHasKey != 1)
                 return unconfirmed("the game answered " + said + " but the stash tab was not read holding it");
+            // The owner step 0 to 9 a shared page and a new Materials identity
+            // end with: measured, the key then answers nothing on map 0. Not
+            // dispatched, still answering there, or not looked up, is not a move.
+            if (r.ownerStep == 1) {
+                const std::string placed = "the game answered " + said + " and placed it, but ";
+                if (r.ownerDispatched != 1)
+                    return unconfirmed(placed + "the owner step was not dispatched: "
+                                       + (r.ownerAnswer.empty() ? std::string("not tried") : r.ownerAnswer));
+                if (r.keyOnMap0 == 1)
+                    return unconfirmed(placed + "the key still answers on map 0 after the owner step (ChangeItemOwner answered "
+                                       + r.ownerAnswer + ")");
+                if (r.keyOnMap0 != 0)
+                    return unconfirmed(placed + "the key's map 0 lookup after the owner step could not be made");
+            }
             out.x = r.destinationX;
             out.y = r.destinationY;
         }
         out.outcome = StashMoveOutcome::Moved;
         out.answer = said;
+        if (!r.validateAnswer.empty()) out.answer += "; ValidateItem answered " + r.validateAnswer;
+        if (r.ownerStep == 1) out.answer += "; ChangeItemOwner answered " + r.ownerAnswer;
         return out;
     }
 
@@ -456,16 +564,22 @@ public:
         if (r.outcome == StashMoveOutcome::Moved) { ++t.moved; return true; }
         if (r.outcome == StashMoveOutcome::Skipped) { ++t.skipped; return true; }
         t.stopped = true;
-        TurnOffForSession();
-        t.lines.push_back(LossLine("stashmoveall", "item " + r.key + ": " + r.answer));
+        const std::string reason = "item " + r.key + ": " + r.answer;
+        TurnOffForSession(reason);
+        t.lines.push_back(LossLine("stashmoveall", reason));
         return false;
     }
 
-    // Turn the mod off for the rest of the session (a loss).
-    void TurnOffForSession() {
+    // Turn the mod off for the rest of the session (a loss), keeping why, so
+    // the state line and a later `stashmoveall 1` can say it. The first
+    // reason is kept.
+    void TurnOffForSession(const std::string& reason) {
+        if (!m_OffThisSession.load()) m_OffReason = reason;
         m_OffThisSession.store(true);
         m_Enabled.store(false);
     }
+
+    const std::string& OffReason() const { return m_OffReason; }
 
     // ---- lines ---------------------------------------------------------------
 
@@ -506,14 +620,23 @@ public:
         return on ? std::string("stashmoveall: on") : std::string("stashmoveall: off - the stash and bag are unchanged");
     }
 
+    // The state: on, off, or turned off by a loss - which a bug report must
+    // be able to tell apart from "switched off" (round-2 review), and which
+    // the panel reads from the last of these lines.
     std::string StateLine() const {
+        if (OffThisSession()) return "stashmoveall: state=off-for-this-session reason=" + m_OffReason;
         return std::string("stashmoveall: state=") + (IsEnabled() ? "on" : "off") + " key=F4";
     }
+
+    // `stashmoveall 1` after a loss: still off, and why.
+    std::string OffForSessionLine() const { return LossLine("stashmoveall", m_OffReason); }
 
 private:
     std::atomic<bool> m_Enabled{false};
     std::atomic<bool> m_OffThisSession{false};
+    std::atomic<bool> m_ButtonPressed{false};
     bool              m_KeyWasDown = false;
+    std::string       m_OffReason;
 };
 
 } // namespace ForgePact

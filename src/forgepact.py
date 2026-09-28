@@ -1679,6 +1679,37 @@ def plugin_mod_state(cfg=None) -> dict:
         return {}
 
 
+STASH_MOVE_ALL_STATE = b"stashmoveall: state="
+STASH_MOVE_ALL_TAIL = 64 * 1024
+
+
+def stash_move_all_session(cfg=None) -> str:
+    """What Move all into the stash says it is doing: `on`, `off`, or
+    `off-after-loss` when a move it could not confirm turned it off for the
+    rest of the session (review of ForgePact #68: the switch kept showing on).
+
+    Read from the last `stashmoveall: state=` line of out.txt, which the
+    plugin prints on every switch and after a loss. out.txt is rotated at
+    plugin load, so its tail is this game session's; only the last 64 KB is
+    read, since the line is printed at each switch and the file grows to
+    megabytes. No line there (or no log) is an empty string: the plugin has
+    not said anything, which is not the same as off."""
+    try:
+        path = ipc_dir(cfg) / "out.txt"
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - STASH_MOVE_ALL_TAIL))
+            tail = fh.read()
+    except Exception:
+        return ""
+    at = tail.rfind(STASH_MOVE_ALL_STATE)
+    if at < 0:
+        return ""
+    state = tail[at + len(STASH_MOVE_ALL_STATE):].split(b"\n", 1)[0].split(b" ", 1)[0].strip()
+    return {b"on": "on", b"off": "off", b"off-for-this-session": "off-after-loss"}.get(state, "")
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1947,6 +1978,7 @@ class H(BaseHTTPRequestHandler):
                         "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
                         "pluginMods": plugin_mod_state(cfg),
+                        "stash_move_all_session": stash_move_all_session(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],

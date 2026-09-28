@@ -122,10 +122,13 @@ CRAFTPROBE_BLOCK = ("// ---- craftprobe: the crafting-materials Phase 0 instrume
                     "#endif // FORGEPACT_RELEASE (craftprobe)")
 STASH_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate")
 # Live procedure 2's row: after those three; then ForgePact #68's row
-# (docs/stash-move-research.md), directly before the control.
+# (docs/stash-move-research.md), and #68's four Live 1f rows for the in-game
+# button (STASH_BUTTON_ROWS), directly before the control.
 CLOSE_ROW = "gml_Script_UiACloseButton"
 STASH_MOVE_ROW = "gml_Script_ValidateItem"
-CP_ROWS = 287
+STASH_BUTTON_ROWS = ("gml_Script_UiSetActivationFunc", "gml_Script_UiSetFocus",
+                     "gml_Script_UiSetFloatingToFalse", "gml_Script_UiNodeClearNavigationFunc")
+CP_ROWS = 291
 
 
 class StashBagLayoutContract(unittest.TestCase):
@@ -380,10 +383,12 @@ class CraftprobePhase0Additions(unittest.TestCase):
         self.assertEqual(at, list(range(at[0], at[0] + 3)), "the three rows sit together, in this order")
         self.assertEqual(at[0], constants.index("gml_Script_ReportClient") + 1, "after the Phase 1k rows")
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction", "the control stays last")
-        # Step 0d's close row, then #68's row, sit between them and the control.
+        # Step 0d's close row, then #68's rows, sit between them and the control.
         self.assertEqual(at[-1] + 1, constants.index(CLOSE_ROW))
-        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3)
-        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2)
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3 - len(STASH_BUTTON_ROWS))
+        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2 - len(STASH_BUTTON_ROWS))
+        self.assertEqual([constants.index(c) for c in STASH_BUTTON_ROWS],
+                         list(range(len(constants) - 1 - len(STASH_BUTTON_ROWS), len(constants) - 1)))
         # Every row's runtime name is the SDK constant's own value.
         self.assertIn("HeroSiege::Scripts::CONSTANT.data()", self.plugin)
         shipped = strip_research_blocks(self.plugin)
@@ -593,9 +598,9 @@ class CraftprobeLive2Additions(unittest.TestCase):
         constants = [constant for _, _, constant in self.rows]
         self.assertEqual(len(self.rows), CP_ROWS)
         self.assertEqual(constants.count(CLOSE_ROW), 1)
-        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3)
+        self.assertEqual(constants.index(CLOSE_ROW), len(constants) - 3 - len(STASH_BUTTON_ROWS))
         self.assertEqual(constants.count(STASH_MOVE_ROW), 1)
-        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2)
+        self.assertEqual(constants.index(STASH_MOVE_ROW), len(constants) - 2 - len(STASH_BUTTON_ROWS))
         self.assertEqual(constants[-1], "gml_Script_CheckPlayerInteraction")
         shipped = strip_research_blocks(self.plugin)
         self.assertIn("kPlayerCommands", shipped)   # negative control: the strip keeps player code

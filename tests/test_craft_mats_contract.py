@@ -57,10 +57,12 @@ STASH_BAG_DOC = ROOT / "docs" / "stash-bag-layout-research.md"
 # only where those rows, or the separate `other` they brought, invalidate them.
 STASH_BAG_ROWS = ("gml_Script_CreateItemNew", "gml_Script_UiCreate", "gml_Script_NetworkSendInventoryUpdate",
                   "gml_Script_UiACloseButton")
-# ForgePact #68's row, after #147's, before the control; written down in
-# its own research doc (docs/stash-move-research.md).
+# ForgePact #68's rows, after #147's, before the control; written down in
+# its own research doc (docs/stash-move-research.md): Phase A's ValidateItem,
+# then Live 1f's four for the in-game button (Static reading 3).
 STASH_MOVE_DOC = ROOT / "docs" / "stash-move-research.md"
-STASH_MOVE_ROWS = ("gml_Script_ValidateItem",)
+STASH_MOVE_ROWS = ("gml_Script_ValidateItem", "gml_Script_UiSetActivationFunc", "gml_Script_UiSetFocus",
+                   "gml_Script_UiSetFloatingToFalse", "gml_Script_UiNodeClearNavigationFunc")
 LATER_ROWS = STASH_BAG_ROWS + STASH_MOVE_ROWS
 
 BLOCK_START = "// ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14)"
@@ -856,7 +858,7 @@ class CraftMatsContractTests(unittest.TestCase):
             self.assertIn(row, labels, row + " is not a craftprobe row")
         # Phase 1e's 252 rows (none added for Phase 1g), Phase 1h's two,
         # Phase 1j's 24 (none for Phase 1i) and Phase 1k's four; then toolkit
-        # #147's four (STASH_BAG_ROWS) and #68's one (STASH_MOVE_ROWS).
+        # #147's four (STASH_BAG_ROWS) and #68's five (STASH_MOVE_ROWS).
         self.assertEqual(len(self.rows), 282 + len(LATER_ROWS))
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
         detour = detour[:detour.index("#define CRAFTPROBE_TARGETS(X)")]

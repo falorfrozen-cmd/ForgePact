@@ -84,6 +84,22 @@ function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el
 function setClass(el,v){if(el&&el.className!==v)el.className=v}
 function setTitle(el,v){if(el&&el.title!==v)el.title=v}
 function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
+// Move all into the stash turns itself off for the rest of a session after a
+// move it could not confirm; the plugin's last `stashmoveall: state=` line
+// says so (`stash_move_all_session`), and the value beside the switch shows
+// it while the game runs (review of #68). The switch keeps the preference.
+// Without a loss it leaves the value as the switch painted it.
+function applyStashMoveAllSession(){
+  const v=document.getElementById('msmaval');
+  if(!v||!ST)return;
+  if(ST.gameRunning&&ST.stash_move_all_session==='off-after-loss'){
+    setText(v,'off (this session)');setClass(v,'val off');
+    setTitle(v,'Move all turned itself off for this game session after a move it could not confirm; it works again after restarting the game.');
+    return;
+  }
+  if(v.textContent==='off (this session)'){const on=!!ST.cfg?.mod_stash_move_all;setText(v,on?'on':'off');setClass(v,'val '+(on?'':'off'))}
+  setTitle(v,'');
+}
 function applyPluginModState(pm){
   const packMarkerStatus=document.getElementById('packMarkerStatus'), packMarkers=pm?.packMarkers;
   if(packMarkerStatus){
@@ -613,6 +629,7 @@ function bind(){
     document.getElementById('mod_stash_move_all').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_stash_move_all',value:e.target.checked})});
         const v=document.getElementById('msmaval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        applyStashMoveAllSession();
         toast('Move all into the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('mod_far_sleep').onchange=async(e)=>{
@@ -941,6 +958,7 @@ export function refreshSavedControls(){
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
+  applyStashMoveAllSession();
   document.getElementById('theme').value=applyTheme(c.theme);
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
@@ -1127,7 +1145,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods);document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

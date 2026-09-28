@@ -22,9 +22,10 @@ A new **Move all into the stash** switch, off by default, does it with one key.
     nothing there.
   - If a move cannot be confirmed afterwards, the run stops, the item is taken
     back out of the stash tab where possible, and the switch turns itself off
-    until you restart the game.
+    until you restart the game; the panel shows `off (this session)` beside it.
   - F4 does nothing unless the switch is on, the game is the window in front and
-    the stash is open. The stash is saved when you close it, as usual.
+    the stash is open, and nothing with Alt, Ctrl or Shift held, so Alt + F4 still
+    only closes the game. The stash is saved when you close it, as usual.
 
 ## How to update
 
