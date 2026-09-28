@@ -118,7 +118,7 @@ try {
   const beaconBefore = (await sandbox.state()).cfg.beacon;
   await saved(() => page.keyboard.press('Space'));
   assert.equal((await sandbox.state()).cfg.beacon, !beaconBefore);
-  for (const query of ['map', 'headhunter', 'beacon', 'pet', 'prospect']) {
+  for (const query of ['map', 'headhunter', 'beacon', 'pet', 'prospect', 'monster density', 'enable monster density']) {
     await page.keyboard.press('Control+k');
     await page.locator('#emberSearchInput').fill(query);
     assert.ok(await page.locator('#emberSearchResults button').count() > 0, query);

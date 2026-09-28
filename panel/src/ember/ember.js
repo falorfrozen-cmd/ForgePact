@@ -459,26 +459,28 @@ function indexEmberSearch() {
       // dedicated search/filter destinations instead of hundreds of duplicates.
       if (input.id.startsWith("sw_") || input.closest(".sat-list,#gemfilter_panel")) continue;
       const row = input.closest(".row"),
-        label =
+        rowLabel =
           row
             ?.querySelector(".label-copy,.lbl")
             ?.textContent.trim()
             .replace(/\s+/g, " ") ||
           input.getAttribute("aria-label") ||
           input.id;
+      const label = input.id === "den" ? "Monster density"
+        : input.id === "den_on" ? "Enable monster density" : rowLabel;
       if (!label) continue;
       const note = row?.nextElementSibling?.matches(".note")
         ? row.nextElementSibling.textContent
         : "";
       emberSearchEntries.push({
-        label: input.id === "den" ? "Monster density"
-          : input.id === "den_on" ? "Enable monster density" : label,
+        label,
         tab,
         card: card.id,
         // Theme's native select is hidden behind the accessible custom picker.
         input: input.id === "theme" ? row.querySelector(".theme-picker-trigger") : input,
         text: (
           label +
+          " " + rowLabel +
           " " + input.id.replaceAll("_", " ") +
           " " +
           note +
