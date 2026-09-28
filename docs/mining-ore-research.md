@@ -1,7 +1,9 @@
 # Mining Ore Amount — research, 2026-09-21
 
-Status: **verified in play on 2026-09-23** (see "Live verification" at the end);
-the adapter described below is unchanged since.
+Status: **verified in play on 2026-09-23** (see "Live verification");
+the multiplier adapter described below is unchanged since. The extra rolls
+added on 2026-09-28 (issue #36) are **not yet confirmed in a live game**; see
+"Extra rolls" at the end.
 Based on ForgePact `eed66427bda39fcd4ea66096934528f5efb9a2b5`. Nothing has been
 published, and no EXE version has been changed for this experiment.
 
@@ -51,7 +53,8 @@ The built-in is present in the inspected game, but actual runtime invocation and
 pickup/stack handling still need the live check below.
 
 No new frame watcher, map enumeration, RNG roll, repeated reward call or saved
-node edit was added. x1 installs nothing on a fresh process. After a nondefault
+node edit was added for the multiplier (the extra rolls below repeat the whole
+completion on purpose, behind their own setting). x1 installs nothing on a fresh process. After a nondefault
 setting installed the hooks, x1 uses immediate passthrough until process exit.
 The existing mod-state writer reports readiness; one-time command/reward/failure
 messages aid the trial. Per-call counters are development-build-only.
@@ -111,3 +114,123 @@ Do not report the feature as verified until these observations are recorded.
 - Not measured: mining XP, non-ore rewards and manual prospecting of mined ore.
   The adapter changes only the ore stack's `o`, so none of them is expected to
   move.
+
+## Extra rolls
+
+Status (2026-09-28, issue #36): **built and covered by the harness, not yet
+confirmed in a live game.** The panel row is Mining Ore Extra Rolls
+(`drops.mining_ore_rolls`, 1-10, default 1, off by default) and the plugin
+command is `miningrolls N`. Live procedure 1 of the workorder
+`forgepact-issue-36-extra-ore-rolls` is to be recorded here; until it is, every
+statement below about what the game does is a static reading, not a
+measurement.
+
+### What the game does at a dig (static reading)
+
+Read locally on 2026-09-28 and written down in our own words; the full labelled
+reading is the hub's
+[`docs/models/mining-reward-spec.md`](../../docs/models/mining-reward-spec.md),
+and the facts every module needs are in the hub's
+[`docs/RUNTIME_DATA_MODELS.md` § 12](../../docs/RUNTIME_DATA_MODELS.md#12-mining).
+
+- The ore kinds and counts a node pays were fixed when the node was created
+  (`Mining_Node_obj`'s Create event, gated by `irandom` and two stat queries;
+  `Asgard_Special_Node_obj` with fixed counts). At dig time `MiningNodeStepMain`
+  only counts that list and drops each kind once, through one
+  `LootGroundCreate` call per kind. So there is no dig-time roll for which ore
+  or how much, and the Mining Ore Multiplier and "more copies of the same ore"
+  are the same thing.
+- The dig's own random part is the bonus finds: several independent rolls,
+  each gated by one of the digger's stats (queries 693-700 through
+  `ReturnSpecificStat`) and an inclusive `irandom` draw, paying type-15 items,
+  one to three `Goblin_Ore_obj`, and some type-14 and type-13 items. These are
+  the "special mats" issue #36 asks for. A character whose stats are all 0 never
+  sees one.
+- After the reward the step calls, directly, `MiningAdd`, `ExperienceUpdate`
+  and `GuildExperienceAdd` (on two branches), `CombatText`, up to four
+  `quest_exists`/`update_quest` pairs, `PlaySound3D`, a `Mining_Effect_obj`
+  and `NetworkSendClient`; then the node's `hp` goes 1 -> 0 (that last part
+  measured on 2026-09-23, `miner-helmet-prototype.md` § "Ownership fix").
+
+### The mechanism
+
+An extra roll is the game's own completion run again on the same node, in the
+same step, from inside the existing `HookStep` detour, after the original
+`MiningNodeStepMain` call returned. It runs only when `HookLoot` recognised an
+ore stack during that original call, and only while the rolls are above 1.
+Before each extra run the plugin sets the node's `hp` back to 1 and
+`miningQue` to true (the route Vein Resonance proved live on 2026-09-23) and
+calls the step trampoline with the original arguments. During an extra run a
+thread-local flag makes five pass-through detours skip the game's call:
+`MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest`, and the
+shared `CombatText` detour. So XP (mining, character, guild), quest progress
+and the floating XP text count once per node, while ore, bonus finds, sound and
+the hit effect happen once per roll. An extra run that pays no ore ends the
+loop, and afterwards the node's `hp` is forced to 0, so a node is never left
+diggable twice. The multiplier (or the helmet's x4) scales every stack of every
+run; the helmet's pulse and Vein Resonance follow the original run only.
+
+`miningrolls` above 1 installs the step/loot pair, the four pass-through
+detours and the shared `CombatText` detour, once a session; all seven must come
+up native, or the rolls stay at 1 with one `miningrolls: unavailable - <script>
+...` line and the multiplier keeps working. The cap is `kMaxRolls = 10`, refused
+in the plugin's parser as well as clamped by the panel.
+
+The research build installs the mining pair before `InstallItemInspectHooks`
+(which table-hooks `LootGroundCreate`); before that change the Mining Ore mod
+was unavailable in the research DLL, and a live session run on it would have
+measured the instrument, not the game.
+
+### Rejected routes
+
+- **Copying the ore stacks N times from `HookLoot`** (extra `LootGroundCreate`
+  calls with cloned params). It reproduces only the node's fixed list, so it is
+  the quantity multiplier written as separate stacks and can never produce a
+  bonus find, which is the point of issue #36.
+- **Re-implementing the bonus rolls in the plugin** (calling
+  `ReturnSpecificStat` and `irandom` ourselves, then `LootGroundCreate`). It
+  would carry every roll site, most of whose caps and bases are computed in code
+  not read to the end, and would drift from the game on the next patch. It is
+  the fallback only if Live procedure 1 finds that the re-run does not pay
+  (`rerun: no-reward`), and that fallback is a new plan with the owner.
+
+Also set aside: editing the node's list before the dig (cannot give a bonus
+find, and the list is built in an object event no name can hook), and the
+game's Blood Pact extra ore (monster-side `DropOres`/`DropOreMaterials`, not
+mining).
+
+### The CombatText decision
+
+`CombatText` already had one native detour, the Experience slider's "N XP"
+rescale in `StatsManager.hpp`, and `HookOneScript` puts the inline detour in
+only on a script's first install. A second detour from the mining code would
+have come up table-only in one install order (rolls refused for anyone with the
+Experience slider moved) and blinded the XP text fix in the other. So there is
+one detour, in `plugin/include/ForgePact/CombatTextHook.hpp`, installed once by
+whichever asks first; it rescales the XP text for the Experience slider and is
+silenced during an extra roll. The alternative, letting the floating XP text
+repeat per roll, was rejected: the README promises it once per node, and each
+roll would show a fresh "N XP" with no XP behind it.
+
+### What Live procedure 1 must show
+
+Run on the research DLL, with `miningore stat` reading `nativeReady=1` as the
+control and `miningrolls stat` as the marker, digging through `miningrolls dig`
+so the loop needs no one at the keyboard:
+
+- `miningrolls stats`: the ten stat queries (692-700, 703). If 693-700 all read
+  0, the bonus finds can only be recorded as not observed.
+- Rolls 1: no extra run, `hp=0` after (baseline).
+- The Experience slider set first (`stat exp 2`), then `miningrolls 3`: the
+  rolls still arm (the shared detour), and a dig pays three runs, with
+  `extraRunsUnpaid` 0, XP counters grown by exactly one dig's worth, and `hp=0`.
+  If a re-run pays nothing, the before/after node snapshots are the finding
+  (`rerun: no-reward`), not a defect.
+- Multiplier x5 with rolls 3: every stack of every run x5.
+- Rolls 10: ten paid runs, the game still answering, `hp=0`.
+- Bonus finds over those digs: seen, or not observed (never a failure).
+- With a Miner's Helmet worn, rolls 3: each stack x4, one pulse per dig.
+
+Not established until then: whether the completion pays again in the same
+frame, whether ten runs in one frame are harmless, and whether any of the
+owner's characters has a bonus-find stat above 0.
