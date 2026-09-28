@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
@@ -289,6 +290,120 @@ class TheCliPrintsWhatAWorkflowReads(unittest.TestCase):
                 expect=0,
             )
             self.assertIn("version=1.3.16", done.stdout)
+
+
+# 2026-10-02 is a Friday; the days around it name themselves.
+THURSDAY = date(2026, 10, 1)
+FRIDAY = date(2026, 10, 2)
+SATURDAY = date(2026, 10, 3)
+NEXT_FRIDAY = date(2026, 10, 9)
+DATED_FRIDAY = "# ForgePact 2.1.0\n\nRelease date: 2026-10-02\n"
+
+
+class FridayReleasesMoveOneStep(unittest.TestCase):
+    def refused(self, version, previous="v2.0.0"):
+        with self.assertRaises(SystemExit) as caught:
+            forgepact_tag.schedule(version, previous, DATED_FRIDAY, FRIDAY)
+        return str(caught.exception)
+
+    def test_one_minor_or_one_major_step_is_accepted(self):
+        for version in ("2.1.0", "3.0.0"):
+            with self.subTest(version=version):
+                forgepact_tag.schedule(version, "v2.0.0", DATED_FRIDAY, FRIDAY)
+
+    def test_a_hotfix_keeps_major_and_minor(self):
+        for version in ("2.0.1", "2.0.2", "2.0.10"):
+            with self.subTest(version=version):
+                forgepact_tag.schedule(version, "v2.0.0", None, THURSDAY)
+
+    def test_skipping_a_step_is_refused_and_names_both_allowed_steps(self):
+        for version in ("2.2.0", "4.0.0", "3.1.0", "3.0.1", "2.1.1"):
+            with self.subTest(version=version):
+                message = self.refused(version)
+                self.assertIn("2.1.0", message)
+                self.assertIn("3.0.0", message)
+
+    def test_with_no_previous_tag_any_step_is_accepted(self):
+        forgepact_tag.schedule("5.0.0", "", None, FRIDAY)
+
+
+class FridayReleasesWaitForTheirDate(unittest.TestCase):
+    def test_a_dated_friday_release_is_refused_before_its_date(self):
+        with self.assertRaises(SystemExit) as caught:
+            forgepact_tag.schedule("2.1.0", "v2.0.0", DATED_FRIDAY, THURSDAY)
+        self.assertIn("2026-10-02", str(caught.exception))
+        self.assertIn("Thursday", str(caught.exception))
+
+    def test_it_is_accepted_on_its_date_and_any_day_after(self):
+        for today in (FRIDAY, SATURDAY, NEXT_FRIDAY):
+            with self.subTest(today=today):
+                forgepact_tag.schedule("2.1.0", "v2.0.0", DATED_FRIDAY, today)
+
+    def test_an_undated_notes_file_is_refused_even_on_a_friday(self):
+        with self.assertRaises(SystemExit) as caught:
+            forgepact_tag.schedule("2.1.0", "v2.0.0", "# ForgePact 2.1.0\n", FRIDAY)
+        self.assertIn("Release date: ", str(caught.exception))
+
+    def test_a_notes_date_that_is_not_a_friday_is_refused(self):
+        with self.assertRaises(SystemExit):
+            forgepact_tag.schedule(
+                "2.1.0", "v2.0.0", "Release date: 2026-10-01\n", SATURDAY)
+
+    def test_with_no_notes_file_only_a_friday_is_accepted(self):
+        forgepact_tag.schedule("2.1.0", "v2.0.0", None, FRIDAY)
+        for today in (THURSDAY, SATURDAY):
+            with self.subTest(today=today):
+                with self.assertRaises(SystemExit):
+                    forgepact_tag.schedule("2.1.0", "v2.0.0", None, today)
+
+    def test_a_hotfix_ships_before_its_own_date(self):
+        forgepact_tag.schedule(
+            "2.0.1", "v2.0.0", "Release date: 2026-10-05\n", THURSDAY)
+
+    def test_a_hotfix_notes_file_still_needs_a_date(self):
+        with self.assertRaises(SystemExit):
+            forgepact_tag.schedule("2.0.1", "v2.0.0", "# ForgePact 2.0.1\n", THURSDAY)
+
+
+class TheReleaseClockIsTurkeys(unittest.TestCase):
+    def test_friday_starts_at_midnight_utc_plus_three(self):
+        # 21:00 UTC on Thursday is 23:00 in Poland (CEST) and already Friday
+        # 00:00 in Turkey: the release may go out.
+        now = datetime(2026, 10, 1, 21, 0, tzinfo=timezone.utc)
+        self.assertEqual(forgepact_tag.release_today(now), FRIDAY)
+        a_minute_earlier = datetime(2026, 10, 1, 20, 59, tzinfo=timezone.utc)
+        self.assertEqual(forgepact_tag.release_today(a_minute_earlier), THURSDAY)
+
+
+class TheCliChecksTheSchedule(unittest.TestCase):
+    def run_it(self, root, today, expect):
+        done = subprocess.run(
+            [sys.executable, str(REPO / "tools/forgepact_tag.py"),
+             "--tag", "2.1.0", "--tree", "2.0.0", "--existing", "v2.0.0",
+             "--root", str(root), "--today", today],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(done.returncode, expect, done.stdout + done.stderr)
+        return done
+
+    def test_the_notes_file_under_root_dates_the_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "release-notes-v2.1.0.md").write_text(DATED_FRIDAY, encoding="utf-8")
+            early = self.run_it(root, "2026-10-01", expect=1)
+            self.assertNotIn("version=", early.stdout)
+            self.assertIn("2026-10-02", early.stderr)
+            self.assertIn("version=2.1.0", self.run_it(root, "2026-10-03", expect=0).stdout)
+
+    def test_today_belongs_to_plan_mode_only(self):
+        done = subprocess.run(
+            [sys.executable, str(REPO / "tools/forgepact_tag.py"),
+             "--published-notes", "--version", "2.0.0", "--today", "2026-10-02"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
 
 
 class NoteVersionsPicksOutAcceptedFilenames(unittest.TestCase):

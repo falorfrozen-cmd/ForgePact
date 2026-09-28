@@ -27,6 +27,16 @@ _spec.loader.exec_module(cut_release)
 
 
 class CutReleaseTests(unittest.TestCase):
+    # A Friday, so the fixture's notes are valid whether the tree's version is
+    # a Friday release (X.Y.0) or a hotfix.
+    FRIDAY = "2026-10-02"
+
+    def write_notes(self, date_line=None):
+        if date_line is None:
+            date_line = f"Release date: {self.FRIDAY}"
+        self.notes.write_bytes(
+            f"# ForgePact {self.version}\r\n\r\n{date_line}\r\n".encode())
+
     def setUp(self):
         # A fresh directory per test, never a fixed path: the parallel runner
         # (tools/run_tests_parallel.py) may run two suites side by side.
@@ -44,7 +54,7 @@ class CutReleaseTests(unittest.TestCase):
         boot.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / cut_release.BOOT_LINE_FILE, boot)
         self.notes = self._tmp / cut_release.RELEASE_NOTES.format(version=self.version)
-        self.notes.write_bytes(b"# ForgePact " + self.version.encode() + b"\r\n")
+        self.write_notes()
 
     def run_cli(self, *args):
         return subprocess.run(
@@ -110,8 +120,48 @@ class CutReleaseTests(unittest.TestCase):
         result = self.run_cli("--check")
         self.assertEqual(result.returncode, 1)
         self.assertIn("release notes", result.stdout)
-        self.notes.write_bytes(b"# ForgePact " + self.version.encode() + b"\r\n")
+        self.write_notes()
         self.assertEqual(self.run_cli("--check").returncode, 0)
+
+    # ---- the release date -------------------------------------------------
+    def test_notes_without_a_release_date_fail_the_check(self):
+        self.write_notes(date_line="Some text, no date.")
+        result = self.run_cli("--check")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Release date: ", result.stdout)
+
+    def test_the_check_reports_the_date(self):
+        result = self.run_cli("--check")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"release date {self.FRIDAY} (Friday)", result.stdout)
+
+    def test_a_release_date_that_is_not_a_real_date_fails(self):
+        self.write_notes(date_line="Release date: 2026-02-30")
+        self.assertEqual(self.run_cli("--check").returncode, 1)
+
+    def test_a_friday_release_must_be_dated_a_friday(self):
+        when, problem = cut_release.notes_date("2.1.0", "Release date: 2026-10-01\n")
+        self.assertIsNone(when)
+        self.assertIn("Thursday", problem)
+        when, problem = cut_release.notes_date("2.1.0", "Release date: 2026-10-02\n")
+        self.assertEqual(str(when), "2026-10-02")
+        self.assertIsNone(problem)
+
+    def test_a_hotfix_may_be_dated_any_day(self):
+        when, problem = cut_release.notes_date("2.0.1", "Release date: 2026-09-29\r\n")
+        self.assertEqual(str(when), "2026-09-29")
+        self.assertIsNone(problem)
+
+    def test_two_release_dates_are_refused(self):
+        _, problem = cut_release.notes_date(
+            "2.0.1", "Release date: 2026-09-29\nRelease date: 2026-10-02\n")
+        self.assertIn("2 release dates", problem)
+
+    def test_hotfix_is_any_version_not_ending_in_zero(self):
+        for version, hotfix in (("2.0.0", False), ("2.1.0", False), ("3.0.0", False),
+                                ("2.0.1", True), ("2.0.10", True), ("1.3.20", True)):
+            with self.subTest(version=version):
+                self.assertIs(cut_release.is_hotfix(version), hotfix)
 
     def test_allow_missing_notes_does_not_fail_the_check(self):
         # Only the tag workflow passes this: the notes file is composed into
