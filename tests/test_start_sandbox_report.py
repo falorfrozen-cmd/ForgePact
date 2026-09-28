@@ -20,16 +20,22 @@ from pathlib import Path
 PANEL = Path(__file__).resolve().parents[1] / "panel"
 BROWSER_LIB = PANEL / "tests" / "lib" / "browser.mjs"
 
-# A sandbox with a seed that cannot report its port within 0.5 s (a start
-# takes seconds: importing hs_game_sdk alone is more), a seed key the sandbox
-# refuses (exit 2, a message on its stderr), then a sandbox that starts, stops
-# and is asked for its state afterwards. The two later cases take long enough
-# for a late sandbox left running to reach its seed and print the failure the
-# old start timeout caused.
+# A sandbox with a seed that cannot report its port within 0.05 s, a seed key
+# the sandbox refuses (exit 2, a message on its stderr), then a sandbox that
+# starts, stops and is asked for its state afterwards. The two later cases take
+# long enough for a late sandbox left running to reach its seed and print the
+# failure the old start timeout caused.
+# The limit was 0.5 s while a start took seconds. Since the SDK loads its
+# tables on first use (hub PR #286) and the panel imports only the Satanic
+# pools, a start took 0.35-0.55 s (2026-09-28), so a sandbox sometimes started
+# in time: the case failed, and the sandbox it had started kept node running
+# until the 600 s timeout (2 of 5 runs). The interpreter's own start and the
+# panel's imports stay well above 0.05 s, and a sandbox that starts anyway is
+# now stopped.
 SCRIPT = """
 import { startSandbox } from %(lib)s;
 const out = {};
-try { await startSandbox({ seed: { theme: 'ledger' }, startTimeoutMs: 500 }); out.late = 'started'; }
+try { const started = await startSandbox({ seed: { theme: 'ledger' }, startTimeoutMs: 50 }); out.late = 'started'; await started.stop(); }
 catch (e) { out.late = e.message; }
 try { await startSandbox({ seed: { no_such_key: 1 } }); out.early = 'started'; }
 catch (e) { out.early = e.message; }
@@ -67,7 +73,7 @@ class StartSandboxReportTests(unittest.TestCase):
         cls.stderr = result.stderr
 
     def test_a_late_sandbox_is_stopped_before_its_seed_goes(self):
-        self.assertIn("did not report its port within 0.5 s and was stopped", self.out["late"])
+        self.assertIn("did not report its port within 0.05 s and was stopped", self.out["late"])
         self.assertRegex(self.out["late"], r"sandbox pid \d+ was stopped by SIGTERM")
         # Dropped while it still ran, the seed made the sandbox fail on the
         # missing file instead: "--seed: cannot read ...seed.json".
