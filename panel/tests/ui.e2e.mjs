@@ -134,6 +134,20 @@ async function reload(page) {
 
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
 
+// The wait after an action. It used to allow the action 30 ms to start its
+// request and then waited for the save indicator; on a loaded CI runner the
+// request had often not started by then, so the indicator read idle and the
+// next check ran against the old state (three different checks in three PR
+// runs). Now it waits up to 250 ms for a request to start, then for every
+// request in flight to end, then for the panel to report saved. An action
+// that sends nothing costs the 250 ms and nothing else.
+async function settleNet(page, net) {
+  const start = net.calls;
+  for (const end = Date.now() + 250; net.calls === start && Date.now() < end;) await wait(10);
+  for (const end = Date.now() + 10000; net.inflight > 0 && Date.now() < end;) await wait(10);
+  await waitSaved(page);
+}
+
 async function panelUi(ctx) {
   const { page, sandbox, passed } = ctx;
   const read = async () => (await sandbox.state()).cfg;
@@ -146,7 +160,7 @@ async function panelUi(ctx) {
     actions.push(new URL(route.request().url()).pathname);
     return route.fulfill({ json: { ok: 'Test action only', cfg: await read(), path: baseline.game_exe } });
   });
-  const settled = async () => { await wait(30); await waitSaved(page); await wait(30); };
+  const settled = async () => { await settleNet(page, net); await wait(30); };
   const tab = (name) => $(page, (n) => document.querySelector(`[data-tab="${n}"].tabbtn`).click(), name);
   const tap = async (selector) => { await $(page, (s) => document.querySelector(s).click(), selector); await settled(); };
   const typeValue = async (selector, value, key = 'Enter') => {
@@ -357,7 +371,7 @@ async function satanicPanel(ctx) {
   const visible = (polarity) => $(page, (p) => document.querySelectorAll(`#sat${p}s .sat-option:not([hidden])`).length, polarity);
   // The Satanic card is aria-busy while a save runs (it was SAT_UI.busy).
   const settled = async () => {
-    await wait(30);
+    await settleNet(page, net);
     await page.waitForFunction(() => document.getElementById('satanicMods').getAttribute('aria-busy') !== 'true', null, { timeout: 5000, polling: 20 });
     await waitSaved(page);
   };
@@ -399,7 +413,8 @@ async function satanicPanel(ctx) {
   const beforeBulk = net.calls;
   await $(page, () => document.getElementById('satbuffAll').click());
   await settled();
-  assert(net.calls === beforeBulk + 1 && await count('buff') === 25 && await count('debuff') === 2, 'Enable all must be a single pool request');
+  const bulk = { requests: net.calls - beforeBulk, buff: await count('buff'), debuff: await count('debuff') };
+  assert(bulk.requests === 1 && bulk.buff === 25 && bulk.debuff === 2, 'Enable all must be a single pool request: ' + JSON.stringify(bulk));
   assert(await visible('buff') === 0 && !await $(page, () => document.querySelector('#satbuffs .sat-empty').hidden), 'Disabled filter not refreshed');
   await $(page, () => document.getElementById('satRestore').click());
   await settled();
