@@ -281,8 +281,14 @@ function normalise(text, sandbox) {
   return text.split(escaped).join('<sandbox>').split(raw).join('<sandbox>');
 }
 
+// `onStep` also gets `requests`: how each of the step's POSTs ended, as text.
+// It is never compared with a recording, only reported with a mismatch or a
+// timeout, so a step that captured no commands says why: the POST failed on
+// the way (Chromium's net:: error), the server answered an error status, or
+// no answer came at all.
 async function runSteps(page, sandbox, plan, onStep) {
   let posts = [];
+  let requests = [];
   let inflight = 0;
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
@@ -292,14 +298,35 @@ async function runSteps(page, sandbox, plan, onStep) {
     let body = raw;
     try { body = JSON.parse(raw); } catch { /* keep the text */ }
     posts.push({ url, body });
+    requests.push({ req, url, at: Date.now() });
   });
-  const done = (req) => { if (req.method() === 'POST') inflight--; };
-  page.on('requestfinished', done);
-  page.on('requestfailed', done);
-  const settle = async () => {
+  const entry = (req) => requests.find((r) => r.req === req);
+  page.on('response', (res) => { const r = entry(res.request()); if (r) r.status = res.status(); });
+  const done = (req, failed) => {
+    if (req.method() !== 'POST') return;
+    inflight--;
+    const r = entry(req);
+    if (!r) return;
+    r.ms = Date.now() - r.at;
+    if (failed) r.failed = req.failure()?.errorText || 'failed';
+    else if (r.status >= 400) req.response().then((res) => res?.text()).then((text) => { r.body = text?.slice(0, 300); }, () => {});
+  };
+  page.on('requestfinished', (req) => done(req, false));
+  page.on('requestfailed', (req) => done(req, true));
+  const outcomes = () => requests.map((r) => {
+    if (r.failed) return `${r.url} failed after ${r.ms} ms: ${r.failed}`;
+    if (r.ms === undefined) return `${r.url} unanswered after ${Date.now() - r.at} ms`;
+    return `${r.url} answered ${r.status} in ${r.ms} ms${r.body ? `: ${r.body}` : ''}`;
+  });
+  const settle = async (i, step) => {
     await page.waitForTimeout(30);
     for (let round = 0; round < 3; round++) {
-      await waitSaved(page);
+      try {
+        await waitSaved(page);
+      } catch (e) {
+        throw new Error(`step ${i} (${step.control} ${step.action}): the save did not end (${e.message.split('\n')[0]}); `
+          + `its POSTs: ${outcomes().join('; ') || 'none'}; ${sandbox.describe()}`, { cause: e });
+      }
       const end = Date.now() + 10000;
       while (inflight > 0 && Date.now() < end) await page.waitForTimeout(10);
       await page.waitForTimeout(60);
@@ -309,10 +336,11 @@ async function runSteps(page, sandbox, plan, onStep) {
     const step = plan[i];
     sandbox.truncateCmds();
     posts = [];
+    requests = [];
     const outcome = await act(page, step, sandbox);
-    await settle();
+    await settle(i, step);
     const cmds = sandbox.readCmds().map((line) => normalise(line, sandbox));
-    await onStep(i, step, outcome, posts, cmds);
+    await onStep(i, step, outcome, posts, cmds, outcomes());
   }
 }
 
@@ -468,8 +496,8 @@ async function replayDerived(browser, derived, viewport, args, mismatches) {
     const page = await openPanel(browser, sandbox, viewport);
     const captured = [];
     const plan = derived.steps.map((s) => ({ control: s.control, action: s.action, value: s.value }));
-    await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
-      captured[i] = { posts, cmds };
+    await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds, requests) => {
+      captured[i] = { posts, cmds, requests };
       const label = `derived ${i}`;
       if (outcome !== 'done') {
         mismatches.push({ step: label, control: step.control, problem: `expected done, got ${outcome}` });
@@ -481,14 +509,14 @@ async function replayDerived(browser, derived, viewport, args, mismatches) {
         if (!want) continue;
         const actual = field === 'posts' ? posts : cmds;
         if ('same' in want) {
-          const reference = captured[want.same]?.[field];
-          if (!reference || !reference.length) {
-            mismatches.push({ step: label, control: step.control, action: step.action, problem: `${field}: reference sent nothing`, reference: want.same });
-          } else if (!same(reference, actual)) {
-            mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: reference, expectedFrom: want.same, actual });
+          const reference = captured[want.same];
+          if (!reference?.[field]?.length) {
+            mismatches.push({ step: label, control: step.control, action: step.action, problem: `${field}: reference sent nothing`, reference: want.same, referenceRequests: reference?.requests });
+          } else if (!same(reference[field], actual)) {
+            mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: reference[field], expectedFrom: want.same, actual, requests });
           }
         } else if (!same(want.is, actual)) {
-          mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: want.is, actual });
+          mismatches.push({ step: label, control: step.control, action: step.action, problem: field, expected: want.is, actual, requests });
         }
       }
     });
@@ -501,7 +529,7 @@ async function replayDerived(browser, derived, viewport, args, mismatches) {
 // each step's outcome, POST bodies and commands must equal the recording's.
 async function replayRecorded(page, sandbox, oracle, mismatches, prefix = '') {
   const plan = oracle.steps.map((s) => ({ control: s.control, action: s.action === 'skipped-disabled' ? s.intended : s.action, value: s.value }));
-  await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds) => {
+  await runSteps(page, sandbox, plan, (i, step, outcome, posts, cmds, requests) => {
     const want = oracle.steps[i];
     const label = prefix ? `${prefix} ${i}` : i;
     const wantOutcome = want.action === 'skipped-disabled' ? 'skipped-disabled' : 'done';
@@ -509,8 +537,8 @@ async function replayRecorded(page, sandbox, oracle, mismatches, prefix = '') {
       mismatches.push({ step: label, control: step.control, problem: `expected ${wantOutcome}, got ${outcome}` });
       return;
     }
-    if (!same(want.posts, posts)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'posts', expected: want.posts, actual: posts });
-    if (!same(want.cmds, cmds)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'cmds', expected: want.cmds, actual: cmds });
+    if (!same(want.posts, posts)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'posts', expected: want.posts, actual: posts, requests });
+    if (!same(want.cmds, cmds)) mismatches.push({ step: label, control: step.control, action: step.action, problem: 'cmds', expected: want.cmds, actual: cmds, requests });
   });
 }
 

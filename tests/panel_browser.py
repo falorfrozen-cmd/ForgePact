@@ -48,8 +48,37 @@ def _missing():
     return None
 
 
+#: How long one `npm run <suite>` may run before its process tree is ended.
+NPM_TIMEOUT = 900
+
+
 def _npm(script):
-    result = subprocess.run([shutil.which("npm"), "--prefix", str(PANEL), "run", script],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=900)
-    return result.returncode, result.stdout + result.stderr
+    return _run_tree([shutil.which("npm"), "--prefix", str(PANEL), "run", script], NPM_TIMEOUT,
+                     label=f"npm run {script}")
+
+
+def _run_tree(args, timeout, label=None):
+    """Run `args`; return its exit code and its stdout followed by its stderr.
+
+    Past `timeout` seconds its whole process tree is ended and the output so
+    far comes back with a line saying so. Ending only the process started
+    here is not enough: npm runs a suite under cmd and node, which start Edge
+    and the sandboxes, every one of them holds the output pipes, and
+    communicate() waits on them for as long as they live. A sandbox that
+    started late did exactly that under four-core load: `npm run e2e:motion`
+    never finished, and `subprocess.run(timeout=900)` never returned
+    (test_panel_browser_timeout.py).
+    """
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        else:
+            proc.kill()
+        out, err = proc.communicate(timeout=60)
+        note = f"\n{label or ' '.join(map(str, args))}: still running after {timeout} s; its process tree was ended\n"
+        return proc.returncode or 1, out + err + note
+    return proc.returncode, out + err
