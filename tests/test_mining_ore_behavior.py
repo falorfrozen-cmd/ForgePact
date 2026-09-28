@@ -13,18 +13,38 @@ class MiningOreBehaviorTests(unittest.TestCase):
         out = ROOT / 'build/mining-ore-behavior'
         out.mkdir(parents=True, exist_ok=True)
         header = ROOT / 'plugin/include/ForgePact/MiningOreMod.hpp'
+        # The shared CombatText detour is real in both runs: MiningOreMod.hpp
+        # uses it, and the harness drives it through what was installed.
+        combat_text = ROOT / 'plugin/include/ForgePact/CombatTextHook.hpp'
+
+        def body(path):
+            return '\n'.join(line for line in path.read_text(encoding='utf8').splitlines()
+                             if not line.startswith(('#include', '#pragma')))
+
         if os.environ.get('MINING_ORE_BASELINE'):
-            production = '''namespace ForgePact::MiningOre {
+            # The vanilla game: both detours pass straight through, no lever does anything.
+            production = body(combat_text) + '''
+namespace ForgePact::MiningOre {
+constexpr int kMaxRolls=10;
 int multiplier=1; bool installTried=false, ready=false, unavailable=false, loggedReward=false, loggedFailure=false;
-CInstance* activeNode=nullptr; bool inReward=false;
+CInstance* activeNode=nullptr; bool inReward=false, inExtraRun=false;
 PFUNC_YYGMLScript originalStep=nullptr, originalLoot=nullptr;
+int (*rewardMultiplier)(CInstance*)=nullptr; void (*rewardDispatched)(CInstance*,double,double)=nullptr;
+std::string installFailure, rollsFailure;
+int rolls=1; bool rollsInstallTried=false, rollsReady=false, rollsUnavailable=false;
+bool loggedRollPaid=false, loggedRollUnpaid=false, loggedHpReset=false;
+uint64_t extraRuns=0, extraRunsUnpaid=0, silencedCalls=0;
+struct SilencedScript { const char* name; const char* hookId; PFUNC_YYGMLScript original; bool native; uint64_t passed, silenced; };
+std::array<SilencedScript,4> silencedScripts{};
+uint64_t SilencedCalls(){return 0;}
+bool Install(){return false;}
 void Command(const std::string&){}
+void RollsCommand(const std::string&){}
 RValue& HookStep(CInstance* s,CInstance* o,RValue& r,int n,RValue** a){return originalStep(s,o,r,n,a);}
 RValue& HookLoot(CInstance* s,CInstance* o,RValue& r,int n,RValue** a){return originalLoot(s,o,r,n,a);}
 }'''
         else:
-            production = '\n'.join(line for line in header.read_text(encoding='utf8').splitlines()
-                                   if not line.startswith(('#include', '#pragma')))
+            production = body(combat_text) + '\n' + body(header)
         cpp = out / 'mining.cpp'
         cpp.write_text((ROOT / 'tests/mining_ore_harness.cpp').read_text(encoding='utf8')
                        .replace('// PRODUCTION_MINING_ORE', production), encoding='utf8')

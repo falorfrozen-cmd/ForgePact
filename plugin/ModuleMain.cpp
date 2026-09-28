@@ -19125,6 +19125,13 @@ static void InstallHook()
     InstallBuffHooks();
     InstallEnemyHooks();
     InstallChaosTowerHooks();
+    // The mining pair first: InstallItemInspectHooks table-hooks
+    // LootGroundCreate, after which the table entry is this module's code and
+    // the mining adapter's own install would come up table-only (the Mining
+    // Ore mod unavailable in the research build). Installed first, the mining
+    // detours hold the native route and the inspect hook chains to them. They
+    // are pass-through while every mining lever is off.
+    ForgePact::MiningOre::Install();
     InstallItemInspectHooks();
 #endif
 }
@@ -23175,6 +23182,12 @@ static void FlushModState(uint32_t frame)
         body += ",\"unavailable\":"; body += ForgePact::MiningOre::unavailable ? "true" : "false";
         body += ",\"stepObserved\":"; body += ForgePact::MiningOre::stepObserved ? "true" : "false";
         body += ",\"oreObserved\":"; body += ForgePact::MiningOre::oreObserved ? "true" : "false";
+        body += ",\"rolls\":" + std::to_string(ForgePact::MiningOre::rolls);
+        body += ",\"rollsReady\":"; body += ForgePact::MiningOre::rollsReady ? "true" : "false";
+        body += ",\"rollsUnavailable\":"; body += ForgePact::MiningOre::rollsUnavailable ? "true" : "false";
+        body += ",\"extraRuns\":" + std::to_string(ForgePact::MiningOre::extraRuns);
+        body += ",\"extraRunsUnpaid\":" + std::to_string(ForgePact::MiningOre::extraRunsUnpaid);
+        body += ",\"silencedCalls\":" + std::to_string(ForgePact::MiningOre::SilencedCalls());
         body += "},\"minerHelmet\":{\"available\":true,\"enabled\":";
         body += ForgePact::MinerHelmet::enabled ? "true" : "false";
         body += ",\"worn\":"; body += ForgePact::MinerHelmet::worn ? "true" : "false";
@@ -39794,7 +39807,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
     };
@@ -39883,6 +39896,8 @@ static void RunCommand(const std::string& line)
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    // Mining Ore Extra Rolls: the multiplier's child row, same adapter.
+    if (lc == "miningrolls") { ForgePact::MiningOre::RollsCommand(rest); return; }
     if (lc == "gemmythic" || lc == "gemmaxroll" || lc == "gemfilter" || lc == "gems") { GemsCommand(lc, rest); return; }
     if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
@@ -41056,6 +41071,9 @@ void FrameCallback(FWFrame& FrameContext)
     if (g_Setup) GemsTick(fc);   // Gems of Incarnation: the tables, a little each frame
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
+#ifndef FORGEPACT_RELEASE
+    if (g_Setup) ForgePact::MiningOre::DigTick();   // `miningrolls dig`'s release
+#endif
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
