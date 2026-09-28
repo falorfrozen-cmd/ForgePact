@@ -649,7 +649,9 @@ itself.
   `off (this session)` beside the switch.
 - **The button** is there only while the switch is on and the stash is open
   with the backpack's Sort button showing; turning the switch off takes it
-  away at once, and closing the stash closes it with the window. A click on
+  away at once, and closing the stash closes it with the window. Turned on
+  while the stash is already open, the button may only appear after you
+  click a stash tab; F4 does not need the button. A click on
   it does exactly what F4 does, once per click. If the button cannot be
   shown, the log says so once (`stashmoveall: button - ...`) and F4 keeps
   working.
