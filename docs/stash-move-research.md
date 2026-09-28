@@ -1665,8 +1665,9 @@ exercised less than its name says:
   positive control, in the same session and through the same instrument, for
   `off-baseline-key`'s zero.
 - **case-full's bag** was refilled by the game's own Ctrl + left click from the
-  stash, because `hs_give_item` refuses every grid-tab class
-  (`GetItemPreferredGrid(1, item) answered no grid`); the refills are setup,
+  stash, because `hs_give_item` refuses every grid-tab class (its
+  `giveitem` reports that `GetItemPreferredGrid` answered no grid); the
+  refills are setup,
   not under test, and never took a key the mod had moved. Four Personal-tab
   items went first, to Shared tab 1, which took all four; four items taken
   from Shared tab 3 then went to Shared tab 2, which refused all four. The
