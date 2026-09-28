@@ -438,9 +438,19 @@ measured. Live 1f (§ Live procedure 1f) measures it.
     its self. So it does not write only its self (the global element is the
     exception), but on a node whose gating member is not true it writes
     nothing at all. The game itself calls it from `ControllerCheckInput`, on
-    the instances of one UI object, together with `UiUnhideRow` and
-    `UiSetFocus`, so a hook on it sees the game's own calls too and must
-    forward every call whose self is not the mod's node.
+    the instances of `UI_Hud_Talent_obj` whose one member matches a value the
+    handler reads (a loop over an object, so children of `UI_Hud_Talent_obj`
+    are taken too), together with `UiUnhideRow` and `UiSetFocus`. So a hook on
+    it sees the game's own calls too and must forward every call whose self
+    is not the mod's node; and if `UI_Button_Small_obj` were
+    `UI_Hud_Talent_obj` or a child of it, that loop could call the candidate
+    with the mod's node as self with no click at all, which would read exactly
+    like a dispatched press. `stashmoveall probe create` checks this by name
+    (its `loop check` line: the node object's parents, and whether it is that
+    object or a child of it); a `CONFOUND` there makes `UiSetFloatingToFalse`
+    unusable as the activation. Other callers (a method value dispatching it,
+    which no direct-call scan shows) are **not read**; the unbound node and
+    the idle reads of § Live procedure 1f are the controls for them.
   - `UiNodeClearNavigationFunc` calls `UiSetFocus` (it moves the UI focus),
     `DirEnumToAngle` and `CheckSensorInstance` (it reads what is under the
     cursor), and a builtin: it acts on the scene, not only on its self.
@@ -1115,10 +1125,12 @@ reading 3).
 
 - **Build**: the research build from this branch after the probe verbs,
   `plugin_build\build.bat dev`, kept as
-  `plugin_build\BloodPactPlugin_rel.phaseC-41558d1c.dll` (untracked, as the
+  `plugin_build\BloodPactPlugin_rel.phaseC-fbca7251.dll` (untracked, as the
   Phase A copy is): build
-  sha256=41558d1c4b468124f31c3ce281f065ad08647b4dec2fca1a643a4a063f7a2b11.
-  Its bare `craftprobe` prints `craftprobe: phase1k rows=291 - ...`.
+  sha256=fbca7251d72bbfe8e80eacec56c0ee40a69dbbd762187fd28158ae0bc263449e.
+  It replaces the first probe build (`phaseC-41558d1c`, on which no session ran),
+  which lacked the instrument controls below. Its bare `craftprobe` prints
+  `craftprobe: phase1k rows=291 - ...`.
 - **The research build's verbs** (`stashmoveall probe`, research build only,
   not a player command): `sort [id:<n>]` prints the Sort node's row (id, x, y,
   bbox, sprite, visible, enabled, `uiNodeCallstack`, text) and its activation
@@ -1128,15 +1140,50 @@ reading 3).
   stash window, left of Sort by Sort's own width plus 8 GUI units, call-stack
   name `ForgePactMoveAll`, then binds `<script>` as its activation through
   `UiSetActivationFunc` (none leaves it unbound) and sets its text to `Move
-  all` (the one write the probe makes, on its own node); `remove` runs
-  `UiRemoveNode` with the same self (or destroys the probe's own node when the
-  window is gone); `show` prints whether the node is listed and two counters,
-  `poll_presses` (Route B: a left press inside the node's bbox, read by name
-  each frame while the node exists) and `detour_presses` (Route A: a call of
-  the bound script's `craftprobe` row whose self is the node); and `copy
-  <template> <count>` copies a stash item into the bag by the give-item verb's
-  loader order with the template read from the stash map, the stash item left
-  as it was, so the socketable blocks need no person.
+  all` (the one write the probe makes, on its own node); `create ...
+  watch:<script>` names the `craftprobe` row counted with the node as self
+  (the bound script's by default, so an unbound node can still count the
+  candidate), and `create` also prints a `loop check` line (§ Static reading
+  3: whether the node's object is `UI_Hud_Talent_obj` or a child of it);
+  `remove` runs `UiRemoveNode` with the same self (or destroys the probe's own
+  node when the window is gone); `show` prints whether the node is listed and
+  its counters: `detour_presses` (Route A: a call of the bound script's row
+  whose self is the node), `row_calls_self_node` (the watched row's calls with
+  the node as self, bound or not), `poll_presses` (Route B: a left press
+  inside the node's bbox), and on a second line the poll's own controls,
+  `poll_any_presses` (every left press the frame poll saw), `poll_sort_presses`
+  (those inside the Sort node's bbox) and `last_press` (the last press's GUI
+  x,y beside both bboxes as read at that frame). The poll is armed by `probe
+  sort` or `probe create` and counts from then on, so the Sort click comes
+  before any node exists; and `copy <template> <count>` copies a stash item
+  into the bag by the give-item verb's loader order with the template read
+  from the stash map, the stash item left as it was, so the socketable blocks
+  need no person.
+- **Instrument controls** (added after the round-0 review of this
+  instrument, which found that a zero from the poll and a count from the
+  detour could each be the instrument rather than the game):
+  - *The poll's positive control is the Sort click* (`sort-click-control`):
+    `probe show` before and after it; the poll works when `poll_any_presses`
+    and `poll_sort_presses` each rose by exactly 1 and `last_press` lies
+    inside `sort_bbox`. `node-press-poll` may be `not-observed` only when this
+    control passed. Otherwise it is `not-run (instrument: poll saw no press)`
+    when `poll_any_presses` did not rise, or `not-run (instrument: coordinates
+    outside Sort's bbox)` when it rose but the press lies outside `sort_bbox`;
+    and on the node click, a rise of `poll_any_presses` with `last_press`
+    outside `node_bbox` is `not-run (instrument: the click missed the node)`,
+    quoting both.
+  - *The activation's two negative controls*, both required before
+    `node-press-activation` can pass: (1) with the bound node listed and no
+    click, two `probe show` reads a few seconds apart, between which
+    `row_calls_self_node` and `detour_presses` do not rise; (2) one click on an
+    unbound node made by `probe create none watch:<S>`, after which
+    `row_calls_self_node` is still 0 (and the idle reads of (1) are repeated on
+    that node). A rise in either, or a `CONFOUND` on the `loop check` line,
+    makes `node-press-activation` `not-run (instrument: <S> is called with the
+    node as self without a press)`, quoting the counts and the row's logged
+    self. The unbound click is also `node-press-poll-unbound`'s measurement,
+    so it runs whatever (c) found, after the bound node's click and its
+    reads.
 - **Recording rule**: as § Instrument's. Each check is `pass`, `fail`,
   `not-observed` (with what was supplied) or `not-run (instrument: ...)`; the
   node's fields are quoted from the probe's replies, and the socket merge's

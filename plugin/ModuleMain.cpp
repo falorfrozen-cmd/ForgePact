@@ -25606,20 +25606,33 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
 // `stashmoveall probe`, below the stashmoveall block): the id of the Move all
 // node the probe created (-1 none) and the craftprobe row of the script it
 // bound as the node's activation (empty for none). Route A's count: a call of
-// that row whose self is the node is one press the game dispatched. Written
-// only by the probe's commands, on the game thread.
+// that row whose self is the node is one press the game dispatched. The
+// watched row (the bound one, or `watch:<script>` on an unbound node) is
+// counted apart, bound or not, so a call of the candidate with the node as
+// self that no click caused - the game's own loop over some UI object's
+// instances, say - shows up as row_calls_self_node on an unbound node and on
+// idle reads, and a detour_presses rise is not taken for a press unless those
+// stay 0 (the round-0 review of Live 1f's instrument). Written only by the
+// probe's commands, on the game thread.
 static std::atomic<long long> g_SmaProbeNodeId{ -1 };
 static std::string g_SmaProbeBound;
+static std::string g_SmaProbeWatch;
 static volatile long g_SmaProbeDetourPresses = 0;
+static volatile long g_SmaProbeRowCallsSelfNode = 0;
 
 static void SmaProbeSawCall(const char* label, CInstance* S)
 {
-    if (!S || g_SmaProbeBound.empty() || g_SmaProbeBound != label) return;
+    if (!S) return;
+    const bool bound = !g_SmaProbeBound.empty() && g_SmaProbeBound == label;
+    const bool watched = !g_SmaProbeWatch.empty() && g_SmaProbeWatch == label;
+    if (!bound && !watched) return;
     try {
         double id = -1;
-        if (ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }), id)
-            && (long long)id == g_SmaProbeNodeId.load())
-            InterlockedIncrement(&g_SmaProbeDetourPresses);
+        if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }), id)
+            || (long long)id != g_SmaProbeNodeId.load())
+            return;
+        if (watched) InterlockedIncrement(&g_SmaProbeRowCallsSelfNode);
+        if (bound) InterlockedIncrement(&g_SmaProbeDetourPresses);
     } catch (...) {}
 }
 
@@ -36928,22 +36941,34 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 // Move all node beside the bag's Sort button can reach the plugin, and
 // whether a socketable merges by name. So:
 //   probe sort [id:<n>]         the Sort node's row and its activation, hook-free
-//   probe create [<script>|none] a UI_Button_Small_obj node made by UiCreateNode
+//   probe create [<script>|none] [watch:<script>]
+//                               a UI_Button_Small_obj node made by UiCreateNode
 //                               with self = other = the stash window, callstack
 //                               ForgePactMoveAll, left of Sort; <script> bound as
-//                               its activation by UiSetActivationFunc
+//                               its activation by UiSetActivationFunc; the
+//                               watched row (the bound one by default) counted
+//                               with the node as self even while unbound; and
+//                               whether the node's object is the UI object
+//                               ControllerCheckInput calls UiSetFloatingToFalse
+//                               on, or a child of it
 //   probe remove                UiRemoveNode with the same self (instance_destroy
 //                               on the probe's own node when the window is gone)
-//   probe show                  whether the node is listed, and both counters
+//   probe show                  whether the node is listed, the counters, the
+//                               last press and both bboxes
 //   probe copy <key> <count>    giveitem's loader order with the template read
 //                               from map 9, so a stash socketable is copied into
 //                               the bag with no person
 // Route A's counter (detour_presses) is counted by the craftprobe detour of the
-// bound script's row when its self is the node (SmaProbeSawCall, with the
-// detours); Route B's (poll_presses) by SmaProbeTick, a left press inside the
-// node's bbox read by name each frame while the node exists. Every routine by
-// its SDK constant through SmaCall; the only write the probe makes itself is
-// the `text` of the node it created.
+// bound script's row when its self is the node, and row_calls_self_node by the
+// same detour for the watched row, bound or not (SmaProbeSawCall, with the
+// detours): an unbound node and idle reads are its negative controls. Route B
+// by SmaProbeTick, armed by `probe sort` or `probe create`: every left press
+// (poll_any_presses), those inside the Sort node's bbox (poll_sort_presses,
+// the poll's positive control: the Sort click of the procedure) and those
+// inside the node's bbox (poll_presses), the last press's GUI x,y kept beside
+// both bboxes as read at that frame. Every routine by its SDK constant through
+// SmaCall; the only write the probe makes itself is the `text` of the node it
+// created.
 
 static constexpr TalentAllocScript kSmaProbeCreate{ HeroSiege::Scripts::gml_Script_UiCreateNode,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiCreateNode) };
@@ -36959,7 +36984,11 @@ static constexpr double kSmaProbeMbLeft = 1.0; // mb_left
 static RValue g_SmaProbeNode;           // the node the probe created (a handle), while it is ours
 static RValue g_SmaProbeOwner;          // the stash window it was created under
 static long long g_SmaProbeSortId = -1; // `probe sort id:<n>`: the Sort node given by hand
-static volatile long g_SmaProbePollPresses = 0;
+static volatile long g_SmaProbePollPresses = 0;     // left presses inside the node's bbox
+static volatile long g_SmaProbePollAnyPresses = 0;  // every left press the poll saw
+static volatile long g_SmaProbePollSortPresses = 0; // left presses inside the Sort node's bbox
+static bool g_SmaProbePollArmed = false;            // set by `probe sort` and `probe create`
+static std::string g_SmaProbeLastPress = "none";    // x,y and both bboxes, as read at that press
 
 static const char* const kSmaProbeTag = "stashmoveall probe: ";
 
@@ -37030,10 +37059,57 @@ static std::string SmaProbeActivation(const RValue& n, std::string* scriptOut = 
     } catch (...) { return "activationFunc=<read failed>"; }
 }
 
+// A node's bbox as l,t,r,b, and whether the GUI point x,y falls inside it
+// (never, when a side did not read).
+static std::string SmaProbeBox(const RValue& n, double x, double y, bool& inside)
+{
+    const double l = MenuLayoutRead(n, "bbox_left"), t = MenuLayoutRead(n, "bbox_top");
+    const double r = MenuLayoutRead(n, "bbox_right"), b = MenuLayoutRead(n, "bbox_bottom");
+    inside = std::isfinite(l) && std::isfinite(t) && std::isfinite(r) && std::isfinite(b)
+        && x >= l && x <= r && y >= t && y <= b;
+    return MenuLayoutDecimal(l) + "," + MenuLayoutDecimal(t) + "," + MenuLayoutDecimal(r) + "," + MenuLayoutDecimal(b);
+}
+
+// § Static reading 3: ControllerCheckInput calls UiSetFloatingToFalse on the
+// instances of UI_Hud_Talent_obj (a loop over an object, which takes its
+// children too). If the node's object is that object or a child of it, the
+// game's own loop can call the candidate with the node as self, and a call
+// counted with the node as self says nothing about a press. Read by name:
+// asset_get_index, object_get_parent, object_is_ancestor.
+static std::string SmaProbeLoopCheck(double objIdx)
+{
+    const std::string loopObj(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj));
+    const std::string nodeObj(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj));
+    const std::string cand(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiSetFloatingToFalse));
+    const std::string caller(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ControllerCheckInput));
+    std::string line = "loop check - " + caller + " calls " + cand + " on " + loopObj + " instances (static reading)";
+    try {
+        double hud = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(loopObj) }), hud) || hud < 0)
+            return line + "; asset_get_index found no " + loopObj + ": not-run";
+        std::string parents;
+        double p = objIdx;
+        for (int i = 0; i < 16; ++i) {
+            p = g_Yytk->CallBuiltin("object_get_parent", { RValue(p) }).ToDouble();
+            if (!std::isfinite(p) || p < 0) break;
+            parents += ">" + MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { RValue(p) }).ToString());
+        }
+        const bool same = (long long)hud == (long long)objIdx;
+        const bool child = g_Yytk->CallBuiltin("object_is_ancestor", { RValue(objIdx), RValue(hud) }).ToBoolean();
+        line += "; node object " + nodeObj + " parents=" + (parents.empty() ? std::string("none") : parents.substr(1))
+            + " same=" + (same ? "1" : "0") + " child=" + (child ? "1" : "0");
+        line += (same || child)
+            ? " - CONFOUND: the game's own loop can call " + cand + " with the node as self, so it is unusable as the activation"
+            : " - no confound from that loop";
+    } catch (...) { line += "; the object reads threw: not-run"; }
+    return line;
+}
+
 static void SmaProbeForget()
 {
     g_SmaProbeNodeId.store(-1);
     g_SmaProbeBound.clear();
+    g_SmaProbeWatch.clear();
     g_SmaProbeNode = RValue();
     g_SmaProbeOwner = RValue();
 }
@@ -37056,6 +37132,11 @@ static void SmaProbeSortCommand(const std::vector<std::string>& tok)
     const std::string act = SmaProbeActivation(sort, &script);
     Out(tag + "sort " + SmaProbeRow(sort));
     Out(tag + "sort " + act);
+    // From here the frame poll counts every left press, so the procedure's
+    // click on Sort is the poll's positive control before any node exists.
+    g_SmaProbePollArmed = true;
+    Out(tag + "sort poll armed - poll_any_presses=" + std::to_string(g_SmaProbePollAnyPresses)
+        + " poll_sort_presses=" + std::to_string(g_SmaProbePollSortPresses));
 }
 
 static void SmaProbeCreateCommand(const std::vector<std::string>& tok)
@@ -37067,7 +37148,21 @@ static void SmaProbeCreateCommand(const std::vector<std::string>& tok)
         return;
     }
     SmaProbeForget();
-    const std::string bind = tok.size() >= 3 ? tok[2] : std::string("none");
+    // `create [<script>|none] [watch:<script>]`: the script bound as the
+    // activation, and the row counted with the node as self (the bound one by
+    // default), so an unbound node can still count the candidate's calls.
+    std::string bind = "none", watch;
+    for (size_t i = 2; i < tok.size(); ++i) {
+        if (Lower(tok[i]).rfind("watch:", 0) == 0) watch = tok[i].substr(6);
+        else bind = tok[i];
+    }
+    if (watch.empty() && Lower(bind) != "none") watch = bind;
+    std::string watchRow;
+    if (!watch.empty()) {
+        const CpTarget* w = CpFindRow(watch);
+        if (!w) { Out(tag + "create refused - no craftprobe row names " + watch + ", so row_calls_self_node cannot count it; nothing was called"); return; }
+        watchRow = w->label;
+    }
     RValue window, sort;
     CInstance* stash = nullptr;
     if (!CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)) {
@@ -37124,9 +37219,14 @@ static void SmaProbeCreateCommand(const std::vector<std::string>& tok)
     try { g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaProbeText)) }); }
     catch (...) { bindLine += "; text could not be set"; }
     g_SmaProbeDetourPresses = 0;
+    g_SmaProbeRowCallsSelfNode = 0;
     g_SmaProbePollPresses = 0;
+    g_SmaProbeWatch = watchRow;
+    g_SmaProbePollArmed = true;
     Out(tag + "created " + SmaProbeRow(node) + " owner=" + PpDescribeSelf(stash));
-    Out(tag + "created " + bindLine + "; " + SmaProbeActivation(node));
+    Out(tag + "created " + bindLine + "; " + SmaProbeActivation(node)
+        + "; watch=" + (watchRow.empty() ? std::string("none") : watchRow));
+    Out(tag + "created " + SmaProbeLoopCheck(objIdx));
 }
 
 static void SmaProbeRemoveCommand()
@@ -37160,8 +37260,21 @@ static void SmaProbeShowCommand()
     const bool listed = SmaProbeExists(g_SmaProbeNode);
     Out(tag + "show node=" + (listed ? SmaProbeRow(g_SmaProbeNode) : std::string("none"))
         + " bound=" + (g_SmaProbeBound.empty() ? std::string("none") : g_SmaProbeBound)
+        + " watch=" + (g_SmaProbeWatch.empty() ? std::string("none") : g_SmaProbeWatch)
         + " poll_presses=" + std::to_string(g_SmaProbePollPresses)
-        + " detour_presses=" + std::to_string(g_SmaProbeDetourPresses));
+        + " detour_presses=" + std::to_string(g_SmaProbeDetourPresses)
+        + " row_calls_self_node=" + std::to_string(g_SmaProbeRowCallsSelfNode));
+    // The poll's own controls: every press it saw, those on Sort, and where
+    // the last one landed beside both bboxes as read at that frame.
+    RValue sort;
+    bool unused = false;
+    const std::string sortBox = SmaProbeSort(sort) ? SmaProbeBox(sort, 0, 0, unused) : std::string("none");
+    Out(tag + "show poll " + (g_SmaProbePollArmed ? "armed" : "not armed (run `probe sort` first)")
+        + " poll_any_presses=" + std::to_string(g_SmaProbePollAnyPresses)
+        + " poll_sort_presses=" + std::to_string(g_SmaProbePollSortPresses)
+        + " last_press=" + g_SmaProbeLastPress
+        + " sort_bbox=" + sortBox
+        + " node_bbox=" + (listed ? SmaProbeBox(g_SmaProbeNode, 0, 0, unused) : std::string("none")));
     if (listed) Out(tag + "show " + SmaProbeActivation(g_SmaProbeNode));
 }
 
@@ -37262,25 +37375,38 @@ static bool SmaProbeCommand(const std::string& rest)
     else if (sub == "remove") SmaProbeRemoveCommand();
     else if (sub == "show") SmaProbeShowCommand();
     else if (sub == "copy") SmaProbeCopyCommand(tok);
-    else Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] | remove | show | "
+    else Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
              "copy <template key on map 9> <count> (research build; docs/stash-move-research.md, Live procedure 1f)");
     return true;
 }
 
-// Route B, from FrameCallback: while the probe's node exists, a left press
-// this frame inside its bbox, both read by name in GUI space, is one press.
-// Nothing is read while there is no node.
+// Route B, from FrameCallback, once `probe sort` or `probe create` armed it:
+// every left press this frame is counted (poll_any_presses), and its GUI x,y
+// is kept beside the Sort node's and the probe node's bbox as read at that
+// frame; a press inside Sort's bbox counts poll_sort_presses (the positive
+// control: the procedure clicks Sort before any node exists) and one inside
+// the node's bbox poll_presses. So a node count of 0 can be told apart from
+// a poll that saw no press at all (read at the wrong time) and from a press
+// that landed outside the bbox (another space, or a missed click). Nothing is
+// read before the probe is armed.
 static void SmaProbeTick()
 {
-    if (g_SmaProbeNodeId.load() < 0) return;
+    if (!g_SmaProbePollArmed) return;
     try {
-        if (!SmaProbeExists(g_SmaProbeNode)) return;
         if (!g_Yytk->CallBuiltin("mouse_check_button_pressed", { RValue(kSmaProbeMbLeft) }).ToBoolean()) return;
         const double mx = g_Yytk->CallBuiltin("device_mouse_x_to_gui", { RValue(0.0) }).ToDouble();
         const double my = g_Yytk->CallBuiltin("device_mouse_y_to_gui", { RValue(0.0) }).ToDouble();
-        const double l = MenuLayoutRead(g_SmaProbeNode, "bbox_left"), t = MenuLayoutRead(g_SmaProbeNode, "bbox_top");
-        const double r = MenuLayoutRead(g_SmaProbeNode, "bbox_right"), b = MenuLayoutRead(g_SmaProbeNode, "bbox_bottom");
-        if (mx >= l && mx <= r && my >= t && my <= b) InterlockedIncrement(&g_SmaProbePollPresses);
+        InterlockedIncrement(&g_SmaProbePollAnyPresses);
+        bool inSort = false, inNode = false;
+        RValue sort;
+        const std::string sortBox = SmaProbeSort(sort) ? SmaProbeBox(sort, mx, my, inSort) : std::string("none");
+        std::string nodeBox = "none";
+        if (g_SmaProbeNodeId.load() >= 0 && SmaProbeExists(g_SmaProbeNode)) nodeBox = SmaProbeBox(g_SmaProbeNode, mx, my, inNode);
+        if (inSort) InterlockedIncrement(&g_SmaProbePollSortPresses);
+        if (inNode) InterlockedIncrement(&g_SmaProbePollPresses);
+        g_SmaProbeLastPress = MenuLayoutDecimal(mx) + "," + MenuLayoutDecimal(my)
+            + " (in_sort=" + (inSort ? "1" : "0") + " sort_bbox=" + sortBox
+            + " in_node=" + (inNode ? "1" : "0") + " node_bbox=" + nodeBox + ")";
     } catch (...) {}
 }
 // ---- end stashmoveall probe
@@ -41653,7 +41779,8 @@ void FrameCallback(FWFrame& FrameContext)
 
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll
-    // (Route B), which reads nothing while the probe has no node.
+    // (Route B), which reads nothing until `stashmoveall probe sort` or
+    // `probe create` arms it.
     if (g_Setup) SmaProbeTick();
 
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun

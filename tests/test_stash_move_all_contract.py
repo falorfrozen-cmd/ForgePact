@@ -407,6 +407,43 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("\n### Live 2 results\n", doc)
         self.assertLess(doc.index("\n### Live 1e results\n"), doc.index("\n### Live 2 results\n"))
 
+    # ---- the Live 1f probe's own controls (research build) -------------------
+
+    def test_probe_poll_and_detour_carry_their_own_controls(self):
+        # The round-0 review of Live 1f's instrument: a poll that counts only
+        # presses inside the node cannot tell a blind read or another
+        # coordinate space from a miss, and a count of the bound script with
+        # the node as self cannot tell a press from the game's own call.
+        tick = self.body("static void SmaProbeTick(")
+        self.assertIn("if (!g_SmaProbePollArmed) return;", tick)
+        self.assertNotIn("if (g_SmaProbeNodeId.load() < 0) return;", tick)
+        any_press = tick.index("InterlockedIncrement(&g_SmaProbePollAnyPresses);")
+        self.assertLess(any_press, tick.index("InterlockedIncrement(&g_SmaProbePollSortPresses);"))
+        self.assertLess(any_press, tick.index("InterlockedIncrement(&g_SmaProbePollPresses);"))
+        self.assertIn("g_SmaProbeLastPress = ", tick)
+        self.assertIn("g_SmaProbePollArmed = true;", self.body("static void SmaProbeSortCommand("))
+
+        saw = self.body("static void SmaProbeSawCall(")
+        self.assertIn("InterlockedIncrement(&g_SmaProbeRowCallsSelfNode);", saw)
+        self.assertIn("g_SmaProbeWatch == label", saw)
+        create = self.body("static void SmaProbeCreateCommand(")
+        self.assertIn('"watch:"', create)
+        self.assertIn("g_SmaProbeWatch = watchRow;", create)
+        self.assertIn("SmaProbeLoopCheck(objIdx)", create)
+        loop = self.body("static std::string SmaProbeLoopCheck(")
+        for name in ("GameObject::UI_Hud_Talent_obj", "gml_Script_ControllerCheckInput", "object_is_ancestor",
+                     "object_get_parent", "CONFOUND"):
+            self.assertIn(name, loop)
+        show = self.body("static void SmaProbeShowCommand(")
+        for field in ("row_calls_self_node=", "poll_any_presses=", "poll_sort_presses=", "last_press=",
+                      "sort_bbox=", "node_bbox="):
+            self.assertIn(field, show)
+        # Research build only: none of it reaches the player build.
+        for name in ("SmaProbeTick", "SmaProbeSawCall", "SmaProbeLoopCheck", "g_SmaProbeRowCallsSelfNode"):
+            self.assertNotIn(name, self.shipped)
+        # Positive control: the research copy keeps them.
+        self.assertIn("SmaProbeTick();", self.plugin)
+
 
 if __name__ == "__main__":
     unittest.main()
