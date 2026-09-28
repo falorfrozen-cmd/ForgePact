@@ -488,16 +488,18 @@ private:
             } catch (...) { Error(); }
         }
         if (m_PassWaking && m_PassPos >= m_Props.size()) { m_PassWaking = false; m_PassPos = 0; }
-        while (!m_PassWaking && m_PassPos < m_Props.size() && Budget(3)) {
+        while (!m_PassWaking && m_PassPos < m_Props.size() && Budget(4)) {
             Prop& p = m_Props[m_PassPos++];
             if (p.asleep || p.gone) continue;
             const double r = p.family == kSolidFamily ? m_SolidSleepRadius : m_SleepRadius;
             if (!std::isfinite(r) || Nearest2(p, m_PassPlayers) <= r * r) continue;
             try {
                 // A prop can move while awake (the ravens fly): trust a stored
-                // position only while it is fresh.
+                // position only while it is fresh. A prop broken meanwhile is
+                // asked nothing but whether it exists.
                 if (m_Frame > p.posFrame + kPositionFreshFrames) {
                     const RValue id = Handle(p);
+                    if (!Call("instance_exists", { id }).ToBoolean()) { p.gone = true; continue; }
                     double x = 0, y = 0;
                     if (!Number(Call("variable_instance_get", { id, RValue("x") }), x)
                         || !Number(Call("variable_instance_get", { id, RValue("y") }), y)) { p.gone = true; continue; }

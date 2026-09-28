@@ -42,6 +42,7 @@ struct World {
     double viewW = 1229, viewH = 691;
     long calls = 0, deactivates = 0, activates = 0, finds = 0, propFinds = 0, reads = 0, exists = 0;
     long callsOnMissing = 0;                    // activate/deactivate on an id that is not in the room
+    long readsOnMissing = 0;                    // variable_instance_get on an id that is not in the room
     bool throwOnDeactivate = false;
     std::vector<std::string> ownerQueries;
 };
@@ -94,6 +95,7 @@ struct Runner {
         if (name == "variable_instance_get") {
             ++world.reads;
             Instance* i = byId(idOf(args[0]));
+            if (!i) ++world.readsOnMissing;
             if (!i || !i->active) return RValue();   // undefined, as the runner answers for a sleeping or gone instance
             if (args[1].text == "x") return RValue(i->x);
             if (args[1].text == "y") return RValue(i->y);
@@ -286,6 +288,23 @@ int main() {
     check("moving/stale_position_reread", byId(ravenId)->active && misplaced().empty(), misplaced());
     maxCalls = 0;
     run(30, 1, zone);
+
+    // A prop broken (destroyed) while awake is never read again: when the
+    // player walks away, the pass asks only whether it still exists.
+    {
+        int64_t broken = -1;
+        for (auto& i : world.instances)
+            if (isScenery(i) && i.active && i.id != ravenId && i.object != Raven) { broken = i.id; break; }
+        byId(broken)->exists = false;
+        const long missingReads = world.readsOnMissing;
+        const double px = player().x, py = player().y;
+        run(80, 1, zone);
+        player().x += 8000;
+        run(40, 1, zone);
+        check("broken/never_read", world.readsOnMissing == missingReads, "reads=" + std::to_string(world.readsOnMissing - missingReads));
+        player().x = px; player().y = py;
+        run(40, 1, zone);
+    }
 
     // Quiet frames with nobody moving: a pass costs no runner calls beyond
     // reading the player (and a verification slice once a second).

@@ -111,6 +111,9 @@ class FarSleepBehaviorTests(unittest.TestCase):
     def test_a_prop_that_moved_is_read_again_before_it_sleeps(self):
         self.assertScenario("moving/stale_position_reread")
 
+    def test_a_broken_prop_is_asked_only_whether_it_exists(self):
+        self.assertScenario("broken/never_read")
+
     def test_solid_props_stay_awake_where_monsters_hunt(self):
         self.assertScenario("hunt/solid_radius")
         self.assertScenario("hunt/whole_map_keeps_solid_awake")

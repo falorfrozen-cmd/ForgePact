@@ -141,8 +141,9 @@ through `CallBuiltin`: no struct layouts, no game addresses.
 ## Verified
 
 - `tests/test_far_sleep_behavior.py` runs the real class against a controlled
-  runner: 37 scenarios (bounded calls, only scenery, settling, walking, jumps,
-  two players, the hunt radius, a raven that moved, the game waking props, the
+  runner: 38 scenarios (bounded calls, only scenery, settling, walking, jumps,
+  two players, the hunt radius, a raven that moved, a prop broken while awake
+  (asked only whether it exists), the game waking props, the
   top-up, off, room changes, skipped rooms, restarts, a refusing runner).
 - Live, 2026-09-28 (research build, Suh, Act_01_01): after every census the
   props within 1,500 px were all active and identical to the all-awake census
