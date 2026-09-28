@@ -384,10 +384,12 @@ jobs:
           echo "$plan"
           echo "$plan" >> "$GITHUB_OUTPUT"
 
-      # The sandbox the suites drive imports hs-game-sdk from a sibling of
-      # ForgePact, as build does. Without it the Satanic pool reads
-      # "Modifier data unavailable" and ui, finish, gems, review and the
-      # oracle replay fail on the environment (run 36371697982).
+      # The panel's sandbox imports hs-game-sdk from a sibling of the ForgePact
+      # checkout (src/forgepact.py). Without it the Satanic Zone pool is
+      # empty, and the browser suites fail on the environment, not on the
+      # panel: 2.0.0's first recut failed e2e, finish, gems, review and the
+      # oracle replay here while all of them passed locally. Same source and
+      # placement as the build job's SDK steps above.
       - name: Check out hs-game-sdk from the hub
         uses: actions/checkout@v4
         with:

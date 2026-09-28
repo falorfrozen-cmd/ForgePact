@@ -282,6 +282,17 @@ class RunnerAndCheckouts(unittest.TestCase):
         self.assertNotEqual(sparse_at, -1)
         self.assertIn("hs-game-sdk", text[sparse_at:sparse_at + 120])
 
+    def test_both_test_jobs_get_hs_game_sdk_as_a_sibling(self):
+        # The panel's sandbox imports hs-game-sdk from beside the ForgePact
+        # checkout. Without it the Satanic Zone pool is empty and the browser
+        # suites fail on the environment: 2.0.0's first recut did.
+        for job in ("build", "panel-browser-tests"):
+            text = jobs()[job]
+            self.assertIn("repository: falorfrozen-cmd/hero-siege-offline-toolkit", text, job)
+            placed = text.find("mv hub/hs-game-sdk hs-game-sdk")
+            self.assertNotEqual(placed, -1, f"{job} never places hs-game-sdk beside ForgePact")
+            self.assertLess(placed, text.find("run_tests_parallel.py"), f"{job} places the SDK after its tests")
+
 
 class Dependencies(unittest.TestCase):
     def test_requirements_build_txt_is_installed(self):
