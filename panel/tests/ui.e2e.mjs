@@ -96,6 +96,7 @@ async function injectFaults(page, pattern, net) {
       // runner, where the delay outlives the group). A group that needed this
       // request still fails on its own assertions.
       net.lateErrors = (net.lateErrors || 0) + 1;
+      net.lastError = String(e?.message ?? e).split(/\r?\n/)[0];
       await route.abort('failed').catch(() => {});
     } finally {
       net.inflight--;
@@ -201,15 +202,26 @@ async function panelUi(ctx) {
   passed.push('All five pages, headings, selected states and overflow');
 
   await tab('world');
-  // Waits for the off state rather than reading it once: `settled()` gives a
-  // click 30 ms to start its save, and on a loaded CI runner the toggle's
-  // repaint had not happened yet ("disabled after enabling", PR run
-  // 36372995669). A state that never arrives still fails, after 5 s.
-  const densityOff = async (context) => assert(await page.waitForFunction(() => {
-    const el = (s) => document.querySelector(s);
-    return !el('#den_on').checked && el('#denval').textContent === 'off' &&
-      el('#densityHero').textContent === 'off' && el('#denval').classList.contains('off');
-  }, null, { timeout: 5000, polling: 20 }).then(() => true, () => false), 'Disabled density looks enabled: ' + context);
+  // Waits for the off state rather than reading it once, and on failure says
+  // what it saw: "disabled after enabling" failed on two CI runs (36372995669,
+  // 36376055177) and never locally, and a bare message could not tell a slow
+  // repaint from a switch that never turned off.
+  const densityOff = async (context) => {
+    const off = await page.waitForFunction(() => {
+      const el = (s) => document.querySelector(s);
+      return !el('#den_on').checked && el('#denval').textContent === 'off' &&
+        el('#densityHero').textContent === 'off' && el('#denval').classList.contains('off');
+    }, null, { timeout: 5000, polling: 20 }).then(() => true, () => false);
+    if (off) return;
+    const seen = await $(page, () => {
+      const el = (s) => document.querySelector(s);
+      return { checked: el('#den_on').checked, disabled: el('#den_on').disabled, denval: el('#denval').textContent,
+        denvalClass: el('#denval').className, hero: el('#densityHero').textContent,
+        saving: el('#saveIndicator').textContent, theme: document.documentElement.dataset.theme };
+    });
+    const saved = (await read()).density_on;
+    assert(false, `Disabled density looks enabled: ${context}: ${JSON.stringify({ ...seen, saved, requests: net.calls, inflight: net.inflight, lateErrors: net.lateErrors || 0, lastError: net.lastError })}`);
+  };
   const denValue = () => $(page, () => +document.getElementById('den').value);
   const expInput = () => $(page, () => document.querySelector('[data-sec="stats"][data-key="exp"]').dispatchEvent(new Event('input', { bubbles: true })));
   await densityOff('initial load');
