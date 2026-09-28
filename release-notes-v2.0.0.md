@@ -122,6 +122,9 @@ also get new plugin commands for the stash, the bag and your skills.
   The zone-mod search stays reachable with Tab after jumping there.
 - **Undo stays clear of your settings.** Ember reserves a separate footer row
   for the Undo message, including long names in small windows.
+- **Status messages for screen readers.** Ember keeps its message area
+  available to screen readers between messages, instead of removing it until
+  new text appears.
 
 - **Reach the bottom of every Ember page.** Long pages now scroll with a visible
   scrollbar, mouse wheel and keyboard. The bottom action bar no longer covers
