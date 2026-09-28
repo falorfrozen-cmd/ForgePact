@@ -459,14 +459,16 @@ measured. Live 1f (§ Live procedure 1f) measures it.
     argument or self and reads no grid" (neither fits it exactly: the global
     array element above). The variable names behind those members could not
     be recovered from the build, so which flag gates it and which global
-    array it touches are **not read**.
+    array it touches are **not read**. Live 1f showed this choice unsafe: a
+    click on a node bound to it ended the game (the last bullet).
 - **Where a click is dispatched.** `ControllerCheckInput` reads the key
   bindings and opens or toggles windows (the inventory, the talents, the
   minimap, the loot filter, a potion, a town portal, the weapon loadout); no
   call of a node's `activationFunc` was found in it. So where the game calls a
   node's activation on a click, and what it does with an undefined one, are
   **not read**. Route B (the frame poll on a node left unbound) is measured on
-  exactly that case in Live 1f (`node-press-poll-unbound`).
+  exactly that case in Live 1f (`node-press-poll-unbound`). (Live 1f then
+  found where: the node's own user event 15, the last bullet below.)
 - **The rows Live 1f arms** beside Live 1e's: `UiCreateNode`, `UiRemoveNode`,
   `UiMoveNode`, `InventorySortTab` and `InventoryResetTabs` (rows already),
   and four new `craftprobe` rows by their SDK constants, after `ValidateItem`
@@ -475,6 +477,72 @@ measured. Live 1f (§ Live procedure 1f) measures it.
   armed with a small budget and read only for the self it logs),
   `UiSetFloatingToFalse` and `UiNodeClearNavigationFunc` (the two candidates).
   291 rows in all; the marker reads `phase1k rows=291`.
+- **What Live 1f and Live 1g measured, and the reading after them.** Each
+  item is marked measured (M) or a static reading (R); § Live 1f results and
+  § Live 1g results carry the rows.
+  - (M) **How a click reaches a node's activation.** In Live 1f a scripted
+    click at the centre of the node bound to `UiSetFloatingToFalse` made the
+    stash window's Step run the node's user event 15, which called the bound
+    activation with the node as self, the stash window as other, and one
+    argument, the node's own `activationArgs` array (empty for the mod's
+    node; the Sort node's holds 1). The research build's detour of that
+    script logged exactly this call as the plugin's last line before the
+    crash, so Route A's dispatch does reach the plugin.
+  - (M) **The crash.** The script then read, as a bool, a member the button
+    object does not carry, and the runner ended the game with no dialog. Its
+    own error log (`crash.txt` in the game's local data folder, written in
+    the click's minute) names a user-defined event 15 of `UI_Node_Parent_obj`
+    and the error "bool argument is unset", with a trace running from
+    `UiSetFloatingToFalse` up through that event to the Step events of
+    `UI_Parent_obj`, `UI_Inventory_Parent_obj` and `UI_Stash_obj`, and it
+    names `InventorySort` as the last UI node. The toolkit's own log showed
+    the same chain natively: the script, the plugin's detour, the runner's
+    method-call helper, the node's event. So the candidate was wrong, not the
+    dispatch: the reading above that the script "writes nothing at all" on a
+    node whose gating member is not true was wrong, because on this runner an
+    unset member is an error, not false. The script belongs to
+    `UI_Hud_Talent_obj`. Route A is dropped for this feature (the owner's
+    decision of 2026-09-28, "Test the watch route"); a script safe for a
+    `UI_Button_Small_obj` self would reopen it.
+  - (R) **What the event does with an undefined activation.** The node's
+    user event 15 (unnamed in the local project, found through its own
+    call-stack-name text) first applies to the node's `activationFunc` the
+    same one-argument check `UiSetActivationFunc` applies before it binds a
+    value, read as an undefined check. When the activation is undefined the
+    event does nothing: no sound, no call, no write. When it is set and a
+    second member check passes, it plays the node's click sound if it has
+    one, calls the activation with the node's `activationArgs`, and stores
+    the node's call-stack name in a global (the error log's last UI node).
+    The Step body of `UI_Parent_obj` that decides which node gets event 15
+    is **not read**; that it sends it to the mod's node on a click inside
+    the node's box is measured (the crash above).
+  - (M) **The unbound node, Live 1g.** A node made by `UiCreateNode` with
+    the activation left undefined (`UiSetActivationFunc` never called) took
+    a scripted click inside its box with the game running on: the frame
+    poll counted exactly one press inside the node, no armed row ran with
+    the node as self, and no dialog appeared. Two idle reads six seconds
+    apart were flat, and a click on the panel background between the node
+    and Sort was counted by the poll as a press outside both buttons only.
+    So a click on an unbound node runs nothing of the game's, and the
+    plugin's end-of-frame poll sees it: this is Route B, the route the
+    player build uses.
+  - (M) **The Sort button.** Its node is a `UI_Button_Small_obj` with
+    `uiNodeCallstack` `InventorySort`, text `Sort Tab` (not `Sort`), sprite
+    `Inventory_Tab_Button_Solid_spr` and `activationArgs` holding 1; its
+    activation is `InventorySortTab` bound with the Sort node itself as self
+    (an instance, not the bag grid's struct the reading above expected). The
+    stash side's own sort button reads `StashSort`, also `Sort Tab`. The
+    player build finds the bag's Sort by its call-stack name, never by its
+    text.
+  - (M) **The node's lifetime.** `UiCreateNode` answered the node with
+    `visible=0` in the same frame and `visible=1` one frame later, drawn
+    with the object's own sprite, `Menu_Button_Chat_spr`, text `Move all`,
+    placed left of Sort by Sort's width plus 8 GUI units and clear of the
+    bag grid. It stayed listed, with the same id and visible, through a
+    switch of the bag to its Materials sub-tab and of the stash to shared
+    tab 1; `UiRemoveNode` with the stash window as self and other removed
+    it; the stash's own close destroyed a listed node; and a reopen listed
+    none.
 
 ## Instrument
 
@@ -988,6 +1056,43 @@ craftprobe call StashAddToStack id:<bag> other:<bag> <skarr> 9 2 fp:<K_SKU> 1 8 
 craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_SKU
 ```
 
+**The Socketable tab's merge and the button, by name (Live 1f and Live 1g)**
+(checks `socket-copy`, `byname-socket-merge`, `byname-socket-nonstack`,
+`sort-node`, `sort-activation`, `node-created`, `node-press-poll-unbound`,
+`node-removed-by-name`). No person: the research build's copy verb makes a
+one-unit copy of a stash socketable in the bag's Socket sub-tab, from the
+stash map, the stash item left as it was. Placeholders, read in the same
+session: `<bag>` the bag grid node with its Socket sub-tab on show; `<N_ORB>`
+and `<N_GEM>` the one-cell `StashSocketGrid` nodes holding the orb (base id
+118) and the gem (base id 38), found by reading each node on map 9;
+`<K_ORB9>`, `<K_GEM9>` their keys; `<K_ORBU>`, `<K_GEMU>` the copies' keys;
+`<x>,<y>` a copy's cell in the bag's Socket sub-tab; `<SORT_ID>` the
+`UI_Button_Small_obj` whose `uiNodeCallstack` is `InventorySort`. The
+Socketable tab's array is the item's own node's `nodeGrid` (one cell), which
+settles the one-row array Live 1e's hand moves logged for the merge path;
+the new placement stays unreplayed.
+
+```
+stashmoveall probe copy <K_ORB9> 1   -> expect: key=<K_ORBU>, a confirmed line, the bag's socket view up by one key
+craftprobe call StashAddToStack id:<bag> other:<bag> path:id:<N_ORB>.nodeGrid 9 2 fp:<K_ORBU> 1 8 confirm   -> expect: true, and N_ORB's o up by exactly 1 (1f and 1g: 81 to 82)
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_ORBU
+stashmoveall probe copy <K_GEM9> 1   -> expect: key=<K_GEMU>, a confirmed line
+craftprobe call StashAddToStack id:<bag> other:<bag> path:id:<N_GEM>.nodeGrid 9 2 fp:<K_GEMU> 1 8 confirm   -> 1f: true, and N_GEM gained o=2 (the gem is stackable)
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_GEMU
+```
+
+The button, the stash open with any tabs on show. `probe create none`
+leaves the activation undefined; the bound form `probe create <script>` is
+not replayed (Live 1f: a click on the node bound to `UiSetFloatingToFalse`
+ended the game):
+
+```
+stashmoveall probe sort id:<SORT_ID>   -> expect: the Sort row (uiNodeCallstack=InventorySort, text=Sort Tab), activation InventorySortTab self=instance id=<SORT_ID>, and sort poll armed
+stashmoveall probe create none watch:UiSetFloatingToFalse   -> expect: created id=<node>, activation left unbound (none), activationFunc=undefined, a loop check line without CONFOUND; visible=1 one frame later
+stashmoveall probe show   -> expect: poll_presses, poll_any_presses, poll_sort_presses, row_calls_self_node; a click inside the node raises poll_presses and poll_any_presses by 1 with in_node=1, and nothing else
+stashmoveall probe remove   -> expect: UiRemoveNode with self=other=the stash window, listed after: no
+```
+
 **Undo**, for a placement whose maps end inconsistent (`grid-move-map` or
 `grid-move-shared-map` fails), before any close: take the item back out of
 the destination array with the remove shape `crafting-materials-research.md`
@@ -1189,6 +1294,29 @@ reading 3).
   node's fields are quoted from the probe's replies, and the socket merge's
   array and counts from the reads.
 
+### Live procedure 1g
+
+The procedure is the one in this workorder's context file,
+`.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1g"
+(kept on the owner's machine with the plan). **No person step**, the
+character select's last resort aside (it was not needed). By the owner's
+decision of 2026-09-28 ("Test the watch route"), after Live 1f's bound click
+ended the game: the same research build as Live 1f
+(`phaseC-fbca7251`, no rebuild; every verb it runs is in that build), the
+saves Live 1f restored, and the same positive controls first. It repeats
+Live 1f's orb merge and closes the stash by name before the button block,
+so the merge's save checks survive a crash. Then only an unbound node (the
+activation left undefined) with the plugin's frame poll watching its box:
+the Sort click as the poll's positive control, idle reads, one click inside
+the node, one click on the panel background as the negative control, a bag
+and a stash tab switch, the removal by name, a close with the node listed,
+and a reopen. Its **crash rule**: if the game ends, the game's own error log
+is read and quoted by its error line and trace names, the check in progress
+is `fail (crash - ...)` with the verdict word first, and every later check is
+`not-run`. **Recording rule**: as § Instrument's; each check is `pass`,
+`fail`, `not-observed` (with what was supplied) or `not-run (instrument:
+...)`.
+
 ## Results
 
 ### Live 1 results
@@ -1232,7 +1360,7 @@ Every call shape and gesture Live 1 tried that was rejected or moved nothing,
 with exactly what was supplied, per the toolkit `AGENTS.md` § "Never Call an
 Address You Resolved by Hand" (a rejected call shape is a labelling problem to
 revisit, not a settled dead end), and after them the same for Live 1b, Live 1c,
-Live 1d and Live 1e (the session is named in the first column). The last column is
+Live 1d, Live 1e and Live 1f (the session is named in the first column). The last column is
 what § Static reading 2 and the later sessions say the reply means; none of
 them is a route negative.
 
@@ -1255,6 +1383,8 @@ them is a route negative.
 | Live 1d: `GridAddItem`, full shared tab 2 (step 6) | bag grid / bag grid | shared tab 2's array (`path:id:<sg>.nodeGrid`, 0 empty cells), a class 10 key as `fp:`, 0, `undefined` | stash shared tab 2, bag page 0 | a struct with `success=false`; nothing changed on any tab or in the bag | the game's no-room answer, the same as the owner's hand move against that tab; the placement searches only the array it is handed |
 | Live 1e: Ctrl + left click, by hand (H1, H1b) | - | the owner's own quick move on two jewels (base ids 109 and 110, the first being `<K_SK1>`) and an Incarnation Gem (base id 136) in the bag's socket view | stash Socketable tab, bag Socket sub-tab | `ValidateItem` once per item, self and other the bag grid, answering empty text, as it does for an accepted item; no other armed row logged; every item stayed in its bag cell | the game does not let these kinds into the Socketable tab (the owner: a limit the game's designers set); it stops the move after `ValidateItem` and before any armed placement routine, and nothing in the logged answer shows the refusal, so a by-name call would not meet it |
 | Live 1e: `node var Controller_obj 0 stashSocketItemSlot` (step 2) | - | the member name, read the way `node var` reads a container | stash Socketable tab | an array of 106 entries with no fingerprint read, while the tab visibly held items | not the Socketable tab's container as read this way: `menulayout` lists one one-cell `StashSocketGrid` node per item, and the save keeps the tab under `stash.hss` `socket_tab`; not a route result |
+| Live 1f: `stashmoveall probe sort` by text (step 2) | - | the text `Sort` searched among `UI_Button_Small_obj` rows | stash Socketable tab, bag Socket sub-tab | `sort not-found`; both sort buttons read `Sort Tab` | the text is `Sort Tab`; the bag's Sort is found by its `uiNodeCallstack`, `InventorySort` (given by id the same session, and in Live 1g) |
+| Live 1f: a click on the node bound to `UiSetFloatingToFalse` (step 7 (c)) | the node / the stash window, as the game's own dispatch supplied them | one argument, the node's `activationArgs` (an empty array); the input a scripted left click at the node's box centre, no hold | as above | the game ended with no dialog; its error log names "bool argument is unset" in the node's user event 15, inside that script | the dispatch reached the plugin as measured; the script reads a member a button does not carry (it belongs to `UI_Hud_Talent_obj`), so it is unsafe as any button's activation. Not a route negative for the dispatch; Route A is dropped, Route B (the unbound node, Live 1g) is used |
 
 Live 1 did not try Ctrl + left click, the game's own quick move. Live 1b
 could not send it (its click control failed), and in Live 1c the owner made
@@ -1415,13 +1545,88 @@ sequence is quoted in the Logged shape column in logged order.
 
 ### Live 1f results
 
-Not run yet. Live procedure 1f runs on the research build § Live procedure
-1f names; its capture is recorded here, one row per check, the logged shape
-beside the supplied one, the way the rows above are.
+Live 1f ran on 2026-09-28 (research build phaseC-fbca7251, slot 14, on the
+saves Live 1e restored; capture
+`.claude/workorders/forgepact-68-move-all-live-1f.md` on the owner's
+machine). Every session-validity check passed. **The Socketable tab merged
+by name**, for the orb and for the gem, the gem showing itself stackable.
+**The button** was created by name left of Sort and drawn, and the Sort
+click proved the frame poll; then the click on the node bound to
+`UiSetFloatingToFalse` **ended the game**, and every later check is
+`not-run`. Nothing had been saved: the stash and bag files were unchanged
+when the saves were inspected after the crash, and the restore left them
+clean. One person step: the character select refused five times (the
+foreground window changed during the click, an hs-drive gap), and the owner
+loaded slot 14 by hand. The bag grid node was 265216 (rebound to its Socket
+sub-tab), the stash window 265188; the Socketable tab listed 106 one-cell
+`StashSocketGrid` nodes, 91 filled, one key per base id, and the bag's
+Socket sub-tab held base ids 109, 110, 111 and 136 only (19 keys), as
+expected. The logged shape for the merge is Live 1e's hand-moved orb.
 
-| Check | What it reads | Supplied | Result | Verdict |
-|---|---|---|---|---|
-| (none yet) | - | - | - | not-run |
+| Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
+|---|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build of § Live procedure 1f | - | - | lease `dll_sha256` fbca7251..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=291 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `290 detoured, 0 failed, 1 held`; `calls=13860`, then `calls=25620`; after the 45-row arm 0, then 10080 | pass |
+| byname-control | the hook line, the armed rows idle after each re-arm, and by-name calls dispatching | - | the by-name calls of steps 5 to 7 | all 45 armed rows read 0 before the first by-name call; every call dispatched, each array or node id the one `menulayout` read | pass |
+| sort-node | the bag's Sort node among `UI_Button_Small_obj` rows | - | `probe sort` by the text `Sort`, then `probe sort id:265231` | no row reads `Sort`: five rows, the bag's Sort (`uiNodeCallstack=InventorySort`, text `Sort Tab`, `activationArgs` [1]), the stash's sort (`StashSort`, `Sort Tab`, [2]), `InventoryMobileStackSplit` (`Split Stack`, not visible), `MoveStashLeft` and `MoveStashRight`; by id: x 2303.5, y 1198.9, box 2303.5,1198.9 to 2485.9,1261.6, sprite `Inventory_Tab_Button_Solid_spr`, visible 1, enabled 1 | pass (by hand: the id given from the `InventorySort` row) |
+| sort-activation | the Sort node's activation, read hook-free | - | `probe sort id:265231` | a method of `InventorySortTab`, self an instance, the Sort node itself (265231) | pass |
+| socket-copy | the copy verb's replies and the bag's Socket sub-tab | - | `probe copy` of the orb's key (node 265556, base id 118, `o` 81), then of the gem's (node 265536, base id 38, no `o`), one each | `<K_ORBU>` with `o=1` and `<K_GEMU>` with no `o`, each `confirmed` in map 0 and its cells (3,1 and 3,2); the sub-tab's keys 19 to 21 | pass |
+| byname-socket-merge | the orb's node count up by 1 and `<K_ORBU>` in no bag cell | Live 1e hand-socket's orb: `StashAddToStack` answering true, then `InvGridClearItemNode` on its bag cell | `StashAddToStack` self = other = the bag grid, `path:id:265556.nodeGrid` (one cell), 9, 2, `fp:<K_ORBU>`, 1, 8; then `InvGridClearItemNode` self = other = the bag grid, `path:id:265216.nodeGrid.1.3`, undefined | true; the orb node's `o` 81 to 82; the clear's node named `<K_ORBU>` at 3,1; the sub-tab's keys 21 to 20 | pass |
+| byname-socket-nonstack | what an identity then thought non-stackable (the gem) answers | as above | `StashAddToStack` as above on `path:id:265536.nodeGrid`, `fp:<K_GEMU>`, 1, 8; then, to end the half state, the same source clear on `path:id:265216.nodeGrid.2.3` | true, not the false the check expected; the gem node gained `o=2`; the bag cell still held `<K_GEMU>` until the clear, after which the sub-tab was back to its 19 keys | fail (the gem merged: base id 38 is stackable, Live 1e's missing `o` being a count of 1, so no non-stackable case exists on this tab) |
+| sort-click-control | the Sort click through both instruments: the `InventorySortTab` row and the frame poll | `InventorySortTab` one call (logged 1, unlogged 0), and the re-sort's 19 `GridAddItem` and 19 `s_InvNode` calls, each with the Sort node as self or other | a scripted left click at Sort's box centre (GUI 2394.7,1230.25, window 1796,971), no hold | `poll_any_presses` and `poll_sort_presses` 0 to 1; `last_press` 2393,1228, inside Sort's box | pass |
+| node-created | the probe's reply, the `menulayout` row and a screenshot | `UiCreateNode` one call, answering the node; `UiSetActivationFunc` self = other = the stash window, the node and the script | `probe create UiSetFloatingToFalse` | node 268008 at x 2113.1, y 1198.9, box 2016.2,1176.1 to 2211.9,1221.7, sprite `Menu_Button_Chat_spr`, `uiNodeCallstack=ForgePactMoveAll`, text `Move all`, owner the stash window; `visible=0` in the reply, 1 a frame later; the activation a method of `UiSetFloatingToFalse` with the node as self; the loop check found the object's parents `UI_Button_obj` then `UI_Node_Parent_obj`, no confound; the box left of Sort's and below the bag grid's | pass |
+| node-press-activation | a click on the bound node through the detour and the poll | `UiSetFloatingToFalse` one call, self the node, other the stash window, one argument, an empty array: the plugin's last line before the crash | two idle reads first (0 presses and 0 calls, twice); then a scripted left click at the node's box centre (GUI 2114.05,1198.9, window 1586,946), no hold | the game ended with no dialog before any read. The game's `crash.txt`: `ERROR in action number 1 of Other Event: User Defined 15 for object UI_Node_Parent_obj: bool argument is unset`; trace `gml_Script_UiSetFloatingToFalse (line 178)`, `gml_Object_UI_Node_Parent_obj_Other_25 (line 7)`, `gml_Object_UI_Parent_obj_Step_0 (line 280)`, `gml_Object_UI_Inventory_Parent_obj_Step_0 (line 3)`, `gml_Object_UI_Stash_obj_Step_0 (line 93)`; last UI node `InventorySort` | fail (crash - the bound script read a member the button does not carry; the capture writes it `crash (fail)`) |
+| node-press-poll | the poll's count for that click | - | - | not reached | not-run (instrument: the game crashed at node-press-activation) |
+| node-press-byname | the by-name activation | - | - | not reached | not-run (instrument: the game crashed at node-press-activation) |
+| node-press-poll-unbound | a click on an unbound node through the poll | - | - | not reached (Live 1g measured it) | not-run (instrument: the game crashed at node-press-activation) |
+| node-survives-tab-switch | the node after a bag and a stash tab switch | - | - | not reached (Live 1g measured it) | not-run (instrument: the game crashed at node-press-activation) |
+| node-removed-by-name | the node after `UiRemoveNode` | - | - | not reached (Live 1g measured it) | not-run (instrument: the game crashed at node-press-activation) |
+| node-gone-on-close | the node after the stash's own close | - | - | not reached (Live 1g measured it) | not-run (instrument: the game crashed at node-press-activation) |
+| close-survives | the game after the stash close | - | - | not reached | not-run (instrument: the game crashed at node-press-activation) |
+| reopen-shows | the merge after a reopen | - | - | not reached (Live 1g measured it) | not-run (instrument: the game crashed at node-press-activation) |
+| saved-stash-has-keys | the merged unit in no live file and the stash still holding the orb | - | - | nothing was saved: after the crash `stash.hss` and `inventory_order_13.hss` were unchanged (Live 1g measured it) | not-run (instrument: the game crashed before any close) |
+| saved-bag-lacks-keys | the merged unit under no bag container | - | - | as above | not-run (instrument: the game crashed before any close) |
+
+### Live 1g results
+
+Live 1g ran on 2026-09-28 (the same research build, phaseC-fbca7251, slot
+14, **fully automatic**, on the saves Live 1f restored; capture
+`.claude/workorders/forgepact-68-move-all-live-1g.md` on the owner's
+machine). **All 22 checks passed** and the game never ended: the orb merge
+by name held through a close by name, a reopen and the saved files, and
+**a click on the unbound node was seen by the frame poll and ran nothing of
+the game's**. The character select worked on the first attempt. The bag
+grid node was 262197, the stash window 262169 (263679 after the reopen);
+the orb sat in `StashSocketGrid` node 262422 (key `0-0-198608718206-15`,
+`o` 81), and the bag's Socket sub-tab held base ids 109, 110, 111 and 136
+only (19 keys), as expected. The node's shape is § Phase A' shapes' button
+block; the logged shape for the merge is Live 1f's.
+
+| Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
+|---|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build of § Live procedure 1f | - | - | lease `dll_sha256` fbca7251..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=291 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `290 detoured, 0 failed, 1 held`; `calls=0`, then `calls=23100` | pass |
+| byname-control | the hook line, the armed rows idle after the arm, and by-name calls dispatching | - | the by-name calls of steps 5 to 7 | all 45 armed rows read 0 before the first by-name call; every call dispatched, each array or node id the one `menulayout` read | pass |
+| socket-copy | the copy verb's reply and the bag's Socket sub-tab | - | `probe copy` of the orb's key, one | `<K_ORBU>` with `o=1`, `confirmed`, cell 3,1; the sub-tab's keys 19 to 20 | pass |
+| byname-socket-merge | the orb's node count up by 1 and `<K_ORBU>` in no bag cell | Live 1f byname-socket-merge | `StashAddToStack` self = other = the bag grid, `path:id:262422.nodeGrid`, 9, 2, `fp:<K_ORBU>`, 1, 8; then `InvGridClearItemNode` self = other = the bag grid, `path:id:262197.nodeGrid.1.3`, undefined | true; `o` 81 to 82; the clear's node named `<K_ORBU>` at 3,1; the sub-tab's keys 20 to 19 | pass |
+| merge-close | the game after the stash close by name, before the button block | - | the by-name close (its first reply "not confirmed", then a mouse move and a re-read) | the stash had no live instance; the game running | pass |
+| reopen-shows | the merge after the reopen | - | - | the orb's node (found again after the reopen) read `o` 82; `<K_ORBU>` in no bag cell, the sub-tab back to its 19 keys | pass |
+| sort-node | the bag's Sort node by id | - | `probe sort id:263722`, the id from the `InventorySort` row | x 2303.5, y 1198.9, box 2303.5,1198.9 to 2485.9,1261.6, sprite `Inventory_Tab_Button_Solid_spr`, visible 1, `uiNodeCallstack=InventorySort`, text `Sort Tab`, `sort poll armed` | pass |
+| sort-activation | the Sort node's activation, read hook-free | - | as above | a method of `InventorySortTab`, self an instance, the Sort node (263722) | pass |
+| sort-click-control | the Sort click through both instruments | `InventorySortTab` one call (logged 1, unlogged 0) | a scripted left click at Sort's box centre (window 1796,972), no hold | `poll_any_presses` and `poll_sort_presses` 0 to 1; `last_press` 2393,1229 with `in_sort=1` | pass |
+| node-created | the probe's reply, the `menulayout` row and a screenshot | `UiCreateNode` one call; no `UiSetActivationFunc` | `probe create none watch:UiSetFloatingToFalse` | node 264522, `activation left unbound (none)`, `activationFunc=undefined`, the same box, sprite and text as Live 1f's node, `visible=1` a frame later, the loop check with no confound | pass |
+| node-idle | the counters across two reads with no input | - | two `probe show` reads six seconds apart | `poll_presses` 0, `poll_any_presses` 1, `poll_sort_presses` 1, `row_calls_self_node` 0, both times | pass |
+| node-press-poll-unbound | a click on the unbound node: the poll, the game, every armed row | no armed row with the node as self (only the hover row `UiSetFocus`, allowed by the procedure) | a scripted left click at the node's box centre (window 1586,947), no hold | the game running, no dialog on screen; `poll_presses` 0 to 1, `poll_any_presses` 1 to 2, `last_press` 2113,1198 with `in_node=1`; `row_calls_self_node` 0 | pass |
+| node-press-negative | a click on the panel background between the node and Sort | - | a scripted left click at GUI 2257.7,1198.9 (window 1693,947), background on the screenshot | `poll_any_presses` 2 to 3; `poll_presses` and `poll_sort_presses` unchanged at 1; `in_node=0 in_sort=0`; the game running | pass |
+| node-survives-tab-switch | the node after a bag and a stash tab switch | - | the bag to its Materials sub-tab, then the stash to shared tab 1, by name | listed after both with the same id, 264522, and `visible=1` | pass |
+| node-removed-by-name | the node after the probe's removal | `UiRemoveNode` one call, self = other = the stash window, the node | `probe remove` | `listed after: no`; no `ForgePactMoveAll` row | pass |
+| node-gone-on-close | a listed node after the stash's own close | - | a new unbound node (265390), then the by-name close | the game running; no `UI_Button_Small_obj` row listed at all | pass |
+| reopen-no-stale-node | the reopened stash | - | the stash reopened | five rows (Sort, Split Stack, the two page arrows, the stash's sort), none `ForgePactMoveAll`; `probe show` reads `node=none` | pass |
+| close-survives | the game after the stash close | - | the by-name close | the game running; `menulayout` answered its header, no stash window listed | pass |
+| saved-stash-has-keys | the merged unit in no live file and the stash still holding the orb | - | `tools/save_item_keys.py` with `--key` for `<K_ORBU>` and for the orb's key | `<K_ORBU>` in no file (merged away); the orb's key under `stash.hss` `socket_tab`; `hs_saves_inspect` had listed `stash.hss` and `inventory_order_13.hss` as changed | pass |
+| saved-bag-lacks-keys | the merged unit under no bag container, beside a positive control | - | as above, with `--key` for an unmoved bag socketable (base id 109) | `<K_ORBU>` in no file; the control listed under `inventory_order_13.hss` `inventory_socket_tab` in both the live file and the pre-session copy | pass |
 
 ### Live 2 results
 
@@ -1468,7 +1673,14 @@ same node when the bag's Materials sub-tab is on show), "the stash grid" the
 tab's array" that node's `nodeGrid` read with the tab on show. Live 1e set
 the last three lines, each from that session alone: `socketRoute`, written
 per path (`new: ...; merge: ...`, the source being the bag's Socket
-sub-tab), `newMaterialRoute` and `wholeStackMerge`.
+sub-tab), `newMaterialRoute` and `wholeStackMerge`. Live 1f and Live 1g set
+four more, recorded together: `buttonRoute` (how a press on the Move all
+button reaches the plugin: `poll` only when Live 1g's poll control, idle
+reads, click inside the unbound node and click outside it all passed with
+the game running), `buttonOwner` (what removes the node when the stash
+closes), `sortActivation` (the Sort node the button is placed beside, and
+how it is found) and `socketMergeRoute` (the Socketable tab's merge by
+name); `socketRoute`'s `merge:` part is rewritten from Live 1f.
 
 gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
 stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
@@ -1477,9 +1689,13 @@ bagSubtabRoute: byname (cells readable: the bag's Materials sub-tab is New_Inven
 gestureRoute: ctrl-click (by hand: Live 1c hand-personal, hand-shared, hand-material and hand-merge, each the owner's own Ctrl + left click moving the item into the tab on show; a scripted click through hs_input never reached the grid's pick-up, Live 1b click-control, so no scripted gesture is measured)
 sourceCellClear: separate step (Live 1d byname-personal-clear and byname-shared: a by-name GridAddItem leaves the item in its bag cells, and InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node, nodeGrid [y][x], and undefined empties them; it runs after a success=true placement and before any owner step, because it looks the item up by fingerprint while the item is still on map 0. After a merge the same call follows StashAddToStack's true, as the hand merge logged it, Live 1c hand-merge and byname-merge. The hand grid moves emptied the bag cell with no armed row logging a clear: which routine does it there is not observed)
 targetTabRule: stays in the bag (Live 1c hand-full: the owner's Ctrl + left click against the full shared tab 2 logged StashAddToStack false and GridAddItem success=false on that tab's own array and nothing after them - no GetStashMaxTabs, no other tab tried; the item stayed in its bag cells and the full tab's filled count was unchanged. The positive control was hand-personal and hand-shared in the same session. Live 1d byname-full answered the same by name, as expected by construction)
-socketRoute: new: not-observed (Live 1e byname-socket not-run: no second socketable of an accepted kind was left off the tab; by hand, Live 1e hand-socket, a rune and a gem from the bag's Socket sub-tab took ValidateItem with self = other = the bag grid, StashAddToStack with the same self and other, a one-row array, 9, 2, the item, 1, 8, answering false, GridAddItem on that array with 0 and undefined answering success=true at x 0, y 0, ValidateItem with self the stash grid and other the bag grid, and the owner step 0 to 9 as on a shared tab; the one-row array was different for each item and was matched to no readable path, Controller_obj.stashSocketItemSlot reading no fingerprint while the tab held items; not replayed by name); merge: not-observed (Live 1e byname-socket-merge not-run: the one given unit was a jewel; by hand an orb merged through StashAddToStack of the same shape answering true, then InvGridClearItemNode on its bag cell, as the Materials merge does; not replayed by name). The game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for this tab after ValidateItem and before any armed placement routine, with nothing in the logged answer showing it (Live 1e H1 and H1b), so no by-name shape carries that refusal. The tab saves as stash.hss socket_tab, and menulayout lists one one-cell StashSocketGrid node per item
+socketRoute: new: not-observed (Live 1e byname-socket not-run: no second socketable of an accepted kind was left off the tab; by hand, Live 1e hand-socket, a rune and a gem from the bag's Socket sub-tab took ValidateItem with self = other = the bag grid, StashAddToStack with the same self and other, a one-row array, 9, 2, the item, 1, 8, answering false, GridAddItem on that array with 0 and undefined answering success=true at x 0, y 0, ValidateItem with self the stash grid and other the bag grid, and the owner step 0 to 9 as on a shared tab; the one-row array was different for each item and was matched to no readable path, Controller_obj.stashSocketItemSlot reading no fingerprint while the tab held items; not replayed by name); merge: byname (Live 1f byname-socket-merge and byname-socket-nonstack, Live 1g byname-socket-merge with its close, reopen and save checks; the shape is socketMergeRoute's below: the array is the item's own StashSocketGrid node's one-cell nodeGrid, the one-row array Live 1e's hand moves logged; by hand, Live 1e, an orb merged the same way). The game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for this tab after ValidateItem and before any armed placement routine, with nothing in the logged answer showing it (Live 1e H1 and H1b), so no by-name shape carries that refusal. The tab saves as stash.hss socket_tab, and menulayout lists one one-cell StashSocketGrid node per item
 newMaterialRoute: byname (Live 1e byname-material-new, replaying hand-material-new; saved-stash-has-keys and saved-bag-lacks-keys pass): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answering false (no stack of that identity on the tab); GridAddItem with the same self, other and array, the item, 0, undefined, answering success=true with the landing x, y; ValidateItem with self the stash grid and other the bag grid; the source clear, InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined, because the placement left the item in its bag cell; then the owner step 0 to 9, ChangeItemOwner with self the stash grid, other the bag grid, 0, 9 and the key as text, answering undefined. The whole stack (908) landed in one cell; the key then answered undefined on map 0 and an item struct on map 9, as the hand-placed unit did, and saved in stash.hss under material_tab. The hand move's first ValidateItem (self = other = the bag grid) was not in the replay
 wholeStackMerge: byname (Live 1e byname-merge-whole): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, its whole count (15), 0, answered true, and the tab's sum for that base id rose from 1 to 16, by exactly the count; then InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined emptied the bag cell. Measured on the Materials tab only; every hand merge logged a fifth argument of 1 (Live 1c hand-merge, Live 1e's orb on the Socketable tab)
+buttonRoute: poll (Live 1g sort-click-control, node-idle, node-press-poll-unbound and node-press-negative, all pass, the game running throughout): the Move all node is created with its activation left undefined (UiCreateNode's fourth argument undefined, UiSetActivationFunc never called, no script hooked for it), and the plugin's frame tick reads a left press and the mouse's GUI point by name and counts a press inside the node's box, read at that frame, as the button press. A click on the unbound node ran nothing of the game's (no armed row with the node as self, no dialog) and the poll counted it once; a click on the panel background beside it counted only as a press outside both buttons. The activation route is dropped: Live 1f's click on a node bound to UiSetFloatingToFalse reached the plugin's detour through the node's user event 15 (self the node, other the stash window, one argument, the node's activationArgs) and then ended the game with "bool argument is unset" inside that script (Live 1f node-press-activation, fail (crash)). The node survived a bag and a stash tab switch (Live 1g node-survives-tab-switch), so it needs no recreate on a tab switch
+buttonOwner: UI_Stash_obj (Live 1g node-gone-on-close and reopen-no-stale-node, pass): the node is created with self = other = the UI_Stash_obj window on show, UiRemoveNode with that same self removes it (Live 1g node-removed-by-name), and the stash's own close destroys a node still listed, so a reopen finds none
+sortActivation: InventorySortTab self=instance (Live 1f and Live 1g sort-activation, pass): the bag's Sort button is the UI_Button_Small_obj whose uiNodeCallstack is InventorySort, text Sort Tab (not Sort), activationArgs [1], its activation InventorySortTab bound with the Sort node itself as self; the button is found by that call-stack name, never by its text (the stash side's own sort button is StashSort, also Sort Tab)
+socketMergeRoute: byname (orb and gem; every identity with a node on the tab merges) (Live 1f byname-socket-merge and byname-socket-nonstack, Live 1g byname-socket-merge, merge-close, reopen-shows, saved-stash-has-keys and saved-bag-lacks-keys): StashAddToStack with self = other = the bag grid (its Socket sub-tab on show), the nodeGrid of the StashSocketGrid node holding the item's identity (one cell; the tab is read as the set of those nodes, each cell's key resolved on map 9), 9, 2, the item, its count, 8, answering true, the node's o rising by exactly the count (orb, base id 118: 81 to 82 in both sessions); then InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined. The gem (base id 38) merged the same way and gained o=2, so it is stackable (Live 1e's missing o was a count of 1) and there is no non-stackable case on this tab. The merged unit's key reached no saved file and the orb stayed under stash.hss socket_tab. Measured with a count of 1; a new identity on this tab stays unmeasured by name (socketRoute new:)
 
 ## Ship design
 
