@@ -28,24 +28,37 @@ namespace ForgePact {
 // - the plan over the shown bag tab's occupied cells: each item once, in
 //   row-major order (row, then column) by its first cell, so a multi-cell
 //   item is planned by its top-left cell (Plan);
+// - the sources: the bag page on show (tabSelected 0..4) for every stash tab
+//   the run takes; the bag's Materials view (-4) for the Materials tab only;
+//   the bag's Socket view (-2) for the Socketable tab only, and only while a
+//   socketable path is measured; a stash page from a bag sub-tab is refused
+//   as unmeasured (Plan);
 // - the route per item for the shown stash tab: a grid tab (0, 1..19) takes
 //   anything through the tab routine, or through the stack routine when a
 //   stack of the item's identity is already there; the Materials tab (-4)
-//   takes only class 14 and the Socketable tab (-2) only class 15, both
-//   through the stack routine; any other class there is a skip that calls
-//   nothing; the Unique tab (-5) and any number not listed here refuse the
-//   run (TabOf, Plan);
+//   takes only class 14 and the Socketable tab (-2) only class 15: onto the
+//   stack of the item's identity when there is one, else into a cell through
+//   the tab placement, each only where kMeasuredRoutes says the research
+//   reproduced it by name (a route not reproduced is a planned skip); any
+//   other class there is a skip that calls nothing; the Unique tab (-5), the
+//   Socketable tab while no socketable path is measured, and any number not
+//   listed here refuse the run (TabOf, Plan);
 // - never overflow (the owner's 2026-09-28 rule): before each item's call the
-//   adapter re-reads the shown stash tab's room for it, and an item the shown
-//   tab has no room for (or whose room could not be read) is a skip that calls
-//   nothing, so it stays in the bag and every other stash tab is left as it was
-//   (MayCall);
+//   adapter re-reads the shown stash tab's room for it - a free block of the
+//   item's footprint on the shown tab's own cells (Room), or a stack of its
+//   identity there - and an item the shown tab has no room for (or whose room
+//   could not be read) is a skip that calls nothing, so it stays in the bag
+//   and every other stash tab is left as it was (MayCall);
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
-//   when the source cell no longer holds the key, the key is on no stash tab
-//   other than the shown one, and either the destination holds it (a cell) or
-//   the stack rose by exactly the item's count (a stack); skipped when the game
+//   when the stash tab on show is still the planned one, the source cell no
+//   longer holds the key, and either the destination holds it (a cell) or the
+//   stack rose by exactly the item's count (a stack); skipped when the game
 //   answered no and every side read unchanged; unconfirmed otherwise, a read
-//   that could not be made and an item found on another tab included;
+//   that could not be made and a shown tab that changed included. Only the
+//   shown tab is re-read: the other stash tabs have no container readable by
+//   name (RUNTIME_DATA_MODELS § 17), so no-spill rests on the route - each
+//   routine is handed only the shown tab's array - and on the room check
+//   (owner, 2026-09-28, "Accept");
 // - that a skip continues and an unconfirmed item stops the run and turns the
 //   mod off for the session (Record);
 // - the lines: one per item, one per run, the refusal and loss lines, and the
@@ -88,9 +101,33 @@ struct StashMoveView {
 };
 
 struct StashMoveItem {
-    StashMoveCell  cell;
+    StashMoveCell  cell;      // its first cell (row-major)
+    int            width = 1; // its footprint in the bag: the columns and rows
+    int            height = 1;//   its cells cover
     StashMoveRoute route = StashMoveRoute::None;
     std::string    refusal;   // why a None route is skipped; empty otherwise
+};
+
+// The routes the research reproduced by name, each from its line in
+// docs/stash-move-research.md § Decision (Live 1e, recorded in round A'8).
+// A route that is false here is not called: the Socketable tab is refused
+// while neither socketable path is measured, a new identity on a special tab
+// and a merge of more than one unit are planned skips. Fixed at build time,
+// never a setting; PlanWith takes another value only so the tests can pin
+// what each rule does when it is the other way.
+struct StashMoveRoutes {
+    bool socketNew = false;       // socketRoute new: not-observed (by hand only)
+    bool socketMerge = false;     // socketRoute merge: not-observed (by hand only)
+    bool newMaterial = true;      // newMaterialRoute: byname
+    bool wholeStackMerge = true;  // wholeStackMerge: byname (on the Materials tab)
+};
+
+// The shown stash tab's own cells as the adapter read them, [row][col] like
+// the game's nodeGrid ([y][x]); rows = 0 when they could not be read.
+struct StashMoveGrid {
+    int               rows = 0;
+    int               cols = 0;
+    std::vector<char> filled;   // rows * cols, row-major: 1 a cell holds an item
 };
 
 struct StashMovePlan {
@@ -115,7 +152,7 @@ struct StashMoveReport {
     int         destinationY = -1;
     int64_t     stackBefore = -1;      // the destination stack's count (stack route)
     int64_t     stackAfter = -1;
-    int         keyOnOtherTab = -1;    // 1 the key was read on a stash tab other than the shown one, 0 on none
+    int         shownTabChanged = -1;  // 1 stashTabSelected moved off the planned tab, 0 unchanged
 };
 
 struct StashMoveResult {
@@ -144,10 +181,16 @@ public:
     static constexpr int kUnreadTab = -1000;
     static constexpr int kMaterialClass = 14;
     static constexpr int kSocketClass = 15;
-    // The bag's page tabs (Main, then four Extra); its sub-tabs are not a
-    // source in this version.
+    // The bag's page tabs (Main, then four Extra), and the two sub-tabs that
+    // can be a source: Materials for the Materials tab, Socket for the
+    // Socketable tab.
     static constexpr int kBagPageTabs = 5;
+    static constexpr int kBagMaterialsView = -4;
+    static constexpr int kBagSocketView = -2;
+    static constexpr int kMaterialsTab = -4;
+    static constexpr int kSocketableTab = -2;
     static constexpr int kLastGridTab = 19;
+    static constexpr StashMoveRoutes kMeasuredRoutes{};
 
     static StashMoveAllMod& Instance() {
         static StashMoveAllMod s_Instance;
@@ -189,9 +232,15 @@ public:
         return StashMoveTab::Unsupported;
     }
 
-    // The items one run moves. Off, or anything the run cannot stand on,
-    // refuses the whole run with its reason and plans nothing.
+    // The items one run moves, on the routes the research measured. Off, or
+    // anything the run cannot stand on, refuses the whole run with its reason
+    // and plans nothing.
     StashMovePlan Plan(const StashMoveView& view) const {
+        return PlanWith(view, kMeasuredRoutes, IsEnabled(), OffThisSession());
+    }
+
+    static StashMovePlan PlanWith(const StashMoveView& view, const StashMoveRoutes& routes, bool enabled,
+                                  bool offThisSession = false) {
         StashMovePlan plan;
         plan.bagTab = view.bagTab;
         plan.stashTab = view.stashTab;
@@ -200,14 +249,25 @@ public:
             plan.reason = reason;
             return plan;
         };
-        if (!IsEnabled()) return refuse(OffThisSession() ? "off for this session" : "off");
+        if (!enabled) return refuse(offThisSession ? "off for this session" : "off");
         if (!view.stashListed) return refuse("no stash window");
         if (view.stashTab == kUnreadTab || view.bagTab == kUnreadTab) return refuse("no shown tab");
-        StashMoveTab tab = TabOf(view.stashTab);
-        if (tab == StashMoveTab::Unsupported || tab == StashMoveTab::Unique)
+        const StashMoveTab tab = TabOf(view.stashTab);
+        const bool socketMeasured = routes.socketNew || routes.socketMerge;
+        if (tab == StashMoveTab::Unsupported || tab == StashMoveTab::Unique
+            || (tab == StashMoveTab::Socketable && !socketMeasured))
             return refuse("unsupported stash tab " + std::to_string(view.stashTab));
-        if (view.bagTab < 0 || view.bagTab >= kBagPageTabs)
-            return refuse("unsupported bag tab " + std::to_string(view.bagTab));
+        // The source: a bag page for any destination; a sub-tab only for the
+        // special tab its moves were measured into.
+        const bool page = view.bagTab >= 0 && view.bagTab < kBagPageTabs;
+        const bool subTab = view.bagTab == kBagMaterialsView || (view.bagTab == kBagSocketView && socketMeasured);
+        if (!page && !subTab) return refuse("unsupported bag tab " + std::to_string(view.bagTab));
+        if (!page) {
+            const bool fits = (view.bagTab == kBagMaterialsView && tab == StashMoveTab::Materials)
+                || (view.bagTab == kBagSocketView && tab == StashMoveTab::Socketable);
+            if (!fits) return refuse("unsupported bag tab " + std::to_string(view.bagTab) + " for stash tab "
+                                     + std::to_string(view.stashTab));
+        }
 
         std::vector<StashMoveCell> cells = view.cells;
         std::stable_sort(cells.begin(), cells.end(), [](const StashMoveCell& a, const StashMoveCell& b) {
@@ -220,18 +280,67 @@ public:
             seen.push_back(c.key);
             StashMoveItem item;
             item.cell = c;
+            Footprint(cells, c.key, item.width, item.height);
+            const bool many = c.count > 1;
             if (tab == StashMoveTab::Grid) {
-                item.route = (c.stackable && c.destinationHasStack) ? StashMoveRoute::Stack : StashMoveRoute::Cell;
+                if (c.stackable && c.destinationHasStack) {
+                    if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+                    else item.route = StashMoveRoute::Stack;
+                } else {
+                    item.route = StashMoveRoute::Cell;
+                }
             } else {
-                bool materials = tab == StashMoveTab::Materials;
-                int mine = materials ? kMaterialClass : kSocketClass;
-                if (c.itemClass == mine) item.route = StashMoveRoute::Stack;
-                else item.refusal = std::string("not taken by the ") + (materials ? "Materials" : "Socketable") + " tab";
+                const bool materials = tab == StashMoveTab::Materials;
+                const int mine = materials ? kMaterialClass : kSocketClass;
+                if (c.itemClass != mine) {
+                    item.refusal = std::string("not taken by the ") + (materials ? "Materials" : "Socketable") + " tab";
+                } else if (c.destinationHasStack) {
+                    // The one-unit merge is measured on the Materials tab
+                    // (stackMoveRoute); the Socketable tab's only by its path.
+                    if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
+                    else if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+                    else item.route = StashMoveRoute::Stack;
+                } else {
+                    const bool placed = materials ? routes.newMaterial : routes.socketNew;
+                    if (placed) item.route = StashMoveRoute::Cell;
+                    else item.refusal = "a new kind stays in the bag";
+                }
             }
             plan.items.push_back(item);
         }
         if (plan.items.empty()) return refuse("nothing to move");
         return plan;
+    }
+
+    // The columns and rows one key's cells cover in the bag; 1 by 1 when it
+    // has none.
+    static void Footprint(const std::vector<StashMoveCell>& cells, const std::string& key, int& width, int& height) {
+        int x0 = 0, x1 = -1, y0 = 0, y1 = -1;
+        for (const StashMoveCell& c : cells) {
+            if (c.key != key) continue;
+            if (x1 < x0) { x0 = x1 = c.x; y0 = y1 = c.y; continue; }
+            x0 = (std::min)(x0, c.x); x1 = (std::max)(x1, c.x);
+            y0 = (std::min)(y0, c.y); y1 = (std::max)(y1, c.y);
+        }
+        width = x1 < x0 ? 1 : x1 - x0 + 1;
+        height = y1 < y0 ? 1 : y1 - y0 + 1;
+    }
+
+    // Whether the shown tab's own cells have a free block `width` columns by
+    // `height` rows: 1 yes, 0 no, -1 the cells were not read (never "has
+    // room", and never "full" either).
+    static int Room(const StashMoveGrid& g, int width, int height) {
+        if (g.rows <= 0 || g.cols <= 0 || (int)g.filled.size() != g.rows * g.cols || width < 1 || height < 1) return -1;
+        for (int r = 0; r + height <= g.rows; ++r) {
+            for (int c = 0; c + width <= g.cols; ++c) {
+                bool free = true;
+                for (int dr = 0; free && dr < height; ++dr)
+                    for (int dc = 0; free && dc < width; ++dc)
+                        if (g.filled[(size_t)(r + dr) * g.cols + (c + dc)]) free = false;
+                if (free) return 1;
+            }
+        }
+        return 0;
     }
 
     StashMoveTally Begin(const StashMovePlan& plan) const {
@@ -257,9 +366,11 @@ public:
     // before the call: 1 it has a free cell for the item's size, or (stack
     // route) a stack of its identity with room; 0 it has neither; -1 the read
     // could not be made. Anything but 1 fills skip with a skip that called
-    // nothing, and the item stays in the bag. The tab passed to the routine is
-    // always the shown one, and this check comes first, because the game's own
-    // quick move may place into another tab when the one it is given is full.
+    // nothing, and the item stays in the bag. The array handed to the routine
+    // is always the shown tab's, and this check comes first, so an item the
+    // shown tab cannot hold never reaches a routine at all (the by-name
+    // placement answered no room on a full tab and tried no other, Live 1d
+    // byname-full; the game's own quick move did the same, Live 1c hand-full).
     static bool MayCall(const StashMoveItem& item, int shownTabHasRoom, StashMoveResult& skip) {
         if (item.route == StashMoveRoute::None) { skip = NotAttempted(item); return false; }
         if (shownTabHasRoom == 1) return true;
@@ -283,13 +394,13 @@ public:
         };
         const bool stack = item.route == StashMoveRoute::Stack;
         const std::string said = r.answer.empty() ? std::string("no answer") : r.answer;
-        // Never overflow: the key on any stash tab but the shown one is a
-        // loss, whatever the game answered; other tabs not read is not "not
-        // there".
-        if (r.keyOnOtherTab == 1)
-            return unconfirmed("the game answered " + said + " but the item was read on a stash tab other than the shown one");
-        if (r.keyOnOtherTab != 0)
-            return unconfirmed("the game answered " + said + " but the other stash tabs could not be read");
+        // The re-reads below are of the shown tab's own array: a tab on show
+        // that moved off the planned one, or could not be re-read, leaves
+        // nothing to confirm them against, whatever the game answered.
+        if (r.shownTabChanged == 1)
+            return unconfirmed("the game answered " + said + " but the shown stash tab changed during the move");
+        if (r.shownTabChanged != 0)
+            return unconfirmed("the game answered " + said + " but the shown stash tab could not be re-read");
 
         if (!r.answered || !r.accepted) {
             // A refusal is a skip only when both sides read unchanged.

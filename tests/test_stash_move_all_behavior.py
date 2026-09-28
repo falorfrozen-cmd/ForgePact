@@ -23,8 +23,13 @@ skipped and the next continues; that an item is moved only when both sides
 confirm it and anything else stops the run and turns the mod off; and that the
 lines name what moved and what stayed. The owner's 2026-09-28 rule, never
 overflow: an item the shown stash tab has no room for is skipped with nothing
-called, so it stays in the bag and every other tab is unchanged, and an item
-re-read on any tab other than the shown one is unconfirmed.
+called, so it stays in the bag and every other tab is unchanged, and a shown
+tab that changed during the move, or could not be re-read, is unconfirmed.
+
+The routes Live 1e decided (docs/stash-move-research.md § Decision): a new
+material identity goes into a cell of the Materials tab, a whole stack merges
+by its count, and the Socketable tab and the bag's Socket view are refused;
+the bag's Materials view feeds the Materials tab only.
 """
 import os
 import shutil
@@ -157,10 +162,39 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # and the rest stay. An unreadable room check calls nothing either.
         self.assertScenario("target/full_shown_tab_keeps_item_in_bag_and_other_tabs_unchanged")
 
-    def test_target_item_read_on_another_tab_is_unconfirmed(self):
-        # With its negative control: the key on the shown tab and no other is
-        # moved; on any other tab (or the other tabs unread) it is a loss.
-        self.assertScenario("target/item_read_on_another_tab_is_unconfirmed")
+    def test_target_shown_tab_changed_or_unread_is_unconfirmed(self):
+        # Only the shown tab is re-read (the others have no container readable
+        # by name; owner, 2026-09-28, "Accept"). With its negative control: the
+        # tab unchanged and the key at the answer's cell is moved; the tab on
+        # show moved off the planned one, or unreadable, is a loss.
+        self.assertScenario("target/shown_tab_changed_or_unread_is_unconfirmed")
+
+    def test_target_room_is_a_free_block_of_the_items_footprint_on_the_shown_tab(self):
+        self.assertScenario("target/room_is_a_free_block_of_the_items_footprint_on_the_shown_tab")
+
+    # ---- the routes Live 1e decided ------------------------------------------
+
+    def test_baseline_grid_tab_destination_from_a_bag_sub_tab_is_refused(self):
+        # With its negative control: a bag page is a source for a stash page.
+        self.assertScenario("baseline/grid_tab_destination_from_a_bag_sub_tab_is_refused")
+
+    def test_target_bag_materials_view_feeds_the_materials_tab(self):
+        self.assertScenario("target/bag_materials_view_feeds_the_materials_tab")
+
+    def test_target_new_material_identity_is_placed_in_a_cell(self):
+        # newMaterialRoute: byname. Negative control: the route not measured
+        # makes it a skip that calls nothing.
+        self.assertScenario("target/new_material_identity_is_placed_in_a_cell")
+
+    def test_target_whole_stack_merges_by_its_count(self):
+        # wholeStackMerge: byname. Negative control: not measured, more than
+        # one unit is a skip and one unit still merges.
+        self.assertScenario("target/whole_stack_merges_by_its_count")
+
+    def test_target_socketable_tab_and_socket_view_are_refused(self):
+        # socketRoute: neither path byname. Negative control: a measured path
+        # would let class 15 in from the bag's Socket view, and nothing else.
+        self.assertScenario("target/socketable_tab_and_socket_view_are_refused")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
