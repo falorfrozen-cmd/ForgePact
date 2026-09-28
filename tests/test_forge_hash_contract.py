@@ -81,6 +81,8 @@ EXPECTED_PLAYER_COMMANDS = {
     # The frame profiler: measures, changes nothing in the game
     # (test_frame_profiler.py pins it).
     "frameprof",
+    # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
+    "farsleep",
 }
 
 

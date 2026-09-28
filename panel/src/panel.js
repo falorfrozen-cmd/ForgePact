@@ -367,6 +367,10 @@ async function boot(){
     document.getElementById('mod_craft_mats').checked=mcm;
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
+    const mfs=!!c.mod_far_sleep;
+    document.getElementById('mod_far_sleep').checked=mfs;
+    document.getElementById('mfsval').textContent=mfs?'on':'off';
+    document.getElementById('mfsval').className='val '+(mfs?'':'off');
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
       const on=!!c[key];
       document.getElementById(id).checked=on;
@@ -601,6 +605,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_craft_mats',value:e.target.checked})});
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_far_sleep').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_far_sleep',value:e.target.checked})});
+        const v=document.getElementById('mfsval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Far scenery sleep '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
@@ -911,10 +920,10 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';

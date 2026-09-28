@@ -34,6 +34,14 @@
 // stands for sends. `oracle.mjs replay --derived` runs these steps on a fresh
 // sandbox after the legacy ones.
 //
+// NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
+// sleep): nothing recorded stands for them, so their contract is written out
+// here as literals - on posts the mod's key with true and sends its plugin
+// verb with 1, off posts false and sends the verb with 0, on again repeats the
+// first, and its Turn off button repeats the off - entered on the tab and Mods
+// sub-tab they sit on. They come last, so no earlier step's index moves, and
+// each is in `controls`, so the replay's coverage check counts it.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -64,6 +72,12 @@ export function switchIdOf(selector) {
 }
 
 export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for="${controlId}"]`;
+
+// Boolean mods added after every recording (see the header): the config key,
+// where the switch sits, and the plugin verb src/forgepact.py sends for it.
+export const NATIVE_BOOLEANS = [
+  { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
+];
 const setPost = (body) => [{ url: '/api/set', body }];
 
 // The tab (and Mods sub-tab) the legacy walk had open when it first reached
@@ -171,6 +185,17 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
   for (const selector of keySupplement ? keySupplement.controls : []) {
     const switchId = switchIdOf(selector);
     if (switchId) switchedSlider(selector, switchId, keySupplement.steps);
+  }
+  // The boolean mods no recording has: their literal contract, last.
+  for (const { key, tab, sub, verb } of NATIVE_BOOLEANS) {
+    const selector = '#' + key;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+    const on = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} 1`] } } });
+    const off = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} 0`] } } });
+    push(selector, 'click', { expect: { posts: { same: on }, cmds: { same: on } } });
+    push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

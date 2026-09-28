@@ -21,6 +21,15 @@
   adds up to more than 3%. There is no panel switch yet: send the command with
   `tools/ipc.ps1` or any tool that writes `bp_ipc\cmd.txt`.
 
+- **Far scenery sleep.** A new switch in Mods → Quality of Life, off by
+  default. A zone's far trees, bushes, hay, rocks and fences are put to sleep
+  so the game stops updating them every frame, and they wake again before they
+  come into view. In Act 1's first zone about 4,200 of its 6,200 objects sleep,
+  and the game's own work per frame drops by about a sixth: at 60 fps that is
+  spare time, and in crowded zones where frames run long it is frame time.
+  Shrines, chests, traps, walls and monsters are never touched, towns and menus
+  are left alone, and switching it off wakes everything at once.
+
 ## Fixed
 
 - **A plugin message with a percent sign could close the game.** When the

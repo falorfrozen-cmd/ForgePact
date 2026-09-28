@@ -828,6 +828,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The frame profiler: measures, changes nothing in the game
             # (test_frame_profiler.py).
             "frameprof",
+            # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
+            "farsleep",
         }
         self.assertEqual(entries, expected)
 
@@ -2941,13 +2943,14 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
         # (test_stash_bag_layout_contract.py), and `frameprof` the frame
-        # profiler (test_frame_profiler.py).
+        # profiler (test_frame_profiler.py), and `farsleep` is far sleep's
+        # switch (test_far_sleep_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "frameprof"})
+                                        "frameprof", "farsleep"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
