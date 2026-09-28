@@ -39,10 +39,11 @@ export function parseArgs(argv) {
   return out;
 }
 
-// How long a sandbox may take to print its port. Starting one costs about
-// 4.5 s on an idle machine, most of it importing hs_game_sdk, and much longer
-// beside three other browser suites on four cores (up to 41 s measured), so
-// the limit is only there to name a sandbox that hangs.
+// How long a sandbox may take to print its port (`startTimeoutMs` overrides
+// it). Starting one costs about 4.5 s on an idle machine, most of it
+// importing hs_game_sdk, and much longer beside three other browser suites on
+// four cores (up to 41 s measured), so the limit is only there to name a
+// sandbox that hangs.
 export const SANDBOX_START_TIMEOUT_MS = 120000;
 // How many of a sandbox's last stderr lines an error quotes.
 const STDERR_TAIL = 20;
@@ -65,7 +66,8 @@ const STDERR_TAIL = 20;
 // sandbox is still running and quotes its last stderr lines; a failed start
 // and a failed `state()` carry that text in their message, which is how a
 // refused connection says whether anything was still serving.
-export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null, src = null } = {}) {
+export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null, src = null,
+  startTimeoutMs = SANDBOX_START_TIMEOUT_MS } = {}) {
   const args = ['-3', SANDBOX];
   if (legacy) args.push('--legacy');
   if (src) args.push('--src', src);
@@ -107,9 +109,10 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
   });
   child.stderr.on('end', () => { if (partial) printLine(partial); partial = ''; });
   const describe = () => {
-    const status = exited === null
-      ? `${label} is still running`
-      : `${label} exited with code ${exited.code}${exited.signal ? ` (${exited.signal})` : ''}, ${(exited.after / 1000).toFixed(1)} s after it started`;
+    const after = exited && `, ${(exited.after / 1000).toFixed(1)} s after it started`;
+    const status = exited === null ? `${label} is still running`
+      : exited.signal ? `${label} was stopped by ${exited.signal}${after}`
+        : `${label} exited with code ${exited.code}${after}`;
     return tail.length ? `${status}; its last stderr lines:\n${tail.join('\n')}` : status;
   };
   const info = await new Promise((resolveInfo, reject) => {
@@ -123,8 +126,8 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
       late = true;
       child.kill();
       await within(closed, 5000);
-      reject(new Error(`sandbox server did not report its port within ${SANDBOX_START_TIMEOUT_MS / 1000} s and was stopped; ${describe()}`));
-    }, SANDBOX_START_TIMEOUT_MS);
+      reject(new Error(`sandbox server did not report its port within ${startTimeoutMs / 1000} s and was stopped; ${describe()}`));
+    }, startTimeoutMs);
     closed.then(() => {
       clearTimeout(timer);
       if (!late) reject(new Error(`sandbox server exited early; ${describe()}`));
@@ -135,7 +138,9 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
         const m = line.match(/^(port|cmds)=(.+)$/);
         if (m) found[m[1]] = m[2];
       }
-      if (found.port && found.cmds) { clearTimeout(timer); resolveInfo(found); }
+      // Not once the start timer has fired: that sandbox is being stopped, and
+      // a port line still on the pipe must not win over the timeout's reject.
+      if (!late && found.port && found.cmds) { clearTimeout(timer); resolveInfo(found); }
     });
   }).catch((e) => { dropSeed(); throw e; });
   const port = Number(info.port);

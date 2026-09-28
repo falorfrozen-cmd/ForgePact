@@ -20,11 +20,17 @@ from pathlib import Path
 PANEL = Path(__file__).resolve().parents[1] / "panel"
 BROWSER_LIB = PANEL / "tests" / "lib" / "browser.mjs"
 
-# A seed key the sandbox refuses (exit 2, a message on its stderr), then a
-# sandbox that starts, stops and is asked for its state afterwards.
+# A sandbox with a seed that cannot report its port within 0.5 s (a start
+# takes seconds: importing hs_game_sdk alone is more), a seed key the sandbox
+# refuses (exit 2, a message on its stderr), then a sandbox that starts, stops
+# and is asked for its state afterwards. The two later cases take long enough
+# for a late sandbox left running to reach its seed and print the failure the
+# old start timeout caused.
 SCRIPT = """
 import { startSandbox } from %(lib)s;
 const out = {};
+try { await startSandbox({ seed: { theme: 'ledger' }, startTimeoutMs: 500 }); out.late = 'started'; }
+catch (e) { out.late = e.message; }
 try { await startSandbox({ seed: { no_such_key: 1 } }); out.early = 'started'; }
 catch (e) { out.early = e.message; }
 const sandbox = await startSandbox({ offline: true });
@@ -59,6 +65,13 @@ class StartSandboxReportTests(unittest.TestCase):
             raise AssertionError(f"node exited {result.returncode}:\n{result.stdout}\n{result.stderr}")
         cls.out = json.loads(lines[-1])
         cls.stderr = result.stderr
+
+    def test_a_late_sandbox_is_stopped_before_its_seed_goes(self):
+        self.assertIn("did not report its port within 0.5 s and was stopped", self.out["late"])
+        self.assertRegex(self.out["late"], r"sandbox pid \d+ was stopped by SIGTERM")
+        # Dropped while it still ran, the seed made the sandbox fail on the
+        # missing file instead: "--seed: cannot read ...seed.json".
+        self.assertNotIn("cannot read", self.stderr)
 
     def test_an_early_exit_quotes_the_sandboxs_own_reason(self):
         self.assertIn("sandbox server exited early", self.out["early"])
