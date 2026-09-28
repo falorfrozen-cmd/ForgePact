@@ -353,6 +353,12 @@ jobs:
   # dependencies or a compiler.
   panel-browser-tests:
     runs-on: windows-2025-vs2026
+    # The job takes about ten minutes. A tag's own harness can hang instead of
+    # failing: until the browser tooling killed a sandbox that started too
+    # late, that sandbox kept its suite's pipes open, and `_npm`'s timeout then
+    # waited on them for good. GitHub's default would hold the runner for six
+    # hours; this limit applies to every tag, old ones included.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
