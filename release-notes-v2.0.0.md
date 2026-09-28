@@ -119,6 +119,7 @@ also get new plugin commands for the stash, the bag and your skills.
 - **Find every setting from Ember's search.** Map reveal, pet collection,
   Headhunter, Beacon and other switches now appear alongside sliders.
   Choosing a result takes you to the right section and focuses its control.
+  The zone-mod search stays reachable with Tab after jumping there.
 - **Undo stays clear of your settings.** Ember reserves a separate footer row
   for the Undo message, including long names in small windows.
 

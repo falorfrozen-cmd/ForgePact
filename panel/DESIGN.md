@@ -487,8 +487,11 @@ navigation rail and controls stack. Dialogs use native focus trapping.
 Undo occupies a separate footer row, with wrapping text and a reachable action,
 outside the content pane. Its opacity follows the existing motion tokens;
 it does not slide over the footer controls. Brief status messages open/close
-instantly in their own footer row. Shared tooltips keep the existing motion
-tokens, keyboard behavior and reduced-motion rules. In reduced motion, opacity and colour fades remain
+instantly in their own footer row. Idle status text stays rendered and clipped
+out of layout, with its
+live region still present in the accessibility tree before content changes.
+Shared tooltips retain their motion tokens, keyboard behavior and reduced-motion
+rules. In reduced motion, opacity and colour fades remain
 while movement is removed. Ember's theme menu
 and expanded Enabled mods list participate in the pane's scroll flow, reveal
 themselves on open and cap their list height to the pane. Every palette and

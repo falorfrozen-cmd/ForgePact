@@ -37,6 +37,8 @@ keep their existing fades. The action is consistently named **Apply all now**.
 Undo lives in a separate row of the footer and fades without sliding across
 controls. Long names wrap there; the content pane reserves the actual height.
 Brief status messages occupy their own row instantly, without overlapping Undo.
+Their live region stays in the accessibility tree while visually hidden.
+Search leaves enabled controls in their original keyboard Tab order.
 An active Undo follows theme changes without losing its action or timer.
 
 ## Development

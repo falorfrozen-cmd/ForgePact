@@ -603,7 +603,7 @@
           "Copper/stone texture surfaces, borders and glow",
           "Theme-scoped material colors and display typography"
         ],
-        "motion": "Shared token-based tooltip motion; keep opacity and colour fades under reduced motion and remove movement. Keyboard actions remain instant. In-flow menus and brief footer status messages appear/close instantly. Undo fades without translation in its reserved footer row.",
+        "motion": "Shared token-based tooltip motion; keep opacity and colour fades under reduced motion and remove movement. Keyboard actions remain instant. In-flow menus and brief footer status messages appear/close instantly. The idle status live region remains rendered and visually clipped, never display:none. Undo fades without translation in its reserved footer row.",
         "figma": "Separate approved artwork; the existing three-palette Figma export is unchanged. Figma library work is deferred."
       },
       "componentPreviewScope": "Existing ds-* snippets describe the three flat palettes. Ember composition is documented in DESIGN.md and src/ember/."

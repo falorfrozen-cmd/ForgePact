@@ -542,7 +542,7 @@ function renderEmberSearch() {
       // Child switches can be disabled until their parent is on. Show the
       // actual setting without changing it just to make a search hit focusable.
       const target = hit.input.disabled ? row : hit.input;
-      if (target === row) row.tabIndex = -1;
+      if (hit.input.disabled && row !== hit.input) row.tabIndex = -1;
       // Mods balances its columns in ResizeObserver on first reveal, moving
       // rows and dropping focus. Wait for that layout before focusing the hit.
       requestAnimationFrame(() => requestAnimationFrame(() => {

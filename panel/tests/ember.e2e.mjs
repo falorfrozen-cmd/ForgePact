@@ -22,6 +22,14 @@ try {
     await page.waitForFunction(({selector,value})=>document.querySelector(selector)?.value===String(value),{selector,value});
   }
   assert.equal(await page.locator('html').getAttribute('data-theme'),'ember');
+  // An idle visual toast still needs to exist in the accessibility tree
+  // before its text changes, otherwise polite announcements can be lost.
+  const cdp = await page.context().newCDPSession(page);
+  const documentNode = await cdp.send('DOM.getDocument');
+  const toastNode = await cdp.send('DOM.querySelector', {nodeId: documentNode.root.nodeId, selector: '#toast'});
+  const toastTree = await cdp.send('Accessibility.getPartialAXTree', {nodeId: toastNode.nodeId, fetchRelatives: false});
+  assert.ok(toastTree.nodes.some(node => !node.ignored && node.role?.value === 'status'), 'Idle toast must remain an accessible live region');
+  await cdp.detach();
   await openTab(page,'overview');
   assert.equal(await page.locator('[data-quick-row]').count(),3);
   await saved(async()=>{await page.locator('#quick-number-magicfind').fill('5.25');await page.locator('#quick-number-magicfind').press('Tab')});
@@ -129,6 +137,14 @@ try {
   await page.locator('#emberSearchResults button').click();
   await page.waitForFunction(() => document.activeElement?.matches('.theme-picker-trigger'));
   assert.equal(await page.locator('.theme-picker-trigger').evaluate(el => document.activeElement === el), true);
+  await page.keyboard.press('Control+k');
+  await page.locator('#emberSearchInput').fill('Satanic Zone Mods');
+  await page.locator('#emberSearchResults button').click();
+  await page.waitForFunction(() => document.activeElement?.id === 'satSearch');
+  assert.equal(await page.locator('#satSearch').evaluate(el => el.tabIndex), 0, 'Standalone search control must stay in the Tab order');
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'satSearch');
   checks.push('Global search finds all toggles and selects, focuses the real destination, and preserves its API handler');
 
   for(const theme of ['ledger','graphite','sigil','ember']) {
