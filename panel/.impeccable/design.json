@@ -23,7 +23,8 @@
         "palettes": {
           "ledger": "#e99a4c",
           "graphite": "#d89c6b",
-          "sigil": "#e8707a"
+          "sigil": "#e8707a",
+          "ember": "#e99748"
         }
       },
       "accent-hover": {
@@ -45,7 +46,8 @@
         "palettes": {
           "ledger": "#f2ae68",
           "graphite": "#ecc299",
-          "sigil": "#f08c94"
+          "sigil": "#f08c94",
+          "ember": "#ffc383"
         }
       },
       "accent-ink": {
@@ -67,7 +69,8 @@
         "palettes": {
           "ledger": "#1a1109",
           "graphite": "#1a1410",
-          "sigil": "#1a0a0d"
+          "sigil": "#1a0a0d",
+          "ember": "#1a1109"
         }
       },
       "accent-tint": {
@@ -89,7 +92,8 @@
         "palettes": {
           "ledger": "#2b1e12",
           "graphite": "#2a2119",
-          "sigil": "#24151a"
+          "sigil": "#24151a",
+          "ember": "#332116"
         }
       },
       "bg-base": {
@@ -111,7 +115,8 @@
         "palettes": {
           "ledger": "#15110d",
           "graphite": "#131517",
-          "sigil": "#0e1013"
+          "sigil": "#0e1013",
+          "ember": "#101112"
         }
       },
       "bg-raised": {
@@ -133,7 +138,8 @@
         "palettes": {
           "ledger": "#251e17",
           "graphite": "#1e2225",
-          "sigil": "#1b1f25"
+          "sigil": "#1b1f25",
+          "ember": "#19191a"
         }
       },
       "bg-hover": {
@@ -155,7 +161,8 @@
         "palettes": {
           "ledger": "#2d241c",
           "graphite": "#25282b",
-          "sigil": "#22262e"
+          "sigil": "#22262e",
+          "ember": "#28211c"
         }
       },
       "bg-sunken": {
@@ -177,7 +184,8 @@
         "palettes": {
           "ledger": "#100d0a",
           "graphite": "#101214",
-          "sigil": "#0a0b0e"
+          "sigil": "#0a0b0e",
+          "ember": "#090b0d"
         }
       },
       "border-strong": {
@@ -199,7 +207,8 @@
         "palettes": {
           "ledger": "#826848",
           "graphite": "#686f79",
-          "sigil": "#616d80"
+          "sigil": "#616d80",
+          "ember": "#967556"
         }
       },
       "border-subtle": {
@@ -221,7 +230,8 @@
         "palettes": {
           "ledger": "#3a2f25",
           "graphite": "#303439",
-          "sigil": "#2a2f38"
+          "sigil": "#2a2f38",
+          "ember": "#514438"
         }
       },
       "text-primary": {
@@ -243,7 +253,8 @@
         "palettes": {
           "ledger": "#efe4d3",
           "graphite": "#eeedeb",
-          "sigil": "#eceef2"
+          "sigil": "#eceef2",
+          "ember": "#eee7da"
         }
       },
       "text-muted": {
@@ -265,7 +276,8 @@
         "palettes": {
           "ledger": "#b5a794",
           "graphite": "#abb0b8",
-          "sigil": "#a9b0bc"
+          "sigil": "#a9b0bc",
+          "ember": "#bab1a5"
         }
       },
       "text-faint": {
@@ -287,7 +299,8 @@
         "palettes": {
           "ledger": "#948672",
           "graphite": "#9a9fa6",
-          "sigil": "#8c94a1"
+          "sigil": "#8c94a1",
+          "ember": "#aaa093"
         }
       },
       "text-inverse": {
@@ -309,7 +322,8 @@
         "palettes": {
           "ledger": "#1a1109",
           "graphite": "#1a1410",
-          "sigil": "#1a0a0d"
+          "sigil": "#1a0a0d",
+          "ember": "#1a1109"
         }
       },
       "track": {
@@ -331,7 +345,8 @@
         "palettes": {
           "ledger": "#816852",
           "graphite": "#67707a",
-          "sigil": "#616d81"
+          "sigil": "#616d81",
+          "ember": "#76604a"
         }
       },
       "switch-idle": {
@@ -353,7 +368,8 @@
         "palettes": {
           "ledger": "#79818d",
           "graphite": "#7a8492",
-          "sigil": "#79818d"
+          "sigil": "#79818d",
+          "ember": "#79818d"
         }
       },
       "focus": {
@@ -375,7 +391,8 @@
         "palettes": {
           "ledger": "#ffc47e",
           "graphite": "#ecc299",
-          "sigil": "#f08c94"
+          "sigil": "#f08c94",
+          "ember": "#ffc383"
         }
       },
       "ok": {
@@ -397,7 +414,8 @@
         "palettes": {
           "ledger": "#8bd3a6",
           "graphite": "#8fcfa8",
-          "sigil": "#7fd1ae"
+          "sigil": "#7fd1ae",
+          "ember": "#8bd3a6"
         }
       },
       "warn": {
@@ -419,7 +437,8 @@
         "palettes": {
           "ledger": "#e8c06a",
           "graphite": "#e3bd6f",
-          "sigil": "#e9d86e"
+          "sigil": "#e9d86e",
+          "ember": "#e8c06a"
         }
       },
       "warn-tint": {
@@ -441,7 +460,8 @@
         "palettes": {
           "ledger": "#261f14",
           "graphite": "#24221e",
-          "sigil": "#20201a"
+          "sigil": "#20201a",
+          "ember": "#261f14"
         }
       },
       "danger": {
@@ -463,7 +483,8 @@
         "palettes": {
           "ledger": "#f29ba6",
           "graphite": "#f08a94",
-          "sigil": "#fa9529"
+          "sigil": "#fa9529",
+          "ember": "#f29ba6"
         }
       }
     },
@@ -558,7 +579,35 @@
         "name": "compact",
         "value": "max-width: 720px"
       }
-    ]
+    ],
+    "themeContract": {
+      "default": "ember",
+      "preserveExplicitChoice": true,
+      "flatPalettes": [
+        "ledger",
+        "graphite",
+        "sigil"
+      ],
+      "ember": {
+        "name": "Ember Forge",
+        "source": "src/ember/",
+        "reference": "../design/ember/reference.png",
+        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane labelled by the current page title and a separate bottom action row that reserves its actual height, including a wrapping Undo row. In-flow theme and Enabled mods menus open/close instantly; Undo fades without movement. Global search indexes real sliders, switches and selects, with dedicated pool-filter destinations and a visible Theme trigger. Apply status text uses at least --font-size-xs.",
+        "typography": {
+          "display": "EmberFell (IM Fell English), Georgia, serif",
+          "body": "Segoe UI, Arial, sans-serif",
+          "symbol": "Arial, sans-serif"
+        },
+        "approvedExceptions": [
+          "Local illustrated forge artwork and setting icons",
+          "Copper/stone texture surfaces, borders and glow",
+          "Theme-scoped material colors and display typography"
+        ],
+        "motion": "Shared token-based tooltip motion; keep opacity and colour fades under reduced motion and remove movement. Keyboard actions remain instant. In-flow menus and brief footer status messages appear/close instantly. The idle status live region remains rendered and visually clipped, never display:none. Undo fades without translation in its reserved footer row.",
+        "figma": "Separate approved artwork; the existing three-palette Figma export is unchanged. Figma library work is deferred."
+      },
+      "componentPreviewScope": "Existing ds-* snippets describe the three flat palettes. Ember composition is documented in DESIGN.md and src/ember/."
+    }
   },
   "components": [
     {
@@ -651,8 +700,8 @@
     }
   ],
   "narrative": {
-    "northStar": "The Graphite Console",
-    "overview": "The panel is an instrument, not a showcase. It is a dark, flat console of rows: a label, a switch, a slider, a mono value. Each row says what a mod does and whether it is on. Depth comes from four tonal steps of one warm-to-cool dark (sunken, base, raised, hover). There is no imagery, no illustration beside a label, and no ornament. The one warm accent marks what is on, selected or actionable, and it stays scarce enough to find at a glance.\n\nDensity is deliberate. Rows are 44px tall, type runs from 12px to 26px, and a two-column workspace fits a whole tab's settings in one 1280px screen. Colour, radius, space and type all come from custom properties, so a palette switch repaints everything and changes nothing else. There are three palettes, all modes of one variable collection: **Ledger** (warm umber and amber, the default), **Graphite** (neutral grey with a copper accent) and **Sigil** (blue-black with a rose accent).\n\nMotion is quiet and functional. A hover eases its colours in only where there is a real pointer. A button gives under the press. Popovers scale from their trigger, and toasts rise into place. Nothing that a poll repaints moves, and a keyboard action never animates.",
+    "northStar": "Ember Forge, with the preserved Graphite Console palettes",
+    "overview": "Ember Forge is the owner-approved default presentation: forge artwork, a sidebar, Overview quick controls and global search. Explicit Ledger, Graphite and Sigil choices preserve the flat console. See extensions.themeContract and DESIGN.md for Ember-specific exceptions; the following describes the original flat palettes.\n\nThe panel is an instrument, not a showcase. It is a dark, flat console of rows: a label, a switch, a slider, a mono value. Each row says what a mod does and whether it is on. Depth comes from four tonal steps of one warm-to-cool dark (sunken, base, raised, hover). There is no imagery, no illustration beside a label, and no ornament. The one warm accent marks what is on, selected or actionable, and it stays scarce enough to find at a glance.\n\nDensity is deliberate. Rows are 44px tall, type runs from 12px to 26px, and a two-column workspace fits a whole tab's settings in one 1280px screen. Colour, radius, space and type all come from custom properties, so a palette switch repaints everything and changes nothing else. There are three palettes, all modes of one variable collection: **Ledger** (warm umber and amber, the default), **Graphite** (neutral grey with a copper accent) and **Sigil** (blue-black with a rose accent).\n\nMotion is quiet and functional. A hover eases its colours in only where there is a real pointer. A button gives under the press. Popovers scale from their trigger, and toasts rise into place. Nothing that a poll repaints moves, and a keyboard action never animates.",
     "keyCharacteristics": [
       "Flat surfaces, with depth carried by tonal steps. Shadows appear only under floating layers.",
       "One accent per palette, reserved for on, selected and primary states.",

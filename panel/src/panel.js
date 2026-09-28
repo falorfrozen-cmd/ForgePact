@@ -49,7 +49,7 @@ function decoratePanelIcons(){
 let lastInputKeyboard=false;
 addEventListener('keydown',()=>{lastInputKeyboard=true},true);
 addEventListener('pointerdown',()=>{lastInputKeyboard=false},true);
-function toast(m){const t=document.getElementById('toast');t.toggleAttribute('data-instant',lastInputKeyboard);t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
+export function toast(m){const t=document.getElementById('toast');t.toggleAttribute('data-instant',lastInputKeyboard);t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
   const dice=Math.max(0,Math.round(v)-1); const oneIn=dice>0?Math.max(1,Math.round(7500/dice)):0;
@@ -296,7 +296,8 @@ async function boot(){
   setST(await j('/api/state'));
   const c=ST.cfg;
   document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>openTab(b.dataset.tab));
-  let initial=c.game_exe?'modifiers':'setup';
+  const palette=applyTheme(c.theme);
+  let initial=c.game_exe?(palette==='ember'?'overview':'modifiers'):'setup';
   try{initial=sessionStorage.getItem('forgepact_tab')||initial}catch(e){}
   try{setModsSubtab(sessionStorage.getItem('forgepact_mods_subtab')||modsSubtab)}catch(e){}
   openTab(initial,false);
@@ -401,6 +402,7 @@ async function boot(){
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
   bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
+  document.dispatchEvent?.(new Event('forgepact:ready'));
   document.getElementById('saveIndicator').textContent='Settings loaded';
 }
 function paintVersion(){
@@ -868,7 +870,8 @@ function preparePanelUI(){
   document.getElementById('exepath').setAttribute('aria-label','Hero Siege executable path');
   document.getElementById('controlSearch').oninput=filterControlRows;
   document.querySelectorAll('[data-control-filter]').forEach(button=>button.onclick=()=>{setControlFilter(button.dataset.controlFilter);filterControlRows()});
-  document.querySelectorAll('.tabbtn').forEach((button,index,buttons)=>button.onkeydown=e=>{
+  document.querySelectorAll('.tabbtn').forEach(button=>button.onkeydown=e=>{
+    const buttons=[...document.querySelectorAll('.tabbtn')].filter(b=>!b.hidden),index=buttons.indexOf(button);
     const direction=['ArrowRight','ArrowDown'].includes(e.key)?1:['ArrowLeft','ArrowUp'].includes(e.key)?-1:0;
     if(!direction&&!['Home','End'].includes(e.key))return;
     e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;
@@ -924,6 +927,7 @@ export function refreshSavedControls(){
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
   renderEnabledMods(c);
+  document.dispatchEvent?.(new Event('forgepact:settings'));
 }
 export function filterControlRows(){
   if(!document.getElementById('controlSearch'))return;
@@ -1105,7 +1109,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods)}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods);document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

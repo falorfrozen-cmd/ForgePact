@@ -3,3 +3,5 @@
 # them on commit, silently corrupting a font or a screenshot.
 *.woff2 binary
 *.png binary
+*.webp binary
+*.ttf binary

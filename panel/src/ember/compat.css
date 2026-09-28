@@ -1,0 +1,86 @@
+/* Adapt the approved material skin to the Svelte 2.0 shell and controls. */
+/* One constrained content viewport. The action bar occupies its own row,
+   so its actual height (including wrapping/zoom) never hides the last setting. */
+html[data-theme="ember"] #appShell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100dvh; min-height: 0; padding-bottom: 0; }
+html[data-theme="ember"] #wrap { width: 100%; min-height: 0; height: auto; overflow-x: hidden; overflow-y: auto; scrollbar-width: auto; scrollbar-gutter: stable; scrollbar-color: #b58251 #141516; overscroll-behavior-y: contain; scroll-padding: 80px 0 24px; padding-bottom: 24px; }
+html[data-theme="ember"] .ember-footer { position: relative; inset: auto; min-width: 0; margin: 12px 16px 16px; flex-wrap: wrap; row-gap: var(--space-4); }
+html[data-theme="ember"] .ember-notices { flex: 1 0 100%; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-3); }
+/* Keep the idle status region in the accessibility tree before its text
+   changes. Clip it out of layout, never hide its ancestor with display:none. */
+html[data-theme="ember"] .ember-notices:not(:has(.undo-toast, #toast.show)) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); pointer-events: none; }
+html[data-theme="ember"] #wrap:focus-visible { outline-offset: -2px; }
+html[data-theme="ember"] .sidebar { position: fixed; inset: 0 auto 0 0; height: 100vh; display: flex; flex-direction: column; align-items: stretch; gap: 0; overflow-y: auto; }
+html[data-theme="ember"] .tabbar { display: flex; flex-direction: column; width: 100%; flex: 0 0 auto; overflow: visible; }
+html[data-theme="ember"] .tabbtn { width: 100%; flex: none; justify-content: flex-start; }
+html[data-theme="ember"] .control-dock { display: block; }
+html[data-theme="ember"] .topline { display: flex; }
+html[data-theme="ember"] .breadcrumb { display: block; }
+html[data-theme="ember"] #statusbar { position: static; inset: auto; height: auto; padding: 0; border: 0; background: transparent; margin-left: auto; flex-wrap: nowrap; box-shadow: none; }
+html[data-theme="ember"] #chipGame { position: static; inset: auto; padding: 0; border: 0; }
+html[data-theme="ember"] .status-foot { position: relative; display: flex; flex-direction: column; order: initial; margin: auto 22px 12px; padding-top: 28px; gap: 8px; white-space: normal; font-size: 12px; }
+html[data-theme="ember"] .status-offline { display: none; }
+html[data-theme="ember"] .status-foot #panelver { display: block; }
+html[data-theme="ember"] #enabledMods { margin: 0 0 14px; padding: 9px 12px; border: 1px solid #514438; border-radius: 3px; background: #111214; min-width: 0; }
+html[data-theme="ember"] #enabledMods[data-form="tray"] { position: relative; inset: auto; display: flex; min-height: 42px; }
+/* Expanded menus stay in the scroll flow, rather than being clipped outside
+   the pane. Their own lists are capped to the available pane height on open. */
+html[data-theme="ember"] #enabledMods[data-form="tray"]:not([data-measure]) { flex-wrap: wrap; }
+html[data-theme="ember"] #enabledMods[data-form="tray"]:not([data-measure]) > h2 { position: static !important; width: auto; height: auto; clip: auto; padding: 0; background: none; }
+html[data-theme="ember"] #enabledMods[data-form="tray"]:not([data-measure]) > ul { position: relative; inset: auto; flex-basis: 100%; width: 100%; min-width: 0; padding-top: var(--space-3); }
+html[data-theme="ember"] #enabledMods h2 { font: 13px "Segoe UI", sans-serif; }
+html[data-theme="ember"] .enabled-mods-toggle { margin-left: auto; }
+html[data-theme="ember"] .ember-density-enable { display: flex; gap: 7px; align-items: center; margin-top: 6px; font: 11px "Segoe UI", sans-serif; color: #c8baa8; }
+html[data-theme="ember"] .ember-density-enable input { width: 15px; height: 15px; accent-color: #f9a14f; }
+html[data-theme="ember"] .ember-quick-off .ember-quick-range { filter: saturate(.25); }
+html[data-theme="ember"] .ember-control-label { min-width: 0; }
+html[data-theme="ember"] .slider-switch { flex: none; }
+html[data-theme="ember"] .plugin-warning { background: none; border: 0; width: auto; padding: 0; margin: 0; }
+html[data-theme="ember"] .plugin-warning-tooltip { z-index: 100; }
+html[data-theme="ember"] .theme-picker-list { position: relative; top: auto; margin-top: 4px; overflow-y: auto; overscroll-behavior: contain; }
+/* A short pane needs all of its height for an open menu. Let the status rail
+   scroll away with it instead of covering the first choices. */
+html[data-theme="ember"] #wrap:has(.theme-picker[data-open], #enabledMods[data-open]) .control-dock { position: relative; }
+html[data-theme="ember"] #wrap:has(.theme-picker[data-open], #enabledMods[data-open]) { scroll-padding: var(--space-4) 0; }
+html[data-theme="ember"] .ember-footer .page-actions { margin: 0; }
+html[data-theme="ember"] #chipApply { font-size: var(--font-size-xs); }
+html[data-theme="ember"] #gemfilter_panel { background: #101214; }
+html[data-theme="ember"] .ember-overview { grid-column: 1 / -1; }
+html[data-theme="ember"] .setting-icon { display: inline-block; width: 26px; height: 26px; flex: 0 0 26px; vertical-align: middle; }
+html[data-theme="ember"] .card h2 .setting-icon { width: 30px; height: 30px; flex-basis: 30px; }
+html[data-theme="ember"] .ember-footer .setting-icon { display: none; }
+html[data-theme="ember"] #toast { position: relative; inset: auto; max-width: 100%; display: flex; transform: none; transition: none; overflow-wrap: anywhere; }
+html[data-theme="ember"] #toast:not(.show) { position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; overflow: hidden; clip-path: inset(50%); }
+/* Undo owns a footer row; its measured height, including wrapped names, is
+   reserved by the shell instead of covering the scroll pane or Apply. */
+html[data-theme="ember"] .undo-toast { position: relative; inset: auto; max-width: 100%; min-width: 0; transform: none; transition-property: opacity; }
+html[data-theme="ember"] .undo-toast-text { min-width: 0; overflow-wrap: anywhere; }
+html[data-theme="ember"] .undo-toast-button { flex: none; }
+html[data-theme="ember"] .ember-footer #applyall:before { mask: none; }
+@media (hover: hover) and (pointer: fine) {
+  html[data-theme="ember"] .ember-footer #applyall:hover { color: #ffe2bb; }
+}
+html[data-theme="ember"] .slider-switch:not([data-live]) input:checked + .sl { background: #3b3b3f; border-color: #777; box-shadow: none; }
+html[data-theme="ember"] .slider-switch:not([data-live]) input:checked + .sl:before { background: #a8a39b; box-shadow: none; }
+@media (min-width: 1151px) {
+  html[data-theme="ember"] .ember-hero { height: clamp(240px, min(calc((100vw - var(--sidebar)) * .276), calc(100vh - 690px)), 410px); padding-top: 38px; }
+}
+html:not([data-theme="ember"]) .ember-overview,
+html:not([data-theme="ember"]) .ember-help { display: none !important; }
+@media (max-width: 1150px) {
+  html[data-theme="ember"] #statusbar { gap: 9px; }
+  html[data-theme="ember"] .breadcrumb { font-size: 12px; }
+}
+@media (max-width: 720px) {
+  html[data-theme="ember"] #appShell { grid-template-rows: auto minmax(0, 1fr) auto; }
+  html[data-theme="ember"] .ember-footer { margin: 5px; }
+  html[data-theme="ember"] .sidebar { position: relative; inset: auto; height: auto; overflow: visible; }
+  html[data-theme="ember"] .tabbar { flex-direction: row; overflow-x: auto; }
+  html[data-theme="ember"] .tabbar { scrollbar-width: thin; }
+  html[data-theme="ember"] .tabbtn { width: auto; flex: 1; justify-content: center; }
+  html[data-theme="ember"] .status-foot { display: none; }
+  html[data-theme="ember"] .brand > div { display: block; }
+  html[data-theme="ember"] .brand > svg { display: none; }
+  html[data-theme="ember"] .brand:before { content: ''; width: 48px; height: 48px; background: var(--relief-anvil) center/contain no-repeat; }
+  html[data-theme="ember"] #statusbar { margin-left: 0; flex-wrap: wrap; }
+  html[data-theme="ember"] .ember-footer .page-actions { gap: 8px; }
+}
