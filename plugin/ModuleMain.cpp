@@ -37701,6 +37701,17 @@ static void SmaButtonEnsure()
     try { sortVisible = sortListed && g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue("visible") }).ToBoolean(); }
     catch (...) { sortVisible = false; }
     if (g_SmaButtonHeld && !SmaButtonIsOurs(g_SmaButton)) SmaButtonForget();   // the stash's close took it
+    // The stash open with no visible Sort to sit beside, three ensure steps
+    // running: said once a session, so a button that never shows (a game
+    // patch renaming InventorySort, say) is not silence.
+    static int s_NoSort = 0;
+    static bool s_NoSortSaid = false;
+    s_NoSort = stashListed && !sortVisible ? s_NoSort + 1 : 0;
+    if (s_NoSort >= 3 && !s_NoSortSaid && mod.IsEnabled()) {
+        s_NoSortSaid = true;
+        Out(std::string("stashmoveall: button - not shown: no visible Sort button (uiNodeCallstack ") + kSmaSortCallstack
+            + ") is listed beside the stash" + (sortListed ? " (it is listed, not visible)" : "") + "; F4 still works");
+    }
     switch (mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)) {
     case ForgePact::StashMoveButtonStep::Create: SmaButtonCreate(stash, window, sort); break;
     case ForgePact::StashMoveButtonStep::Remove: SmaButtonRemove(); break;

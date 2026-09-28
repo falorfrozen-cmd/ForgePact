@@ -374,6 +374,9 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn('static constexpr const char* kSmaSortCallstack = "InventorySort";', block)
         self.assertNotIn('"Sort', block)
         self.assertIn("mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)", ensure)
+        # A Sort that never shows is said once, not silence.
+        self.assertIn('"stashmoveall: button - not shown: no visible Sort button (uiNodeCallstack "', ensure)
+        self.assertIn("if (s_NoSort >= 3 && !s_NoSortSaid && mod.IsEnabled()) {", ensure)
         create = self.body("static void SmaButtonCreate(")
         self.assertIn("SmaCall(kSmaUiCreateNode, stash, stash,", create)
         self.assertIn("object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);", create)

@@ -1762,7 +1762,10 @@ frame start one run between them. A node that cannot be made (the Sort row's
 x, y or bbox not read, `UiCreateNode` refusing, the label not taking) is
 reported once, `stashmoveall: button - <reason>; F4 still works`, is not tried
 again until the stash is opened again or the switch turned on again, and never
-turns the mod off.
+turns the mod off. A stash open for three ensure steps with no visible Sort
+node to sit beside is said once a session (`stashmoveall: button - not shown:
+no visible Sort button ...`), so a button that never shows - a game patch
+renaming `InventorySort`, say - is not silence.
 
 **What one run stands on**, found by name at the point of use: `UI_Stash_obj`
 (its `tabSelected` is the bag view on show, its `stashTabSelected` the stash tab
