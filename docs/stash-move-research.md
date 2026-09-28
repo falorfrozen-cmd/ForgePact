@@ -563,6 +563,22 @@ lookup lines for the moved key. Every armed row that logged is quoted with
 `self=`, `other=`, each `a<n>=` (an array with its `len`/`len0`) and `ret=`:
 those are the shapes the by-name blocks replay.
 
+Each gesture has three outcomes the reads tell apart, because the click
+control has already shown what a plain click does. The item in a stash cell
+and in no bag cell is `pass`. The item still in its bag cell, with no new
+`InvStartDragging` or `InvCopyItemDragData` line, is `not-observed`. The bag
+cell empty, the key in no stash cell and a drag row logged means the game did
+not see Ctrl: the click was a plain `Pick up` and the item is on the cursor.
+Nothing in this toolkit has yet shown that a Ctrl held through `hs_input`
+(a scancode key-down) reaches the game, so that outcome is
+`not-run (instrument: Ctrl not seen - the click picked the item up)`, never
+a result about the quick move. The item is put back at once, before any tab
+switch, with one plain left click on the same point and a `menulayout` read
+of its cell; after it in the first gesture, the later gestures are not sent
+(`not-run (instrument: Ctrl not seen in gesture-ctrl-personal)`), the by-name
+blocks use their no-gesture shapes, and `gestureRoute` reads not-observed for
+the instrument's reason.
+
 - personal tab shown, `<K_J2>` - `gesture-ctrl-personal`; then
   `grid-array-identity` on its landing cell:
 
@@ -576,7 +592,14 @@ those are the shapes the by-name blocks replay.
   owner rule);
 - shared tab 2 shown with 0 empty cells, `<K_J4>` - `gesture-ctrl-full`: the
   tab's cell list before, the bag, the tab, then each other tab in order until
-  `<K_J4>` is found (the bag, the shown tab, or tab `<n>`, a spill).
+  `<K_J4>` is found (the bag, the shown tab, or tab `<n>`, a spill). This
+  gesture is sent only when `gesture-ctrl-personal` or `gesture-ctrl-shared`
+  passed earlier in the same session. "Stayed in the bag" is also what a
+  gesture reads when it does nothing at all (Ctrl not seen, a point off by a
+  cell, the window not focused), so only a Ctrl + left click that has already
+  moved an item into the stash lets the full-tab answer mean anything. With
+  neither passed it is
+  `not-run (instrument: no Ctrl + left click moved an item this session)`.
 
 **Grid item by name into the personal tab** (checks `grid-move-byname`,
 `grid-move-map`) - runs only when `lookup-control` passed. The placement for
@@ -646,7 +669,13 @@ as the template and a count of 1, makes `<K_MU>`, a one-unit stack of `<K_MA>`'s
 left click on `<K_MA>`'s cell in `<mg>` then puts `<K_MA>`'s whole stack on
 the tab (`gesture-ctrl-material`, its rows quoted: on the static reading
 `StashAddToStack` answers false, then a placement into the tab's array, then
-the source clear). The merge by name uses the self, other and sixth argument
+the source clear). Before the merge by name, the Materials tab is read for a
+stack of `<K_MU>`'s base id (`<K_MX>`'s when the one-unit give was refused).
+With none on the tab no call is made and `stack-move-byname` is
+`not-run (instrument: no merge target on the tab)`: the routine answers false
+when there is nothing to merge into (§ Static reading 2, (c)), so a false then
+says nothing about the route, which is how Live 1's two falses came about. The
+merge by name uses the self, other and sixth argument
 `StashAddToStack` logged in that gesture if it logged one; otherwise as
 written, and once more with `<mg>` as self and other if the first answers
 false with the merge target present. Then the source clear on `<K_MU>`'s cell
@@ -710,6 +739,10 @@ identity by name), the close and reopen, and the saved files read with
 `tools/save_item_keys.py`. Those save reads cover the bag's own file,
 `inventory_order_<slot>.hss`, as well as `stash.hss` and the character file:
 the bag is saved there, not in the character file (§ Static reading 2, (g)).
+All three files are copied before the session and read again after it, in
+one read with a `--key` per moved key; the bag check passes only when the
+copy's read shows each moved key in a bag container first, which proves the
+read can see the bag, and is `not-run` when the bag's file was not read.
 No person at the keyboard; every click uses the default hold. Every by-name
 call follows the recording rule under § Instrument, and each check is `pass`,
 `fail`, `not-observed` (with what was supplied) or `not-run (instrument:
@@ -789,7 +822,7 @@ quoted in full.
 | click-control | a plain click on `<K_J1>`'s cell picks it up (drag rows rising, the cell empty), a second puts it back | | - | | |
 | gesture-ctrl-personal | Ctrl + left click on `<K_J2>`, personal tab shown: where it lands, its map, every row logged | | - | | |
 | gesture-ctrl-shared | Ctrl + left click on `<K_J3>`, shared tab 1 shown: where it lands, its map, every row logged (`ChangeItemOwner` or not) | | - | | |
-| gesture-ctrl-full | Ctrl + left click on `<K_J4>`, full shared tab 2 shown: the bag, that tab or another tab, and the shown tab's cells before and after | | - | | |
+| gesture-ctrl-full | Ctrl + left click on `<K_J4>`, full shared tab 2 shown: the bag, that tab or another tab, and the shown tab's cells before and after; sent only after a Ctrl + left click moved an item this session | | - | | |
 | gesture-ctrl-material | Ctrl + left click on `<K_MA>` in the bag's Materials sub-tab, Materials tab shown: the tab's sum and the rows | | - | | |
 | grid-array-identity | `Controller_obj.stashPersonalGrid` and the grid node's `nodeGrid` at `<K_J2>`'s landing cell | - | - | | |
 | grid-move-byname | `<K_J5>` in a personal-tab cell and in no bag cell after the by-name block | | | | |
@@ -797,12 +830,12 @@ quoted in full.
 | grid-move-shared-byname | `<K_J6>` in a shared-tab-1 cell and in no bag cell after the by-name block | | | | |
 | grid-move-shared-map | `<K_J6>`'s two lookup replies against `<K_S1>`'s | - | | | |
 | tab-full-byname | the by-name placement into full shared tab 2: `success=false`, both sides unchanged (instrument check) | | | | |
-| stack-move-byname | the Materials tab's sum for `<K_MU>`'s identity up by 1 and `<K_MU>`'s cell gone | | | | |
+| stack-move-byname | the Materials tab's sum for `<K_MU>`'s identity up by 1 and `<K_MU>`'s cell gone, run only with a stack of that identity already on the tab | | | | |
 | mat-new-byname | the Materials tab gains `<K_MB>`'s identity and its count; the bag cell gone | | | | |
 | close-survives | the game after the stash close | - | - | | |
 | reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | | |
 | saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | | |
-| saved-bag-lacks-keys | no moved key under a bag container, `inventory_order_<slot>.hss` included | - | - | | |
+| saved-bag-lacks-keys | no moved key under a bag container, `inventory_order_<slot>.hss` included, after the pre-session copy's read showed each one in a bag container | - | - | | |
 
 ## Decision
 
@@ -819,8 +852,11 @@ quick-moves (`ctrl-click`, from the hint strip and Live 1b's gestures).
 `targetTabRule` (what decides the tab an item lands on, and whether it can
 spill to another tab) is set only from a gesture against a full shown tab
 (`grid-move-tab-full` in Live 1, `gesture-ctrl-full` in Live 1b), never from
-`tab-full-byname`; when that check is `not-run` it reads `not-observed
-(<reason>)`, and the mod's own rule (the shown tab's room is checked before
+`tab-full-byname`, and in Live 1b only when `gesture-ctrl-personal` or
+`gesture-ctrl-shared` passed in the same session (the Ctrl + left click's
+positive control; without it "stayed in the bag" cannot be told from a
+gesture that did nothing); when that check is `not-run` it reads
+`not-observed (<reason>)`, and the mod's own rule (the shown tab's room is checked before
 any call, and no route that can pick another tab is used) stands either way.
 
 gridMoveRoute: not-observed (Live 1 ran no grid block: its lookup control failed on the map 9 half, with a personal-tab key; Ctrl + left click was not tried)
