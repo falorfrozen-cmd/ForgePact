@@ -10,13 +10,17 @@ game-independent by contract and is spliced in whole; the harness supplies
 only Out().
 
 Baseline scenarios pin the game's rule as the reference (a surviving target is
-kept for 600 frames while the scan offers another) and that the real mod,
-off by default, asks for nothing. Target scenarios pin the watch: the same
+kept for 600 frames while the scan offers another), that the real mod, off by
+default, asks for nothing, and the pre-fix rules (a watch that gave a target
+up once, a re-pick count that skipped a target equal to the previous tick's)
+keeping a target taken straight back. Target scenarios pin the watch: the same
 target within the radius is given up at exactly kPetLootStuckFrames and not a
 frame earlier; a travel beyond the radius never counts; a different target, no
-target or a skipped frame restarts; a target is given up once until another
-(or none) has been seen; a target that vanishes first asks for nothing; and
-the singleton's toggle lines and stat line.
+target or a skipped frame restarts; a target taken straight back after its
+give-up (ground item or coin) is given up again every kPetLootStuckFrames and
+counted once per give-up as a re-pick, by kind (PetLootRepickRing); a target
+that vanishes first asks for nothing; and the singleton's toggle lines and
+stat line.
 
 No automated session measures #94; Live procedure 1 of workorder
 forgepact-pet-loot-stuck is the live confirmation.
@@ -113,6 +117,12 @@ class PetLootUnstickBehaviorTests(unittest.TestCase):
     def test_baseline_mod_off_never_asks(self):
         self.assertScenario("baseline/mod_off_never_asks")
 
+    def test_baseline_latched_watch_keeps_a_target_taken_straight_back(self):
+        # The pre-fix rules as the reference: the same id taken straight back
+        # after its give-up is given up once and never again, and no re-pick
+        # is counted; its positive control counts one after a tick of none.
+        self.assertScenario("baseline/latched_watch_keeps_a_target_taken_straight_back")
+
     # ---- target: the stuck-target watch -------------------------------------
 
     def test_target_constants(self):
@@ -131,8 +141,24 @@ class PetLootUnstickBehaviorTests(unittest.TestCase):
         self.assertScenario("target/no_target_restarts")
         self.assertScenario("target/skipped_frame_restarts")
 
-    def test_target_given_up_once_per_target(self):
-        self.assertScenario("target/given_up_once_per_target")
+    def test_target_ground_taken_straight_back_is_given_up_again(self):
+        # The fix departs from baseline/latched_watch_keeps_a_target_taken_straight_back:
+        # the same id handed straight back is given up every kPetLootStuckFrames,
+        # each give-up followed by one ground re-pick, the longest run at the count.
+        self.assertScenario("target/ground_taken_straight_back_is_given_up_again")
+
+    def test_target_coin_taken_straight_back_is_given_up_again(self):
+        self.assertScenario("target/coin_taken_straight_back_is_given_up_again")
+
+    def test_target_repick_counted_once_per_give_up(self):
+        # Negative controls beside the positive ones: an id never given up and
+        # an entry kPetLootHoldFrames old do not count, and a target that stays
+        # after its re-pick counts once, not once per tick.
+        self.assertScenario("target/repick_counted_once_per_give_up")
+
+    def test_old_latch_scenario_is_gone(self):
+        # The once-per-target latch was the defect; its scenario must not come back.
+        self.assertNotIn("given_up_once_per_target", self.output)
 
     def test_target_vanished_target_asks_nothing(self):
         self.assertScenario("target/vanished_target_asks_nothing")

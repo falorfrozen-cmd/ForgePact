@@ -20,13 +20,26 @@
 // watch: the same target within kPetLootStuckRadiusPx is given up at exactly
 // the frame its run reaches kPetLootStuckFrames, a travel beyond the radius
 // never counts, a different target, no target or a skipped frame restarts the
-// run, a target given up is not given up again until another target (or none)
-// has been seen, and a target that vanishes before the run fills asks for
-// nothing.
+// run, and a target that vanishes before the run fills asks for nothing.
+//
+// A target taken straight back (Replan 1 of workorder forgepact-pet-loot-stuck):
+// after the tick drops the pet's target, the game can hand the same id back in
+// its very next Step, so no tick reads "no target" in between. The pre-fix
+// rules, written out below as LatchedReference, gave such a target up once and
+// never again, and their re-pick count skipped a target equal to the previous
+// tick's, so a pet stuck on a coin was helped at most once and nothing said
+// so. The fixed rules live in the header: the watch re-arms at each give-up
+// (the same target, still in reach, is given up again every
+// kPetLootStuckFrames frames), and PetLootRepickRing counts a target seen on
+// the frame right after its give-up as a re-pick, once per give-up. TickSim
+// replays the tick's own order (re-pick decision, then the watch, then the
+// give-up remembered) through the real header.
 //
 // Red first: with these scenarios written and the header holding only an empty
 // namespace, the first error was `error C2039: 'PetLootStuckWatch': is not a
-// member of 'ForgePact'` (the first of the using-declarations below).
+// member of 'ForgePact'` (the first of the using-declarations below). Replan 1's
+// scenarios, written against the unfixed (latching) header, first failed with
+// `error C2039: 'PetLootRepickRing': is not a member of 'ForgePact'`.
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -41,6 +54,9 @@ static void Out(const std::string& s) { g_Logged.push_back(s); }
 // PRODUCTION_PETUNSTICK
 
 using ForgePact::PetLootStuckWatch;
+using ForgePact::PetLootRepickRing;
+using ForgePact::PetLootRepick;
+using ForgePact::PetLootKind;
 using ForgePact::PetLootUnstickMod;
 using ForgePact::kPetLootStuckFrames;
 using ForgePact::kPetLootStuckRadiusPx;
@@ -93,6 +109,86 @@ static std::optional<double> GameRetarget(std::optional<double> current, bool cu
     return scanPick;
 }
 
+// The pre-fix rules, as the reference the fix departs from (the header and the
+// tick before Replan 1): the watch gives a target up once and then answers
+// nothing for it until a different target, or none, has been seen; the re-pick
+// count returns at once when this tick's target equals the previous tick's,
+// and otherwise counts a give-up of the same id younger than
+// kPetLootHoldFrames. Frame() replays one tick in the tick's order.
+struct LatchedReference {
+    std::optional<double> target;
+    bool givenUp = false;
+    int64_t run = 0;
+    int64_t lastFrame = 0;
+    bool haveLast = false;
+    std::vector<std::pair<double, int64_t>> giveUps;   // id, frame
+    std::optional<double> prev;
+    int64_t prevFrame = -2;
+    int repicks = 0;
+
+    bool Observe(int64_t frame, double t, double distancePx)
+    {
+        const bool consecutive = haveLast && frame == lastFrame + 1;
+        lastFrame = frame;
+        haveLast = true;
+        if (!target || *target != t) { target = t; givenUp = false; run = 0; }
+        if (!consecutive || !(distancePx <= kPetLootStuckRadiusPx)) run = 0;
+        if (!(distancePx <= kPetLootStuckRadiusPx)) return false;
+        ++run;
+        if (givenUp || run < kPetLootStuckFrames) return false;
+        givenUp = true;
+        return true;
+    }
+
+    void Frame(int64_t f, std::optional<double> t, double distancePx)
+    {
+        const std::optional<double> previous = f == prevFrame + 1 ? prev : std::nullopt;
+        prevFrame = f;
+        prev.reset();
+        if (!t) { target.reset(); givenUp = false; run = 0; haveLast = false; return; }
+        prev = t;
+        if (!(previous && *previous == *t)) {
+            for (const auto& g : giveUps) {
+                if (g.first == *t && f - g.second < kPetLootHoldFrames) { ++repicks; break; }
+            }
+        }
+        if (Observe(f, *t, distancePx)) giveUps.push_back({ *t, f });
+    }
+};
+
+// The fixed rules, through the real header, in PetLootUnstickTick's order: the
+// previous tick's live target (none unless the previous frame saw one), the
+// re-pick decision on every tick that sees a live target, then the watch, and
+// a give-up remembered with its kind once the watch answers. No target resets
+// the watch, as the tick's no-target route does.
+struct TickSim {
+    PetLootStuckWatch watch;
+    PetLootRepickRing ring;
+    PetLootKind kind = PetLootKind::Ground;
+    std::optional<double> prev;
+    int64_t prevFrame = -2;
+    std::vector<int64_t> giveUps;
+    std::vector<int64_t> repickFrames;
+    std::vector<PetLootKind> repickKinds;
+
+    void Frame(int64_t f, std::optional<double> t, double distancePx)
+    {
+        const std::optional<double> previous = f == prevFrame + 1 ? prev : std::nullopt;
+        prevFrame = f;
+        prev.reset();
+        if (!t) { watch.Reset(); return; }
+        prev = t;
+        if (const std::optional<PetLootRepick> hit = ring.Seen(f, *t, previous)) {
+            repickFrames.push_back(f);
+            repickKinds.push_back(hit->kind);
+        }
+        if (watch.Observe(f, t, distancePx)) {
+            giveUps.push_back(f);
+            ring.Remember(f, *t, kind);
+        }
+    }
+};
+
 // ---- baseline ---------------------------------------------------------------
 
 static void BaselineGameKeepsASurvivingTarget()
@@ -124,6 +220,27 @@ static void BaselineModOffNeverAsks()
           mod.LongestRun() == 0 && g_Logged.empty(),
           "offByDefault=" + std::to_string(offByDefault) + " asks=" + std::to_string(r.count) +
           " longest=" + N(mod.LongestRun()));
+}
+
+static void BaselineLatchedWatchKeepsATargetTakenStraightBack()
+{
+    // The pre-fix rules fed the same id, within reach, on every frame -
+    // including the frame right after the give-up, as when the game hands a
+    // dropped target straight back - for kPetLootHoldFrames frames: one
+    // give-up and then nothing, and no re-pick counted, so the stat line
+    // showed neither. Positive control on the same reference: one tick of no
+    // target and then the same id is counted as a re-pick.
+    LatchedReference ref;
+    for (int64_t f = 0; f < kPetLootHoldFrames; ++f) ref.Frame(f, kA, kNear);
+    const size_t giveUps = ref.giveUps.size();
+    const int64_t first = ref.giveUps.empty() ? -1 : ref.giveUps[0].second;
+    const int repicks = ref.repicks;
+    ref.Frame(kPetLootHoldFrames, kNone, 0.0);
+    ref.Frame(kPetLootHoldFrames + 1, kA, kNear);
+    Check("baseline/latched_watch_keeps_a_target_taken_straight_back",
+          giveUps == 1 && first == kPetLootStuckFrames - 1 && repicks == 0 && ref.repicks == 1,
+          "giveUps=" + std::to_string(giveUps) + " first=" + N(first) + " repicks=" + std::to_string(repicks) +
+          " control=" + std::to_string(ref.repicks));
 }
 
 // ---- target -----------------------------------------------------------------
@@ -212,28 +329,115 @@ static void TargetSkippedFrameRestarts()
           "a2=" + std::to_string(a2.count) + " onTime=" + std::to_string(onTime));
 }
 
-static void TargetGivenUpOncePerTarget()
+// The baseline's sequence through the real header: the same id, within reach,
+// on every frame including the one right after each give-up, for
+// kPetLootHoldFrames + 1 frames (so the feed ends after its last give-up and
+// that give-up is followed by its re-pick). Then, kept from the old
+// once-per-target scenario: ten frames travelling beyond the radius give
+// nothing up, and back in reach the run restarts from the first in-reach frame.
+static bool TakenStraightBackIsGivenUpAgain(PetLootKind kind, std::string& detail)
 {
-    // A target given up is not given up again while it stays the target, nor
-    // after it leaves the radius and comes back; once another target, or
-    // none, has been seen, the same id can be given up again (a coin, which
-    // has no hold of its own, that sticks twice is counted twice). The
-    // longest run keeps growing past the count while a given-up target stays
-    // in reach, which is what shows a give-up that did not move the pet.
-    PetLootStuckWatch w;
-    const FeedResult stuck = Feed(w, 0, kPetLootStuckFrames + 500, kA, kNear);
-    const FeedResult away = Feed(w, stuck.next, 10, kA, kFar);
-    const FeedResult back = Feed(w, away.next, kPetLootStuckFrames * 3, kA, kNear);
-    const FeedResult none = Feed(w, back.next, 1, kNone, 0.0);
-    const FeedResult again = Feed(w, none.next, kPetLootStuckFrames, kA, kNear);
-    const FeedResult other = Feed(w, again.next, 1, kB, kNear);
-    const FeedResult third = Feed(w, other.next, kPetLootStuckFrames, kA, kNear);
-    Check("target/given_up_once_per_target",
-          stuck.count == 1 && stuck.first == kPetLootStuckFrames - 1 && away.count == 0 && back.count == 0 &&
-          again.count == 1 && third.count == 1 && w.Longest() == kPetLootStuckFrames + 500,
-          "stuck=" + std::to_string(stuck.count) + " back=" + std::to_string(back.count) +
-          " again=" + std::to_string(again.count) + " third=" + std::to_string(third.count) +
-          " longest=" + N(w.Longest()));
+    TickSim sim;
+    sim.kind = kind;
+    const int64_t frames = kPetLootHoldFrames + 1;
+    for (int64_t f = 0; f < frames; ++f) sim.Frame(f, kA, kNear);
+
+    const size_t n = sim.giveUps.size();
+    const size_t expected = (size_t)((frames - kPetLootStuckFrames) / kPetLootStuckFrames + 1);
+    bool spaced = n > 0 && sim.giveUps[0] == kPetLootStuckFrames - 1;
+    for (size_t i = 1; i < n; ++i)
+        spaced = spaced && sim.giveUps[i] - sim.giveUps[i - 1] == kPetLootStuckFrames;
+    bool repickEach = sim.repickFrames.size() == n;
+    for (size_t i = 0; repickEach && i < n; ++i)
+        repickEach = sim.repickFrames[i] == sim.giveUps[i] + 1 && sim.repickKinds[i] == kind;
+    const bool endsAfter = n > 0 && sim.giveUps.back() < frames - 1;
+    const long ln = (long)n;
+    const bool counted = sim.ring.Repicked() == ln &&
+        sim.ring.Ground() == (kind == PetLootKind::Ground ? ln : 0) &&
+        sim.ring.Coin() == (kind == PetLootKind::Coin ? ln : 0);
+
+    const int64_t away = frames;
+    for (int64_t f = away; f < away + 10; ++f) sim.Frame(f, kA, kFar);
+    const size_t beforeBack = sim.giveUps.size();
+    const size_t repicksBeforeBack = sim.repickFrames.size();
+    for (int64_t f = away + 10; f < away + 10 + kPetLootStuckFrames; ++f) sim.Frame(f, kA, kNear);
+    const bool awayBack = beforeBack == n && sim.giveUps.size() == n + 1 &&
+        sim.giveUps.back() == away + 10 + kPetLootStuckFrames - 1 && sim.repickFrames.size() == repicksBeforeBack;
+
+    const bool longest = sim.watch.Longest() == kPetLootStuckFrames;
+    detail = "giveUps=" + std::to_string(n) + "/" + std::to_string(expected) + " spaced=" + std::to_string(spaced) +
+             " repickEach=" + std::to_string(repickEach) + " endsAfter=" + std::to_string(endsAfter) +
+             " repicked=" + std::to_string(sim.ring.Repicked()) + " ground=" + std::to_string(sim.ring.Ground()) +
+             " coin=" + std::to_string(sim.ring.Coin()) + " awayBack=" + std::to_string(awayBack) +
+             " longest=" + N(sim.watch.Longest());
+    return n == expected && n >= 2 && spaced && repickEach && endsAfter && counted && awayBack && longest;
+}
+
+static void TargetGroundTakenStraightBackIsGivenUpAgain()
+{
+    // A ground item the game hands straight back (its timer reset, or the
+    // item counted as timer absent=): given up every kPetLootStuckFrames
+    // frames, each give-up followed by one ground re-pick, and the longest
+    // run between give-ups never past the count.
+    std::string detail;
+    const bool ok = TakenStraightBackIsGivenUpAgain(PetLootKind::Ground, detail);
+    Check("target/ground_taken_straight_back_is_given_up_again", ok, detail);
+}
+
+static void TargetCoinTakenStraightBackIsGivenUpAgain()
+{
+    // A coin has no itemCompanionTimer, so only the target is dropped and the
+    // game may pick it again at once: the case a latched watch helped at
+    // most once. Counted under coin, never under ground.
+    std::string detail;
+    const bool ok = TakenStraightBackIsGivenUpAgain(PetLootKind::Coin, detail);
+    Check("target/coin_taken_straight_back_is_given_up_again", ok, detail);
+}
+
+static void TargetRepickCountedOncePerGiveUp()
+{
+    // After one tick of no target (the case counted before the fix too).
+    PetLootRepickRing afterNone;
+    afterNone.Remember(100, kA, PetLootKind::Ground);
+    const bool none = afterNone.Seen(102, kA, kNone).has_value();
+    // A different target in between, then the given-up id.
+    PetLootRepickRing viaOther;
+    viaOther.Remember(200, kA, PetLootKind::Ground);
+    const bool otherFirst = viaOther.Seen(201, kB, kNone).has_value();
+    const bool thenA = viaOther.Seen(202, kA, kB).has_value();
+    // An id never given up, however it arrives (negative control).
+    PetLootRepickRing never;
+    never.Remember(300, kA, PetLootKind::Ground);
+    const bool neverB = never.Seen(301, kB, kNone).has_value() || never.Seen(302, kB, kA).has_value() ||
+                        never.Seen(303, kB, kB).has_value();
+    // Younger than kPetLootHoldFrames counts; that old or older does not.
+    PetLootRepickRing aged;
+    aged.Remember(1000, kA, PetLootKind::Coin);
+    const bool young = aged.Seen(1000 + kPetLootHoldFrames - 1, kA, kNone).has_value();
+    const bool atHold = aged.Seen(1000 + kPetLootHoldFrames, kA, kNone).has_value();
+    const bool older = aged.Seen(1000 + kPetLootHoldFrames + 1, kA, kNone).has_value();
+    // Through the tick's order: a target that stays the target after its
+    // re-pick (travelling, so nothing is given up) is counted once, not once
+    // per tick; leaving it for a tick and taking it back within the hold
+    // counts again, once.
+    TickSim sim;
+    for (int64_t f = 0; f < kPetLootStuckFrames; ++f) sim.Frame(f, kA, kNear);
+    const int64_t gaveUp = sim.giveUps.empty() ? -1 : sim.giveUps[0];
+    for (int64_t f = kPetLootStuckFrames; f < kPetLootStuckFrames + 50; ++f) sim.Frame(f, kA, kFar);
+    sim.Frame(kPetLootStuckFrames + 50, kNone, 0.0);
+    for (int64_t f = kPetLootStuckFrames + 51; f < kPetLootStuckFrames + 61; ++f) sim.Frame(f, kA, kFar);
+    const bool stays = sim.giveUps.size() == 1 && gaveUp == kPetLootStuckFrames - 1 &&
+        sim.repickFrames == std::vector<int64_t>{ kPetLootStuckFrames, kPetLootStuckFrames + 51 } &&
+        sim.ring.Repicked() == 2 && sim.ring.Ground() == 2;
+    const bool counters = afterNone.Repicked() == 1 && viaOther.Repicked() == 1 && never.Repicked() == 0 &&
+        aged.Repicked() == 1 && aged.Coin() == 1 && aged.Ground() == 0;
+    Check("target/repick_counted_once_per_give_up",
+          none && !otherFirst && thenA && !neverB && young && !atHold && !older && stays && counters,
+          "none=" + std::to_string(none) + " otherFirst=" + std::to_string(otherFirst) +
+          " thenA=" + std::to_string(thenA) + " neverB=" + std::to_string(neverB) +
+          " young=" + std::to_string(young) + " atHold=" + std::to_string(atHold) +
+          " older=" + std::to_string(older) + " stays=" + std::to_string(stays) +
+          " repicks=" + std::to_string(sim.repickFrames.size()) + " counters=" + std::to_string(counters));
 }
 
 static void TargetVanishedTargetAsksNothing()
@@ -286,13 +490,16 @@ int main()
 {
     BaselineGameKeepsASurvivingTarget();
     BaselineModOffNeverAsks();
+    BaselineLatchedWatchKeepsATargetTakenStraightBack();
     TargetConstants();
     TargetStuckTargetIsGivenUpAtExactlyTheCount();
     TargetTravellingTargetNeverCounts();
     TargetDifferentTargetRestarts();
     TargetNoTargetRestarts();
     TargetSkippedFrameRestarts();
-    TargetGivenUpOncePerTarget();
+    TargetGroundTakenStraightBackIsGivenUpAgain();
+    TargetCoinTakenStraightBackIsGivenUpAgain();
+    TargetRepickCountedOncePerGiveUp();
     TargetVanishedTargetAsksNothing();
     TargetModOnAsksAndCounts();
     std::cout << (g_Failures ? "RESULT FAIL " + std::to_string(g_Failures) : std::string("RESULT OK")) << "\n";

@@ -9,8 +9,11 @@ while enabled, and the tick does what docs/pet-loot-stuck-research.md says and
 nothing more - it writes `itemCompanionTimer` on a ground item (only after
 `variable_instance_exists` says the item carries it), drops the pet's
 `lootTarget` and clears its `lootList`, and never collects, destroys or calls
-anything resolved by hand; and `petunstick 0` prints the fix-1 counters
-(`timer absent=`, `re-picked while held=`) a bug report needs.
+anything resolved by hand; `petunstick 0` prints the fix-1 counters
+(`timer absent=`, `re-picked while held=`) a bug report needs; and (Replan 1)
+every tick that sees a live target reaches the header's re-pick decision,
+never returning merely because the target equals the previous tick's, so a
+target the game hands straight back is counted.
 """
 
 import re
@@ -79,6 +82,37 @@ def timer_write_is_guarded_by_exists(body: str) -> bool:
             continue
         guarded.append(braced_block(body, guard.end() - 1))
     return all(any(start < at < end for start, end in guarded) for at in writes)
+
+
+# The header's re-pick decision (PetLootRepickRing::Seen), reached through the
+# singleton, and an `if` that returns on the target equalling the previous
+# tick's (the pre-Replan-1 `if (targetId == prevTarget) return;`).
+REPICK_DECISION = re.compile(r"\.Repicks\(\)\s*\.Seen\(")
+SAME_TARGET_RETURN = re.compile(
+    r"if\s*\([^;{]*?\b(?:targetId\s*==\s*prev\w*|prev\w*\s*==\s*targetId)\b[^;{]*\)\s*\{?\s*return\b")
+
+
+def repick_decision_on_every_live_target(tick: str, note: str) -> bool:
+    """True iff every tick that saw a live target reaches the header's re-pick
+    decision: in the tick, the `PetLootNoteTargetSeen(` call follows the
+    `if (!targetExists) { ... }` refusal with no `return` in between; in
+    PetLootNoteTargetSeen's body, the `Repicks().Seen(` call comes before any
+    `return`; and neither body returns on the target equalling the previous
+    tick's target. Fails closed: no refusal, no call or no decision is False.
+    Before Replan 1 the note function returned at once on that equality, so a
+    target the game handed straight back after a give-up was never counted.
+    """
+    gone = re.search(r"if\s*\(\s*!\s*targetExists\s*\)\s*\{", tick)
+    if not gone:
+        return False
+    _start, gone_end = braced_block(tick, gone.end() - 1)
+    call = tick.find("PetLootNoteTargetSeen(", gone_end)
+    if call < 0 or re.search(r"\breturn\b", tick[gone_end + 1:call]):
+        return False
+    decision = REPICK_DECISION.search(note)
+    if not decision or re.search(r"\breturn\b", note[:decision.start()]):
+        return False
+    return not any(SAME_TARGET_RETURN.search(body) for body in (tick, note))
 
 
 def definition_body(source: str, name: str) -> str | None:
@@ -241,6 +275,29 @@ class PetLootUnstickTargetTests(unittest.TestCase):
                       '"petunstick stat: held back="'):
             self.assertIn(field, line, field)
 
+    def test_repick_decision_runs_on_every_tick_that_saw_a_live_target(self):
+        # Replan 1: a target the game hands straight back after a give-up
+        # equals the previous tick's target, and must still reach the
+        # header's re-pick decision (which counts it when the give-up was on
+        # the frame before). On code only, so a comment cannot stand in.
+        tick = strip_comments(self.tick)
+        note = strip_comments(function_body(self.plugin, "static void PetLootNoteTargetSeen("))
+        self.assertTrue(repick_decision_on_every_live_target(tick, note), note)
+
+    def test_repick_check_fails_with_the_early_return_put_back(self):
+        # Negative controls: the same assertion, on the real bodies with the
+        # pre-Replan-1 early return put back (where it was, and in the tick
+        # before the call), or with the header's decision taken out, fails.
+        tick = strip_comments(self.tick)
+        note = strip_comments(function_body(self.plugin, "static void PetLootNoteTargetSeen("))
+        early = "if (targetId == prevTarget) return;\n"
+        self.assertFalse(repick_decision_on_every_live_target(tick, early + note))
+        call = tick.index("PetLootNoteTargetSeen(")
+        self.assertFalse(repick_decision_on_every_live_target(tick[:call] + early + tick[call:], note))
+        no_decision = REPICK_DECISION.sub(".Repicks().Remember(", note)
+        self.assertNotEqual(no_decision, note)
+        self.assertFalse(repick_decision_on_every_live_target(tick, no_decision))
+
     def test_loot_list_is_cleared_only_when_it_is_a_list_id(self):
         clear_at = self.tick.index('"ds_list_clear"')
         guard = self.tick[:clear_at][-300:]
@@ -270,6 +327,14 @@ class PetLootUnstickTargetTests(unittest.TestCase):
             self.assertRegex(self.header, rf"inline constexpr \w+ {name} = ")
         self.assertIn("class PetLootStuckWatch", self.header)
         self.assertIn("class PetLootUnstickMod", self.header)
+        # Replan 1: the re-pick decision and its kinds are header code the
+        # harness compiles, and the watch no longer latches a given-up target.
+        self.assertIn("enum class PetLootKind { Other, Ground, Coin };", self.header)
+        self.assertIn("struct PetLootRepick", self.header)
+        self.assertIn("class PetLootRepickRing", self.header)
+        self.assertIn("PetLootRepickRing m_Repicks;", self.header)
+        self.assertNotIn("m_GivenUp", strip_comments(self.header))
+        self.assertNotIn("enum class PetLootKind", self.plugin)
         self.assertIn("#include <ForgePact/PetLootUnstickMod.hpp>", self.plugin)
 
 

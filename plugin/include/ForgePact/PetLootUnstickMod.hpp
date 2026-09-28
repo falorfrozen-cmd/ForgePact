@@ -32,10 +32,17 @@ namespace ForgePact {
 // VALUE_REF), and a clear the tick refuses is counted and logged. Nothing is
 // collected, destroyed or credited by the mod; there is no hook.
 //
-// PetLootStuckWatch is game-independent by contract - a frame number, a target
-// id and a distance in pixels, never an instance - so
-// tests/pet_loot_unstick_harness.cpp compiles it whole. Frames are the tick's
-// own count, one per tick while the mod is on.
+// The game may hand a dropped target straight back in its very next Step (a
+// coin has no timer; a ground item's hold may not take), so no tick reads "no
+// target" in between. The watch therefore re-arms at each give-up - the same
+// target, still in reach, is given up again every kPetLootStuckFrames frames -
+// and PetLootRepickRing counts such a take-back as a re-pick while held, once
+// per give-up, so `petunstick 0` names it.
+//
+// PetLootStuckWatch and PetLootRepickRing are game-independent by contract -
+// frame numbers, target ids and a distance in pixels, never an instance - so
+// tests/pet_loot_unstick_harness.cpp compiles them whole. Frames are the
+// tick's own count, one per tick while the mod is on.
 
 // Consecutive frames the same target has been within reach without going away
 // before it is given up: 1.5 s at 60 fps. The game tries the pickup on every
@@ -55,11 +62,14 @@ public:
     // Fed once per tick with the pet's current loot target (none when it has
     // none) and the pet-to-target distance in pixels. Returns true on the
     // frame the same target has been within kPetLootStuckRadiusPx for
-    // kPetLootStuckFrames consecutive frames, and only once for that target:
-    // the same id is not given up again until a different target, or none,
-    // has been seen. No target, a different target, a distance beyond the
-    // radius (or an unreadable one: NaN compares false) or a frame number that
-    // skips restarts the count.
+    // kPetLootStuckFrames consecutive frames, and re-arms on answering: a
+    // target that is still the target and still in reach on the next frames
+    // (the game took it straight back) is given up again exactly
+    // kPetLootStuckFrames frames after the previous give-up, and not a frame
+    // earlier. No target, a different target, a distance beyond the radius
+    // (or an unreadable one: NaN compares false) or a frame number that skips
+    // restarts the count. A give-up the tick could not carry out is followed
+    // by Reset(), which restarts it too.
     bool Observe(int64_t frame, std::optional<double> target, double distancePx) {
         const bool consecutive = m_HaveLast && frame == m_LastFrame + 1;
         m_LastFrame = frame;
@@ -68,7 +78,6 @@ public:
         if (!target) { Forget(); return false; }
         if (!m_Target || *m_Target != *target) {
             m_Target = target;
-            m_GivenUp = false;
             m_Run = 0;
         }
         if (!consecutive || !(distancePx <= kPetLootStuckRadiusPx)) m_Run = 0;
@@ -76,8 +85,8 @@ public:
 
         ++m_Run;
         if (m_Run > m_Longest.load()) m_Longest.store(m_Run);
-        if (m_GivenUp || m_Run < kPetLootStuckFrames) return false;
-        m_GivenUp = true;
+        if (m_Run < kPetLootStuckFrames) return false;
+        m_Run = 0;   // re-arm: the next in-reach frame counts 1 again
         return true;
     }
 
@@ -88,26 +97,104 @@ public:
         m_HaveLast = false;
     }
 
-    // The current same-target in-reach run, in frames.
+    // The current same-target in-reach run since the last start or give-up,
+    // in frames.
     int64_t Run() const { return m_Run; }
-    // The longest such run since load, for `petunstick 0`. It keeps growing
-    // past kPetLootStuckFrames while a given-up target stays in reach, so a
-    // give-up that did not move the pet shows in the stat line.
+    // The longest such run since load, for `petunstick 0`: the longest a
+    // target sat in reach between give-ups. The watch re-arms at each
+    // give-up, so while the mod is on it never exceeds kPetLootStuckFrames;
+    // a give-up that did not move the pet shows as `re-picked while held=`
+    // instead (PetLootRepickRing).
     int64_t Longest() const { return m_Longest.load(); }
 
 private:
     void Forget() {
         m_Target.reset();
-        m_GivenUp = false;
         m_Run = 0;
     }
 
     std::optional<double> m_Target;
-    bool m_GivenUp = false;
     int64_t m_Run = 0;
     int64_t m_LastFrame = 0;
     bool m_HaveLast = false;
     std::atomic<int64_t> m_Longest{ 0 };
+};
+
+// What a given-up target was, recorded with the give-up: a ground item (the
+// tick set, or tried to set, its itemCompanionTimer), a coin (no timer; only
+// the target was dropped), or neither.
+enum class PetLootKind { Other, Ground, Coin };
+
+// A re-pick while held: the pet's live target is one given up less than
+// kPetLootHoldFrames frames ago.
+struct PetLootRepick {
+    PetLootKind kind = PetLootKind::Other;
+    int64_t age = 0;   // frames since that give-up
+};
+
+// Whether a give-up held. The tick remembers its last kSize give-ups (id,
+// frame, kind), and on every tick that sees a live target asks Seen() whether
+// that target is one of them taken back. It is, when an entry for the same id
+// is younger than kPetLootHoldFrames and either the previous tick's live
+// target was a different id or none (the pet left it and came back), or the
+// entry was recorded on the frame immediately before this one (the game
+// handed it straight back, so the previous tick's target is this very id). A
+// target that stays the target after being counted is not counted again on
+// the ticks after, until the next give-up or until it leaves and comes back.
+// Ages are in the tick's frames; the hold is in the game's own frames; both
+// run at the game's frame rate. The entries are touched only from the tick;
+// the counters are read by `petunstick 0` on the IPC thread.
+class PetLootRepickRing {
+public:
+    static constexpr int kSize = 8;
+
+    // A give-up the tick carried out (the target was dropped) on `frame`.
+    void Remember(int64_t frame, double id, PetLootKind kind) {
+        Entry& e = m_Entries[m_Next];
+        e.id = id;
+        e.frame = frame;
+        e.kind = kind;
+        e.used = true;
+        m_Next = (m_Next + 1) % kSize;
+    }
+
+    // Called once per tick that saw a live target `id` on `frame`; `previous`
+    // is the previous tick's live target, none when that tick saw none or was
+    // not the frame before. Counts and returns the re-pick, by the newest
+    // matching give-up's kind, or nothing.
+    std::optional<PetLootRepick> Seen(int64_t frame, double id, std::optional<double> previous) {
+        const bool leftAndCameBack = !previous || *previous != id;
+        const Entry* hit = nullptr;
+        for (const Entry& e : m_Entries) {
+            if (!e.used || e.id != id) continue;
+            const int64_t age = frame - e.frame;
+            if (age <= 0 || age >= kPetLootHoldFrames) continue;
+            if (!leftAndCameBack && e.frame != frame - 1) continue;
+            if (!hit || e.frame > hit->frame) hit = &e;
+        }
+        if (!hit) return std::nullopt;
+        m_Repicked.fetch_add(1);
+        if (hit->kind == PetLootKind::Ground) m_Ground.fetch_add(1);
+        else if (hit->kind == PetLootKind::Coin) m_Coin.fetch_add(1);
+        return PetLootRepick{ hit->kind, frame - hit->frame };
+    }
+
+    long Repicked() const { return m_Repicked.load(); }
+    long Ground() const { return m_Ground.load(); }
+    long Coin() const { return m_Coin.load(); }
+
+private:
+    struct Entry {
+        double id = -1.0;
+        int64_t frame = 0;
+        PetLootKind kind = PetLootKind::Other;
+        bool used = false;
+    };
+    Entry m_Entries[kSize];
+    int m_Next = 0;
+    std::atomic<long> m_Repicked{ 0 };
+    std::atomic<long> m_Ground{ 0 };
+    std::atomic<long> m_Coin{ 0 };
 };
 
 // Off by default, like every ForgePact mod: `petunstick 1` / `petunstick 0`.
@@ -141,6 +228,11 @@ public:
 
     // No pet out, or no live target: forget the current one.
     void Reset() { m_Watch.Reset(); }
+
+    // The tick's give-ups and the re-picks it counted; the tick remembers and
+    // asks, `petunstick 0` reads the counters.
+    PetLootRepickRing& Repicks() { return m_Repicks; }
+    const PetLootRepickRing& Repicks() const { return m_Repicks; }
 
     // A ground item handed back to its `itemCompanionTimer`.
     void NoteHeldBack() { m_HeldBack.fetch_add(1); }
@@ -226,6 +318,7 @@ private:
     PetLootUnstickMod() = default;
     std::atomic<bool> m_Enabled{ false };
     PetLootStuckWatch m_Watch;
+    PetLootRepickRing m_Repicks;
     std::atomic<long> m_HeldBack{ 0 };
     std::atomic<long> m_CoinsReleased{ 0 };
     std::atomic<long> m_Ticks{ 0 };
