@@ -12,8 +12,9 @@ from far scenery sleep's measurements, four research-build instruments
 (`lootspawn`, `lootsleep`, `loothide`, `lootshow`) plus a wider `lootcensus`, and
 one live session that puts about 3,000 hidden items in a zone and compares the
 frame thread with them awake and with them asleep. Whether a mod is built at all
-(part 2b, the draft workorder `forgepact-issue-95-mod`) is decided from those
-numbers.
+(part 2b, the workorder `forgepact-issue-95-mod`) was decided from those
+numbers: the owner decided to build it, and [The mod](#the-mod) describes what
+was built.
 
 Everything below is labelled. **Measured** means observed on the running game,
 and each measurement names the check of the session that took it. **Static
@@ -35,7 +36,8 @@ facts established here are also recorded in the hub's
 | What a hidden item costs per frame | About 2.4-5.6 µs of frame time per hidden item per frame at 2,736 items, three to seven times the model's 0.4-0.8 µs | **Measured**, Live 1's `cost-hidden-working` and its `perf` annex `cost-hidden-perf`; the prediction was a **Model** ([below](#model-what-a-hidden-item-should-cost)) |
 | Whether hidden items outlive the zone | No. The zone's end ran Clean Up on 809 of 809 hidden items, and none were left | **Measured**, Live 1's `zone-end-cleanup` and `zone-change-gone` |
 | Whether hidden items reach the save | **Not observed.** `saves-diff`, read with 2,736 hidden items still on the ground and before any zone change, is the check that answers it; its control failed. `reload-none` landed in town | Live 1's `saves-diff` and `reload-none`, both `not-observed` |
-| A mod that hides, sleeps or refuses filtered items | None. **No mod ships from this workorder.** On 2026-09-28 the owner decided to build part 2b (`forgepact-issue-95-mod`) | - |
+| A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **not observed live** yet: Live procedure 2 of `forgepact-issue-95-mod` is pending ([The mod](#the-mod)) |
+| That all three ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee | **Static reading**, 2026-09-28 ([The mod](#the-mod)); whether the hook sees the game's own calls is for Live procedure 2 |
 
 Live 1 of `forgepact-issue-95` ran on 2026-09-28; its results are in
 [Live 1 results](#live-1-results-2026-09-28). Part 1's own record stays in the
@@ -284,6 +286,118 @@ hidden items would cost 0.7-1.6 ms a frame, about 4-9% of a 60 fps frame.
   measured later, the finding covers the save written at exit, not a save
   written mid-zone.
 
+## The mod
+
+Part 2b, the workorder `forgepact-issue-95-mod` (2026-09-28): a Quality of Life
+switch, **Sleep loot your filter hides** (`mod_hidden_loot`, off by default,
+plugin verb `hiddenloot 1|0|stat|key <vk>`), with a child row, **Show hidden
+loot while held**, that picks the show key (`mod_hidden_loot_key`, Left Alt,
+virtual key 164, by default). The class is
+`plugin/include/ForgePact/HiddenLootMod.hpp`; the adapter is the "Hidden loot
+sleep" section of `plugin/ModuleMain.cpp`. Everything in this section is a
+**reading of our own code** unless it is labelled otherwise. The mod was built
+to the owner's answers of 2026-09-28: build it (Q1), a key held to show the
+items (Q2), sleep rather than destroy (Q3), the hook on `LootGroundInit` with
+the sleep at the end of the drop's frame (Q-deferral), and Left Alt as the
+default key (Q-key).
+
+**It decides nothing.** The verdict is the game's: the mod acts on the
+`lootFilterVisible` the game's own filter left on the item, and never
+evaluates the filter itself or refuses a drop.
+
+**The hook point, and why there.** All three ground-drop entry points reach
+`LootGroundInit`, which runs the item's bound filter closure and leaves the
+verdict on the new instance: `LootGroundCreateFromItem` (monster drops) calls
+it once after making the instance, `LootGroundDrop` (an item dropped from the
+bag) calls it at two sites, and `LootGroundCreate`'s body names it as a callee
+once. **Static reading**, 2026-09-28, in the local Ghidra project; the third
+is a listing of callees, not a traced path. So one hook, on `LootGroundInit`,
+covers every drop path. Hooking the entry points instead would take three
+hooks, and two of them already carry one of ours (`MiningOre` hooks
+`LootGroundCreate` in the player build; the research build's
+`InstallItemInspectHooks` table-swaps `LootGroundCreate` and
+`LootGroundCreateFromItem` at start-up), on which `HookOneScript` would go
+table-only and miss the game's compiled calls. Nothing else hooks
+`LootGroundInit` in either build, so the install, `HookOneScript` by the SDK's
+name with both routes, gets the inline detour on both builds. It is attempted
+once, on the first switch-on after setup.
+
+**Where the sleep happens, and why there.** The hook calls the game first and
+then only records what the call carried (argument 0, argument 1 and `self`),
+with no runner call. The arguments are read as `(instance, item)`, but that is
+a reading, not a measurement, so at the end of the frame (`EVENT_FRAME`, after
+every step event) the class takes the first of the three that is a live
+instance whose `object_index` is `Loot_Ground_obj`'s, whatever its value kind
+(a number, a reference or an instance pointer are all asked; the kind never
+decides, since an item struct is an object too). It then reads the verdict
+there, after `variable_instance_exists`, and deactivates the item only if the
+verdict reads hidden. It does not deactivate inside the call: the rest of the
+entry point, and whoever called `LootGroundCreateFromItem` with its return
+value, may still address the new instance, and a deactivated instance is
+absent to them; whether this runtime would then error or silently skip is not
+established, and neither is acceptable. The price is that a hidden drop stays
+awake for at most one frame. Reading the verdict at the tick is also where the
+decision is used (AGENTS.md § "Check a Permission Where It Is Used"). A call
+none of whose three values is a ground item counts `unidentified=`, and an item
+with no verdict counts `no-filter-var=`; neither is acted on.
+
+**The show key and its guard.** The class polls the key once a frame with
+`GetAsyncKeyState` (the route the research build's F5-F11 hotkeys already use),
+finds its edges, and counts it only while the foreground window belongs to the
+game's process (`GetWindowThreadProcessId(GetForegroundWindow())` against
+`GetCurrentProcessId()`), so a key held in another window shows nothing. These
+are Win32 calls, not game addresses. On a key-down edge every slept item is
+woken and both its verdict and the built-in `visible` are written visible, so
+it shows at once rather than at Alarm 9's next refresh (if the built-in refuses
+the write, the verdict alone is left to that refresh and the log says so once).
+A hidden drop made while the key is held is shown instead of slept. On release,
+every shown item that still exists is written hidden again and slept; one
+picked up meanwhile is forgotten and counted `gone=`, asked nothing but whether
+it exists. `GetAsyncKeyState(VK_LMENU)` reads the left Alt only. Codes 1 and 2
+(the mouse buttons the game plays with) are refused, 0 means no key is polled,
+and the panel does not offer generic Alt, Right Alt or F10. A lone Alt press
+can put a Win32 window into its menu mode; whether it does for this game's
+window is **not established**, and Live procedure 2's `alt-no-menu` measures it
+with the default key. If it does, the player picks another key.
+
+**Switching, rooms.** Switching on walks the ground items already there once,
+capped at 8,192 like `lootcensus`, and sleeps those the filter hides.
+Switching off wakes every item the mod put to sleep, with the game's hidden
+verdict in place, which leaves them exactly as the game keeps a hidden item.
+A room change forgets every handle without a runner call (the room's end took
+the instances), and in a persistent room the mod sleeps nothing, read the way
+far sleep reads it (`room_persistent`).
+
+**The fallback.** If the `LootGroundInit` hook is table-only or not installed,
+the game's compiled drop calls may pass it by, so a pass over the awake ground
+items every 18 frames (Alarm 9's 0.3 s at 60 fps) takes its place, and the
+switch-on line (`route=table-only` / `route=none`) and a log line say so. With
+both routes in place the mod never walks, apart from the switch-on walk.
+
+**What it cannot do**, known and accepted rather than fixed: loosening the
+filter does not reveal slept items. A deactivated instance is not drawn,
+whatever its verdict, and whether the game's menu re-evaluation even reaches
+one is not established (see [Static reading](#static-reading) and
+[Not established](#not-established)); the player holds the key or switches the
+mod off, and an item woken by the switch keeps the hidden verdict it had until
+the filter is next applied. Only the verdict at drop time counts: an item a later,
+stricter filter hides stays awake. The pet collects only filter-visible items
+([pet-loot-stuck-research.md](pet-loot-stuck-research.md#the-scan)), so it ignores slept
+items as it ignored hidden ones, and while the key is held the shown items are
+targets it can pick up.
+
+**Verified.** The harness (`tests/hidden_loot_harness.cpp`, run by
+`tests/test_hidden_loot_behavior.py`) compiles the real class against a
+controlled runner: off asks the game nothing, not even the key; a hidden drop
+sleeps at the next frame's end and a visible one is never touched; the hold,
+the drop while held and the foreground guard; off, the switch-on walk, room
+changes and persistent rooms; and the fallback pass. The wiring and the rules
+are pinned by `tests/test_hidden_loot_mod_contract.py`, the panel by
+`tests/test_hidden_loot_panel_contract.py`. **Not observed live:** everything
+the harness cannot see (that the detour sees the game's own drop calls, the key
+under `SendInput`, whether Clean Up runs at the zone's end for sleeping loot)
+is Live procedure 2 of `forgepact-issue-95-mod`, not yet run.
+
 ## Not established
 
 - **Why 95 items stayed invisible with the filter off** in part 1's Live 1.
@@ -294,10 +408,12 @@ hidden items would cost 0.7-1.6 ms a frame, about 4-9% of a 60 fps frame.
   re-evaluates the items on the ground; how that pass walks them was not read,
   so whether it can reach an item a mod put to sleep is not established (see
   [Static reading](#static-reading)).
-- **Whether `LootGroundCreate` reaches the same filter call.** It calls
-  `CreateLootInFreePos` like `LootGroundCreateFromItem`, but its body was not
-  read to the end, so whether items it makes get their verdict from
-  `LootGroundInit` is not established.
+- **Whether `LootGroundCreate` reaches the same filter call on every path.** It
+  calls `CreateLootInFreePos` like `LootGroundCreateFromItem`, and a listing of
+  its callees names `LootGroundInit` once (**static reading**, 2026-09-28,
+  [The mod](#the-mod)), but no path through its long body was traced, so which
+  of the items it makes get their verdict from `LootGroundInit` is not
+  established.
 - **The guard in front of the filter call** inside `LootGroundInit` was not
   read; `skipLootFilter` is a candidate, not a finding.
 - **Whether ground items reach the save.** `SaveSlot`'s body was not read, and
