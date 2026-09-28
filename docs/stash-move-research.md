@@ -1635,57 +1635,77 @@ block; the logged shape for the merge is Live 1f's.
 
 Live 2 ran on 2026-09-28 on the **player build** (§ Ship design),
 `modfiles_shipped/BloodPactPlugin.dll` SHA-256
-`4171ad7425e5d2335093a57824229aa51b37d58271fc354770142240b5b1e5a2`, slot 14,
-**fully automatic** (no person step; capture
-`.claude/workorders/forgepact-68-move-all-live-2.md` on the owner's machine).
-Every check it scored passed and the game never ended; the saves were restored
-afterwards and inspected clean. The capture's own check list scores 18 checks;
-`single-control` is scored in its step text only (step 4, `PASS`), and its row
-below is taken from there. The session's bag page 0 held 7 non-stackable
-grid items, the Personal tab 4 items in 18 of 306 cells.
+`64a55e8d66c1f89c5c766c8f1b1b8e0a0f00869e42751d45121a9bd4ff8b16ed`, slot 14,
+**fully automatic** (no person step, and no key the mod moved was moved back by
+hand; capture `.claude/workorders/forgepact-68-move-all-live-2.md` on the
+owner's machine). All 19 checks passed, each read by `tools/live_checks.py`
+from the capture's `## Checks` block, and the game never ended; the saves were
+restored afterwards and inspected clean. The session's bag page 0 held 7 grid
+items (one of one cell, the others of three or six), the Personal tab 4 items
+in 18 cells.
 
-Two cases ran on something other than the plan's first reading, and a third
+This is the procedure's **third run**; the table is the third run's, since a
+capture is never repaired. The first run (the same plugin source, built as
+SHA-256 `4171ad7425e5d2335093a57824229aa51b37d58271fc354770142240b5b1e5a2`)
+passed every case it scored, but wrote its checks under a heading the check
+reader does not read and scored `single-control` in its step text only. The
+second run (this build) left `case-full` not observed, because no tab then met
+the procedure's free-cell reading of a nearly full tab, and failed
+`saved-bag-lacks-keys`, because the operator moved the mod's keys back into the
+bag by hand to reuse them. The procedure was then amended: the full tab is the
+first tab whose room check refuses an item, found by trying tabs in order, and
+no key the mod moved is moved back by hand.
+
+Three cases ran on something other than the plan's first reading, and a fourth
 exercised less than its name says:
 
+- **F4 with the switch on** started five of the session's six runs (case-full's
+  two tabs, case-refused, case-material-new with case-stack, and case-socket),
+  each an `hs_input` press of key 115 that printed its run's lines. That is the
+  positive control, in the same session and through the same instrument, for
+  `off-baseline-key`'s zero.
 - **case-full's bag** was refilled by the game's own Ctrl + left click from the
-  stash (the 7 items case-mixed and single-control had moved), because
-  `hs_give_item` refuses every grid-tab class (`GetItemPreferredGrid(1, item)
-  answered no grid`); the refill is setup, not under test. The full tab was
-  Shared tab 2, 200 of 306 cells taken in scattered one-cell gaps: none of the
-  7 multi-cell items fitted, so the room check is per item, not a free-cell
-  total.
+  stash, because `hs_give_item` refuses every grid-tab class
+  (`GetItemPreferredGrid(1, item) answered no grid`); the refills are setup,
+  not under test, and never took a key the mod had moved. Four Personal-tab
+  items went first, to Shared tab 1, which took all four; four items taken
+  from Shared tab 3 then went to Shared tab 2, which refused all four. The
+  first run saw the same answer on Shared tab 2 for 7 multi-cell items, with
+  200 of 306 cells taken in scattered one-cell gaps: none fitted, so the room
+  check is per item, not a free-cell total.
 - **case-socket** ran with 19 socketables in the bag's Socket view, and **none
   of their kinds was on the Socketable tab**, so every one was the planned
   skip `a new kind stays in the bag`. The by-name socket merge was therefore
   **not exercised by the player build**; it was measured on the research build
   only (Live 1f, Live 1g).
-- **button-press** carried case-mixed's run. Turning the switch off removed the
-  button; turning it on again **with the stash still open did not bring it
-  back** until a stash tab was clicked (a new node, a new id, then listed).
-  The cause is not established; F4 and `stashmoveall run` are not affected by
-  it.
+- **button-press** carried case-mixed's run. In the first run, turning the
+  switch on again **with the stash still open did not bring the button back**
+  until a stash tab was clicked (a new node, a new id, then listed). The third
+  run clicked a stash tab after switching on, as a known gap, rather than test
+  it again. The cause is not established; F4 and `stashmoveall run` are not
+  affected by it.
 
 | Check | What it reads | Supplied | Result | Verdict |
 |---|---|---|---|---|
-| dll-hash | the lease's DLL hash against the dispatched build | - | lease `dll_sha256` 4171ad74..., `dll_status=hashed`, equal to the build's | pass |
+| dll-hash | the lease's DLL hash against the dispatched build | - | lease `dll_sha256` 64a55e8d..., `dll_status=hashed`, equal to the dispatched build's | pass |
 | marker | the first line of bare `stashmoveall` | - | `stashmoveall: state=off key=F4 button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none` | pass |
 | control | a stash tab switch by name | `hs_stash_tab("shared1")` | `stashtab: before=0 after=1 handler=UiAStashTabClick` | pass |
-| off-baseline-key | F4 with the switch off and the stash open | F4 held 60 ms | the 87 `cell=` lines of `menulayout` identical to before; no `stashmoveall:` line in 300 lines of the log (no positive control: F4 was never sent with the switch on, so this zero does not show the key send reaches the plugin; the off state rests on `off-baseline-verb` and the marker's `state=off`) | pass |
+| off-baseline-key | F4 with the switch off and the stash open | F4 (key 115) held 60 ms | the bag's 7 items and the Personal tab's 4 in the same cells after as before; no `stashmoveall:` line in the log tail. Its positive control is the same session's F4 with the switch on, which started the case-full, case-refused, case-material-new and case-socket runs | pass |
 | off-baseline-verb | the run verb with the switch off | `stashmoveall run` | `stashmoveall: refused - off; nothing was called` | pass |
 | off-baseline-button | the stash's small buttons with the switch off | `menulayout UI_Button_Small_obj` | five rows (Sort, Split Stack, the two page arrows, the stash's sort), none `ForgePactMoveAll` | pass |
-| single-control | the one-item verb (from the step text) | `stashmove` of the one-cell item at bag cell 4,0 | `stashmove: moved <key> -> cell 0,0`; the key on the Personal tab at 0,0 and in no bag cell | pass |
-| button-press | the button's row, a scripted click on it, the state line, off and on | a left click at the node's centre (window 1585,947) | one `ForgePactMoveAll` row, `text=Move all`, `visible=1`, left of Sort; after the click `button=held presses=1 in_node=1 taken=1`; `stashmoveall 0` removed the row; `stashmoveall 1` listed it again (a new id) only after a stash tab click | pass |
-| case-mixed | the run the click started, into a tab with room | 6 items on bag page 0, the Personal tab shown | `moved 6 of 6 from bag tab 0 to stash tab 0; skipped 0`; every key on the Personal tab, the bag page empty | pass |
-| case-full | a run into a nearly full tab, and every other stash container | 7 items on bag page 0, Shared tab 2 shown | `moved 0 of 7 from bag tab 0 to stash tab 2; skipped 7`, each `skipped: no room on the shown tab`; the 7 in their bag cells, the tab unchanged; in the saved `stash.hss` every container but the three this session targeted (`material_tab`, `stash_tab_2`, `socket_tab`) held the same keys before and after | pass |
-| case-refused | non-stackables into the Materials tab | the same 7, the Materials tab shown | each `skipped: not taken by the Materials tab`; `moved 0 of 7 ... skipped 7`; nothing changed | pass |
-| case-material-new | new material kinds into the Materials tab | the bag's Materials view: 3 materials plus one copied by `hs_give_item` (4), none of their kinds on the tab | the copy and the two other kinds each at a cell of their own (3,15, 3,16, 3,17) | pass |
-| case-stack | the second item of one kind in the same run | the copy's original, count 1 | `-> stack`; in no bag cell and not listed on its own on the tab (the mod's own line says it merged into the copy's stack, which the run itself had just placed; that stack's count was not read after the run, so these readings do not tell a merge from a loss) | pass |
-| case-socket | the Socketable tab from the bag's Socket view | 19 socketables | every one `skipped: a new kind stays in the bag`; `moved 0 of 19 ... skipped 19`; the merge not reached (no kind on the tab) | pass |
-| close-survives | the game after the stash close | `hs_stash_close` | no `UI_Stash_obj` listed on a direct read; the game running (the tool's own re-read said "not confirmed", a race) | pass |
-| reopen-shows | the reopened stash | `hs_stash_open` (refused once, then opened) | the Personal tab back to its 4 keys (the moved ones had been pulled back for case-full), the 19 socketables untouched in the bag | pass |
-| saved-stash-has-keys | the moved keys in the saved files | `tools/save_item_keys.py` on `stash.hss`, `herosiege13.hss`, `inventory_order_13.hss` | the 3 Materials-tab keys under `stash.hss` `material_tab` | pass |
-| saved-bag-lacks-keys | the same keys under every bag container | as above | in none of the bag containers of either character file | pass |
-| no-duplicate | every key of the session under exactly one container | as above | the 7 grid keys, the 3 Materials-tab keys and 2 sampled socketables once each; the merged key in none | pass |
+| single-control | the one-item verb | `stashmove` of the bag page's one-cell item | `stashmove: moved <key> -> cell 0,0`; the key on the Personal tab and in no bag cell | pass |
+| button-press | the button's row, a scripted click on it, the state line, off and on | a left click at the node's centre (window 1585,947, from the row found by its call-stack name) | one `ForgePactMoveAll` row, `text=Move all`, `visible=1`, left of Sort (window x 1585 against Sort's 1728); after the click `button=held presses=1 in_node=1 outside=0 unread=0 errors=0 taken=1 dropped=0`; one run; `stashmoveall 0` removed the row; `stashmoveall 1` and a stash tab click listed it again with a new id | pass |
+| case-mixed | the run the click started, into a tab with room | 6 items on bag page 0 (the seventh moved by single-control), the Personal tab shown | `moved 6 of 6 from bag tab 0 to stash tab 0; skipped 0`; every key on the Personal tab, the bag page empty | pass |
+| case-full | the first tab whose room check refuses an item, the tabs around it, and every saved stash container | 4 items on bag page 0 and F4, Shared tab 1 shown, then after a refill Shared tab 2 | Shared tab 1: `moved 4 of 4 from bag tab 0 to stash tab 1; skipped 0`. Shared tab 2: `moved 0 of 4 from bag tab 0 to stash tab 2; skipped 4`, each `skipped: no room on the shown tab`, the 4 in their bag cells, the tab's cells unchanged; Shared tab 3 and the Personal tab unchanged cell for cell. The saved `stash.hss` against its copy from before the stash was opened: only `material_tab` (69 to 72 keys), `stash_tab_1` (62 to 66) and `stash_tab_3` (149 to 145, the refill's source) differ; `stash_tab_2` and every other container list the same keys | pass |
+| case-refused | non-stackables into the Materials tab | the same 4, bag page 0 confirmed before the Materials tab click, F4 | each `skipped: not taken by the Materials tab`; `moved 0 of 4 ... skipped 4`; the bag and the tab unchanged. The capture quotes the summary with `from bag tab -4`, a bag number it does not explain after page 0 was confirmed; the 4 items planned were the page's 4 | pass |
+| case-material-new | new material kinds into the Materials tab | the bag's Materials view: 3 materials plus one copied by `hs_give_item` from one of them (4), none of their kinds on the tab, F4 | the copy and the two other kinds each at a cell of their own (3,15, 3,16, 3,17), out of the bag | pass |
+| case-stack | the second item of one kind in the same run | the copy's original, count 1 | `-> stack`; in no bag cell, not listed on its own on the tab, in no saved file (the mod's own line says it merged into the copy's stack, which the run itself had just placed; that stack's count was not read after the run, so these readings do not tell a merge from a loss) | pass |
+| case-socket | the Socketable tab from the bag's Socket view | 19 socketables, F4 | every one `skipped: a new kind stays in the bag`; `moved 0 of 19 ... skipped 19`; the merge not reached (no kind on the tab) | pass |
+| close-survives | the game after the stash close | `hs_stash_close` | no `UI_Stash_obj` listed on a direct read; the game running (the tool's own re-read said "not confirmed" again, the race) | pass |
+| reopen-shows | the reopened stash | `hs_stash_open` | the 14 keys the mod moved on the Personal tab (7), Shared tab 1 (4) and the Materials tab (3), none in the bag; the merged key in no grid | pass |
+| saved-stash-has-keys | the moved keys in the saved files | `tools/save_item_keys.py --key` on `stash.hss`, `herosiege13.hss`, `inventory_order_13.hss` | the 7 under `herosiege13.hss` `inventory.personal_stash`, 4 under `stash.hss` `stash_tab_1`, 3 under `stash.hss` `material_tab` | pass |
+| saved-bag-lacks-keys | the same keys in the bag's saved file | as above | none of the 14 in `inventory_order_13.hss` | pass |
+| no-duplicate | every moved key under exactly one container | as above | each of the 14 under exactly one container, as in the last in-game listing; the merged key in none | pass |
 
 ## Decision
 
@@ -1985,20 +2005,24 @@ does before a node's click event were not read. For the Socketable tab: a merge
 of more than one unit (measured with a count of 1, orb and gem), a merge
 through this adapter, and a new kind placed by name (`socketRoute` new).
 
-**What Live 2 then observed** (§ Live 2 results): the shipped adapter's run
-into a tab with room, a full tab, the Materials tab refusing non-stackables,
-new material kinds and a second item of one kind reported by the mod as
-merged into the stack the run itself had just made (it left the bag and was
-not listed on its own; that stack's count was not read, so a merge is not
-told apart from a loss); the one-item verb; the switch-off baseline for the
-verb and the button, and F4 producing nothing while off (with no control:
-F4 was never sent with the switch on); the shipped button made beside Sort, a click on it
-starting one run, and switching off removing it. **Still not observed after
-Live 2:** F4 with the switch on (every run was the button or the verb); the
-held-modifier guard; the Socketable tab's merge through this adapter (no bag
-socketable's kind was on the tab); a merge on a stash page or a stackable on a
-shared page; the undo, an owner step that did not take, and any loss; the
-button's fail-safe lines; whether Sort stays visible on the bag's Materials
-and Socket views; and a multi-cell item placed into the Materials tab. One gap
-was seen: switched on again with the stash still open, the button came back
-only after a stash tab click; the cause was not established.
+**What Live 2 then observed** (§ Live 2 results, its third run): the shipped
+adapter's run into a tab with room, a Shared tab that took every item handed
+to it and the next that refused every one (`no room on the shown tab`, the
+tabs around it and every other saved stash container unchanged), the
+Materials tab refusing non-stackables, new material kinds and a second item
+of one kind reported by the mod as merged into the stack the run itself had
+just made (it left the bag and was not listed on its own; that stack's count
+was not read, so a merge is not told apart from a loss); the one-item verb;
+F4 with the switch on, which started five runs, and, with that as its
+control, F4 producing nothing while off; the switch-off baseline for the verb
+and the button; the shipped button made beside Sort, a click on it starting
+one run, and switching off removing it. **Still not observed after Live 2:**
+the held-modifier guard; the Socketable tab's merge through this adapter (no
+bag socketable's kind was on the tab); a merge on a stash page or a stackable
+on a shared page; the undo, an owner step that did not take, and any loss;
+the button's fail-safe lines; whether Sort stays visible on the bag's
+Materials and Socket views; and a multi-cell item placed into the Materials
+tab. One gap was seen, in the first run: switched on again with the stash
+still open, the button came back only after a stash tab click; the cause was
+not established, and the third run clicked a tab after switching on rather
+than test it again.
