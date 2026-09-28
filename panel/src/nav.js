@@ -29,7 +29,9 @@ export function openTab(name,remember=true){
   document.getElementById('workspace').setAttribute('aria-labelledby','nav-'+name);
   document.getElementById('pageTitle').textContent=PAGE_INFO[name][0];
   document.getElementById('pageDescription').textContent=PAGE_INFO[name][1];
-  document.getElementById('breadcrumbPage').textContent=name[0].toUpperCase()+name.slice(1);
+  // Named as its nav button reads: Ember relabels Modifiers to Character.
+  const navLabel=document.querySelector(`.tabbtn[data-tab="${name}"]`)?.textContent?.trim();
+  document.getElementById('breadcrumbPage').textContent=navLabel||name[0].toUpperCase()+name.slice(1);
   document.getElementById('controlToolbar').hidden=!['loot','modifiers'].includes(name);
   document.getElementById('controlSearch').value='';controlFilter='all';filterControlRows();
   if(remember){try{sessionStorage.setItem('forgepact_tab',name)}catch(e){}}
