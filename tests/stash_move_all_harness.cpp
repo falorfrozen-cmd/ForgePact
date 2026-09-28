@@ -78,6 +78,14 @@
 // threw or a guard drop. Written before the header had it; the first error
 // line was `error C2039: 'NoteButtonHeld': is not a member of
 // 'ForgePact::StashMoveAllMod'`, 2026-09-28.
+//
+// Phase D (before Live 2): the Socketable tab's merge was measured with one
+// unit only, so it reads its own flag, socketWholeStackMerge (off), and a
+// socketable of more than one unit stays in the bag; and the state line after
+// a loss keeps the button's fields, the free-text reason last. Written before
+// the header had either; the first error line was `error C2039:
+// 'socketWholeStackMerge': is not a member of 'ForgePact::StashMoveRoutes'`,
+// 2026-09-28.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -366,10 +374,12 @@ static void TargetStackablePlansStack()
         if (!mine && (i.route != StashMoveRoute::None || i.refusal != "not taken by the Materials tab")) { ok = false; detail += " matsref " + i.refusal; }
     }
     // The Socketable tab (socketMergeRoute: byname), fed from the bag's Socket
-    // view, takes class 15 onto the stack of its identity.
+    // view, takes class 15 onto the stack of its identity; one unit, the count
+    // Live 1f measured (more than one: its own scenario below).
     StashMoveView sock = MixedView(-2);
     sock.bagTab = -2;
     sock.cells[6].destinationHasStack = true;
+    sock.cells[6].count = 1;
     StashMovePlan s = mod.Plan(sock);
     for (const StashMoveItem& i : s.items) {
         bool mine = i.cell.itemClass == 15;
@@ -491,7 +501,7 @@ static void TargetUnconfirmedStopsAndTurnsOff()
     // and names the loss; turning on again answers with the same reason.
     const std::string reason = "item 0-0-10-18: the game answered success=true but the bag cell still holds it";
     ok = ok && mod.OffReason() == reason
-        && mod.StateLine() == "stashmoveall: state=off-for-this-session reason=" + reason
+        && mod.StateLine() == "stashmoveall: state=off-for-this-session" + kIdleButton + " reason=" + reason
         && mod.OffForSessionLine() == "stashmoveall: off for this session - " + reason
                                       + "; turn it on again after restarting the game";
     // Negative control: switched off by hand, the state line is plain off.
@@ -785,21 +795,26 @@ static void TargetSocketableMergesAnIdentityWithANode()
 {
     // socketMergeRoute: byname (Live 1f byname-socket-merge, Live 1g): a
     // socketable whose identity has a node on the tab merges by its whole
-    // count (wholeStackMerge), confirmed only on that identity's count rising
-    // by exactly it; a ring is not taken there.
+    // count, confirmed only on that identity's count rising by exactly it; a
+    // ring is not taken there. Live 1f measured one unit only, so a count
+    // above 1 merges only with socketWholeStackMerge on (the next scenario
+    // pins it off); the gem's merge is checked with it turned on.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
     const StashMovePlan p = mod.Plan(SocketView());
     bool ok = StashMoveAllMod::kMeasuredRoutes.socketMerge && !p.refused && p.items.size() == 4
         && p.items[0].route == StashMoveRoute::Stack && p.items[0].cell.count == 1
-        && p.items[1].route == StashMoveRoute::Stack && p.items[1].cell.count == 3
         && p.items[3].route == StashMoveRoute::None && p.items[3].refusal == "not taken by the Socketable tab";
+    StashMoveRoutes whole = StashMoveAllMod::kMeasuredRoutes;
+    whole.socketWholeStackMerge = true;
+    const StashMovePlan pw = StashMoveAllMod::PlanWith(SocketView(), whole, true);
+    ok = ok && pw.items.size() == 4 && pw.items[1].route == StashMoveRoute::Stack && pw.items[1].cell.count == 3;
     const StashMoveResult orb = StashMoveAllMod::Decide(p.items[0], Stacked(81, 82));
-    const StashMoveResult gem = StashMoveAllMod::Decide(p.items[1], Stacked(2, 5));
+    const StashMoveResult gem = StashMoveAllMod::Decide(pw.items[1], Stacked(2, 5));
     ok = ok && orb.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(orb) == "stashmoveall: item 0-0-118-15 -> stack"
         && gem.outcome == StashMoveOutcome::Moved;
     // One unit short is a loss, never a move.
-    ok = ok && StashMoveAllMod::Decide(p.items[1], Stacked(2, 3)).outcome == StashMoveOutcome::Unconfirmed;
+    ok = ok && StashMoveAllMod::Decide(pw.items[1], Stacked(2, 3)).outcome == StashMoveOutcome::Unconfirmed;
     // At the point of use the sum decides, as on the Materials tab: a node
     // still there is merged into, an unread sum is a skip that calls nothing.
     ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, 81).route == StashMoveRoute::Stack
@@ -835,6 +850,46 @@ static void TargetSocketableNewKindStaysInTheBag()
     const StashMovePlan withNew = StashMoveAllMod::PlanWith(SocketView(), Flipped(true, true, true, true), true);
     ok = ok && withNew.items.size() == 4 && withNew.items[2].route == StashMoveRoute::Cell;
     Check("target/socketable_new_kind_stays_in_the_bag", ok, Keys(p) + " " + p.items[2].refusal);
+}
+
+static void TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip()
+{
+    // Live 1f measured the Socketable tab's merge with a count of 1 only (an
+    // orb and a gem); wholeStackMerge was measured on the Materials tab. So
+    // the Socketable tab reads its own flag, socketWholeStackMerge, off: a
+    // socketable of more than one unit is a skip that calls nothing and stays
+    // in the bag, the run goes on, and one unit still merges.
+    const char* why = "a socketable merge of more than one unit is not measured";
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const StashMovePlan p = mod.Plan(SocketView());
+    bool ok = !StashMoveAllMod::kMeasuredRoutes.socketWholeStackMerge && StashMoveAllMod::kMeasuredRoutes.wholeStackMerge
+        && !p.refused && p.items.size() == 4
+        && p.items[0].route == StashMoveRoute::Stack && p.items[0].cell.count == 1
+        && p.items[1].route == StashMoveRoute::None && p.items[1].refusal == why;
+    StashMoveResult skip;
+    ok = ok && !StashMoveAllMod::MayCall(p.items[1], 1, skip) && skip.outcome == StashMoveOutcome::Skipped
+        && StashMoveAllMod::ItemLine(skip) == std::string("stashmoveall: item 0-0-38-15 -> skipped: ") + why;
+    StashMoveTally t = mod.Begin(p);
+    ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
+    // At the point of use too: a merge planned under another rule, re-read
+    // with 3 units, is the same skip; with 1 unit it merges.
+    StashMoveItem planned = p.items[0];
+    planned.cell.count = 3;
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).refusal == why;
+    planned.cell.count = 1;
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).route == StashMoveRoute::Stack;
+    // The Materials tab keeps its own measured rule: 15 units still merge.
+    const StashMovePlan mats = mod.Plan(MaterialsView(-4));
+    ok = ok && mats.items.size() == 3 && mats.items[0].route == StashMoveRoute::Stack && mats.items[0].cell.count == 15;
+    // Negative control: were the multi-unit socket merge measured, the gem
+    // would merge by its whole count.
+    StashMoveRoutes whole = StashMoveAllMod::kMeasuredRoutes;
+    whole.socketWholeStackMerge = true;
+    const StashMovePlan withWhole = StashMoveAllMod::PlanWith(SocketView(), whole, true);
+    ok = ok && withWhole.items.size() == 4 && withWhole.items[1].route == StashMoveRoute::Stack;
+    Check("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip", ok,
+          Keys(p) + " " + (p.items.size() > 1 ? p.items[1].refusal : std::string()));
 }
 
 static void TargetShownTabRoom()
@@ -1085,7 +1140,7 @@ static void TargetOwnerStepThatDidNotTakeIsUnconfirmed()
     ok = ok && StashMoveAllMod::Decide(it, PlacedCell(2, 1)).outcome == StashMoveOutcome::Moved;
     StashMoveTally t;
     ok = ok && !mod.Record(t, stayed) && t.stopped && mod.OffThisSession()
-        && mod.StateLine().rfind("stashmoveall: state=off-for-this-session reason=item 0-0-87-18: ", 0) == 0;
+        && mod.StateLine().rfind("stashmoveall: state=off-for-this-session" + kIdleButton + " reason=item 0-0-87-18: ", 0) == 0;
     Check("target/owner_step_that_did_not_take_is_unconfirmed", ok,
           notRun.answer + " | " + stayed.answer + " | " + took.answer + " | " + mod.StateLine());
 }
@@ -1267,6 +1322,39 @@ static void TargetButtonCountersNameWhereAPressWent()
     Check("target/button_counters_name_where_a_press_went", ok, mod.StateLine());
 }
 
+static void TargetOffForThisSessionStateLineKeepsTheButtonFields()
+{
+    // After a loss the state line still carries the button's fields, so a
+    // click that ended in a loss can be read from the one line the operator
+    // and a bug report see. The reason goes last: it is free text.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonHeld(true);
+    mod.NoteButtonPress();
+    const bool taken = mod.TakeButtonPress(true, true, false);
+    StashMovePlan p = mod.Plan(MixedView(1));
+    StashMoveTally t = mod.Begin(p);
+    bool ok = mod.Record(t, StashMoveAllMod::Decide(p.items[0], PlacedCell(0, 0)));
+    StashMoveReport half = PlacedCell(1, 0);
+    half.sourceHasKey = 1;
+    const StashMoveResult loss = StashMoveAllMod::Decide(p.items[1], half);
+    ok = ok && taken && loss.outcome == StashMoveOutcome::Unconfirmed && !mod.Record(t, loss) && mod.OffThisSession();
+    mod.NoteButtonHeld(false);
+    const std::string want = "stashmoveall: state=off-for-this-session button=none presses=1 in_node=1 outside=0"
+                             " unread=0 errors=0 taken=1 dropped=0 last_drop=none reason=" + mod.OffReason();
+    ok = ok && !mod.OffReason().empty() && mod.StateLine() == want;
+    // The state word stays first, for the panel.
+    ok = ok && mod.StateLine().rfind("stashmoveall: state=off-for-this-session ", 0) == 0;
+    // Negative control: switched off by hand, the line is plain off with the
+    // key and the same fields, and no reason.
+    StashMoveAllMod byHand;
+    byHand.SetEnabled(true);
+    byHand.SetEnabled(false);
+    ok = ok && byHand.StateLine() == "stashmoveall: state=off key=F4" + kIdleButton
+        && byHand.StateLine().find(" reason=") == std::string::npos;
+    Check("target/off_for_this_session_state_line_keeps_the_button_fields", ok, mod.StateLine());
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -1288,6 +1376,7 @@ int main()
     BaselineSocketableTabTakesOnlyTheBagSocketView();
     TargetSocketableMergesAnIdentityWithANode();
     TargetSocketableNewKindStaysInTheBag();
+    TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();
@@ -1301,6 +1390,7 @@ int main()
     TargetButtonPressIsALeftPressInsideTheNodeBbox();
     TargetButtonRefusalIsReportedOnceAndKeepsTheModOn();
     TargetButtonCountersNameWhereAPressWent();
+    TargetOffForThisSessionStateLineKeepsTheButtonFields();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

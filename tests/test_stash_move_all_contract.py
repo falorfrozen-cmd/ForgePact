@@ -30,7 +30,7 @@ PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "StashMoveAllMod.hpp"
 README = ROOT / "README.md"
 DOC = ROOT / "docs" / "stash-move-research.md"
-NOTES_VERSION = "2.0.2"
+NOTES_VERSION = "2.1.0"
 NOTES = ROOT / f"release-notes-v{NOTES_VERSION}.md"
 
 BLOCK = ("// ---- stashmoveall, stashmove: Move all into the stash (ForgePact #68)",
@@ -289,7 +289,9 @@ class StashMoveAllContractTests(unittest.TestCase):
         # After a loss the state line says so, with the reason; turning on
         # again answers with the reason and stays off; every switch and a loss
         # print the state line, whose last copy the panel reads.
-        self.assertIn('"stashmoveall: state=off-for-this-session reason=" + m_OffReason', self.header)
+        # The button's fields stay on it, the free-text reason last.
+        self.assertIn('"stashmoveall: state=off-for-this-session" + ButtonFields() + " reason=" + m_OffReason',
+                      self.header)
         self.assertIn('return LossLine("stashmoveall", m_OffReason);', self.header)
         cmd = self.body("static void StashMoveAllCommand(")
         self.assertIn("if (!mod.SetEnabled(true)) { Out(mod.OffForSessionLine()); Out(mod.StateLine()); return; }", cmd)
@@ -519,6 +521,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         # one-cell nodeGrid with 9, 2, the item, its count and 8.
         self.assertIn("bool socketMerge = true;", self.header)
         self.assertIn("bool socketNew = false;", self.header)
+        # Live 1f measured a one-unit merge only: more than one unit is a
+        # planned skip on this tab, whatever the Materials tab's rule says.
+        self.assertIn("bool socketWholeStackMerge = false;", self.header)
+        self.assertIn("else if (many && !materials && !routes.socketWholeStackMerge)", self.header)
         self.assertIn('static constexpr const char* kSmaSocketGrid = "StashSocketGrid";', self.code)
         self.assertNotIn("stashSocketItemSlot", self.code)
         self.assertNotIn("kCmSocketTabVar", self.code)
@@ -600,6 +606,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertRegex(new, r"fill|full|room")
         self.assertRegex(new, SPILL)
         self.assertIn("Socketable", new)
+        # A socketable stack of more than one stays in the bag
+        # (socketWholeStackMerge off): both say so.
+        self.assertIn("more than one", section)
+        self.assertIn("more than one", new)
         self.assertIn("\n## How to update\n", notes)
 
     def test_readme_notes_and_panel_name_the_button(self):

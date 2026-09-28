@@ -1,4 +1,6 @@
-# ForgePact 2.0.2
+# ForgePact 2.1.0
+
+Release date: 2026-10-02
 
 Emptying your backpack into the stash used to take one Ctrl + click per item.
 A new **Move all into the stash** switch, off by default, does it with one
@@ -23,8 +25,9 @@ button or one key.
     kind there whole, or takes a free cell if the tab has none of that kind yet.
     An item the tab does not take stays in your backpack.
   - On the **Socketable** tab, from the backpack's Socket view, a socketable
-    whose kind is already on the tab joins that stack. A kind the tab does not
-    have yet stays in your backpack.
+    whose kind is already on the tab joins that stack when it is a single one.
+    A stack of more than one socketable stays in your backpack, and so does a
+    kind the tab does not have yet.
   - **Not supported yet:** the Unique tab, and the backpack's Key, Tarot and
     Relic views. The button and F4 move nothing there.
   - If a move cannot be confirmed afterwards, the run stops, the item is taken

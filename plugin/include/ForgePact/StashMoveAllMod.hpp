@@ -84,7 +84,8 @@ namespace ForgePact {
 //   mod off for the session, keeping the reason (Record);
 // - the lines: one per item, one per run, the refusal and loss lines, and the
 //   switch and state lines, each starting with its verb; after a loss the
-//   state line reads off-for-this-session with the reason, never plain off.
+//   state line reads off-for-this-session, the button's fields kept and the
+//   reason last, never plain off.
 //
 // It is game-independent on purpose: it names no runtime interface, builtin,
 // log call or runtime value type, so tests/stash_move_all_harness.cpp compiles
@@ -150,6 +151,11 @@ struct StashMoveRoutes {
     bool socketMerge = true;      // socketMergeRoute: byname (Live 1f and 1g; orb and gem, every identity with a node merges)
     bool newMaterial = true;      // newMaterialRoute: byname
     bool wholeStackMerge = true;  // wholeStackMerge: byname (on the Materials tab)
+    // The Socketable tab's merge of more than one unit: Live 1f measured its
+    // merge with a count of 1 only (an orb and a gem), and wholeStackMerge
+    // was measured on the Materials tab, so that tab reads this flag instead
+    // and such a socketable stays in the bag.
+    bool socketWholeStackMerge = false;
 };
 
 // The shown stash tab's own cells as the adapter read them, [row][col] like
@@ -470,9 +476,13 @@ public:
             // The one-unit merge is measured on the Materials tab
             // (stackMoveRoute); the Socketable tab's by socketMergeRoute, on
             // the item's own node, with no non-stackable case (the gem Live
-            // 1e read as one merged too, Live 1f).
+            // 1e read as one merged too, Live 1f). More than one unit follows
+            // each tab's own measurement: wholeStackMerge on the Materials
+            // tab, socketWholeStackMerge on the Socketable tab.
             if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
-            else if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+            else if (many && materials && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+            else if (many && !materials && !routes.socketWholeStackMerge)
+                item.refusal = "a socketable merge of more than one unit is not measured";
             else item.route = StashMoveRoute::Stack;
         } else {
             const bool placed = materials ? routes.newMaterial : routes.socketNew;
@@ -709,9 +719,11 @@ public:
     // The state: on, off, or turned off by a loss - which a bug report must
     // be able to tell apart from "switched off" (round-2 review), and which
     // the panel reads from the last of these lines (the state word first; the
-    // button's fields follow the key).
+    // button's fields follow the key). After a loss the button's fields stay,
+    // so a click that ended in one reads from this line too, and the reason,
+    // free text, goes last.
     std::string StateLine() const {
-        if (OffThisSession()) return "stashmoveall: state=off-for-this-session reason=" + m_OffReason;
+        if (OffThisSession()) return "stashmoveall: state=off-for-this-session" + ButtonFields() + " reason=" + m_OffReason;
         return std::string("stashmoveall: state=") + (IsEnabled() ? "on" : "off") + " key=F4" + ButtonFields();
     }
 

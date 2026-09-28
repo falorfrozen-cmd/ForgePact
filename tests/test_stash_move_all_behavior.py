@@ -31,7 +31,10 @@ material identity goes into a cell of the Materials tab, a whole stack merges
 by its count, and the bag's Materials view feeds the Materials tab only. Live
 1f and 1g decided the Socketable tab (socketMergeRoute: byname): fed from the
 bag's Socket view only, a socketable whose identity has a node on the tab
-merges by its whole count and a new kind stays in the bag. And the in-game
+merges and a new kind stays in the bag; since Live 1f measured that merge with
+one unit only, a socketable of more than one unit stays in the bag too
+(socketWholeStackMerge off; the Materials tab's wholeStackMerge is its own
+measurement). And the in-game
 Move all button (buttonRoute: poll): its node exists only while the switch is
 on and the stash and Sort are listed, a left press inside its bbox is a press,
 taken once under the key's guard, and a node that cannot be made is reported
@@ -215,6 +218,14 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # placement would go into a cell.
         self.assertScenario("target/socketable_new_kind_stays_in_the_bag")
 
+    def test_target_socketable_merge_of_more_than_one_unit_is_a_planned_skip(self):
+        # Live 1f measured the socket merge with one unit only, so
+        # socketWholeStackMerge is off: more than one unit is a skip that
+        # calls nothing, one unit still merges, and the Materials tab keeps
+        # its own whole-stack merge. Negative control: with the flag on the
+        # gem merges by its whole count.
+        self.assertScenario("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip")
+
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
 
@@ -274,6 +285,13 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # unread), a poll that threw, or a guard drop with its reason.
         # Negative control: a readable point outside the box still reads.
         self.assertScenario("target/button_counters_name_where_a_press_went")
+
+    def test_target_off_for_this_session_state_line_keeps_the_button_fields(self):
+        # After a loss the state line keeps the button's fields (a click that
+        # ended in a loss reads from one line), the state word first and the
+        # free-text reason last. Negative control: off by hand is plain off
+        # with no reason.
+        self.assertScenario("target/off_for_this_session_state_line_keeps_the_button_fields")
 
 
 if __name__ == "__main__":

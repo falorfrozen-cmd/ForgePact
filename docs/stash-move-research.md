@@ -1699,7 +1699,7 @@ socketMergeRoute: byname (orb and gem; every identity with a node on the tab mer
 
 ## Ship design
 
-What the player build does with the lines above (ForgePact 2.0.2, Mods tab →
+What the player build does with the lines above (ForgePact 2.1.0, Mods tab →
 Quality of Life → **Move all into the stash**, off by default). The decisions
 live in `plugin/include/ForgePact/StashMoveAllMod.hpp`, which names no runtime
 interface and is run whole by `tests/stash_move_all_harness.cpp`; the adapter
@@ -1718,8 +1718,9 @@ the key, `stashmove <fingerprint>` moves one item of the bag tab on show through
 the same per-item routine, and bare `stashmoveall` prints
 `stashmoveall: state=<on|off> key=F4` with the button's counts (below) and the
 usage. After a loss (below) the
-state line reads `stashmoveall: state=off-for-this-session reason=<reason>`
-instead, and `stashmoveall 1` answers `stashmoveall: off for this session -
+state line reads `stashmoveall: state=off-for-this-session <the button's
+counts> reason=<reason>` instead (the counts kept, so a click that ended in a
+loss reads from the same line; the reason, free text, last), and `stashmoveall 1` answers `stashmoveall: off for this session -
 <reason>; ...` and stays off. Every switch, and every loss, prints the state
 line; the panel reads the last one in `out.txt` (`/api/state`'s
 `stash_move_all_session`) and shows `off (this session)` beside the switch while
@@ -1816,7 +1817,11 @@ by the Materials tab`). On the Socketable tab: class 15 onto the node of its
 identity when there is one (`socketMergeRoute`; there is no non-stackable case,
 the gem merged too), and a kind with no node there a planned skip,
 `a new kind stays in the bag` (`socketRoute` new: not measured); any other
-class `not taken by the Socketable tab`. A merge of more than one unit follows `wholeStackMerge`.
+class `not taken by the Socketable tab`. A merge of more than one unit follows `wholeStackMerge`
+on a stash page and the Materials tab, where it was measured; on the Socketable tab it follows
+its own flag, `socketWholeStackMerge`, off, since Live 1f measured that tab's merge with a count
+of 1 only, so such a socketable is a planned skip that stays in the bag (`a socketable merge of
+more than one unit is not measured`).
 A stackable whose stack on the tab cannot be read - a shared page's entries
 answer on no map by name (`mapOwnerRule`) - is a skip, never read as "no
 stack". The plan's route is not the last word: a stackable's route is decided
