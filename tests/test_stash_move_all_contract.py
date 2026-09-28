@@ -35,6 +35,8 @@ NOTES = ROOT / f"release-notes-v{NOTES_VERSION}.md"
 
 BLOCK = ("// ---- stashmoveall, stashmove: Move all into the stash (ForgePact #68)",
          "// ---- end stashmoveall, stashmove")
+BUTTON_BLOCK = ("// ---- stashmoveall button: the in-game Move all button (ForgePact #68)",
+                "// ---- end stashmoveall button")
 VERBS = {
     "stashmoveall": ("HandleStashMoveAllCommand", "StashMoveAllCommand"),
     "stashmove": ("HandleStashMoveCommand", "StashMoveCommand"),
@@ -158,16 +160,21 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("if (g_Setup) StashMoveAllTick();", frame)
         self.assertNotIn("StashMoveAllRun", frame)
         tick = self.body("static void StashMoveAllTick(")
-        # Off: nothing is read, not even the key.
-        gate = tick.index("if (!mod.IsEnabled()) { s_WasOn = false; return; }")
+        # Off: nothing is read, not even the key; a button node still held is
+        # removed, and knowing whether one is held reads nothing of the game.
+        gate = tick.index("if (!mod.IsEnabled()) { s_WasOn = false; SmaButtonRemove(); return; }")
         self.assertLess(gate, tick.index("GetAsyncKeyState(kSmaHotkey)"))
         self.assertEqual(tick.count("GetAsyncKeyState"), 1)
-        # The foreground and the stash window are asked only while the key is down.
-        down = tick.index("if (down) {")
+        self.assertTrue(self.body("static void SmaButtonRemove(").lstrip("{ \n").startswith("if (!g_SmaButtonHeld) return;"))
+        # The foreground and the stash window are asked only while the key is
+        # down or the button recorded a press.
+        down = tick.index("if (down || pressed) {")
         self.assertLess(down, tick.index("SmaGameInForeground()"))
         self.assertLess(down, tick.index("HeroSiege::Objects::GameObject::UI_Stash_obj"))
         self.assertIn("listed = fg && CmInstance(", tick)
-        self.assertIn("if (mod.KeyEdge(down, fg, listed, modifier)) StashMoveAllRun();", tick)
+        self.assertIn("const bool key = mod.KeyEdge(down, fg, listed, modifier);", tick)
+        self.assertIn("if (key || button) StashMoveAllRun();", tick)
+        self.assertEqual(tick.count("StashMoveAllRun()"), 1)
         # The first frame on only notes the key.
         self.assertIn("if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false, false); return; }", tick)
         self.assertIn("return press && foreground && stashListed && !modifier;", self.header)
@@ -244,7 +251,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         # RouteAtUse decides, whatever the plan said; the branch taken is the
         # one it answers, and the outcome is decided on that item.
         one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
-        reread = one.index("before = arrRead ? SmaStackSum(s, arr, cls, base) : -1;")
+        reread = one.index("before = arrRead ? (held == 0 ? 0 : SmaStackSum(s, arr, cls, base)) : -1;")
         at_use = one.index("use = Mod::RouteAtUse(use, plan.stashTab, before);")
         self.assertLess(reread, at_use)
         self.assertIn("if (it.cell.stackable) {", one[:reread])
@@ -268,9 +275,10 @@ class StashMoveAllContractTests(unittest.TestCase):
             self.assertIn(key, held, key)
         self.assertIn("GetAsyncKeyState", held)
         tick = self.body("static void StashMoveAllTick(")
-        down = tick.index("if (down) {")
+        down = tick.index("if (down || pressed) {")
         self.assertLess(down, tick.index("modifier = SmaModifierHeld();"))
-        self.assertIn("if (mod.KeyEdge(down, fg, listed, modifier)) StashMoveAllRun();", tick)
+        self.assertIn("const bool key = mod.KeyEdge(down, fg, listed, modifier);", tick)
+        self.assertIn("const bool button = mod.TakeButtonPress(fg, listed, modifier);", tick)
         self.assertIn("bool KeyEdge(bool down, bool foreground, bool stashListed, bool modifier)", self.header)
         self.assertIn("return press && foreground && stashListed && !modifier;", self.header)
 
@@ -336,6 +344,154 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("if (r.ownerDispatched != 1)", decide)
         self.assertIn("if (r.keyOnMap0 == 1)", decide)
         self.assertIn("if (r.keyOnMap0 != 0)", decide)
+
+    # ---- the in-game button (buttonRoute: poll, Live 1g) ------------------------
+
+    def button_block(self):
+        start, end = self.plugin.index(BUTTON_BLOCK[0]), self.plugin.index(BUTTON_BLOCK[1])
+        return strip_comments(self.plugin[start:end])
+
+    def test_button_node_is_created_and_removed_by_name_and_only_while_on(self):
+        block = self.button_block()
+        # It ships, whole, in the player build.
+        start, end = self.plugin.index(BUTTON_BLOCK[0]), self.plugin.index(BUTTON_BLOCK[1])
+        self.assertIn(self.plugin[start:end], self.shipped)
+        self.assertNotIn("FORGEPACT_RELEASE", self.plugin[start:end])
+        # The two node routines, each an SDK constant, and the only routines here.
+        consts = re.findall(r"static constexpr TalentAllocScript (kSma\w+)\{ HeroSiege::Scripts::gml_Script_(\w+),\s*"
+                            r"SdkShortScriptName\(HeroSiege::Scripts::gml_Script_(\w+)\) \};", block)
+        self.assertEqual({c[1] for c in consts}, {"UiCreateNode", "UiRemoveNode"})
+        for name, routine, short in consts:
+            self.assertEqual(routine, short, name)
+        self.assertEqual(set(re.findall(r"SmaCall\((\w+),", block)), {"kSmaUiCreateNode", "kSmaUiRemoveNode"})
+        self.assertNotIn('"gml_Script_', block)
+        self.assertNotIn('"UI_', block)
+        # Made under the stash window, beside Sort found by its call-stack
+        # name (sortActivation: its text reads Sort Tab, never searched).
+        ensure = self.body("static void SmaButtonEnsure(")
+        self.assertIn("CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)", ensure)
+        self.assertIn('StashVerbByString(HeroSiege::Objects::GameObject::UI_Button_Small_obj, "uiNodeCallstack", kSmaSortCallstack, sort, sortInst)', ensure)
+        self.assertIn('static constexpr const char* kSmaSortCallstack = "InventorySort";', block)
+        self.assertNotIn('"Sort', block)
+        self.assertIn("mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)", ensure)
+        create = self.body("static void SmaButtonCreate(")
+        self.assertIn("SmaCall(kSmaUiCreateNode, stash, stash,", create)
+        self.assertIn("object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);", create)
+        self.assertIn('static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";', block)
+        self.assertIn('static constexpr const char* kSmaButtonText = "Move all";', block)
+        # A refusal is the core's once-only line; the mod stays on.
+        self.assertIn("mod.ButtonRefused(why)", create)
+        self.assertNotIn("TurnOffForSession", block)
+        self.assertNotIn("SetEnabled", block)
+        # The only write: the label of the node the mod made, read back.
+        self.assertEqual(block.count("variable_instance_set"), 1)
+        self.assertIn('"variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) }', create)
+        # Removal: UiRemoveNode with the owner window as self while it is
+        # listed, instance_destroy on the mod's own node only when it is not.
+        remove = self.body("static void SmaButtonRemove(")
+        self.assertIn("SmaCall(kSmaUiRemoveNode, owner, owner, { g_SmaButton }, res);", remove)
+        self.assertEqual(block.count('"instance_destroy"'), 1)
+        self.assertLess(remove.index("if (owner) {"), remove.index('"instance_destroy"'))
+        self.assertLess(remove.index("if (!SmaButtonIsOurs(g_SmaButton))"), remove.index("SmaCall(kSmaUiRemoveNode"))
+        ours = self.body("static bool SmaButtonIsOurs(")
+        self.assertIn("v.ToString() == kSmaButtonCallstack", ours)
+        # Only while on: the tick's ensure step at most every tenth frame, and
+        # the switch turned off, a loss, and the off tick each remove it.
+        tick = self.body("static void StashMoveAllTick(")
+        self.assertIn("if ((s_Frame++ % kSmaButtonEveryFrames) == 0) SmaButtonEnsure();", tick)
+        self.assertIn("static constexpr unsigned kSmaButtonEveryFrames = 10;", self.code)
+        self.assertLess(tick.index("if (!mod.IsEnabled())"), tick.index("SmaButtonEnsure()"))
+        cmd = self.body("static void StashMoveAllCommand(")
+        off = cmd[cmd.index('if (arg == "0" || arg == "off") {'):]
+        self.assertLess(off.index("mod.SetEnabled(false);"), off.index("SmaButtonRemove();"))
+        self.assertIn("if (t.stopped) SmaButtonRemove();", self.body("static void StashMoveAllRun("))
+        self.assertIn("if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) SmaButtonRemove();",
+                      self.body("static void StashMoveCommand("))
+        # The core: the node exists exactly while on, the stash and Sort listed.
+        step = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "StashMoveButtonStep ButtonStep(")
+        self.assertIn("const bool wanted = IsEnabled() && stashListed && sortListed && sortVisible;", step)
+
+    def test_button_binds_no_activation_and_installs_no_script_hook(self):
+        # Live 1f: a click on a node bound to a game script ran that script
+        # with the node as self and ended the game. The player build binds
+        # nothing and hooks nothing for the button, whichever route stands.
+        block = self.button_block()
+        for word in ("UiSetActivationFunc", "HookOneScript", "HookBuiltin", "MmCreateHook", "activationFunc",
+                     "event_perform", "Rva", "GetModuleHandle", "reinterpret_cast"):
+            self.assertNotIn(word, block, word)
+        release = strip_comments(self.shipped)
+        self.assertNotIn("gml_Script_UiSetActivationFunc", release)
+        self.assertNotIn("kSmaProbeBind", release)
+        # UiCreateNode's fourth argument, the activation, is undefined.
+        create = self.body("static void SmaButtonCreate(")
+        self.assertRegex(create, r"SmaCall\(kSmaUiCreateNode, stash, stash,\s*\{ RValue\(sx - sw - kSmaButtonGap\), "
+                                 r"RValue\(sy\), object, RValue\(\), RValue\(std::string\(kSmaButtonCallstack\)\) \}, node\);")
+        # Positive control: the research build's probe still carries the bind.
+        self.assertIn("SmaCall(kSmaProbeBind, stash, stash, { node, script }, res);", strip_comments(self.plugin))
+
+    def test_button_press_is_the_frame_poll_inside_the_node_bbox(self):
+        poll = self.body("static bool SmaButtonPoll(")
+        self.assertTrue(poll.lstrip("{ \n").startswith("if (!g_SmaButtonHeld) return false;"))
+        order = [poll.index(t) for t in ('CallBuiltin("mouse_check_button_pressed", { RValue(kSmaMbLeft) })',
+                                         'CallBuiltin("device_mouse_x_to_gui", { RValue(0.0) })',
+                                         'CallBuiltin("device_mouse_y_to_gui", { RValue(0.0) })',
+                                         'MenuLayoutRead(g_SmaButton, "bbox_left")',
+                                         "ForgePact::StashMoveAllMod::PressInNode(mx, my, l, t, r, b)",
+                                         "NoteButtonPress()")]
+        self.assertEqual(order, sorted(order))
+        for side in ("bbox_left", "bbox_top", "bbox_right", "bbox_bottom"):
+            self.assertIn(f'MenuLayoutRead(g_SmaButton, "{side}")', poll)
+        # The press is handed to the core, never acted on in the poll.
+        for word in ("StashMoveAllRun", "SmaMoveOne", "SmaCall", "KeyEdge", "TakeButtonPress"):
+            self.assertNotIn(word, poll, word)
+        tick = self.body("static void StashMoveAllTick(")
+        self.assertLess(tick.index("const bool pressed = SmaButtonPoll();"), tick.index("if (down || pressed) {"))
+        self.assertLess(tick.index("if (down || pressed) {"), tick.index("mod.TakeButtonPress(fg, listed, modifier)"))
+        self.assertIn("static bool PressInNode(double x, double y, double left, double top, double right, double bottom)",
+                      self.header)
+        self.assertIn("return pressed && IsEnabled() && foreground && stashListed && !modifier;", self.header)
+        # None of the research probe's strings reach the player build (the
+        # built DLL is checked for them too, criterion ship-strings).
+        release = strip_comments(self.shipped)
+        for word in ('"poll_presses', '"stashmoveall probe', '"stashmoveall probe copy: "'):
+            self.assertNotIn(word, release, word)
+
+    # ---- the Socketable tab (socketMergeRoute, Live 1f and 1g) ---------------
+
+    def test_socket_tab_reads_its_grid_nodes_not_the_slot_array(self):
+        # Live 1e finding 2: Controller_obj.stashSocketItemSlot is not the
+        # container. The tab is read as the set of StashSocketGrid nodes,
+        # each cell's key on map 9, and the merge is handed the node's own
+        # one-cell nodeGrid with 9, 2, the item, its count and 8.
+        self.assertIn("bool socketMerge = true;", self.header)
+        self.assertIn("bool socketNew = false;", self.header)
+        self.assertIn('static constexpr const char* kSmaSocketGrid = "StashSocketGrid";', self.code)
+        self.assertNotIn("stashSocketItemSlot", self.code)
+        self.assertNotIn("kCmSocketTabVar", self.code)
+        node = self.body("static int SmaSocketNode(")
+        self.assertIn("TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj)", node)
+        self.assertIn("v.ToString() != kSmaSocketGrid", node)
+        self.assertIn('CmArrayVar(h, "nodeGrid", grid)', node)
+        self.assertIn("SmaStackSum(s, grid, cls, base)", node)
+        self.assertIn("CmMapItem(s.map9", self.body("static bool SmaResolve("))
+        one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
+        self.assertIn("const int held = tabStill && socket ? SmaSocketNode(s, cls, base, node, arr) : -1;", one)
+        self.assertIn("RValue(socket ? kSmaSocketStackA5 : kSmaStackA5)", one)
+        self.assertIn("static constexpr double kSmaStackA5 = 0.0, kSmaSocketStackA5 = 8.0;", self.code)
+        # No ValidateItem first, as the measured merge ran none; no placement
+        # room read there (socketRoute new: not-observed).
+        self.assertIn("if (!materials && !socket) c = SmaCall(kSmaValidate, s.bag, s.bag, { item }, res);", one)
+        self.assertIn("if (arrRead && cellRoute && !socket) room = Mod::Room(", one)
+        # The re-reads, the merge's own and the core's, are of the node handed.
+        self.assertIn("const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;", one)
+        self.assertIn("const bool nowRead = r.shownTabChanged == 0 && SmaReread(s, plan.stashTab, node, now);", one)
+        reread = self.body("static bool SmaReread(")
+        self.assertIn('if (node.m_Kind != VALUE_UNDEFINED) return CmArrayVar(node, "nodeGrid", cells);', reread)
+        scene = self.body("static bool SmaReadScene(")
+        self.assertIn("const int held = SmaSocketNode(s, cls, base, node, cells);", scene)
+        # The source is the bag's Socket view only (the core's rule).
+        plan = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static StashMovePlan PlanWith(")
+        self.assertIn("const bool fits = page ? tab != StashMoveTab::Socketable", plan)
 
     # ---- the panel ------------------------------------------------------------
 
