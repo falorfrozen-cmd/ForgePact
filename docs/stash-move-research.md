@@ -217,7 +217,15 @@ the save**; a body that was not read says so.
   is the measured `stashInventoryMap`, `docs/RUNTIME_DATA_MODELS.md` § 17). It
   has one further case past 12, **not read**. So the map 9 lookup reads
   neither its self nor its other: Live 1's `Console_Save_obj` self was not the
-  problem.
+  problem. **Measured** for the personal tab (Live 1b `lookup-control`, Live 1c
+  `hand-personal-map`, Live 1d `byname-personal-clear`): a personal-tab key
+  answers an item struct on map 0 and undefined on map 9, before and after a
+  move into the personal tab. **Not established** for the shared tabs: every
+  shared-tab key looked up (Live 1b, 1c and 1d, including one the game itself
+  had just moved there with its owner step from 0 to 9) answered undefined on
+  both map 0 and map 9 through the one lookup form of § Phase A shapes, so
+  which map holds a shared-tab entry, and why the owner 9 lookup misses it,
+  are still open.
 - **(b) `GetItemFromFingerprint`** takes the key and the owner. It refuses an
   undefined or non-string key, then asks `GetItemMap` for that owner's map and
   answers the map's value for the key, or undefined. Nothing else. So Live 1's
@@ -250,7 +258,11 @@ the save**; a body that was not read says so.
   Compare`, `SHIFT + LMB: Split Stack`. The game's own quick move is Ctrl +
   left click, which Live 1 never tried (its right click equipped the item, as
   the strip says it would). The owner confirmed it on 2026-09-28: a hand move
-  from the bag into the stash is Ctrl + click.
+  from the bag into the stash is Ctrl + click. **Measured by hand** in Live 1c
+  (`hand-personal`, `hand-shared`, `hand-material`, `hand-merge`: the owner's
+  own Ctrl + left click, each moving the item into the tab on show). A
+  scripted click never reached the grid's pick-up in Live 1b
+  (`click-control`), so no scripted Ctrl + click has been measured.
 - **(f) The bag's item classes.** Live 1's bag grid held classes 6, 7 and 10
   only; `hs-game-sdk`'s `ItemType` names them Shield (6), Ring (7) and Charm
   (10), beside Weapon (3), Material (14) and Potion (18). Potions sit in the
@@ -263,11 +275,25 @@ the save**; a body that was not read says so.
   `stash.hss`; and the bag's tabs are saved in a third file,
   `inventory_order_13.hss`, not in the character file. The personal stash
   therefore saves with the character, which fits (a): a personal-tab item has
-  no stash owner to be in.
+  no stash owner to be in. **Measured** after moves in Live 1c and Live 1d
+  (`saved-stash-has-keys`, `saved-bag-lacks-keys`): a key moved into the
+  personal tab saves under `herosiege13.hss`'s `inventory.personal_stash`, one
+  moved into shared tab 1 under `stash.hss`'s `stash_tab_1`, a material stack
+  moved into the Materials tab under `stash.hss`'s `material_tab`, and none of
+  them under a bag container of `inventory_order_13.hss` any more.
 - **Not read**: which of `m_MoveItemToGrid`'s ten owner changes a bag-to-stash
   move takes, the processor's third `GridAddItem` argument, and where the
-  processor clears the bag cell after a grid placement. Live 1b logs all
-  three from the game's own gesture instead of reading them.
+  processor clears the bag cell after a grid placement. Live 1b was to log
+  all three from the game's own gesture; its scripted click never reached the
+  pick-up, so Live 1c logged them from the owner's hand moves instead:
+  its armed row (`InvGrid15345`, the `anon@15345` closure) logged nothing in
+  any hand move, whose logged sequence is instead the processor's
+  bag-to-stash group of § Static reading; the third `GridAddItem` argument was 0 on every tab
+  kind (**measured**, Live 1c); and no armed row logged a clear after a hand
+  grid placement, though the bag cell emptied (which routine clears it is
+  still **not observed**). By name, the placement leaves the bag cell as it
+  was and a separate `InvGridClearItemNode` on the item's anchor cell empties
+  it (**measured**, Live 1d `byname-personal-clear`, `byname-shared`).
 
 **The hypothesis Live 1b tests**, written before the session, each claim with
 the check that decides it:
@@ -298,6 +324,72 @@ the check that decides it:
 7. Against a full shown tab the game's own quick move either leaves the item
    in the bag or spills it to another tab - `gesture-ctrl-full`, the only
    check `targetTabRule` is set from.
+
+**What Live 1b, 1c and 1d found**, hypothesis by hypothesis. Live 1b measured
+only the lookups: its scripted click never started the grid's pick-up
+(`click-control` fail), so it sent no gesture and ran no grid block. Live 1c
+put the owner's own Ctrl + left click in the gestures' place (the positive
+controls for every replay), and Live 1d replayed the hand moves' logged
+sequences by name. Each result names its check.
+
+- Hypothesis 1: **half measured.** A personal-tab entry stays on map 0
+  (1b `lookup-control`, 1c `hand-personal-map`). A shared-tab entry answers
+  on neither map 0 nor map 9 through the one lookup form (1b, 1c
+  `hand-shared-map`, 1d `byname-shared-owner`); where it lives is **not
+  established**.
+- Hypothesis 2: **measured.** The hand move into the personal tab logged no
+  `ChangeItemOwner` (1c H1); the one into shared tab 1 logged one, after the
+  placement and the stash grid's item check, with self the stash grid, other
+  the bag grid, and the owner numbers 0 then 9 and the key as text (1c H2).
+  Replayed by name after a confirmed placement it left the item in its
+  shared-tab cells and turned its lookups into the shared-tab answer (1d
+  `byname-shared-owner`). Replayed alone, with no placement, it took the key
+  off map 0 while the item still sat in its bag cell - the half state the
+  game's own save does not survive - and was reversed at once (1c step 8).
+- Hypothesis 3: **measured by hand, with a correction.** The owner's Ctrl +
+  left click moved the item into the tab on show every time (1c
+  `hand-personal`, `hand-shared`, `hand-material`, `hand-merge`). The logged
+  sequence is the bag-to-stash group of § Static reading, not the
+  into-the-bag group: the item check on the bag grid, `StashAddToStack`
+  (false when no stack of that identity is on the tab), `GridAddItem` on the
+  tab's array (third argument 0, fourth undefined), `s_InvNode` (whose self
+  is a struct), the item check again with the stash grid as self, and on a
+  shared or Materials tab the owner step. `InventoryGridCanAddToStack`,
+  `InventoryGridAddToStack`, `InventoryGridAddItemToTab` and
+  `GetStashMaxTabs` never logged. A scripted click through `hs_input` did
+  not reach the pick-up (1b `click-control`).
+- Hypothesis 4: **measured.** The array the hand moves' `StashAddToStack` and
+  `GridAddItem` were handed is the stash grid node's own `nodeGrid` read with
+  that tab on show: the same array object, by the id the log prints, for the
+  personal tab and for shared tab 1 (1c steps 7 and 8). `Controller_obj` has
+  no member `stashPersonalGrid` on this build (1c step 7). The Materials
+  tab's array is `Controller_obj.stashMaterialTab` (1c step 9).
+- Hypothesis 5: **measured**, once `GridAddItem` is in the replay. Live 1c
+  replayed only the group's named rows, which left `GridAddItem` out, and
+  moved nothing (1c `byname-personal`, `byname-shared`: not-observed). Live
+  1d replayed the logged sequence with `GridAddItem` included: the item
+  landed in the personal tab and in shared tab 1 at the cell the answer
+  named (1d `byname-personal`, `byname-shared`), the bag cell emptied only
+  after a by-name `InvGridClearItemNode` on the item's anchor cell (1d
+  `byname-personal-clear`, `byname-shared`), and after a close, a reopen and
+  the saved files each moved key was in the stash and in no bag container
+  (1d `reopen-shows`, `saved-stash-has-keys`, `saved-bag-lacks-keys`).
+- Hypothesis 6: **measured.** With a stack of the same identity on the
+  Materials tab, `StashAddToStack` by name answered true and the tab's sum
+  rose by exactly one unit; the source clear then emptied the bag cell (1c
+  `byname-merge`, replaying the hand merge of `hand-merge`). A new material
+  identity went, by hand, through `StashAddToStack` (false), `GridAddItem`
+  on the Materials tab's array and the owner step from 0 to 9 (1c
+  `hand-material`); that placement was not replayed by name.
+- Hypothesis 7: **measured by hand: it stays in the bag.** Against the full
+  shared tab 2, the owner's Ctrl + left click logged `StashAddToStack`
+  (false) and `GridAddItem` (`success=false`) and nothing after them - no
+  `GetStashMaxTabs`, no tab walk, no clear, no owner step; the item stayed in
+  its bag cell and the full tab's filled count was unchanged (1c
+  `hand-full`). The tab walk § Static reading found behind a failed
+  placement did not run for this input. Live 1d's by-name replay against the
+  same tab answered the same (`byname-full`), which is expected by
+  construction and not what `targetTabRule` is set from.
 
 ## Instrument
 
@@ -495,6 +587,10 @@ item)`, `not-run (instrument: cell point unconfirmed)` or `not-run
 ### Phase A' shapes
 
 Research build `plugin_build\BloodPactPlugin_rel.phaseA-e18d3198.dll`, build sha256=e18d3198e5e24e7357f34a80d91eee0b4b91d679cbdf9d6c80692c3ec5c79a3f - the kept copy of Live 1's build, unchanged: no rebuild for Live 1b. Every row Live 1b arms is already a `craftprobe` row of that build (checked by name against the table on 2026-09-28): `InventoryGridCanAddToStack`, `InventoryGridAddToStack`, `InventoryGridAddItemToTab`, `InvGridClearItemNode`, `StashAddToStack`, `InventoryGridAddItemPos`, `InventoryGridAddItem`, `InventoryGridHasSpace`, `ValidateItem`, `ChangeItemOwner`, `RemoveItemFromMap`, `AddItemToMap`, `InventorySwapItemsNew`, `StashGridAddItem`, `GridAddItem`, `GridRemoveItem`, `s_InvNode`, `InvStartDragging`, `InvCopyItemDragData`, `InvCopyItemToInvDragData`, `InventoryStackUpdateAndRemove`, `StashAddItemOnline`, `GetStackOpLocationFromGridType`, `GetItemOwnerFromStackOpLocation`, `InvGrid15345` and the control `CheckPlayerInteraction`, plus `GetItemFromFingerprint` for the lookups.
+Live 1c and Live 1d ran on the same kept copy, also with no rebuild: the rows
+Live 1c added to the armed list (`GetItemFromFingerprint`, `GetItemMap`,
+`GetStashMaxTabs`, `GridAddToStack`, `UiASplitStack`, `ItemCheckHash`,
+`GetItemOwnerStr`) and every row Live 1d calls are rows of the same table.
 
 The lines Live 1b runs, in order, in the same form as § Phase A shapes (the
 command up to `confirm`, then `-> expect:`). What Live 1 changed about them:
@@ -691,6 +787,64 @@ craftprobe call InvGridClearItemNode id:<mg> other:<mg> path:id:<mg>.nodeGrid.<y
 craftprobe call GridAddItem <self as logged> <other as logged> path:Controller_obj.stashMaterialTab fp:<K_MB> <a2 as logged> undefined confirm   -> expect: success=true, and the tab gains K_MB's base id with its count
 ```
 
+**The hand moves' sequences, replayed by name (Live 1d)** (checks
+`byname-personal`, `byname-personal-clear`, `byname-shared`,
+`byname-shared-owner`, `byname-full`). Live 1c's owner moved one item by hand
+into each tab kind; the rows each hand move logged (§ Live 1c results) are
+what these lines replay, in logged order, with the placement `GridAddItem`
+included - Live 1c's own replays left it out, because the procedure replayed
+only the rows of the group § Static reading named, and moved nothing.
+`s_InvNode` is never replayed: its self is a struct, and `craftprobe call`
+takes an instance self only; a by-name `GridAddItem` sets it off itself
+(Live 1d logged it nested under each successful placement). Placeholders, read
+in the same session: `<bag>` the bag grid node (`InventoryGrid`), `<sg>` the
+`StashGrid` node, which rebinds to whichever stash tab is on show (so
+`path:id:<sg>.nodeGrid` is that tab's own array), `<K_P>` and `<K_Q>` two
+non-stackable bag keys (Live 1d: two 1 by 3 charms), `<K_R>` a third, and
+`<x>,<y>` a key's anchor cell in the bag (the top-left cell of its footprint;
+`nodeGrid` is `[y][x]`). The bag is on its first page throughout.
+
+Into the personal tab (personal tab on show), then the source clear, only
+when `GridAddItem` answered `success=true` and the key is still in a bag
+cell; no owner step:
+
+```
+craftprobe call ValidateItem id:<bag> other:<bag> fp:<K_P> confirm   -> expect: ""
+craftprobe call StashAddToStack id:<bag> other:<bag> path:id:<sg>.nodeGrid 0 13 fp:<K_P> 1 0 confirm   -> expect: false (no stack of a non-stackable)
+craftprobe call GridAddItem id:<bag> other:<bag> path:id:<sg>.nodeGrid fp:<K_P> 0 undefined confirm   -> expect: a struct with success=true and the landing x, y
+craftprobe call ValidateItem id:<sg> other:<bag> fp:<K_P> confirm   -> expect: ""; only after success=true
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_P
+```
+
+Into shared tab 1 (shared tab 1 on show): the same with the shared tab's
+constants, then the owner step last, only after the placement is confirmed
+and the bag cell is clear:
+
+```
+craftprobe call ValidateItem id:<bag> other:<bag> fp:<K_Q> confirm   -> expect: ""
+craftprobe call StashAddToStack id:<bag> other:<bag> path:id:<sg>.nodeGrid 9 2 fp:<K_Q> 1 0 confirm   -> expect: false
+craftprobe call GridAddItem id:<bag> other:<bag> path:id:<sg>.nodeGrid fp:<K_Q> 0 undefined confirm   -> expect: success=true and the landing x, y
+craftprobe call ValidateItem id:<sg> other:<bag> fp:<K_Q> confirm   -> expect: ""; only after success=true
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_Q
+craftprobe call ChangeItemOwner id:<sg> other:<bag> 0 9 <K_Q> confirm   -> expect: undefined; K_Q still in its shared-tab cells, its lookups now as a shared-tab key's
+```
+
+Against the full shared tab 2 (on show, 0 empty cells): the placement
+answers no room and nothing after it runs - no clear, no owner step:
+
+```
+craftprobe call ValidateItem id:<bag> other:<bag> fp:<K_R> confirm   -> expect: ""
+craftprobe call StashAddToStack id:<bag> other:<bag> path:id:<sg>.nodeGrid 9 2 fp:<K_R> 1 0 confirm   -> expect: false
+craftprobe call GridAddItem id:<bag> other:<bag> path:id:<sg>.nodeGrid fp:<K_R> 0 undefined confirm   -> expect: success=false; the bag, the full tab and every other tab unchanged
+```
+
+Every line above answered as expected in Live 1d (§ Live 1d results). The
+merge into an existing Materials stack is Live 1c's step 9, the first and
+third lines of the **Materials** block above, with the bag's Materials
+sub-tab on show (`<mg>` measured as the bag grid node itself, rebound to the
+sub-tab); it answered true and the sum rose by one (§ Live 1c results,
+`byname-merge`).
+
 **Undo**, for a placement whose maps end inconsistent (`grid-move-map` or
 `grid-move-shared-map` fails), before any close: take the item back out of
 the destination array with the remove shape `crafting-materials-research.md`
@@ -748,6 +902,47 @@ call follows the recording rule under § Instrument, and each check is `pass`,
 `fail`, `not-observed` (with what was supplied) or `not-run (instrument:
 ...)`.
 
+### Live procedure 1c
+
+The procedure is the one in this workorder's context file,
+`.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1c"
+(kept on the owner's machine with the plan). **Hand-assisted**, by the
+owner's decision of 2026-09-28, for this one session only: Live 1b showed a
+scripted click does not start the grid's own pick-up, so the owner made the
+quick moves the gestures were meant to make. The same research build as Live
+1 and Live 1b (§ Phase A' shapes); the same positive controls first; then
+four asks, one at a time, each after a re-arm and a baseline `craftprobe
+show` so every logged line belongs to that ask: the owner's Ctrl + left click
+into the personal tab, into shared tab 1, against the full shared tab 2, and
+on the Materials tab (a stack as a new identity, then one unit merged onto
+it). After each ask the operator read every armed row that logged, both
+grids and the moved key's lookups. Then, with no person, by-name replays of
+the shapes those hand moves logged - but only of the rows in the group §
+Static reading named, which left out the placement `GridAddItem` - the
+close by name only, the reopen, and the saved files read with
+`tools/save_item_keys.py`. Every by-name call follows the recording rule
+under § Instrument; each check is `pass`, `fail`, `not-observed` (with what
+was supplied) or `not-run (instrument: ...)`. Each hand-move result is
+**measured**, and its input is a person, not the instrument.
+
+### Live procedure 1d
+
+The procedure is the one in this workorder's context file,
+`.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1d"
+(kept on the owner's machine with the plan): **fully automatic, no person
+step**, on the same research build, the same slot and the saves Live 1c
+restored. The same positive controls first; then Live 1c's hand-move
+sequences replayed by name in logged order with `GridAddItem` included (§
+Phase A' shapes, "The hand moves' sequences, replayed by name"): into the
+personal tab, into shared tab 1 with the owner step only after a confirmed
+placement, and against the full shared tab 2. The bag's source clear runs
+only when the key is still in a bag cell after the placement, and before any
+owner step. Then the close by name only, the reopen, and the saved files read
+with `tools/save_item_keys.py`, with a positive control on each side. Every
+by-name call follows the recording rule under § Instrument; each check is
+`pass`, `fail`, `not-observed` (with what was supplied) or `not-run
+(instrument: ...)`.
+
 ## Results
 
 ### Live 1 results
@@ -790,8 +985,10 @@ lists every rejected or unproductive shape in full.
 Every call shape and gesture Live 1 tried that was rejected or moved nothing,
 with exactly what was supplied, per the toolkit `AGENTS.md` § "Never Call an
 Address You Resolved by Hand" (a rejected call shape is a labelling problem to
-revisit, not a settled dead end). The last column is what § Static reading 2
-says the reply means; none of them is a route negative.
+revisit, not a settled dead end), and after them the same for Live 1b, Live 1c
+and Live 1d (the session is named in the first column). The last column is
+what § Static reading 2 and the later sessions say the reply means; none of
+them is a route negative.
 
 | Call or gesture | Self / other | Arguments or input supplied | Shown | Reply | What it means |
 |---|---|---|---|---|---|
@@ -803,45 +1000,142 @@ says the reply means; none of them is a route negative.
 | Shift + left click | - | `key_down` vk 16, left click with `hold_ms` 0, `key_up`, on a class 6 bag cell | as above | nothing moved | unproven: a zero hold activates nothing; Shift is Compare / Split Stack in the hint strip, not a move |
 | click, move, click | - | left click on a class 10 bag cell (hold not recorded), move, left click on an empty personal-tab cell | as above | nothing moved | unproven (hold not recorded); a pick-up and place, not a quick move |
 | grid block (`GridAddItem`, `InvGridClearItemNode`, `ChangeItemOwner`) | - | never called: the lookup control failed first | - | - | not a result |
+| Live 1b: `GetItemFromFingerprint`, map 0 lookup control | bag grid / bag grid | the key of a class 1 item in a shared-tab-1 cell, as text; owner 0 | stash personal tab, bag page 0 | `undefined` | the shared-tab entry is not on map 0 |
+| Live 1b: `GetItemFromFingerprint`, map 9 lookup control | `Console_Save_obj` / none | the same shared-tab-1 key, as text; owner 9 | as above | `undefined` | nor on map 9 through this form; Live 1c and 1d answered the same for every shared-tab key, including one the game had just moved there, so where a shared-tab entry lives is not established (§ Static reading 2, (a)) |
+| Live 1b: plain left click (click control) | - | left button, no modifier, the default hold, on the centre of a class 7 bag cell computed from the grid's box and confirmed on a screenshot | as above | `ProcessInventoryGridInput` ran once and `ValidateItem` once; no drag row logged; the cell still held the item | a scripted click reaches the grid's input but not its pick-up, so no scripted gesture was sent; not a route result |
+| Live 1c: `StashAddToStack` alone, personal tab (step 7) | bag grid / bag grid | the personal tab's array (`path:id:<sg>.nodeGrid`), 0, 13, a class 10 key as `fp:`, 1, 0 | stash personal tab, bag page 0 | `false`, nothing moved | the hand move's own answer, reproduced; it only merges, and the placement `GridAddItem` was left out of the replay (Live 1d put it back and moved the item) |
+| Live 1c: `StashAddToStack` then `ChangeItemOwner`, shared tab 1 (step 8) | bag grid / bag grid, then stash grid / bag grid | shared tab 1's array, 9, 2, a class 10 key as `fp:`, 1, 0; then 0, 9 and the key as text | stash shared tab 1, bag page 0 | `false`; then `undefined`, and the key answered on no map while it still sat in its bag cell | no placement ran, so the owner step alone left the half state the game's save does not survive; reversed at once with the owner step from 9 to 0, after which the key answered on map 0 again. The owner step runs only after a confirmed placement |
+| Live 1c: `var Controller_obj 0 stashPersonalGrid` (step 7) | - | the member name | stash personal tab | "the instance has no variable stashPersonalGrid" | that candidate array does not exist on this build; the personal tab's array is the stash grid node's `nodeGrid` with the tab on show |
+| Live 1d: `GridAddItem`, full shared tab 2 (step 6) | bag grid / bag grid | shared tab 2's array (`path:id:<sg>.nodeGrid`, 0 empty cells), a class 10 key as `fp:`, 0, `undefined` | stash shared tab 2, bag page 0 | a struct with `success=false`; nothing changed on any tab or in the bag | the game's no-room answer, the same as the owner's hand move against that tab; the placement searches only the array it is handed |
 
-Ctrl + left click, the game's own quick move, was not tried.
+Live 1 did not try Ctrl + left click, the game's own quick move. Live 1b
+could not send it (its click control failed), and in Live 1c the owner made
+it by hand (§ Live 1c results).
 
 ### Live 1b results
 
-Not run yet. One row per Live 1b check; the logged shape sits beside the
-supplied shape for every by-name call, and the rows each gesture logged are
-quoted in full.
+Live 1b ran on 2026-09-28 (research build e18d3198, slot 14, no person at the
+keyboard; capture `.claude/workorders/forgepact-68-move-all-live-1b.md` on the
+owner's machine). Every session-validity check passed; **nothing moved and no
+route was measured**. Two instrument checks failed before any move: the
+shared-tab lookup answered on neither map, which stopped every by-name grid
+block, and a scripted left click reached the grid's input but never picked
+the item up, which stopped every gesture. The bag grid node was 262362, the
+stash grid node 262406 (the same node rebinds to each stash tab), the stash
+window 262334; shared tab 1 had 82 empty cells and shared tab 2 none. The
+stash never closed (three by-name closes refused), so nothing reached the
+saves. One row per check; the logged shape sits beside the supplied shape
+for every by-name call.
 
 | Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
 |---|---|---|---|---|---|
-| dll-hash | the lease's DLL hash against the build of § Phase A' shapes | - | - | | |
-| marker | `craftprobe` first line | - | - | | |
-| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | | |
-| byname-control | the dispatcher control line and its `show` entry | | | | |
-| lookup-control | the four lookup lines for `<K_S0>` and `<K_S1>`: each on exactly one map (`personal-map`, `shared-map`) | - | | | |
-| click-control | a plain click on `<K_J1>`'s cell picks it up (drag rows rising, the cell empty), a second puts it back | | - | | |
-| gesture-ctrl-personal | Ctrl + left click on `<K_J2>`, personal tab shown: where it lands, its map, every row logged | | - | | |
-| gesture-ctrl-shared | Ctrl + left click on `<K_J3>`, shared tab 1 shown: where it lands, its map, every row logged (`ChangeItemOwner` or not) | | - | | |
-| gesture-ctrl-full | Ctrl + left click on `<K_J4>`, full shared tab 2 shown: the bag, that tab or another tab, and the shown tab's cells before and after; sent only after a Ctrl + left click moved an item this session | | - | | |
-| gesture-ctrl-material | Ctrl + left click on `<K_MA>` in the bag's Materials sub-tab, Materials tab shown: the tab's sum and the rows | | - | | |
-| grid-array-identity | `Controller_obj.stashPersonalGrid` and the grid node's `nodeGrid` at `<K_J2>`'s landing cell | - | - | | |
-| grid-move-byname | `<K_J5>` in a personal-tab cell and in no bag cell after the by-name block | | | | |
-| grid-move-map | `<K_J5>`'s two lookup replies against `<K_S0>`'s | - | | | |
-| grid-move-shared-byname | `<K_J6>` in a shared-tab-1 cell and in no bag cell after the by-name block | | | | |
-| grid-move-shared-map | `<K_J6>`'s two lookup replies against `<K_S1>`'s | - | | | |
-| tab-full-byname | the by-name placement into full shared tab 2: `success=false`, both sides unchanged (instrument check) | | | | |
-| stack-move-byname | the Materials tab's sum for `<K_MU>`'s identity up by 1 and `<K_MU>`'s cell gone, run only with a stack of that identity already on the tab | | | | |
-| mat-new-byname | the Materials tab gains `<K_MB>`'s identity and its count; the bag cell gone | | | | |
-| close-survives | the game after the stash close | - | - | | |
-| reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | | |
-| saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | | |
-| saved-bag-lacks-keys | no moved key under a bag container, `inventory_order_<slot>.hss` included, after the pre-session copy's read showed each one in a bag container | - | - | | |
+| dll-hash | the lease's DLL hash against the build of § Phase A' shapes | - | - | lease `dll_sha256` e18d3198..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=287 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `286 detoured, 0 failed, 1 held`; `calls=10920`, then `calls=40320` five seconds later | pass |
+| byname-control | the dispatcher control line and its `show` entry | `InventoryGridCanAddToStack calls=1 logged=1` | self = other = bag grid 262362; 1, undefined, `fp:` the bag's largest material stack (class 14) | `dispatched #1 -> ret=` an item struct (class 14) | pass |
+| lookup-control | the four lookup lines for `<K_S0>` and `<K_S1>`: each on exactly one map (`personal-map`, `shared-map`) | - | map 0: self = other = bag grid; map 9: self `Console_Save_obj`; `<K_S0>` a class 3 personal-tab key, `<K_S1>` a class 1 shared-tab-1 key | `<K_S0>`: an item struct on map 0, undefined on map 9 (`personal-map: 0`); `<K_S1>`: undefined on both maps, so `shared-map` could not be read | fail |
+| click-control | a plain click on `<K_J1>`'s cell picks it up (drag rows rising, the cell empty), a second puts it back | `ProcessInventoryGridInput` +1 and `ValidateItem` +1; no `InvStartDragging` or `InvCopyItemDragData` | - | left click with the default hold on `<K_J1>` (class 7, cell 4,0), its point confirmed on a screenshot; the cell still held `<K_J1>` afterwards | fail |
+| gesture-ctrl-personal | Ctrl + left click on `<K_J2>`, personal tab shown: where it lands, its map, every row logged | - | - | not sent | not-run (instrument: click control failed) |
+| gesture-ctrl-shared | Ctrl + left click on `<K_J3>`, shared tab 1 shown: where it lands, its map, every row logged (`ChangeItemOwner` or not) | - | - | not sent | not-run (instrument: click control failed) |
+| gesture-ctrl-full | Ctrl + left click on `<K_J4>`, full shared tab 2 shown: the bag, that tab or another tab, and the shown tab's cells before and after; sent only after a Ctrl + left click moved an item this session | - | - | not sent | not-run (instrument: no Ctrl + left click moved an item this session) |
+| gesture-ctrl-material | Ctrl + left click on `<K_MA>` in the bag's Materials sub-tab, Materials tab shown: the tab's sum and the rows | - | - | not sent | not-run (instrument: click control failed) |
+| grid-array-identity | `Controller_obj.stashPersonalGrid` and the grid node's `nodeGrid` at `<K_J2>`'s landing cell | - | - | no gesture, so no landing cell | not-run (instrument: click control failed) |
+| grid-move-byname | `<K_J5>` in a personal-tab cell and in no bag cell after the by-name block | - | nothing: no grid block ran | - | not-run (instrument: lookup control failed) |
+| grid-move-map | `<K_J5>`'s two lookup replies against `<K_S0>`'s | - | nothing | - | not-run (instrument: lookup control failed) |
+| grid-move-shared-byname | `<K_J6>` in a shared-tab-1 cell and in no bag cell after the by-name block | - | nothing | - | not-run (instrument: lookup control failed) |
+| grid-move-shared-map | `<K_J6>`'s two lookup replies against `<K_S1>`'s | - | nothing | - | not-run (instrument: lookup control failed) |
+| tab-full-byname | the by-name placement into full shared tab 2: `success=false`, both sides unchanged (instrument check) | - | nothing | - | not-run (instrument: lookup control failed) |
+| stack-move-byname | the Materials tab's sum for `<K_MU>`'s identity up by 1 and `<K_MU>`'s cell gone, run only with a stack of that identity already on the tab | - | nothing: the one-unit give made `<K_MU>` (base id 72), but no stack of base id 72 was on the tab, and the gesture that would have put one there was not sent | - | not-run (instrument: no merge target on the tab) |
+| mat-new-byname | the Materials tab gains `<K_MB>`'s identity and its count; the bag cell gone | - | nothing | the gesture was not sent, so no placement was logged | not-run (no reproducible shape logged) |
+| close-survives | the game after the stash close | - | - | the game kept running and `menulayout` answered its header; the stash itself never closed (three by-name closes answered `stash_still_open`) | pass |
+| reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | nothing had moved, and with the stash still open there was no reopen | not-observed (nothing moved this session to confirm) |
+| saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | nothing moved; `hs_saves_inspect` listed only `shop.ini` as changed, so the stash, bag and character files were byte-identical to the pre-session copy | not-observed (no key moved this session to check) |
+| saved-bag-lacks-keys | no moved key under a bag container, `inventory_order_<slot>.hss` included, after the pre-session copy's read showed each one in a bag container | - | - | as above | not-observed (no key moved this session to check) |
+
+### Live 1c results
+
+Live 1c ran on 2026-09-28 (research build e18d3198, slot 14, **hand-assisted**:
+the owner made the four quick moves H1 to H4 one at a time, then left;
+capture `.claude/workorders/forgepact-68-move-all-live-1c.md` on the owner's
+machine). Every session-validity check passed. **Every hand move passed and
+the by-name merge reproduced**; the by-name grid replays moved nothing,
+because the procedure replayed only the rows of the group § Static reading
+named and so left out `GridAddItem`, the row each hand move placed the item
+with (Live 1d replayed it). The bag grid node was 262350 (it rebinds to the
+bag's Materials sub-tab), the stash grid node 262394 (it rebinds to each
+stash tab), the stash window 262322. The bag grid held one single-cell
+non-stackable (a class 7 ring); the other test keys were 1 by 3 class 10
+charms, each clicked and addressed at its top-left anchor cell. The hot rows
+`GetItemFromFingerprint` and `GetItemMap` logged their whole budget with no
+input in five seconds and were re-armed out of the list (their counts still
+showed; the lookups were run by name). Each hand-move row is **measured**,
+with a person as the input; the logged sequence is quoted in the Logged
+shape column in logged order.
+
+| Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
+|---|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build of § Phase A' shapes | - | - | lease `dll_sha256` e18d3198..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=287 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `286 detoured, 0 failed, 1 held`; `calls=12600`, then `calls=41580` five seconds later | pass |
+| byname-control | the hook line, and by-name calls dispatching and listed | - | the by-name calls of steps 7 to 9 | every by-name call dispatched; each array argument printed the same array id the matching hand move logged | pass |
+| hand-personal | the owner's Ctrl + left click on `<K_A>` (class 7, bag cell 4,0), personal tab shown: where it lands, every row logged | `ValidateItem` self = other = bag grid, the item, answer empty text; `StashAddToStack` self = other = bag grid, the personal tab's array (18 rows), 0, 13, the item, 1, 0, answer false; `GridAddItem` self = other = bag grid, the same array, the item, 0, undefined, answer tab 0, x 0, y 0, `success=true`; `s_InvNode` (self a struct, other the bag grid) with 0, 0, the item; `ValidateItem` self the stash grid, other the bag grid, answer empty text. No clear, no `ChangeItemOwner`, no `GetStashMaxTabs` | a person | `<K_A>` in personal-tab cell 0,0 and in no bag cell; the bag's filled count 25 to 24, the tab's 18 to 19 | pass |
+| hand-personal-map | `<K_A>`'s two lookups after the move against `<K_S0>`'s | - | map 0: self = other = bag grid; map 9: self `Console_Save_obj` | both keys: an item struct on map 0, undefined on map 9 | pass |
+| hand-shared | the owner's Ctrl + left click on `<K_B>` (class 10, 1 by 3, anchor 2,0), shared tab 1 shown | as hand-personal with `StashAddToStack`'s second and third arguments 9 and 2 and shared tab 1's own array; `GridAddItem` answered x 0, y 1, `success=true`; `s_InvNode` three times; then, after the stash grid's `ValidateItem`, `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key as text, answer undefined | a person | `<K_B>` in shared-tab-1 cells 0,1 to 0,3 and in no bag cell; the bag's filled count 24 to 21, the tab's 224 to 227 | pass |
+| hand-shared-map | `<K_B>`'s two lookups after the move against `<K_S1>`'s | - | as hand-personal-map | both keys undefined on map 0 and on map 9: they match, but which map holds a shared-tab entry is still not identified | pass |
+| hand-full | the owner's Ctrl + left click on `<K_C>` (class 10, anchor 3,0), full shared tab 2 shown: where it lands, and the tab's cells | `ValidateItem`; `StashAddToStack` with shared tab 2's array, 9, 2, answer false; `GridAddItem` with the same array, the item, 0, undefined, answer `success=false`; nothing after it: no `s_InvNode`, no clear, no `ChangeItemOwner`, no `GetStashMaxTabs` | a person | `<K_C>` stayed in its bag cells; shared tab 2 still 306 filled, 0 empty; shared tab 3, also full, did not hold it | pass |
+| hand-material | the owner's Ctrl + left click on `<K_MA>` (base id 72, a stack of 934), bag Materials sub-tab and Materials tab shown | `ValidateItem`; `StashAddToStack` with `Controller_obj.stashMaterialTab`'s array, 9, 2, the item, 1, 0, answer false; `GridAddItem` with the same array, the item, 0, undefined, answer x 3, y 15, `success=true`; `s_InvNode`; `ValidateItem` with the stash grid as self; `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key | a person | the Materials tab gained base id 72 with 934; `<K_MA>` left the bag | pass |
+| hand-merge | the owner's Ctrl + left click on `<K_MU1>` (base id 72, one unit), the stack above on the tab | `ValidateItem`; `StashAddToStack` self = other = bag grid, the Materials array, 9, 2, the item, 1, 0, answer true; `InvGridClearItemNode` self = other = bag grid, the unit's bag cell node (anchor 0,0), undefined. No `GridAddItem`, no `ChangeItemOwner` | a person | the tab's sum for base id 72 rose 934 to 935; `<K_MU1>` left the bag | pass |
+| byname-personal | `<K_P>` (class 10, anchor 2,3) in a personal-tab cell and in no bag cell after the replay | as hand-personal | only the group's row `StashAddToStack`: self = other = bag grid, `path:id:<sg>.nodeGrid` (the same array id as hand-personal's), 0, 13, `fp:<K_P>`, 1, 0 | answer false; `<K_P>` still in its bag cells; the placement `GridAddItem` was not in the replay | not-observed (the placement row was left out of the replay; Live 1d's `byname-personal`) |
+| byname-personal-map | `<K_P>`'s lookups against `<K_A>`'s after H1 | - | as hand-personal-map | both an item struct on map 0 and undefined on map 9; uninformative, since a bag item and a personal-tab item answer the same | pass (by the letter; uninformative) |
+| byname-shared | `<K_Q>` (class 10, anchor 3,3) in a shared-tab-1 cell and in no bag cell after the replay | as hand-shared | `StashAddToStack` self = other = bag grid, `path:id:<sg>.nodeGrid` with shared tab 1 on show (the same array id as hand-shared's), 9, 2, `fp:<K_Q>`, 1, 0; then `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key | false, then undefined; `<K_Q>` still in its bag cells | not-observed (the placement row was left out of the replay; Live 1d's `byname-shared`) |
+| byname-shared-map | `<K_Q>`'s lookups against `<K_B>`'s after H2 | - | as hand-shared-map | undefined on both maps, matching - but made by the owner step alone, with the item still in its bag cell: the half state the game's save does not survive. Reversed at once (owner step 9 to 0; the key answered on map 0 again) | pass (by the letter; not a move, reversed) |
+| byname-merge | the Materials tab's sum for `<K_MU2>`'s base id up by 1 and `<K_MU2>`'s cell gone | as hand-merge | `StashAddToStack` self = other = bag grid, `path:Controller_obj.stashMaterialTab` (the same array id as hand-merge's), 9, 2, `fp:<K_MU2>`, 1, 0; then `InvGridClearItemNode` self = other = bag grid, `path:id:<bag>.nodeGrid.1.0`, undefined | answer true, then undefined; the sum rose 935 to 936; `<K_MU2>` left the bag | pass |
+| close-survives | the game after the stash close, by name only | - | - | the first by-name close answered "not confirmed"; after a mouse move `menulayout` no longer listed the stash; the game kept running | pass |
+| reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | `<K_A>` in the personal tab, `<K_B>` in shared tab 1, the Materials sum for base id 72 still 936; none of them in the bag | pass |
+| saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | `<K_A>` under `herosiege13.hss` `inventory.personal_stash`; `<K_B>` under `stash.hss` `stash_tab_1`; `<K_MA>` under `stash.hss` `material_tab` (the merged units are exempt) | pass |
+| saved-bag-lacks-keys | no moved key under a bag container of `inventory_order_13.hss`, after the pre-session copy's read showed each one in a bag container | - | - | none of the three under a bag container after; the pre-session copies listed all three there (`inventory_tab_0`, `inventory_material_tab`) | pass |
+
+### Live 1d results
+
+Live 1d ran on 2026-09-28 (research build e18d3198, slot 14, **fully
+automatic**, on the saves Live 1c restored; capture
+`.claude/workorders/forgepact-68-move-all-live-1d.md` on the owner's machine).
+All thirteen checks passed. **The by-name move reproduced into the personal
+tab and into shared tab 1**, with `GridAddItem` in the replay, and it held
+through a close, a reopen and the saved files; against the full tab it
+answered no room and changed nothing. The bag grid node was 262446, the stash
+grid node 262490, the stash window 262418; every key read in step 2 matched
+Live 1c's. The by-name calls are § Phase A' shapes, "The hand moves'
+sequences, replayed by name"; the logged shape beside each is Live 1c's hand
+move of the same tab kind.
+
+| Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
+|---|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build of § Phase A' shapes | - | - | lease `dll_sha256` e18d3198..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=287 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `286 detoured, 0 failed, 1 held`; `calls=0` right after the arm, then `calls=59640` five seconds later | pass |
+| byname-control | the hook line, the armed rows idle before any call, and by-name calls dispatching | - | the by-name calls of steps 4 to 6 | every armed grid row read 0 calls before the first by-name call; every by-name call dispatched | pass |
+| byname-personal | `<K_P>` (class 10, 1 by 3, anchor 2,3) in personal-tab cells at the answer's x, y, the tab's filled count up by its footprint | Live 1c hand-personal | `ValidateItem` self = other = bag grid, `fp:<K_P>`; `StashAddToStack` self = other = bag grid, `path:id:<sg>.nodeGrid`, 0, 13, `fp:<K_P>`, 1, 0; `GridAddItem` self = other = bag grid, the same array, `fp:<K_P>`, 0, undefined; `ValidateItem` self the stash grid, other the bag grid | empty text; false; tab 0, x 0, y 0, `success=true`, with three `s_InvNode` calls nested under it; empty text. `<K_P>` in personal-tab cells 0,0 to 0,2; the tab's filled count 18 to 21. The bag cell still held `<K_P>` | pass |
+| byname-personal-clear | `<K_P>` in no bag cell after the source clear, its lookups as `<K_S0>`'s | the hand move emptied the bag cell with no armed row logging a clear | `InvGridClearItemNode` self = other = bag grid, `path:id:<bag>.nodeGrid.3.2` (the anchor), undefined | answer undefined, the reply's node naming `<K_P>` at 2,3; the bag's filled count 25 to 22, `<K_P>` in no bag cell; an item struct on map 0 and undefined on map 9, as `<K_S0>` | pass (cleared by `InvGridClearItemNode`) |
+| byname-shared | `<K_Q>` (class 10, anchor 3,3) in shared-tab-1 cells at the answer's x, y and in no bag cell | Live 1c hand-shared | as byname-personal with shared tab 1 on show and `StashAddToStack`'s 9, 2; then the source clear `path:id:<bag>.nodeGrid.3.3` | false; x 0, y 1, `success=true`, three nested `s_InvNode`; the tab's filled count 224 to 227; the clear emptied the bag cell (22 to 19) - the placement alone did not | pass |
+| byname-shared-owner | after a `byname-shared` pass: the owner step, `<K_Q>` still in its cells, its lookups turning into `<K_S1>`'s | hand-shared's `ChangeItemOwner` | `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, `<K_Q>` as text | undefined; `<K_Q>`'s lookups from an item struct on map 0 to undefined on both maps, as `<K_S1>`'s; shared tab 1 still 227 filled with `<K_Q>` in it | pass |
+| byname-full | `<K_R>` (class 10, anchor 3,0) against full shared tab 2: `success=false`, nothing changed anywhere | Live 1c hand-full | `ValidateItem`; `StashAddToStack` with shared tab 2's array, 9, 2, `fp:<K_R>`, 1, 0; `GridAddItem` with the same array, `fp:<K_R>`, 0, undefined | false; `success=false`, nothing nested; the bag 19 filled with `<K_R>` in it, shared tab 2 still 306 and 0 empty, the personal tab 21 and shared tab 1 227 as after steps 4 and 5 | pass |
+| close-survives | the game after the stash close, by name only | - | - | the first by-name close answered "not confirmed"; after a mouse move `menulayout` no longer listed the stash; the game kept running | pass |
+| reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | `<K_P>` in the personal tab (21 filled), `<K_Q>` in shared tab 1 (227), neither in the bag, `<K_R>` still in the bag | pass |
+| saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | `<K_P>` under `herosiege13.hss` `inventory.personal_stash`; `<K_Q>` under `stash.hss` `stash_tab_1` | pass |
+| saved-bag-lacks-keys | no moved key under a bag container of `inventory_order_13.hss`; the pre-session copies list every key there, and the unmoved `<K_R>` is still there | - | - | neither `<K_P>` nor `<K_Q>` under a bag container after; the pre-session copies listed all three under `inventory_tab_0`; `<K_R>` still under it | pass |
 
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
 worked, `not-observed` with what was supplied, or `shape not reproduced`.
-Live 1 set every line below; Live 1b rewrites them. From Live 1b on, three
+Live 1 set every line first. Live 1b measured no route (its lookup and click
+controls failed), so it changed no line's verdict; Live 1c and Live 1d set
+the lines below, each from the session that measured it: a line Live 1d
+measured from Live 1d (`gridMoveRoute`, `sourceCellClear`, the shared half of
+`mapOwnerRule`), a line only Live 1c measured from Live 1c (`stackMoveRoute`,
+`gestureRoute`, `targetTabRule`, the personal half of `mapOwnerRule`), and
+`bagSubtabRoute` from Live 1, with what Live 1c added. From Live 1b on, three
 lines are written per tab kind, because the static reading puts the personal
 tab and the shared tabs in different maps (§ Static reading 2):
 `gridMoveRoute` names the array, self and third argument the placement takes
@@ -850,19 +1144,24 @@ for each kind (`personal: <array> <self> <a2>; shared: <array> <self> <a2>`),
 <step>; shared: map <n> <step>`), and `gestureRoute` names the input that
 quick-moves (`ctrl-click`, from the hint strip and Live 1b's gestures).
 `targetTabRule` (what decides the tab an item lands on, and whether it can
-spill to another tab) is set only from a gesture against a full shown tab
-(`grid-move-tab-full` in Live 1, `gesture-ctrl-full` in Live 1b), never from
-`tab-full-byname`, and in Live 1b only when `gesture-ctrl-personal` or
-`gesture-ctrl-shared` passed in the same session (the Ctrl + left click's
-positive control; without it "stayed in the bag" cannot be told from a
+spill to another tab) is set only from a quick move made by the game's own
+input against a full shown tab (`grid-move-tab-full` in Live 1,
+`gesture-ctrl-full` in Live 1b, `hand-full` in Live 1c), never from a by-name
+placement (`tab-full-byname`, `byname-full`), and only when a quick move by
+the same input moved an item into the stash earlier in the same session
+(the positive control; without it "stayed in the bag" cannot be told from a
 gesture that did nothing); when that check is `not-run` it reads
 `not-observed (<reason>)`, and the mod's own rule (the shown tab's room is checked before
 any call, and no route that can pick another tab is used) stands either way.
+In the lines below, "the bag grid" is the bag's `InventoryGrid` node (the
+same node when the bag's Materials sub-tab is on show), "the stash grid" the
+`StashGrid` node, which rebinds to the stash tab on show, and "the shown
+tab's array" that node's `nodeGrid` read with the tab on show.
 
-gridMoveRoute: not-observed (Live 1 ran no grid block: its lookup control failed on the map 9 half, with a personal-tab key; Ctrl + left click was not tried)
-stackMoveRoute: not-observed (Live 1: StashAddToStack answered false twice - self and other the bag grid, the Materials array, 9, 2, a class 14 key of base id 71, count 15 then 1, sixth 0 - with no stack of base id 71 on the tab to merge into)
-mapOwnerRule: not-observed (Live 1: a personal-tab key answered undefined on map 9 with self Console_Save_obj; no shared-tab key was looked up and nothing moved)
-bagSubtabRoute: byname (cells readable: the bag's Materials sub-tab is New_Inventory_Data_obj.inventoryMaterialGrid, an array 6 by 15 of cells carrying fingerprints, Live 1 bag-subtab-source)
-gestureRoute: not-observed (Live 1: right click with a 120 ms hold equipped the item; Shift + left click with a 0 ms hold and click, move, click with an unrecorded hold moved nothing; Ctrl + left click was not tried)
-sourceCellClear: not-observed (Live 1: never called - no placement or merge succeeded)
-targetTabRule: not-observed (no single-input quick move ran)
+gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
+stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
+mapOwnerRule: personal: map 0, no owner step (Live 1c hand-personal logged none and hand-personal-map read the key on map 0 as before; Live 1d byname-personal-clear; saved in herosiege13.hss under inventory.personal_stash); shared: owner step 0 to 9 after the placement, ChangeItemOwner with self the stash grid, other the bag grid, 0, 9 and the key as text, answering undefined (Live 1c hand-shared logged it; Live 1d byname-shared-owner replayed it: the item stayed in its cells and its lookups turned into a shared-tab key's, undefined on map 0 and on map 9; saved in stash.hss under stash_tab_1). Never before a confirmed placement: alone it leaves the key on no map while it sits in the bag (Live 1c step 8, reversed). The Materials tab's new identity took the same shared step by hand (Live 1c hand-material); a merge takes none (Live 1c hand-merge). Which map holds a shared-tab entry is not established: the owner 9 lookup misses every one
+bagSubtabRoute: byname (cells readable: the bag's Materials sub-tab is New_Inventory_Data_obj.inventoryMaterialGrid, an array 6 by 15 of cells carrying fingerprints, Live 1 bag-subtab-source; Live 1c: hs_bag_tab switches the bag to it by name and the bag grid node rebinds to it, while the way back to the bag's first page is the page-tab click, which logged UiAInventoryTabClick and InventoryResetTabs by hand and is not measured by name)
+gestureRoute: ctrl-click (by hand: Live 1c hand-personal, hand-shared, hand-material and hand-merge, each the owner's own Ctrl + left click moving the item into the tab on show; a scripted click through hs_input never reached the grid's pick-up, Live 1b click-control, so no scripted gesture is measured)
+sourceCellClear: separate step (Live 1d byname-personal-clear and byname-shared: a by-name GridAddItem leaves the item in its bag cells, and InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node, nodeGrid [y][x], and undefined empties them; it runs after a success=true placement and before any owner step, because it looks the item up by fingerprint while the item is still on map 0. After a merge the same call follows StashAddToStack's true, as the hand merge logged it, Live 1c hand-merge and byname-merge. The hand grid moves emptied the bag cell with no armed row logging a clear: which routine does it there is not observed)
+targetTabRule: stays in the bag (Live 1c hand-full: the owner's Ctrl + left click against the full shared tab 2 logged StashAddToStack false and GridAddItem success=false on that tab's own array and nothing after them - no GetStashMaxTabs, no other tab tried; the item stayed in its bag cells and the full tab's filled count was unchanged. The positive control was hand-personal and hand-shared in the same session. Live 1d byname-full answered the same by name, as expected by construction)
