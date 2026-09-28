@@ -88,6 +88,16 @@ test('openTab selects one tab, titles the page and remembers it', () => {
   assert.equal(nav.filtered(), 1);
 });
 
+test('the breadcrumb names the page as its nav button reads', () => {
+  const nav = load();
+  const $ = (id) => nav.document.getElementById(id);
+  nav.openTab('loot');
+  assert.equal($('breadcrumbPage').textContent, 'Loot', 'an unlabelled button falls back to the tab name');
+  $('nav-modifiers').textContent = ' Character ';
+  nav.openTab('modifiers');
+  assert.equal($('breadcrumbPage').textContent, 'Character');
+});
+
 test('an unknown tab falls back to Modifiers; remember=false stores nothing', () => {
   const nav = load();
   nav.openTab('nope', false);

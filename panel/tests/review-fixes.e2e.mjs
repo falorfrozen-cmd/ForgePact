@@ -72,7 +72,22 @@ const EXP = 'input[type=range][data-sec="stats"][data-key="exp"]';
 
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes, straight to the sandbox. One failed on a CI runner with only
+// "TypeError: Failed to fetch" (PR run 36390046850; 6 of 6 concurrent local
+// runs passed), so a failure now says which write it was and whether a second
+// attempt at once got through: a transient refusal and a dead sandbox look
+// alike otherwise. It still fails either way.
+const post = async (page, body) => {
+  const result = await $(page, async (b) => {
+    const send = () => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json());
+    try { return { ok: await send() }; } catch (e) {
+      const again = await send().then(() => 'ok', (e2) => String(e2));
+      return { error: String(e), again, readyState: document.readyState };
+    }
+  }, body);
+  if (result.error) throw new Error(`setup POST ${JSON.stringify(body)} failed: ${result.error}; retry at once: ${result.again}; page ${result.readyState}`);
+  return result.ok;
+};
 const frames = (page) => $(page, () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const formOf = (page) => $(page, () => document.getElementById('enabledMods').dataset.form);
 const visible = (page, selector) => $(page, (s) => !!document.querySelector(s)?.checkVisibility(), selector);
@@ -361,10 +376,11 @@ async function focus(ctx) {
 // A width where `base` is inline and one more entry overfills the row:
 // the widest width at which base plus that entry is in the tray.
 async function edgeWidth(page, base, extra) {
-  await page.setViewportSize({ width: 1280, height: HEIGHT });
+  const startWidth = await $(page, () => document.documentElement.dataset.theme === 'ember' ? 1600 : 1280);
+  await page.setViewportSize({ width: startWidth, height: HEIGHT });
   await only(page, base, extra.on);
   let W = 0;
-  for (let width = 1280; width >= 480; width -= 10) {
+  for (let width = startWidth; width >= 480; width -= 10) {
     await page.setViewportSize({ width, height: HEIGHT });
     await frames(page);
     if (await formOf(page) === 'tray') { W = width; break; }
@@ -380,6 +396,7 @@ async function hold(ctx) {
   let W = await edgeWidth(page, THREE, {
     on: [{ section: 'stats', key: 'exp', value: 2 }], off: [{ section: 'stats', key: 'exp', value: 1 }],
   });
+  await $(page, () => document.querySelector('.tabbtn[data-tab="modifiers"]').click());
   await $(page, (s) => document.querySelector(s).focus(), EXP);
   await page.keyboard.down('ArrowRight');
   await settled(page);
@@ -552,11 +569,15 @@ const browser = await launchBrowser();
 const passedAll = [];
 let failures = 0;
 try {
-  for (const [name, fn] of GROUPS) {
-    const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null });
+  // These long inline names fit Ledger at 1280 and Ember at 1600. Run the
+  // entire contract in both palettes instead of relying on the default theme.
+  for (const theme of ['ember', 'ledger']) {
+  for (const [group, fn] of GROUPS) {
+    const name = `${theme}/${group}`;
+    const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, seed: { theme } });
     const ctx = { sandbox, passed: [], note: '' };
     try {
-      ctx.page = await openPanel(browser, sandbox);
+      ctx.page = await openPanel(browser, sandbox, { width: theme === 'ember' ? 1600 : 1280, height: HEIGHT });
       ctx.posts = capturePosts(ctx.page);
       await fn(ctx);
       console.log(`ok   ${name}: ${ctx.passed.length} checks${ctx.note ? ' (' + ctx.note + ')' : ''}`);
@@ -565,15 +586,17 @@ try {
       console.log(`FAIL ${name}: ${e.message} (after ${ctx.passed.length} passing checks)`);
     } finally {
       for (const label of ctx.passed) console.log(`     passed: ${label}`);
-      passedAll.push(...ctx.passed);
+      passedAll.push(...ctx.passed.map(label => `${theme}/${label}`));
       await ctx.page?.context().close();
       await sandbox.stop();
     }
   }
+  }
 } finally {
   await browser.close();
 }
-const missing = EXPECTED.filter((label) => !passedAll.includes(label));
+const allExpected = ['ember', 'ledger'].flatMap(theme => EXPECTED.map(label => `${theme}/${label}`));
+const missing = allExpected.filter((label) => !passedAll.includes(label));
 for (const label of missing) console.log(`FAIL not passed: ${label}`);
-console.log(`e2e-review: ${passedAll.length}/${EXPECTED.length} checks passed`);
+console.log(`e2e-review: ${passedAll.length}/${allExpected.length} checks passed`);
 process.exitCode = failures || missing.length ? 1 : 0;

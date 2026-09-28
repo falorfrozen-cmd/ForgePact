@@ -46,6 +46,7 @@
   "#sw_angelic_items",
   "#theme",
   "#sw_keys_primeevil",
+  "#mod_far_sleep",
   "#mod_pet_loot_unstick"
  ],
  "steps": [
@@ -4578,26 +4579,48 @@
   },
   {
    "step": 397,
+   "control": "#theme",
+   "action": "select",
+   "value": "ember",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "ember"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 398,
    "control": "tab:loot",
    "action": "click"
   },
   {
-   "step": 398,
-   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "max"
-  },
-  {
    "step": 399,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "min"
+   "action": "max"
   },
   {
    "step": 400,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "max"
+   "action": "min"
   },
   {
    "step": 401,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 402,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4614,12 +4637,12 @@
      ]
     },
     "cmds": {
-     "same": 399
+     "same": 400
     }
    }
   },
   {
-   "step": 402,
+   "step": 403,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4634,19 +4657,6 @@
        }
       }
      ]
-    },
-    "cmds": {
-     "same": 400
-    }
-   }
-  },
-  {
-   "step": 403,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 401
     },
     "cmds": {
      "same": 401
@@ -4655,6 +4665,19 @@
   },
   {
    "step": 404,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 402
+    },
+    "cmds": {
+     "same": 402
+    }
+   }
+  },
+  {
+   "step": 405,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4671,27 +4694,99 @@
      ]
     },
     "cmds": {
-     "same": 402
+     "same": 403
     }
    }
   },
   {
-   "step": 405,
+   "step": 406,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
    "action": "min"
   },
   {
-   "step": 406,
+   "step": 407,
    "control": "tab:mods",
    "action": "click"
   },
   {
-   "step": 407,
+   "step": 408,
    "control": "subtab:qol",
    "action": "click"
   },
   {
-   "step": 408,
+   "step": 409,
+   "control": "#mod_far_sleep",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_far_sleep",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "farsleep 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 410,
+   "control": "#mod_far_sleep",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_far_sleep",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "farsleep 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 411,
+   "control": "#mod_far_sleep",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 409
+    },
+    "cmds": {
+     "same": 409
+    }
+   }
+  },
+  {
+   "step": 412,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_far_sleep\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 410
+    },
+    "cmds": {
+     "same": 410
+    }
+   }
+  },
+  {
+   "step": 413,
    "control": "#mod_pet_loot_unstick",
    "action": "click",
    "expect": {
@@ -4714,7 +4809,7 @@
    }
   },
   {
-   "step": 409,
+   "step": 414,
    "control": "#mod_pet_loot_unstick",
    "action": "click",
    "expect": {
@@ -4737,38 +4832,28 @@
    }
   },
   {
-   "step": 410,
+   "step": 415,
    "control": "#mod_pet_loot_unstick",
    "action": "click",
    "expect": {
     "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "key": "mod_pet_loot_unstick",
-        "value": true
-       }
-      }
-     ]
+     "same": 413
     },
     "cmds": {
-     "is": [
-      "petunstick 1"
-     ]
+     "same": 413
     }
    }
   },
   {
-   "step": 411,
+   "step": 416,
    "control": "#enabledMods .quick-disable[data-for=\"mod_pet_loot_unstick\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 409
+     "same": 414
     },
     "cmds": {
-     "same": 409
+     "same": 414
     }
    }
   }

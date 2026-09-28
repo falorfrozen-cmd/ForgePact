@@ -1,0 +1,127 @@
+# Runs the panel's browser suites on every pull request that can change what
+# they test, so a UI change is caught before merge rather than at release.
+#
+# Until this existed the suites ran only in forgepact-release.yml's
+# `panel-browser-tests` job, after a tag. ForgePact#105 (Ember Forge) showed
+# the cost: `e2e:review` passed on main and failed 15/28 on the pull request,
+# and nothing ran it at all, because it had no Python module either. Now every
+# `panel/tests/*.e2e.mjs` must have one (tests/test_panel_browser_coverage.py,
+# the first step below), and this job runs all of them.
+#
+# It runs exactly what the release job runs: the modules declaring
+# `PARALLEL_GROUP = "panel-browser"`, through tools/run_tests_parallel.py, on
+# the same runner image with the installed Edge. Two differences, both
+# because this is the pull request's own tree rather than a tag: the tests
+# and the runner come from that tree, and there is no main/tag split.
+#
+# Not run here, deliberately:
+#   - test_panel_perf (`e2e:perf`): its frame budgets measure the machine as
+#     much as the panel on a shared runner, so it stays a local step, as
+#     ForgePact#104 decided for release CI. Report its table in the pull
+#     request instead (see the module guide's panel verification section).
+#   - anything needing the game, impeccable's live mode or a person looking
+#     at the window.
+#
+# The sandbox imports hs-game-sdk from a sibling of the ForgePact checkout,
+# as the release build does; without it the Satanic pool is empty and the
+# suites that read it fail on the environment, not the panel.
+name: Panel browser suites
+
+on:
+  pull_request:
+    paths:
+      - 'panel/**'
+      - 'src/forgepact.py'
+      - 'tests/panel_browser.py'
+      - 'tests/panel_sandbox_server.py'
+      - 'tests/test_panel_*.py'
+      - 'tests/test_satanic_panel.py'
+      - 'tools/run_tests_parallel.py'
+      - '.github/workflows/panel-browser-pr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: panel-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  panel-browser:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+    steps:
+      - name: Check out ForgePact
+        uses: actions/checkout@v4
+        with:
+          path: ForgePact
+
+      - name: Check out hs-game-sdk from the hub
+        uses: actions/checkout@v4
+        with:
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          ref: main
+          path: hub
+          sparse-checkout: |
+            hs-game-sdk
+          sparse-checkout-cone-mode: false
+
+      - name: Place hs-game-sdk as a sibling of ForgePact
+        shell: bash
+        run: mv hub/hs-game-sdk hs-game-sdk
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # Static, a second: fail fast if a suite has no module, before paying
+      # for the build.
+      - name: Every browser suite has a module
+        shell: bash
+        working-directory: ForgePact
+        run: python -m unittest tests.test_panel_browser_coverage -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ForgePact/panel/package-lock.json
+
+      - name: Install the panel's build dependencies
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm ci
+
+      - name: Build the panel (panel/dist)
+        shell: bash
+        working-directory: ForgePact/panel
+        run: npm run build
+
+      # As in the release job: a suite skips when node, Edge, playwright-core
+      # or panel/dist is missing, and a skip reads as OK, so here, where all
+      # of them are meant to be present, a skip fails the job (AGENTS.md,
+      # "Prove the instrument").
+      - name: The panel's browser suites
+        shell: bash
+        working-directory: ForgePact
+        run: |
+          set -o pipefail
+          python tools/run_tests_parallel.py -s tests -v \
+            --state-dir "$RUNNER_TEMP/test-state" \
+            --only-group panel-browser 2>&1 | tee "$RUNNER_TEMP/browser-tests.log"
+          if grep -Eq '^(OK|FAILED) \(.*skipped=' "$RUNNER_TEMP/browser-tests.log"; then
+            echo "::error::a panel browser suite skipped on a runner meant to have everything it needs"
+            exit 1
+          fi
+
+      - name: Keep the suites' screenshots and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panel-browser-artifacts
+          path: |
+            ${{ runner.temp }}/browser-tests.log
+            ForgePact/panel/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14

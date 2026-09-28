@@ -828,6 +828,11 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Toolkit #147's tool-facing stash and bag verbs
             # (test_stash_bag_layout_contract.py).
             "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
+            # The frame profiler: measures, changes nothing in the game
+            # (test_frame_profiler.py).
+            "frameprof",
+            # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
+            "farsleep",
         }
         self.assertEqual(entries, expected)
 
@@ -2944,14 +2949,16 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `skillstate` and `talentalloc` are toolkit #147's skill verbs
         # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
-        # (test_stash_bag_layout_contract.py), and `petunstick` is #94's
-        # companion loot unstick (test_pet_loot_unstick_contract.py).
+        # (test_stash_bag_layout_contract.py), `petunstick` is #94's
+        # companion loot unstick (test_pet_loot_unstick_contract.py), and
+        # `frameprof` the frame profiler (test_frame_profiler.py), and
+        # `farsleep` is far sleep's switch (test_far_sleep_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick"})
+                                        "petunstick", "frameprof", "farsleep"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

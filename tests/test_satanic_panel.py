@@ -57,6 +57,17 @@ def bind_safe_server(bind, max_attempts=SANDBOX_BIND_ATTEMPTS):
         "tried: {}".format(max_attempts, tried))
 
 
+class _SandboxServer(forgepact.ThreadingHTTPServer):
+    # socketserver's listen backlog is 5. A browser suite's page, Playwright's
+    # route.fetch() and the test's own /api/state reads can open more than
+    # that at once, and on a loaded CI runner the accept loop fell behind:
+    # Windows refused the overflow (ECONNREFUSED on a running sandbox; PR runs
+    # 36370998107 and 36376055177, and 2 of 24 concurrent local ui.e2e runs).
+    # The sandbox is test infrastructure, so it gets a deep queue; the panel's
+    # own server is unchanged.
+    request_queue_size = 128
+
+
 class PanelSandbox:
     def __enter__(self):
         self.temp = tempfile.TemporaryDirectory(prefix="forgepact-panel-")
@@ -72,7 +83,7 @@ class PanelSandbox:
                         patch.object(forgepact, "send_cmds")]
         self.mocks = [p.start() for p in self.patches]
         self.server = bind_safe_server(
-            lambda: forgepact.ThreadingHTTPServer(("127.0.0.1", 0), forgepact.H))
+            lambda: _SandboxServer(("127.0.0.1", 0), forgepact.H))
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

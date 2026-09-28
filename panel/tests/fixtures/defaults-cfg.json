@@ -18,6 +18,7 @@
  "mod_toggle_guard": false,
  "mod_restart_anytime": false,
  "mod_craft_mats": false,
+ "mod_far_sleep": false,
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",

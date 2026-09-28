@@ -69,6 +69,11 @@
         <span class="val" id="mraval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Far scenery sleep<br><span class="feature-description">Lets the game skip a zone's far trees, bushes, hay, rocks and fences every frame, and wakes them before they come into view, so busy zones run lighter. Shrines, chests, traps and monsters are never touched. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_far_sleep"><span class="sl"></span></label>
+        <span class="val" id="mfsval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style">
             <option value="off">Off</option>

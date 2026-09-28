@@ -353,6 +353,12 @@ jobs:
   # dependencies or a compiler.
   panel-browser-tests:
     runs-on: windows-2025-vs2026
+    # The job takes about ten minutes. A tag's own harness can hang instead of
+    # failing: until the browser tooling killed a sandbox that started too
+    # late, that sandbox kept its suite's pipes open, and `_npm`'s timeout then
+    # waited on them for good. GitHub's default would hold the runner for six
+    # hours; this limit applies to every tag, old ones included.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -383,6 +389,26 @@ jobs:
           plan=$(python forgepact-ci/tools/release_ci.py tag --tag "$TAG_INPUT")
           echo "$plan"
           echo "$plan" >> "$GITHUB_OUTPUT"
+
+      # The panel's sandbox imports hs-game-sdk from a sibling of the ForgePact
+      # checkout (src/forgepact.py). Without it the Satanic Zone pool is
+      # empty, and the browser suites fail on the environment, not on the
+      # panel: 2.0.0's first recut failed e2e, finish, gems, review and the
+      # oracle replay here while all of them passed locally. Same source and
+      # placement as the build job's SDK steps above.
+      - name: Check out hs-game-sdk from the hub
+        uses: actions/checkout@v4
+        with:
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          ref: ${{ inputs.hub_ref }}
+          path: hub
+          sparse-checkout: |
+            hs-game-sdk
+          sparse-checkout-cone-mode: false
+
+      - name: Place hs-game-sdk as a sibling of ForgePact
+        shell: bash
+        run: mv hub/hs-game-sdk hs-game-sdk
 
       - name: Check out the tagged ForgePact tree
         uses: actions/checkout@v4

@@ -96,10 +96,11 @@ class EnabledModsPanelTests(unittest.TestCase):
     def test_api_set_call_sites_are_the_old_ones_plus_switch_and_theme(self):
         # The old ones: the legacy page's 25, plus the 2 main's legacy page
         # added for Gems of Incarnation (its switches' handler and the filter's
-        # save) before it was ported here, plus 1 no legacy page had: the Pet
-        # moves on switch (forgepact-pet-loot-stuck).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 1)
+        # save) before it was ported here, plus 2 no legacy page had: the Pet
+        # moves on switch (forgepact-pet-loot-stuck) and Far scenery sleep's
+        # switch (both the derived oracle's native booleans).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 2)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 2)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
@@ -146,7 +147,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertLess(section, warning)
         # After the dock has closed, inside main#wrap.
         self.assertIn("</div></div>", self.app[dock:section])
-        self.assertLess(self.app.index('<main id="wrap">'), section)
+        main = _opening_tag(self.app, 'id="wrap"')
+        self.assertTrue(main.startswith("<main "))
+        self.assertIn('tabindex="0"', main)
+        self.assertIn('aria-labelledby="pageTitle"', main)
+        self.assertLess(self.app.index(main), section)
         self.assertLess(section, self.app.index("</main>"))
         # Re-rendered from boot() and from refreshSavedControls().
         boot = self.panel[self.panel.index("async function boot(){"):self.panel.index("function paintVersion(){")]

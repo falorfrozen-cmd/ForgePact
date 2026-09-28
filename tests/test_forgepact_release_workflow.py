@@ -257,6 +257,14 @@ class TheSuiteIsSplitAcrossTwoJobs(unittest.TestCase):
         self.assertIn("skipped=", call)
         self.assertIn("exit 1", call[call.find("skipped="):])
 
+    def test_a_hung_browser_suite_cannot_hold_the_runner_for_hours(self):
+        # The job takes about ten minutes; a tag's harness that hangs instead
+        # of failing would otherwise sit out GitHub's six-hour default.
+        head = jobs()["panel-browser-tests"].split("steps:", 1)[0]
+        limit = re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", head)
+        self.assertIsNotNone(limit, "panel-browser-tests has no timeout-minutes")
+        self.assertTrue(20 <= int(limit.group(1)) <= 60, limit.group(0))
+
 
 class NeverPublishesOrDispatches(unittest.TestCase):
     def test_none_of_these_appear(self):
@@ -281,6 +289,17 @@ class RunnerAndCheckouts(unittest.TestCase):
         sparse_at = text.find("sparse-checkout:")
         self.assertNotEqual(sparse_at, -1)
         self.assertIn("hs-game-sdk", text[sparse_at:sparse_at + 120])
+
+    def test_both_test_jobs_get_hs_game_sdk_as_a_sibling(self):
+        # The panel's sandbox imports hs-game-sdk from beside the ForgePact
+        # checkout. Without it the Satanic Zone pool is empty and the browser
+        # suites fail on the environment: 2.0.0's first recut did.
+        for job in ("build", "panel-browser-tests"):
+            text = jobs()[job]
+            self.assertIn("repository: falorfrozen-cmd/hero-siege-offline-toolkit", text, job)
+            placed = text.find("mv hub/hs-game-sdk hs-game-sdk")
+            self.assertNotEqual(placed, -1, f"{job} never places hs-game-sdk beside ForgePact")
+            self.assertLess(placed, text.find("run_tests_parallel.py"), f"{job} places the SDK after its tests")
 
 
 class Dependencies(unittest.TestCase):

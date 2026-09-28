@@ -12,9 +12,9 @@ import test_satanic_panel as panel_mod
 
 
 class FakeServer:
-    """Stands in for forgepact.ThreadingHTTPServer: server_port plus the
-    three calls PanelSandbox and bind_safe_server make on it, each recorded
-    on the shared events list passed in."""
+    """Stands in for test_satanic_panel._SandboxServer: server_port plus
+    the three calls PanelSandbox and bind_safe_server make on it, each
+    recorded on the shared events list passed in."""
 
     def __init__(self, port, events):
         self.server_port = port
@@ -64,7 +64,7 @@ class BindSafeServerTests(unittest.TestCase):
 class PanelSandboxRebindTests(unittest.TestCase):
     def test_panel_sandbox_binds_once_when_first_port_is_safe(self):
         events = []
-        with patch.object(panel_mod.forgepact, "ThreadingHTTPServer",
+        with patch.object(panel_mod, "_SandboxServer",
                            side_effect=lambda *a, **k: FakeServer(50000, events)):
             with panel_mod.PanelSandbox() as sandbox:
                 self.assertEqual(sandbox.port, 50000)
@@ -74,7 +74,7 @@ class PanelSandboxRebindTests(unittest.TestCase):
     def test_panel_sandbox_rebinds_off_a_restricted_port(self):
         events = []
         servers = iter([1719, 50000])
-        with patch.object(panel_mod.forgepact, "ThreadingHTTPServer",
+        with patch.object(panel_mod, "_SandboxServer",
                            side_effect=lambda *a, **k: FakeServer(next(servers), events)):
             with panel_mod.PanelSandbox() as sandbox:
                 self.assertEqual(sandbox.port, 50000)

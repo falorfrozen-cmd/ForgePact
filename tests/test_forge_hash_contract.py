@@ -81,6 +81,11 @@ EXPECTED_PLAYER_COMMANDS = {
     # The pet moves on from loot it cannot pick up (#94, workorder
     # forgepact-pet-loot-stuck; test_pet_loot_unstick_contract.py pins it).
     "petunstick",
+    # The frame profiler: measures, changes nothing in the game
+    # (test_frame_profiler.py pins it).
+    "frameprof",
+    # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
+    "farsleep",
 }
 
 

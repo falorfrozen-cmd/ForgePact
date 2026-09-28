@@ -110,7 +110,14 @@ jobs:
         }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A whole review of a large pull request takes longer than 30 minutes:
+    # ForgePact #105 (67 files, 5,003 added lines, most of it panel CSS, plus
+    # the design tooling) was cancelled at 30 with nothing posted, while a
+    # scoped `@claude review` of one of its commits finished in 8. The review
+    # step below has a shorter limit of its own, so a review that runs out of
+    # time fails that step and the job still reaches the result upload,
+    # rather than the whole job being cancelled.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
@@ -147,6 +154,17 @@ jobs:
           fi
           base=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
 
+          # Changed files no reviewer needs to read: binaries (`--numstat`
+          # prints `-` for them), licence texts and lockfiles. ForgePact #105
+          # carried 27 images and fonts and two copies of a font licence.
+          mapfile -t skip < <(
+            {
+              git diff --numstat --no-renames "origin/$base...HEAD" | awk -F'\t' '$1 == "-" { print $3 }'
+              git diff --name-only --no-renames --diff-filter=d "origin/$base...HEAD" -- \
+                '*LICENSE*' '*LICENCE*' '*COPYING*' '*OFL*.txt' '*/licenses/*' '*.lock' '*package-lock.json'
+            } | sort -u
+          )
+
           delim="EOF_$(openssl rand -hex 16)"
           {
             echo "notes<<$delim"
@@ -156,6 +174,18 @@ jobs:
             echo "and \`git diff --stat origin/$base...HEAD\` lists every changed file with its size."
             echo "Pathspecs can exclude too, for example \`-- . ':(exclude)*.md'\`."
             echo "If \`gh pr diff\` fails because the diff is too large, use git instead."
+            # ForgePact #105's scoped review was refused four times trying to
+            # write its comment to a file first, and posted on the fifth try.
+            echo
+            echo "Post each comment in one command: \`gh pr comment <number> --body \"\$(cat <<'EOF' ... EOF)\"\`."
+            echo "Do not write it to a file first: this run cannot create files (Write and shell redirection"
+            echo "are denied), and every refused attempt costs a turn."
+            if [ "${#skip[@]}" -gt 0 ]; then
+              echo
+              echo "These changed files are binary, licence text or lockfiles. Do not read or report on them,"
+              echo "and leave them out of \`git diff\` with \`':(exclude)<path>'\`:"
+              printf -- '- %s\n' "${skip[@]}"
+            fi
             if [ -n "$instructions" ]; then
               echo
               echo "The person who requested this review gave these instructions. They take precedence"
@@ -331,6 +361,7 @@ jobs:
           cat "$out/impeccable-detect.stderr"
 
       - uses: anthropics/claude-code-action@v1
+        timeout-minutes: 55
         env:
           # Makes every Agent call run in the foreground. The code-review
           # command runs its whole review through subagents, and agents run in

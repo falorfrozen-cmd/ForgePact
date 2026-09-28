@@ -49,7 +49,7 @@ function decoratePanelIcons(){
 let lastInputKeyboard=false;
 addEventListener('keydown',()=>{lastInputKeyboard=true},true);
 addEventListener('pointerdown',()=>{lastInputKeyboard=false},true);
-function toast(m){const t=document.getElementById('toast');t.toggleAttribute('data-instant',lastInputKeyboard);t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
+export function toast(m){const t=document.getElementById('toast');t.toggleAttribute('data-instant',lastInputKeyboard);t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2200)}
 function angelicPaint(){
   const el=document.getElementById('angelic_items'); const v=sliderVal(el);
   const dice=Math.max(0,Math.round(v)-1); const oneIn=dice>0?Math.max(1,Math.round(7500/dice)):0;
@@ -296,7 +296,8 @@ async function boot(){
   setST(await j('/api/state'));
   const c=ST.cfg;
   document.querySelectorAll('.tabbtn').forEach(b=>b.onclick=()=>openTab(b.dataset.tab));
-  let initial=c.game_exe?'modifiers':'setup';
+  const palette=applyTheme(c.theme);
+  let initial=c.game_exe?(palette==='ember'?'overview':'modifiers'):'setup';
   try{initial=sessionStorage.getItem('forgepact_tab')||initial}catch(e){}
   try{setModsSubtab(sessionStorage.getItem('forgepact_mods_subtab')||modsSubtab)}catch(e){}
   openTab(initial,false);
@@ -370,6 +371,10 @@ async function boot(){
     document.getElementById('mod_craft_mats').checked=mcm;
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
+    const mfs=!!c.mod_far_sleep;
+    document.getElementById('mod_far_sleep').checked=mfs;
+    document.getElementById('mfsval').textContent=mfs?'on':'off';
+    document.getElementById('mfsval').className='val '+(mfs?'':'off');
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
       const on=!!c[key];
       document.getElementById(id).checked=on;
@@ -405,6 +410,7 @@ async function boot(){
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
   bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
+  document.dispatchEvent?.(new Event('forgepact:ready'));
   document.getElementById('saveIndicator').textContent='Settings loaded';
 }
 function paintVersion(){
@@ -608,6 +614,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_craft_mats',value:e.target.checked})});
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_far_sleep').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_far_sleep',value:e.target.checked})});
+        const v=document.getElementById('mfsval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Far scenery sleep '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
@@ -877,7 +888,8 @@ function preparePanelUI(){
   document.getElementById('exepath').setAttribute('aria-label','Hero Siege executable path');
   document.getElementById('controlSearch').oninput=filterControlRows;
   document.querySelectorAll('[data-control-filter]').forEach(button=>button.onclick=()=>{setControlFilter(button.dataset.controlFilter);filterControlRows()});
-  document.querySelectorAll('.tabbtn').forEach((button,index,buttons)=>button.onkeydown=e=>{
+  document.querySelectorAll('.tabbtn').forEach(button=>button.onkeydown=e=>{
+    const buttons=[...document.querySelectorAll('.tabbtn')].filter(b=>!b.hidden),index=buttons.indexOf(button);
     const direction=['ArrowRight','ArrowDown'].includes(e.key)?1:['ArrowLeft','ArrowUp'].includes(e.key)?-1:0;
     if(!direction&&!['Home','End'].includes(e.key))return;
     e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;
@@ -917,10 +929,10 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
@@ -933,6 +945,7 @@ export function refreshSavedControls(){
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
   renderEnabledMods(c);
+  document.dispatchEvent?.(new Event('forgepact:settings'));
 }
 export function filterControlRows(){
   if(!document.getElementById('controlSearch'))return;
@@ -1114,7 +1127,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods)}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods);document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }
