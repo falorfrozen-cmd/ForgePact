@@ -69,6 +69,11 @@
         <span class="val" id="mfsval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Extra packs as you approach<br><span class="feature-description">With Monster Density above x1, the extra monster packs are set up as you come near instead of all at once when a zone loads, so crowded zones run lighter. You meet just as many packs. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="density_rolling"><span class="sl"></span></label>
+        <span class="val" id="drlval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style">
             <option value="off">Off</option>

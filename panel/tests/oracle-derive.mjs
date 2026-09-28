@@ -77,6 +77,7 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // where the switch sits, and the plugin verb src/forgepact.py sends for it.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
+  { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
 ];
 const setPost = (body) => [{ url: '/api/set', body }];
 
