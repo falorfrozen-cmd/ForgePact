@@ -6,9 +6,11 @@ compiled and exercised by test_pet_loot_unstick_behavior.py. These tests pin
 the rest, which no harness can run: the mod is off by default and sends
 nothing while off, the command reaches a player build, the tick runs only
 while enabled, and the tick does what docs/pet-loot-stuck-research.md says and
-nothing more - it writes `itemCompanionTimer` on a ground item, drops the pet's
+nothing more - it writes `itemCompanionTimer` on a ground item (only after
+`variable_instance_exists` says the item carries it), drops the pet's
 `lootTarget` and clears its `lootList`, and never collects, destroys or calls
-anything resolved by hand.
+anything resolved by hand; and `petunstick 0` prints the fix-1 counters
+(`timer absent=`, `re-picked while held=`) a bug report needs.
 """
 
 import re
@@ -32,7 +34,60 @@ import forgepact  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from panel_source import panel_file  # noqa: E402
-from test_release_hook_contract import function_body, strip_research_blocks  # noqa: E402
+from test_release_hook_contract import function_body, strip_comments, strip_research_blocks  # noqa: E402
+
+
+# The positive control on the timer's name: the answer of a
+# variable_instance_exists call on "itemCompanionTimer", kept in a variable.
+TIMER_EXISTS_CALL = re.compile(
+    r'(?P<var>\w+)\s*=\s*g_Yytk->CallBuiltin\(\s*"variable_instance_exists"\s*,'
+    r'\s*\{[^}]*RValue\("itemCompanionTimer"\)\s*\}\s*\)\s*\.ToBoolean\(\)')
+TIMER_SET_CALL = re.compile(
+    r'CallBuiltin\(\s*"variable_instance_set"\s*,\s*\{[^}]*RValue\("itemCompanionTimer"\)')
+
+
+def braced_block(source: str, open_brace: int) -> tuple[int, int]:
+    """(start, end) of the block whose `{` is at `open_brace`, brace-matched."""
+    depth = 0
+    for index in range(open_brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return open_brace, index
+    raise AssertionError("unterminated block")
+
+
+def timer_write_is_guarded_by_exists(body: str) -> bool:
+    """True iff every variable_instance_set of "itemCompanionTimer" in `body`
+    (there must be at least one) comes after a variable_instance_exists call on
+    the same name and sits inside the braced then-block of `if (<its answer>)`.
+    A negated condition, an `else` block, code after the block closes and an
+    unbraced then-statement all count as outside. Fails closed: no exists call,
+    or no write, is False. Without the check, a set on a name the instance
+    lacks creates a stray variable and `held back=` counts a hold that holds
+    nothing.
+    """
+    exists = TIMER_EXISTS_CALL.search(body)
+    writes = [m.start() for m in TIMER_SET_CALL.finditer(body)]
+    if not exists or not writes:
+        return False
+    guarded = []
+    for guard in re.finditer(rf"if\s*\(\s*{re.escape(exists.group('var'))}\s*\)\s*\{{", body):
+        if guard.start() < exists.end():
+            continue
+        guarded.append(braced_block(body, guard.end() - 1))
+    return all(any(start < at < end for start, end in guarded) for at in writes)
+
+
+def definition_body(source: str, name: str) -> str | None:
+    """The body of a `std::string <name>()` definition, or None."""
+    found = re.search(rf"std::string\s+{re.escape(name)}\(\)\s*(?:const\s*)?\{{", source)
+    if not found:
+        return None
+    start, end = braced_block(source, found.end() - 1)
+    return source[start + 1:end]
 
 
 class PetLootUnstickBaselineTests(unittest.TestCase):
@@ -130,6 +185,61 @@ class PetLootUnstickTargetTests(unittest.TestCase):
         self.assertIn("NoteHeldBack()", self.tick)
         self.assertIn("NoteCoinReleased()", self.tick)
         self.assertIn("g_PetLootCoinObjIdx", self.tick)
+
+    def test_timer_write_is_gated_on_the_name_existing(self):
+        # fix-1: the name itemCompanionTimer comes from a static reading, so
+        # the tick asks variable_instance_exists before it writes the hold,
+        # and on "no" writes nothing to the item (counted as timer absent=).
+        # On code only, so a comment naming the check cannot stand in for it.
+        tick = strip_comments(self.tick)
+        self.assertTrue(timer_write_is_guarded_by_exists(tick), tick)
+        absent_at = tick.index("PetLootNoteTimerAbsent(")
+        self.assertGreater(absent_at, TIMER_EXISTS_CALL.search(tick).end())
+
+    def test_timer_guard_check_fails_without_the_guard(self):
+        # Negative controls: the same assertion, on the real tick body with
+        # the guard taken away three ways, must fail.
+        tick = strip_comments(self.tick)
+        exists = TIMER_EXISTS_CALL.search(tick)
+        self.assertIsNotNone(exists)
+        var = exists.group("var")
+        no_exists_call = tick[:exists.start()] + f"{var} = true" + tick[exists.end():]
+        self.assertFalse(timer_write_is_guarded_by_exists(no_exists_call))
+        negated = re.sub(rf"if\s*\(\s*{re.escape(var)}\s*\)", f"if (!{var})", tick)
+        self.assertNotEqual(negated, tick)
+        self.assertFalse(timer_write_is_guarded_by_exists(negated))
+        # A second write, before the check and outside any guard.
+        unguarded = (tick[:exists.start()] + 'g_Yytk->CallBuiltin("variable_instance_set", '
+                     '{ target, RValue("itemCompanionTimer"), RValue(1.0) });\n' + tick[exists.start():])
+        self.assertFalse(timer_write_is_guarded_by_exists(unguarded))
+
+    def test_off_line_carries_timer_absent_and_repicked_while_held(self):
+        # `petunstick 0` is what a bug report quotes. The two fix-1 counters
+        # (timer absent=, re-picked while held= with its ground/coin split)
+        # must reach that line, today through PetLootLocalStatSuffix()
+        # appended to FullStatLine() in the command block.
+        plugin = strip_comments(self.plugin)
+        header = strip_comments(self.header)
+        after = plugin.split('lc == "petunstick"', 1)[1]
+        start, end = braced_block(after, after.index("{"))
+        block = after[start:end]
+        printed = re.search(r"if\s*\(\s*!\s*enable\s*\)\s*Out\((?P<arg>.*?)\);", block, re.S)
+        self.assertIsNotNone(printed, block)
+        # Follow every no-argument string builder the line calls, and the ones
+        # those call (FullStatLine() starts with StatLine()).
+        line, pending, seen = printed.group("arg"), [printed.group("arg")], set()
+        while pending:
+            for name in re.findall(r"(\w+)\(\)", pending.pop()):
+                if name in seen:
+                    continue
+                seen.add(name)
+                body = definition_body(plugin, name) or definition_body(header, name)
+                if body is not None:
+                    line += body
+                    pending.append(body)
+        for field in ('" timer absent="', '" re-picked while held="', '" (ground "', '" coin "',
+                      '"petunstick stat: held back="'):
+            self.assertIn(field, line, field)
 
     def test_loot_list_is_cleared_only_when_it_is_a_list_id(self):
         clear_at = self.tick.index('"ds_list_clear"')

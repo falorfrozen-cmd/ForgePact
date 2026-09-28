@@ -31,7 +31,7 @@ the shared record every module reads.
 | Issue | What was established | Fix | Checked by |
 |---|---|---|---|
 | #93 | **Measured** (Live 1): the equipped relic slots 10-14 are fingerprint strings in a global, and the scan through them found the three maxed relics the save shows | `hs-game-sdk`'s relic scan reads the equipped slots, both bindings | Live 1's `relic-scan-count` (research build); Live 2's `on-relic-scan` (player build) |
-| #94 | **Static reading** of the game's companion loot pickup (`Companion_obj`): a target is replaced only once it ceases to exist, so an item the pickup keeps failing on pins the pet; no session measured it ([pet-loot-stuck-research.md](pet-loot-stuck-research.md)) | `petunstick` (off by default): an item the pet has stayed on for 1.5 s is held back through the game's own `itemCompanionTimer`, and the pet's target and loot list are dropped | Live procedure 1 of the workorder `forgepact-pet-loot-stuck` (player DLL) |
+| #94 | **Static reading** of the game's companion loot pickup (`Companion_obj`): a target is replaced only once it ceases to exist, so an item the pickup keeps failing on pins the pet; no session measured it ([pet-loot-stuck-research.md](pet-loot-stuck-research.md)) | `petunstick` (off by default): an item the pet has stayed on for 1.5 s is held back through the game's own `itemCompanionTimer` when `variable_instance_exists` says the item carries it (otherwise nothing is written to the item and it is counted `timer absent=`), and either way the pet's target and loot list are dropped; `re-picked while held=` counts a given-up target the pet takes back within the hold | Live procedure 1 of the workorder `forgepact-pet-loot-stuck` (player DLL) |
 | Pet Quest Collector (first filed here as #94) | **Reading of our own code** only; no session measured it | target selection that remembers a failed target, and a cursor over the quest-item family (no issue number) | the owner's own test on the final player DLL (Live procedure 3) |
 | #77 | **Measured** (Live 1): `dropmult gold 100` makes 10,000 coins per monster gold drop and stalls the game for seconds, at the drop and again at the pickup | gold multiplies one coin's amount; each gold script runs once | Live 2's `on-gold-amount` |
 | #83 | **Measured** (Live 1) with Chosen One: the orb's own timer counts down across the cast, and the countdown's rule never selected Mana Orb. Without Chosen One: not observed | an explicit countdown row for Mana Orb (`manaorb-route: object-timer`) | Live 2's `on-manaorb-countdown` |
@@ -100,7 +100,8 @@ with the global instance as self and other). ForgePact logs the two lines above
 once per arm, in both builds, so a player's log names what the filter found and,
 for a zero, the stage that stopped.
 
-## #94: the pet circles one quest item when many are on screen
+<a id="94-the-pet-circles-one-quest-item-when-many-are-on-screen"></a>
+## Pet Quest Collector target selection (first read as #94; #94 is the companion's loot pickup)
 
 **Corrected 2026-09-27.** This section is the batch's first reading of #94, and
 that reading was wrong about which pet code the report meant. The owner

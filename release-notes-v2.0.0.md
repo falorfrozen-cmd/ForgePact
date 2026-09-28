@@ -78,8 +78,10 @@ also get new plugin commands for the stash, the bag and your skills.
   the ground, the pet could stay on one item, hopping around it without
   picking it up or going on to the rest. A new switch on the Mods tab, under
   Quality of Life, makes the pet give up an item it has stayed on for about a
-  second and a half and go for the others; the pet leaves that item alone for
-  about ten seconds before it tries it again. The switch picks nothing up
+  second and a half and go for the others; an item on the ground is then left
+  alone for about ten seconds before the pet tries it again. Gold is different:
+  the switch can only turn the pet away from a coin, not hold it back, so the
+  pet may go for a coin it gave up again sooner. The switch picks nothing up
   itself and does not change which items the pet collects. It is off by
   default: turn it on to use it. Not yet confirmed in a live game.
 

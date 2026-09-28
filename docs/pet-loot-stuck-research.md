@@ -148,7 +148,10 @@ full grid or a full stack leaves the item on the ground and returns false.
   current build. Live procedure 1 records whether the stuck state reproduces
   with the mod off (`off-pet-stuck`) and whether the pet moves on with it on
   (`on-pet-moves-on`, which passes only when the owner's verdict is good **and**
-  `held back=` or `coins released=` rose). A `not-observed` there is a finding
+  `held back=` or `coins released=` rose; beside every verdict it quotes
+  `timer absent=`, `re-picked while held=` and `longest same-target=`, which
+  tell "the same item came back" from "distinct items one after another").
+  A `not-observed` there is a finding
   about that session, not a defect, and not evidence that the stuck state does
   not happen.
 
@@ -172,21 +175,54 @@ runs `PetLootUnstickTick()` in `plugin/ModuleMain.cpp`:
    (90 frames, 1.5 s at 60 fps) in a row. No target, another target, a
    distance beyond the radius or a skipped frame restarts the count; the same
    target is not given up twice until another target, or none, has been seen.
-4. Giving up writes only what the game itself reads next: on a ground item
-   (by `object_index`, the ground-item family), `itemCompanionTimer` =
-   `kPetLootHoldFrames` (600 of the game's frames, about 10 s), so the next
-   scan skips it; on every target, the pet's `lootTarget` = -4; and the pet's
+4. Giving up writes only what the game itself reads next. On a ground item
+   (by `object_index`, the ground-item family) the tick first asks
+   `variable_instance_exists` whether the item carries `itemCompanionTimer`:
+   the name comes from a static reading, and `variable_instance_set` with a
+   name the instance lacks creates a stray variable without an error, which
+   would count as held back while holding nothing. When the name is present
+   it writes `itemCompanionTimer` = `kPetLootHoldFrames` (600 of the game's
+   frames, about 10 s), so the next scan skips the item, and counts
+   `held back=`. When it is absent it writes nothing to the item, counts
+   `timer absent=` (keeping the last `object_index`, and logging the first one
+   once), and still drops the target and clears the list below. An exists
+   check or a timer write that throws counts `give-up failed=` and drops
+   nothing, as does a `lootTarget` write that throws. Then, on every target, the pet's `lootTarget` = -4; and the pet's
    `lootList` is emptied with `ds_list_clear`, only when it reads as a finite
    number that `ds_exists(…, ds_type_list)` confirms is a live list, so the
    game's next scan (at most half a second later) rebuilds it without the held
    item. The clear is the write that matters: the timer only keeps the item
    out of a new scan, and a list left holding it would hand it straight back.
-5. It counts what it did. `petunstick 0` prints one line:
-   `petunstick stat: held back=<n> coins released=<n> longest same-target=<n> frames`,
-   followed by where the ticks went (`ticks=`, `no pet=`, `no target=`,
-   `target gone=`) and every refusal with the read it failed on
-   (`unreadable=`, `list not cleared=`), so a bug report can tell "did
-   nothing" from "could not look" from "did the wrong thing".
+5. It counts what it did. `petunstick 0` prints one line,
+   `FullStatLine()` from the header followed by the tick's own
+   `PetLootLocalStatSuffix()`:
+   `petunstick stat: held back=<n> coins released=<n> longest same-target=<n> frames ticks=<n> no pet=<n> no target=<n> target gone=<n> unreadable=<n> (last <read>) list not cleared=<n> (last <reason>) give-up failed=<n> (last <reason>) other kind=<n> (last object_index <n>) timer absent=<n> (last object_index <n>) re-picked while held=<n> (ground <n> coin <n>) (last ground timer read <n>)`.
+   Each `(last …)` part appears only once its counter has something to name;
+   the last one reads `(last ground timer unreadable)` when the read-back
+   failed. The line says where the ticks went (`ticks=`, `no pet=`,
+   `no target=`, `target gone=`), every refusal with the read it failed on
+   (`unreadable=`, `list not cleared=`, `give-up failed=`), a target of
+   neither family that was only dropped (`other kind=`) and a ground item
+   with no timer (`timer absent=`), so a bug report can tell "did nothing"
+   from "could not look" from "did the wrong thing".
+
+   `re-picked while held=` is the check on the hold itself. `held back=`
+   counts the timer write returning, not the item staying out of the pet's
+   next scan, and `longest same-target=` does not show a give-up that failed
+   to move the pet: after a give-up the pet usually reads no target on the
+   next tick, the watch forgets, and a target the game hands straight back
+   starts a new run, given up again 90 frames later and counted again. So the
+   tick keeps its last eight give-ups, and when the pet takes one of them back
+   as a new target within `kPetLootHoldFrames` of giving it up, it counts a
+   re-pick, split by kind (`ground`, `coin`), and logs the first. On a ground
+   item it also reads `itemCompanionTimer` back: a positive value says the
+   hold took and the pet came back anyway, 0 or less says the game reset it
+   or the write never landed. A pet that still looks stuck beside a rising
+   `held back=` then reads one of two ways: ground re-picks rising (with the
+   timer read-back) means the hold did not take and the same item keeps
+   coming back; re-picks staying 0 while `held back=` rises means the pet is
+   working through a cluster of distinct items, one every 1.5 s. Coin
+   re-picks are expected, since a coin has no timer to hold it.
 
 Why these numbers: a target within 160 px for 1.5 s that has not gone away has
 had dozens of arrived frames of `PickupLoot` attempts, and a pet travelling to
@@ -202,7 +238,8 @@ not change what the pet picks up or how fast it walks, and it does not make a
 failed pickup succeed: an item the game cannot put in the inventory stays on
 the ground, and the pet comes back to it about ten seconds later. A coin gets no
 timer (it has none), only a dropped target, so a coin that sticks again is
-given up again and counted again (`coins released=`).
+given up again and counted again (`coins released=`, and, when the pet takes
+it back within the hold, `re-picked while held=` under `coin`).
 
 **Rejected alternatives**, so nobody re-proposes them:
 
@@ -230,7 +267,14 @@ counts; another target or none restarts; given up once per target; a target
 that vanishes asks for nothing). `tests/test_pet_loot_unstick_contract.py` pins
 the tick's shape (gated on the switch, the three names it writes, objects by
 name, the timer only on a ground item, nothing collected, destroyed or hooked,
-no kind check as the gate), the off default and the panel text.
+no kind check as the gate), the off default and the panel text. On the
+comment-stripped source it also pins fix-1: the `itemCompanionTimer` write
+sits inside the then-block of the answer of a `variable_instance_exists` call
+on that name, made before it (with negative controls: the same check fails on
+the tick with the exists call removed, the condition negated, or a write added
+outside the guard), and `timer absent=` and `re-picked while held=` (with its
+ground/coin split) reach the line `petunstick 0` prints. No harness runs the
+absent-timer branch or the re-pick ring; they are pinned by shape only.
 
 **Live.** Not yet confirmed in a live game. Live procedure 1 (player DLL, one
 crowded spot with mixed loot, mod off then on) is what will record it; its
