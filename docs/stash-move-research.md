@@ -391,6 +391,81 @@ sequences by name. Each result names its check.
   same tab answered the same (`byname-full`), which is expected by
   construction and not what `targetTabRule` is set from.
 
+### Static reading 3: the button
+
+The owner asked on 2026-09-28 for a **Move all** button in the stash window,
+left of the backpack's Sort button, with F4 kept ("Build it into #68"). This
+subsection is what the local reading of the game's UI node routines says
+about how such a button could be made and could reach the plugin, written in
+our own words with names only, each item a **static reading** unless it says
+measured. Live 1f (§ Live procedure 1f) measures it.
+
+- **Making and removing a node.** `UiCreateNode` runs with the window that
+  will own the node as its self and takes, in order, an x, a y, the object to
+  create, an activation and a call-stack name: it creates an instance of that
+  object, places it, binds the activation as a method of the new node when
+  the activation is callable (and leaves the node's `activationFunc`
+  undefined otherwise), stores the call-stack name as the node's
+  `uiNodeCallstack`, adds the node to a list the window keeps, and answers the
+  node. Measured: the prospect research logged it with a grid name as its
+  fifth argument and the restart research with `UI_Button_obj` as its third,
+  which fixes the order. `UiSetActivationFunc` sets a node's `activationFunc`
+  the same way, so an undefined activation is a state the game's own API
+  makes; grids and labels carry none. `UiRemoveNode`, with the owning window
+  as self, finds the node in that list, drops the entry and destroys the node.
+  The bag's tab switch (`InventoryResetTabs`, run by each tab click) removes
+  only the window's active grid nodes, so a button node is not expected to go
+  with it (unverified: Live 1f `node-survives-tab-switch`).
+- **The Sort button.** The bag grid's struct binds `InventorySortTab` as one
+  of its own methods, and no direct call of `InventorySortTab` exists anywhere
+  in the image, so the Sort button's activation is expected to be that method
+  (or a closure calling it). Its body clears the bag grid and re-adds every
+  item, reading the grid's own members off its self, so it must never run with
+  a button as self: it is rejected as the Move all node's activation. Which
+  code creates the Sort button was found in none of the decompiled closures
+  and is **not read**; Live 1f reads the button hook-free instead (`stashmoveall
+  probe sort`, and `menulayout UI_Button_Small_obj`, whose rows end in
+  `text=`).
+- **The dispatch script `<S>` (read 2026-09-28, this round).** A node's
+  activation must name a game script (a method value cannot wrap plugin
+  code), so the plugin can only see a press by hooking the script the node is
+  bound to, and that script must be harmless if the hook were ever blind. The
+  two candidates were read:
+  - `UiSetFloatingToFalse` calls no other named script and reads no grid. It
+    does nothing unless one member of its self reads true; when that member
+    does, it rewrites a few members of its self and sets one element of an
+    array held by a global object, at an index taken from another member of
+    its self. So it does not write only its self (the global element is the
+    exception), but on a node whose gating member is not true it writes
+    nothing at all. The game itself calls it from `ControllerCheckInput`, on
+    the instances of one UI object, together with `UiUnhideRow` and
+    `UiSetFocus`, so a hook on it sees the game's own calls too and must
+    forward every call whose self is not the mod's node.
+  - `UiNodeClearNavigationFunc` calls `UiSetFocus` (it moves the UI focus),
+    `DirEnumToAngle` and `CheckSensorInstance` (it reads what is under the
+    cursor), and a builtin: it acts on the scene, not only on its self.
+  - **Chosen: `UiSetFloatingToFalse`** as `probe create`'s script and Route
+    A's candidate, being the closer fit of the two to "writes only its
+    argument or self and reads no grid" (neither fits it exactly: the global
+    array element above). The variable names behind those members could not
+    be recovered from the build, so which flag gates it and which global
+    array it touches are **not read**.
+- **Where a click is dispatched.** `ControllerCheckInput` reads the key
+  bindings and opens or toggles windows (the inventory, the talents, the
+  minimap, the loot filter, a potion, a town portal, the weapon loadout); no
+  call of a node's `activationFunc` was found in it. So where the game calls a
+  node's activation on a click, and what it does with an undefined one, are
+  **not read**. Route B (the frame poll on a node left unbound) is measured on
+  exactly that case in Live 1f (`node-press-poll-unbound`).
+- **The rows Live 1f arms** beside Live 1e's: `UiCreateNode`, `UiRemoveNode`,
+  `UiMoveNode`, `InventorySortTab` and `InventoryResetTabs` (rows already),
+  and four new `craftprobe` rows by their SDK constants, after `ValidateItem`
+  and before the `CheckPlayerInteraction` control: `UiSetActivationFunc` (the
+  binder), `UiSetFocus` (a hot row: every hovered frame calls it, so it is
+  armed with a small budget and read only for the self it logs),
+  `UiSetFloatingToFalse` and `UiNodeClearNavigationFunc` (the two candidates).
+  291 rows in all; the marker reads `phase1k rows=291`.
+
 ## Instrument
 
 The instrument is `craftprobe` (research build only; the toolkit guide's
@@ -1026,6 +1101,47 @@ call follows the recording rule under § Instrument; each check is `pass`,
 ...)`. Each hand-move result is **measured**, and its input is a person, not
 the instrument.
 
+### Live procedure 1f
+
+The procedure is the one in this workorder's context file,
+`.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1f"
+(kept on the owner's machine with the plan). **No person step**, unless the
+by-name activation also answers nothing, when one owner click on the node is
+the last resort, asked once. Two questions, by the owner's decisions of
+2026-09-28 ("one more session for socketables", "Build it into #68"): whether
+a socketable merges into its stack on the Socketable tab by name, and how a
+Move all node left of the bag's Sort button can reach the plugin (§ Static
+reading 3).
+
+- **Build**: the research build from this branch after the probe verbs,
+  `plugin_build\build.bat dev`, kept as
+  `plugin_build\BloodPactPlugin_rel.phaseC-41558d1c.dll` (untracked, as the
+  Phase A copy is): build
+  sha256=41558d1c4b468124f31c3ce281f065ad08647b4dec2fca1a643a4a063f7a2b11.
+  Its bare `craftprobe` prints `craftprobe: phase1k rows=291 - ...`.
+- **The research build's verbs** (`stashmoveall probe`, research build only,
+  not a player command): `sort [id:<n>]` prints the Sort node's row (id, x, y,
+  bbox, sprite, visible, enabled, `uiNodeCallstack`, text) and its activation
+  read hook-free (the method's script, the `craftprobe` row naming it, and
+  whether its self is an instance or a struct); `create [<script>|none]` makes
+  a `UI_Button_Small_obj` node through `UiCreateNode` with self and other the
+  stash window, left of Sort by Sort's own width plus 8 GUI units, call-stack
+  name `ForgePactMoveAll`, then binds `<script>` as its activation through
+  `UiSetActivationFunc` (none leaves it unbound) and sets its text to `Move
+  all` (the one write the probe makes, on its own node); `remove` runs
+  `UiRemoveNode` with the same self (or destroys the probe's own node when the
+  window is gone); `show` prints whether the node is listed and two counters,
+  `poll_presses` (Route B: a left press inside the node's bbox, read by name
+  each frame while the node exists) and `detour_presses` (Route A: a call of
+  the bound script's `craftprobe` row whose self is the node); and `copy
+  <template> <count>` copies a stash item into the bag by the give-item verb's
+  loader order with the template read from the stash map, the stash item left
+  as it was, so the socketable blocks need no person.
+- **Recording rule**: as § Instrument's. Each check is `pass`, `fail`,
+  `not-observed` (with what was supplied) or `not-run (instrument: ...)`; the
+  node's fields are quoted from the probe's replies, and the socket merge's
+  array and counts from the reads.
+
 ## Results
 
 ### Live 1 results
@@ -1250,6 +1366,16 @@ sequence is quoted in the Logged shape column in logged order.
 | saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | the rune and the gem under `stash.hss` `socket_tab`; `<K_XU>` and `<K_Y>` under `stash.hss` `material_tab`; the merged `<K_X>` and orb in no live file (exempt) | pass |
 | saved-bag-lacks-keys | no moved key under a bag container of `inventory_order_13.hss`, after the pre-session copies' read showed the bag keys in a bag container | - | - | none under a bag container after; the pre-session copies listed `<K_X>` and `<K_Y>` under `inventory_material_tab` (the rune and the gem started in `stash.hss` `socket_tab`, and `<K_XU>` did not exist yet) | pass |
 
+### Live 1f results
+
+Not run yet. Live procedure 1f runs on the research build § Live procedure
+1f names; its capture is recorded here, one row per check, the logged shape
+beside the supplied one, the way the rows above are.
+
+| Check | What it reads | Supplied | Result | Verdict |
+|---|---|---|---|---|
+| (none yet) | - | - | - | not-run |
+
 ### Live 2 results
 
 Not run yet. Live procedure 2 is the acceptance session on the player build
@@ -1318,13 +1444,21 @@ in `plugin/ModuleMain.cpp` (the `stashmoveall, stashmove` block) reads the game
 and calls it. `tests/test_stash_move_all_contract.py` pins the adapter.
 
 **The control.** The switch is `stashmoveall 1|0` (the panel sends it). While it
-is on, the frame callback reads one key, F4; the foreground window and the
-stash window are asked only while the key is down, and a press starts one run
-only with the game's window in front and a `UI_Stash_obj` listed. While it is
-off, the frame path reads nothing. `stashmoveall run` runs the same thing
-without the key, `stashmove <fingerprint>` moves one item of the bag tab on
-show through the same per-item routine, and bare `stashmoveall` prints
-`stashmoveall: state=<on|off> key=F4` and the usage.
+is on, the frame callback reads one key, F4; the modifiers, the foreground
+window and the stash window are asked only while the key is down, and a press
+starts one run only with the game's window in front, a `UI_Stash_obj` listed and
+no Alt, Ctrl or Shift held (Alt+F4 closes the game, and a run started as it
+closes would move items the stash's own close never saves). While it is off,
+the frame path reads nothing. `stashmoveall run` runs the same thing without
+the key, `stashmove <fingerprint>` moves one item of the bag tab on show through
+the same per-item routine, and bare `stashmoveall` prints
+`stashmoveall: state=<on|off> key=F4` and the usage. After a loss (below) the
+state line reads `stashmoveall: state=off-for-this-session reason=<reason>`
+instead, and `stashmoveall 1` answers `stashmoveall: off for this session -
+<reason>; ...` and stays off. Every switch, and every loss, prints the state
+line; the panel reads the last one in `out.txt` (`/api/state`'s
+`stash_move_all_session`) and shows `off (this session)` beside the switch while
+the game runs.
 
 **What one run stands on**, found by name at the point of use: `UI_Stash_obj`
 (its `tabSelected` is the bag view on show, its `stashTabSelected` the stash tab
@@ -1356,14 +1490,24 @@ of its identity when there is one, else into a cell of the tab
 by the Materials tab`). A merge of more than one unit follows `wholeStackMerge`.
 A stackable whose stack on the tab cannot be read - a shared page's entries
 answer on no map by name (`mapOwnerRule`) - is a skip, never read as "no
-stack".
+stack". The plan's route is not the last word: a stackable's route is decided
+again at its own call (next paragraph), because an earlier item of the same run
+can make the stack a later one joins.
 
 **One item, in order.** At the point of use, before any call: the bag cell
 still holds the key and the item still answers on map 0, `stashTabSelected`
 still reads the planned tab, and the shown tab's own array (the stash grid
 node's `nodeGrid` on a page, `Controller_obj.stashMaterialTab` on the Materials
 tab) reads room for it - a free block of the item's footprint, or a stack of its
-identity. No room, or a read that could not be made, is `skipped: no room on the
+identity. For a stackable the route is decided here, from its identity's sum
+re-read on that array just before the first call and its count re-read with it
+(`RouteAtUse` in the core), whatever the plan said: a sum above 0 is the stack
+routine with the whole count, 0 the placement, and a sum that could not be read
+a skip (`its stack on the shown tab could not be read`). The round-2 review of
+the first player build found why: two bag items of one identity the tab lacked
+were both planned into cells, the first made the stack, and the second's
+`StashAddToStack` found it and merged one unit while its bag cell stayed - a
+duplicate. No room, or a read that could not be made, is `skipped: no room on the
 shown tab` (or `the shown tab's room could not be read`) with nothing called, so
 the item stays in the bag (the owner's no-overflow rule). Then the calls, each
 through its SDK constant, resolved by name and dispatched with self and other
@@ -1399,7 +1543,16 @@ owner accepted on 2026-09-28.
 
 **Outcomes and lines.** Moved only when the tab on show is unchanged, the bag
 cell no longer holds the key, and the key is at the answer's cell (or the sum
-rose by the count). An answer the game gave before changing anything
+rose by the count), and, where the route ends with the owner step (a shared page,
+a new Materials identity), the owner step was dispatched and the key then
+answers undefined on map 0, the signature of a step that took (Live 1d
+`byname-shared-owner`, Live 1e `byname-material-new`). The second
+`ValidateItem`'s answer and the owner step's answer go into the report the core
+decides on, so a step that ran and did nothing is not read as success. An owner
+step that did not take after the bag cell was cleared is a loss; the item is
+left where it was placed, since taking it back out of the tab would leave it in
+no grid (there is no by-name route back into the bag cell), and the line says
+so. An answer the game gave before changing anything
 (`success=false`, `StashAddToStack` false on a merge) with both sides unchanged
 is `skipped: <answer>` and the run goes on. Anything else - the tab on show
 changed or unreadable, the key in both places, the stack risen by another
@@ -1419,7 +1572,13 @@ restarting the game`, and for the one-item verb `stashmove: moved <key> -> ...`,
 
 **What is not observed** in play before Live 2: every case of this build (Live 1
 to Live 1e measured the routines through the research build's `craftprobe`, one
-call at a time, not this adapter); a merge on a stash page (merges were measured
-on the Materials tab only); a multi-cell item placed by name into the Materials
-tab; the undo; F4 itself; and whether a run of many items in one frame behaves as
-the single calls did.
+call at a time, not this adapter); a merge on a stash page with the page's own
+two numbers (0 and 13 on the personal page, 9 and 2 on a shared page) - every
+merge was measured on the Materials tab (by name and by hand), plus one by-hand
+orb on the Socketable tab, and none on a page; the Materials tab fed from a bag
+page (`newMaterialRoute`, `stackMoveRoute` and `wholeStackMerge` were all
+measured with the bag's Materials view on show, `tabSelected` -4); a multi-cell
+item placed by name into the Materials tab; the undo, and an owner step that
+did not take; F4 itself, and the held-modifier guard; and whether a run of many
+items in one frame, a second item merging into a stack the run itself made
+among them, behaves as the single calls did.
