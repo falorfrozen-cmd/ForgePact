@@ -1,5 +1,7 @@
 # ForgePact 2.1.0
 
+Release date: 2026-10-02
+
 A new **Extra packs as you approach** switch, off by default, makes Monster
 Density's extra spawners only as you come near them, so high density costs the
 game less every frame.

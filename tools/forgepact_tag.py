@@ -77,9 +77,28 @@ tags are ragged (`v1.3.9` alongside `v1.3.16`), and a lexical sort gets that
 wrong. Tags from another scheme (`hub-v9.0.0`, `catalog`, `v2.0.0-rc1`) are
 ignored for every one of the checks above, and for `previous`.
 
-**Why release notes are never a refusal here.** The whole point of this
-change is that nobody has to author `release-notes-vX.Y.Z.md` before tagging
--- see "Notes composition" below. `cut_release.py --check` still refuses a
+**Friday releases, and hotfixes any day** (`schedule`, run after the checks
+above). ForgePact ships on Fridays. A version ending in `.0` is a Friday
+release and moves by exactly one step from the previous `v*` tag: from 2.0.0,
+either 2.1.0 or 3.0.0. A version ending in anything else is a hotfix: it keeps
+the previous tag's major and minor (2.0.0 -> 2.0.1) and can be tagged any day.
+A Friday release is refused before its day:
+
+- when its `release-notes-vX.Y.Z.md` exists, before the `Release date:` that
+  file names (which `cut_release.notes_date` requires to be a Friday), and any
+  day from that date on is accepted, so a missed Friday can still ship late;
+- when it has no notes file, on any day but a Friday.
+
+"Today" is the date at UTC+03:00, Turkey's clock, the easternmost of the
+maintainers' timezones: a release may go out once it is Friday there, even
+while it is still Thursday in Poland. `--today` overrides it, for tests and
+for a dry run.
+
+**Why a missing notes file is never a refusal here.** The point of the
+generated-notes fallback is that nobody has to author `release-notes-vX.Y.Z.md`
+before tagging -- see "Notes composition" below. A Friday release's file that
+exists must still carry a valid release date (a hotfix's needs none, but a date
+it gives must be real), and `cut_release.py --check` still refuses a
 missing notes file by default; only `--allow-missing-notes`, which the tag
 workflow passes, relaxes that.
 
@@ -140,6 +159,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, List, NamedTuple, Optional, Tuple
 
@@ -167,6 +187,17 @@ BANNER = (
     "ForgePact {version} section for players before publishing: the Toolkit "
     "Hub shows this text to players."
 )
+
+
+#: Turkey's clock, fixed at UTC+03:00 with no daylight saving since 2016, so a
+#: fixed offset says the same as a zone database without needing one (Windows
+#: Python ships none). See "Friday releases" in the module docstring.
+RELEASE_CLOCK = timezone(timedelta(hours=3), "UTC+03:00")
+
+
+def release_today(now: Optional[datetime] = None) -> date:
+    """Today's date on the release clock."""
+    return (now or datetime.now(timezone.utc)).astimezone(RELEASE_CLOCK).date()
 
 
 class Plan(NamedTuple):
@@ -265,6 +296,60 @@ def plan(raw: str, refs: Iterable[str], tree: str, recut: bool = False) -> Plan:
         )
 
     return Plan(version, tag, bump=tree != version, previous=highest or "")
+
+
+def schedule(version: str, previous: str, notes_text: Optional[str], today: date) -> None:
+    """Refuse a step size or a day that ForgePact's release schedule does not allow.
+
+    `previous` is `Plan.previous`; `notes_text` is the version's own notes
+    file, or None when it has none. See "Friday releases" in the module
+    docstring.
+    """
+    hotfix = cut_release.is_hotfix(version)
+    major, minor, _ = as_numbers(version)
+
+    bound = _previous_bound(previous)
+    if bound is not None:
+        was_major, was_minor, _ = bound
+        if hotfix:
+            allowed = (major, minor) == (was_major, was_minor)
+        else:
+            allowed = (major, minor) in (
+                (was_major, was_minor + 1),
+                (was_major + 1, 0),
+            )
+        if not allowed:
+            base = f"{was_major}.{was_minor}"
+            raise SystemExit(
+                f"v{version} is not one step from {previous}. A Friday release "
+                f"moves by one minor or one major version ({was_major}."
+                f"{was_minor + 1}.0 or {was_major + 1}.0.0); a hotfix keeps "
+                f"{base} and moves only the last number ({base}.x)."
+            )
+
+    if notes_text is not None:
+        when, problem = cut_release.notes_date(version, notes_text)
+        if problem:
+            raise SystemExit(f"release-notes-v{version}.md {problem}.")
+    else:
+        when = None
+
+    if hotfix:
+        return
+
+    today_is = f"today is {today.strftime('%A')} {today.isoformat()} at UTC+03:00"
+    if when is not None and today < when:
+        raise SystemExit(
+            f"v{version} is a Friday release dated {when.isoformat()} in "
+            f"release-notes-v{version}.md, and {today_is}. It can be tagged from "
+            f"that date on. Only a hotfix (a version not ending in .0) ships early."
+        )
+    if when is None and today.weekday() != cut_release.FRIDAY:
+        raise SystemExit(
+            f"v{version} is a Friday release with no release-notes-v{version}.md "
+            f"to date it, and {today_is}. Tag it on a Friday, or write its notes "
+            f"with a `{cut_release.RELEASE_DATE_EXAMPLE}` line."
+        )
 
 
 def note_versions(names: Iterable[str]) -> List[str]:
@@ -469,6 +554,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="the tag may already exist: the workflow has checked that its "
              "release is an unpublished draft, and will delete both first",
     )
+    parser.add_argument(
+        "--today",
+        type=date.fromisoformat,
+        default=None,
+        help="the date to check the release schedule against, YYYY-MM-DD "
+             "(default: today at UTC+03:00)",
+    )
 
     parser.add_argument(
         "--compose-notes",
@@ -494,6 +586,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.recut and (args.published_notes or args.compose_notes):
         parser.error("--recut is only for planning a tag")
+    if args.today and (args.published_notes or args.compose_notes):
+        parser.error("--today is only for planning a tag")
 
     if args.published_notes:
         if args.compose_notes:
@@ -527,6 +621,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     tree = args.tree or cut_release.current(args.root)
     chosen = plan(args.tag, args.existing, tree, recut=args.recut)
+    notes = args.root / cut_release.RELEASE_NOTES.format(version=chosen.version)
+    notes_text = _read_notes_text(notes) if notes.is_file() else None
+    schedule(chosen.version, chosen.previous, notes_text, args.today or release_today())
 
     # Four bare lines: this is appended straight to `$GITHUB_OUTPUT`, and
     # `bump` is compared as a string because that is the only shape a step's

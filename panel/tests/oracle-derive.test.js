@@ -3,8 +3,9 @@
 // recorded values, every `same` looks back, and the step counts are the
 // contract's: three switch clicks per switched slider, one Turn off per mod
 // the list can show, one theme step per THEMES entry, after the one step that
-// opens Setup, where the theme is, and then the key supplement's slider (Prime
-// Evil Parts), entered on the Loot tab.
+// opens Setup, where the theme is, then the key supplement's slider (Prime
+// Evil Parts), entered on the Loot tab, and last the boolean mods no recording
+// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -88,7 +89,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 123 switch clicks, 59 Turn off buttons, one theme step per theme', () => {
+test('the counts: 123 switch clicks, 60 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -96,7 +97,7 @@ test('the counts: 123 switch clicks, 59 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 123);
-  assert.equal(quick.length, 59);
+  assert.equal(quick.length, 60);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -173,19 +174,40 @@ test('every control is covered: the switches in legacy order, the theme, the key
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'density_rolling']);
-  for (const n of NATIVE_BOOLEANS) assert.ok(BOOLEAN_MODS.includes(n.key), n.key);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'density_rolling']);
+  for (const n of NATIVE_BOOLEANS) {
+    assert.ok(BOOLEAN_MODS.includes(n.key), `${n.key}: the Enabled mods list shows it, so it has a Turn off button`);
+    const cb = '#' + n.key;
+    assert.ok(!LEGACY.controls.includes(cb) && !SUPPLEMENT.controls.includes(cb) && !KEY_SUPPLEMENT.controls.includes(cb),
+      `${n.key}: a recording lists it: derive it from there instead`);
+  }
+  // The legacy walk reached the Pet moves on switch's neighbour, Pet collects
+  // quest items, on the same tab and sub-tab the native booleans are entered on.
+  const neighbour = LEGACY.steps.findIndex((s) => s.control === '#mod_pet_quest_pickup');
+  const nav = LEGACY.steps.slice(0, neighbour).filter((s) => /^(tab|subtab):/.test(s.control)).map((s) => s.control);
+  assert.equal(nav.findLast((c) => c.startsWith('tab:')), 'tab:mods');
+  assert.equal(nav.at(-1), 'subtab:qol');
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_STEPS;
+  // Every earlier step (the key supplement's last one included) comes first,
+  // so none of their indexes moved.
+  assert.equal(steps[at - 1].control, KEY_SLIDERS[0]);
+  assert.equal(steps[at - 1].action, 'min');
+  for (const n of NATIVE_BOOLEANS) assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), n.key);
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
-  const [{ key, verb }] = NATIVE_BOOLEANS;
-  const on = steps[at + 2];
-  const off = steps[at + 3];
-  assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
-  assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
-  assert.deepEqual(steps[at + 4].expect, { posts: { same: on.step }, cmds: { same: on.step } });
-  assert.equal(steps[at + 5].control, quickDisable(key));
-  assert.deepEqual(steps[at + 5].expect, { posts: { same: off.step }, cmds: { same: off.step } });
+  assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
+  NATIVE_BOOLEANS.forEach(({ key, verb }, i) => {
+    const first = at + 2 + 4 * i;
+    const cb = '#' + key;
+    assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action]),
+      [[cb, 'click'], [cb, 'click'], [cb, 'click'], [quickDisable(key), 'click']]);
+    const on = steps[first];
+    const off = steps[first + 1];
+    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
+    assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
+    assert.deepEqual(steps[first + 2].expect, { posts: { same: on.step }, cmds: { same: on.step } });
+    assert.deepEqual(steps[first + 3].expect, { posts: { same: off.step }, cmds: { same: off.step } });
+  });
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {

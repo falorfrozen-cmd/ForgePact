@@ -15,7 +15,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 import copy
 import hashlib
@@ -247,6 +247,11 @@ DEFAULTS = {
     # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
     # other mod toggles.
     "mod_pet_quest_pickup": False,
+    # The pet moves on from loot it cannot pick up (#94): when the game's own
+    # companion loot pickup sits on one item, the plugin holds that item back
+    # for the pet and lets it choose another (docs/pet-loot-stuck-research.md).
+    # Off by default like the other mod toggles.
+    "mod_pet_loot_unstick": False,
     # Auto-prospect (ForgePact #9): every item put into the Prospect Cube's
     # grid is prospected at once by the game's own Prospect. Off by default:
     # whatever is left in the grid when the game saves is lost.
@@ -940,6 +945,9 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: no hook is installed, so unlike relicfilter
         # there is no arm/defer lifecycle to worry about.
         out.append("petquest 1")
+    if cfg.get("mod_pet_loot_unstick", False):
+        # Safe to send at launch: no hook, only a per-frame tick while on.
+        out.append("petunstick 1")
     if cfg.get("mod_auto_prospect", False):
         # Safe to send at launch: like relicfilter, the plugin only ARMS the mod
         # here and installs its hook once the game has settled.
@@ -2064,7 +2072,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "density_rolling", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "density_rolling", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "gem_filter":
                     value = gem_filter_value(val)
@@ -2146,6 +2154,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
                     elif key == "mod_pet_quest_pickup":
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
+                    elif key == "mod_pet_loot_unstick":
+                        send_cmds([f"petunstick {1 if cfg['mod_pet_loot_unstick'] else 0}"], cfg)
                     elif key == "mod_auto_prospect":
                         cmds = [f"autoprospect {1 if cfg['mod_auto_prospect'] else 0}"]
                         # Turning the parent on restates the child, as map

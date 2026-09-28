@@ -4751,7 +4751,12 @@ the vanilla duplication (`### Constraints from Phase 1`).
   `craftmats: off for this session - ...` (a loss, an error inside the press,
   or an install without both routes); `craftmats: consume mismatch - ...;
   off for this session ...`. A player build carries no `craftmats stat` (the
-  owner's rule); the per-press line names the work done instead.
+  owner's rule); the per-press line names the work done instead. Since
+  ForgePact 2.0.1 (#80) the press gate's refusal names its cause instead of
+  `unreadable`: `already-served`, `unpaired`, `unnumbered-row` or `other-row`,
+  each with its own line and counter, and a take whose `ItemCheckHash` call did
+  not dispatch is unconfirmed and refused as `hash-failed`
+  ([dev2-bug-batch-research.md](dev2-bug-batch-research.md#80-every-refused-craft-press-said-unreadable)).
 - **Research build only:** `craftmats stat`; `craftmats 1` refuses, and the
   install stays off, while `craftprobe` detours any of the six (a second
   detour on one function reads as a false `TABLE-ONLY`); `craftprobe hook`

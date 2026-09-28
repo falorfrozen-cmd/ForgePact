@@ -485,6 +485,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/CraftMatsMod.hpp>
 #include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
+#include <ForgePact/PetLootUnstickMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
@@ -3298,9 +3299,124 @@ static std::string EsyaAdiJson(const std::string& js)
 }
 #endif
 
+#ifndef FORGEPACT_RELEASE
+// ===== Live 1 research instruments (dev2 bug batch: #77, #95 part 1) ========
+// Research build only: neither command is in kPlayerCommands, and the player
+// build compiles none of this. Both only read.
+//
+// `goldtrace on|off|stat` (#77): while on, each DropGold / DropMonsterGold call
+// that passes a ForgePact drop hook appends its arguments to
+// bp_ipc\goldtrace.txt, one line per call, so a session can see which argument
+// is the coin's amount. LogDrop feeds it, and every FP_DROP_HOOK body calls
+// LogDrop after its original. At most kGoldTraceMaxLines lines a session,
+// because at `dropmult gold 100` one monster's gold is 10,000 DropGold calls.
+static bool g_GoldTraceOn = false;
+static bool g_GoldTraceFileFresh = false;   // truncated once, at the session's first `on`
+static long g_GoldTraceLines = 0;
+static long g_GoldTraceOverCap = 0;         // gold calls seen while on, after the cap
+static constexpr long kGoldTraceMaxLines = 400;
+
+static void GoldTraceAppend(const char* fn, int argc, RValue** A)
+{
+    if (!g_GoldTraceOn || !fn) return;
+    const std::string name = fn;
+    if (name != "DropGold" && name != "DropMonsterGold") return;
+    if (g_GoldTraceLines >= kGoldTraceMaxLines) { ++g_GoldTraceOverCap; return; }
+    try {
+        std::string line = name + " argc=" + std::to_string(argc);
+        for (int i = 0; i < argc && i < 32; ++i) {
+            line += " a" + std::to_string(i) + "=";
+            if (!A || !A[i]) { line += "null"; continue; }
+            const RValue& v = *A[i];
+            bool isNumber = true;
+            double number = 0.0;
+            switch (v.m_Kind) {
+            case VALUE_REAL:  number = v.ToDouble(); break;
+            case VALUE_INT32: number = (double)v.ToInt32(); break;
+            case VALUE_INT64: number = (double)v.ToInt64(); break;
+            case VALUE_BOOL:  number = v.ToBoolean() ? 1.0 : 0.0; break;
+            default: isNumber = false; break;
+            }
+            if (isNumber) {
+                char text[64];
+                sprintf_s(text, "%.6g", number);
+                line += text;
+            } else if (v.m_Kind == VALUE_STRING) {
+                std::string s = v.ToString();
+                if (s.size() > 40) s.resize(40);
+                line += "\"" + s + "\"";
+            } else {
+                line += "kind" + std::to_string((int)v.m_Kind);
+            }
+        }
+        std::ofstream f(IPC_DIR + "\\goldtrace.txt", std::ios::app);
+        f << line << "\n";
+        ++g_GoldTraceLines;
+    } catch (...) {}
+}
+
+// `lootcensus` (#95 part 1, #77): one line counting the ground loot and the
+// coins. Loot_Ground_obj and Coin_obj are resolved by their SDK names; the
+// walk reads each ground item's `lootFilterVisible` (the game's loot filter
+// verdict, checked with variable_instance_exists first) and its built-in
+// `visible`, up to kLootCensusWalkCap instances. `visible` is read directly,
+// the way the rest of this file reads it, rather than gated on
+// variable_instance_exists, which a GameMaker built-in may not answer true
+// for; an unreadable one is counted rather than guessed. The two trailing
+// counters say how many items the walk could not classify, so a zero
+// `hidden=` cannot come from an instrument that read nothing.
+static constexpr int kLootCensusWalkCap = 2048;
+
+static void LootCensus()
+{
+    try {
+        const double lootIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        const double coinIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Coin_obj))) }).ToDouble();
+        if (lootIdx < 0 || coinIdx < 0) {
+            Out("lootcensus: object not found (Loot_Ground_obj=" + std::to_string((long)lootIdx)
+                + " Coin_obj=" + std::to_string((long)coinIdx) + ")");
+            return;
+        }
+        const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
+        const long coins = (long)g_Yytk->CallBuiltin("instance_number", { RValue(coinIdx) }).ToDouble();
+        long hidden = 0, invisible = 0, walked = 0, noFilterVar = 0, unreadableVisible = 0;
+        const long toWalk = std::min<long>(ground, kLootCensusWalkCap);
+        for (long i = 0; i < toWalk; ++i) {
+            RValue inst;
+            try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) }); }
+            catch (...) { continue; }
+            if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            ++walked;
+            try {
+                if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("lootFilterVisible") }).ToBoolean()) {
+                    if (!g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("lootFilterVisible") }).ToBoolean()) ++hidden;
+                } else {
+                    ++noFilterVar;
+                }
+            } catch (...) { ++noFilterVar; }
+            try {
+                RValue visible = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("visible") });
+                if (visible.m_Kind == VALUE_UNDEFINED) ++unreadableVisible;
+                else if (!visible.ToBoolean()) ++invisible;
+            } catch (...) { ++unreadableVisible; }
+        }
+        Out("lootcensus: ground=" + std::to_string(ground) + " hidden=" + std::to_string(hidden)
+            + " invisible=" + std::to_string(invisible) + " coins=" + std::to_string(coins)
+            + " walked=" + std::to_string(walked)
+            + " no-filter-var=" + std::to_string(noFilterVar)
+            + " visible-unreadable=" + std::to_string(unreadableVisible));
+    } catch (...) { Out("lootcensus: read threw"); }
+}
+#endif
+
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
     if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
+#ifndef FORGEPACT_RELEASE
+    GoldTraceAppend(fn, argc, A);      // #77 research: the gold scripts' arguments
+#endif
     try {
 #ifndef FORGEPACT_RELEASE
         if (g_TypeMapAktifTip >= 0) g_TypeMapKancaSayaci++;
@@ -5685,7 +5801,7 @@ static bool ToggleTableResolveIds()
                         // talent counts ruleDenied even when it has no object
                         // by name convention at all (bushido/holyForm/
                         // unholyForm/melonForm). D-R1: a talent id matching
-                        // one of the seven explicit rows above is never
+                        // one of the eight explicit rows above is never
                         // entered here.
                         if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
                             if (ForgePact::SkillTimerRuleDenied(name)) {
@@ -6346,7 +6462,7 @@ static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, d
 // ForgePact::kSkillTimerField among them - otherwise the same shape as
 // SkillTimerReadRow, written separately rather than shared because that
 // function always resolves its object by name fresh (SkillTimerResolveRowObject,
-// no caching - fine for seven explicit rows, wasteful for up to
+// no caching - fine for eight explicit rows, wasteful for up to
 // kSkillTimerRuleCap rule entries), while this one is handed an
 // already-resolved, cached objIdx.
 static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
@@ -8957,10 +9073,14 @@ static bool IsPetQuestExcluded(int objIdx)
 // machine, so the collect is something the player can watch happen rather
 // than items silently vanishing across the screen:
 //
-//   Idle   -> pick the nearest eligible on-screen item, remember its id
+//   Idle   -> walk the family from the selector's cursor, hand every eligible
+//             on-screen item to PetQuestSelector::Pick, which chooses the
+//             nearest one not held back; remember its id
 //   Travel -> step the pet toward it each frame (same x/y write PullOneGlobe
 //             uses for globes); on arrival, or on timeout, go to Collect
-//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down
+//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down,
+//             and tell the selector how it went: an item the collect left in
+//             place is held back so the next pick is another item (#94)
 //
 // Gates are re-read at collect time, never cached from selection: an item can
 // stop being collectable during the two seconds the pet is walking over.
@@ -8969,6 +9089,10 @@ static PetQuestPhase g_PetQuestPhase = PetQuestPhase::Idle;
 static double g_PetQuestTargetId = -4.0;
 static int    g_PetQuestTravelFrames = 0;
 static int    g_PetQuestCooldown = 0;
+// Issue #94: the selection with memory of failure and the family cursor, and
+// the clock its holds run on - one frame per tick while the mod is on.
+static ForgePact::PetQuestSelector g_PetQuestSelector;
+static int64_t g_PetQuestFrame = 0;
 
 static constexpr double kPetQuestSpeed = 11.0;        // px/frame; a brisk trot, not a teleport
 static constexpr double kPetQuestArriveR = 26.0;      // close enough to read as "the pet is on it"
@@ -8997,22 +9121,26 @@ static bool PetQuestItemIsCollectable(const RValue& inst)
     } catch (...) { return false; }
 }
 
-static bool PetQuestCollectOne(const RValue& inst)
+// Returns how the collect went, for the selector: Collected only when the
+// call ran and the item is gone; NoEffect when it ran and the item stayed;
+// Gate and Refused when it never ran.
+static ForgePact::PetQuestOutcome PetQuestCollectOne(const RValue& inst)
 {
+    using ForgePact::PetQuestOutcome;
     try {
-        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return false; }
+        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return PetQuestOutcome::Gate; }
         int lm = 0;
         try { lm = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootManagerObjIdx) }).ToDouble(); }
         catch (...) { lm = 0; }
-        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue lmInst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootManagerObjIdx), RValue(0.0) });
         CInstance* lootMgr = HhResolveInstance(lmInst);
         CInstance* item = HhResolveInstance(inst);
-        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue method = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("m_Questpickup") });
         RValue result;
         std::vector<RValue> args{ RValue(g_PetQuestArg.load()) };
-        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return false;
+        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return PetQuestOutcome::Refused;
         InterlockedIncrement(&g_PetQuestCollected);
         // Did the call actually do anything? m_Questpickup removes the item,
         // so an instance that is still there afterwards means the call
@@ -9022,17 +9150,28 @@ static bool PetQuestCollectOne(const RValue& inst)
         // §4 rule 3 still stands); it only separates "nothing ran" from "ran
         // and did nothing", which are otherwise identical from outside.
         try {
-            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean())
+            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
                 InterlockedIncrement(&g_PetQuestNoEffect);
+                return PetQuestOutcome::NoEffect;
+            }
         } catch (...) {}
-        return true;
-    } catch (...) { return false; }
+        return PetQuestOutcome::Collected;
+    } catch (...) { return PetQuestOutcome::Refused; }
+}
+
+// Every travel ends here, so the selector's open travel always closes with
+// the way it ended; an outcome that left the item in place holds it back.
+static void PetQuestEndTravel(ForgePact::PetQuestOutcome outcome)
+{
+    g_PetQuestSelector.Note(outcome, g_PetQuestFrame);
+    g_PetQuestPhase = PetQuestPhase::Idle;
 }
 
 static void PetQuestCollectorTick()
 {
     ResolvePetQuestAssets();
     if (g_QuestObjParentIdx < 0) return;
+    ++g_PetQuestFrame;
 
     CInstance* pet = nullptr;
     RValue petInst;
@@ -9048,7 +9187,10 @@ static void PetQuestCollectorTick()
     // No pet out, no fetching. The mod is "the pet collects quest items", so
     // without one it stays a counter - which is also what stops it running in
     // menus and cutscenes.
-    if (petInst.m_Kind == VALUE_UNDEFINED) { g_PetQuestPhase = PetQuestPhase::Idle; return; }
+    if (petInst.m_Kind == VALUE_UNDEFINED) {
+        if (g_PetQuestPhase == PetQuestPhase::Travel) PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
+        return;
+    }
 
     if (g_PetQuestCooldown > 0) { --g_PetQuestCooldown; return; }
 
@@ -9071,7 +9213,7 @@ static void PetQuestCollectorTick()
             // These items despawn on their own (deleteTimer), so losing one
             // mid-walk is ordinary, not an error.
             InterlockedIncrement(&g_PetQuestTargetLost);
-            g_PetQuestPhase = PetQuestPhase::Idle;
+            PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost);
             return;
         }
         try {
@@ -9087,9 +9229,11 @@ static void PetQuestCollectorTick()
                 // means something is holding the pet (its own AI winning the
                 // x/y tug-of-war, a teleport, a room change). Collect anyway:
                 // the fetch animation is cosmetic, the credit is the point.
+                // Unless that collect removed the item, the timeout holds it
+                // back: re-picking an item the pet cannot reach is #94's loop.
                 InterlockedIncrement(&g_PetQuestTravelTimeouts);
-                PetQuestCollectOne(target);
-                g_PetQuestPhase = PetQuestPhase::Idle;
+                const ForgePact::PetQuestOutcome r = PetQuestCollectOne(target);
+                PetQuestEndTravel(r == ForgePact::PetQuestOutcome::Collected ? r : ForgePact::PetQuestOutcome::Timeout);
                 g_PetQuestCooldown = kPetQuestCooldownFrames;
                 return;
             }
@@ -9100,15 +9244,21 @@ static void PetQuestCollectorTick()
                 g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("y"), RValue(py + dy * t) });
                 return;
             }
-            PetQuestCollectOne(target);
+            PetQuestEndTravel(PetQuestCollectOne(target));
         } catch (...) {}
-        g_PetQuestPhase = PetQuestPhase::Idle;
+        // A position read that threw closes the travel without holding the
+        // item; after a Note this is a no-op for the selector.
+        PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
         g_PetQuestCooldown = kPetQuestCooldownFrames;
         return;
     }
 
-    // --- Idle: choose the nearest eligible item on screen ------------------
-    int budget = 64;   // a runaway quest-item count on screen cannot cost a frame
+    // --- Idle: choose the nearest eligible item on screen not held back -----
+    // The walk reads at most kBudget family instances per tick (a runaway
+    // quest-item count cannot cost a frame) and starts where the last one
+    // stopped, wrapping, so an item past the budget is reached within a few
+    // ticks instead of never (#94). The static props share the family.
+    constexpr int kBudget = 64;
     int total = 0;
     try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_QuestObjParentIdx) }).ToDouble(); }
     catch (...) { return; }
@@ -9119,8 +9269,11 @@ static void PetQuestCollectorTick()
         petY = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
     } catch (...) { return; }
 
-    double bestD2 = -1.0, bestId = -4.0;
-    for (int i = 0; i < total && budget > 0; ++i, --budget) {
+    const int start = g_PetQuestSelector.NextStart(total, kBudget);
+    const int walk = (std::min)(total, kBudget);
+    std::vector<ForgePact::PetQuestCandidate> candidates;
+    for (int k = 0; k < walk; ++k) {
+        const int i = (start + k) % total;
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_QuestObjParentIdx), RValue((double)i) });
             if (inst.m_Kind == VALUE_UNDEFINED) continue;
@@ -9133,15 +9286,15 @@ static void PetQuestCollectorTick()
             InterlockedIncrement(&g_PetQuestOnScreen);
             if (!PetQuestItemIsCollectable(inst)) continue;
             const double dx = ix - petX, dy = iy - petY;
-            const double d2 = dx * dx + dy * dy;
-            if (bestD2 < 0.0 || d2 < bestD2) {
-                bestD2 = d2;
-                bestId = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
-            }
+            const double id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+            candidates.push_back({ id, dx * dx + dy * dy });
         } catch (...) {}
     }
-    if (bestD2 < 0.0) return;
-    g_PetQuestTargetId = bestId;
+    // None on screen, or every one held back: stay idle. The pet waits for a
+    // hold to expire rather than walking back to an item that just failed.
+    const std::optional<double> pick = g_PetQuestSelector.Pick(candidates, g_PetQuestFrame);
+    if (!pick) return;
+    g_PetQuestTargetId = *pick;
     g_PetQuestTravelFrames = 0;
     g_PetQuestPhase = PetQuestPhase::Travel;
 }
@@ -9158,9 +9311,12 @@ static void PetQuestCollectorStats()
               g_PetQuestPetSeen, g_PetQuestNoCam);
     Out(b);
     char c[320];
-    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | phase=%s arg=%.2f",
+    // `held back=` (#94): travels that ended with the item still in place
+    // (no effect, a gate refusal, a refused call, a timeout), each of which
+    // kept that item out of the picks for kPetQuestHoldFrames ticks.
+    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | held back=%ld | phase=%s arg=%.2f",
               g_PetQuestCollected, g_PetQuestRefusedGate, g_PetQuestNoLootMgr,
-              g_PetQuestTargetLost, g_PetQuestTravelTimeouts,
+              g_PetQuestTargetLost, g_PetQuestTravelTimeouts, g_PetQuestSelector.HeldBack(),
               (g_PetQuestPhase == PetQuestPhase::Travel ? "travel" : "idle"), g_PetQuestArg.load());
     Out(c);
     // Structural refusals, reported separately from gameplay ones: these two
@@ -9179,6 +9335,334 @@ static void PetQuestCollectorStats()
                   g_PetQuestNoMethodFn, g_PetQuestBadBind);
         Out(d);
     }
+}
+
+// ---- pet moves on from loot it cannot pick up (#94, PetLootUnstickMod.hpp) --
+// The game's own companion loot pickup, not the quest collector above. Static
+// reading (docs/pet-loot-stuck-research.md): Companion_obj replaces its
+// `lootTarget` only once that instance has ceased to exist, so an item the
+// pickup keeps failing on pins the pet. This tick never picks anything up. It
+// watches the pet's target from outside, and when the same target has sat
+// within reach for kPetLootStuckFrames it does the three things the game
+// itself would read next: holds the item back through its own
+// `itemCompanionTimer` (ground items only; a coin has none), drops the pet's
+// `lootTarget`, and empties `lootList`, which the game rebuilds on its next
+// half-second scan without the held item.
+static bool g_PetLootAssetsResolved = false;
+static int  g_PetLootCompanionObjIdx = -1;
+static int  g_PetLootGroundObjIdx = -1;
+static int  g_PetLootCoinObjIdx = -1;
+
+static void ResolvePetLootUnstickAssets()
+{
+    if (g_PetLootAssetsResolved) return;
+    g_PetLootAssetsResolved = true;
+    auto assetIndex = [](const char* name, HeroSiege::Objects::GameObject fallback) -> int {
+        try {
+            const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }).ToDouble();
+            if (i >= 0) return i;
+        } catch (...) {}
+        return (int)fallback;
+    };
+    g_PetLootCompanionObjIdx = assetIndex("Companion_obj", HeroSiege::Objects::GameObject::Companion_obj);
+    g_PetLootGroundObjIdx = assetIndex("Loot_Ground_obj", HeroSiege::Objects::GameObject::Loot_Ground_obj);
+    g_PetLootCoinObjIdx = assetIndex("Coin_obj", HeroSiege::Objects::GameObject::Coin_obj);
+}
+
+// Is this object `family` or a child of it? The pet's scan collects by
+// family (a collision list over the parent object), so a child's target
+// must count as the parent.
+static bool PetLootIsOf(int objIdx, int family)
+{
+    if (objIdx < 0 || family < 0) return false;
+    if (objIdx == family) return true;
+    try {
+        return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)objIdx), RValue((double)family) }).ToBoolean();
+    } catch (...) { return false; }
+}
+
+// Two give-up outcomes PetLootUnstickMod's own counters do not name, kept
+// here and appended to `petunstick 0`'s line: a give-up write that threw (the
+// target was not dropped; the watch forgets it and may try again), and a
+// target of neither the ground-item nor the coin family (dropped with no
+// timer to set). Each logs its first occurrence once, with the reason or the
+// object index, and keeps the latest for the stat line.
+static std::atomic<long> g_PetLootGiveUpFailed{ 0 };
+static std::atomic<const char*> g_PetLootGiveUpFailedLast{ nullptr };
+static std::atomic<bool> g_PetLootGiveUpFailedLogged{ false };
+static std::atomic<long> g_PetLootOtherKind{ 0 };
+static std::atomic<int> g_PetLootOtherKindLast{ -1 };
+static std::atomic<bool> g_PetLootOtherKindLogged{ false };
+
+static void PetLootNoteGiveUpFailed(const char* why)
+{
+    g_PetLootGiveUpFailed.fetch_add(1);
+    g_PetLootGiveUpFailedLast.store(why);
+    if (!g_PetLootGiveUpFailedLogged.exchange(true))
+        Out(std::string("petunstick: could not give up a stuck target: ") + why +
+            " (counted as give-up failed=; logged once)");
+}
+
+static void PetLootNoteOtherKind(int objIdx)
+{
+    g_PetLootOtherKind.fetch_add(1);
+    g_PetLootOtherKindLast.store(objIdx);
+    if (!g_PetLootOtherKindLogged.exchange(true))
+        Out("petunstick: gave up a target that is neither a ground item nor a coin (object_index " +
+            std::to_string(objIdx) + "; counted as other kind=; logged once)");
+}
+
+// A ground item that does not carry `itemCompanionTimer`. The name comes from
+// a static reading, and variable_instance_set with a name the instance lacks
+// creates a stray variable without an error, so the write would count as held
+// back while holding nothing. The tick asks variable_instance_exists first and
+// on "no" writes nothing, counts it here with the object index (logged once),
+// and still drops the target.
+static std::atomic<long> g_PetLootTimerAbsent{ 0 };
+static std::atomic<int> g_PetLootTimerAbsentLast{ -1 };
+static std::atomic<bool> g_PetLootTimerAbsentLogged{ false };
+
+static void PetLootNoteTimerAbsent(int objIdx)
+{
+    g_PetLootTimerAbsent.fetch_add(1);
+    g_PetLootTimerAbsentLast.store(objIdx);
+    if (!g_PetLootTimerAbsentLogged.exchange(true))
+        Out("petunstick: a ground item has no itemCompanionTimer, so it was not held back, only dropped (object_index " +
+            std::to_string(objIdx) + "; counted as timer absent=; logged once)");
+}
+
+// Whether a give-up held. `held back=` counts the timer write returning, not
+// the item staying out of the pet's next scan. The game may hand a dropped
+// target back at once, in the Step right after the drop with no tick of "no
+// target" in between (a coin has no timer; a ground item's hold may not
+// take), or after the pet has had another target or none. Either way the
+// watch re-arms at each give-up, so the same target still in reach is given
+// up again kPetLootStuckFrames later, and `longest same-target=` stays at or
+// below the count. Every tick that sees a live target asks the header's
+// PetLootRepickRing whether it is one of the last few give-ups taken back
+// within kPetLootHoldFrames - straight back, or after leaving it - which
+// counts it once per give-up as a re-pick while held, by kind; the tick logs
+// the first. On a ground item it also reads the timer back: a positive value
+// says the hold took and the pet came back anyway, 0 or less says the game
+// reset it or the write never landed. A `fail` beside a rising `held back=`
+// then reads as "the same item came back" (re-picked > 0) or "distinct items,
+// one after another" (re-picked 0). Ages are in the watch's clock
+// (g_RuntimeFrame, one per FrameCallback), the hold in the game's own frames;
+// both run at the game's frame rate.
+static double g_PetLootPrevTarget = -1.0;   // the previous tick's live target, -1 for none
+static uint64_t g_PetLootPrevFrame = 0;
+// 0: no ground re-pick yet; 1: the timer was read back (value below); 2: it
+// could not be read. A separate state, so "unread" never passes for a value.
+static std::atomic<int> g_PetLootRepickTimerState{ 0 };
+static std::atomic<double> g_PetLootRepickTimerLast{ 0.0 };
+static std::atomic<bool> g_PetLootRepickLogged{ false };
+
+static void PetLootRememberGiveUp(double targetId, ForgePact::PetLootKind kind)
+{
+    ForgePact::PetLootUnstickMod::Instance().Repicks().Remember((int64_t)g_RuntimeFrame, targetId, kind);
+}
+
+// Called by the tick on every tick that saw a live target, after
+// instance_exists said yes, with the previous tick's live target (-1 for
+// none; every other tick route leaves it at none). The re-pick decision is the
+// header's, and sees a target equal to the previous tick's when it was given
+// up on the frame before; this adds only the game calls, the ground timer
+// read-back and the one log line.
+static void PetLootNoteTargetSeen(double targetId, const RValue& target, double prevTarget)
+{
+    const std::optional<ForgePact::PetLootRepick> hit = ForgePact::PetLootUnstickMod::Instance().Repicks().Seen(
+        (int64_t)g_RuntimeFrame, targetId, prevTarget >= 0.0 ? std::optional<double>(prevTarget) : std::nullopt);
+    if (!hit) return;
+    std::string timerText;
+    if (hit->kind == ForgePact::PetLootKind::Ground) {
+        double timer = 0.0;
+        bool read = false;
+        try {
+            timer = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("itemCompanionTimer") }).ToDouble();
+            read = std::isfinite(timer);
+        } catch (...) { read = false; }
+        if (read) {
+            g_PetLootRepickTimerLast.store(timer);
+            g_PetLootRepickTimerState.store(1);
+            timerText = ", its itemCompanionTimer reads " + std::to_string((long long)timer);
+        } else {
+            g_PetLootRepickTimerState.store(2);
+            timerText = ", its itemCompanionTimer could not be read";
+        }
+    }
+    if (!g_PetLootRepickLogged.exchange(true)) {
+        const char* kind = hit->kind == ForgePact::PetLootKind::Ground ? "ground item"
+                         : hit->kind == ForgePact::PetLootKind::Coin ? "coin" : "other kind";
+        Out(std::string("petunstick: the pet took back a ") + kind + " it gave up " +
+            std::to_string((long long)hit->age) + " frames ago" + timerText +
+            " (counted as re-picked while held=; logged once)");
+    }
+}
+
+static std::string PetLootLocalStatSuffix()
+{
+    const char* failed = g_PetLootGiveUpFailedLast.load();
+    std::string s = " give-up failed=" + std::to_string(g_PetLootGiveUpFailed.load());
+    if (failed) s += std::string(" (last ") + failed + ")";
+    s += " other kind=" + std::to_string(g_PetLootOtherKind.load());
+    if (g_PetLootOtherKind.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootOtherKindLast.load()) + ")";
+    s += " timer absent=" + std::to_string(g_PetLootTimerAbsent.load());
+    if (g_PetLootTimerAbsent.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootTimerAbsentLast.load()) + ")";
+    const ForgePact::PetLootRepickRing& repicks = ForgePact::PetLootUnstickMod::Instance().Repicks();
+    s += " re-picked while held=" + std::to_string(repicks.Repicked()) +
+         " (ground " + std::to_string(repicks.Ground()) +
+         " coin " + std::to_string(repicks.Coin()) + ")";
+    const int timerState = g_PetLootRepickTimerState.load();
+    if (timerState == 1)
+        s += " (last ground timer read " + std::to_string((long long)g_PetLootRepickTimerLast.load()) + ")";
+    else if (timerState == 2)
+        s += " (last ground timer unreadable)";
+    return s;
+}
+
+// Called once per frame from FrameCallback while `petunstick 1` is on. The
+// watch's clock is g_RuntimeFrame, one per FrameCallback, so frames the mod
+// spent switched off are a gap and a run never straddles off and on.
+static void PetLootUnstickTick()
+{
+    ResolvePetLootUnstickAssets();
+    ForgePact::PetLootUnstickMod& mod = ForgePact::PetLootUnstickMod::Instance();
+    // Every tick is counted, and every early return below names its route,
+    // so `petunstick 0` tells "never found the pet" from "could not read it"
+    // from "nothing was ever stuck".
+    mod.NoteTick();
+
+    // The previous tick's live target, for the re-pick count: none unless
+    // this tick directly follows it and sees a live target again below.
+    const double prevTarget = g_RuntimeFrame == g_PetLootPrevFrame + 1 ? g_PetLootPrevTarget : -1.0;
+    g_PetLootPrevFrame = g_RuntimeFrame;
+    g_PetLootPrevTarget = -1.0;
+
+    // One number off an instance, in its own try: false when the read threw
+    // or gave something that is not a finite number.
+    auto readNumber = [](const RValue& inst, const char* name, double& out) -> bool {
+        try { out = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }).ToDouble(); }
+        catch (...) { return false; }
+        return std::isfinite(out);
+    };
+
+    // No pet out (menus, town without a companion): nothing to watch.
+    int n = 0;
+    try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_PetLootCompanionObjIdx) }).ToDouble(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet count"); return; }
+    if (n <= 0) { mod.Reset(); mod.NoteNoPet(); return; }
+    RValue pet;
+    try { pet = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_PetLootCompanionObjIdx), RValue(0.0) }); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet instance"); return; }
+
+    // The game writes `lootTarget` as a real: -4 (noone) at Create, an
+    // instance id after. Read the number, whatever kind carries it, and
+    // let instance_exists say whether it names something.
+    double targetId = 0.0;
+    if (!readNumber(pet, "lootTarget", targetId)) { mod.Reset(); mod.NoteUnreadable("lootTarget"); return; }
+    if (targetId < 0.0) { mod.Reset(); mod.NoteNoTarget(); return; }
+    RValue target = RValue(targetId);
+    bool targetExists = false;
+    try { targetExists = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("target instance_exists"); return; }
+    if (!targetExists) { mod.Reset(); mod.NoteTargetGone(); return; }
+    g_PetLootPrevTarget = targetId;
+    PetLootNoteTargetSeen(targetId, target, prevTarget);
+
+    double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
+    if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
+    if (!readNumber(pet, "y", py)) { mod.Reset(); mod.NoteUnreadable("pet y"); return; }
+    if (!readNumber(target, "x", tx)) { mod.Reset(); mod.NoteUnreadable("target x"); return; }
+    if (!readNumber(target, "y", ty)) { mod.Reset(); mod.NoteUnreadable("target y"); return; }
+    const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
+    if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+
+    // Give it up. The item first, so a throw below still leaves it held.
+    // Which kind it is decides only whether there is a timer to set, never
+    // whether the target is dropped: the pet is stuck on it either way.
+    double oiD = -1.0;
+    const bool kindRead = readNumber(target, "object_index", oiD);
+    if (!kindRead) mod.NoteUnreadable("target object_index");
+    const int oi = kindRead ? (int)oiD : -1;
+    bool isGround = false;
+    if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
+        isGround = true;
+        // Ask whether the item carries the name before writing it: a set on
+        // a name the instance lacks would create a stray variable and hold
+        // nothing. The check itself is not measured on this runner (no
+        // session has seen it answer true for a real ground item), so a
+        // `timer absent=` above 0 reads either way: the item lacks the name,
+        // or the check answers false for everything.
+        bool hasTimer = false;
+        try {
+            hasTimer = g_Yytk->CallBuiltin("variable_instance_exists",
+                { target, RValue("itemCompanionTimer") }).ToBoolean();
+        } catch (...) {
+            PetLootNoteGiveUpFailed("itemCompanionTimer exists check threw");
+            mod.Reset();
+            return;
+        }
+        if (hasTimer) {
+            try {
+                g_Yytk->CallBuiltin("variable_instance_set",
+                    { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
+            } catch (...) {
+                PetLootNoteGiveUpFailed("itemCompanionTimer write threw");
+                mod.Reset();
+                return;
+            }
+            mod.NoteHeldBack();
+        } else {
+            // Not held back, but the target is still dropped below.
+            PetLootNoteTimerAbsent(oi);
+        }
+    }
+    try { g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) }); }
+    catch (...) {
+        PetLootNoteGiveUpFailed("lootTarget write threw");
+        mod.Reset();
+        return;
+    }
+    // Remembered for the re-pick count only once the target is dropped.
+    PetLootRememberGiveUp(targetId, isGround ? ForgePact::PetLootKind::Ground
+        : PetLootIsOf(oi, g_PetLootCoinObjIdx) ? ForgePact::PetLootKind::Coin : ForgePact::PetLootKind::Other);
+    // Counted only once the target is actually dropped.
+    if (!isGround && PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
+        // No timer on a coin: only the target is dropped, so a coin that
+        // sticks again is counted again.
+        mod.NoteCoinReleased();
+    } else if (!isGround && kindRead) {
+        // Neither family: no timer to set, the target is still dropped, and
+        // the object index is named once in the log. (An unreadable
+        // object_index was counted above as unreadable= instead.)
+        PetLootNoteOtherKind(oi);
+    }
+
+    // Empty the list rather than destroy it: it is the game's, and its next
+    // scan refills it. The gate is ds_exists(lootList, ds_type_list), never
+    // the value's kind (a live ds handle can arrive as a reference), and the
+    // clear is handed the RValue that was read, not a rebuilt real. Each
+    // refusal is counted with its reason: an uncleared list can hand the pet
+    // the held item straight back.
+    RValue lootListV;
+    try { lootListV = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootList") }); }
+    catch (...) { mod.NoteListNotCleared("lootList read threw"); return; }
+    double listId = 0.0;
+    bool listFinite = false;
+    try { listId = lootListV.ToDouble(); listFinite = std::isfinite(listId); }
+    catch (...) { listFinite = false; }
+    if (!listFinite) { mod.NoteListNotCleared("lootList not a finite number"); return; }
+    bool listLive = false;
+    try {
+        // 2 is ds_type_list.
+        listLive = listId >= 0.0 &&
+            g_Yytk->CallBuiltin("ds_exists", { lootListV, RValue(2.0) }).ToBoolean();
+    } catch (...) { mod.NoteListNotCleared("ds_exists threw"); return; }
+    if (!listLive) { mod.NoteListNotCleared("lootList is not a live ds_list"); return; }
+    try { g_Yytk->CallBuiltin("ds_list_clear", { lootListV }); }
+    catch (...) { mod.NoteListNotCleared("ds_list_clear threw"); }
 }
 
 // ---- interaction/pickup trace (Phase 0.1 research, dev build only) --------
@@ -16944,6 +17428,39 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     BP_LOGDROP("DropRelic", _res, argc, A);
     return _res;
 }
+
+// The relic filter's arm-time line (#93), both builds. The hook's own report
+// above speaks only at a relic roll, and relics roll only in Satanic zones, so
+// without this nothing said what the scan saw until one dropped. FrameCallback
+// calls it once per `relicfilter 1`, after the DropRelic install, and the count
+// and ids come from the very set the scan just filled. A scan that did not run
+// says so instead of reading as "0 maxed relics" (the dead-scanner shape).
+// The line after it is the SDK's own report on the equipped relic slots
+// (`relicfilter: equipped slots mplr=.. owner=.. relic=.. control=..
+// stopped=..`), so a zero names the stage that stopped rather than reading
+// the same as a player with nothing maxed.
+static void RelicFilterReportArmScan()
+{
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    rf.ClearArmScanDue();
+    std::unordered_set<int> maxed;
+    HeroSiege::Player::EquippedSlotScanReport equipped;
+    const bool scanRan = rf.GetPlayerMaxedRelics(maxed, &equipped);
+    if (!scanRan) {
+        Out("relicfilter: scan did not run (no player yet)");
+        return;
+    }
+    std::vector<int> ids(maxed.begin(), maxed.end());
+    std::sort(ids.begin(), ids.end());
+    std::string list;
+    for (int id : ids) {
+        if (!list.empty()) list += ",";
+        list += std::to_string(id);
+    }
+    Out("relicfilter: scan found " + std::to_string(ids.size()) + " maxed relics (ids "
+        + (list.empty() ? std::string("none") : list) + ")");
+    Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport(equipped));
+}
 // The 19 domain hooks above (DropBossGems .. DropOreMaterials, including
 // DropKeys' dev-only diagnostic variant) moved to ForgePact::DropManager
 // (module includes anchor near the top of the file, after FirstToken).
@@ -24121,15 +24638,24 @@ static void CmNothingDone(ForgePact::CraftMatsMoveReport& r, int64_t sourceCount
 }
 
 // The inline edit Live 1k measured on a stash entry and on a bag stack: the
-// definition's `o` set, then ItemCheckHash(item) by name.
-static bool CmSetCount(CInstance* save, const RValue& item, int64_t count)
+// definition's `o` set, then ItemCheckHash(item) by name. When that call did
+// not dispatch, no hash was made for the new count (issue #80): `o` is put
+// back, which the item's hash was made for, the core is told the item's key,
+// and the edit reads as not made - the take is never confirmed, so the press
+// is refused before the game's call.
+static bool CmSetCount(CInstance* save, const RValue& item, const std::string& key, int64_t count)
 {
-    RValue def, res;
-    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def)) return false;
-    try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)count) }); }
-    catch (...) { return false; }
-    CmCall(kCmCheckHashName, save, { item }, res);
-    return true;
+    RValue def, was, res;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def) || !CmMember(def, "o", was)) return false;
+    const auto setO = [&](const RValue& o) {
+        try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), o }); return true; }
+        catch (...) { return false; }
+    };
+    if (!setO(RValue((double)count))) return false;
+    if (CmCall(kCmCheckHashName, save, { item }, res)) return true;
+    setO(was);
+    ForgePact::CraftMatsMod::Instance().OnHashFailed(key);
+    return false;
 }
 
 // The bag's own stack of a material in the grid the game prefers for it: its
@@ -24244,7 +24770,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     CmNewUnit unit;
     if (stacked) {
         int64_t sc = -1, sb = -1;
-        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackBefore + t.amount)) {
+        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackKey, stackBefore + t.amount)) {
             CmNothingDone(r, have);
             return out;
         }
@@ -24281,7 +24807,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
                 if (CmCellArray(t.entry, cellsNow)) CmCall(kCmGridRemoveName, save, { cellsNow, RValue(key) }, removed);
             }
         } else {
-            CmSetCount(save, source, have - t.amount);
+            CmSetCount(save, source, key, have - t.amount);
         }
     }
     auto sourceRead = [&]() {
@@ -24304,9 +24830,9 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     if (!sourceDone) {
         RValue res;
         if (t.whole && r.sourceEntryGone && !r.sourceCellGone) CmCall(kCmAddToMapName, save, { map9, RValue(key), source }, res);
-        if (!t.whole && destRose) CmSetCount(save, source, have);
+        if (!t.whole && destRose) CmSetCount(save, source, key, have);
         if (stacked) {
-            CmSetCount(save, stackItem, stackBefore);
+            CmSetCount(save, stackItem, stackKey, stackBefore);
         } else {
             CmCall(kCmGridRemoveName, save, { unit.grid, RValue(unit.key) }, res);
             if (CmCellsHold(unit.grid, unit.key) == 0) CmCall(kCmRemoveFromMapName, save, { map0, RValue(unit.key) }, res);
@@ -38659,6 +39185,54 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
+// sits above LogDrop.
+static void GoldTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    auto status = []() {
+        return std::string("goldtrace: ") + (g_GoldTraceOn ? "ON" : "OFF") + ", "
+            + std::to_string(g_GoldTraceLines) + " of " + std::to_string(kGoldTraceMaxLines)
+            + " lines this session (" + std::to_string(g_GoldTraceOverCap)
+            + " gold calls after the cap) -> bp_ipc\\goldtrace.txt";
+    };
+    if (v == "on" || v == "1") {
+        if (!g_GoldTraceFileFresh) {
+            std::ofstream(IPC_DIR + "\\goldtrace.txt", std::ios::trunc);
+            g_GoldTraceFileFresh = true;
+        }
+        // The gold scripts reach LogDrop only through the drop hooks, which
+        // `dropmult` installs only for a multiplier above 1. Install them here
+        // at their x1 pass-through, so `dropmult gold 1` is traced too;
+        // DropRelic is left to its own installers.
+        ForgePact::DropManager::Instance().InstallHooks();
+        g_GoldTraceOn = true;
+        Out(status());
+    } else if (v == "off" || v == "0") {
+        g_GoldTraceOn = false;
+        Out(status());
+    } else if (v.empty() || v == "stat") {
+        Out(status());
+    } else {
+        Out("goldtrace: usage -> goldtrace on | off | stat");
+    }
+}
+#endif
+
+// The Live 1 research instruments of the dev2 bug batch (`lootcensus`,
+// `goldtrace`), dispatched from their own function for the C1061 reason
+// HandleMenuProbeCommand gives. Answers false in the player build.
+static bool HandleLiveOneResearchCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "lootcensus") { LootCensus(); return true; }
+    if (lc == "goldtrace") { GoldTraceCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Far sleep and the zone census read the game's compiled-code table from
 // the same anchor the frame profiler walks (defined in its section below).
 static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
@@ -39293,7 +39867,7 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep", "densityroll"
@@ -39304,6 +39878,21 @@ static void RunCommand(const std::string& line)
     }
 #endif
 
+    // `petunstick 1` / `petunstick 0` (#94), the pet quest collector's
+    // neighbour. It sits out here rather than as one more `else if` below:
+    // that chain is at MSVC's nesting limit (C1061). Turning it off prints
+    // what the mod did, so a report can tell "did nothing" from "did the
+    // wrong thing"; the counters are cheap and ship.
+    if (lc == "petunstick") {
+        std::string pv = Lower(rest);
+        while (!pv.empty() && std::isspace((unsigned char)pv.back())) pv.pop_back();
+        const bool enable = (pv == "1" || pv == "true" || pv == "on");
+        ForgePact::PetLootUnstickMod::Instance().SetEnabled(enable);
+        // SetEnabled prints the `petunstick -> ON|OFF` line itself; off adds
+        // what the mod did, where its ticks went and how each give-up ended.
+        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine() + PetLootLocalStatSuffix());
+        return;
+    }
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
@@ -39312,6 +39901,7 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
     if (HandlePlayerWarpCommand(lc, rest)) return;
@@ -40603,6 +41193,14 @@ void FrameCallback(FWFrame& FrameContext)
         PetQuestCollectorTick();
     }
 
+    // Pet moves on from loot it cannot pick up, toggled by `petunstick 1`
+    // (#94): gives the game's own companion loot pickup a nudge when the pet
+    // has sat on one item too long (see PetLootUnstickMod.hpp). No hook;
+    // everything goes through CallBuiltin.
+    if (ForgePact::PetLootUnstickMod::Instance().IsEnabled()) {
+        PetLootUnstickTick();
+    }
+
 #ifndef FORGEPACT_RELEASE
     // B4 Phase 0 research: `citrace pokekey`'s pending one-frame restore must
     // land regardless of whether `citrace <on|off>` tracing itself is armed -
@@ -40626,6 +41224,15 @@ void FrameCallback(FWFrame& FrameContext)
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
         }
+    }
+    // ...then, once per arm, the scan's own answer (#93): `relicfilter: scan
+    // found <n> maxed relics (ids ...)`. It waits for the install above when
+    // one is pending, and for a player either way, so an arm sent from the
+    // character screen with the hook already in (`dropmult relic`) is not
+    // spent on a scan that cannot run yet.
+    if (ForgePact::RelicFilterMod::Instance().IsArmScanDue() && !ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) RelicFilterReportArmScan();
     }
 
     // The shipped toggle table's talent ids (D-P1), the countdown's own
