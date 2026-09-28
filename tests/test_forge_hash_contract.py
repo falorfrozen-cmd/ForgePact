@@ -78,6 +78,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Toolkit #147's tool-facing stash and bag verbs
     # (test_stash_bag_layout_contract.py, StashBagPlayerVerbs).
     "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
+    # The frame profiler: measures, changes nothing in the game
+    # (test_frame_profiler.py pins it).
+    "frameprof",
 }
 
 

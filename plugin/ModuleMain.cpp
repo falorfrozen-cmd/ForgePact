@@ -179,11 +179,34 @@ static const std::string IPC_DIR = ComputeIpcDir();
 static std::string CmdPath() { return IPC_DIR + "\\cmd.txt"; }
 static std::string OutPath() { return IPC_DIR + "\\out.txt"; }
 
+// The line reaches out.txt first, whole, before anything else can fail.
+// YYToolkit's PrintInfo formats "[BP] %s" into a 4096-byte buffer with
+// vsprintf_s, then hands the result to CmWriteInfo, which runs it through
+// vsprintf_s again as a format string (upstream Interface.cpp / Console.cpp at
+// the pinned commit). So a '%' in the text becomes a conversion specifier the
+// second time, and an invalid one such as "%," - like a line too long for the
+// buffer - makes vsprintf_s call the C runtime's invalid-parameter handler,
+// which by default ends the game: 0xC0000409 in ucrtbase, exception data 5,
+// measured 2026-09-28 while a frameprof summary line ("working 54%, waiting")
+// was printed. Doubled, every '%' comes out of the second pass as one; the
+// console copy is cut well short of the buffer.
+static constexpr size_t kOutPrintLimit = 1800;
+
 static void Out(const std::string& s)
 {
-    std::ofstream f(OutPath(), std::ios::app);
-    f << s << "\n";
-    if (g_Yytk) g_Yytk->PrintInfo("[BP] %s", s.c_str());
+    {
+        std::ofstream f(OutPath(), std::ios::app);
+        f << s << "\n";
+    }
+    if (!g_Yytk) return;
+    std::string printable;
+    printable.reserve(s.size() + 8);
+    for (const char c : s) {
+        if (printable.size() >= kOutPrintLimit) { printable += "..."; break; }
+        printable += c;
+        if (c == '%') printable += '%';
+    }
+    g_Yytk->PrintInfo("[BP] %s", printable.c_str());
 }
 
 // out.txt is append-only and nothing ever trimmed it - one player's copy
@@ -467,6 +490,8 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
 #include <ForgePact/ExitSafeThread.hpp>
+#include <ForgePact/FrameProfiler.hpp>
+#include <ForgePact/FrameProfilerBuiltins.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -38598,6 +38623,157 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+// ===== Frame profiler (`frameprof`) =====
+// Where the game's frame thread spends its time, sampled from another thread
+// by ForgePact::FrameProfiler (plugin/include/ForgePact/FrameProfiler.hpp).
+// The command runs here, on the frame thread, which is what makes the thread
+// handle, the stack range and the table reads below the frame thread's own.
+// While no capture runs, FrameProfilerTick() is two atomic loads a frame.
+
+static bool FrameProfIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+// Enemy_Parent_obj's index for the monster count. The profiler resolves its
+// own copy and never writes g_EnemyParentIdx: other features read that global
+// (IsEnemyObject, the pack markers), and a capture must not change them.
+static int FrameProfEnemyParent()
+{
+    if (g_EnemyParentIdx >= 0) return g_EnemyParentIdx;
+    static int own = -2;
+    if (own == -2) {
+        try { own = static_cast<int>(g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") }).ToDouble()); }
+        catch (...) { own = -1; }
+    }
+    return own;
+}
+
+// Room, instance count and monster count, once a second while a capture runs.
+static bool FrameProfContext(ForgePact::FrameProfiler::Context& c)
+{
+    try {
+        RValue room;
+        if (AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, room)))
+            c.room = g_Yytk->CallBuiltin("room_get_name", { room }).ToString();
+        RValue count;
+        if (AurieSuccess(g_Yytk->GetBuiltin("instance_count", nullptr, NULL_INDEX, count)) && FrameProfIsNumber(count))
+            c.instances = static_cast<long long>(count.ToDouble());
+        const int enemyParent = FrameProfEnemyParent();
+        if (enemyParent >= 0) {
+            const RValue n = g_Yytk->CallBuiltin("instance_number", { RValue(static_cast<double>(enemyParent)) });
+            if (FrameProfIsNumber(n)) c.monsters = static_cast<long long>(n.ToDouble());
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Any entry of the game's compiled-code table: a script's CScript points at
+// its own YYGMLFuncs row, and the profiler walks the table from there. Only a
+// row inside the game image counts, so a CScript a mod pointed at a row of
+// its own is passed over.
+static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor()
+{
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const uintptr_t end = base + nt->OptionalHeader.SizeOfImage;
+    for (int i = 0; i < 256; ++i) {
+        CScript* script = nullptr;
+        if (!AurieSuccess(g_Yytk->GetScriptData(i, script)) || !script) continue;
+        const auto row = reinterpret_cast<uintptr_t>(script->m_Functions);
+        if (row >= base && row + sizeof(ForgePact::FrameProfiler::GmlEntry) <= end && script->m_Functions->m_Name)
+            return reinterpret_cast<const ForgePact::FrameProfiler::GmlEntry*>(script->m_Functions);
+    }
+    return nullptr;
+}
+
+static void FrameProfUsage()
+{
+    Out("usage: frameprof start [seconds 1-600, default 30] [samples per second 20-2000, default 250] | stop | stat");
+}
+
+static void FrameProfCommand(const std::string& rest)
+{
+    namespace fp = ForgePact::FrameProfiler;
+    auto& profiler = fp::Profiler::Instance();
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(Lower(w)); }
+    const std::string sub = tok.empty() ? "stat" : tok[0];
+    if (sub == "stat" || sub == "status") { Out("frameprof: " + profiler.Status()); return; }
+    if (sub == "stop") {
+        if (!profiler.Busy()) { Out("frameprof: no capture is running"); return; }
+        profiler.RequestStop();
+        Out("frameprof: stopping; the report follows in a moment");
+        return;
+    }
+    if (sub != "start") { FrameProfUsage(); return; }
+
+    fp::StartParams p;
+    try {
+        if (tok.size() > 1) p.seconds = std::stod(tok[1]);
+        if (tok.size() > 2) p.hz = static_cast<unsigned>(std::stoul(tok[2]));
+    } catch (...) { FrameProfUsage(); return; }
+    if (!(p.seconds >= fp::kMinSeconds && p.seconds <= fp::kMaxSeconds) || p.hz < fp::kMinHz || p.hz > fp::kMaxHz) {
+        FrameProfUsage();
+        return;
+    }
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &p.frameThread,
+                         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) {
+        Out("frameprof: not started - the frame thread could not be opened (error " + std::to_string(GetLastError()) + ")");
+        return;
+    }
+    p.frameThreadId = GetCurrentThreadId();
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    p.stackLow = low;
+    p.stackHigh = high;
+    p.gmlAnchor = FrameProfGmlAnchor();
+    for (const char* name : ForgePact::FrameProfiler::kBuiltinNames) {
+        PVOID routine = nullptr;
+        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &routine)) && routine)
+            p.builtins.push_back({ reinterpret_cast<uintptr_t>(routine), name });
+    }
+    p.outDir = std::filesystem::path(IPC_DIR) / "perf";
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    char stem[48];
+    sprintf_s(stem, "frameprof-%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    p.stem = stem;
+    p.toolVersion = FORGEPACT_VERSION;
+    p.context = &FrameProfContext;
+    p.gameBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const double seconds = p.seconds;
+    const unsigned hz = p.hz;
+    const size_t builtins = p.builtins.size();
+    const bool anchored = p.gmlAnchor != nullptr;
+    HANDLE handle = p.frameThread;
+    std::string why;
+    if (!profiler.Start(std::move(p), why)) {
+        CloseHandle(handle);
+        Out("frameprof: not started - " + why);
+        return;
+    }
+    char b[256];
+    sprintf_s(b, "frameprof: sampling the frame thread %u times a second for %.0f s (%zu built-ins named, game code table %s); "
+                 "play normally - the report lands in bp_ipc\\perf and its summary here",
+              hz, seconds, builtins, anchored ? "found" : "NOT found - game code will show as addresses");
+    Out(b);
+}
+
+// FrameCallback, every frame: records the frame for a running capture and
+// prints a finished capture's summary. Two atomic loads while idle.
+static void FrameProfilerTick()
+{
+    auto& profiler = ForgePact::FrameProfiler::Profiler::Instance();
+    profiler.OnFrame();
+    std::vector<std::string> lines;
+    if (profiler.TakeSummary(lines))
+        for (const auto& l : lines) Out(l);
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -38616,7 +38792,7 @@ static void RunCommand(const std::string& line)
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -38673,6 +38849,11 @@ static void RunCommand(const std::string& line)
     // so the player build accepts it; a standalone early return for the
     // C1061 reason above.
     if (lc == "packmarks") { PackMarksCommand(rest); return; }
+    // Frame profiler: measures, changes nothing in the game, so the player
+    // build accepts it too; a standalone early return for the same reason.
+    // Its own verb, not `perf`: the research build's `perf` reports the
+    // plugin's own hook timings.
+    if (lc == "frameprof") { FrameProfCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -39816,6 +39997,9 @@ static void PopulationProfileTick()
 void FrameCallback(FWFrame& FrameContext)
 {
     UNREFERENCED_PARAMETER(FrameContext);
+    // First, so a capture's frame boundary is taken before any of ForgePact's
+    // own per-frame work.
+    FrameProfilerTick();
 #ifdef FORGEPACT_POPULATION_PROFILE
     PopulationProfileTick();
 #endif
