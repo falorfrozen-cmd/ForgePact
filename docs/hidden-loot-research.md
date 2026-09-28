@@ -36,11 +36,15 @@ facts established here are also recorded in the hub's
 | What a hidden item costs per frame | About 2.4-5.6 µs of frame time per hidden item per frame at 2,736 items, three to seven times the model's 0.4-0.8 µs | **Measured**, Live 1's `cost-hidden-working` and its `perf` annex `cost-hidden-perf`; the prediction was a **Model** ([below](#model-what-a-hidden-item-should-cost)) |
 | Whether hidden items outlive the zone | No. The zone's end ran Clean Up on 809 of 809 hidden items, and none were left | **Measured**, Live 1's `zone-end-cleanup` and `zone-change-gone` |
 | Whether hidden items reach the save | **Not observed.** `saves-diff`, read with 2,736 hidden items still on the ground and before any zone change, is the check that answers it; its control failed. `reload-none` landed in town | Live 1's `saves-diff` and `reload-none`, both `not-observed` |
-| A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **not observed live** yet: Live procedure 2 of `forgepact-issue-95-mod` is pending ([The mod](#the-mod)) |
-| That all three ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee | **Static reading**, 2026-09-28 ([The mod](#the-mod)); whether the hook sees the game's own calls is for Live procedure 2 |
+| A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **measured** live on real monster drops, through the hold and release of Left Alt, off, the switch-on walk and the zone's end, in Live 2 of `forgepact-issue-95-mod` (2026-09-28); `LootGroundDrop`, a pickup while shown and the table-only fallback **not observed live** ([Live 2 results](#live-2-results-2026-09-28)) |
+| That all three ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept` |
+| Whether a sleeping hidden item outlives the zone | No. With 1,495 items asleep, the zone's end ran Clean Up 1,495 times and Destroy 0 | **Measured**, Live 2's `zone-end-asleep` |
+| Whether the game's 0.3 s refresh re-hides an item whose verdict was written visible | No. 522 woken items read `hidden=0` 1 s and 2 s after the write. How many of them were also drawn is not established: 462 read `visible` false, which the on-screen half of Alarm 9 also causes | **Measured**, Live 2's `hold-shows`, its `hidden=` half ([What `hold-shows` measured](#what-hold-shows-measured)) |
 
 Live 1 of `forgepact-issue-95` ran on 2026-09-28; its results are in
-[Live 1 results](#live-1-results-2026-09-28). Part 1's own record stays in the
+[Live 1 results](#live-1-results-2026-09-28). Live 2 of `forgepact-issue-95-mod`,
+the mod's own session, ran the same day; its results are in
+[Live 2 results](#live-2-results-2026-09-28). Part 1's own record stays in the
 [dev2 bug batch](dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
 this document is where it continues.
 
@@ -356,9 +360,11 @@ picked up meanwhile is forgotten and counted `gone=`, asked nothing but whether
 it exists. `GetAsyncKeyState(VK_LMENU)` reads the left Alt only. Codes 1 and 2
 (the mouse buttons the game plays with) are refused, 0 means no key is polled,
 and the panel does not offer generic Alt, Right Alt or F10. A lone Alt press
-can put a Win32 window into its menu mode; whether it does for this game's
-window is **not established**, and Live procedure 2's `alt-no-menu` measures it
-with the default key. If it does, the player picks another key.
+can put a Win32 window into its menu mode. For this game's window it did not:
+Live 2's `alt-no-menu` passed, one injected press and release of Left Alt
+leaving the game in front, answering `ping`, with no menu on screen
+([Live 2 results](#live-2-results-2026-09-28)). That is one press, injected, on
+one machine; a player whose window does go into menu mode picks another key.
 
 **Switching, rooms.** Switching on walks the ground items already there once,
 capped at 8,192 like `lootcensus`, and sleeps those the filter hides.
@@ -393,10 +399,98 @@ sleeps at the next frame's end and a visible one is never touched; the hold,
 the drop while held and the foreground guard; off, the switch-on walk, room
 changes and persistent rooms; and the fallback pass. The wiring and the rules
 are pinned by `tests/test_hidden_loot_mod_contract.py`, the panel by
-`tests/test_hidden_loot_panel_contract.py`. **Not observed live:** everything
-the harness cannot see (that the detour sees the game's own drop calls, the key
-under `SendInput`, whether Clean Up runs at the zone's end for sleeping loot)
-is Live procedure 2 of `forgepact-issue-95-mod`, not yet run.
+`tests/test_hidden_loot_panel_contract.py`. **Measured live** in Live 2 of
+`forgepact-issue-95-mod` ([Live 2 results](#live-2-results-2026-09-28)): the
+hook installed with both routes and fired on the game's own monster drops, the
+hold and release of the key under injected input, off, the switch-on walk, and
+Clean Up at the zone's end for sleeping loot. **Not observed live:**
+`LootGroundDrop` (an item dropped from the bag), an item picked up while shown
+(`gone=` stayed 0), and the table-only fallback pass (the route was `both`);
+the harness alone covers them.
+
+## Live 2 results (2026-09-28)
+
+Live 2 of the workorder `forgepact-issue-95-mod`, the mod's one live session.
+Slot 14 ("Sorak"), the research DLL with sha256 `52414e0f...f968` (ForgePact
+plugin at `2ea37d6`, `build.bat dev`, boot line `v2.0.1`), at the owner's
+strict filter with `dropmult item 10`, and the show key at 164 (Left Alt), the
+shipped default, pressed and released by injected input (`hs_input`). The
+research DLL was used because Live 1's instruments (`lootcensus`, `lootspawn`,
+`loothide`, `evcount`) exist only there; the mod's code is the same in both
+builds. The saves were backed up before the launch and restored afterwards, and
+the restored set inspected identical to the backup. Fourteen of the fifteen
+checks passed (`hold-screenshot` is a description), and `hold-shows` failed on
+one field, which the check turned out not to be able to read cleanly (below).
+
+| Check | Verdict | What was seen |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `52414e0f...f968`, the hash the session was dispatched with |
+| `marker` | pass | `==== BloodPact plugin loaded ==== v2.0.1` |
+| `control` | pass | `pong (YYTK 4.0.1)`, and `lootcensus: ground=2 hidden=0 invisible=2 coins=2 walked=2 ...` before any count was recorded |
+| `route-both` | pass | `hiddenloot 1`, in town, logged `HOOK INSTALLED on LootGroundInit` and answered `route=both`; no `TABLE-ONLY` line named `LootGroundInit` |
+| `create-slept` | pass | After about 60 s of the owner killing monsters in a zone: `inits=531 slept=522 asleep-now=522 visible=9 unidentified=0 errors=0`, and `lootcensus` read `hidden=0`, so no hidden drop was left awake |
+| `visible-untouched` | pass | `lootspawn 1000` answered `hidden-now=0 visible-now=971 return-unreadable=29`; `visible` rose by 971 (9 to 980), `slept` stayed 522, and `ground=` rose from 2 to 973 |
+| `hold-shows` | fail on `invisible=`, confounded by the on-screen gate; `hidden=` within tolerance; off-screen share not established | Before the key: S = 522 asleep, G = 973, H0 = 0, I0 = 2. Held, at 1 s and 2 s: `held=1 asleep-now=0 shown-now=522`, `ground=1495` (G + S) and `hidden=0` both times, but `invisible=464` both times, 462 over I0 against a threshold of 26 |
+| `hold-screenshot` | description | The ground densely covered with item labels, named rares and uniques among them, well beyond step 5's copies: woken loot was drawn |
+| `release-hides` | pass | 1 s after the release: `held=0 shown-now=0 asleep-now=522 gone=0`, and `ground=973` (G) |
+| `alt-no-menu` | pass | The key-up left the game window in front (`foreground_after` equal to its `hwnd`), `ping` answered `pong (YYTK 4.0.1)`, and the screenshot showed the game world with no system menu and no game menu |
+| `off-wakes` | pass | `hiddenloot 0`: `woken=522 exist-after=522`; `lootcensus` then read `hidden=522 invisible=524`, the game's own hidden state, Live 1's vanilla shape |
+| `on-walk` | pass | `loothide` hid all 1,495 ground items (`hidden=1495` 2 s later); `hiddenloot 1` answered `walk-slept=1495`, and `lootcensus` then read `hidden=0` |
+| `zone-end-asleep` | pass | With 1,495 items asleep (`asleep-now=1495`), the owner left the zone: Clean Up ran 1,495 times and Destroy 0, and `lootcensus` read `ground=0` in town |
+| `forget-on-room` | pass | After the zone change, `asleep-now=0 shown-now=0` |
+| `no-refusal` | pass | No `hiddenloot:` refusal or error line in the session's IPC tails; every `hiddenloot` stat, ON and OFF line read `errors=0 unidentified=0` |
+
+### What `hold-shows` measured
+
+The check asked two things of the woken items while the key was held: that
+the game's 0.3 s refresh (Alarm 9) did not put them back to hidden, and that
+they were drawn. `hidden=`, read from `lootFilterVisible`, answers the first:
+it stayed at H0 in both held readings, 1 s and 2 s after the key went down,
+several refreshes apart. So the verdict the mod writes on the key-down edge
+holds while the key is held. **Measured.**
+
+`invisible=`, read from the built-in `visible`, was meant to answer the
+second and cannot. Alarm 9 sets `visible` from the verdict **and** from
+`OnScreen` ([Static reading](#static-reading)), so an item that is merely off
+screen reads `visible` false whatever its verdict; part 1 saw 95 such items
+with the filter off. 462 of the 522 woken items read `visible` false in both
+readings, while the screenshot showed woken loot drawn around the player and
+the 971 `lootspawn` copies, all near the player, kept `invisible=` at 2. That
+fits the 462 being off screen, the real drops of a minute's fighting, but
+which of the woken items were off screen was not measured: **not established**.
+The fail is recorded as it read and was not routed as a defect; Amendment 2 of
+the workorder took `hold-shows` off the live criterion's required checks for
+this reason, and the gating question is read from `hidden=` alone.
+
+### The `ground=` fall from 1,495 to 0 after `hiddenloot 1`
+
+In the `on-walk` step, `lootcensus` read `ground=1495` before `hiddenloot 1`
+and `ground=0 ... walked=0` straight after it. That is a blind spot of the
+census, not a loss of items: `lootcensus` counts with `instance_number` and
+walks with `instance_find`, and neither sees a deactivated instance (Live 1
+measured the same for `lootsleep`'s `ground-after=`). The switch-on walk had
+just put all 1,495 to sleep (`walk-slept=1495`), the mod's `asleep-now` kept
+1,495 until the zone change, Clean Up and Destroy, counted from just after the
+walk, stayed at 0 until the exit, and at the zone's end Clean Up ran 1,495
+times, once for every item the walk had slept. `gone=`
+stayed 0 because it counts only shown or woken items found missing, and none
+was woken there. **Measured.** So with the mod on, `lootcensus` counts the
+awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
+
+### Other readings
+
+- **`inits` rose by 971 across `lootspawn 1000`**, the number of calls that
+  returned a live instance; the 29 that returned none added no
+  `LootGroundInit` call the hook saw. **Measured**, one reading. It fits those
+  calls failing before `LootGroundInit` is reached; the cause is still not
+  established (see [Not established](#not-established)).
+- **Which route carried the drop calls was not separated.** `route=both` says
+  the detour and the table swap were both in place, and `create-slept` says
+  the hook fired on real monster drops; nothing counted the two routes apart.
+- **Not observed live:** `LootGroundDrop` (an item dropped from the bag), an
+  item picked up while shown (`gone=` stayed 0 all session), and the
+  table-only fallback pass (`passes=0`, the route was `both`). The harness
+  covers each; no session has.
 
 ## Not established
 
@@ -424,10 +518,13 @@ is Live procedure 2 of `forgepact-issue-95-mod`, not yet run.
   and its share with the items asleep was not recorded.
 - **Whether the cost is linear in the number of items.** Live 1 measured one
   count, 2,736; the scaling to part 1's 281 assumes linearity.
-- **Whether a sleeping ground item is cleaned up at the zone's end.** Live 1's
-  zone exit ran with the items awake; far sleep's props are cleaned up asleep,
-  but that was not measured for loot.
+- **Which of the woken items were off screen** while the key was held in
+  Live 2, and so whether every on-screen woken item was drawn. `invisible=`
+  cannot separate the on-screen gate from a re-hide; `hidden=` settled the
+  re-hide ([What `hold-shows` measured](#what-hold-shows-measured)).
 - **Why some `LootGroundCreateFromItem` calls made no ground item.** 86-90 of
   each 1,000 `lootspawn` drops in the first zone, and 191 of 1,000 in the
   second, returned no live instance, and the ground count rose only by the
-  instances returned. **Measured**; the cause is not established.
+  instances returned. **Measured**; the cause is not established. In Live 2,
+  29 of 1,000 returned none and the hook on `LootGroundInit` counted 971 calls,
+  so those 29 did not reach it as far as the hook saw.
