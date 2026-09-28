@@ -316,9 +316,13 @@ it once after making the instance, `LootGroundDrop` (an item dropped from the
 bag) calls it at two sites, and `LootGroundCreate`'s body names it as a callee
 once. **Static reading**, 2026-09-28, in the local Ghidra project; the third
 is a listing of callees, not a traced path. So one hook, on `LootGroundInit`,
-covers every drop path. Hooking the entry points instead would take three
-hooks, and two of them already carry one of ours (`MiningOre` hooks
-`LootGroundCreate` in the player build; the research build's
+covers monster drops and the bag drop, and whichever of `LootGroundCreate`'s
+items pass through it. Which of those items do is not established (see
+[Not established](#not-established)). Live 2 measured the hook only on
+`LootGroundCreateFromItem`'s drops: monster drops and `lootspawn`. Hooking
+the entry points instead would take three hooks, and two of them already
+carry one of ours (`MiningOre` hooks `LootGroundCreate` in the player build;
+the research build's
 `InstallItemInspectHooks` table-swaps `LootGroundCreate` and
 `LootGroundCreateFromItem` at start-up), on which `HookOneScript` would go
 table-only and miss the game's compiled calls. Nothing else hooks
