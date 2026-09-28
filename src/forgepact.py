@@ -274,6 +274,12 @@ DEFAULTS = {
     # bag is short of moves over. Off by default; offline only, like every mod
     # here.
     "mod_craft_mats": False,
+    # Move all into the stash (ForgePact #68, docs/stash-move-research.md):
+    # with the stash open, F4 moves the bag tab on show into the stash tab on
+    # show, each item by the game's own move; what the tab has no room for,
+    # or does not take, stays in the bag. Off by default; offline only, like
+    # every mod here.
+    "mod_stash_move_all": False,
     # Far scenery sleep (docs/far-sleep-research.md): a zone's far trees,
     # bushes, hay, rocks and fences sleep until a player comes near, so the
     # game stops walking them every frame. Off by default; offline only,
@@ -960,6 +966,10 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
+    if cfg.get("mod_stash_move_all", False):
+        # Safe to send at launch: `stashmoveall 1` only turns the switch on;
+        # nothing moves until F4 is pressed with the stash open.
+        out.append("stashmoveall 1")
     if cfg.get("mod_far_sleep", False):
         # Safe to send at launch: `farsleep 1` only turns the switch on; the
         # plugin touches nothing before a zone has settled with a player in
@@ -2055,7 +2065,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_craft_mats", "mod_stash_move_all", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "gem_filter":
                     value = gem_filter_value(val)
@@ -2157,6 +2167,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"craftmats {1 if cfg['mod_craft_mats'] else 0}"], cfg)
                     elif key == "mod_far_sleep":
                         send_cmds([f"farsleep {1 if cfg['mod_far_sleep'] else 0}"], cfg)
+                    elif key == "mod_stash_move_all":
+                        send_cmds([f"stashmoveall {1 if cfg['mod_stash_move_all'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

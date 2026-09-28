@@ -96,7 +96,7 @@ test('the counts: 123 switch clicks, 58 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 123);
-  assert.equal(quick.length, 58);
+  assert.equal(quick.length, 59);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -173,19 +173,24 @@ test('every control is covered: the switches in legacy order, the theme, the key
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep']);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_stash_move_all']);
   for (const n of NATIVE_BOOLEANS) assert.ok(BOOLEAN_MODS.includes(n.key), n.key);
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_STEPS;
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
-  const [{ key, verb }] = NATIVE_BOOLEANS;
-  const on = steps[at + 2];
-  const off = steps[at + 3];
-  assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
-  assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
-  assert.deepEqual(steps[at + 4].expect, { posts: { same: on.step }, cmds: { same: on.step } });
-  assert.equal(steps[at + 5].control, quickDisable(key));
-  assert.deepEqual(steps[at + 5].expect, { posts: { same: off.step }, cmds: { same: off.step } });
+  // Both sit on the Quality of Life sub-tab, so it is entered once and each
+  // boolean's four steps follow in turn.
+  NATIVE_BOOLEANS.forEach(({ key, verb }, i) => {
+    const base = at + 2 + 4 * i;
+    const on = steps[base];
+    const off = steps[base + 1];
+    assert.equal(on.control, '#' + key);
+    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
+    assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
+    assert.deepEqual(steps[base + 2].expect, { posts: { same: on.step }, cmds: { same: on.step } });
+    assert.equal(steps[base + 3].control, quickDisable(key));
+    assert.deepEqual(steps[base + 3].expect, { posts: { same: off.step }, cmds: { same: off.step } });
+  });
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {

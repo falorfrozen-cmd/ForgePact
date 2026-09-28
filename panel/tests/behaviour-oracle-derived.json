@@ -46,7 +46,8 @@
   "#sw_angelic_items",
   "#theme",
   "#sw_keys_primeevil",
-  "#mod_far_sleep"
+  "#mod_far_sleep",
+  "#mod_stash_move_all"
  ],
  "steps": [
   {
@@ -4781,6 +4782,78 @@
     },
     "cmds": {
      "same": 410
+    }
+   }
+  },
+  {
+   "step": 413,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 414,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 415,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 413
+    },
+    "cmds": {
+     "same": 413
+    }
+   }
+  },
+  {
+   "step": 416,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_stash_move_all\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 414
+    },
+    "cmds": {
+     "same": 414
     }
    }
   }

@@ -96,10 +96,11 @@ class EnabledModsPanelTests(unittest.TestCase):
     def test_api_set_call_sites_are_the_old_ones_plus_switch_and_theme(self):
         # The old ones: the legacy page's 25, plus the 2 main's legacy page
         # added for Gems of Incarnation (its switches' handler and the filter's
-        # save) before it was ported here, plus Far scenery sleep's switch,
-        # which no legacy page had (the derived oracle's native booleans).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 1)
+        # save) before it was ported here, plus Far scenery sleep's and Move
+        # all into the stash's switches, which no legacy page had (the derived
+        # oracle's native booleans).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 2)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 2)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

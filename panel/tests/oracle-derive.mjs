@@ -35,7 +35,7 @@
 // sandbox after the legacy ones.
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
-// sleep): nothing recorded stands for them, so their contract is written out
+// sleep, Move all into the stash): nothing recorded stands for them, so their contract is written out
 // here as literals - on posts the mod's key with true and sends its plugin
 // verb with 1, off posts false and sends the verb with 0, on again repeats the
 // first, and its Turn off button repeats the off - entered on the tab and Mods
@@ -77,6 +77,7 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // where the switch sits, and the plugin verb src/forgepact.py sends for it.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
+  { key: 'mod_stash_move_all', tab: 'tab:mods', sub: 'subtab:qol', verb: 'stashmoveall' },
 ];
 const setPost = (body) => [{ url: '/api/set', body }];
 
