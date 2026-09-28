@@ -257,6 +257,14 @@ class TheSuiteIsSplitAcrossTwoJobs(unittest.TestCase):
         self.assertIn("skipped=", call)
         self.assertIn("exit 1", call[call.find("skipped="):])
 
+    def test_a_hung_browser_suite_cannot_hold_the_runner_for_hours(self):
+        # The job takes about ten minutes; a tag's harness that hangs instead
+        # of failing would otherwise sit out GitHub's six-hour default.
+        head = jobs()["panel-browser-tests"].split("steps:", 1)[0]
+        limit = re.search(r"(?m)^    timeout-minutes: (\d+)\s*$", head)
+        self.assertIsNotNone(limit, "panel-browser-tests has no timeout-minutes")
+        self.assertTrue(20 <= int(limit.group(1)) <= 60, limit.group(0))
+
 
 class NeverPublishesOrDispatches(unittest.TestCase):
     def test_none_of_these_appear(self):

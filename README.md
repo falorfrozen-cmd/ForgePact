@@ -42,6 +42,7 @@ none of these diagnostic hooks or the recorder. See
 | **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
+| **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
@@ -49,6 +50,7 @@ none of these diagnostic hooks or the recorder. See
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
+| **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -819,6 +821,69 @@ moves an item between the bag and the stash. How each was measured, and
 what it does not cover, is in
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md).
 
+## Frame profiler (where the game's frame time goes)
+
+`frameprof` measures what the game itself spends its frames on, so a slow
+scene can be pinned on the code that makes it slow instead of guessed at. It
+changes nothing in the game and costs nothing until you start it. There is no
+panel switch: send it with `tools/ipc.ps1` (or anything that writes
+`bp_ipc\cmd.txt`) while the game runs.
+
+- **`frameprof start [seconds] [rate]`** samples the game's frame thread for
+  `seconds` (1-600, default 30) at `rate` samples a second (20-2000, default
+  250). Play normally meanwhile, where the game is slow. It answers
+  `frameprof: sampling the frame thread ...`.
+- **`frameprof stop`** ends a capture early; **`frameprof stat`** says whether
+  one is running and names the last report.
+
+When a capture ends, a short summary appears in `out.txt`: frames per second,
+the median and worst frames, how the frame thread's time split between game
+code, the graphics driver, the GameMaker runtime, mods and waiting, and the
+heaviest events, scripts and built-ins. Three files land in `bp_ipc\perf\`:
+`frameprof-<date>-<time>.json` (the full report), `.stacks.txt` (every call
+stack with its sample count, in the format flame-graph tools read) and `.txt`
+(the summary). `py tools/frameprof_report.py` turns the newest capture into a
+page you can open in a browser: the numbers, the heaviest code, the slow frames
+and what ran during each, a per-second chart with the monster count, CPU per
+thread and a chart of the call stacks.
+
+How it works: a background thread pauses the game's frame thread 250 times a
+second for well under a tenth of a millisecond, notes where it is, and lets it
+go; the rest of the work happens on another CPU core. The report states what
+the pauses cost (under about 2% of the frame thread's time on a quiet PC), and
+the profiler slows itself down whenever they add up to more than 3%. Design,
+measurements and limits: [`docs/frame-profiler.md`](docs/frame-profiler.md).
+
+## Far scenery sleep (lighter frames in busy zones)
+
+Mods → Quality of Life → **Far scenery sleep** (plugin command `farsleep 1|0`,
+`farsleep stat` for its state). Off by default.
+
+A Hero Siege zone holds thousands of props - trees, bushes, hay, rocks,
+fences - and the game hides the far ones, but hidden is not asleep: the
+GameMaker runtime still walks every one of them several times a frame. With
+this on, props farther than about 2,300 px from every player are put to sleep
+with the runtime's own deactivation and woken again when a player comes within
+about 1,700 px, well before they can come into view (both follow the camera's
+size). In Act_01_01, with about 4,200 of 6,200 instances asleep, the game's
+own work per frame fell from about 56% of a 60 fps frame to about 45%; at
+density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
+57.3 fps.
+
+- **Only scenery.** Never shrines, dungeon entrances, chests, piles, quest
+  objects, traps, walls, blocks or monsters, and never an object whose own
+  code runs every frame. Solid props stay awake as far out as the Beacon keeps
+  monsters hunting.
+- **Where.** Zones only: towns, menus, developer rooms and persistent rooms
+  are left alone, and nothing happens until a zone has settled with a player
+  in it.
+- **Cost.** The work is spread over frames (a few hundred runtime calls a
+  frame at most); a teleport wakes the new spot at once. Switching it off
+  wakes everything it put to sleep.
+
+Measurements, the rules and what is not known yet:
+[`docs/far-sleep-research.md`](docs/far-sleep-research.md).
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs
@@ -927,9 +992,10 @@ load there anyway.
   stripped game binary in Ghidra from the game's own script table, `panel_smoke.py`
   starts a packaged `ForgePact.exe` and checks it opens its window and serves the built
   panel, `package_size.py` builds the exe from a git ref or a working tree in a
-  temporary directory and prints its size, and `itemtruth_memrun.py` launches the game
+  temporary directory and prints its size, `itemtruth_memrun.py` launches the game
   to the main menu, queues Item Truth checks and samples the game's private memory from
-  outside (with a positive control for the research build).
+  outside (with a positive control for the research build), and `frameprof_report.py`
+  turns a `frameprof` capture into a summary and a self-contained HTML page.
 - `docs/S10-special-content-notes.md` — the Season 10 reverse-engineering log, in our own
   words: object, script and variable names with their indices, the special-content gates
   and what opens each, measured values and crash thresholds, our own commands and hooks,

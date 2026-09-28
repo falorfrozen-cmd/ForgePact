@@ -179,11 +179,34 @@ static const std::string IPC_DIR = ComputeIpcDir();
 static std::string CmdPath() { return IPC_DIR + "\\cmd.txt"; }
 static std::string OutPath() { return IPC_DIR + "\\out.txt"; }
 
+// The line reaches out.txt first, whole, before anything else can fail.
+// YYToolkit's PrintInfo formats "[BP] %s" into a 4096-byte buffer with
+// vsprintf_s, then hands the result to CmWriteInfo, which runs it through
+// vsprintf_s again as a format string (upstream Interface.cpp / Console.cpp at
+// the pinned commit). So a '%' in the text becomes a conversion specifier the
+// second time, and an invalid one such as "%," - like a line too long for the
+// buffer - makes vsprintf_s call the C runtime's invalid-parameter handler,
+// which by default ends the game: 0xC0000409 in ucrtbase, exception data 5,
+// measured 2026-09-28 while a frameprof summary line ("working 54%, waiting")
+// was printed. Doubled, every '%' comes out of the second pass as one; the
+// console copy is cut well short of the buffer.
+static constexpr size_t kOutPrintLimit = 1800;
+
 static void Out(const std::string& s)
 {
-    std::ofstream f(OutPath(), std::ios::app);
-    f << s << "\n";
-    if (g_Yytk) g_Yytk->PrintInfo("[BP] %s", s.c_str());
+    {
+        std::ofstream f(OutPath(), std::ios::app);
+        f << s << "\n";
+    }
+    if (!g_Yytk) return;
+    std::string printable;
+    printable.reserve(s.size() + 8);
+    for (const char c : s) {
+        if (printable.size() >= kOutPrintLimit) { printable += "..."; break; }
+        printable += c;
+        if (c == '%') printable += '%';
+    }
+    g_Yytk->PrintInfo("[BP] %s", printable.c_str());
 }
 
 // out.txt is append-only and nothing ever trimmed it - one player's copy
@@ -445,6 +468,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/MapRevealManager.hpp>
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
+#include <ForgePact/FarSleep.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -467,6 +491,8 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
 #include <ForgePact/ExitSafeThread.hpp>
+#include <ForgePact/FrameProfiler.hpp>
+#include <ForgePact/FrameProfilerBuiltins.hpp>
 
 static void DoScriptLookup(const std::string& name)
 {
@@ -22643,6 +22669,15 @@ static void FlushModState(uint32_t frame)
         body += ",\"veinResonance\":"; body += ForgePact::MinerHelmet::veinResonance ? "true" : "false";
         body += ",\"lastRewardReason\":\"" + ModStateEscape(ForgePact::MinerHelmet::lastRewardReason) + "\"";
         body += ",\"reason\":\"" + ModStateEscape(ForgePact::MinerHelmet::equipmentReason) + "\"}";
+        {
+            auto& fs = ForgePact::FarSleep::Instance();
+            body += ",\"farSleep\":{\"enabled\":"; body += fs.Enabled() ? "true" : "false";
+            body += ",\"zone\":\""; body += fs.ZoneStateName(); body += "\"";
+            body += ",\"props\":" + std::to_string(fs.Props());
+            body += ",\"asleep\":" + std::to_string(fs.Asleep());
+            body += ",\"wakeRadius\":" + std::to_string(static_cast<long long>(fs.WakeRadius()));
+            body += ",\"errors\":" + std::to_string(fs.StatsRef().errors) + "}";
+        }
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
         body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
@@ -38601,6 +38636,577 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+// Far sleep and the zone census read the game's compiled-code table from
+// the same anchor the frame profiler walks (defined in its section below).
+static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
+
+// ---- Far sleep (FarSleep.hpp): the adapter --------------------------------
+// The names of the objects that own an event running every frame (Step,
+// Begin/End Step, Draw GUI and its begin/end), read once from the game's
+// compiled-code table: FarSleep never touches such an object. The table is
+// the one the frame profiler walks; a row a mod swapped keeps its name.
+static std::unordered_set<std::string> g_FarSleepFrameOwners;
+static bool g_FarSleepOwnersRead = false;
+static void FarSleepReadFrameOwners()
+{
+    g_FarSleepOwnersRead = true;
+    using ForgePact::FrameProfiler::GmlEntry;
+    const GmlEntry* anchor = FrameProfGmlAnchor();
+    if (!anchor) return;
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const uintptr_t end = base + nt->OptionalHeader.SizeOfImage;
+    auto row = [&](const GmlEntry* e) {
+        const auto p = reinterpret_cast<uintptr_t>(e);
+        if (p < base || p + sizeof(GmlEntry) > end) return false;
+        const auto n = reinterpret_cast<uintptr_t>(e->name);
+        return n >= base && n + 5 <= end && std::memcmp(e->name, "gml_", 4) == 0;
+    };
+    const GmlEntry* first = anchor;
+    while (row(first - 1)) --first;
+    static const char* const kSuffixes[] = { "_Step_0", "_Step_1", "_Step_2", "_Draw_64", "_Draw_74", "_Draw_75" };
+    for (const GmlEntry* e = first; row(e); ++e) {
+        const std::string_view name(e->name, strnlen(e->name, 256));
+        if (name.rfind("gml_Object_", 0) != 0) continue;
+        for (const char* suffix : kSuffixes) {
+            const std::string_view s(suffix);
+            if (name.size() > 11 + s.size() && name.substr(name.size() - s.size()) == s) {
+                g_FarSleepFrameOwners.emplace(name.substr(11, name.size() - 11 - s.size()));
+                break;
+            }
+        }
+    }
+}
+static bool FarSleepOwnsFrameEvent(const std::string& objectName)
+{
+    if (!g_FarSleepOwnersRead) FarSleepReadFrameOwners();
+    return g_FarSleepFrameOwners.count(objectName) != 0;
+}
+static ForgePact::FarSleep::RoomInfo FarSleepRoomInfo()
+{
+    ForgePact::FarSleep::RoomInfo info;
+    try {
+        RValue room, persistent;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, room))
+            || !AurieSuccess(g_Yytk->GetBuiltin("room_persistent", nullptr, NULL_INDEX, persistent))) {
+            info.readable = false;
+            return info;
+        }
+        info.name = g_Yytk->CallBuiltin("room_get_name", { room }).ToString();
+        info.persistent = persistent.ToBoolean();
+    } catch (...) { info.readable = false; }
+    return info;
+}
+static void FarSleepTick()
+{
+    auto& fs = ForgePact::FarSleep::Instance();
+    if (!fs.Enabled() && !fs.Draining()) return;
+    // Solid props stay awake as far out as ForgePact keeps monsters hunting.
+    // Asked once a second: HuntPolicy() looks at what the player wears.
+    if ((g_RuntimeFrame % 60) == 0) fs.SetHuntRadius(HuntPolicy() != 0 ? g_BeWakeRadius : 0.0);
+    fs.OnFrame(g_RuntimeFrame, CurrentRoomKey(), [] { return FarSleepRoomInfo(); });
+}
+static void FarSleepStatus()
+{
+    auto& fs = ForgePact::FarSleep::Instance();
+    const auto& st = fs.StatsRef();
+    char b[480];
+    sprintf_s(b, "farsleep: %s%s | zone %s, %zu props known, %zu asleep | wake %.0f px, sleep %.0f px, solid %.0f px"
+        " | %zu scenery objects | sleeps %llu, wakes %llu, scans %llu, passes %llu (%llu after a jump), skipped rooms %llu,"
+        " woken by the game %llu, restarts %llu, errors %llu",
+        fs.Enabled() ? "on" : "off", fs.Draining() ? " (waking everything)" : "", fs.ZoneStateName(), fs.Props(), fs.Asleep(),
+        fs.WakeRadius(), fs.SleepRadius(), fs.SolidSleepRadius(), fs.EligibleObjects(),
+        (unsigned long long)st.sleeps, (unsigned long long)st.wakes, (unsigned long long)st.scans, (unsigned long long)st.passes,
+        (unsigned long long)st.urgentPasses, (unsigned long long)st.zonesSkipped, (unsigned long long)st.externalWakes,
+        (unsigned long long)st.restarts, (unsigned long long)st.errors);
+    std::string line = b;
+    double px = 0, py = 0;
+    if (fs.FirstPlayer(px, py)) line += " | player " + std::to_string(std::llround(px)) + "," + std::to_string(std::llround(py));
+    Out(line);
+}
+// `farsleep 1|0` (the panel's switch), `farsleep stat`.
+static void FarSleepCommand(const std::string& rest)
+{
+    std::string arg = Lower(rest);
+    arg.erase(0, arg.find_first_not_of(" \t"));
+    arg.erase(arg.find_last_not_of(" \t\r\n") + 1);
+    auto& fs = ForgePact::FarSleep::Instance();
+    if (arg == "1" || arg == "on") {
+        fs.SetFrameEventOwner(&FarSleepOwnsFrameEvent);
+        fs.SetEnabled(true);
+    } else if (arg == "0" || arg == "off") {
+        fs.SetEnabled(false);
+#ifndef FORGEPACT_RELEASE
+    } else if (arg == "ids plain" || arg == "ids handle") {
+        // Research: address props by plain numeric id, or by the handle
+        // instance_find answered (the default).
+        fs.SetPlainIds(arg == "ids plain");
+        Out(std::string("farsleep: props addressed by ") + (fs.PlainIds() ? "plain numeric id" : "instance_find's handle"));
+#endif
+    } else if (!arg.empty() && arg != "stat") {
+        Out("farsleep: usage farsleep 1 | 0 | stat");
+        return;
+    }
+    FarSleepStatus();
+}
+
+#ifndef FORGEPACT_RELEASE
+// ===== Zone census (`zonecensus [near radius]`, research build) =====
+// What the room's active instances are, object by object: how many, how
+// many visible, how many with a sprite, how many within the near radius of
+// the player, which layers they sit on, and each object's parent chain - the
+// input for deciding which objects a far-sleep optimisation could
+// deactivate (a frameprof capture in Act_01_01 at density 5x found 6,072
+// active instances, 78 of them monsters, and 57% of the frame thread in the
+// runtime's per-instance loops). Read-only: every call below only reads.
+static std::string ZcEscape(const std::string& s)
+{
+    std::string out;
+    for (const unsigned char c : s) {
+        if (c == '"' || c == '\\') { out += '\\'; out += static_cast<char>(c); }
+        else if (c < 0x20) out += ' ';
+        else out += static_cast<char>(c);
+    }
+    return out;
+}
+
+static void ZoneCensusCommand(const std::string& rest)
+{
+    double nearRadius = 1500.0;
+    {
+        std::stringstream ss(rest);
+        double r = 0;
+        if (ss >> r && r > 0) nearRadius = r;
+    }
+    const char* stage = "start";
+    try {
+        const uint64_t started = GetTickCount64();
+        auto get = [](const RValue& inst, const char* name) {
+            return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+        };
+        stage = "player";
+        double px = 0, py = 0;
+        bool havePlayer = false;
+        try {
+            RValue player;
+            if (HhResolveLocalPlayer(player)) {
+                px = get(player, "x").ToDouble();
+                py = get(player, "y").ToDouble();
+                havePlayer = std::isfinite(px) && std::isfinite(py);
+            }
+        } catch (...) {
+            havePlayer = false;
+        }
+        RValue roomV, countV;
+        g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, roomV);
+        g_Yytk->GetBuiltin("instance_count", nullptr, NULL_INDEX, countV);
+        const std::string roomName = g_Yytk->CallBuiltin("room_get_name", { roomV }).ToString();
+        const int count = static_cast<int>(countV.ToDouble());
+
+        struct Row {
+            int count = 0, visible = 0, withSprite = 0, closeBy = 0;
+            double nearest = 1e18;
+            std::map<std::string, int> layers;
+        };
+        std::map<int, Row> rows;
+        struct LayerRow { std::string name; bool visible = true; int instances = 0; };
+        std::map<long long, LayerRow> layers;
+        int unreadable = 0;
+        stage = "instances";
+        for (int i = 0; i < count; ++i) {
+            try {
+                const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(-3.0), RValue(static_cast<double>(i)) });
+                const int oi = static_cast<int>(get(inst, "object_index").ToDouble());
+                Row& r = rows[oi];
+                ++r.count;
+                if (get(inst, "visible").ToBoolean()) ++r.visible;
+                if (get(inst, "sprite_index").ToDouble() >= 0) ++r.withSprite;
+                if (havePlayer) {
+                    const double d = std::hypot(get(inst, "x").ToDouble() - px, get(inst, "y").ToDouble() - py);
+                    if (d <= nearRadius) ++r.closeBy;
+                    if (d < r.nearest) r.nearest = d;
+                }
+                const RValue layerV = get(inst, "layer");
+                const long long layerId = static_cast<long long>(layerV.ToDouble());
+                auto lit = layers.find(layerId);
+                if (lit == layers.end()) {
+                    LayerRow lr;
+                    lr.name = "(no layer)";
+                    if (layerId >= 0) {
+                        lr.name = g_Yytk->CallBuiltin("layer_get_name", { layerV }).ToString();
+                        lr.visible = g_Yytk->CallBuiltin("layer_get_visible", { layerV }).ToBoolean();
+                    }
+                    lit = layers.emplace(layerId, lr).first;
+                }
+                ++lit->second.instances;
+                ++r.layers[lit->second.name];
+            } catch (...) {
+                ++unreadable;
+            }
+        }
+
+        // Every layer of the room, with the scripts that switch off the
+        // runtime's draw short-cut and whether it is drawn at all. The script
+        // getters are asked only when this runner has them, so a missing one
+        // never reads as "script 0".
+        stage = "layers";
+        std::ostringstream roomLayers;
+        int roomLayerCount = 0, scriptedLayers = 0, unreadableLayers = 0;
+        PVOID getterBegin = nullptr, getterEnd = nullptr;
+        const bool haveScriptGetters = AurieSuccess(g_Yytk->GetNamedRoutinePointer("layer_get_script_begin", &getterBegin))
+            && AurieSuccess(g_Yytk->GetNamedRoutinePointer("layer_get_script_end", &getterEnd)) && getterBegin && getterEnd;
+        {
+            const RValue all = g_Yytk->CallBuiltin("layer_get_all", {});
+            RValue arr = all;
+            size_t n = 0;
+            if (AurieSuccess(g_Yytk->GetArraySize(arr, n))) {
+                roomLayerCount = static_cast<int>(n);
+                // A layer script is a script index, or a method or function
+                // value: anything but a negative number or undefined counts.
+                auto isScript = [](const RValue& v) {
+                    if (v.m_Kind == VALUE_UNDEFINED || v.m_Kind == VALUE_UNSET) return false;
+                    if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64)
+                        return v.ToDouble() >= 0;
+                    return true;
+                };
+                bool firstLayer = true;
+                for (size_t k = 0; k < n; ++k) {
+                    try {
+                        RValue* el = nullptr;
+                        if (!AurieSuccess(g_Yytk->GetArrayEntry(arr, k, el)) || !el) continue;
+                        const std::string name = g_Yytk->CallBuiltin("layer_get_name", { *el }).ToString();
+                        const bool vis = g_Yytk->CallBuiltin("layer_get_visible", { *el }).ToBoolean();
+                        const double depth = g_Yytk->CallBuiltin("layer_get_depth", { *el }).ToDouble();
+                        bool scripted = false;
+                        if (haveScriptGetters) {
+                            scripted = isScript(g_Yytk->CallBuiltin("layer_get_script_begin", { *el }))
+                                    || isScript(g_Yytk->CallBuiltin("layer_get_script_end", { *el }));
+                        }
+                        if (scripted) ++scriptedLayers;
+                        if (!firstLayer) roomLayers << ',';
+                        firstLayer = false;
+                        roomLayers << "{\"name\":\"" << ZcEscape(name) << "\",\"visible\":" << (vis ? "true" : "false")
+                                   << ",\"depth\":" << depth << ",\"scripted\":" << (scripted ? "true" : "false") << '}';
+                    } catch (...) {
+                        ++unreadableLayers;
+                    }
+                }
+            }
+        }
+
+        stage = "objects";
+        std::vector<std::pair<int, const Row*>> order;
+        for (const auto& kv : rows) order.emplace_back(kv.first, &kv.second);
+        std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.second->count > b.second->count; });
+
+        std::ostringstream j;
+        int totalNear = 0, totalVisible = 0;
+        j << "{\"room\":\"" << ZcEscape(roomName) << "\",\"instanceCount\":" << count
+          << ",\"player\":" << (havePlayer ? "{\"x\":" + std::to_string(px) + ",\"y\":" + std::to_string(py) + "}" : std::string("null"))
+          << ",\"nearRadius\":" << nearRadius << ",\"roomLayers\":" << roomLayerCount
+          << ",\"scriptedLayers\":" << (haveScriptGetters ? std::to_string(scriptedLayers) : std::string("null"))
+          << ",\"unreadableInstances\":" << unreadable << ",\"unreadableLayers\":" << unreadableLayers << ",\"objects\":[";
+        for (size_t k = 0; k < order.size(); ++k) {
+            const int oi = order[k].first;
+            const Row& r = *order[k].second;
+            totalNear += r.closeBy;
+            totalVisible += r.visible;
+            std::string name = "?", parents;
+            try {
+                name = g_Yytk->CallBuiltin("object_get_name", { RValue(static_cast<double>(oi)) }).ToString();
+                int p = oi;
+                for (int depth = 0; depth < 24; ++depth) {
+                    p = static_cast<int>(g_Yytk->CallBuiltin("object_get_parent", { RValue(static_cast<double>(p)) }).ToDouble());
+                    if (p < 0) break;
+                    if (!parents.empty()) parents += ',';
+                    parents += "\"" + ZcEscape(g_Yytk->CallBuiltin("object_get_name", { RValue(static_cast<double>(p)) }).ToString()) + "\"";
+                }
+            } catch (...) {}
+            if (k) j << ',';
+            j << "{\"index\":" << oi << ",\"name\":\"" << ZcEscape(name) << "\",\"parents\":[" << parents << "]"
+              << ",\"count\":" << r.count << ",\"visible\":" << r.visible << ",\"withSprite\":" << r.withSprite
+              << ",\"near\":" << r.closeBy << ",\"nearest\":" << (r.nearest < 1e17 ? r.nearest : -1.0) << ",\"layers\":{";
+            bool first = true;
+            for (const auto& l : r.layers) {
+                if (!first) j << ',';
+                first = false;
+                j << '"' << ZcEscape(l.first) << "\":" << l.second;
+            }
+            j << "}}";
+        }
+        j << "],\"instanceLayers\":[";
+        bool firstLayer = true;
+        for (const auto& l : layers) {
+            if (!firstLayer) j << ',';
+            firstLayer = false;
+            j << "{\"id\":" << l.first << ",\"name\":\"" << ZcEscape(l.second.name) << "\",\"visible\":"
+              << (l.second.visible ? "true" : "false") << ",\"instances\":" << l.second.instances << '}';
+        }
+        j << "],\"layers\":[" << roomLayers.str() << "],\"elapsedMs\":" << (GetTickCount64() - started) << "}\n";
+
+        stage = "write";
+        SYSTEMTIME t{};
+        GetLocalTime(&t);
+        char stamp[32];
+        sprintf_s(stamp, "%02u%02u%02u", t.wHour, t.wMinute, t.wSecond);
+        const std::string path = IPC_DIR + "\\zonecensus-" + roomName + "-" + stamp + ".json";
+        { std::ofstream f(path, std::ios::binary | std::ios::trunc); f << j.str(); }
+        std::string top;
+        for (size_t k = 0; k < order.size() && k < 8; ++k) {
+            if (k) top += ", ";
+            std::string topName = "?";
+            try { topName = g_Yytk->CallBuiltin("object_get_name", { RValue(static_cast<double>(order[k].first)) }).ToString(); }
+            catch (...) {}
+            top += topName + " " + std::to_string(order[k].second->count);
+        }
+        Out("zonecensus: " + roomName + " " + std::to_string(count) + " instances in " + std::to_string(rows.size())
+            + " objects; visible " + std::to_string(totalVisible) + ", within " + std::to_string(static_cast<int>(nearRadius))
+            + " px of the player " + std::to_string(totalNear) + "; " + std::to_string(layers.size())
+            + " layers hold instances, " + std::to_string(roomLayerCount) + " in the room (" + std::to_string(scriptedLayers)
+            + " with scripts); top: " + top);
+        Out("zonecensus: " + path);
+    } catch (...) {
+        Out(std::string("zonecensus: EXCEPTION at ") + stage);
+    }
+}
+
+// Event counter (research build only): swap one compiled-code table row's
+// function for a counting trampoline with the object-event signature,
+// fn(self, other). `evcount <row name>` installs (4 slots), `evcount` prints
+// the counts, `evcount reset` zeroes them. Used to see whether instances that
+// are asleep when a room ends still get their Clean Up event.
+using FsEventFn = void (*)(CInstance*, CInstance*);
+struct FsEventSlot {
+    std::string name;
+    const void** fnField = nullptr;
+    FsEventFn orig = nullptr;
+    volatile long count = 0;
+};
+static FsEventSlot g_FsEventSlots[4];
+template <int N>
+static void FsEventCountHook(CInstance* self, CInstance* other)
+{
+    InterlockedIncrement(&g_FsEventSlots[N].count);
+    g_FsEventSlots[N].orig(self, other);
+}
+static PVOID FsEventHook(int n)
+{
+    switch (n) {
+        case 0: return (PVOID)FsEventCountHook<0>;
+        case 1: return (PVOID)FsEventCountHook<1>;
+        case 2: return (PVOID)FsEventCountHook<2>;
+        case 3: return (PVOID)FsEventCountHook<3>;
+    }
+    return nullptr;
+}
+static const ForgePact::FrameProfiler::GmlEntry* FsFindGmlRow(const std::string& name)
+{
+    using ForgePact::FrameProfiler::GmlEntry;
+    const auto* anchor = FrameProfGmlAnchor();
+    if (!anchor) return nullptr;
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const uintptr_t end = base + nt->OptionalHeader.SizeOfImage;
+    auto looksValid = [&](const GmlEntry* e) {
+        const auto p = reinterpret_cast<uintptr_t>(e);
+        if (p < base || p + sizeof(GmlEntry) > end) return false;
+        const auto nm = reinterpret_cast<uintptr_t>(e->name);
+        return nm >= base && nm + 5 <= end && std::memcmp(e->name, "gml_", 4) == 0;
+    };
+    const GmlEntry* b = anchor;
+    while (looksValid(b - 1)) --b;
+    for (const GmlEntry* e = b; looksValid(e); ++e)
+        if (name == e->name) return e;
+    return nullptr;
+}
+static void EvCountCommand(const std::string& rest)
+{
+    std::string arg = rest;
+    arg.erase(0, arg.find_first_not_of(" \t"));
+    arg.erase(arg.find_last_not_of(" \t\r\n") + 1);
+    if (arg.empty() || Lower(arg) == "stat" || Lower(arg) == "reset") {
+        const bool reset = Lower(arg) == "reset";
+        for (auto& s : g_FsEventSlots) {
+            if (s.name.empty()) continue;
+            Out("evcount: " + s.name + " -> " + std::to_string(s.count));
+            if (reset) InterlockedExchange(&s.count, 0);
+        }
+        if (reset) Out("evcount: counts reset");
+        return;
+    }
+    for (int i = 0; i < 4; ++i) {
+        FsEventSlot& s = g_FsEventSlots[i];
+        if (!s.name.empty()) {
+            if (s.name == arg) { Out("evcount: " + arg + " already counted"); return; }
+            continue;
+        }
+        const auto* row = FsFindGmlRow(arg);
+        if (!row || !row->function) { Out("evcount: no table row named " + arg); return; }
+        s.name = arg;
+        s.fnField = const_cast<const void**>(&row->function);
+        s.orig = reinterpret_cast<FsEventFn>(const_cast<void*>(row->function));
+        *s.fnField = FsEventHook(i);
+        Out("evcount: counting " + arg);
+        return;
+    }
+    Out("evcount: all 4 slots are in use");
+}
+#endif
+
+
+// ===== Frame profiler (`frameprof`) =====
+// Where the game's frame thread spends its time, sampled from another thread
+// by ForgePact::FrameProfiler (plugin/include/ForgePact/FrameProfiler.hpp).
+// The command runs here, on the frame thread, which is what makes the thread
+// handle, the stack range and the table reads below the frame thread's own.
+// While no capture runs, FrameProfilerTick() is two atomic loads a frame.
+
+static bool FrameProfIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+// Enemy_Parent_obj's index for the monster count. The profiler resolves its
+// own copy and never writes g_EnemyParentIdx: other features read that global
+// (IsEnemyObject, the pack markers), and a capture must not change them.
+static int FrameProfEnemyParent()
+{
+    if (g_EnemyParentIdx >= 0) return g_EnemyParentIdx;
+    static int own = -2;
+    if (own == -2) {
+        try { own = static_cast<int>(g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") }).ToDouble()); }
+        catch (...) { own = -1; }
+    }
+    return own;
+}
+
+// Room, instance count and monster count, once a second while a capture runs.
+static bool FrameProfContext(ForgePact::FrameProfiler::Context& c)
+{
+    try {
+        RValue room;
+        if (AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, room)))
+            c.room = g_Yytk->CallBuiltin("room_get_name", { room }).ToString();
+        RValue count;
+        if (AurieSuccess(g_Yytk->GetBuiltin("instance_count", nullptr, NULL_INDEX, count)) && FrameProfIsNumber(count))
+            c.instances = static_cast<long long>(count.ToDouble());
+        const int enemyParent = FrameProfEnemyParent();
+        if (enemyParent >= 0) {
+            const RValue n = g_Yytk->CallBuiltin("instance_number", { RValue(static_cast<double>(enemyParent)) });
+            if (FrameProfIsNumber(n)) c.monsters = static_cast<long long>(n.ToDouble());
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Any entry of the game's compiled-code table: a script's CScript points at
+// its own YYGMLFuncs row, and the profiler walks the table from there. Only a
+// row inside the game image counts, so a CScript a mod pointed at a row of
+// its own is passed over.
+static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor()
+{
+    const auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const uintptr_t end = base + nt->OptionalHeader.SizeOfImage;
+    for (int i = 0; i < 256; ++i) {
+        CScript* script = nullptr;
+        if (!AurieSuccess(g_Yytk->GetScriptData(i, script)) || !script) continue;
+        const auto row = reinterpret_cast<uintptr_t>(script->m_Functions);
+        if (row >= base && row + sizeof(ForgePact::FrameProfiler::GmlEntry) <= end && script->m_Functions->m_Name)
+            return reinterpret_cast<const ForgePact::FrameProfiler::GmlEntry*>(script->m_Functions);
+    }
+    return nullptr;
+}
+
+static void FrameProfUsage()
+{
+    Out("usage: frameprof start [seconds 1-600, default 30] [samples per second 20-2000, default 250] | stop | stat");
+}
+
+static void FrameProfCommand(const std::string& rest)
+{
+    namespace fp = ForgePact::FrameProfiler;
+    auto& profiler = fp::Profiler::Instance();
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(Lower(w)); }
+    const std::string sub = tok.empty() ? "stat" : tok[0];
+    if (sub == "stat" || sub == "status") { Out("frameprof: " + profiler.Status()); return; }
+    if (sub == "stop") {
+        if (!profiler.Busy()) { Out("frameprof: no capture is running"); return; }
+        profiler.RequestStop();
+        Out("frameprof: stopping; the report follows in a moment");
+        return;
+    }
+    if (sub != "start") { FrameProfUsage(); return; }
+
+    fp::StartParams p;
+    try {
+        if (tok.size() > 1) p.seconds = std::stod(tok[1]);
+        if (tok.size() > 2) p.hz = static_cast<unsigned>(std::stoul(tok[2]));
+    } catch (...) { FrameProfUsage(); return; }
+    if (!(p.seconds >= fp::kMinSeconds && p.seconds <= fp::kMaxSeconds) || p.hz < fp::kMinHz || p.hz > fp::kMaxHz) {
+        FrameProfUsage();
+        return;
+    }
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &p.frameThread,
+                         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) {
+        Out("frameprof: not started - the frame thread could not be opened (error " + std::to_string(GetLastError()) + ")");
+        return;
+    }
+    p.frameThreadId = GetCurrentThreadId();
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    p.stackLow = low;
+    p.stackHigh = high;
+    p.gmlAnchor = FrameProfGmlAnchor();
+    for (const char* name : ForgePact::FrameProfiler::kBuiltinNames) {
+        PVOID routine = nullptr;
+        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &routine)) && routine)
+            p.builtins.push_back({ reinterpret_cast<uintptr_t>(routine), name });
+    }
+    p.outDir = std::filesystem::path(IPC_DIR) / "perf";
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    char stem[48];
+    sprintf_s(stem, "frameprof-%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    p.stem = stem;
+    p.toolVersion = FORGEPACT_VERSION;
+    p.context = &FrameProfContext;
+    p.gameBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const double seconds = p.seconds;
+    const unsigned hz = p.hz;
+    const size_t builtins = p.builtins.size();
+    const bool anchored = p.gmlAnchor != nullptr;
+    HANDLE handle = p.frameThread;
+    std::string why;
+    if (!profiler.Start(std::move(p), why)) {
+        CloseHandle(handle);
+        Out("frameprof: not started - " + why);
+        return;
+    }
+    char b[256];
+    sprintf_s(b, "frameprof: sampling the frame thread %u times a second for %.0f s (%zu built-ins named, game code table %s); "
+                 "play normally - the report lands in bp_ipc\\perf and its summary here",
+              hz, seconds, builtins, anchored ? "found" : "NOT found - game code will show as addresses");
+    Out(b);
+}
+
+// FrameCallback, every frame: records the frame for a running capture and
+// prints a finished capture's summary. Two atomic loads while idle.
+static void FrameProfilerTick()
+{
+    auto& profiler = ForgePact::FrameProfiler::Profiler::Instance();
+    profiler.OnFrame();
+    std::vector<std::string> lines;
+    if (profiler.TakeSummary(lines))
+        for (const auto& l : lines) Out(l);
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -38619,7 +39225,7 @@ static void RunCommand(const std::string& line)
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -38649,6 +39255,10 @@ static void RunCommand(const std::string& line)
     if (lc == "tgprobe") { TgProbeCommand(rest); return; }
     // Item Truth memory research: the same standalone early return (C1061).
     if (lc == "truthmem") { TruthMemCommand(rest); return; }
+    // Zone census and the event counter (far-sleep research): the same
+    // standalone early returns.
+    if (lc == "zonecensus") { ZoneCensusCommand(rest); return; }
+    if (lc == "evcount") { EvCountCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -38676,6 +39286,13 @@ static void RunCommand(const std::string& line)
     // so the player build accepts it; a standalone early return for the
     // C1061 reason above.
     if (lc == "packmarks") { PackMarksCommand(rest); return; }
+    // Frame profiler: measures, changes nothing in the game, so the player
+    // build accepts it too; a standalone early return for the same reason.
+    // Its own verb, not `perf`: the research build's `perf` reports the
+    // plugin's own hook timings.
+    if (lc == "frameprof") { FrameProfCommand(rest); return; }
+    // Far sleep: the Mods tab's switch, the same standalone early return.
+    if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -39819,6 +40436,9 @@ static void PopulationProfileTick()
 void FrameCallback(FWFrame& FrameContext)
 {
     UNREFERENCED_PARAMETER(FrameContext);
+    // First, so a capture's frame boundary is taken before any of ForgePact's
+    // own per-frame work.
+    FrameProfilerTick();
 #ifdef FORGEPACT_POPULATION_PROFILE
     PopulationProfileTick();
 #endif
@@ -39990,6 +40610,11 @@ void FrameCallback(FWFrame& FrameContext)
     // runs on the frame path - its work happens inside the game's own crafting
     // calls, and only while the switch is on.
     if (ForgePact::CraftMatsMod::Instance().IsEnabled() && g_Setup && !g_CmInstallTried) CraftMatsInstall();
+
+    // Far sleep, toggled by `farsleep 1`: far scenery props sleep and wake
+    // again near a player (FarSleep.hpp). Nothing runs while it is off and
+    // nothing it put to sleep is left asleep.
+    if (g_Setup) FarSleepTick();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun

@@ -27,6 +27,7 @@
 import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { OPEN_DELAY_MS } from '../src/lib/slider-note.js';
+import { INSTANT_MS } from '../src/lib/plugin-warning.js';
 import { THEMES } from '../src/theme.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -149,8 +150,33 @@ async function hoverNote(page) {
 }
 async function hoverWarning(page, icon = pageIcon) {
   await away(page);
+  // Every caller measures the tooltip's animated entrance, which by design
+  // is skipped when the other tooltip closed less than INSTANT_MS ago. On a
+  // slow CI runner the previous tooltip's close landed just inside that
+  // window, so M11 saw "no opacity entrance" (PR run 36377419617). Wait for
+  // both tooltips to close, then past the window.
+  await page.waitForFunction(() => [...document.querySelectorAll('.plugin-warning-tooltip')].every((t) => t.hidden),
+    null, { timeout: 5000, polling: 20 });
+  await wait(INSTANT_MS + 100);
   await record(page);
-  await page.hover(icon);
+  try {
+    await page.hover(icon, { timeout: 15000 });
+  } catch (e) {
+    // M11 once timed out here on a CI runner with nothing but "Timeout
+    // 30000ms exceeded". Say what stood in the way, so the next time names
+    // its cause instead of costing a guess.
+    const at = await $(page, (s) => {
+      const el = document.querySelector(s);
+      if (!el) return 'no such element';
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return JSON.stringify({ visible: el.checkVisibility(), rect: [r.x, r.y, r.width, r.height].map(Math.round),
+        viewport: [innerWidth, innerHeight], top: top ? `${top.tagName}#${top.id}.${top.className}` : null,
+        theme: document.documentElement.dataset.theme, tab: document.body.dataset.emberTab ?? null });
+    }, icon).catch(() => 'page unreadable');
+    const log = e.message.split('\n').filter((l) => /intercepts|not visible|not stable|outside|detached|retrying/.test(l)).slice(-3);
+    throw new Error(`hover ${icon} failed: ${at}; ${log.join(' | ') || e.message.split('\n')[0]}`);
+  }
   await page.waitForFunction((s) => !!document.querySelector(s)?.checkVisibility(), tipOf(icon), { timeout: 3000 });
   await wait(250);
   return seen(page, tipOf(icon));

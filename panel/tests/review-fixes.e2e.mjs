@@ -72,7 +72,22 @@ const EXP = 'input[type=range][data-sec="stats"][data-key="exp"]';
 
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes, straight to the sandbox. One failed on a CI runner with only
+// "TypeError: Failed to fetch" (PR run 36390046850; 6 of 6 concurrent local
+// runs passed), so a failure now says which write it was and whether a second
+// attempt at once got through: a transient refusal and a dead sandbox look
+// alike otherwise. It still fails either way.
+const post = async (page, body) => {
+  const result = await $(page, async (b) => {
+    const send = () => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json());
+    try { return { ok: await send() }; } catch (e) {
+      const again = await send().then(() => 'ok', (e2) => String(e2));
+      return { error: String(e), again, readyState: document.readyState };
+    }
+  }, body);
+  if (result.error) throw new Error(`setup POST ${JSON.stringify(body)} failed: ${result.error}; retry at once: ${result.again}; page ${result.readyState}`);
+  return result.ok;
+};
 const frames = (page) => $(page, () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const formOf = (page) => $(page, () => document.getElementById('enabledMods').dataset.form);
 const visible = (page, selector) => $(page, (s) => !!document.querySelector(s)?.checkVisibility(), selector);
