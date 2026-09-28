@@ -78,6 +78,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Toolkit #147's tool-facing stash and bag verbs
     # (test_stash_bag_layout_contract.py, StashBagPlayerVerbs).
     "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
+    # The pet moves on from loot it cannot pick up (#94, workorder
+    # forgepact-pet-loot-stuck; test_pet_loot_unstick_contract.py pins it).
+    "petunstick",
     # The frame profiler: measures, changes nothing in the game
     # (test_frame_profiler.py pins it).
     "frameprof",

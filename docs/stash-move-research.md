@@ -1699,7 +1699,7 @@ socketMergeRoute: byname (orb and gem; every identity with a node on the tab mer
 
 ## Ship design
 
-What the player build does with the lines above (ForgePact 2.0.1, Mods tab →
+What the player build does with the lines above (ForgePact 2.0.2, Mods tab →
 Quality of Life → **Move all into the stash**, off by default). The decisions
 live in `plugin/include/ForgePact/StashMoveAllMod.hpp`, which names no runtime
 interface and is run whole by `tests/stash_move_all_harness.cpp`; the adapter

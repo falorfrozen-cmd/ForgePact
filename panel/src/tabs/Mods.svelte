@@ -34,6 +34,11 @@
         <span class="val" id="mpqpval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Pet moves on from loot it cannot pick up<br><span class="feature-description">When a lot of loot is on the ground and your pet stays stuck on one item it cannot pick up, it leaves that item for a few seconds and goes for the next one. Nothing is picked up or destroyed for you. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_pet_loot_unstick"><span class="sl"></span></label>
+        <span class="val" id="mpluval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Auto-prospect items put in the Prospect Cube<br><span class="feature-description">Every item you drag or click into the Prospect Cube's grid is prospected straight away, as if you had pressed Prospect, so the grid never fills with items waiting their turn. Anything still in the prospect grid when the game saves is lost.</span></span>
         <label class="switch"><input type="checkbox" id="mod_auto_prospect"><span class="sl"></span></label>
         <span class="val" id="autoprospval">off</span>

@@ -11,6 +11,7 @@
  "mod_filter_max_relics": false,
  "mod_orb_pickup_radius": false,
  "mod_pet_quest_pickup": false,
+ "mod_pet_loot_unstick": false,
  "mod_auto_prospect": false,
  "mod_auto_prospect_bag": true,
  "mod_toggle_indicator": false,

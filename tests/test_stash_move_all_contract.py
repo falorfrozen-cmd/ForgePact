@@ -30,7 +30,7 @@ PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "StashMoveAllMod.hpp"
 README = ROOT / "README.md"
 DOC = ROOT / "docs" / "stash-move-research.md"
-NOTES_VERSION = "2.0.1"
+NOTES_VERSION = "2.0.2"
 NOTES = ROOT / f"release-notes-v{NOTES_VERSION}.md"
 
 BLOCK = ("// ---- stashmoveall, stashmove: Move all into the stash (ForgePact #68)",

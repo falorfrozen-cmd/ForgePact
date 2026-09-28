@@ -41,6 +41,16 @@
 // targets used `MustWalk`, `BeginFind`/`Needs`, `Split`, `OnMoveReport`,
 // `MayCraft`/`PressStep`, `OnConsume` and `SaveDue`/`PressLine`, beyond the
 // compiler's 100-error cap, so their own lines were not printed.
+//
+// Issue #80 splits the press gate's one `unreadable` refusal into its four
+// reasons (already-served, unpaired, unnumbered-row, other-row), each with its
+// own token, line and counter, and adds `hash-failed`: the take whose
+// ItemCheckHash call did not dispatch is never confirmed. The old combined
+// scenario `target/press_gate_is_vanilla_without_a_stash_count_and_refuses_what_it_cannot_pair`
+// became one baseline (the vanilla paths) and one target per kind. Red first:
+// with those scenarios written and the core unchanged, the first error was
+// `error C2838: 'AlreadyServed': illegal qualified name in member declaration`
+// (the kinds table), then the same for `Unpaired` and `UnnumberedRow`.
 #include <atomic>
 #include <cstdint>
 #include <iostream>
@@ -681,13 +691,29 @@ static void TargetPressCraftsOnlyWhenEveryTakeIsConfirmed()
     const bool allTaken = mod.MayCraft({ CraftMatsOutcome::Taken, CraftMatsOutcome::Taken });
     const bool oneDeclined = mod.MayCraft({ CraftMatsOutcome::Taken, CraftMatsOutcome::NotTaken });
     const bool oneLost = mod.MayCraft({ CraftMatsOutcome::Loss });
+    // A plan the core refused refuses the press before any take.
+    CraftMatsPlan refusedPlan;
+    refusedPlan.refused = true;
+    const bool refusedPlanCrafts = mod.MayCraft(refusedPlan, {});
     Check("target/press_crafts_only_when_every_take_is_confirmed",
-          bagCovers && allTaken && !oneDeclined && !oneLost && mod.PressesRefused() == 2,
+          bagCovers && allTaken && !oneDeclined && !oneLost && !refusedPlanCrafts && mod.PressesRefused() == 3,
           "bag=" + N(bagCovers) + " all=" + N(allTaken) + " declined=" + N(oneDeclined) + " lost=" + N(oneLost)
-              + " refused=" + N(mod.PressesRefused()));
+              + " refused-plan=" + N(refusedPlanCrafts) + " refused=" + N(mod.PressesRefused()));
+}
 
-    // The gate before any take. No record, or no stash count added during this
-    // press's CraftFindRecipeItems: the game's own press, untouched.
+// ---- the press gate: one kind, counter and line per refusal (issue #80) ---------
+//
+// The gate used to name every refusal `unreadable`, so a player's log could not
+// say which of four different things stopped the press. Each now has its own
+// kind, token, line and counter. A record that serves a press is used up
+// (already-served); counts that cannot be paired with the amounts decoded
+// before them (unpaired); a recipe row the adapter could not number, on either
+// side (unnumbered-row); a record made for another row (other-row).
+
+static void BaselinePressGateIsVanillaWithoutAStashCount()
+{
+    // No record, or no stash count added during this press's
+    // CraftFindRecipeItems: the game's own press, untouched, and nothing named.
     CraftMatsMod gate;
     gate.SetEnabled(true);
     const CraftMatsPressStep noFind = gate.PressStep(7);
@@ -695,39 +721,156 @@ static void TargetPressCraftsOnlyWhenEveryTakeIsConfirmed()
     gate.OnDecode(3);
     gate.OnFindCount(CraftMatsMod::Material(15, 1), 3, false);
     const CraftMatsPressStep bagOnly = gate.PressStep(7);
+    // Negative control: the same record with a stash count added plans.
     gate.BeginFind(7);
     gate.OnDecode(3);
     gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
     const CraftMatsPressStep plan = gate.PressStep(7);
-    const CraftMatsPressStep reused = gate.PressStep(7);   // one record serves one press
-    gate.BeginFind(7);
-    gate.OnDecode(3);
-    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
-    const CraftMatsPressStep otherSelf = gate.PressStep(8);
-    gate.BeginFind(7);
-    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
-    const CraftMatsPressStep noDecode = gate.PressStep(7);
-    // A recipe row the adapter could not number matches nothing, itself included.
-    gate.BeginFind(-1);
-    gate.OnDecode(3);
-    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
-    const CraftMatsPressStep unnumbered = gate.PressStep(-1);
+    Check("baseline/press_gate_is_vanilla_without_a_stash_count",
+          noFind == CraftMatsPressStep::Vanilla && bagOnly == CraftMatsPressStep::Vanilla && plan == CraftMatsPressStep::Plan
+              && gate.PressesRefused() == 0 && gate.TakeFirstRefusal() == CraftMatsRefusal::None && gate.IsEnabled(),
+          "no-find=" + N((int)noFind) + " bag-only=" + N((int)bagOnly) + " plan=" + N((int)plan)
+              + " refused=" + N(gate.PressesRefused()));
+}
+
+// Every kind a refusal can be, for the counters' negative control.
+static const CraftMatsRefusal kAllRefusals[] = {
+    CraftMatsRefusal::Unreadable,    CraftMatsRefusal::NotTaken, CraftMatsRefusal::StashUnreadable,
+    CraftMatsRefusal::AlreadyServed, CraftMatsRefusal::Unpaired, CraftMatsRefusal::UnnumberedRow,
+    CraftMatsRefusal::OtherRow,      CraftMatsRefusal::HashFailed,
+};
+
+// One press refusal, checked the same way for each kind: the gate refused, the
+// kind is the one named (once), its token and line are its own, the line says
+// the craft was refused and nothing moved, its own counter and stat field are
+// 1, and every other kind's counter is 0. `setup`: what led up to the press
+// went as the scenario says.
+static void CheckPressRefusal(const std::string& label, CraftMatsMod& gate, CraftMatsPressStep step,
+                              CraftMatsRefusal kind, const std::string& token, bool setup = true)
+{
     const CraftMatsRefusal first = gate.TakeFirstRefusal();
+    const CraftMatsRefusal again = gate.TakeFirstRefusal();
     const std::string line = gate.RefusalLine(first);
-    // A plan the core refused refuses the press before any take.
-    CraftMatsPlan refusedPlan;
-    refusedPlan.refused = true;
-    const bool refusedPlanCrafts = gate.MayCraft(refusedPlan, {});
-    Check("target/press_gate_is_vanilla_without_a_stash_count_and_refuses_what_it_cannot_pair",
-          noFind == CraftMatsPressStep::Vanilla && bagOnly == CraftMatsPressStep::Vanilla
-              && plan == CraftMatsPressStep::Plan && reused == CraftMatsPressStep::Refuse
-              && otherSelf == CraftMatsPressStep::Refuse && noDecode == CraftMatsPressStep::Refuse
-              && unnumbered == CraftMatsPressStep::Refuse && !refusedPlanCrafts
-              && gate.PressesRefused() == 5 && first == CraftMatsRefusal::Unreadable
-              && line.find("refused") != std::string::npos && gate.IsEnabled(),
-          "no-find=" + N((int)noFind) + " bag-only=" + N((int)bagOnly) + " plan=" + N((int)plan) + " reused="
-              + N((int)reused) + " other-self=" + N((int)otherSelf) + " no-decode=" + N((int)noDecode)
-              + " unnumbered=" + N((int)unnumbered) + " line=\"" + line + "\"");
+    const std::string stat = gate.StatLine();
+    bool counters = true;
+    std::string detail;
+    for (CraftMatsRefusal k : kAllRefusals) {
+        const long want = k == kind ? 1 : 0;
+        if (gate.Refused(k) != want) counters = false;
+        detail += std::string(" ") + CraftMatsMod::RefusalName(k) + "=" + N(gate.Refused(k));
+    }
+    Check(label,
+          setup && step == CraftMatsPressStep::Refuse && first == kind && again == CraftMatsRefusal::None
+              && std::string(CraftMatsMod::RefusalName(kind)) == token
+              && line.rfind("craftmats: " + token + " - ", 0) == 0 && line.find("refused") != std::string::npos
+              && line.find("nothing") != std::string::npos && counters && gate.PressesRefused() == 1
+              && stat.find(" " + token + "=1") != std::string::npos && gate.IsEnabled(),
+          "setup=" + N(setup) + " step=" + N((int)step) + " first=" + CraftMatsMod::RefusalName(first) + " again="
+              + CraftMatsMod::RefusalName(again) + detail + " line=\"" + line + "\" stat=\"" + stat + "\"");
+}
+
+// A record with a stash count added, one decode before it, for row `self`.
+static void PairedRecord(CraftMatsMod& gate, long long self)
+{
+    gate.BeginFind(self);
+    gate.OnDecode(3);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);
+}
+
+static void TargetPressRefusedAlreadyServed()
+{
+    CraftMatsMod gate;
+    gate.SetEnabled(true);
+    PairedRecord(gate, 7);
+    const CraftMatsPressStep served = gate.PressStep(7);   // the record serves this press
+    const CraftMatsPressStep again = gate.PressStep(7);    // and no second one
+    CheckPressRefusal("target/press_refused_already_served", gate, again, CraftMatsRefusal::AlreadyServed,
+                      "already-served", served == CraftMatsPressStep::Plan);
+}
+
+static void TargetPressRefusedUnpaired()
+{
+    CraftMatsMod gate;
+    gate.SetEnabled(true);
+    gate.BeginFind(7);
+    gate.OnFindCount(CraftMatsMod::Material(15, 1), 2, true);   // a stash count with no decode before it
+    const CraftMatsPressStep step = gate.PressStep(7);
+    CheckPressRefusal("target/press_refused_unpaired", gate, step, CraftMatsRefusal::Unpaired, "unpaired");
+}
+
+static void TargetPressRefusedUnnumberedRow()
+{
+    // A recipe row the adapter could not number matches nothing, itself included.
+    CraftMatsMod record;
+    record.SetEnabled(true);
+    PairedRecord(record, -1);
+    const CraftMatsPressStep step = record.PressStep(-1);
+    CheckPressRefusal("target/press_refused_unnumbered_row", record, step, CraftMatsRefusal::UnnumberedRow,
+                      "unnumbered-row");
+    // The same when only the pressed row could not be numbered.
+    CraftMatsMod press;
+    press.SetEnabled(true);
+    PairedRecord(press, 7);
+    const CraftMatsPressStep pressStep = press.PressStep(-1);
+    CheckPressRefusal("target/press_refused_unnumbered_row_at_the_press", press, pressStep,
+                      CraftMatsRefusal::UnnumberedRow, "unnumbered-row");
+}
+
+static void TargetPressRefusedOtherRow()
+{
+    CraftMatsMod gate;
+    gate.SetEnabled(true);
+    PairedRecord(gate, 7);
+    const CraftMatsPressStep step = gate.PressStep(8);
+    CheckPressRefusal("target/press_refused_other_row", gate, step, CraftMatsRefusal::OtherRow, "other-row");
+}
+
+// ItemCheckHash is the second half of the adapter's inline count edit. When
+// its by-name call does not dispatch, the adapter puts the count back, feeds
+// the core the item's key (OnHashFailed), and reports the take's re-read as
+// usual: the take is not confirmed, the press is refused, and the reason is
+// named once, as its own kind - not as a declined take.
+static void TargetHashFailedTakeIsUnconfirmedAndNamedOnce()
+{
+    CraftMatsMod mod;
+    mod.SetEnabled(true);
+    // The count put back and the destination undone: both sides as they were.
+    mod.OnHashFailed("0-0-12-15");
+    const CraftMatsOutcome o = mod.OnMoveReport(Move(2, 216, 216, false, false, 1, 1));
+    const bool may = mod.MayCraft({ o });
+    const long counted = mod.Refused(CraftMatsRefusal::HashFailed);
+    const CraftMatsRefusal first = mod.TakeFirstRefusal();
+    const std::string line = mod.RefusalLine(first);
+    // A second failure in the session counts, and is not named again.
+    mod.OnHashFailed("0-0-11-15");
+    const CraftMatsOutcome o2 = mod.OnMoveReport(Move(2, 216, 216, false, false, 1, 1));
+    const CraftMatsRefusal second = mod.TakeFirstRefusal();
+    // Negative control: a take with no hash failure before it is confirmed as usual.
+    const CraftMatsOutcome o3 = mod.OnMoveReport(Move(2, 216, 214, false, false, 1, 3));
+    const std::string stat = mod.StatLine();
+    const bool firstOk = o == CraftMatsOutcome::NotTaken && !may && counted == 1 && first == CraftMatsRefusal::HashFailed
+        && line == "craftmats: hash-failed - ItemCheckHash did not run for 0-0-12-15; the take was not confirmed and the"
+                   " craft was refused"
+        && mod.Refused(CraftMatsRefusal::NotTaken) == 0 && mod.PressesRefused() == 1;
+    const bool laterOk = o2 == CraftMatsOutcome::NotTaken && second == CraftMatsRefusal::None
+        && mod.Refused(CraftMatsRefusal::HashFailed) == 2 && o3 == CraftMatsOutcome::Taken && mod.IsEnabled()
+        && stat.find(" hash-failed=2") != std::string::npos;
+    // A hash failure whose put-back did not land: both sides moved by the
+    // amount, but an edited count has no fresh hash - a loss, never Taken.
+    CraftMatsMod stale;
+    stale.SetEnabled(true);
+    stale.OnHashFailed("0-0-12-15");
+    const CraftMatsOutcome o4 = stale.OnMoveReport(Move(2, 216, 214, false, false, 1, 3));
+    const bool staleOk = o4 == CraftMatsOutcome::Loss && stale.OffThisSession() && stale.TakeFirstLoss()
+        && !stale.MayCraft({ o4 }) && stale.Taken() == 0 && stale.Refused(CraftMatsRefusal::HashFailed) == 1;
+    // Off, the seam is ignored: the adapter takes nothing while off.
+    CraftMatsMod off;
+    off.OnHashFailed("0-0-12-15");
+    const bool offOk = off.Refused(CraftMatsRefusal::HashFailed) == 0 && off.TakeFirstRefusal() == CraftMatsRefusal::None;
+    Check("target/hash_failed_take_is_unconfirmed_and_named_once", firstOk && laterOk && staleOk && offOk,
+          "o=" + N((int)o) + " may=" + N(may) + " counted=" + N(counted) + " first=" + CraftMatsMod::RefusalName(first)
+              + " o2=" + N((int)o2) + " second=" + CraftMatsMod::RefusalName(second) + " o3=" + N((int)o3)
+              + " o4=" + N((int)o4) + " off=" + N(offOk) + " line=\"" + line + "\" stat=\"" + stat + "\"");
 }
 
 static void BaselinePressOffIsVanilla()
@@ -823,6 +966,12 @@ int main()
     TargetTakeSplitsAcrossEntriesWholeThenPartial();
     TargetMoveConfirmedOnlyWhenSourceAndDestinationMovedByTheAmount();
     TargetPressCraftsOnlyWhenEveryTakeIsConfirmed();
+    BaselinePressGateIsVanillaWithoutAStashCount();
+    TargetPressRefusedAlreadyServed();
+    TargetPressRefusedUnpaired();
+    TargetPressRefusedUnnumberedRow();
+    TargetPressRefusedOtherRow();
+    TargetHashFailedTakeIsUnconfirmedAndNamedOnce();
     BaselinePressOffIsVanilla();
     TargetConsumeMismatchTurnsTheModOffForTheSession();
     TargetSaveRequestedOnlyAfterAConfirmedMove();

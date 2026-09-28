@@ -1,4 +1,4 @@
-# ForgePact 2.0.1
+# ForgePact 2.0.2
 
 Emptying your backpack into the stash used to take one Ctrl + click per item.
 A new **Move all into the stash** switch, off by default, does it with one key.

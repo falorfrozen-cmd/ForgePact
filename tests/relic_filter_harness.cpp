@@ -10,6 +10,11 @@
 // announced a working filter on paths where nothing was applied. Only a test
 // that runs the hook end to end and compares what was logged against what was
 // actually written to the repository can tell those apart.
+//
+// It also runs the REAL RelicFilterReportArmScan (#93): the one line the
+// filter logs when it arms, naming what the scan found, so a live session can
+// check the scan without waiting for a relic roll in a Satanic zone.
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
@@ -61,6 +66,12 @@ struct World {
     long baseRestores = 0;              // droprate.base <- original
     long origCalls = 0;                 // the game's own DropRelic
     bool rewardScopeActive = false;     // inside AFK FARM's reward delivery
+    // What the equipped-slot read reports when a caller asks for it (#93):
+    // the stage it stopped at (nullptr = read every slot) and the relics it
+    // identified; and how many scans asked for a report at all.
+    const char* equippedStopped = nullptr;
+    int equippedRelics = 0;
+    long reportRequests = 0;
     std::vector<std::string> log;
 };
 static World world;
@@ -156,8 +167,26 @@ static bool HhResolveLocalPlayer(RValue& out) {
 }
 
 namespace HeroSiege { namespace Player {
-inline std::unordered_set<int> GetMaxedRelicIds(FakeRunner*, const RValue&) {
+// Stand-in for hs_game_sdk/player.hpp's EquippedSlotScanReport, reduced to the
+// two fields a scenario drives: the stage that ended the equipped-slot read
+// (nullptr when every slot was read, "not-run" when the scan never reached
+// it) and the relics it identified. The real report and its formatter are
+// tested in the hub (tests/cpp/test_sdk_player_hooks.cpp); this one only has
+// to show which report the arm line prints.
+struct EquippedSlotScanReport {
+    const char* stopped = "not-run";
+    int relicInstances = 0;
+};
+inline std::string FormatEquippedSlotScanReport(const EquippedSlotScanReport& r) {
+    return "relic=" + std::to_string(r.relicInstances) + " stopped=" + (r.stopped ? r.stopped : "none");
+}
+inline std::unordered_set<int> GetMaxedRelicIds(FakeRunner*, const RValue&, EquippedSlotScanReport* report = nullptr) {
+    if (report) ++world.reportRequests;
     if (world.scanThrows) throw std::runtime_error("read failed");
+    if (report) {
+        report->stopped = world.equippedStopped;
+        report->relicInstances = world.equippedRelics;
+    }
     return world.maxed;
 }
 }}
@@ -201,7 +230,22 @@ static void report(const char* label) {
     std::cout << "SCENARIO " << label
               << " suppressed=" << world.baseSuppressions
               << " restored=" << world.baseRestores
-              << " origcalls=" << world.origCalls << "\n";
+              << " origcalls=" << world.origCalls
+              << " reports=" << world.reportRequests << "\n";
+    for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
+}
+
+// The arm-time report: whether a report was due before and after it ran, so a
+// scenario can show the line is emitted once per arm and not again.
+static void runArmReport(const char* label) {
+    const bool dueBefore = ForgePact::RelicFilterMod::Instance().IsArmScanDue();
+    RelicFilterReportArmScan();
+    const bool dueAfter = ForgePact::RelicFilterMod::Instance().IsArmScanDue();
+    std::cout << "SCENARIO " << label
+              << " due_before=" << (dueBefore ? 1 : 0)
+              << " due_after=" << (dueAfter ? 1 : 0)
+              << " origcalls=" << world.origCalls
+              << " reports=" << world.reportRequests << "\n";
     for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
 }
 
@@ -277,6 +321,65 @@ int main() {
     world.rewardScopeActive = true;
     runHook();
     report("reward_scope_passthrough");
+
+    // 10. Arm-time line: `relicfilter 1` arms the filter, and the report names
+    //     the count and the ids from the scan's own set.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
+    world.maxed = { 42, 7 };
+    world.equippedRelics = 2;
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_two");
+
+    // 11. Ids are listed in numeric order, not text order (9 before 124).
+    reset();
+    world.maxed = { 135, 9, 124 };
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_sorted");
+
+    // 12. The scan ran and found nothing: an empty set is named as such.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_empty");
+
+    // 13. No player: the scan did not run, which must not read as "0 maxed".
+    reset();
+    world.maxed = { 42 };
+    world.playerResolves = false;
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_no_player");
+
+    // 14. Armed and then switched off before the report: nothing is due.
+    reset();
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
+    std::cout << "SCENARIO arm_then_off due="
+              << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
+
+    // 15. Re-armed while the DropRelic hook is already in (`dropmult relic`
+    //     installed it): the install is not pending, the report still is.
+    reset();
+    world.maxed = { 42 };
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, true);
+    std::cout << "SCENARIO rearm_hooked pending="
+              << (ForgePact::RelicFilterMod::Instance().IsPending() ? 1 : 0)
+              << " due=" << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
+
+    // 16. The equipped-slot read stopped at the owner lookup: the scan ran
+    //     and found nothing, and the line after it names the stage, so this
+    //     zero reads differently from a player with nothing maxed (12).
+    reset();
+    world.equippedStopped = "owner";
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_stopped_owner");
+
+    // 17. The scan threw before the slots were read: it did not run, and no
+    //     equipped-slot line claims a stage for a read that never happened.
+    reset();
+    world.maxed = { 42 };
+    world.scanThrows = true;
+    ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    runArmReport("arm_scan_throws");
 
     std::cout << "HARNESS DONE\n";
     return 0;
