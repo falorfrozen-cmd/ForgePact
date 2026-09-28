@@ -1703,8 +1703,9 @@ What the player build does with the lines above (ForgePact 2.0.2, Mods tab →
 Quality of Life → **Move all into the stash**, off by default). The decisions
 live in `plugin/include/ForgePact/StashMoveAllMod.hpp`, which names no runtime
 interface and is run whole by `tests/stash_move_all_harness.cpp`; the adapter
-in `plugin/ModuleMain.cpp` (the `stashmoveall, stashmove` block) reads the game
-and calls it. `tests/test_stash_move_all_contract.py` pins the adapter.
+in `plugin/ModuleMain.cpp` (the `stashmoveall, stashmove` block, and the
+`stashmoveall button` block for the in-game button) reads the game and calls
+it. `tests/test_stash_move_all_contract.py` pins the adapter.
 
 **The control.** The switch is `stashmoveall 1|0` (the panel sends it). While it
 is on, the frame callback reads one key, F4; the modifiers, the foreground
@@ -1723,6 +1724,46 @@ line; the panel reads the last one in `out.txt` (`/api/state`'s
 `stash_move_all_session`) and shows `off (this session)` beside the switch while
 the game runs.
 
+**The button** (`buttonRoute: poll`, `buttonOwner: UI_Stash_obj`,
+`sortActivation`, all from Live 1f and 1g). While the switch is on, the frame
+tick's ensure step, at most every tenth frame, asks the core whether the node
+should exist: the switch on, a `UI_Stash_obj` listed, and the bag's Sort button
+listed and visible - the `UI_Button_Small_obj` whose `uiNodeCallstack` reads
+`InventorySort`, found by that name and never by its text (`Sort Tab`). To make
+it, `UiCreateNode` is called by name with self and other the stash window and
+five arguments: x (the Sort node's x, less its own bbox width, less 8), y (the
+Sort node's y), the object `UI_Button_Small_obj` by `asset_get_index`, the
+activation **undefined**, and the call-stack name `ForgePactMoveAll`; then the
+node's own `text` is set to `Move all` and read back, the one write the button
+makes, on the instance the mod made (a node whose label does not read back is
+taken away again). No `UiSetActivationFunc`, and no script hooked for it: a node
+with no activation runs nothing of the game's when clicked (Static reading 3,
+and Live 1g's click on one), while Live 1f's click on a node bound to a game
+script ran that script with the node as self and ended the game. The node is
+identified as the mod's own by that call-stack name on a listed instance, not
+by its id alone. It is removed with `UiRemoveNode`, self and other the window it
+was made under, whenever the core says it should not exist, on
+`stashmoveall 0`, and on a loss; `instance_destroy` on the mod's own node only
+when that window is gone (the stash's own close destroys a node still listed,
+Live 1g `node-gone-on-close`, so the mod then just lets go of it). A
+`UiRemoveNode` that leaves the node listed is said once and tried again, never
+followed by a destroy that would leave the window's list naming a gone node. A
+tab switch keeps it (Live 1g `node-survives-tab-switch`).
+
+The press is the frame poll: each frame the node exists,
+`mouse_check_button_pressed(mb_left)` by name, and on a press
+`device_mouse_x_to_gui(0)` and `device_mouse_y_to_gui(0)` against the node's
+`bbox_left`, `bbox_top`, `bbox_right` and `bbox_bottom` read by name at that
+frame (the core's `PressInNode`: inclusive sides, a side that did not read is
+never a press). A press inside is handed to the core and nothing more happens in
+the poll; the frame tick then takes it under F4's own guard (the game in front,
+the stash listed, no modifier held), and a key edge and a press in the same
+frame start one run between them. A node that cannot be made (the Sort row's
+x, y or bbox not read, `UiCreateNode` refusing, the label not taking) is
+reported once, `stashmoveall: button - <reason>; F4 still works`, is not tried
+again until the stash is opened again or the switch turned on again, and never
+turns the mod off.
+
 **What one run stands on**, found by name at the point of use: `UI_Stash_obj`
 (its `tabSelected` is the bag view on show, its `stashTabSelected` the stash tab
 on show), the bag's grid node and the stash's grid node (the two
@@ -1736,10 +1777,11 @@ takes items from the bag page on show (`tabSelected` 0 to 4). The Materials tab
 takes class 14 from a bag page or from the bag's Materials view (`tabSelected`
 -4, the source `stackMoveRoute`, `newMaterialRoute` and `wholeStackMerge` were
 measured from). A stash page from a bag sub-tab is refused (`unsupported bag tab
--4 for stash tab <n>`). The Socketable tab is refused as a destination
-(`unsupported stash tab -2`) and the bag's Socket view as a source
-(`unsupported bag tab -2`), because `socketRoute` has no `byname` path; so are
-the Unique tab and the bag's Key, Tarot and Relic views. The route rules are
+-4 for stash tab <n>`). The Socketable tab takes class 15 from the bag's Socket
+view only (`tabSelected` -2, the view `socketMergeRoute` was measured from):
+a bag page or the Materials view feeding it is refused (`unsupported bag tab
+<t> for stash tab -2`), and the Socket view feeds no other tab. The Unique tab
+and the bag's Key, Tarot and Relic views are refused. The route rules are
 fixed in the core (`StashMoveRoutes`, `kMeasuredRoutes`) from the lines above;
 they are not settings.
 
@@ -1750,7 +1792,11 @@ the cells its key covers. Per item, on a stash page: a stackable (class 12 to
 stack, anything else into a cell. On the Materials tab: class 14 onto the stack
 of its identity when there is one, else into a cell of the tab
 (`newMaterialRoute`); any other class is a skip that calls nothing (`not taken
-by the Materials tab`). A merge of more than one unit follows `wholeStackMerge`.
+by the Materials tab`). On the Socketable tab: class 15 onto the node of its
+identity when there is one (`socketMergeRoute`; there is no non-stackable case,
+the gem merged too), and a kind with no node there a planned skip,
+`a new kind stays in the bag` (`socketRoute` new: not measured); any other
+class `not taken by the Socketable tab`. A merge of more than one unit follows `wholeStackMerge`.
 A stackable whose stack on the tab cannot be read - a shared page's entries
 answer on no map by name (`mapOwnerRule`) - is a skip, never read as "no
 stack". The plan's route is not the last word: a stackable's route is decided
@@ -1793,12 +1839,23 @@ apart:
 - onto a stack: `ValidateItem` first on a stash page only, then
   `StashAddToStack` with the shown tab's array, the tab kind's two numbers, the
   item and its whole count, 0; the bag cell is cleared only after the shown tab's
-  sum for that identity rose by exactly that count.
+  sum for that identity rose by exactly that count;
+- onto a socketable's stack on the Socketable tab (`socketMergeRoute`): the tab
+  is read as what it is, the set of `UI_Inventory_Grid_obj` instances whose
+  `uiNodeCallstack` reads `StashSocketGrid`, one item each, every cell's key
+  resolved on map 9 (`Controller_obj.stashSocketItemSlot` is not the container,
+  Live 1e); every node is read, and one that does not read makes the sum
+  unreadable. `StashAddToStack` with self and other the bag grid, the one-cell
+  `nodeGrid` of the node holding the item's identity, 9, 2, the item, its whole
+  count, 8 - no `ValidateItem` first, as none ran in the measured merge - and
+  the bag cell is cleared only after that node's count rose by exactly the
+  count, re-read on the same node.
 
 After the calls the adapter re-reads `stashTabSelected`, the shown tab's own
 array (the key at the answer's cell for a placement, read `[y][x]` on a page and
 either order on the Materials tab, whose axis order is only a static reading;
-the identity's sum for a merge) and the bag cell, and nothing else: the other
+the identity's sum for a merge, on the Socketable tab that node's own
+`nodeGrid`) and the bag cell, and nothing else: the other
 stash tabs have no container readable by name (RUNTIME_DATA_MODELS § 17), so
 no-spill rests on the route (each routine is handed only the shown tab's array,
 after its room was read) and on Live 2's `case-full` save comparison, as the
@@ -1844,4 +1901,12 @@ measured with the bag's Materials view on show, `tabSelected` -4); a multi-cell
 item placed by name into the Materials tab; the undo, and an owner step that
 did not take; F4 itself, and the held-modifier guard; and whether a run of many
 items in one frame, a second item merging into a stack the run itself made
-among them, behaves as the single calls did.
+among them, behaves as the single calls did. For the button: the shipped
+adapter's node and poll (Live 1f and 1g measured the research build's probe,
+which made the node and polled the press the same way), a click that starts a
+run, the fail-safe line, and whether the backpack's Sort button stays listed
+and visible on the bag's Materials and Socket views (the button is shown only
+while it is); how the Sort button is created and what the stash window's step
+does before a node's click event were not read. For the Socketable tab: a merge
+of more than one unit (measured with a count of 1, orb and gem), a merge
+through this adapter, and a new kind placed by name (`socketRoute` new).

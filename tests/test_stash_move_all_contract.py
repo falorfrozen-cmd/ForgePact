@@ -548,6 +548,31 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("Socketable", new)
         self.assertIn("\n## How to update\n", notes)
 
+    def test_readme_notes_and_panel_name_the_button(self):
+        # The button, where it is, that F4 does the same, and what the
+        # Socketable tab now does, in player words in all three places.
+        readme = README.read_text(encoding="utf-8")
+        row = next(l for l in readme.splitlines() if l.startswith("| **Move all into the stash** |"))
+        for word in ("**Move all** button", "Sort", "F4", "Socketable"):
+            self.assertIn(word, row, word)
+        section = readme[readme.index("\n## Move all into the stash\n"):]
+        nxt = section.find("\n## ", 1)
+        section = section if nxt < 0 else section[:nxt]
+        for word in ("**Move all** button", "**Sort**", "F4", "a new kind stays in the bag", "stashmoveall: button - "):
+            self.assertIn(word, section, word)
+        self.assertRegex(section, r"switch off takes it\s+away")
+        notes = NOTES.read_text(encoding="utf-8")
+        new = notes[notes.index("\n## New\n"):]
+        new = new[:new.find("\n## ", 1)]
+        self.assertRegex(new, r"Move all\*\* button")
+        for word in ("**Sort**", "F4", "Socketable", "stays in your backpack"):
+            self.assertIn(word, new, word)
+        mods = panel_file("tabs/Mods.svelte")
+        m = re.search(r'Move all into the stash<br><span class="feature-description">([^<]*)</span>', mods)
+        self.assertIsNotNone(m)
+        for word in ("Move all button", "Sort", "F4"):
+            self.assertIn(word, m.group(1), word)
+
     def test_research_doc_has_ship_design_and_live_results(self):
         doc = DOC.read_text(encoding="utf-8")
         ship = doc.index("\n## Ship design\n")
@@ -560,6 +585,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         for line in ("stashmoveall: moved", "stashmoveall: refused - ", "stashmoveall: off for this session - ",
                      "not observed"):
             self.assertIn(line, section, line)
+        # Phase C: the button's routine and the Socketable tab's merge.
+        for word in ("UiCreateNode", "UiRemoveNode", "ForgePactMoveAll", "InventorySort", "mouse_check_button_pressed",
+                     "stashmoveall: button - ", "StashSocketGrid", "socketMergeRoute", "a new kind stays in the bag"):
+            self.assertIn(word, section, word)
         self.assertIn("\n### Live 2 results\n", doc)
         self.assertLess(doc.index("\n### Live 1e results\n"), doc.index("\n### Live 2 results\n"))
 

@@ -54,7 +54,7 @@
         <span class="val" id="mcmval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Move all into the stash<br><span class="feature-description">With the stash open, press F4 to move every item on the bag tab you are looking at into the stash tab you are looking at. Items the tab has no room for, or does not take, stay in your bag. Off by default.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Move all into the stash<br><span class="feature-description">With the stash open, click the Move all button next to your bag's Sort button, or press F4, to move every item on the bag tab you are looking at into the stash tab you are looking at. Items the tab has no room for, or does not take, stay in your bag. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_stash_move_all"><span class="sl"></span></label>
         <span class="val" id="msmaval">off</span>
     </div>
