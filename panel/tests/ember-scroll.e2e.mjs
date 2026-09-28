@@ -234,6 +234,13 @@ try {
       await page.locator('.enabled-mods-toggle').click();
     await page.locator('#enabledMods .quick-disable').click();
     await frames(page);
+    // Measure the toasts at rest: #toast rises in on a transform transition,
+    // and on a CI runner a mid-flight box read as overlapping Undo at 900 px
+    // (PR run 36374509937).
+    await page.waitForFunction(() => ['.undo-toast', '#toast'].every((s) => {
+      const el = document.querySelector(s);
+      return !el || el.getAnimations().every((a) => a.playState !== 'running');
+    }), null, { timeout: 5000, polling: 20 });
     const toast = await page.locator('.undo-toast').boundingBox(), pane = await wrap.boundingBox();
     assert.ok(toast.y >= pane.y + pane.height - 1 && toast.y + toast.height <= height, `${width}: Undo covers content or leaves viewport`);
     const status = await page.locator('#toast.show').boundingBox();

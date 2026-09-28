@@ -16,7 +16,10 @@
 // crossed), on blur, and on Escape, which leaves focus where it was. It is
 // position: fixed, placed from the icon's box whenever it opens and clamped
 // into the window: below the icon in the page actions, above it in the status
-// bar, which is fixed at the bottom of the window.
+// bar, which is fixed at the bottom of the window. A side that has no room
+// flips to the other: Ember moves the status bar to the top, where "above"
+// was clamped onto the icon itself, so the tooltip covered the button it
+// describes and took its pointer.
 // Nothing here posts or stores anything.
 
 export const OPEN_DELAY_MS = 300;
@@ -28,13 +31,19 @@ const GAP = 8;
 let lastClosed = -Infinity;
 const tooltips = [];
 
-// Where a tooltip goes: its box beside the icon's, inside the window.
+// Where a tooltip goes: its box beside the icon's, inside the window, on the
+// preferred side (`upward`) when it fits there and on the other when only
+// that one does. `upward` in the answer is the side it went.
 export function tooltipPosition(icon, size, viewport, upward) {
+  const above = icon.top - GAP - size.height, below = icon.bottom + GAP;
+  const fitsAbove = above >= EDGE, fitsBelow = below + size.height <= viewport.height - EDGE;
+  const up = upward ? fitsAbove || !fitsBelow : !fitsBelow && fitsAbove;
   const left = upward ? icon.left : icon.right - size.width;
-  const top = upward ? icon.top - GAP - size.height : icon.bottom + GAP;
+  const top = up ? above : below;
   return {
     left: Math.max(EDGE, Math.min(left, viewport.width - EDGE - size.width)),
     top: Math.max(EDGE, Math.min(top, viewport.height - EDGE - size.height)),
+    upward: up,
   };
 }
 
@@ -54,7 +63,7 @@ function wire(host, upward) {
       { width: innerWidth, height: innerHeight }, upward);
     tip.style.left = at.left + 'px';
     tip.style.top = at.top + 'px';
-    tip.style.setProperty('--tooltip-origin', upward ? 'bottom left' : 'top right');
+    tip.style.setProperty('--tooltip-origin', `${at.upward ? 'bottom' : 'top'} ${upward ? 'left' : 'right'}`);
   };
   const isOpen = () => !tip.hidden;
   const open = (instant) => {
