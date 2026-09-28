@@ -87,7 +87,7 @@ const EXPECTED = [
 const DUNGEON_AT_4 = '4x its vanilla drop rate; where the game never rolls this family, the roll is opened at the normal-key chance first';
 const DAMAGE_AT_100 = 'adds 100% to the final hit after the game finishes its own calculation (+100% doubles it)';
 // Child rows sit in their parent's card, never in one of their own.
-const CHILD_CONTROLS = ['map_reveal_packs', 'map_reveal_spawn', 'mod_auto_prospect_bag'];
+const CHILD_CONTROLS = ['map_reveal_packs', 'map_reveal_spawn', 'mod_auto_prospect_bag', 'mod_hidden_loot_key'];
 
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
@@ -432,7 +432,8 @@ function modCards([id, children]) {
   const perCard = top.map((t) => ({ id: t.id || t.querySelector('input,select')?.id || t.className, controls: tops.filter((c) => t.contains(c)).map((c) => c.id) }));
   const childHome = children.filter((c) => document.getElementById(c) && card.contains(document.getElementById(c))).map((c) => {
     const holder = top.find((t) => t.contains(document.getElementById(c)));
-    return { child: c, parentInSame: !!holder && holder.querySelectorAll('input[type=checkbox]').length > 1 };
+    // The child's own control and its parent's switch (a child may be a select).
+    return { child: c, parentInSame: !!holder && holder.querySelectorAll('input[type=checkbox], select').length > 1 };
   });
   return {
     wrapper: bg(card), transparent: bg(card) === 'rgba(0, 0, 0, 0)', raised: raised.length, top: top.length,
@@ -445,7 +446,7 @@ async function modsCardsQol({ page }) {
   await subtab(page, 'subtab-qol');
   const got = await $(page, modCards, ['qolCard', CHILD_CONTROLS]);
   assert(got.transparent, `#qolCard is still drawn as a card (${got.wrapper})`);
-  assert(got.top === 12 && got.raised === 12, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 12`);
+  assert(got.top === 13 && got.raised === 13, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 13`);
   assert(got.unitsAreTops, `Quality of Life: the cards are not the column's ${got.units} mods`);
   assert(got.perCard.every((p) => p.controls.length === 1), 'A Quality of Life card does not hold exactly one mod: ' + JSON.stringify(got.perCard));
   assert(got.childHome.length === CHILD_CONTROLS.length && got.childHome.every((c) => c.parentInSame), 'A child row is not in its parent\'s card: ' + JSON.stringify(got.childHome));

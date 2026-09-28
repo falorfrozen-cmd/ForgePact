@@ -35,7 +35,8 @@
 // sandbox after the legacy ones.
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
-// sleep, and the Pet moves on switch of forgepact-pet-loot-stuck): the same
+// sleep, the Pet moves on switch of forgepact-pet-loot-stuck, and Sleep loot
+// your filter hides, whose show-key select is derived after them): the same
 // on, off, on and Turn off shape the legacy recording holds for
 // #mod_pet_quest_pickup, but nothing recorded stands for them, so their
 // contract is written out here as literals - on posts the mod's key with true and sends its plugin
@@ -77,10 +78,23 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 
 // Boolean mods added after every recording (see the header): the config key,
 // where the switch sits, and the plugin verb src/forgepact.py sends for it.
+// `restate` is a line the backend sends before the verb's `1` when the switch
+// turns on (Sleep loot your filter hides restates its show key, at its
+// default in a fresh sandbox, as map reveal restates its child).
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
+  { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
 ];
+// The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
+// child row), derived as #mod_skill_timer_style is but with literals, since no
+// recording has it: each code posts itself as an integer and sends
+// `hiddenloot key <code>`. Ctrl, None, then Left Alt, the default, again. The
+// select is disabled while its switch is off, and the native booleans leave
+// the switch off, so the switch is turned on around them (on repeats the
+// switch's first on, off its off).
+export const HIDDEN_LOOT_KEY_PARENT = 'mod_hidden_loot';
+export const HIDDEN_LOOT_KEY_CODES = [17, 0, 164];
 const setPost = (body) => [{ url: '/api/set', body }];
 
 // The tab (and Mods sub-tab) the legacy walk had open when it first reached
@@ -190,16 +204,32 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     if (switchId) switchedSlider(selector, switchId, keySupplement.steps);
   }
   // The boolean mods no recording has: their literal contract, last.
-  for (const { key, tab, sub, verb } of NATIVE_BOOLEANS) {
+  const nativeAt = {};
+  for (const { key, tab, sub, verb, restate } of NATIVE_BOOLEANS) {
     const selector = '#' + key;
     controls.push(selector);
     if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
     if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
-    const on = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} 1`] } } });
+    const onCmds = [...(restate ? [restate] : []), `${verb} 1`];
+    const on = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: onCmds } } });
     const off = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} 0`] } } });
     push(selector, 'click', { expect: { posts: { same: on }, cmds: { same: on } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    nativeAt[key] = { on, off };
   }
+  // The show key's select, after everything above, on the tab the native
+  // booleans left open (see HIDDEN_LOOT_KEY_CODES).
+  const parent = '#' + HIDDEN_LOOT_KEY_PARENT;
+  const { on: parentOn, off: parentOff } = nativeAt[HIDDEN_LOOT_KEY_PARENT];
+  controls.push('#mod_hidden_loot_key');
+  push(parent, 'click', { expect: { posts: { same: parentOn }, cmds: { same: parentOn } } });
+  for (const code of HIDDEN_LOOT_KEY_CODES) {
+    push('#mod_hidden_loot_key', 'select', {
+      value: String(code),
+      expect: { posts: { is: setPost({ key: 'mod_hidden_loot_key', value: code }) }, cmds: { is: [`hiddenloot key ${code}`] } },
+    });
+  }
+  push(parent, 'click', { expect: { posts: { same: parentOff }, cmds: { same: parentOff } } });
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),
     ...(keySupplement ? { keySupplementFrom } : {}), controls, steps,

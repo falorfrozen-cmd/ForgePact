@@ -4,13 +4,17 @@
 // contract's: three switch clicks per switched slider, one Turn off per mod
 // the list can show, one theme step per THEMES entry, after the one step that
 // opens Setup, where the theme is, then the key supplement's slider (Prime
-// Evil Parts), entered on the Loot tab, and last the boolean mods no recording
-// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life.
+// Evil Parts), entered on the Loot tab, then the boolean mods no recording
+// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, and last the show
+// key's select of Sleep loot your filter hides.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { NATIVE_BOOLEANS, derive, derivedFromPath, quickDisable, serialise, switchIdOf } from './oracle-derive.mjs';
+import {
+  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, derive, derivedFromPath, quickDisable, serialise, switchIdOf,
+} from './oracle-derive.mjs';
+import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../src/hidden-loot-keys.js';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
 
@@ -26,6 +30,9 @@ const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 // The native booleans' steps close the file: the Mods tab and its Quality of
 // Life sub-tab once, then on, off, on and Turn off for each.
 const NATIVE_STEPS = 2 + 4 * NATIVE_BOOLEANS.length;
+// Then the show key's select: its switch on, one select per code, its switch off.
+const KEY_STEPS = 2 + HIDDEN_LOOT_KEY_CODES.length;
+const TAIL_STEPS = NATIVE_STEPS + KEY_STEPS;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -89,7 +96,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 123 switch clicks, 59 Turn off buttons, one theme step per theme', () => {
+test('the counts: 123 switch clicks, 60 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -97,7 +104,7 @@ test('the counts: 123 switch clicks, 59 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 123);
-  assert.equal(quick.length, 59);
+  assert.equal(quick.length, 60);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -106,7 +113,9 @@ test('the counts: 123 switch clicks, 59 Turn off buttons, one theme step per the
   }
   for (const s of switches) assert.ok('is' in s.expect.posts && 'same' in s.expect.cmds, s.control);
   for (const s of quick) assert.ok('same' in s.expect.posts && 'same' in s.expect.cmds, s.control);
-  assert.equal(steps.filter((s) => NATIVE_BOOLEANS.some((n) => s.control === '#' + n.key)).length, 3 * NATIVE_BOOLEANS.length);
+  // Three clicks each, and two more on the show key's switch around its select.
+  assert.equal(steps.filter((s) => NATIVE_BOOLEANS.some((n) => s.control === '#' + n.key)).length, 3 * NATIVE_BOOLEANS.length + 2);
+  assert.equal(steps.filter((s) => s.control === '#mod_hidden_loot_key').length, HIDDEN_LOOT_KEY_CODES.length);
   assert.ok(LEGACY.steps.length + steps.length >= 600);
 });
 
@@ -136,21 +145,21 @@ test('the theme steps come after one tab:setup step, and only the key supplement
   assert.ok(!('expect' in steps[first - 1]), 'the Setup step carries an expectation');
   assert.equal(steps.filter((s) => s.control === 'tab:setup').length, 1);
   assert.deepEqual(steps.slice(first, first + THEMES.length).map((s) => s.control), THEMES.map(() => '#theme'));
-  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length - NATIVE_STEPS);
+  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length - TAIL_STEPS);
   assert.ok(!DERIVED.controls.includes('tab:setup'), 'a navigation step is not a control');
   // Without the key supplement, only the native booleans' steps follow the
   // theme, and everything before them is the same as with it.
   const bare = derive(LEGACY, 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json');
-  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length - NATIVE_STEPS);
+  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length - TAIL_STEPS);
   assert.ok(!('keySupplementFrom' in bare));
-  const head = bare.steps.length - NATIVE_STEPS;
+  const head = bare.steps.length - TAIL_STEPS;
   assert.deepEqual(bare.steps.slice(0, head), DERIVED.steps.slice(0, head));
 });
 
 test('the key supplement\'s slider gets the eight slider steps, entered on the Loot tab after the theme', () => {
   assert.deepEqual(KEY_SLIDERS, ['input[type=range][data-sec="keys"][data-key="primeevil"]']);
   const steps = DERIVED.steps;
-  const at = steps.length - 9 - NATIVE_STEPS;
+  const at = steps.length - 9 - TAIL_STEPS;
   // The theme left Setup open, so the Loot tab is entered again first.
   assert.equal(steps[at - 1].control, '#theme');
   assert.deepEqual(steps[at], { step: at, control: 'tab:loot', action: 'click' });
@@ -168,13 +177,17 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, then the native booleans', () => {
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, then the show key', () => {
   assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil',
-    ...NATIVE_BOOLEANS.map((n) => '#' + n.key)]);
+    ...NATIVE_BOOLEANS.map((n) => '#' + n.key), '#mod_hidden_loot_key']);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick']);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_hidden_loot']);
+  // Only Sleep loot your filter hides restates a child when it turns on: its
+  // show key, at the default a fresh sandbox holds.
+  assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
+    [['mod_hidden_loot', `hiddenloot key ${HIDDEN_LOOT_KEY_DEFAULT}`]]);
   for (const n of NATIVE_BOOLEANS) {
     assert.ok(BOOLEAN_MODS.includes(n.key), `${n.key}: the Enabled mods list shows it, so it has a Turn off button`);
     const cb = '#' + n.key;
@@ -188,7 +201,7 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   assert.equal(nav.findLast((c) => c.startsWith('tab:')), 'tab:mods');
   assert.equal(nav.at(-1), 'subtab:qol');
   const steps = DERIVED.steps;
-  const at = steps.length - NATIVE_STEPS;
+  const at = steps.length - TAIL_STEPS;
   // Every earlier step (the key supplement's last one included) comes first,
   // so none of their indexes moved.
   assert.equal(steps[at - 1].control, KEY_SLIDERS[0]);
@@ -196,18 +209,43 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   for (const n of NATIVE_BOOLEANS) assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), n.key);
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
   assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
-  NATIVE_BOOLEANS.forEach(({ key, verb }, i) => {
+  NATIVE_BOOLEANS.forEach(({ key, verb, restate }, i) => {
     const first = at + 2 + 4 * i;
     const cb = '#' + key;
     assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action]),
       [[cb, 'click'], [cb, 'click'], [cb, 'click'], [quickDisable(key), 'click']]);
     const on = steps[first];
     const off = steps[first + 1];
-    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
+    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] },
+      cmds: { is: [...(restate ? [restate] : []), `${verb} 1`] } });
     assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
     assert.deepEqual(steps[first + 2].expect, { posts: { same: on.step }, cmds: { same: on.step } });
     assert.deepEqual(steps[first + 3].expect, { posts: { same: off.step }, cmds: { same: off.step } });
   });
+});
+
+test('the show key\'s select closes the file: its switch on, Ctrl, None, Left Alt, its switch off', () => {
+  // Codes the key list offers, the last one the saved default.
+  const offered = HIDDEN_LOOT_KEYS.map(([code]) => code);
+  assert.deepEqual(HIDDEN_LOOT_KEY_CODES, [17, 0, 164]);
+  for (const code of HIDDEN_LOOT_KEY_CODES) assert.ok(offered.includes(code), code);
+  assert.equal(HIDDEN_LOOT_KEY_CODES.at(-1), HIDDEN_LOOT_KEY_DEFAULT);
+  const steps = DERIVED.steps;
+  const at = steps.length - KEY_STEPS;
+  const parent = '#' + HIDDEN_LOOT_KEY_PARENT;
+  const nativeAt = steps.length - TAIL_STEPS + 2 + 4 * NATIVE_BOOLEANS.findIndex((n) => n.key === HIDDEN_LOOT_KEY_PARENT);
+  const [on, off] = [nativeAt, nativeAt + 1];
+  assert.equal(steps[on].control, parent);
+  // The switch's own steps left it off, and the select is disabled while it is.
+  assert.equal(steps[at - 1].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  assert.deepEqual(steps[at], { step: at, control: parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
+  HIDDEN_LOOT_KEY_CODES.forEach((code, i) => {
+    assert.deepEqual(steps[at + 1 + i], {
+      step: at + 1 + i, control: '#mod_hidden_loot_key', action: 'select', value: String(code),
+      expect: { posts: { is: [{ url: '/api/set', body: { key: 'mod_hidden_loot_key', value: code } }] }, cmds: { is: [`hiddenloot key ${code}`] } },
+    });
+  });
+  assert.deepEqual(steps.at(-1), { step: steps.length - 1, control: parent, action: 'click', expect: { posts: { same: off }, cmds: { same: off } } });
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {

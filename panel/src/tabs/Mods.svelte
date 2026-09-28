@@ -1,3 +1,7 @@
+<script>
+  import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../hidden-loot-keys.js';
+</script>
+
 <!-- Mods tab: the Quality of Life and Items panels, switched by App.svelte's sub-tab strip. Neither repeats its
      sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one.
      A child row is marked by its indent (app.css .feature-with-child), never by a glyph (finish review F6). -->
@@ -72,6 +76,17 @@
         <span class="lbl" style="width:auto;flex:1">Far scenery sleep<br><span class="feature-description">Lets the game skip a zone's far trees, bushes, hay, rocks and fences every frame, and wakes them before they come into view, so busy zones run lighter. Shrines, chests, traps and monsters are never touched. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_far_sleep"><span class="sl"></span></label>
         <span class="val" id="mfsval">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Sleep loot your filter hides<br><span class="feature-description">Items your loot filter hides are put to sleep as they drop, so the game stops spending time on them every frame. Hold Left Alt, or the key you pick below, to see them and pick them up; let go and they hide again. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_hidden_loot"><span class="sl"></span></label>
+        <span class="val" id="mhlval">off</span>
+    </div>
+    <div class="row" id="mod_hidden_loot_key_row">
+        <span class="lbl" style="width:auto;flex:1">Show hidden loot while held<br><span class="feature-description">While you hold this key or mouse button with the game in front, the items your filter hides are shown. None turns the key off.</span></span>
+        <select class="style-select" id="mod_hidden_loot_key">
+            {#each HIDDEN_LOOT_KEYS as [code, name] (code)}<option value={code} selected={code === HIDDEN_LOOT_KEY_DEFAULT}>{name}</option>{/each}
+        </select>
     </div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>

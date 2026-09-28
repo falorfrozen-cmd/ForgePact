@@ -47,7 +47,9 @@
   "#theme",
   "#sw_keys_primeevil",
   "#mod_far_sleep",
-  "#mod_pet_loot_unstick"
+  "#mod_pet_loot_unstick",
+  "#mod_hidden_loot",
+  "#mod_hidden_loot_key"
  ],
  "steps": [
   {
@@ -4854,6 +4856,177 @@
     },
     "cmds": {
      "same": 414
+    }
+   }
+  },
+  {
+   "step": 417,
+   "control": "#mod_hidden_loot",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_hidden_loot",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "hiddenloot key 164",
+      "hiddenloot 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 418,
+   "control": "#mod_hidden_loot",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_hidden_loot",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "hiddenloot 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 419,
+   "control": "#mod_hidden_loot",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 417
+    },
+    "cmds": {
+     "same": 417
+    }
+   }
+  },
+  {
+   "step": 420,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_hidden_loot\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 418
+    },
+    "cmds": {
+     "same": 418
+    }
+   }
+  },
+  {
+   "step": 421,
+   "control": "#mod_hidden_loot",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 417
+    },
+    "cmds": {
+     "same": 417
+    }
+   }
+  },
+  {
+   "step": 422,
+   "control": "#mod_hidden_loot_key",
+   "action": "select",
+   "value": "17",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_hidden_loot_key",
+        "value": 17
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "hiddenloot key 17"
+     ]
+    }
+   }
+  },
+  {
+   "step": 423,
+   "control": "#mod_hidden_loot_key",
+   "action": "select",
+   "value": "0",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_hidden_loot_key",
+        "value": 0
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "hiddenloot key 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 424,
+   "control": "#mod_hidden_loot_key",
+   "action": "select",
+   "value": "164",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_hidden_loot_key",
+        "value": 164
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "hiddenloot key 164"
+     ]
+    }
+   }
+  },
+  {
+   "step": 425,
+   "control": "#mod_hidden_loot",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 418
+    },
+    "cmds": {
+     "same": 418
     }
    }
   }

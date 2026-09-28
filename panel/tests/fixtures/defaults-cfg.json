@@ -19,6 +19,8 @@
  "mod_restart_anytime": false,
  "mod_craft_mats": false,
  "mod_far_sleep": false,
+ "mod_hidden_loot": false,
+ "mod_hidden_loot_key": 164,
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",

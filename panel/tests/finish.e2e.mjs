@@ -459,7 +459,7 @@ async function noGlyphs({ page }) {
   await tab(page, 'mods');
   await $(page, () => document.getElementById('subtab-qol').click());
   await frames(page);
-  const indent = await $(page, () => ['map_reveal_packs_row', 'map_reveal_spawn_row', 'mod_auto_prospect_bag_row'].map((id) => {
+  const indent = await $(page, () => ['map_reveal_packs_row', 'map_reveal_spawn_row', 'mod_auto_prospect_bag_row', 'mod_hidden_loot_key_row'].map((id) => {
     const row = document.getElementById(id);
     const parent = row.parentElement.firstElementChild;
     return { id, indent: Math.round(row.getBoundingClientRect().left - parent.getBoundingClientRect().left), label: row.querySelector('.lbl').firstChild.textContent.trim() };
