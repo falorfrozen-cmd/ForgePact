@@ -33,44 +33,20 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 import offline_launcher
 
+# The Satanic Zone pools are all the panel takes from the SDK, and the import
+# names nothing else: a name from one of the SDK's generated tables
+# (GameObject, GameScript, ...) builds that table's whole IntEnum on every
+# panel start, sandbox and exe launch, used or not. Hub guide: ForgePact Known
+# Limitations item 31. tests/test_panel_sdk_import.py pins it.
 try:
-    from hs_game_sdk import (
-        GameObject,
-        GameScript,
-        StatId,
-        PROC_FAMILIES,
-        EquipmentSlot,
-        PlayerEquipment,
-        scan_relic_levels,
-        ModDefinition,
-        GLOBAL_MOD_REGISTRY,
-        SATANIC_BUFFS,
-        SATANIC_DEBUFFS,
-    )
+    from hs_game_sdk import SATANIC_BUFFS, SATANIC_DEBUFFS
 except ImportError:
     _sdk_path = Path(__file__).resolve().parents[2] / "hs-game-sdk" / "python"
     if _sdk_path.exists() and str(_sdk_path) not in sys.path:
         sys.path.insert(0, str(_sdk_path))
     try:
-        from hs_game_sdk import (
-            GameObject,
-            GameScript,
-            StatId,
-            PROC_FAMILIES,
-            EquipmentSlot,
-            PlayerEquipment,
-            scan_relic_levels,
-            ModDefinition,
-            GLOBAL_MOD_REGISTRY,
-            SATANIC_BUFFS,
-            SATANIC_DEBUFFS,
-        )
+        from hs_game_sdk import SATANIC_BUFFS, SATANIC_DEBUFFS
     except Exception:
-        GameObject = None
-        GameScript = None
-        StatId = None
-        PROC_FAMILIES = {}
-        GLOBAL_MOD_REGISTRY = None
         SATANIC_BUFFS = ()
         SATANIC_DEBUFFS = ()
 
