@@ -587,10 +587,12 @@ item)`, `not-run (instrument: cell point unconfirmed)` or `not-run
 ### Phase A' shapes
 
 Research build `plugin_build\BloodPactPlugin_rel.phaseA-e18d3198.dll`, build sha256=e18d3198e5e24e7357f34a80d91eee0b4b91d679cbdf9d6c80692c3ec5c79a3f - the kept copy of Live 1's build, unchanged: no rebuild for Live 1b. Every row Live 1b arms is already a `craftprobe` row of that build (checked by name against the table on 2026-09-28): `InventoryGridCanAddToStack`, `InventoryGridAddToStack`, `InventoryGridAddItemToTab`, `InvGridClearItemNode`, `StashAddToStack`, `InventoryGridAddItemPos`, `InventoryGridAddItem`, `InventoryGridHasSpace`, `ValidateItem`, `ChangeItemOwner`, `RemoveItemFromMap`, `AddItemToMap`, `InventorySwapItemsNew`, `StashGridAddItem`, `GridAddItem`, `GridRemoveItem`, `s_InvNode`, `InvStartDragging`, `InvCopyItemDragData`, `InvCopyItemToInvDragData`, `InventoryStackUpdateAndRemove`, `StashAddItemOnline`, `GetStackOpLocationFromGridType`, `GetItemOwnerFromStackOpLocation`, `InvGrid15345` and the control `CheckPlayerInteraction`, plus `GetItemFromFingerprint` for the lookups.
-Live 1c and Live 1d ran on the same kept copy, also with no rebuild: the rows
-Live 1c added to the armed list (`GetItemFromFingerprint`, `GetItemMap`,
-`GetStashMaxTabs`, `GridAddToStack`, `UiASplitStack`, `ItemCheckHash`,
-`GetItemOwnerStr`) and every row Live 1d calls are rows of the same table.
+Live 1c, Live 1d and Live 1e ran on the same kept copy, also with no rebuild:
+the rows Live 1c added to the armed list (`GetItemFromFingerprint`,
+`GetItemMap`, `GetStashMaxTabs`, `GridAddToStack`, `UiASplitStack`,
+`ItemCheckHash`, `GetItemOwnerStr`), the row Live 1e added
+(`GetItemPreferredGrid`), and every row Live 1d and Live 1e call are rows of
+the same table.
 
 The lines Live 1b runs, in order, in the same form as § Phase A shapes (the
 command up to `confirm`, then `-> expect:`). What Live 1 changed about them:
@@ -845,6 +847,62 @@ sub-tab on show (`<mg>` measured as the bag grid node itself, rebound to the
 sub-tab); it answered true and the sum rose by one (§ Live 1c results,
 `byname-merge`).
 
+**The special tabs' routes, replayed by name (Live 1e)** (checks
+`byname-material-new`, `byname-merge-whole`, `byname-socket`,
+`byname-socket-merge`). Live 1e's owner moved one new material identity and
+three socketables by hand (§ Live 1e results); these lines replay what those
+moves logged, in logged order, `s_InvNode` left out as above. Placeholders,
+read in the same session: `<bag>` the bag grid node, rebound to the bag's
+Materials or Socket sub-tab on show; `<sg>` the `StashGrid` node; `<K_Y>` a
+bag material whose identity has no stack on the Materials tab (Live 1e: base
+id 73, a stack of 908); `<K_X>` a bag material whose identity the hand move
+had just put on the tab, and `<n>` its count (Live 1e: base id 71, 15);
+`<x>,<y>` a key's anchor cell in the bag's sub-tab; `<K_SK2>` a bag
+socketable of a kind the tab accepts (a rune, a gem or an orb, never a jewel
+or an Incarnation Gem) whose identity has no stack on the Socketable tab;
+`<K_SKU>` a one-unit socketable whose identity is on the tab; `<skarr>` the
+Socketable tab's array exactly as the hand move logged it (one row long, a
+different array for each item in Live 1e, and matched to no `path:` form in
+that session).
+
+A new material identity (Materials tab and the bag's Materials sub-tab on
+show), then the source clear while the key is still in a bag cell, then the
+owner step, only after `success=true`. The hand move's first `ValidateItem`
+(self and other the bag grid) was not in Live 1e's replay:
+
+```
+craftprobe call StashAddToStack id:<bag> other:<bag> path:Controller_obj.stashMaterialTab 9 2 fp:<K_Y> 1 0 confirm   -> expect: false (no stack of that identity on the tab)
+craftprobe call GridAddItem id:<bag> other:<bag> path:Controller_obj.stashMaterialTab fp:<K_Y> 0 undefined confirm   -> expect: success=true and the landing x, y
+craftprobe call ValidateItem id:<sg> other:<bag> fp:<K_Y> confirm   -> expect: ""; only after success=true
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_Y
+craftprobe call ChangeItemOwner id:<sg> other:<bag> 0 9 <K_Y> confirm   -> expect: undefined; K_Y undefined on map 0 and an item struct on map 9
+```
+
+A whole stack merged onto its identity's stack (same tabs on show), the
+source clear only after the tab's sum rose by exactly `<n>`:
+
+```
+craftprobe call StashAddToStack id:<bag> other:<bag> path:Controller_obj.stashMaterialTab 9 2 fp:<K_X> <n> 0 confirm   -> expect: true, and the tab's sum for that base id up by exactly <n>
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_X
+```
+
+The Socketable tab (Socketable tab and the bag's Socket sub-tab on show),
+**not run in Live 1e** (both checks `not-run`, § Live 1e results): the new
+path as the rune and the gem logged it by hand, the sixth argument being the
+8 those moves logged, then the merge as the orb logged it. `<skarr>` has to be
+matched to a readable form first; without one neither block can run.
+
+```
+craftprobe call ValidateItem id:<bag> other:<bag> fp:<K_SK2> confirm   -> expect: ""
+craftprobe call StashAddToStack id:<bag> other:<bag> <skarr> 9 2 fp:<K_SK2> 1 8 confirm   -> expect: false
+craftprobe call GridAddItem id:<bag> other:<bag> <skarr> fp:<K_SK2> 0 undefined confirm   -> expect: success=true
+craftprobe call ValidateItem id:<sg> other:<bag> fp:<K_SK2> confirm   -> expect: ""; only after success=true
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_SK2; only if the placement left it there
+craftprobe call ChangeItemOwner id:<sg> other:<bag> 0 9 <K_SK2> confirm   -> expect: undefined
+craftprobe call StashAddToStack id:<bag> other:<bag> <skarr> 9 2 fp:<K_SKU> 1 8 confirm   -> expect: true, and the tab's count for that identity up by 1
+craftprobe call InvGridClearItemNode id:<bag> other:<bag> path:id:<bag>.nodeGrid.<y>.<x> undefined confirm   -> expect: undefined, and no bag cell holds K_SKU
+```
+
 **Undo**, for a placement whose maps end inconsistent (`grid-move-map` or
 `grid-move-shared-map` fails), before any close: take the item back out of
 the destination array with the remove shape `crafting-materials-research.md`
@@ -943,6 +1001,31 @@ by-name call follows the recording rule under § Instrument; each check is
 `pass`, `fail`, `not-observed` (with what was supplied) or `not-run
 (instrument: ...)`.
 
+### Live procedure 1e
+
+The procedure is the one in this workorder's context file,
+`.claude/workorders/forgepact-68-move-all-context.md` § "Live procedure 1e"
+(kept on the owner's machine with the plan). **Hand-assisted**, by the
+owner's decision of 2026-09-28 to research the three routes Live 1d left
+unmeasured (the Socketable tab with the bag's Socket sub-tab as the source, a
+new material identity on the Materials tab, and a merge of more than one
+unit) before the player build: the same research build and slot, the saves
+Live 1d restored, and the same positive controls first. Then the owner's own
+Ctrl + left click, one ask at a time, each after a re-arm and a baseline
+`craftprobe show` so every logged line belongs to that ask: a socketable
+from the bag's socket view into the Socketable tab, and a one-unit new
+material identity into the Materials tab. After each ask the operator read
+every armed row that logged, both grids and the moved key's lookups. Then,
+with no person, by-name replays of those logged sequences with a second item
+of the same kind (§ Phase A' shapes, "The special tabs' routes, replayed by
+name"), a socketable unit merge, and a merge by name of a whole material
+stack; then the close by name only, the reopen, and the saved files read with
+`tools/save_item_keys.py`, with a positive control on each side. Every by-name
+call follows the recording rule under § Instrument; each check is `pass`,
+`fail`, `not-observed` (with what was supplied) or `not-run (instrument:
+...)`. Each hand-move result is **measured**, and its input is a person, not
+the instrument.
+
 ## Results
 
 ### Live 1 results
@@ -985,8 +1068,8 @@ lists every rejected or unproductive shape in full.
 Every call shape and gesture Live 1 tried that was rejected or moved nothing,
 with exactly what was supplied, per the toolkit `AGENTS.md` § "Never Call an
 Address You Resolved by Hand" (a rejected call shape is a labelling problem to
-revisit, not a settled dead end), and after them the same for Live 1b, Live 1c
-and Live 1d (the session is named in the first column). The last column is
+revisit, not a settled dead end), and after them the same for Live 1b, Live 1c,
+Live 1d and Live 1e (the session is named in the first column). The last column is
 what § Static reading 2 and the later sessions say the reply means; none of
 them is a route negative.
 
@@ -1007,6 +1090,8 @@ them is a route negative.
 | Live 1c: `StashAddToStack` then `ChangeItemOwner`, shared tab 1 (step 8) | bag grid / bag grid, then stash grid / bag grid | shared tab 1's array, 9, 2, a class 10 key as `fp:`, 1, 0; then 0, 9 and the key as text | stash shared tab 1, bag page 0 | `false`; then `undefined`, and the key answered on no map while it still sat in its bag cell | no placement ran, so the owner step alone left the half state the game's save does not survive; reversed at once with the owner step from 9 to 0, after which the key answered on map 0 again. The owner step runs only after a confirmed placement |
 | Live 1c: `var Controller_obj 0 stashPersonalGrid` (step 7) | - | the member name | stash personal tab | "the instance has no variable stashPersonalGrid" | that candidate array does not exist on this build; the personal tab's array is the stash grid node's `nodeGrid` with the tab on show |
 | Live 1d: `GridAddItem`, full shared tab 2 (step 6) | bag grid / bag grid | shared tab 2's array (`path:id:<sg>.nodeGrid`, 0 empty cells), a class 10 key as `fp:`, 0, `undefined` | stash shared tab 2, bag page 0 | a struct with `success=false`; nothing changed on any tab or in the bag | the game's no-room answer, the same as the owner's hand move against that tab; the placement searches only the array it is handed |
+| Live 1e: Ctrl + left click, by hand (H1, H1b) | - | the owner's own quick move on two jewels (base ids 109 and 110, the first being `<K_SK1>`) and an Incarnation Gem (base id 136) in the bag's socket view | stash Socketable tab, bag Socket sub-tab | `ValidateItem` once per item, self and other the bag grid, answering empty text, as it does for an accepted item; no other armed row logged; every item stayed in its bag cell | the game does not let these kinds into the Socketable tab (the owner: a limit the game's designers set); it stops the move after `ValidateItem` and before any armed placement routine, and nothing in the logged answer shows the refusal, so a by-name call would not meet it |
+| Live 1e: `node var Controller_obj 0 stashSocketItemSlot` (step 2) | - | the member name, read the way `node var` reads a container | stash Socketable tab | an array of 106 entries with no fingerprint read, while the tab visibly held items | not the Socketable tab's container as read this way: `menulayout` lists one one-cell `StashSocketGrid` node per item, and the save keeps the tab under `stash.hss` `socket_tab`; not a route result |
 
 Live 1 did not try Ctrl + left click, the game's own quick move. Live 1b
 could not send it (its click control failed), and in Live 1c the owner made
@@ -1125,6 +1210,46 @@ move of the same tab kind.
 | saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | `<K_P>` under `herosiege13.hss` `inventory.personal_stash`; `<K_Q>` under `stash.hss` `stash_tab_1` | pass |
 | saved-bag-lacks-keys | no moved key under a bag container of `inventory_order_13.hss`; the pre-session copies list every key there, and the unmoved `<K_R>` is still there | - | - | neither `<K_P>` nor `<K_Q>` under a bag container after; the pre-session copies listed all three under `inventory_tab_0`; `<K_R>` still under it | pass |
 
+### Live 1e results
+
+Live 1e ran on 2026-09-28 (research build e18d3198, slot 14,
+**hand-assisted**, on the saves Live 1d restored; capture
+`.claude/workorders/forgepact-68-move-all-live-1e.md` on the owner's
+machine). Every session-validity check passed; twelve checks passed and two
+were `not-run`. **A new material identity and a whole-stack merge moved by
+name** and held through a close, a reopen and the saved files. **The
+Socketable tab moved by hand only**: the game refused both jewel kinds and
+the Incarnation Gem the procedure first picked, the owner then offered a
+rune, a gem and an orb (moved from the tab into the bag by hand first, a
+direction not under test), and those three went back in, two as new
+placements and one as a merge; with those used, no socketable of an accepted
+kind was left for a by-name replay. The bag grid node was 262399 (it rebinds
+to the bag's Socket and Materials sub-tabs), the stash grid node 262443, the
+stash window 262371; the bag's materials matched Live 1c's reads (base ids
+71, 73 and 72 with 15, 908 and 934, none on the Materials tab).
+`hs_give_item` made a one-unit socketable too, so it is not limited to
+class 14. `GetItemPreferredGrid`, the row this session added, logged only
+during the reverse move, never on a move from the bag into the stash. Each
+hand-move row is **measured**, with a person as the input; the logged
+sequence is quoted in the Logged shape column in logged order.
+
+| Check | What it reads | Logged shape | Supplied shape | Result | Verdict |
+|---|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build of § Phase A' shapes | - | - | lease `dll_sha256` e18d3198..., equal to the build's | pass |
+| marker | `craftprobe` first line | - | - | `craftprobe: phase1k rows=287 - research instrument ...` | pass |
+| control | `craftprobe hook` line, `CheckPlayerInteraction` rising | - | - | `286 detoured, 0 failed, 1 held`; `calls=11340`, then `calls=21420` five seconds later | pass |
+| byname-control | the hook line, the armed rows idle after each re-arm, and by-name calls dispatching | - | the by-name calls of steps 5 and 6 | every re-arm's baseline read 0 calls on every armed row; every by-name call dispatched, and each array argument printed the same array id the matching hand move logged | pass |
+| hand-socket | the owner's Ctrl + left click from the bag's socket view, Socketable tab shown: where each item lands, every row logged, the path taken | refused items: `ValidateItem` only (self and other the bag grid, answer empty text). Rune (base id 31) and gem (38), the new path: `ValidateItem` self and other the bag grid, empty text; `StashAddToStack` self and other the bag grid, a one-row array (a different one for each item), 9, 2, the item, 1, 8, answer false; `GridAddItem` self and other the bag grid, the same array, the item, 0, undefined, answer tab 0, x 0, y 0, `success=true`; `s_InvNode` (self a struct, other the bag grid) with 0, 0, the item; `ValidateItem` self the stash grid, other the bag grid, empty text; `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key as text, answer undefined. Orb (118), the merge path: `ValidateItem`; `StashAddToStack` the same shape, answer true; `InvGridClearItemNode` self and other the bag grid, the orb's bag cell node, undefined. No `GetStashMaxTabs` | a person | two jewels (base ids 109 and 110, the first `<K_SK1>`) and an Incarnation Gem (136) stayed in their bag cells: the game refuses them for this tab. The rune, the gem and the orb each left the bag's socket view (23, 22, 21, then 20 keys) and reached the tab; the rune and the gem were saved under `stash.hss` `socket_tab`. The one-row array was not matched to a `path:` form: `Controller_obj.stashSocketItemSlot` read no fingerprint while the tab held items | pass (on the rune, gem and orb; `<K_SK1>`, a jewel, was refused by the game) |
+| hand-material-new | the owner's Ctrl + left click on `<K_XU>` (base id 71, one unit given from `<K_X>`'s template, bag cell 0,0), bag Materials sub-tab and Materials tab shown | `ValidateItem` self and other the bag grid, empty text; `StashAddToStack` self and other the bag grid, `Controller_obj.stashMaterialTab`'s array (18 rows), 9, 2, the item, 1, 0, answer false; `GridAddItem` self and other the bag grid, the same array, the item, 0, undefined, answer x 3, y 15, `success=true`; `s_InvNode` with 3, 15, the item; `ValidateItem` self the stash grid, other the bag grid; `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key, answer undefined. No clear logged | a person | the Materials tab gained base id 71 with 1, in the cell Live 1c's hand-material landed in; `<K_XU>` left the bag | pass |
+| byname-material-new | `<K_Y>` (base id 73, 908, bag cell 14,4): the tab's sum for its base id equal to its count, in no bag cell, its lookups as `<K_XU>`'s after the hand move | hand-material-new | `StashAddToStack` self and other the bag grid, `path:Controller_obj.stashMaterialTab` (the same array id as the hand move's), 9, 2, `fp:<K_Y>`, 1, 0; `GridAddItem` the same self, other and array, `fp:<K_Y>`, 0, undefined; `ValidateItem` self the stash grid, other the bag grid; `InvGridClearItemNode` self and other the bag grid, `path:id:<bag>.nodeGrid.4.14`, undefined; `ChangeItemOwner` self the stash grid, other the bag grid, 0, 9, the key | false; x 3, y 16, `success=true`; empty text; undefined, the reply's node naming `<K_Y>` at 14,4; undefined. The tab's sum for base id 73 was 908; `<K_Y>` in no bag cell; undefined on map 0 and an item struct on map 9, as `<K_XU>` | pass |
+| byname-merge-whole | `<K_X>` (base id 71, 15, bag cell 14,3) merged by name onto the unit the hand move placed: the tab's sum up by exactly its count, its cell gone | Live 1c hand-merge (fifth argument 1) | `StashAddToStack` self and other the bag grid, `path:Controller_obj.stashMaterialTab`, 9, 2, `fp:<K_X>`, 15 (the whole count), 0; then `InvGridClearItemNode` self and other the bag grid, `path:id:<bag>.nodeGrid.3.14`, undefined | true; the sum for base id 71 rose 1 to 16, by exactly 15; the clear's node named `<K_X>` at 14,3; `<K_X>` in no bag cell | pass |
+| byname-socket | a second socketable identity off the tab placed by name, replaying hand-socket's new path | hand-socket's rune and gem | nothing | the only rune, gem and orb in the bag were used by hand-socket; the bag's other socketables are jewels and Incarnation Gems, which the game refuses for this tab | not-run (instrument: no second socketable identity off the tab) |
+| byname-socket-merge | a one-unit socketable merged by name onto its identity's stack on the tab | hand-socket's orb | nothing | the one given unit, `<K_SKU>`, is a jewel; the game refuses that kind before any armed placement routine, so a by-name merge would force it past the refusal; not attempted, and `<K_SKU>` stayed untouched in its bag cell | not-run (instrument: the only given unit is a kind the game refuses for this tab) |
+| close-survives | the game after the stash close, by name only | - | - | the first by-name close answered "not confirmed"; after a mouse move `menulayout` no longer listed the stash; the game kept running | pass |
+| reopen-shows | every moved key where it landed after a reopen, in no bag cell | - | - | the Materials sums for base ids 71 and 73 still 16 and 908; the bag's Materials sub-tab held only the untouched base id 72 stack; the bag's socket view still 20 keys, the rune, the gem and the orb absent | pass |
+| saved-stash-has-keys | each moved key under a stash container in exactly one file (`save_item_keys.py`) | - | - | the rune and the gem under `stash.hss` `socket_tab`; `<K_XU>` and `<K_Y>` under `stash.hss` `material_tab`; the merged `<K_X>` and orb in no live file (exempt) | pass |
+| saved-bag-lacks-keys | no moved key under a bag container of `inventory_order_13.hss`, after the pre-session copies' read showed the bag keys in a bag container | - | - | none under a bag container after; the pre-session copies listed `<K_X>` and `<K_Y>` under `inventory_material_tab` (the rune and the gem started in `stash.hss` `socket_tab`, and `<K_XU>` did not exist yet) | pass |
+
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
@@ -1156,7 +1281,10 @@ any call, and no route that can pick another tab is used) stands either way.
 In the lines below, "the bag grid" is the bag's `InventoryGrid` node (the
 same node when the bag's Materials sub-tab is on show), "the stash grid" the
 `StashGrid` node, which rebinds to the stash tab on show, and "the shown
-tab's array" that node's `nodeGrid` read with the tab on show.
+tab's array" that node's `nodeGrid` read with the tab on show. Live 1e set
+the last three lines, each from that session alone: `socketRoute`, written
+per path (`new: ...; merge: ...`, the source being the bag's Socket
+sub-tab), `newMaterialRoute` and `wholeStackMerge`.
 
 gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
 stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
@@ -1165,3 +1293,6 @@ bagSubtabRoute: byname (cells readable: the bag's Materials sub-tab is New_Inven
 gestureRoute: ctrl-click (by hand: Live 1c hand-personal, hand-shared, hand-material and hand-merge, each the owner's own Ctrl + left click moving the item into the tab on show; a scripted click through hs_input never reached the grid's pick-up, Live 1b click-control, so no scripted gesture is measured)
 sourceCellClear: separate step (Live 1d byname-personal-clear and byname-shared: a by-name GridAddItem leaves the item in its bag cells, and InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node, nodeGrid [y][x], and undefined empties them; it runs after a success=true placement and before any owner step, because it looks the item up by fingerprint while the item is still on map 0. After a merge the same call follows StashAddToStack's true, as the hand merge logged it, Live 1c hand-merge and byname-merge. The hand grid moves emptied the bag cell with no armed row logging a clear: which routine does it there is not observed)
 targetTabRule: stays in the bag (Live 1c hand-full: the owner's Ctrl + left click against the full shared tab 2 logged StashAddToStack false and GridAddItem success=false on that tab's own array and nothing after them - no GetStashMaxTabs, no other tab tried; the item stayed in its bag cells and the full tab's filled count was unchanged. The positive control was hand-personal and hand-shared in the same session. Live 1d byname-full answered the same by name, as expected by construction)
+socketRoute: new: not-observed (Live 1e byname-socket not-run: no second socketable of an accepted kind was left off the tab; by hand, Live 1e hand-socket, a rune and a gem from the bag's Socket sub-tab took ValidateItem with self = other = the bag grid, StashAddToStack with the same self and other, a one-row array, 9, 2, the item, 1, 8, answering false, GridAddItem on that array with 0 and undefined answering success=true at x 0, y 0, ValidateItem with self the stash grid and other the bag grid, and the owner step 0 to 9 as on a shared tab; the one-row array was different for each item and was matched to no readable path, Controller_obj.stashSocketItemSlot reading no fingerprint while the tab held items; not replayed by name); merge: not-observed (Live 1e byname-socket-merge not-run: the one given unit was a jewel; by hand an orb merged through StashAddToStack of the same shape answering true, then InvGridClearItemNode on its bag cell, as the Materials merge does; not replayed by name). The game refuses jewels (base ids 109 and 110) and Incarnation Gems (136) for this tab after ValidateItem and before any armed placement routine, with nothing in the logged answer showing it (Live 1e H1 and H1b), so no by-name shape carries that refusal. The tab saves as stash.hss socket_tab, and menulayout lists one one-cell StashSocketGrid node per item
+newMaterialRoute: byname (Live 1e byname-material-new, replaying hand-material-new; saved-stash-has-keys and saved-bag-lacks-keys pass): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answering false (no stack of that identity on the tab); GridAddItem with the same self, other and array, the item, 0, undefined, answering success=true with the landing x, y; ValidateItem with self the stash grid and other the bag grid; the source clear, InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined, because the placement left the item in its bag cell; then the owner step 0 to 9, ChangeItemOwner with self the stash grid, other the bag grid, 0, 9 and the key as text, answering undefined. The whole stack (908) landed in one cell; the key then answered undefined on map 0 and an item struct on map 9, as the hand-placed unit did, and saved in stash.hss under material_tab. The hand move's first ValidateItem (self = other = the bag grid) was not in the replay
+wholeStackMerge: byname (Live 1e byname-merge-whole): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, its whole count (15), 0, answered true, and the tab's sum for that base id rose from 1 to 16, by exactly the count; then InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined emptied the bag cell. Measured on the Materials tab only; every hand merge logged a fifth argument of 1 (Live 1c hand-merge, Live 1e's orb on the Socketable tab)
