@@ -88,6 +88,15 @@ async function injectFaults(page, pattern, net) {
       const response = await route.fetch();
       if (net.failure === 'after') return await route.abort('failed');
       return await route.fulfill({ response });
+    } catch (e) {
+      // A POST still held by `net.delay` when its group ends is released
+      // after the group's sandbox has stopped (ECONNREFUSED) or its page has
+      // closed. Playwright runs this handler outside the page, so a rejection
+      // here was an unhandled one that killed the whole suite (seen on a CI
+      // runner, where the delay outlives the group). A group that needed this
+      // request still fails on its own assertions.
+      net.lateErrors = (net.lateErrors || 0) + 1;
+      await route.abort('failed').catch(() => {});
     } finally {
       net.inflight--;
     }
@@ -97,9 +106,15 @@ async function injectFaults(page, pattern, net) {
 // Patch fields of every /api/state answer, the way a poll would bring them.
 async function patchState(page, patch) {
   await page.route('**/api/state', async (route) => {
-    const response = await route.fetch();
-    const state = await response.json();
-    return route.fulfill({ response, json: { ...state, ...patch(state) } });
+    // As in injectFaults: a poll caught by the group's teardown must not
+    // become an unhandled rejection that ends the suite.
+    try {
+      const response = await route.fetch();
+      const state = await response.json();
+      return await route.fulfill({ response, json: { ...state, ...patch(state) } });
+    } catch (e) {
+      await route.abort('failed').catch(() => {});
+    }
   });
 }
 
