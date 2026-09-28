@@ -4577,26 +4577,48 @@
   },
   {
    "step": 397,
+   "control": "#theme",
+   "action": "select",
+   "value": "ember",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "theme",
+        "value": "ember"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 398,
    "control": "tab:loot",
    "action": "click"
   },
   {
-   "step": 398,
-   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "max"
-  },
-  {
    "step": 399,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "min"
+   "action": "max"
   },
   {
    "step": 400,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
-   "action": "max"
+   "action": "min"
   },
   {
    "step": 401,
+   "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
+   "action": "max"
+  },
+  {
+   "step": 402,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4613,12 +4635,12 @@
      ]
     },
     "cmds": {
-     "same": 399
+     "same": 400
     }
    }
   },
   {
-   "step": 402,
+   "step": 403,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4633,19 +4655,6 @@
        }
       }
      ]
-    },
-    "cmds": {
-     "same": 400
-    }
-   }
-  },
-  {
-   "step": 403,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 401
     },
     "cmds": {
      "same": 401
@@ -4654,6 +4663,19 @@
   },
   {
    "step": 404,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_keys_primeevil\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 402
+    },
+    "cmds": {
+     "same": 402
+    }
+   }
+  },
+  {
+   "step": 405,
    "control": "#sw_keys_primeevil",
    "action": "click",
    "expect": {
@@ -4670,12 +4692,12 @@
      ]
     },
     "cmds": {
-     "same": 402
+     "same": 403
     }
    }
   },
   {
-   "step": 405,
+   "step": 406,
    "control": "input[type=range][data-sec=\"keys\"][data-key=\"primeevil\"]",
    "action": "min"
   }

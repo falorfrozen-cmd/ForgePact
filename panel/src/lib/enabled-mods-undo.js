@@ -190,7 +190,9 @@ export function installEnabledModsUndo(form) {
     button.textContent = UNDO_TEXTS.undo;
     button.setAttribute('aria-label', withName(UNDO_TEXTS.undoLabel, name));
     el.append(text, button);
-    document.body.append(el);
+    const host = document.documentElement.dataset.theme === 'ember'
+      ? document.querySelector('.ember-notices') : null;
+    (host || document.body).append(el);
     document.documentElement.setAttribute('data-undo-open', '');
 
     let left = UNDO_VISIBLE_MS;
@@ -273,7 +275,8 @@ export function installEnabledModsUndo(form) {
   function releaseBand() {
     const root = document.documentElement;
     if (toast || !root.hasAttribute('data-undo-open')) return;
-    if (!wrap || !shell || growsInPlace()) {
+    // Ember's footer row reserves its own height, including a leaving toast.
+    if (root.dataset.theme === 'ember' || !wrap || !shell || growsInPlace()) {
       root.removeAttribute('data-undo-open');
       return;
     }

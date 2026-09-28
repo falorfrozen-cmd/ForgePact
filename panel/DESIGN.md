@@ -1,6 +1,6 @@
 ---
 name: ForgePact control panel
-description: The Graphite Console, a dark, flat, token-driven control surface for Hero Siege offline mods (ForgePact 2.0.0).
+description: ForgePact 2.0's Ember Forge presentation, alongside the preserved Ledger, Graphite and Sigil palettes.
 colors:
   accent: "#e99a4c"
   accent-hover: "#f2ae68"
@@ -24,6 +24,18 @@ colors:
   warn-tint: "#261f14"
   danger: "#f29ba6"
 typography:
+  ember-display:
+    fontFamily: "EmberFell, IM Fell English, Georgia, serif"
+    fontSize: "26px"
+    fontWeight: 400
+  ember-body:
+    fontFamily: "Segoe UI, Arial, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+  ember-symbol:
+    fontFamily: "Arial, sans-serif"
+    fontSize: "23px"
+    fontWeight: 400
   display:
     fontFamily: "IBM Plex Sans, Segoe UI, system-ui, sans-serif"
     fontSize: "26px"
@@ -451,6 +463,59 @@ Tokens: `--motion-duration-fast` (120ms) and `--motion-duration-base` (200ms); `
 - The tray opens over `base` on `emphasized` (0.97 to 1, with opacity) and closes over `fast` on `standard`. Opened or closed from the keyboard, or rebuilt while open, it appears at once (`data-instant`).
 - The theme picker's list does the same from its trigger's corner: open over `base` on `emphasized`, close over `fast` on `standard`, at once from the keyboard. A closing list takes no pointer.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): the press, every scale and every rise are removed. The opacity fades of the tray, the theme picker's list, tooltips, toasts and removed entry stay, and so do the hover colour fades (the owner's "Keep colour fades too", `amendments.ship`).
+
+## Ember Forge (owner-approved integration)
+
+The owner approved the illustrated forge reference in `../design/ember/` and
+asked to carry it onto the current Svelte panel before any Figma work. Ember
+is the default for an unset or unknown theme; explicitly saved Ledger,
+Graphite and Sigil choices remain unchanged. The flat-panel specifications
+above and below continue to describe those three palettes.
+
+Ember's intentional differences are scoped under `html[data-theme="ember"]`
+in `src/ember/`: local copper/stone material textures, the IM Fell English
+display face, illustrated setting icons, a vertical desktop sidebar and a
+bottom action footer. The shell uses a constrained content viewport and a
+separate footer grid row, reserving the footer's actual height. A visible
+native scrollbar, wheel and keyboard expose the entire page; sidebar and
+filter-list scrolling remain independent. Its seven sections include Overview and Help. Overview
+offers up to three selectable shortcuts and searches all current controls.
+Every write delegates to an existing setting handler; no game hooks or
+polling loop are added. At narrow widths the sidebar becomes a horizontal
+navigation rail and controls stack. Dialogs use native focus trapping.
+
+Undo occupies a separate footer row, with wrapping text and a reachable action,
+outside the content pane. Its opacity follows the existing motion tokens;
+it does not slide over the footer controls. Brief status messages open/close
+instantly in their own footer row. Idle status text stays rendered and clipped
+out of layout, with its
+live region still present in the accessibility tree before content changes.
+Shared tooltips retain their motion tokens, keyboard behavior and reduced-motion
+rules. In reduced motion, opacity and colour fades remain
+while movement is removed. Ember's theme menu
+and expanded Enabled mods list participate in the pane's scroll flow, reveal
+themselves on open and cap their list height to the pane. Every palette and
+Turn off action must remain reachable above the separate footer. These two
+in-flow menus open and close instantly, including pointer input, so their
+layout space never lingers after a fade. Flat palettes keep floating-menu
+animations. Apply status text uses at least `--font-size-xs` at every width.
+
+The artwork, typography, literal material colours and ornamentation are
+approved exceptions to the flat-panel rules below, confined to Ember. The
+material palette is fixed artwork-matching chrome; `palette.css` supplies the
+semantic colours of shared controls rather than recolouring that artwork.
+The native scrollbar's copper thumb and iron track are part of that material
+palette (`#b58251` and `#141516`). The scrollable main landmark is labelled by
+the current page title. Global search indexes the actual range, checkbox and
+select controls, omitting duplicate slider switches and individual pool entries;
+the pools have their own filter destinations. A hidden theme select resolves
+to the visible theme-picker trigger.
+Segoe UI is Ember's body face, with Arial as the system fallback; the existing
+arrow/check glyphs explicitly use Arial. No Arial font file is bundled. The
+existing Figma export and generated `tokens.css` are unchanged; shared Figma
+design-library work is deferred. See `../docs/ember-ui.md` for provenance and
+tests. `e2e:finish` retains Ledger's gutter/type baseline and exercises all
+four picker options; `e2e:ember` verifies the new layout at four widths.
 
 ## Do's and Don'ts
 
