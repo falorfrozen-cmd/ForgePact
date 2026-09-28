@@ -187,11 +187,15 @@ async function panelUi(ctx) {
   passed.push('All five pages, headings, selected states and overflow');
 
   await tab('world');
-  const densityOff = async (context) => assert(await $(page, () => {
+  // Waits for the off state rather than reading it once: `settled()` gives a
+  // click 30 ms to start its save, and on a loaded CI runner the toggle's
+  // repaint had not happened yet ("disabled after enabling", PR run
+  // 36372995669). A state that never arrives still fails, after 5 s.
+  const densityOff = async (context) => assert(await page.waitForFunction(() => {
     const el = (s) => document.querySelector(s);
     return !el('#den_on').checked && el('#denval').textContent === 'off' &&
       el('#densityHero').textContent === 'off' && el('#denval').classList.contains('off');
-  }), 'Disabled density looks enabled: ' + context);
+  }, null, { timeout: 5000, polling: 20 }).then(() => true, () => false), 'Disabled density looks enabled: ' + context);
   const denValue = () => $(page, () => +document.getElementById('den').value);
   const expInput = () => $(page, () => document.querySelector('[data-sec="stats"][data-key="exp"]').dispatchEvent(new Event('input', { bubbles: true })));
   await densityOff('initial load');
