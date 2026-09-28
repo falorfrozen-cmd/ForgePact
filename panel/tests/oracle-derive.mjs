@@ -44,6 +44,17 @@
 // sub-tab they sit on. They come last, so no earlier step's index moves, and
 // each is in `controls`, so the replay's coverage check counts it.
 //
+// NATIVE_SLIDERS are switched table sliders no recorded page ever had (Mining
+// Ore Extra Rolls, issue #36): the same eight steps a legacy slider gets
+// (max, min, max, switch off, on, Turn off, on, min), entered on the tab they
+// sit on, but with nothing recorded to compare the slider's own moves against,
+// so its maximum and minimum carry literal expectations - max posts the
+// section, key and ceiling and sends its plugin verb with the ceiling, min
+// posts 1 and sends the verb with 1 - and the switch steps compare with those
+// the way a legacy slider's do. They come after the native booleans, so no
+// earlier step's index moves, and both the range and its switch are in
+// `controls`, since no recording lists the range either.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -81,6 +92,13 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
 ];
+// Switched table sliders added after every recording (see the header): the
+// section and key, the tab the row sits on, its ceiling, and the plugin verb
+// src/forgepact.py sends with the value.
+export const NATIVE_SLIDERS = [
+  { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', max: 10, verb: 'miningrolls' },
+];
+export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
 
 // The tab (and Mods sub-tab) the legacy walk had open when it first reached
@@ -199,6 +217,30 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     const off = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} 0`] } } });
     push(selector, 'click', { expect: { posts: { same: on }, cmds: { same: on } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+  }
+  // The switched sliders no recording has: a legacy slider's eight steps, with
+  // the slider's own maximum and minimum written out as literals, last.
+  for (const { section, key, tab, max, verb } of NATIVE_SLIDERS) {
+    const selector = tableRange(section, key);
+    const switchId = `${section}.${key}`;
+    const sw = '#' + switchControlId(switchId);
+    controls.push(selector, sw);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    const atMaxLiteral = { posts: { is: setPost({ section, key, value: max }) }, cmds: { is: [`${verb} ${max}`] } };
+    push(selector, 'max', { expect: atMaxLiteral });
+    const atMin = push(selector, 'min', { expect: { posts: { is: setPost({ section, key, value: 1 }) }, cmds: { is: [`${verb} 1`] } } });
+    const atMax = push(selector, 'max', { expect: atMaxLiteral });
+    const off = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: false }) }, cmds: { same: atMin } },
+    });
+    const on = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: atMax } },
+    });
+    push(quickDisable(switchControlId(switchId)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
+    });
+    push(selector, 'min', { expect: { posts: { same: atMin }, cmds: { same: atMin } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

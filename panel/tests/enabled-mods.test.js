@@ -67,9 +67,9 @@ test('density is an entry only while switched on above x1, through den_on', () =
   assert.deepEqual(enabledControls(cfg({ density_on: true, density: 1 })), [], 'x1 is the default');
 });
 
-test('the switch ids: 37 table rows plus four top-level sliders, never density', () => {
+test('the switch ids: 38 table rows plus four top-level sliders, never density', () => {
   const ids = sliderSwitchIds(cfg());
-  assert.equal(ids.length, 41);
+  assert.equal(ids.length, 42);
   assert.deepEqual(ids.slice(-4), TOP_LEVEL_SWITCHES);
   assert.ok(ids.includes('stats.exp') && ids.includes('percent_stats.damage') && ids.includes('keys.ruby'));
   assert.ok(!ids.some((id) => id.includes('density') || id === 'enemy_speed_ct'));
@@ -86,6 +86,15 @@ test('a table slider is an entry above its default while its switch is on', () =
   assert.deepEqual(enabledControls(withSection('drops', 'mining_ore', 4)), ['sw_drops_mining_ore']);
   assert.deepEqual(enabledControls(withSection('keys', 'relic', 20)), ['sw_keys_relic']);
   assert.deepEqual(enabledControls(withSection('stats', 'exp', 1)), [], 'x1 is the default');
+});
+
+test('Mining Ore Extra Rolls is an entry above one roll, beside the multiplier', () => {
+  assert.equal(DEFAULTS.drops.mining_ore_rolls, 1, 'off by default');
+  assert.deepEqual(enabledControls(withSection('drops', 'mining_ore_rolls', 3)), ['sw_drops_mining_ore_rolls']);
+  assert.deepEqual(enabledControls(withSection('drops', 'mining_ore_rolls', 1)), [], 'one roll is the default');
+  const both = withSection('drops', 'mining_ore', 5);
+  both.drops.mining_ore_rolls = 3;
+  assert.deepEqual(enabledControls(both), ['sw_drops_mining_ore', 'sw_drops_mining_ore_rolls']);
 });
 
 test('percent stats, enemy speed and rarity are on above 0; angelic above 1', () => {

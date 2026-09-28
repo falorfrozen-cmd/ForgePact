@@ -47,7 +47,9 @@
   "#theme",
   "#sw_keys_primeevil",
   "#mod_far_sleep",
-  "#mod_pet_loot_unstick"
+  "#mod_pet_loot_unstick",
+  "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+  "#sw_drops_mining_ore_rolls"
  ],
  "steps": [
   {
@@ -4854,6 +4856,175 @@
     },
     "cmds": {
      "same": 414
+    }
+   }
+  },
+  {
+   "step": 417,
+   "control": "tab:loot",
+   "action": "click"
+  },
+  {
+   "step": 418,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "drops",
+        "key": "mining_ore_rolls",
+        "value": 10
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "miningrolls 10"
+     ]
+    }
+   }
+  },
+  {
+   "step": 419,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "drops",
+        "key": "mining_ore_rolls",
+        "value": 1
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "miningrolls 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 420,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "drops",
+        "key": "mining_ore_rolls",
+        "value": 10
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "miningrolls 10"
+     ]
+    }
+   }
+  },
+  {
+   "step": 421,
+   "control": "#sw_drops_mining_ore_rolls",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore_rolls",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 419
+    }
+   }
+  },
+  {
+   "step": 422,
+   "control": "#sw_drops_mining_ore_rolls",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore_rolls",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 420
+    }
+   }
+  },
+  {
+   "step": 423,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_drops_mining_ore_rolls\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 421
+    },
+    "cmds": {
+     "same": 421
+    }
+   }
+  },
+  {
+   "step": 424,
+   "control": "#sw_drops_mining_ore_rolls",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore_rolls",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 422
+    }
+   }
+  },
+  {
+   "step": 425,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 419
+    },
+    "cmds": {
+     "same": 419
     }
    }
   }

@@ -81,6 +81,9 @@ LIVE_SLIDERS = [
     ("percent_stats", "damage", 1000, 0, ["stat damage 11"], ["stat damage 1"]),
     ("spawners", "rift", 100, 1, ["specialrate rift 100"], ["specialrate rift 1"]),
     ("drops", "gold", 100, 1, ["dropmult gold 100"], ["dropmult gold 1"]),
+    # Mining Ore Extra Rolls (issue #36): a drops row with its own command
+    # and a ceiling of 10, like the Mining Ore Multiplier beside it.
+    ("drops", "mining_ore_rolls", 10, 1, ["miningrolls 10"], ["miningrolls 1"]),
     ("keys", "dungeon", 100, 1,
      _KEY_RESETS + ["dungeonkey add 12 1", "dungeonkey chance auto", "dungeonkey on",
                     "droprate group dungeon 100"] + _KEY_TAIL,
@@ -149,8 +152,9 @@ class SliderSwitchTests(unittest.TestCase):
                     + [f"keys.{k}" for k, *_ in forgepact.KEYS]
                     + ["rarity_rare", "rarity_ancient", "angelic_items", "enemy_speed"])
         self.assertEqual(list(ids), expected)
-        self.assertEqual(len(ids), 41)
-        self.assertEqual(len(set(ids)), 41)
+        self.assertEqual(len(ids), 42)
+        self.assertEqual(len(set(ids)), 42)
+        self.assertEqual(ids.index("drops.mining_ore") + 1, ids.index("drops.mining_ore_rolls"))
         for excluded in ("density", "density_on", "enemy_speed_ct"):
             self.assertNotIn(excluded, ids)
 

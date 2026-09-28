@@ -126,6 +126,7 @@ function applyPluginModState(pm){
     // Only the live status: the note is empty (and hidden) while there is none.
     setText(miningNote,status.trim());
   }
+  paintRollsNote(pm);
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
   const bagVal=document.getElementById("apbagval");
@@ -153,6 +154,30 @@ function applyPluginModState(pm){
   }else if(!ap.hookBlind){
     syncProspectBag(parentOn,wantsBag);   // repaints the label and the disabled state
   }
+}
+// The drops rows with their own plugin command and a ceiling of 10: the Mining
+// Ore Multiplier and its Extra Rolls child (src/forgepact.py's
+// MINING_DROP_COMMANDS). Every other drops row goes to 100.
+const MINING_DROPS=['mining_ore','mining_ore_rolls'];
+// Mining Ore Extra Rolls' note, from the row itself: the range's value and its
+// switch, so a drag or a switch click repaints it before the next save or poll.
+// It runs on its own plugin counters (the helmet replaces the multiplier, never
+// the rolls). With the game closed a value above one says what it does for the
+// player; while it runs, the plugin's own status; at one, nothing.
+function paintRollsNote(pm){
+  const note=document.querySelector('.note[data-note="mining_ore_rolls"]');
+  const range=document.querySelector('input[type=range][data-sec="drops"][data-key="mining_ore_rolls"]');
+  if(!note||!range)return;
+  const rolls=switchedOff('drops.mining_ore_rolls')?1:Math.max(1,Math.round(Number(range.value)||1)), mining=pm?.miningOre;
+  let status='';
+  if(rolls>1&&!ST?.gameRunning){
+    status='Each mining node you finish pays out '+rolls+' times: '+rolls+' sets of ore and '+rolls+' chances at the rare finds your mining stats allow. Mining and character XP still count once.';
+  }else if(rolls>1){
+    if(mining?.rollsUnavailable)status='Plugin could not enable extra rolls; each node pays out once.';
+    else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
+    else status='Waiting for the matching mining plugin to confirm the setting.';
+  }
+  setText(note,status);
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 export function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
@@ -391,11 +416,14 @@ async function boot(){
     const v=(c.keys&&c.keys[k])||1;
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
   }).join('');
-  // The mining row keeps an empty note: applyPluginModState() writes the
-  // plugin's live mining status into it while the game runs. row() writes it
-  // (an empty note), so it gets its id and the range's aria-describedby too.
-  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
-    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,k==='mining_ore'?'':null)).join('');
+  // The two mining rows (the multiplier and its Extra Rolls child) go to 10
+  // and keep an empty note: applyPluginModState() writes the plugin's live
+  // mining status into it while the game runs. row() writes it (an empty
+  // note), so it gets its id and the range's aria-describedby too.
+  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>{
+    const mining=MINING_DROPS.includes(k);
+    return row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',mining?10:100,mining?'':null);
+  }).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);
@@ -476,6 +504,7 @@ function bind(){
       if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);
       if(noteEl&&r.dataset.sec==='stats')noteEl.textContent=statNote(r.dataset.key,v);
       if(noteEl&&r.dataset.sec==='percent_stats')noteEl.textContent=percentStatNote(r.dataset.key,v);
+      if(noteEl&&r.dataset.sec==='drops'&&r.dataset.key==='mining_ore_rolls')paintRollsNote(ST?.pluginMods);
     };
     r.onchange=async()=>{
       const v=sliderVal(r);

@@ -33,6 +33,7 @@ none of these diagnostic hooks or the recorder. See
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
+| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Mining XP, character XP and quest progress still count once per node. Works together with the Mining Ore Multiplier (each set is multiplied) and with a worn Miner's Helmet (each set gets its 4×). Not yet confirmed in a live game ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
@@ -78,6 +79,22 @@ native hooks only when raised above x1, and uses the original
 reward unchanged if it cannot validate the reward parameters. Checked in play on
 2026-09-23: at x10 a 6-ore reward dropped 60. A worn [Miner's Helmet](#miners-helmet)
 replaces it with 4×. See [research and test scope](docs/mining-ore-research.md).
+
+**Mining Ore Extra Rolls** sits under the multiplier on the Loot tab and sends the
+plugin command `miningrolls N` (a whole number from 1 to 10; the plugin refuses
+anything above 10). Where the multiplier changes how much ore one stack holds, extra
+rolls make the game run its own dig completion again for the node you just finished,
+so each extra roll pays the node's ore stacks again and rolls the dig's stat-gated
+bonus finds again. Nothing is forced: a bonus find still needs your character's own
+find stats, and an extra roll that pays nothing ends the loop for that node. Mining
+XP, character XP, quest progress and the floating XP text happen once per node. The
+two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
+node pays three sets of stacks, each 5×; a worn Miner's Helmet gives each set its 4×
+in place of the multiplier. At 1 it installs nothing, and the multiplier on its own
+keeps working exactly as before. If the plugin cannot attach what the extra rolls
+need, the rolls stay at 1 with one `miningrolls: unavailable` line in the log while
+the multiplier keeps working. Not yet confirmed in a live game; see
+[research and test scope](docs/mining-ore-research.md).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
 zone the game rolls their drop type at zero chance, so the item can never come up no
