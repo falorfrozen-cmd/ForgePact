@@ -866,7 +866,9 @@ this on, props farther than about 2,300 px from every player are put to sleep
 with the runtime's own deactivation and woken again when a player comes within
 about 1,700 px, well before they can come into view (both follow the camera's
 size). In Act_01_01, with about 4,200 of 6,200 instances asleep, the game's
-own work per frame fell from about 56% of a 60 fps frame to about 45%.
+own work per frame fell from about 56% of a 60 fps frame to about 45%; at
+density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
+57.3 fps.
 
 - **Only scenery.** Never shrines, dungeon entrances, chests, piles, quest
   objects, traps, walls, blocks or monsters, and never an object whose own

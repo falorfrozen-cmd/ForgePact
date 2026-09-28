@@ -66,8 +66,26 @@ thread's time not spent in the frame limiter.
 About 10 points of a 60 fps frame, 1.6-2.4 ms. The saving is in the runtime
 passes: the layer-walk overhead fell about 2-5 points and the step upkeep about
 6 points (the alarm pass alone 5 → 2). At 60 fps with frame time to spare this
-shows as idle time; where a frame is over budget (dense zones at high density)
-it is frame time.
+shows as idle time; where a frame is over budget it is frame time.
+
+**Density 5x** (`density 5` before entering, 8,100-8,300 instances, 4,204
+props asleep; the same session, alternating, 13:48-13:51). The first two
+captures were taken while packs fought the player, the last three after it
+calmed down, so compare neighbours:
+
+| capture | fps | frame-thread work | GameMaker runtime | step upkeep |
+| --- | --- | --- | --- | --- |
+| off, fighting | 52.5 | 99.9% | 52.0% | 21.7% |
+| on, fighting | 57.3 | 90.7% | 44.0% | 17.5% |
+| off, calm | 59.8 | 77.5% | 42.2% | 21.3% |
+| on, calm | 59.9 | 67.0% | 33.7% | 13.6% |
+| off, calm | 59.9 | 69.4% | 39.3% | 20.9% |
+
+The step upkeep falls by 4-8 points whenever the props sleep; with the frame
+over budget that showed as 52.5 → 57.3 fps (the fight's own load changes
+between captures, so read that pair as a direction, not a precise figure).
+Monsters, their shadows and health bars are not scenery and stay in every
+walk.
 
 Tried and dropped: hiding the empty `Game_Layer_#` layers (4,321 of 5,501)
 saved only about 1.5 points, and an instance moving onto a hidden layer would
@@ -140,7 +158,7 @@ through `CallBuiltin`: no struct layouts, no game addresses.
 
 - **Co-op.** Every `Player_obj` counts as a player, so another player's
   neighbourhood stays awake, but no co-op session was measured.
-- **Density 5x and other acts.** The live A/B ran at density 1x in Act_01_01;
+- **Other acts.** The live A/B ran in Act_01_01 (density 1x and 5x);
   Act_02_01 was censused, not measured.
 - **Pop-in.** A woken prop becomes visible when the game's own visibility pass
   next reaches it (every 30 frames), exactly as a far prop does without far
