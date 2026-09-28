@@ -268,6 +268,13 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # exists is kept.
         self.assertScenario("target/button_refusal_is_reported_once_and_keeps_the_mod_on")
 
+    def test_target_button_counters_name_where_a_press_went(self):
+        # A click that moved nothing is told apart on the state line:
+        # poll-blind (presses=0 with the node held), a bbox miss (outside or
+        # unread), a poll that threw, or a guard drop with its reason.
+        # Negative control: a readable point outside the box still reads.
+        self.assertScenario("target/button_counters_name_where_a_press_went")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -33,7 +34,9 @@ namespace ForgePact {
 //   recorded by the adapter and taken once by the frame tick under the key's
 //   own guard; and a node the adapter could not make, reported once and never
 //   turning the mod off (ButtonStep, PressInNode, NoteButtonPress,
-//   TakeButtonPress, ButtonRefused);
+//   TakeButtonPress, ButtonRefused); each press the adapter read, where it
+//   went and why a recorded one started no run, counted for the state line
+//   (NoteButtonHeld, NoteButtonMiss, NoteButtonPollError, ButtonFields);
 // - the plan over the shown bag tab's occupied cells: each item once, in
 //   row-major order (row, then column) by its first cell, so a multi-cell
 //   item is planned by its top-left cell (Plan);
@@ -300,18 +303,67 @@ public:
         return left <= right && top <= bottom && x >= left && x <= right && y >= top && y <= bottom;
     }
 
+    // Whether a poll's mouse point and the node's box all read: every value
+    // finite and the box not inside out. False is an unread miss, told apart
+    // from a press that fell outside a box that read.
+    static bool PressReads(double x, double y, double left, double top, double right, double bottom) {
+        return std::isfinite(x) && std::isfinite(y) && std::isfinite(left) && std::isfinite(top)
+            && std::isfinite(right) && std::isfinite(bottom) && left <= right && top <= bottom;
+    }
+
+    // Where each press went, for the state line (the review of Phase C: the
+    // player build has no probe, so a click that moved nothing must still say
+    // why). The adapter says whether it holds a node; each left press it read
+    // while holding one is counted once as inside the node (NoteButtonPress),
+    // or as a miss (outside, or unread when PressReads was false), and a poll
+    // that threw is counted apart. A session's counts; never reset.
+    void NoteButtonHeld(bool held) { m_ButtonHeld.store(held); }
+
+    void NoteButtonMiss(bool pointAndBoxRead) {
+        ++m_Presses;
+        if (pointAndBoxRead) ++m_PressesOutside;
+        else ++m_PressesUnread;
+    }
+
+    void NoteButtonPollError() { ++m_PollErrors; }
+
     // The adapter saw the button pressed (the frame poll). Nothing moves
     // here: the press waits for the frame tick's guard. Off, it is not kept.
     void NoteButtonPress() {
+        ++m_Presses;
+        ++m_PressesInNode;
         if (IsEnabled()) m_ButtonPressed.store(true);
     }
 
     // The frame tick takes a recorded press once, under the key's own guard:
     // the game in front, the stash listed, no modifier held. Presses recorded
-    // before one tick are one run; a press the guard refuses is dropped.
+    // before one tick are one run; a press the guard refuses is dropped, and
+    // counted with its reason (off, fg, stash, modifier) for the state line.
     bool TakeButtonPress(bool foreground, bool stashListed, bool modifier) {
         const bool pressed = m_ButtonPressed.exchange(false);
-        return pressed && IsEnabled() && foreground && stashListed && !modifier;
+        if (!pressed) return false;
+        const char* drop = !IsEnabled() ? "off" : !foreground ? "fg" : !stashListed ? "stash" : modifier ? "modifier" : nullptr;
+        if (drop) {
+            ++m_PressesDropped;
+            m_LastDrop.store(drop);
+            return false;
+        }
+        ++m_PressesTaken;
+        return true;
+    }
+
+    // The button's fields of the state line: whether the adapter holds a
+    // node, the presses it read while holding one, where they went, and the
+    // runs they started or why they did not. A click that moved nothing then
+    // reads as poll-blind (presses=0 with button=held), a bbox miss (outside
+    // or unread above 0, in_node not risen), a poll that threw (errors) or a
+    // guard drop (dropped, with last_drop).
+    std::string ButtonFields() const {
+        return std::string(" button=") + (m_ButtonHeld.load() ? "held" : "none")
+            + " presses=" + std::to_string(m_Presses.load()) + " in_node=" + std::to_string(m_PressesInNode.load())
+            + " outside=" + std::to_string(m_PressesOutside.load()) + " unread=" + std::to_string(m_PressesUnread.load())
+            + " errors=" + std::to_string(m_PollErrors.load()) + " taken=" + std::to_string(m_PressesTaken.load())
+            + " dropped=" + std::to_string(m_PressesDropped.load()) + " last_drop=" + m_LastDrop.load();
     }
 
     static StashMoveTab TabOf(int tab) {
@@ -656,10 +708,11 @@ public:
 
     // The state: on, off, or turned off by a loss - which a bug report must
     // be able to tell apart from "switched off" (round-2 review), and which
-    // the panel reads from the last of these lines.
+    // the panel reads from the last of these lines (the state word first; the
+    // button's fields follow the key).
     std::string StateLine() const {
         if (OffThisSession()) return "stashmoveall: state=off-for-this-session reason=" + m_OffReason;
-        return std::string("stashmoveall: state=") + (IsEnabled() ? "on" : "off") + " key=F4";
+        return std::string("stashmoveall: state=") + (IsEnabled() ? "on" : "off") + " key=F4" + ButtonFields();
     }
 
     // `stashmoveall 1` after a loss: still off, and why.
@@ -669,6 +722,15 @@ private:
     std::atomic<bool> m_Enabled{false};
     std::atomic<bool> m_OffThisSession{false};
     std::atomic<bool> m_ButtonPressed{false};
+    std::atomic<bool> m_ButtonHeld{false};
+    std::atomic<int>  m_Presses{0};
+    std::atomic<int>  m_PressesInNode{0};
+    std::atomic<int>  m_PressesOutside{0};
+    std::atomic<int>  m_PressesUnread{0};
+    std::atomic<int>  m_PollErrors{0};
+    std::atomic<int>  m_PressesTaken{0};
+    std::atomic<int>  m_PressesDropped{0};
+    std::atomic<const char*> m_LastDrop{"none"};
     bool              m_KeyWasDown = false;
     bool              m_ButtonRefused = false;   // a refusal already reported, while the stash stays open
     std::string       m_OffReason;

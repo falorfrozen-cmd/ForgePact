@@ -71,6 +71,13 @@
 // from the bag's Socket view only, a new kind staying in the bag. Written
 // before the header had them; the first error line was `error C2039:
 // 'PressInNode': is not a member of 'ForgePact::StashMoveAllMod'`, 2026-09-28.
+//
+// Phase C round 1 (the review's instrument-blindness finding): the button's
+// press path counts where each press went and the state line prints it, so
+// a click that moved nothing names poll-blind, a bbox miss, a poll that
+// threw or a guard drop. Written before the header had it; the first error
+// line was `error C2039: 'NoteButtonHeld': is not a member of
+// 'ForgePact::StashMoveAllMod'`, 2026-09-28.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -225,13 +232,17 @@ static std::string Joined(const std::vector<std::string>& lines)
 
 static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMaterial, bool wholeStackMerge);
 
+// The button's fields of the state line before any node or press.
+static const std::string kIdleButton =
+    " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none";
+
 // ---- baseline: off is vanilla ----------------------------------------------
 
 static void BaselineOffByDefault()
 {
     StashMoveAllMod mod;
     Check("baseline/off_by_default", !mod.IsEnabled() && !mod.OffThisSession()
-          && mod.StateLine() == "stashmoveall: state=off key=F4",
+          && mod.StateLine() == "stashmoveall: state=off key=F4" + kIdleButton,
           mod.StateLine());
 }
 
@@ -487,7 +498,7 @@ static void TargetUnconfirmedStopsAndTurnsOff()
     StashMoveAllMod byHand;
     byHand.SetEnabled(true);
     byHand.SetEnabled(false);
-    ok = ok && byHand.StateLine() == "stashmoveall: state=off key=F4" && byHand.OffReason().empty();
+    ok = ok && byHand.StateLine() == "stashmoveall: state=off key=F4" + kIdleButton &&byHand.OffReason().empty();
     Check("target/unconfirmed_item_stops_the_run_and_turns_the_mod_off", ok,
           StashMoveAllMod::SummaryLine(t) + " " + Joined(t.lines));
 }
@@ -864,7 +875,7 @@ static void TargetLines()
     bool ok = mod.SwitchLine(true) == "stashmoveall: on"
         && mod.SwitchLine(false) == "stashmoveall: off - the stash and bag are unchanged";
     mod.SetEnabled(true);
-    ok = ok && mod.StateLine() == "stashmoveall: state=on key=F4";
+    ok = ok && mod.StateLine() == "stashmoveall: state=on key=F4" + kIdleButton;
     StashMoveView mats = MixedView(-4);
     mats.cells[0].destinationHasStack = true;
     StashMovePlan p = mod.Plan(mats);
@@ -1181,7 +1192,7 @@ static void TargetButtonRefusalIsReportedOnceAndKeepsTheModOn()
     const std::string first = mod.ButtonRefused("UiCreateNode answered undefined");
     const std::string again = mod.ButtonRefused("UiCreateNode answered undefined");
     ok = ok && first == "stashmoveall: button - UiCreateNode answered undefined; F4 still works" && again.empty();
-    ok = ok && mod.IsEnabled() && !mod.OffThisSession() && mod.StateLine() == "stashmoveall: state=on key=F4";
+    ok = ok && mod.IsEnabled() && !mod.OffThisSession() && mod.StateLine() == "stashmoveall: state=on key=F4" + kIdleButton;
     ok = ok && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Keep;
     // F4 still starts a run.
     mod.KeyEdge(false, true, true, false);
@@ -1198,6 +1209,62 @@ static void TargetButtonRefusalIsReportedOnceAndKeepsTheModOn()
     // Negative control: a node that exists is kept, refusal or not.
     ok = ok && mod.ButtonStep(true, true, true, true) == StashMoveButtonStep::Keep;
     Check("target/button_refusal_is_reported_once_and_keeps_the_mod_on", ok, first + " | " + again);
+}
+
+static void TargetButtonCountersNameWhereAPressWent()
+{
+    // Round-0 review of Phase C (instrument blindness): a click on the button
+    // that moved nothing must say why on the state line, since the player
+    // build carries no probe. poll-blind is presses=0 while the node is held;
+    // a bbox miss is presses above in_node (outside, or a point or box that
+    // did not read); a poll that threw is errors; a guard drop is dropped,
+    // with the last reason. The state word stays first, for the panel.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double l = 520, t = 600, r = 600, b = 632;
+    StashMoveAllMod mod;
+    const std::string off0 = "stashmoveall: state=off key=F4 button=none presses=0 in_node=0 outside=0 unread=0 errors=0"
+                             " taken=0 dropped=0 last_drop=none";
+    bool ok = mod.StateLine() == off0;
+    mod.SetEnabled(true);
+    mod.NoteButtonHeld(true);
+    const std::string blind = "stashmoveall: state=on key=F4 button=held presses=0 in_node=0 outside=0 unread=0 errors=0"
+                              " taken=0 dropped=0 last_drop=none";
+    ok = ok && mod.StateLine() == blind;
+    // The misses: outside the box, a box that did not read, a box inside
+    // out, a mouse point that did not read; and a poll that threw.
+    mod.NoteButtonMiss(StashMoveAllMod::PressReads(640, 616, l, t, r, b));
+    mod.NoteButtonMiss(StashMoveAllMod::PressReads(560, 616, nan, t, r, b));
+    mod.NoteButtonMiss(StashMoveAllMod::PressReads(560, 616, r, t, l, b));
+    mod.NoteButtonMiss(StashMoveAllMod::PressReads(nan, 616, l, t, r, b));
+    mod.NoteButtonPollError();
+    // Presses inside: dropped by each guard in turn, then one taken; a take
+    // with no press recorded counts nothing.
+    mod.NoteButtonPress();
+    const bool fg = mod.TakeButtonPress(false, false, false);
+    mod.NoteButtonPress();
+    const bool stash = mod.TakeButtonPress(true, false, false);
+    mod.NoteButtonPress();
+    const bool held = mod.TakeButtonPress(true, true, true);
+    mod.NoteButtonPress();
+    const bool taken = mod.TakeButtonPress(true, true, false);
+    const bool nothing = mod.TakeButtonPress(true, true, false);
+    ok = ok && !fg && !stash && !held && taken && !nothing;
+    const std::string after = "stashmoveall: state=on key=F4 button=held presses=8 in_node=4 outside=1 unread=3 errors=1"
+                              " taken=1 dropped=3 last_drop=modifier";
+    ok = ok && mod.StateLine() == after;
+    // A press recorded, then the switch off before the tick took it: dropped
+    // as off. The node gone: button=none, the counts kept for the session.
+    mod.NoteButtonPress();
+    mod.SetEnabled(false);
+    const bool whileOff = mod.TakeButtonPress(true, true, false);
+    mod.NoteButtonHeld(false);
+    const std::string offAfter = "stashmoveall: state=off key=F4 button=none presses=9 in_node=5 outside=1 unread=3 errors=1"
+                                 " taken=1 dropped=4 last_drop=off";
+    ok = ok && !whileOff && mod.StateLine() == offAfter;
+    // Negative control: PressReads is true for a readable point and box
+    // whether the point is inside or not.
+    ok = ok && StashMoveAllMod::PressReads(560, 616, l, t, r, b) && StashMoveAllMod::PressReads(640, 616, l, t, r, b);
+    Check("target/button_counters_name_where_a_press_went", ok, mod.StateLine());
 }
 
 int main()
@@ -1233,6 +1300,7 @@ int main()
     TargetButtonPressRunsOnceUnderTheKeyGuard();
     TargetButtonPressIsALeftPressInsideTheNodeBbox();
     TargetButtonRefusalIsReportedOnceAndKeepsTheModOn();
+    TargetButtonCountersNameWhereAPressWent();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }

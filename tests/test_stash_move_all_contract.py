@@ -162,7 +162,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         tick = self.body("static void StashMoveAllTick(")
         # Off: nothing is read, not even the key; a button node still held is
         # removed, and knowing whether one is held reads nothing of the game.
-        gate = tick.index("if (!mod.IsEnabled()) { s_WasOn = false; SmaButtonRemove(); return; }")
+        # A node UiRemoveNode left listed is retried at the ensure step's
+        # pace, not every frame.
+        gate = tick.index("if (!mod.IsEnabled()) { s_WasOn = false; if ((s_Frame++ % kSmaButtonEveryFrames) == 0) "
+                          "SmaButtonRemove(); return; }")
         self.assertLess(gate, tick.index("GetAsyncKeyState(kSmaHotkey)"))
         self.assertEqual(tick.count("GetAsyncKeyState"), 1)
         self.assertTrue(self.body("static void SmaButtonRemove(").lstrip("{ \n").startswith("if (!g_SmaButtonHeld) return;"))
@@ -452,12 +455,60 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertLess(tick.index("if (down || pressed) {"), tick.index("mod.TakeButtonPress(fg, listed, modifier)"))
         self.assertIn("static bool PressInNode(double x, double y, double left, double top, double right, double bottom)",
                       self.header)
-        self.assertIn("return pressed && IsEnabled() && foreground && stashListed && !modifier;", self.header)
+        # The guard is the key's: off, the game not in front, the stash not
+        # listed, or a modifier held drops the press, counted with its reason.
+        self.assertIn('const char* drop = !IsEnabled() ? "off" : !foreground ? "fg" : !stashListed ? "stash" : '
+                      'modifier ? "modifier" : nullptr;', self.header)
         # None of the research probe's strings reach the player build (the
         # built DLL is checked for them too, criterion ship-strings).
         release = strip_comments(self.shipped)
         for word in ('"poll_presses', '"stashmoveall probe', '"stashmoveall probe copy: "'):
             self.assertNotIn(word, release, word)
+
+    def test_button_press_path_counts_where_each_press_went(self):
+        # Review of Phase C (instrument blindness): the player build carries
+        # no probe, so a click on the button that moved nothing must say why.
+        # Every left press the poll reads while it holds a node is counted
+        # once, inside or as a miss, a poll that threw apart, and a recorded
+        # press the guard drops with its reason; the state line prints them.
+        poll = self.body("static bool SmaButtonPoll(")
+        miss = poll.index("if (!ForgePact::StashMoveAllMod::PressInNode(mx, my, l, t, r, b)) {")
+        self.assertLess(miss, poll.index("mod.NoteButtonMiss(ForgePact::StashMoveAllMod::PressReads(mx, my, l, t, r, b));"))
+        self.assertLess(poll.index("NoteButtonMiss("), poll.index("mod.NoteButtonPress();"))
+        self.assertIn("catch (...) { mod.NoteButtonPollError(); return false; }", poll)
+        # No press is counted before mouse_check_button_pressed says one was.
+        self.assertLess(poll.index('CallBuiltin("mouse_check_button_pressed"'), poll.index("NoteButtonMiss("))
+        # The node held or not, as the adapter holds it.
+        self.assertIn("mod.NoteButtonHeld(true);", self.body("static void SmaButtonCreate("))
+        self.assertIn("NoteButtonHeld(false);", self.body("static void SmaButtonForget("))
+        # The core's side: each counter, and the state line carrying them
+        # after the key, the state word still first for the panel.
+        for field in ('" button="', '" presses="', '" in_node="', '" outside="', '" unread="', '" errors="',
+                      '" taken="', '" dropped="', '" last_drop="'):
+            self.assertIn(field, self.header, field)
+        self.assertIn('return std::string("stashmoveall: state=") + (IsEnabled() ? "on" : "off") + " key=F4" '
+                      '+ ButtonFields();', self.header)
+        take = function_body(self.header, "bool TakeButtonPress(bool foreground, bool stashListed, bool modifier)")
+        self.assertIn("++m_PressesDropped;", take)
+        self.assertIn("m_LastDrop.store(drop);", take)
+        self.assertIn("++m_PressesTaken;", take)
+        # The bare verb prints the state line, so the operator reads it after
+        # a click; the panel still reads the state word from it.
+        cmd = self.body("static void StashMoveAllCommand(")
+        self.assertRegex(cmd, r'if \(arg == "run"\) \{ StashMoveAllRun\(\); return; \}\s*Out\(mod\.StateLine\(\)\);')
+        import tempfile
+        from unittest import mock
+        import forgepact  # noqa: E402
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(forgepact, "ipc_dir", return_value=Path(d)):
+            (Path(d) / "out.txt").write_bytes(
+                b"stashmoveall: state=on key=F4 button=held presses=2 in_node=1 outside=1 unread=0 errors=0"
+                b" taken=0 dropped=1 last_drop=fg\r\n")
+            self.assertEqual(forgepact.stash_move_all_session({}), "on")
+        # Live procedure 2's button-press step reads it after the click.
+        doc = DOC.read_text(encoding="utf-8")
+        s = doc.index("\n## Ship design\n")
+        e = doc.find("\n## ", s + 1)
+        self.assertIn("last_drop=", doc[s:e if e >= 0 else len(doc)])
 
     # ---- the Socketable tab (socketMergeRoute, Live 1f and 1g) ---------------
 

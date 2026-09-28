@@ -37515,7 +37515,9 @@ static void StashMoveAllTick()
     static bool s_WasOn = false;
     static unsigned s_Frame = 0;
     auto& mod = ForgePact::StashMoveAllMod::Instance();
-    if (!mod.IsEnabled()) { s_WasOn = false; SmaButtonRemove(); return; }
+    // Off: a node still held (UiRemoveNode left it listed) is retried at the
+    // ensure step's pace, never every frame.
+    if (!mod.IsEnabled()) { s_WasOn = false; if ((s_Frame++ % kSmaButtonEveryFrames) == 0) SmaButtonRemove(); return; }
     const bool down = (GetAsyncKeyState(kSmaHotkey) & 0x8000) != 0;
     if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false, false); return; }
     if ((s_Frame++ % kSmaButtonEveryFrames) == 0) SmaButtonEnsure();
@@ -37608,6 +37610,7 @@ static void SmaButtonForget()
     g_SmaButton = RValue();
     g_SmaButtonOwner = RValue();
     g_SmaButtonHeld = false;
+    ForgePact::StashMoveAllMod::Instance().NoteButtonHeld(false);
 }
 
 // Take the mod's node away now, if it holds one. Nothing is read while it
@@ -37671,6 +37674,7 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
     g_SmaButton = node;
     g_SmaButtonOwner = window;
     g_SmaButtonHeld = true;
+    mod.NoteButtonHeld(true);
     // The label: the one write, on the mod's own node, read back. Without it
     // the node would be a blank button, so it is taken away again.
     bool labelled = false;
@@ -37722,20 +37726,27 @@ static void SmaButtonEnsure()
 // The press (buttonRoute: poll), each frame the node exists: a left press this
 // frame whose GUI point lies inside the node's bbox, read by name now, is
 // handed to the core, and nothing else happens here - the frame tick takes
-// it under F4's guard. True when one was handed over.
+// it under F4's guard. True when one was handed over. Every left press read
+// is counted by the core, inside or as a miss (outside, or a point or box
+// that did not read), and a poll that threw too, so the state line tells a
+// click that moved nothing apart: poll-blind, bbox miss, or a guard drop.
 static bool SmaButtonPoll()
 {
     if (!g_SmaButtonHeld) return false;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
     try {
         if (!g_Yytk->CallBuiltin("mouse_check_button_pressed", { RValue(kSmaMbLeft) }).ToBoolean()) return false;
         const double mx = g_Yytk->CallBuiltin("device_mouse_x_to_gui", { RValue(0.0) }).ToDouble();
         const double my = g_Yytk->CallBuiltin("device_mouse_y_to_gui", { RValue(0.0) }).ToDouble();
         const double l = MenuLayoutRead(g_SmaButton, "bbox_left"), t = MenuLayoutRead(g_SmaButton, "bbox_top");
         const double r = MenuLayoutRead(g_SmaButton, "bbox_right"), b = MenuLayoutRead(g_SmaButton, "bbox_bottom");
-        if (!ForgePact::StashMoveAllMod::PressInNode(mx, my, l, t, r, b)) return false;
-        ForgePact::StashMoveAllMod::Instance().NoteButtonPress();
+        if (!ForgePact::StashMoveAllMod::PressInNode(mx, my, l, t, r, b)) {
+            mod.NoteButtonMiss(ForgePact::StashMoveAllMod::PressReads(mx, my, l, t, r, b));
+            return false;
+        }
+        mod.NoteButtonPress();
         return true;
-    } catch (...) { return false; }
+    } catch (...) { mod.NoteButtonPollError(); return false; }
 }
 // ---- end stashmoveall button
 

@@ -1716,7 +1716,8 @@ closes would move items the stash's own close never saves). While it is off,
 the frame path reads nothing. `stashmoveall run` runs the same thing without
 the key, `stashmove <fingerprint>` moves one item of the bag tab on show through
 the same per-item routine, and bare `stashmoveall` prints
-`stashmoveall: state=<on|off> key=F4` and the usage. After a loss (below) the
+`stashmoveall: state=<on|off> key=F4` with the button's counts (below) and the
+usage. After a loss (below) the
 state line reads `stashmoveall: state=off-for-this-session reason=<reason>`
 instead, and `stashmoveall 1` answers `stashmoveall: off for this session -
 <reason>; ...` and stays off. Every switch, and every loss, prints the state
@@ -1766,6 +1767,22 @@ turns the mod off. A stash open for three ensure steps with no visible Sort
 node to sit beside is said once a session (`stashmoveall: button - not shown:
 no visible Sort button ...`), so a button that never shows - a game patch
 renaming `InventorySort`, say - is not silence.
+
+A click that moved nothing is not silence either (the Phase C review: the
+player build carries none of the research probe's counters). The core counts,
+for the session, every left press the poll read while the mod held a node and
+where it went, and the state line prints the counts after the key:
+`stashmoveall: state=on key=F4 button=<held|none> presses=<n> in_node=<n>
+outside=<n> unread=<n> errors=<n> taken=<n> dropped=<n>
+last_drop=<none|off|fg|stash|modifier>`. `outside` is a press whose point and
+box read but did not meet, `unread` one where the mouse point or a bbox side
+did not read or the box was inside out, `errors` a poll that threw, `taken` a
+press that started a run and `dropped` one the guard refused, with the last
+reason. So after a click, bare `stashmoveall` names which of these happened:
+poll-blind (`button=held presses=0`), a bbox miss (`presses` rose, `in_node`
+did not), a guard drop (`dropped` rose), or a run (`taken` rose, beside its
+`stashmoveall: moved ...` line). The state word stays first, so the panel's
+read of it is unchanged.
 
 **What one run stands on**, found by name at the point of use: `UI_Stash_obj`
 (its `tabSelected` is the bag view on show, its `stashTabSelected` the stash tab
