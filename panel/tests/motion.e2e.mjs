@@ -27,6 +27,7 @@
 import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { OPEN_DELAY_MS } from '../src/lib/slider-note.js';
+import { INSTANT_MS } from '../src/lib/plugin-warning.js';
 import { THEMES } from '../src/theme.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -149,6 +150,14 @@ async function hoverNote(page) {
 }
 async function hoverWarning(page, icon = pageIcon) {
   await away(page);
+  // Every caller measures the tooltip's animated entrance, which by design
+  // is skipped when the other tooltip closed less than INSTANT_MS ago. On a
+  // slow CI runner the previous tooltip's close landed just inside that
+  // window, so M11 saw "no opacity entrance" (PR run 36377419617). Wait for
+  // both tooltips to close, then past the window.
+  await page.waitForFunction(() => [...document.querySelectorAll('.plugin-warning-tooltip')].every((t) => t.hidden),
+    null, { timeout: 5000, polling: 20 });
+  await wait(INSTANT_MS + 100);
   await record(page);
   try {
     await page.hover(icon, { timeout: 15000 });

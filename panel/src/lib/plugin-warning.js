@@ -24,7 +24,7 @@
 
 export const OPEN_DELAY_MS = 300;
 export const CLOSE_GRACE_MS = 120;
-const INSTANT_MS = 400;
+export const INSTANT_MS = 400;
 const EDGE = 12;
 const GAP = 8;
 
