@@ -28,8 +28,14 @@ tab that changed during the move, or could not be re-read, is unconfirmed.
 
 The routes Live 1e decided (docs/stash-move-research.md § Decision): a new
 material identity goes into a cell of the Materials tab, a whole stack merges
-by its count, and the Socketable tab and the bag's Socket view are refused;
-the bag's Materials view feeds the Materials tab only.
+by its count, and the bag's Materials view feeds the Materials tab only. Live
+1f and 1g decided the Socketable tab (socketMergeRoute: byname): fed from the
+bag's Socket view only, a socketable whose identity has a node on the tab
+merges by its whole count and a new kind stays in the bag. And the in-game
+Move all button (buttonRoute: poll): its node exists only while the switch is
+on and the stash and Sort are listed, a left press inside its bbox is a press,
+taken once under the key's guard, and a node that cannot be made is reported
+once without turning the mod off.
 """
 import os
 import shutil
@@ -191,10 +197,23 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # one unit is a skip and one unit still merges.
         self.assertScenario("target/whole_stack_merges_by_its_count")
 
-    def test_target_socketable_tab_and_socket_view_are_refused(self):
-        # socketRoute: neither path byname. Negative control: a measured path
-        # would let class 15 in from the bag's Socket view, and nothing else.
-        self.assertScenario("target/socketable_tab_and_socket_view_are_refused")
+    # ---- the Socketable tab (socketMergeRoute, Live 1f and 1g) ---------------
+
+    def test_baseline_socketable_tab_takes_only_the_bag_socket_view(self):
+        # A bag page or the Materials view feeding the Socketable tab is
+        # refused, and the Socket view feeds no other tab. Negative control:
+        # the Socket view into the Socketable tab is a run.
+        self.assertScenario("baseline/socketable_tab_takes_only_the_bag_socket_view")
+
+    def test_target_socketable_merges_an_identity_with_a_node_by_its_whole_count(self):
+        # Negative control: with socketMergeRoute not-observed the tab is
+        # refused, as before Live 1f.
+        self.assertScenario("target/socketable_merges_an_identity_with_a_node_by_its_whole_count")
+
+    def test_target_socketable_new_kind_stays_in_the_bag(self):
+        # socketRoute new: not-observed. Negative control: a measured
+        # placement would go into a cell.
+        self.assertScenario("target/socketable_new_kind_stays_in_the_bag")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
@@ -237,6 +256,17 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
 
     def test_target_button_press_runs_once_under_the_key_guard(self):
         self.assertScenario("target/button_press_runs_once_under_the_key_guard")
+
+    def test_target_button_press_is_a_left_press_inside_the_node_bbox(self):
+        # buttonRoute: poll. Negative controls: a press just outside each
+        # side, on Sort beside it, or on the panel background; a side that
+        # did not read.
+        self.assertScenario("target/button_press_is_a_left_press_inside_the_node_bbox")
+
+    def test_target_button_refusal_is_reported_once_and_keeps_the_mod_on(self):
+        # The fail-safe: F4 keeps working. Negative control: a node that
+        # exists is kept.
+        self.assertScenario("target/button_refusal_is_reported_once_and_keeps_the_mod_on")
 
 
 if __name__ == "__main__":

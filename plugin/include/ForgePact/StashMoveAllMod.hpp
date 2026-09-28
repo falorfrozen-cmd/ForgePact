@@ -27,17 +27,22 @@ namespace ForgePact {
 //   the foreground window, the stash window is listed and no modifier is
 //   held, so Alt+F4 closing the game starts nothing (KeyEdge);
 // - the in-game Move all button: whether its node should exist (on, the stash
-//   window and the bag's Sort button listed, Sort visible) and a press the
-//   adapter records, taken once by the frame tick under the key's own guard
-//   (ButtonStep, NoteButtonPress, TakeButtonPress);
+//   window and the bag's Sort button listed, Sort visible); a press, which is
+//   a left press whose GUI point lies inside the node's bbox (buttonRoute:
+//   poll, Live 1g: the node has no activation and nothing is hooked for it),
+//   recorded by the adapter and taken once by the frame tick under the key's
+//   own guard; and a node the adapter could not make, reported once and never
+//   turning the mod off (ButtonStep, PressInNode, NoteButtonPress,
+//   TakeButtonPress, ButtonRefused);
 // - the plan over the shown bag tab's occupied cells: each item once, in
 //   row-major order (row, then column) by its first cell, so a multi-cell
 //   item is planned by its top-left cell (Plan);
 // - the sources: the bag page on show (tabSelected 0..4) for every stash tab
-//   the run takes; the bag's Materials view (-4) for the Materials tab only;
-//   the bag's Socket view (-2) for the Socketable tab only, and only while a
-//   socketable path is measured; a stash page from a bag sub-tab is refused
-//   as unmeasured (Plan);
+//   the run takes but the Socketable one; the bag's Materials view (-4) for
+//   the Materials tab only; the bag's Socket view (-2) for the Socketable tab,
+//   and it is that tab's only source (the view every socketable merge was
+//   measured from, Live 1f and 1g); a stash page from a bag sub-tab is
+//   refused as unmeasured (Plan);
 // - the route per item for the shown stash tab: a grid tab (0, 1..19) takes
 //   anything through the tab routine, or through the stack routine when a
 //   stack of the item's identity is already there; the Materials tab (-4)
@@ -130,15 +135,16 @@ struct StashMoveItem {
 };
 
 // The routes the research reproduced by name, each from its line in
-// docs/stash-move-research.md § Decision (Live 1e, recorded in round A'8).
-// A route that is false here is not called: the Socketable tab is refused
-// while neither socketable path is measured, a new identity on a special tab
-// and a merge of more than one unit are planned skips. Fixed at build time,
-// never a setting; PlanWith takes another value only so the tests can pin
-// what each rule does when it is the other way.
+// docs/stash-move-research.md § Decision (Live 1e, recorded in round A'8;
+// Live 1f and 1g, recorded in round A'9). A route that is false here is not
+// called: the Socketable tab is refused while neither socketable path is
+// measured, a new identity on a special tab and a merge of more than one unit
+// are planned skips. Fixed at build time, never a setting; PlanWith takes
+// another value only so the tests can pin what each rule does when it is the
+// other way.
 struct StashMoveRoutes {
-    bool socketNew = false;       // socketRoute new: not-observed (by hand only)
-    bool socketMerge = false;     // socketRoute merge: not-observed (by hand only)
+    bool socketNew = false;       // socketRoute new: not-observed (no accepted kind absent from the tab without a person)
+    bool socketMerge = true;      // socketMergeRoute: byname (Live 1f and 1g; orb and gem, every identity with a node merges)
     bool newMaterial = true;      // newMaterialRoute: byname
     bool wholeStackMerge = true;  // wholeStackMerge: byname (on the Materials tab)
 };
@@ -234,9 +240,11 @@ public:
     bool OffThisSession() const { return m_OffThisSession.load(); }
 
     // Turning on is refused (false) once a loss has turned the mod off for the
-    // session; turning off is always allowed.
+    // session; turning off is always allowed. Turning on gives a button the
+    // adapter could not make one more try.
     bool SetEnabled(bool on) {
         if (on && m_OffThisSession.load()) return false;
+        if (on) m_ButtonRefused = false;
         m_Enabled.store(on);
         return true;
     }
@@ -261,16 +269,39 @@ public:
     // What the frame tick does with the button's node: it exists exactly while
     // the switch is on, the stash window is listed and the bag's Sort button
     // (the node it sits beside) is listed and visible. Off, nothing is
-    // created, and a node left from before is removed.
-    StashMoveButtonStep ButtonStep(bool stashListed, bool sortListed, bool sortVisible, bool nodeExists) const {
+    // created, and a node left from before is removed. After a refusal
+    // (ButtonRefused) it is not made again until the stash window has been
+    // closed, or the switch turned on again.
+    StashMoveButtonStep ButtonStep(bool stashListed, bool sortListed, bool sortVisible, bool nodeExists) {
+        if (!stashListed) m_ButtonRefused = false;
         const bool wanted = IsEnabled() && stashListed && sortListed && sortVisible;
         if (wanted == nodeExists) return StashMoveButtonStep::Keep;
+        if (wanted && m_ButtonRefused) return StashMoveButtonStep::Keep;
         return wanted ? StashMoveButtonStep::Create : StashMoveButtonStep::Remove;
     }
 
-    // The adapter saw the button pressed (the activation's detour, or the
-    // frame poll). Nothing moves here: the press waits for the frame tick,
-    // so nothing moves inside a game script call. Off, it is not kept.
+    // The node could not be made (the game's node routine refused it, or the
+    // Sort row it is placed from did not read). The fail-safe: the line to
+    // print, once - empty when this refusal was already reported - and the
+    // mod stays on, F4 and the verbs working without the button.
+    std::string ButtonRefused(const std::string& reason) {
+        if (m_ButtonRefused) return std::string();
+        m_ButtonRefused = true;
+        return "stashmoveall: button - " + reason + "; F4 still works";
+    }
+
+    // buttonRoute: poll (Live 1g). The node is made with no activation, so a
+    // click on it runs nothing of the game's; the adapter reads a left press
+    // and the mouse's GUI point each frame the node exists, and a press whose
+    // point lies inside the node's bbox, read at that frame, is the button
+    // press. The sides are inclusive; a side that did not read (NaN) or a box
+    // turned inside out is never a press.
+    static bool PressInNode(double x, double y, double left, double top, double right, double bottom) {
+        return left <= right && top <= bottom && x >= left && x <= right && y >= top && y <= bottom;
+    }
+
+    // The adapter saw the button pressed (the frame poll). Nothing moves
+    // here: the press waits for the frame tick's guard. Off, it is not kept.
     void NoteButtonPress() {
         if (IsEnabled()) m_ButtonPressed.store(true);
     }
@@ -316,17 +347,18 @@ public:
         if (tab == StashMoveTab::Unsupported || tab == StashMoveTab::Unique
             || (tab == StashMoveTab::Socketable && !socketMeasured))
             return refuse("unsupported stash tab " + std::to_string(view.stashTab));
-        // The source: a bag page for any destination; a sub-tab only for the
-        // special tab its moves were measured into.
+        // The source: a bag page for any destination but the Socketable tab; a
+        // sub-tab only for the special tab its moves were measured into, and
+        // the Socket view is the Socketable tab's only source (every
+        // socketable merge ran from it, Live 1f and 1g).
         const bool page = view.bagTab >= 0 && view.bagTab < kBagPageTabs;
         const bool subTab = view.bagTab == kBagMaterialsView || (view.bagTab == kBagSocketView && socketMeasured);
         if (!page && !subTab) return refuse("unsupported bag tab " + std::to_string(view.bagTab));
-        if (!page) {
-            const bool fits = (view.bagTab == kBagMaterialsView && tab == StashMoveTab::Materials)
-                || (view.bagTab == kBagSocketView && tab == StashMoveTab::Socketable);
-            if (!fits) return refuse("unsupported bag tab " + std::to_string(view.bagTab) + " for stash tab "
-                                     + std::to_string(view.stashTab));
-        }
+        const bool fits = page ? tab != StashMoveTab::Socketable
+                               : (view.bagTab == kBagMaterialsView && tab == StashMoveTab::Materials)
+                                     || (view.bagTab == kBagSocketView && tab == StashMoveTab::Socketable);
+        if (!fits) return refuse("unsupported bag tab " + std::to_string(view.bagTab) + " for stash tab "
+                                 + std::to_string(view.stashTab));
 
         std::vector<StashMoveCell> cells = view.cells;
         std::stable_sort(cells.begin(), cells.end(), [](const StashMoveCell& a, const StashMoveCell& b) {
@@ -384,7 +416,9 @@ public:
             item.refusal = unread;
         } else if (hasStack) {
             // The one-unit merge is measured on the Materials tab
-            // (stackMoveRoute); the Socketable tab's only by its path.
+            // (stackMoveRoute); the Socketable tab's by socketMergeRoute, on
+            // the item's own node, with no non-stackable case (the gem Live
+            // 1e read as one merged too, Live 1f).
             if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
             else if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
             else item.route = StashMoveRoute::Stack;
@@ -636,6 +670,7 @@ private:
     std::atomic<bool> m_OffThisSession{false};
     std::atomic<bool> m_ButtonPressed{false};
     bool              m_KeyWasDown = false;
+    bool              m_ButtonRefused = false;   // a refusal already reported, while the stash stays open
     std::string       m_OffReason;
 };
 

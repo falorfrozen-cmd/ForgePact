@@ -31,11 +31,13 @@
 //
 // The routes Live 1e decided (docs/stash-move-research.md § Decision): a new
 // material identity is placed in a cell of the Materials tab and a whole stack
-// merges by its count (both measured by name); the Socketable tab and the
-// bag's Socket view have no measured by-name shape and are refused. Each rule
-// is pinned for the state recorded, with the other state as its negative
-// control. The bag's Materials view is a source for the Materials tab only;
-// a stash page from a bag sub-tab is refused (baseline).
+// merges by its count (both measured by name). Live 1f and 1g decided the
+// Socketable tab: a socketable whose identity has a node there merges by name
+// (socketMergeRoute), a new kind is a planned skip, and the bag's Socket view
+// is its only source. Each rule is pinned for the state recorded, with the
+// other state as its negative control. The bag's Materials view is a source
+// for the Materials tab only; a stash page from a bag sub-tab is refused
+// (baseline).
 //
 // Red first: with these scenarios written and the header holding only its
 // namespace, this file did not compile. The first error line was
@@ -61,10 +63,19 @@
 // the header had any of them; the first error line was `error C2039:
 // 'StashMoveButtonStep': is not a member of 'ForgePact'` (on its
 // using-declaration), 2026-09-28.
+//
+// Phase C (C3), after Live 1f and 1g: the button takes the poll route (a left
+// press inside the node's bbox; no activation, no detour), a node that cannot
+// be made is reported once and never turns the mod off, and the Socketable
+// tab merges an identity with a node on it (socketMergeRoute: byname), fed
+// from the bag's Socket view only, a new kind staying in the bag. Written
+// before the header had them; the first error line was `error C2039:
+// 'PressInNode': is not a member of 'ForgePact::StashMoveAllMod'`, 2026-09-28.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -302,7 +313,8 @@ static void TargetRefusedRuns()
     StashMoveView unique = v; unique.stashTab = -5; expect(unique, "unsupported stash tab -5");
     StashMoveView other = v; other.stashTab = 20; expect(other, "unsupported stash tab 20");
     StashMoveView bagSub = v; bagSub.bagTab = -4; expect(bagSub, "unsupported bag tab -4 for stash tab 1");
-    StashMoveView socketTab = v; socketTab.stashTab = -2; expect(socketTab, "unsupported stash tab -2");
+    // The Socketable tab takes only the bag's Socket view (socketMergeRoute).
+    StashMoveView socketTab = v; socketTab.stashTab = -2; expect(socketTab, "unsupported bag tab 0 for stash tab -2");
     StashMoveView unknown = v; unknown.stashTab = StashMoveAllMod::kUnreadTab; expect(unknown, "no shown tab");
     StashMoveView empty = v; empty.cells.clear(); expect(empty, "nothing to move");
     ok = ok && mod.IsEnabled();
@@ -342,11 +354,12 @@ static void TargetStackablePlansStack()
         if (mine != (i.route == StashMoveRoute::Stack)) { ok = false; detail += " mats " + i.cell.key; }
         if (!mine && (i.route != StashMoveRoute::None || i.refusal != "not taken by the Materials tab")) { ok = false; detail += " matsref " + i.refusal; }
     }
-    // The Socketable tab, with a measured merge path (not this build's
-    // state, which refuses the tab), takes class 15 onto its stack.
+    // The Socketable tab (socketMergeRoute: byname), fed from the bag's Socket
+    // view, takes class 15 onto the stack of its identity.
     StashMoveView sock = MixedView(-2);
+    sock.bagTab = -2;
     sock.cells[6].destinationHasStack = true;
-    StashMovePlan s = StashMoveAllMod::PlanWith(sock, Flipped(true, true, true, true), true);
+    StashMovePlan s = mod.Plan(sock);
     for (const StashMoveItem& i : s.items) {
         bool mine = i.cell.itemClass == 15;
         if (mine != (i.route == StashMoveRoute::Stack)) { ok = false; detail += " sock " + i.cell.key; }
@@ -639,11 +652,10 @@ static void BaselineGridTabFromBagSubTabIsRefused()
             StashMoveView v = MixedView(stashTab);
             v.bagTab = bagTab;
             StashMovePlan p = mod.Plan(v);
-            // The Materials view is a source, for the Materials tab only; the
-            // Socket view is none at all while no socketable path is measured.
-            const std::string want = bagTab == -4
-                ? "unsupported bag tab -4 for stash tab " + std::to_string(stashTab)
-                : std::string("unsupported bag tab -2");
+            // The Materials view is a source for the Materials tab only, and
+            // the Socket view for the Socketable tab only.
+            const std::string want = "unsupported bag tab " + std::to_string(bagTab) + " for stash tab "
+                + std::to_string(stashTab);
             if (!p.refused || p.reason != want || !p.items.empty()) { ok = false; detail += " want " + want + " got " + p.reason; }
         }
     }
@@ -713,44 +725,105 @@ static void TargetWholeStackMergesByItsCount()
     Check("target/whole_stack_merges_by_its_count", ok, Keys(p) + " " + off.items[0].refusal);
 }
 
-static void TargetSocketableTabAndSocketViewAreRefused()
+// The bag's Socket view as the adapter would read it with the Socketable tab
+// on show: an orb whose identity has a node on the tab (Live 1f's base id
+// 118), three of a gem whose identity has one too (base id 38, which merged
+// and so is stackable), a socketable of a kind the tab lacks, and a ring.
+static StashMoveView SocketView()
 {
-    // socketRoute: neither path byname (Live 1e measured the Socketable tab by
-    // hand only): the Socketable tab is refused as a destination and the
-    // bag's Socket view as a source, each with nothing called.
+    StashMoveView v;
+    v.stashListed = true;
+    v.bagTab = -2;
+    v.stashTab = -2;
+    v.cells = { Cell(0, 0, "0-0-118-15", 15, true, 1, true), Cell(1, 0, "0-0-38-15", 15, true, 3, true),
+                Cell(2, 0, "0-0-31-15", 15, true, 1, false), Cell(3, 0, "0-0-5-7", 7) };
+    return v;
+}
+
+static void BaselineSocketableTabTakesOnlyTheBagSocketView()
+{
+    // socketMergeRoute: byname was measured from the bag's Socket view only
+    // (Live 1f, Live 1g), so that view is the Socketable tab's one source: a
+    // bag page, or the Materials view, feeding it is refused with nothing
+    // called, and the Socket view feeds no other stash tab.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
-    bool ok = !StashMoveAllMod::kMeasuredRoutes.socketNew && !StashMoveAllMod::kMeasuredRoutes.socketMerge;
-    StashMovePlan dest = mod.Plan(MixedView(-2));
-    ok = ok && dest.refused && dest.reason == "unsupported stash tab -2" && dest.items.empty();
-    StashMoveView fromSocket = MixedView(-2);
-    fromSocket.bagTab = -2;
-    StashMovePlan src = mod.Plan(fromSocket);
-    ok = ok && src.refused && src.reason == "unsupported stash tab -2";
-    StashMoveView socketToMats = MaterialsView(-2);
-    StashMovePlan mats = mod.Plan(socketToMats);
-    ok = ok && mats.refused && mats.reason == "unsupported bag tab -2";
-    ok = ok && StashMoveAllMod::RefusalLine("stashmoveall", dest.reason) == "stashmoveall: refused - unsupported stash tab -2; nothing was called";
-    // Negative control: with a measured new path, the Socketable tab takes
-    // class 15 from the bag's Socket view (a new identity into a cell, one
-    // with a stack there a skip while its merge is not measured), and still
-    // nothing else.
-    StashMoveRoutes on = Flipped(true, false, true, true);
-    StashMoveView sock;
-    sock.stashListed = true; sock.bagTab = -2; sock.stashTab = -2;
-    sock.cells = { Cell(0, 0, "0-0-31-15", 15, true, 1, false), Cell(1, 0, "0-0-118-15", 15, true, 1, true), Cell(2, 0, "0-0-5-7", 7) };
-    StashMovePlan withRoute = StashMoveAllMod::PlanWith(sock, on, true);
-    ok = ok && !withRoute.refused && withRoute.items.size() == 3
-        && withRoute.items[0].route == StashMoveRoute::Cell
-        && withRoute.items[1].route == StashMoveRoute::None && withRoute.items[1].refusal == "a socketable merge is not measured"
-        && withRoute.items[2].route == StashMoveRoute::None && withRoute.items[2].refusal == "not taken by the Socketable tab";
-    // With the merge path measured too, the stacked one merges.
-    StashMovePlan both = StashMoveAllMod::PlanWith(sock, Flipped(true, true, true, true), true);
-    ok = ok && both.items.size() == 3 && both.items[1].route == StashMoveRoute::Stack;
-    // The Socket view is still no source for the Materials tab.
-    ok = ok && StashMoveAllMod::PlanWith(socketToMats, on, true).reason == "unsupported bag tab -2 for stash tab -4";
-    Check("target/socketable_tab_and_socket_view_are_refused", ok,
-          dest.reason + " | " + src.reason + " | " + mats.reason + " | " + withRoute.reason);
+    bool ok = true;
+    std::string detail;
+    for (int bagTab : {0, 4, -4}) {
+        StashMoveView v = SocketView();
+        v.bagTab = bagTab;
+        const StashMovePlan p = mod.Plan(v);
+        const std::string want = "unsupported bag tab " + std::to_string(bagTab) + " for stash tab -2";
+        if (!p.refused || p.reason != want || !p.items.empty()) { ok = false; detail += " want " + want + " got " + p.reason; }
+    }
+    StashMoveView toMats = SocketView();
+    toMats.stashTab = -4;
+    ok = ok && mod.Plan(toMats).reason == "unsupported bag tab -2 for stash tab -4";
+    StashMoveView toPage = SocketView();
+    toPage.stashTab = 1;
+    ok = ok && mod.Plan(toPage).reason == "unsupported bag tab -2 for stash tab 1";
+    ok = ok && StashMoveAllMod::RefusalLine("stashmoveall", "unsupported bag tab 0 for stash tab -2")
+        == "stashmoveall: refused - unsupported bag tab 0 for stash tab -2; nothing was called";
+    // Negative control: the Socket view with the Socketable tab on show is a run.
+    ok = ok && !mod.Plan(SocketView()).refused;
+    Check("baseline/socketable_tab_takes_only_the_bag_socket_view", ok, detail);
+}
+
+static void TargetSocketableMergesAnIdentityWithANode()
+{
+    // socketMergeRoute: byname (Live 1f byname-socket-merge, Live 1g): a
+    // socketable whose identity has a node on the tab merges by its whole
+    // count (wholeStackMerge), confirmed only on that identity's count rising
+    // by exactly it; a ring is not taken there.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const StashMovePlan p = mod.Plan(SocketView());
+    bool ok = StashMoveAllMod::kMeasuredRoutes.socketMerge && !p.refused && p.items.size() == 4
+        && p.items[0].route == StashMoveRoute::Stack && p.items[0].cell.count == 1
+        && p.items[1].route == StashMoveRoute::Stack && p.items[1].cell.count == 3
+        && p.items[3].route == StashMoveRoute::None && p.items[3].refusal == "not taken by the Socketable tab";
+    const StashMoveResult orb = StashMoveAllMod::Decide(p.items[0], Stacked(81, 82));
+    const StashMoveResult gem = StashMoveAllMod::Decide(p.items[1], Stacked(2, 5));
+    ok = ok && orb.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(orb) == "stashmoveall: item 0-0-118-15 -> stack"
+        && gem.outcome == StashMoveOutcome::Moved;
+    // One unit short is a loss, never a move.
+    ok = ok && StashMoveAllMod::Decide(p.items[1], Stacked(2, 3)).outcome == StashMoveOutcome::Unconfirmed;
+    // At the point of use the sum decides, as on the Materials tab: a node
+    // still there is merged into, an unread sum is a skip that calls nothing.
+    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, 81).route == StashMoveRoute::Stack
+        && StashMoveAllMod::RouteAtUse(p.items[0], -2, -1).refusal == "its stack on the shown tab could not be read";
+    // Negative control: with the merge not measured (socketMergeRoute
+    // not-observed) the tab is refused as a destination, as before Live 1f.
+    const StashMovePlan off = StashMoveAllMod::PlanWith(SocketView(), Flipped(false, false, true, true), true);
+    ok = ok && off.refused && off.reason == "unsupported stash tab -2" && off.items.empty();
+    Check("target/socketable_merges_an_identity_with_a_node_by_its_whole_count", ok,
+          Keys(p) + " " + StashMoveAllMod::ItemLine(orb) + " off=" + off.reason);
+}
+
+static void TargetSocketableNewKindStaysInTheBag()
+{
+    // socketRoute new: not-observed (no accepted identity absent from the tab
+    // was obtainable without a person): a socketable whose identity has no
+    // node on the tab is a planned skip that calls nothing, and the run goes on.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const StashMovePlan p = mod.Plan(SocketView());
+    bool ok = !StashMoveAllMod::kMeasuredRoutes.socketNew && p.items.size() == 4
+        && p.items[2].route == StashMoveRoute::None && p.items[2].refusal == "a new kind stays in the bag";
+    StashMoveResult skip;
+    ok = ok && !StashMoveAllMod::MayCall(p.items[2], 1, skip) && skip.outcome == StashMoveOutcome::Skipped
+        && StashMoveAllMod::ItemLine(skip) == "stashmoveall: item 0-0-31-15 -> skipped: a new kind stays in the bag";
+    StashMoveTally t = mod.Begin(p);
+    ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
+    // At the point of use too: a sum of 0 is a new kind, still a skip.
+    StashMoveItem planned = p.items[0];
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 0).refusal == "a new kind stays in the bag";
+    // Negative control: were the new-identity placement measured, it would
+    // go into a cell.
+    const StashMovePlan withNew = StashMoveAllMod::PlanWith(SocketView(), Flipped(true, true, true, true), true);
+    ok = ok && withNew.items.size() == 4 && withNew.items[2].route == StashMoveRoute::Cell;
+    Check("target/socketable_new_kind_stays_in_the_bag", ok, Keys(p) + " " + p.items[2].refusal);
 }
 
 static void TargetShownTabRoom()
@@ -1075,6 +1148,58 @@ static void TargetButtonPressRunsOnceUnderTheKeyGuard()
           + " noStash=" + std::to_string(noStash));
 }
 
+static void TargetButtonPressIsALeftPressInsideTheNodeBbox()
+{
+    // buttonRoute: poll (Live 1g): the node's activation is left undefined,
+    // and a left press whose GUI point lies inside the node's bbox, read at
+    // that frame, is the button press. The bbox is inclusive, as the game's
+    // own sides are; a side that did not read (NaN) or a box turned inside
+    // out is never a press.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    // Live 1g's node sat left of Sort; these are the shape of its box.
+    const double l = 520, t = 600, r = 600, b = 632;
+    bool ok = StashMoveAllMod::PressInNode(560, 616, l, t, r, b)
+        && StashMoveAllMod::PressInNode(l, t, l, t, r, b) && StashMoveAllMod::PressInNode(r, b, l, t, r, b);
+    // Negative controls: just outside each side, Sort's box beside it, and
+    // the panel background (Live 1g node-press-negative).
+    ok = ok && !StashMoveAllMod::PressInNode(l - 1, 616, l, t, r, b) && !StashMoveAllMod::PressInNode(r + 1, 616, l, t, r, b)
+        && !StashMoveAllMod::PressInNode(560, t - 1, l, t, r, b) && !StashMoveAllMod::PressInNode(560, b + 1, l, t, r, b)
+        && !StashMoveAllMod::PressInNode(640, 616, l, t, r, b) && !StashMoveAllMod::PressInNode(300, 200, l, t, r, b);
+    ok = ok && !StashMoveAllMod::PressInNode(560, 616, nan, t, r, b) && !StashMoveAllMod::PressInNode(nan, 616, l, t, r, b)
+        && !StashMoveAllMod::PressInNode(560, 616, r, t, l, b);
+    Check("target/button_press_is_a_left_press_inside_the_node_bbox", ok, "");
+}
+
+static void TargetButtonRefusalIsReportedOnceAndKeepsTheModOn()
+{
+    // A node the adapter could not create (UiCreateNode refused it, the Sort
+    // row did not read) is reported once, is not tried again while the stash
+    // stays open, and never turns the mod off: F4 keeps working.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    bool ok = mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Create;
+    const std::string first = mod.ButtonRefused("UiCreateNode answered undefined");
+    const std::string again = mod.ButtonRefused("UiCreateNode answered undefined");
+    ok = ok && first == "stashmoveall: button - UiCreateNode answered undefined; F4 still works" && again.empty();
+    ok = ok && mod.IsEnabled() && !mod.OffThisSession() && mod.StateLine() == "stashmoveall: state=on key=F4";
+    ok = ok && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Keep;
+    // F4 still starts a run.
+    mod.KeyEdge(false, true, true, false);
+    ok = ok && mod.KeyEdge(true, true, true, false);
+    // The stash closed and opened again: one more try, and one more line if
+    // it is refused again.
+    ok = ok && mod.ButtonStep(false, false, false, false) == StashMoveButtonStep::Keep
+        && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Create
+        && !mod.ButtonRefused("the Sort row's x, y or bbox did not read").empty();
+    // So does the switch turned off and on again.
+    mod.SetEnabled(false);
+    mod.SetEnabled(true);
+    ok = ok && mod.ButtonStep(true, true, true, false) == StashMoveButtonStep::Create;
+    // Negative control: a node that exists is kept, refusal or not.
+    ok = ok && mod.ButtonStep(true, true, true, true) == StashMoveButtonStep::Keep;
+    Check("target/button_refusal_is_reported_once_and_keeps_the_mod_on", ok, first + " | " + again);
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -1093,7 +1218,9 @@ int main()
     TargetBagMaterialsViewFeedsTheMaterialsTab();
     TargetNewMaterialIdentityIsPlacedInACell();
     TargetWholeStackMergesByItsCount();
-    TargetSocketableTabAndSocketViewAreRefused();
+    BaselineSocketableTabTakesOnlyTheBagSocketView();
+    TargetSocketableMergesAnIdentityWithANode();
+    TargetSocketableNewKindStaysInTheBag();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();
@@ -1104,6 +1231,8 @@ int main()
     BaselineButtonOffCreatesNothing();
     TargetButtonExistsOnlyWithTheStashAndSortListed();
     TargetButtonPressRunsOnceUnderTheKeyGuard();
+    TargetButtonPressIsALeftPressInsideTheNodeBbox();
+    TargetButtonRefusalIsReportedOnceAndKeepsTheModOn();
     std::cout << (g_Failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return g_Failures ? 1 : 0;
 }
