@@ -2163,7 +2163,7 @@ Instrument Before Trusting a Negative Result" rule (now in the repo-root
 `agents.md`) was written about hooks that could not fire; it applies just as
 much to call shapes that were never given their arguments.
 
-ForgePact 2.0.0 improves this collector's target selection: it now holds back
+ForgePact 2.0.1 improves this collector's target selection: it now holds back
 a quest item it could not collect and walks the family past the per-tick
 budget; the design is in
 [dev2-bug-batch-research.md](dev2-bug-batch-research.md#94-the-pet-circles-one-quest-item-when-many-are-on-screen).

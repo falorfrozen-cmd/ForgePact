@@ -1,7 +1,7 @@
 # Development 2 bug batch: #93, #94, #77, #83, #80 and #95 part 1
 
-Five findings from the Development 2 round ship together in ForgePact 2.0.0,
-recut from its unpublished draft with no version bump: the relic filter now
+Five findings from the Development 2 round ship together in ForgePact 2.0.1
+(2.0.0 was published on 2026-09-28, before this batch merged): the relic filter now
 counts relics worn in the equipped slots (#93), the pet moves on from ground
 loot it cannot pick up when the new, off-by-default `petunstick` mod is on (#94,
 the game's own companion loot pickup; its reading is in
@@ -31,16 +31,21 @@ the shared record every module reads.
 | Issue | What was established | Fix | Checked by |
 |---|---|---|---|
 | #93 | **Measured** (Live 1): the equipped relic slots 10-14 are fingerprint strings in a global, and the scan through them found the three maxed relics the save shows | `hs-game-sdk`'s relic scan reads the equipped slots, both bindings | Live 1's `relic-scan-count` (research build); Live 2's `on-relic-scan` (player build) |
-| #94 | **Static reading** of the game's companion loot pickup (`Companion_obj`): a target is replaced only once it ceases to exist, so an item the pickup keeps failing on pins the pet; no session measured it ([pet-loot-stuck-research.md](pet-loot-stuck-research.md)) | `petunstick` (off by default): an item the pet has stayed on for 1.5 s is held back through the game's own `itemCompanionTimer` when `variable_instance_exists` says the item carries it (otherwise nothing is written to the item and it is counted `timer absent=`), and either way the pet's target and loot list are dropped; `re-picked while held=` counts a given-up target the pet takes back within the hold | Live procedure 1 of the workorder `forgepact-pet-loot-stuck` (player DLL) |
-| Pet Quest Collector (first filed here as #94) | **Reading of our own code** only; no session measured it | target selection that remembers a failed target, and a cursor over the quest-item family (no issue number) | the owner's own test on the final player DLL (Live procedure 3) |
+| #94 | **Static reading** of the game's companion loot pickup (`Companion_obj`): a target is replaced only once it ceases to exist, so an item the pickup keeps failing on pins the pet; no session measured it ([pet-loot-stuck-research.md](pet-loot-stuck-research.md)) | `petunstick` (off by default): an item the pet has stayed on for 1.5 s is held back through the game's own `itemCompanionTimer` when `variable_instance_exists` says the item carries it (otherwise nothing is written to the item and it is counted `timer absent=`), and either way the pet's target and loot list are dropped; `re-picked while held=` counts a given-up target the pet takes back within the hold | Live 1 of the workorder `forgepact-pet-loot-stuck` (player DLL): the stuck state did not reproduce and the mod gave nothing up, so not observed; shipped off by default ([pet-loot-stuck-research.md](pet-loot-stuck-research.md#live-1-results-2026-09-28)) |
+| Pet Quest Collector (first filed here as #94) | **Reading of our own code** only; no session measured it | target selection that remembers a failed target, and a cursor over the quest-item family (no issue number) | none: Live procedure 3 (the owner's own test) was not run, so no session confirms it |
 | #77 | **Measured** (Live 1): `dropmult gold 100` makes 10,000 coins per monster gold drop and stalls the game for seconds, at the drop and again at the pickup | gold multiplies one coin's amount; each gold script runs once | Live 2's `on-gold-amount` |
 | #83 | **Measured** (Live 1) with Chosen One: the orb's own timer counts down across the cast, and the countdown's rule never selected Mana Orb. Without Chosen One: not observed | an explicit countdown row for Mana Orb (`manaorb-route: object-timer`) | Live 2's `on-manaorb-countdown` |
 | #80 | **Reading of our own code**: one refusal kind covered four different causes, and the hash call's result was dropped | one kind, counter and line per cause; `hash-failed` when `ItemCheckHash` did not run | Live 2's `on-craftmats-press` and `no-new-refusal` |
 | #95 part 1 | **Measured** (Live 1): a filtered item stays a live, invisible instance; 281 of 291 ground items were hidden at a strict filter | none: measurement only | Live 1's `loot-hidden-count`, `loot-showall-control`, `loot-frame` |
 
-When this document was written, Live 1 had run (2026-09-27, research DLL
-sha256 `87ad8265...32a6`, slot 14 "Sorak", a White Mage). Live 2 and the owner's
-Live procedure 3 had not.
+Live 1 ran on 2026-09-27 (research DLL sha256 `87ad8265...32a6`, slot 14
+"Sorak", a White Mage) and Live 2 on 2026-09-27 (player DLL sha256
+`c36004c6...8e6b`, the same slot): all eight of Live 2's checks passed
+([Live 2 results](#live-2-results-2026-09-27)). The owner's Live procedure 3
+was not run. The batch ships in ForgePact 2.0.1, since 2.0.0 was published
+before it merged. The 2.0.1 player DLL, built afterwards from the tree merged
+with ForgePact's `main`, has not been run by any session; the results here
+belong to the DLLs they name.
 
 ## #93: the relic filter did not see equipped relics
 
@@ -341,7 +346,9 @@ order, all recorded above: `dll-hash`, `marker`, `control` (pass);
 observed) (#95). Research checks record findings; only the first three had to
 pass.
 
-**Live 2, the fix gate** (player DLL, without the quest-collector change). Checks: `dll-hash`, `marker`,
+**Live 2, the fix gate** (player DLL `c36004c6...8e6b`, which also carries the
+quest-collector change but does not test it; ran 2026-09-27, results in
+[Live 2 results](#live-2-results-2026-09-27)). Checks: `dll-hash`, `marker`,
 `control`; `on-craftmats-press` (one Ol to Old press moves from the stash and
 logs one `craftmats: moved` line); `on-gold-amount` (three gold drops at x100,
 exactly one `dropmult gold: x100 applied to the coin's amount` line, no freeze);
@@ -356,4 +363,43 @@ items on screen and one with two or three, and judges the pet; the operator
 reads `petquest 0`'s counter lines before and after each. Checks:
 `on-petquest-many` and `on-petquest-few` (the owner's verdict, with `collected=`
 rising), and `petquest-counters` (a record of which counter rose besides
-`collected`, never a gate).
+`collected`, never a gate). **It was not run**: the batch ships in 2.0.1
+without it, so no session confirms the quest-collector change, and the notes
+say so ("Not yet confirmed in a live game.").
+
+## Live 2 results (2026-09-27)
+
+**Measured**, one session: player DLL SHA-256 `c36004c6...8e6b` (boot line
+`==== BloodPact plugin loaded ==== v2.0.0`), slot 14 ("Sorak"). All eight
+checks passed: `dll-hash`, `marker`, `control`, and the five below.
+
+- **#93, `on-relic-scan`: pass.** The relic filter logged `relicfilter: scan
+  found 3 maxed relics (ids 109,124,135)` when it armed and again on a formal
+  re-run: the equipped slots are read in the player build.
+- **#83, `on-manaorb-countdown`: pass.** With Chosen One, the countdown arc
+  showed on the Mana Orb slot (0,3) right after the cast and was gone once the
+  orb cleared. Mana Orb without Chosen One was not checked.
+- **#77, `on-gold-amount`: pass.** At x100 the hook logged one `dropmult gold`
+  line reading `first coin 44 -> 4400`. The HUD's gold rose from 188948 to
+  189019 at x1 (+71) and on to 201889 at x100 (+12870, two stacks the screen
+  showed as 5720 and 7150). The owner saw no freeze at the kill or at the
+  pickup. This is the first time argument 4 of `DropGold` has a gold figure
+  the game showed beside it; monster gold only, one session.
+- **#80, `on-craftmats-press` and `no-new-refusal`: pass.** The re-press
+  logged `craftmats: moved 1 class=15 ...` and the owner crafted one Old; none
+  of the five new `craftmats:` refusal lines appeared anywhere in the session.
+
+Two findings, neither a defect of the batch:
+
+- **The mods were not armed after `hs_launch`.** The session's first craft
+  press ran with no ForgePact mod armed, so it tested nothing; the operator
+  armed the mods by command and the re-press is the one that counts. Why the
+  mods did not arm on their own is not established.
+- **The operator's bag count was wrong.** A `menulayout` read taken as the
+  bag's Ol count said 19 while the bag held none: the cells it counted share
+  the recipe's item class with other items, and whether the grid read was the
+  bag was not proven. The count came from the instrument, not the bag.
+
+Live procedure 3 was not run, so the quest-collector change is confirmed by no
+session. The 2.0.1 player DLL, built later from the tree merged with
+ForgePact's `main`, is a different binary, and no session has run it.

@@ -15,10 +15,12 @@ compiled code in a local decompiler and written here in our own words; no game
 code is quoted (`AGENTS.md` § Legal), and objects and scripts are named by their
 `hs-game-sdk` names. **Measured** means observed on the running game. A thing
 that was looked for and not seen is written "not observed", never "does not
-happen". **No session has measured any of this yet**: the whole mechanism below
-is a static reading of the current build's compiled events (2026-09-27), and
-the only live check planned is Live procedure 1 of the workorder
-`forgepact-pet-loot-stuck` (see [The fix and what it does not do](#the-fix-and-what-it-does-not-do)).
+happen". The whole mechanism below is a static reading of the current build's
+compiled events (2026-09-27). One session has run since: Live 1 of the
+workorder `forgepact-pet-loot-stuck` (2026-09-28), which did not reproduce the
+stuck state and saw the mod give nothing up, so none of the reading is
+confirmed by a measurement yet (see [Live 1 results](#live-1-results-2026-09-28)).
+The mod ships off by default in ForgePact 2.0.1.
 The game facts are also recorded in the hub's `docs/RUNTIME_DATA_MODELS.md`
 § 10.6, the shared record every module reads.
 
@@ -145,15 +147,10 @@ full grid or a full stack leaves the item on the ground and returns false.
   measured, which is why the mod gates the clear on `ds_exists` and never on
   the kind.
 - **Nothing here is measured.** Every claim above is a static reading of the
-  current build. Live procedure 1 records whether the stuck state reproduces
-  with the mod off (`off-pet-stuck`) and whether the pet moves on with it on
-  (`on-pet-moves-on`, which passes only when the owner's verdict is good **and**
-  `held back=` or `coins released=` rose; beside every verdict it quotes
-  `timer absent=`, `re-picked while held=` and `longest same-target=`, which
-  tell "the same item came back" from "distinct items one after another").
-  A `not-observed` there is a finding
-  about that session, not a defect, and not evidence that the stuck state does
-  not happen.
+  current build. Live 1 (2026-09-28) did not reproduce the stuck state with
+  the mod off, and with it on no give-up counter rose, so it measured neither
+  the stuck state nor the fix ([Live 1 results](#live-1-results-2026-09-28)).
+  That is not observed, not evidence that the stuck state does not happen.
 
 ## The fix and what it does not do
 
@@ -311,6 +308,34 @@ function or in the tick, or with the decision taken out). No harness runs the
 ground item's timer branch, where no `itemCompanionTimer` means
 `timer absent=`; it is pinned by shape only.
 
-**Live.** Not yet confirmed in a live game. Live procedure 1 (player DLL, one
-crowded spot with mixed loot, mod off then on) is what will record it; its
-results belong in this section when it has run.
+**Live.** Not yet confirmed in a live game. Live 1 (player DLL, one crowded
+spot with mixed loot, mod off then on) ran on 2026-09-28 and did not reproduce
+the stuck state, so the mod had nothing to act on; its record is
+[Live 1 results](#live-1-results-2026-09-28) below. The owner shipped the mod
+off by default on that result.
+
+## Live 1 results (2026-09-28)
+
+**Measured**, one session: the workorder `forgepact-pet-loot-stuck`'s Live 1,
+player DLL SHA-256 `083d7e02…57c7` (boot line `==== BloodPact plugin loaded
+==== v2.0.0`), slot 14 ("Sorak"). The bag was filled on the back end by
+unstacking stacks, with `dropmult item`, `runes`, `gems` and `ores` at 3 for a
+crowded ground, then the owner played about 90 s with the mod off and about
+90 s with it on, in a crowded spot.
+
+| Check | Result | What was seen |
+|---|---|---|
+| `dll-hash`, `marker`, `control` | pass | the expected DLL, its boot line, `pong`, and a `petunstick 0` line with every named field |
+| `off-pet-stuck` | fail | the owner saw the pet stuck at no point with the mod off: the stuck state did not reproduce |
+| `on-pet-moves-on` | not observed | the owner saw no stuck pet with the mod on, but `held back=`, `coins released=`, `timer absent=` and `other kind=` all stayed 0, so the mod gave nothing up |
+| `unstick-counters` | pass | both `petunstick 0` lines recorded: at the end `ticks=27900`, `target gone=11691`, `longest same-target=13 frames` (under the 90-frame give-up), `re-picked while held=0` |
+
+So the tick ran and watched the pet the whole on phase, and no target stayed
+within reach for anywhere near the give-up count: the longest run was 13
+frames. Neither the stuck state nor the mod acting on it has been observed
+live. That is not observed, not evidence that either does not happen: one
+session with a filled bag and a crowded ground did not reproduce what the
+owner reported (#94), and it cannot say whether the stuck state needs a full
+grid, a stack limit or something else (§ [Not established](#not-established)). The owner shipped the mod off by
+default in ForgePact 2.0.1 (2026-09-28) on this result. The 2.0.1 player DLL,
+built later from the merged tree, has not been run by any session.
