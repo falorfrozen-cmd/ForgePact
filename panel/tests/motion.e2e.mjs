@@ -150,7 +150,24 @@ async function hoverNote(page) {
 async function hoverWarning(page, icon = pageIcon) {
   await away(page);
   await record(page);
-  await page.hover(icon);
+  try {
+    await page.hover(icon, { timeout: 15000 });
+  } catch (e) {
+    // M11 once timed out here on a CI runner with nothing but "Timeout
+    // 30000ms exceeded". Say what stood in the way, so the next time names
+    // its cause instead of costing a guess.
+    const at = await $(page, (s) => {
+      const el = document.querySelector(s);
+      if (!el) return 'no such element';
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return JSON.stringify({ visible: el.checkVisibility(), rect: [r.x, r.y, r.width, r.height].map(Math.round),
+        viewport: [innerWidth, innerHeight], top: top ? `${top.tagName}#${top.id}.${top.className}` : null,
+        theme: document.documentElement.dataset.theme, tab: document.body.dataset.emberTab ?? null });
+    }, icon).catch(() => 'page unreadable');
+    const log = e.message.split('\n').filter((l) => /intercepts|not visible|not stable|outside|detached|retrying/.test(l)).slice(-3);
+    throw new Error(`hover ${icon} failed: ${at}; ${log.join(' | ') || e.message.split('\n')[0]}`);
+  }
   await page.waitForFunction((s) => !!document.querySelector(s)?.checkVisibility(), tipOf(icon), { timeout: 3000 });
   await wait(250);
   return seen(page, tipOf(icon));

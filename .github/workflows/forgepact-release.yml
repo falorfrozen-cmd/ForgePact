@@ -384,6 +384,24 @@ jobs:
           echo "$plan"
           echo "$plan" >> "$GITHUB_OUTPUT"
 
+      # The sandbox the suites drive imports hs-game-sdk from a sibling of
+      # ForgePact, as build does. Without it the Satanic pool reads
+      # "Modifier data unavailable" and ui, finish, gems, review and the
+      # oracle replay fail on the environment (run 36371697982).
+      - name: Check out hs-game-sdk from the hub
+        uses: actions/checkout@v4
+        with:
+          repository: falorfrozen-cmd/hero-siege-offline-toolkit
+          ref: ${{ inputs.hub_ref }}
+          path: hub
+          sparse-checkout: |
+            hs-game-sdk
+          sparse-checkout-cone-mode: false
+
+      - name: Place hs-game-sdk as a sibling of ForgePact
+        shell: bash
+        run: mv hub/hs-game-sdk hs-game-sdk
+
       - name: Check out the tagged ForgePact tree
         uses: actions/checkout@v4
         with:
