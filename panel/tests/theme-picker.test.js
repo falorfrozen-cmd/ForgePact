@@ -13,7 +13,7 @@ const rule = (selectorText, values) => ({ selectorText, style: { getPropertyValu
 // tokens.css's own blocks, parsed the plain way: `:root { ... }` and
 // `:root[data-theme="<name>"] { ... }`, custom properties only.
 function tokenRules() {
-  const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8') + readFileSync(new URL('../src/ember/palette.css', import.meta.url), 'utf8');
   return [...css.matchAll(/(:root(?:\[[^\]]+\])?)\s*\{([^}]*)\}/g)].map(([, selector, body]) =>
     rule(selector, Object.fromEntries([...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map(([, k, v]) => [k, v.trim()]))));
 }
@@ -35,7 +35,7 @@ test('the default palette is :root, each other one its data-theme block; a later
     rule(':root[data-theme="graphite"]', { '--color-border-strong': '#444', '--color-text-muted': '#555', '--color-accent': '#666' }),
     rule(':root[data-theme=sigil]', { '--color-border-strong': '#777', '--color-text-muted': '#888', '--color-accent': '#999' }),
   ]);
-  assert.deepEqual(got, { ledger: ['#111', '#222', '#334'], graphite: ['#444', '#555', '#666'], sigil: ['#777', '#888', '#999'] });
+  assert.deepEqual(got, { ledger: ['#111', '#222', '#334'], graphite: ['#444', '#555', '#666'], sigil: ['#777', '#888', '#999'], ember: ['', '', ''] });
 });
 
 test('a palette with no block gets empty swatches, never another palette\'s colours (negative control)', () => {

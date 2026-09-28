@@ -139,6 +139,8 @@ export function installEnabledModsForm() {
   // layout measure() forces never replays the close.
   function setOpen(open, instant = true) {
     if (open === isOpen()) return;
+    // The Ember list expands in flow; reserve/release its space immediately.
+    instant ||= document.documentElement.dataset.theme === 'ember';
     const ul = list();
     if (ul) {
       ul.toggleAttribute('data-instant', instant);
@@ -160,6 +162,12 @@ export function installEnabledModsForm() {
       schedule(HOLD_IDLE_MS + 1);
     }
     fitTray();
+    if (open && document.documentElement.dataset.theme === 'ember') {
+      // Ignore the pane's normal sticky-header scroll padding: this expanded
+      // menu must fit even when the entire pane is only a few rows high.
+      const delta = box.getBoundingClientRect().bottom - wrap.getBoundingClientRect().bottom + 8;
+      if (delta > 0) wrap.scrollBy({ top: delta, behavior: 'instant' });
+    }
   }
 
   // The list the toggle controls, and the tray's height: it scrolls after
@@ -181,6 +189,13 @@ export function installEnabledModsForm() {
       if (entries.length > 8) {
         const last = entries[7];
         ul.style.maxHeight = `${last.offsetTop + last.offsetHeight + parseFloat(getComputedStyle(ul).paddingBottom)}px`;
+      }
+      if (document.documentElement.dataset.theme === 'ember') {
+        // Leave room for the heading/count and padding, then let the list
+        // itself scroll. No viewport-sized popover can cover the action bar.
+        const available = Math.max(32, wrap.clientHeight - (box.offsetHeight - ul.offsetHeight) - 16);
+        const limit = parseFloat(ul.style.maxHeight) || Infinity;
+        ul.style.maxHeight = `${Math.min(limit, available)}px`;
       }
     }
     markMoreBelow(ul);

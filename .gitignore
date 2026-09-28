@@ -50,3 +50,6 @@ plugin_build/include/
 **/decompiled/
 **/disassembly/
 *.dis
+
+# Local UI verification screenshots
+panel/artifacts/

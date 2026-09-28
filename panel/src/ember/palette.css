@@ -1,0 +1,21 @@
+/* Ember's palette is local to the approved Falor artwork. Existing Figma palettes stay unchanged. */
+:root[data-theme="ember"] {
+  --color-bg-base: #101112;
+  --color-bg-raised: #19191a;
+  --color-bg-sunken: #090b0d;
+  --color-bg-hover: #28211c;
+  --color-accent: #e99748;
+  --color-accent-hover: #ffc383;
+  --color-accent-ink: #1a1109;
+  --color-accent-tint: #332116;
+  --color-border-strong: #967556;
+  --color-border-subtle: #514438;
+  --color-text-primary: #eee7da;
+  --color-text-muted: #bab1a5;
+  --color-text-faint: #aaa093;
+  --color-ok: #8bd3a6;
+  --color-danger: #f29ba6;
+  --color-focus: #ffc383;
+  --color-track: #76604a;
+  --font-body-family: "Segoe UI";
+}
