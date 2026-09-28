@@ -483,6 +483,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/CraftMatsMod.hpp>
+#include <ForgePact/StashMoveAllMod.hpp>
 #include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
@@ -35852,8 +35853,8 @@ static bool HandleTalentAllocCommand(const std::string& lc, const std::string& r
 // line from its own re-read at the point of use, or a line beginning
 // `<verb>: refused - ` saying why nothing (or nothing more) was called. There
 // is no `stashopen`: the by-name open crashed the game once and the hub opens
-// with the interact key (§ Decision, stashOpenRoute). There is no `stashmove`:
-// the moves are hs-drive-stash-move-research's.
+// with the interact key (§ Decision, stashOpenRoute). The move from the bag
+// into the stash is ForgePact #68's `stashmoveall` and `stashmove`, below.
 
 // The routines these verbs call by name, through the by-name dispatcher
 // talentalloc uses (GetNamedRoutinePointer on the SDK constant, then
@@ -36258,6 +36259,558 @@ static bool HandleGiveItemCommand(const std::string& lc, const std::string& rest
     return false;
 }
 // ---- end stash and bag player verbs
+
+// ---- stashmoveall, stashmove: Move all into the stash (ForgePact #68)
+//
+// docs/stash-move-research.md § Decision and § Ship design. With the stash
+// open and the switch on, F4 in the game's window (or `stashmoveall run`)
+// moves every item on the bag tab on show into the stash tab on show, one
+// item at a time, through the game's own routines called by name in the order
+// and with the arguments the research replayed; `stashmove <fingerprint>`
+// moves one. ForgePact::StashMoveAllMod decides - the plan, the room check,
+// each outcome and the lines - and this adapter reads the game and acts.
+// Every instance is found by name and every routine by its SDK constant
+// (GetNamedRoutinePointer, then asset_get_index, then script_execute with
+// self and other apart, as TalentAllocDispatch resolves them). Nothing here
+// writes a container, a map entry or an item: the game's routines do, and
+// the stash's own close saves it. Only the tab on show is re-read, because
+// the other stash tabs have no container readable by name (RUNTIME_DATA_MODELS
+// § 17); an item is only ever handed the shown tab's array, and only after
+// that array reads room for it. Nothing runs on the frame path while the
+// switch is off; while it is on, the frame path reads one key.
+
+static constexpr TalentAllocScript kSmaValidate{ HeroSiege::Scripts::gml_Script_ValidateItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_ValidateItem) };
+static constexpr TalentAllocScript kSmaAddToStack{ HeroSiege::Scripts::gml_Script_StashAddToStack,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_StashAddToStack) };
+static constexpr TalentAllocScript kSmaPlace{ HeroSiege::Scripts::gml_Script_GridAddItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem) };
+static constexpr TalentAllocScript kSmaClear{ HeroSiege::Scripts::gml_Script_InvGridClearItemNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode) };
+static constexpr TalentAllocScript kSmaOwner{ HeroSiege::Scripts::gml_Script_ChangeItemOwner,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChangeItemOwner) };
+static constexpr TalentAllocScript kSmaRemove{ HeroSiege::Scripts::gml_Script_GridRemoveItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridRemoveItem) };
+
+// The key: F4 (the owner's choice, 2026-09-28). No research hotkey uses it
+// (F5-F11 do), so the two builds never fire two things on one press.
+static constexpr int kSmaHotkey = VK_F4;
+// The bag grid and the stash grid, by the uiNodeCallstack each grid node
+// carries (Live 1b to 1e: the stash's grid node rebinds to the tab on show,
+// the bag's to the bag view on show).
+static constexpr const char* kSmaBagGrid = "InventoryGrid";
+static constexpr const char* kSmaStashGrid = "StashGrid";
+// The item owners the moves pass: 0 the character, 9 the stash
+// (RUNTIME_DATA_MODELS § 17; ChangeItemOwner 0 to 9 on a shared page and on a
+// new Materials identity, Live 1d byname-shared-owner, Live 1e).
+static constexpr double kSmaCharacterOwner = 0.0;
+static constexpr double kSmaStashOwner = 9.0;
+// StashAddToStack's second and third arguments, as the game's own moves
+// passed them (Live 1c and 1d, § Decision gridMoveRoute and stackMoveRoute):
+// 0, 13 into the personal page; 9, 2 into a shared page and the Materials tab.
+static constexpr double kSmaPersonalStackA1 = 0.0, kSmaPersonalStackA2 = 13.0;
+static constexpr double kSmaSharedStackA1 = 9.0, kSmaSharedStackA2 = 2.0;
+static constexpr int kSmaPersonalTab = 0;
+
+// One by-name call, self and other passed apart, keeping the routine's
+// answer; TalentAllocDispatch's resolution, which drops the answer.
+static TalentAllocCall SmaCall(const TalentAllocScript& s, CInstance* self, CInstance* other,
+                               const std::vector<RValue>& args, RValue& res)
+{
+    res = RValue();
+    PVOID p = nullptr;
+    if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(s.routine.data(), &p)) || !p) return TalentAllocCall::NoRoutine;
+    double idx = -1;
+    RValue index;
+    try { index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(s.script)) }); }
+    catch (...) { return TalentAllocCall::NoScript; }
+    if (!ApNumber(index, idx) || idx < 0) return TalentAllocCall::NoScript;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, other, callArgs); }
+    catch (...) { return TalentAllocCall::Threw; }
+    return AurieSuccess(st) ? TalentAllocCall::Ran : TalentAllocCall::Failed;
+}
+
+// What one run stands on, found by name at the point of use.
+struct SmaScene {
+    RValue     window;            // UI_Stash_obj
+    RValue     bagNode;           // the bag's grid node (InventoryGrid)
+    RValue     stashNode;         // the stash's grid node (StashGrid)
+    CInstance* bag = nullptr;
+    CInstance* sg = nullptr;
+    RValue     map9;              // GetItemMap(9), for the shown tab's items
+    bool       map9Read = false;
+    std::map<std::string, std::pair<int64_t, int64_t>> ids;   // key -> class, base id (never changes)
+    ForgePact::StashMoveView view;
+};
+
+// A tab number UI_Stash_obj holds (tabSelected for the bag, stashTabSelected
+// for the stash); kUnreadTab when it cannot be read as a whole number.
+static int SmaTab(const RValue& window, const char* var)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { window, RValue(var) }).ToBoolean())
+            return ForgePact::StashMoveAllMod::kUnreadTab;
+        double d = 0;
+        if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { window, RValue(var) }), d) || d != std::floor(d))
+            return ForgePact::StashMoveAllMod::kUnreadTab;
+        return (int)d;
+    } catch (...) { return ForgePact::StashMoveAllMod::kUnreadTab; }
+}
+
+// The shown stash tab's own cell array: the stash grid node's nodeGrid for a
+// page ([y][x], it rebinds to the page on show), Controller_obj's
+// stashMaterialTab for the Materials tab (the array every Materials move
+// logged, Live 1c and 1e). No other tab's array is read, or has a name.
+static bool SmaShownArray(const SmaScene& s, int stashTab, RValue& cells)
+{
+    const ForgePact::StashMoveTab kind = ForgePact::StashMoveAllMod::TabOf(stashTab);
+    if (kind == ForgePact::StashMoveTab::Grid) return CmArrayVar(s.stashNode, "nodeGrid", cells);
+    if (kind != ForgePact::StashMoveTab::Materials) return false;
+    RValue handle;
+    CInstance* inst = nullptr;
+    return CmInstance(HeroSiege::Objects::GameObject::Controller_obj, handle, inst) && CmArrayVar(handle, kCmMaterialTabVar, cells);
+}
+
+// The cells of a two-level array as the core's grid: a cell holding an item
+// struct is filled. rows = 0 (unread) when a level is not an array or the
+// rows differ in length.
+static ForgePact::StashMoveGrid SmaGrid(const RValue& cells)
+{
+    ForgePact::StashMoveGrid g;
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return g;
+        const int rows = CmLength(cells);
+        int cols = -1;
+        std::vector<char> filled;
+        for (int r = 0; r < rows; ++r) {
+            const RValue line = CmAt(cells, r);
+            if (line.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveGrid();
+            const int n = CmLength(line);
+            if (cols >= 0 && n != cols) return ForgePact::StashMoveGrid();
+            cols = n;
+            for (int c = 0; c < n; ++c) filled.push_back(ApIsPlainStruct(CmAt(line, c)) ? 1 : 0);
+        }
+        if (rows > 0 && cols > 0) { g.rows = rows; g.cols = cols; g.filled = filled; }
+    } catch (...) { return ForgePact::StashMoveGrid(); }
+    return g;
+}
+
+// 1 the array's cell [row][col] holds `key`, 0 it holds nothing or another
+// item, -1 it could not be read.
+static int SmaArrayCellHolds(const RValue& cells, int row, int col, const std::string& key)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY || row < 0 || row >= CmLength(cells)) return -1;
+        const RValue line = CmAt(cells, row);
+        if (line.m_Kind != VALUE_ARRAY || col < 0 || col >= CmLength(line)) return -1;
+        RValue fp;
+        std::string text;
+        return ApCellFingerprint(CmAt(line, col), fp, text) && text == key ? 1 : 0;
+    } catch (...) { return -1; }
+}
+
+// The placement's answer cell on the shown tab: [y][x], the order measured on
+// the stash pages (Live 1: nodeGrid.<y>.<x>). The Materials array's order is a
+// static reading only ([x][y], RUNTIME_DATA_MODELS § 17), so there either
+// order holding the key confirms it.
+static int SmaAnswerCellHolds(const RValue& cells, int x, int y, const std::string& key, bool materials)
+{
+    const int yx = SmaArrayCellHolds(cells, y, x, key);
+    if (yx == 1 || !materials) return yx;
+    const int xy = SmaArrayCellHolds(cells, x, y, key);
+    if (xy == 1) return 1;
+    return yx == -1 && xy == -1 ? -1 : 0;
+}
+
+// The bag cell at x, y (nodeGrid[y][x] of the bag's grid node, re-read): 1 it
+// holds `key`, 0 not, -1 unread; the cell itself in `cell` for the clear.
+static int SmaBagCellHolds(const SmaScene& s, int x, int y, const std::string& key, RValue* cell = nullptr)
+{
+    try {
+        RValue c, fp;
+        std::string text;
+        if (!ApReadCell(s.bagNode, y, x, c)) return -1;
+        if (cell) *cell = c;
+        return ApCellFingerprint(c, fp, text) && text == key ? 1 : 0;
+    } catch (...) { return -1; }
+}
+
+// An item's class, base id and count (`o`, one when it has none; -1 when it
+// is there and not a whole number).
+static bool SmaReadIdentity(const RValue& item, int64_t& cls, int64_t& base, int64_t& count)
+{
+    RValue type, def, b, o;
+    if (!CmMember(item, "itemType", type) || !CmMember(item, "itemDefinitionStruct", def) || !CmMember(def, "b", b)) return false;
+    cls = CmWhole(type);
+    base = CmWhole(b);
+    count = CmMember(def, "o", o) ? CmWhole(o) : 1;
+    return cls >= 0 && base >= 0;
+}
+
+// The item a shown-tab key names: map 9 (the stash's, where the Materials tab
+// and a moved shared-page item answer) then map 0 (the personal page's, and a
+// bag item). A shared page's entries answer on neither by name (§ Decision,
+// mapOwnerRule), so they stay unidentified.
+static bool SmaResolve(const SmaScene& s, const std::string& key, RValue& item)
+{
+    if (s.map9Read && CmMapItem(s.map9, RValue(key), item)) return true;
+    return ApItemFromFingerprint(s.bag, RValue(key), item);
+}
+
+// The shown tab's stack of one identity: the sum of `o` over its items of
+// that class and base id. -1 when the array is unreadable or any of its items
+// could not be identified, since a missed item may be of that identity.
+static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        std::vector<std::string> seen;
+        int64_t sum = 0;
+        const int n = CmLength(cells);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(cells, i);
+            if (line.m_Kind != VALUE_ARRAY) return -1;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp, item;
+                std::string key;
+                if (!ApCellFingerprint(CmAt(line, j), fp, key)) continue;
+                if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+                seen.push_back(key);
+                auto known = s.ids.find(key);
+                if (known != s.ids.end() && (known->second.first != cls || known->second.second != base)) continue;
+                int64_t c = -1, b = -1, o = -1;
+                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return -1;
+                s.ids[key] = { c, b };
+                if (c != cls || b != base) continue;
+                if (o < 0) return -1;
+                sum += o;
+            }
+        }
+        return sum;
+    } catch (...) { return -1; }
+}
+
+static bool SmaStackable(int64_t cls)
+{
+    return cls >= (int64_t)HeroSiege::Items::ItemType::Key && cls <= (int64_t)HeroSiege::Items::ItemType::Socketable;
+}
+
+// Everything one run stands on, read by name. False, with `why`, when a
+// grid node or the save object is not there; the view's own gaps (no stash
+// window, a tab that did not read) are the core's to refuse.
+static bool SmaReadScene(SmaScene& s, std::string& why)
+{
+    CInstance* stash = nullptr;
+    s.view = ForgePact::StashMoveView();
+    s.view.stashListed = CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, s.window, stash);
+    if (!s.view.stashListed) return true;
+    s.view.bagTab = SmaTab(s.window, "tabSelected");
+    s.view.stashTab = SmaTab(s.window, "stashTabSelected");
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, "uiNodeCallstack", kSmaBagGrid, s.bagNode, s.bag)) {
+        why = "no bag grid is listed (no UI_Inventory_Grid_obj carries uiNodeCallstack=" + std::string(kSmaBagGrid) + ")";
+        return false;
+    }
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, "uiNodeCallstack", kSmaStashGrid, s.stashNode, s.sg)) {
+        why = "no stash grid is listed (no UI_Inventory_Grid_obj carries uiNodeCallstack=" + std::string(kSmaStashGrid) + ")";
+        return false;
+    }
+    CInstance* save = CmSaveInstance();
+    s.map9Read = save && CmItemMap(save, kSmaStashOwner, s.map9);
+
+    RValue grid, shown;
+    if (!CmArrayVar(s.bagNode, "nodeGrid", grid)) { why = "the bag's cells could not be read"; return false; }
+    const bool shownRead = SmaShownArray(s, s.view.stashTab, shown);
+    std::map<std::pair<int64_t, int64_t>, int64_t> stacks;   // identity -> the shown tab's sum
+    const int rows = CmLength(grid);
+    for (int y = 0; y < rows; ++y) {
+        const RValue line = CmAt(grid, y);
+        if (line.m_Kind != VALUE_ARRAY) { why = "the bag's cells could not be read"; return false; }
+        const int cols = CmLength(line);
+        for (int x = 0; x < cols; ++x) {
+            RValue fp, item;
+            ForgePact::StashMoveCell c;
+            if (!ApCellFingerprint(CmAt(line, x), fp, c.key)) continue;
+            c.x = x;
+            c.y = y;
+            int64_t cls = -1, base = -1, count = 1;
+            if (ApItemFromFingerprint(s.bag, fp, item) && SmaReadIdentity(item, cls, base, count)) {
+                c.itemClass = (int)cls;
+                c.stackable = SmaStackable(cls);
+            }
+            c.count = c.stackable ? count : 1;
+            if (c.stackable) {
+                const auto id = std::make_pair(cls, base);
+                if (!stacks.count(id)) stacks[id] = shownRead ? SmaStackSum(s, shown, cls, base) : -1;
+                // A count that did not read is never merged: the merge passes it.
+                c.destinationStackRead = stacks[id] >= 0 && (count >= 1 || stacks[id] == 0);
+                c.destinationHasStack = stacks[id] > 0;
+            }
+            s.view.cells.push_back(c);
+        }
+    }
+    return true;
+}
+
+// One item through the game's own routines for its route, then the re-reads
+// the core decides on. `note` names an undo when one ran.
+static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::StashMovePlan& plan,
+                                             const ForgePact::StashMoveItem& it, std::string& note)
+{
+    using Mod = ForgePact::StashMoveAllMod;
+    const std::string& key = it.cell.key;
+    const bool materials = Mod::TabOf(plan.stashTab) == ForgePact::StashMoveTab::Materials;
+    const bool cellRoute = it.route == ForgePact::StashMoveRoute::Cell;
+    auto skipped = [&](const std::string& why) {
+        ForgePact::StashMoveItem none = it;
+        none.route = ForgePact::StashMoveRoute::None;
+        none.refusal = why;
+        return Mod::NotAttempted(none);
+    };
+    if (it.route == ForgePact::StashMoveRoute::None) return Mod::NotAttempted(it);
+
+    // At the point of use: the item still in its bag cell and on map 0, and
+    // the shown tab still the planned one, with room for it.
+    RValue cell, item;
+    if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) != 1) return skipped("no longer in its bag cell");
+    int64_t cls = -1, base = -1, count = -1;
+    if (!ApItemFromFingerprint(s.bag, RValue(key), item) || !SmaReadIdentity(item, cls, base, count))
+        return skipped("not found on map 0");
+    RValue arr;
+    int room = -1;
+    int64_t before = -1;
+    if (SmaTab(s.window, "stashTabSelected") == plan.stashTab && SmaShownArray(s, plan.stashTab, arr)) {
+        if (cellRoute) room = Mod::Room(SmaGrid(arr), it.width, it.height);
+        else {
+            before = SmaStackSum(s, arr, cls, base);
+            room = before > 0 ? 1 : (before == 0 ? 0 : -1);
+        }
+    }
+    ForgePact::StashMoveResult skip;
+    if (!Mod::MayCall(it, room, skip)) return skip;
+
+    const bool personal = plan.stashTab == kSmaPersonalTab;
+    const double a1 = personal ? kSmaPersonalStackA1 : kSmaSharedStackA1;
+    const double a2 = personal ? kSmaPersonalStackA2 : kSmaSharedStackA2;
+    ForgePact::StashMoveReport r;
+    RValue res;
+    bool ownerRan = false;
+    auto notRun = [&](const TalentAllocScript& script, TalentAllocCall c) {
+        r.answered = false;
+        r.answer = TalentAllocCallText(script, c);
+    };
+    // A page's sequence opens with ValidateItem, self = other = the bag grid
+    // (gridMoveRoute); the Materials tab's recorded routes do not.
+    TalentAllocCall c = TalentAllocCall::Ran;
+    if (!materials) c = SmaCall(kSmaValidate, s.bag, s.bag, { item }, res);
+    if (c != TalentAllocCall::Ran) notRun(kSmaValidate, c);
+    else if (cellRoute) {
+        // StashAddToStack answers false for an item with no stack of its
+        // identity (every recorded placement), then GridAddItem places it on
+        // the shown tab's array and nowhere else.
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue(1.0), RValue(0.0) }, res);
+        if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
+        else if (res.m_Kind == VALUE_BOOL && res.ToBoolean()) {
+            // Merged where the plan saw no stack: nothing was placed, and
+            // the re-read below cannot confirm a cell.
+            r.answered = r.accepted = true;
+            r.answer = "StashAddToStack answered true (merged, not placed)";
+        } else {
+            c = SmaCall(kSmaPlace, s.bag, s.bag, { arr, item, RValue(0.0), RValue() }, res);
+            if (c != TalentAllocCall::Ran) notRun(kSmaPlace, c);
+            else {
+                r.answered = true;
+                r.accepted = ApAddSucceeded(res);
+                RValue vx, vy;
+                if (r.accepted && CmMember(res, "x", vx) && CmMember(res, "y", vy)) {
+                    r.destinationX = (int)CmWhole(vx);
+                    r.destinationY = (int)CmWhole(vy);
+                }
+                r.answer = r.accepted ? "success=true" : (ApIsPlainStruct(res) ? "success=false" : "GridAddItem answered " + Describe(res));
+                RValue now;
+                if (r.accepted && SmaShownArray(s, plan.stashTab, now)
+                    && SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials) == 1) {
+                    // Placed and read there: the game's own follow-ups, in the
+                    // order the replays ran them.
+                    SmaCall(kSmaValidate, s.sg, s.bag, { item }, res);
+                    if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+                        SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+                    // The owner step, only once the bag cell is empty: a shared
+                    // page and a new Materials identity (mapOwnerRule,
+                    // newMaterialRoute); none on the personal page.
+                    if (!personal && SmaBagCellHolds(s, it.cell.x, it.cell.y, key) == 0) {
+                        ownerRan = SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaCharacterOwner), RValue(kSmaStashOwner), RValue(key) }, res)
+                            == TalentAllocCall::Ran;
+                    }
+                }
+            }
+        }
+    } else {
+        // A merge: the item's whole count (wholeStackMerge; one unit is the
+        // one-unit shape, stackMoveRoute), then the source clear only once
+        // the shown tab's sum rose by exactly that count.
+        r.stackBefore = before;
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue((double)count), RValue(0.0) }, res);
+        if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
+        else {
+            r.answered = true;
+            r.accepted = res.m_Kind == VALUE_BOOL && res.ToBoolean();
+            r.answer = r.accepted ? "true" : "StashAddToStack answered " + Describe(res);
+            RValue now;
+            const int64_t after = SmaShownArray(s, plan.stashTab, now) ? SmaStackSum(s, now, cls, base) : -1;
+            if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+                SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+        }
+    }
+
+    // The re-reads the core decides on: the tab on show, its own array and
+    // the bag cell - nothing else.
+    const int tabNow = SmaTab(s.window, "stashTabSelected");
+    r.shownTabChanged = tabNow == Mod::kUnreadTab ? -1 : (tabNow != plan.stashTab ? 1 : 0);
+    RValue now;
+    const bool nowRead = r.shownTabChanged == 0 && SmaShownArray(s, plan.stashTab, now);
+    r.sourceHasKey = SmaBagCellHolds(s, it.cell.x, it.cell.y, key);
+    if (cellRoute) {
+        if (!nowRead) r.destinationHasKey = -1;
+        else if (r.accepted && r.destinationX >= 0) r.destinationHasKey = SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials);
+        else r.destinationHasKey = CmCellsHold(now, key);
+    } else {
+        r.stackAfter = nowRead ? SmaStackSum(s, now, cls, base) : -1;
+    }
+    ForgePact::StashMoveResult out = Mod::Decide(it, r);
+
+    // The undo: a placed item whose bag cell did not clear is taken back out
+    // of the shown tab (GridRemoveItem, the measured shape), and the owner
+    // step reversed if it ran. Not measured live (Known Limitations).
+    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && nowRead
+        && r.sourceHasKey == 1 && CmCellsHold(now, key) == 1) {
+        SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);
+        if (ownerRan) SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaStashOwner), RValue(kSmaCharacterOwner), RValue(key) }, res);
+        RValue after;
+        const int left = SmaShownArray(s, plan.stashTab, after) ? CmCellsHold(after, key) : -1;
+        note = "undo " + key + ": taken back out of the stash tab by GridRemoveItem"
+            + std::string(left == 0 ? "" : " - NOT confirmed: the stash tab still reads it");
+    }
+    return out;
+}
+
+// One run over the bag tab on show; every line starts with the verb.
+static void StashMoveAllRun()
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string verb = "stashmoveall";
+    if (!mod.IsEnabled()) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, mod.Plan({}).reason)); return; }
+    SmaScene s;
+    std::string why;
+    if (!SmaReadScene(s, why)) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, why)); return; }
+    const ForgePact::StashMovePlan plan = mod.Plan(s.view);
+    if (plan.refused) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, plan.reason)); return; }
+    ForgePact::StashMoveTally t = mod.Begin(plan);
+    for (const ForgePact::StashMoveItem& it : plan.items) {
+        std::string note;
+        const ForgePact::StashMoveResult res = SmaMoveOne(s, plan, it, note);
+        const bool go = mod.Record(t, res);
+        if (!note.empty()) t.lines.push_back(verb + ": " + note);
+        if (!go) break;
+    }
+    for (const std::string& line : t.lines) Out(line);
+    Out(ForgePact::StashMoveAllMod::SummaryLine(t));
+}
+
+// `stashmoveall` bare | `1` | `0` | `run`.
+static void StashMoveAllCommand(const std::string& rest)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg == "1" || arg == "on") {
+        if (!mod.SetEnabled(true)) { Out(ForgePact::StashMoveAllMod::RefusalLine("stashmoveall", "off for this session")); return; }
+        Out(ForgePact::StashMoveAllMod::SwitchLine(true));
+        return;
+    }
+    if (arg == "0" || arg == "off") { mod.SetEnabled(false); Out(ForgePact::StashMoveAllMod::SwitchLine(false)); return; }
+    if (arg == "run") { StashMoveAllRun(); return; }
+    Out(mod.StateLine());
+    Out("stashmoveall: usage - stashmoveall 1|0 switches it; stashmoveall run (or F4, with the stash open) moves the bag tab on show "
+        "into the stash tab on show; stashmove <fingerprint> moves one item");
+}
+
+// `stashmove <fingerprint>`: one item of the bag tab on show, through the
+// same per-item routine.
+static void StashMoveCommand(const std::string& rest)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string verb = "stashmove";
+    const std::string key = TrimCopy(rest);
+    if (key.empty() || key.find(' ') != std::string::npos) {
+        Out(ForgePact::StashMoveAllMod::RefusalLine(verb, "usage: stashmove <fingerprint>, one bag key"));
+        return;
+    }
+    if (!mod.IsEnabled()) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, mod.Plan({}).reason)); return; }
+    SmaScene s;
+    std::string why;
+    if (!SmaReadScene(s, why)) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, why)); return; }
+    const ForgePact::StashMovePlan plan = mod.Plan(s.view);
+    if (plan.refused) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, plan.reason)); return; }
+    const auto it = std::find_if(plan.items.begin(), plan.items.end(),
+                                 [&](const ForgePact::StashMoveItem& i) { return i.cell.key == key; });
+    if (it == plan.items.end()) {
+        Out(ForgePact::StashMoveAllMod::RefusalLine(verb, key + " is not on the bag tab on show"));
+        return;
+    }
+    std::string note;
+    const ForgePact::StashMoveResult res = SmaMoveOne(s, plan, *it, note);
+    if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) mod.TurnOffForSession();
+    Out(ForgePact::StashMoveAllMod::SingleLine(res));
+    if (!note.empty()) Out(verb + ": " + note);
+}
+
+// Whether the foreground window belongs to this process (the game's).
+static bool SmaGameInForeground()
+{
+    const HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+// The hotkey, from FrameCallback: nothing while the switch is off. While it
+// is on, one key read a frame; the foreground and the stash window are asked
+// only while the key is down. The first frame after the switch turns on only
+// notes the key, so a key held while turning it on starts nothing.
+static void StashMoveAllTick()
+{
+    static bool s_WasOn = false;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    if (!mod.IsEnabled()) { s_WasOn = false; return; }
+    const bool down = (GetAsyncKeyState(kSmaHotkey) & 0x8000) != 0;
+    if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false); return; }
+    bool fg = false, listed = false;
+    if (down) {
+        fg = SmaGameInForeground();
+        RValue handle;
+        CInstance* inst = nullptr;
+        listed = fg && CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, handle, inst);
+    }
+    if (mod.KeyEdge(down, fg, listed)) StashMoveAllRun();
+}
+
+// Each verb from its own helper, for the C1061 reason HandleMenuLayoutCommand gives.
+static bool HandleStashMoveAllCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashmoveall") { StashMoveAllCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleStashMoveCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashmove") { StashMoveCommand(rest); return true; }
+    return false;
+}
+// ---- end stashmoveall, stashmove
 
 #ifndef FORGEPACT_RELEASE
 // ---- restartprobe: pause-menu Restart gate research (ForgePact issue #8) ---
@@ -39225,7 +39778,8 @@ static void RunCommand(const std::string& line)
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
+        "stashmoveall", "stashmove"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -39248,6 +39802,8 @@ static void RunCommand(const std::string& line)
     if (HandleBagTabCommand(lc, rest)) return;
     if (HandleStashCloseCommand(lc, rest)) return;
     if (HandleGiveItemCommand(lc, rest)) return;
+    if (HandleStashMoveAllCommand(lc, rest)) return;
+    if (HandleStashMoveCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
@@ -40615,6 +41171,11 @@ void FrameCallback(FWFrame& FrameContext)
     // again near a player (FarSleep.hpp). Nothing runs while it is off and
     // nothing it put to sleep is left asleep.
     if (g_Setup) FarSleepTick();
+
+    // Move all into the stash, toggled by `stashmoveall 1`: F4, read only
+    // while the switch is on (StashMoveAllTick). The move itself runs only on
+    // a press with the game in front and the stash open.
+    if (g_Setup) StashMoveAllTick();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun

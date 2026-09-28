@@ -308,6 +308,14 @@ static void TargetStackablePlansStack()
     StashMovePlan g = mod.Plan(grid);
     ok = ok && g.items.size() == 3 && g.items[0].route == StashMoveRoute::Stack
         && g.items[1].route == StashMoveRoute::Cell && g.items[2].route == StashMoveRoute::Cell;
+    // A stackable whose stack on the shown tab could not be read (a shared
+    // page's entries answer on no map by name) is a skip, never "no stack";
+    // a non-stackable does not need the read.
+    StashMoveView unreadStack = grid;
+    for (StashMoveCell& c : unreadStack.cells) { c.destinationHasStack = false; c.destinationStackRead = false; }
+    StashMovePlan u = mod.Plan(unreadStack);
+    ok = ok && u.items.size() == 3 && u.items[0].route == StashMoveRoute::None && u.items[1].route == StashMoveRoute::None
+        && u.items[0].refusal == "its stack on the shown tab could not be read" && u.items[2].route == StashMoveRoute::Cell;
     // The Materials tab takes class 14 and nothing else: onto its stack when
     // its identity is there, else into a cell (newMaterialRoute). Another
     // class is planned as a skip that calls nothing.

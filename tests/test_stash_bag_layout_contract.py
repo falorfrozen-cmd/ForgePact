@@ -690,10 +690,12 @@ class StashBagPlayerVerbs(unittest.TestCase):
             self.assertIn(f'"{verb}"', commands, verb)
             self.assertIn(command, self.shipped, verb)
         self.assertNotIn("FORGEPACT_RELEASE", self.block)
-        # Neither a by-name open nor a move is a verb here.
-        for verb in ("stashopen", "stashmove"):
-            self.assertNotIn(f'"{verb}"', commands, verb)
-            self.assertNotIn(f'lc == "{verb}"', self.plugin, verb)
+        # No by-name open is a verb. The move into the stash is ForgePact #68's
+        # own verbs, `stashmoveall` and `stashmove`, outside this block
+        # (test_stash_move_all_contract.py pins them).
+        self.assertNotIn('"stashopen"', commands)
+        self.assertNotIn('lc == "stashopen"', self.plugin)
+        self.assertNotIn('lc == "stashmove"', self.block)
 
     def test_each_is_dispatched_from_its_own_handler_as_a_standalone_early_return(self):
         run = function_body(self.plugin, "static void RunCommand(const std::string& line)")

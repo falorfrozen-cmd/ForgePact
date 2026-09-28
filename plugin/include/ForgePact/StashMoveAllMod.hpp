@@ -89,6 +89,10 @@ struct StashMoveCell {
     bool        stackable = false;
     int64_t     count = 1;                 // the stack count; 1 for a single item
     bool        destinationHasStack = false;  // the shown stash tab holds a stack of this identity
+    // False when the shown tab holds an item whose identity could not be
+    // read (a shared page's entries answer on no map by name), so "no stack
+    // of this identity" cannot be told from "one the read missed".
+    bool        destinationStackRead = true;
 };
 
 // What the adapter read before a run: whether the stash window is listed, and
@@ -282,8 +286,13 @@ public:
             item.cell = c;
             Footprint(cells, c.key, item.width, item.height);
             const bool many = c.count > 1;
+            // A stackable whose stack on the shown tab is unknown is a skip:
+            // the game's stack routine would merge into one the read missed.
+            const char* unread = "its stack on the shown tab could not be read";
             if (tab == StashMoveTab::Grid) {
-                if (c.stackable && c.destinationHasStack) {
+                if (c.stackable && !c.destinationStackRead) {
+                    item.refusal = unread;
+                } else if (c.stackable && c.destinationHasStack) {
                     if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
                     else item.route = StashMoveRoute::Stack;
                 } else {
@@ -294,6 +303,8 @@ public:
                 const int mine = materials ? kMaterialClass : kSocketClass;
                 if (c.itemClass != mine) {
                     item.refusal = std::string("not taken by the ") + (materials ? "Materials" : "Socketable") + " tab";
+                } else if (!c.destinationStackRead) {
+                    item.refusal = unread;
                 } else if (c.destinationHasStack) {
                     // The one-unit merge is measured on the Materials tab
                     // (stackMoveRoute); the Socketable tab's only by its path.
