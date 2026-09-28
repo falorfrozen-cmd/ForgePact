@@ -88,8 +88,12 @@ also get new plugin commands for the stash, the bag and your skills.
 - **Small touches.** The footer now reads "Created by Falor and ST4H". A light
   line separates the groups on the Modifiers tab. The Miner's Helmet card
   shows the helmet's stats in the accent colour.
-- **Tooltips and menus move gently.** Tooltips, the list of enabled mods, the
-  theme list and the messages at the bottom fade in; they appear at once when
+- **Tooltips and messages move gently.** In Ledger, Graphite and Sigil,
+  tooltips, bottom messages and floating menus fade in. Ember's tooltips
+  keep their fades; its
+  theme and enabled-mods lists open and close instantly; its Undo message
+  fades without moving in its own footer row, while brief status messages
+  appear instantly in a separate row. Animated elements appear at once when
   you use the keyboard, and they only fade, without moving, when your system is
   set to reduce motion. Buttons and tabs still ease into their hover colour
   with reduce motion on. A screen reader now reads the line under a slider along
@@ -111,6 +115,12 @@ also get new plugin commands for the stash, the bag and your skills.
   to Setup.
 
 ## Fixed
+
+- **Find every setting from Ember's search.** Map reveal, pet collection,
+  Headhunter, Beacon and other switches now appear alongside sliders.
+  Choosing a result takes you to the right section and focuses its control.
+- **Undo stays clear of your settings.** Ember reserves a separate footer row
+  for the Undo message, including long names in small windows.
 
 - **Reach the bottom of every Ember page.** Long pages now scroll with a visible
   scrollbar, mouse wheel and keyboard. The bottom action bar no longer covers

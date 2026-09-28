@@ -145,7 +145,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertLess(section, warning)
         # After the dock has closed, inside main#wrap.
         self.assertIn("</div></div>", self.app[dock:section])
-        self.assertLess(self.app.index('<main id="wrap">'), section)
+        main = _opening_tag(self.app, 'id="wrap"')
+        self.assertTrue(main.startswith("<main "))
+        self.assertIn('tabindex="0"', main)
+        self.assertIn('aria-labelledby="pageTitle"', main)
+        self.assertLess(self.app.index(main), section)
         self.assertLess(section, self.app.index("</main>"))
         # Re-rendered from boot() and from refreshSavedControls().
         boot = self.panel[self.panel.index("async function boot(){"):self.panel.index("function paintVersion(){")]

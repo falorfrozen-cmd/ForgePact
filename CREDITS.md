@@ -35,8 +35,9 @@ The reference, provenance and crop recipe are documented in `design/ember/README
 the optimized WebPs are bundled from `panel/src/ember/assets/`. They do not
 contain extracted game artwork.
 
-IM Fell English by Igino Marini is bundled unmodified under the SIL Open Font
-License 1.1; see `panel/src/ember/assets/OFL-IMFellEnglish.txt`.
+IM Fell English by Igino Marini is bundled under the SIL Open Font License 1.1,
+converted to WOFF2 with all glyph outlines, metrics and character mappings
+unchanged; see `panel/src/ember/assets/OFL-IMFellEnglish.txt`.
 
 The 69 setting icons in `panel/src/icons.js` are original vector illustrations
 created for ForgePact/Falor and distributed under this project's AGPL-3.0

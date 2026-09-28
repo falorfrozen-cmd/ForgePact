@@ -601,6 +601,7 @@ async function m5ThemePicker({ page }) {
 // same, and leaves (then is removed) after the pointer's Undo.
 async function m6Toasts({ page }) {
   const t = await tokens(page);
+  const ember = await $(page, () => document.documentElement.dataset.theme === 'ember');
   await page.setViewportSize({ width: 1600, height: 800 });
   await only(page, THREE);
   await record(page);
@@ -608,13 +609,17 @@ async function m6Toasts({ page }) {
   await page.waitForFunction(() => document.getElementById('toast').classList.contains('show'), null, { timeout: 3000 });
   await wait(300);
   const inn = await seen(page, '#toast');
-  timed(one(inn, 'opacity'), t.base, t.standard, '#toast in');
-  timed(one(inn, 'transform'), t.base, t.standard, '#toast in');
+  if (ember) assert(inn.length === 0, 'Ember footer status should appear instantly');
+  else {
+    timed(one(inn, 'opacity'), t.base, t.standard, '#toast in');
+    timed(one(inn, 'transform'), t.base, t.standard, '#toast in');
+  }
   await clearLog(page);
   await page.waitForFunction(() => !document.getElementById('toast').classList.contains('show'), null, { timeout: 5000 });
   await wait(300);
   const out = await seen(page, '#toast');
-  timed(one(out, 'opacity'), t.fast, t.standard, '#toast out');
+  if (ember) assert(out.length === 0, 'Ember footer status should close instantly');
+  else timed(one(out, 'opacity'), t.fast, t.standard, '#toast out');
   await settled(page);
   await clearLog(page);
   await page.click('#enabledMods .quick-disable[data-for="headhunter"]');
@@ -622,7 +627,8 @@ async function m6Toasts({ page }) {
   await wait(300);
   const undoIn = await seen(page, '.undo-toast');
   timed(one(undoIn, 'opacity'), t.base, t.standard, 'the undo toast in');
-  timed(one(undoIn, 'transform'), t.base, t.standard, 'the undo toast in');
+  if (ember) assert(!undoIn.some(x => x.prop === 'transform'), 'The in-flow Ember Undo must fade without movement');
+  else timed(one(undoIn, 'transform'), t.base, t.standard, 'the undo toast in');
   await settled(page);
   await clearLog(page);
   await page.click('.undo-toast-button');
@@ -710,7 +716,7 @@ try {
       const note = await withPage(browser, fn);
       // Ember expands these menus instantly in flow; the flat popovers must
       // still keep their original token-based entrance and exit animations.
-      if (fn === m4Tray || fn === m5ThemePicker) await withPage(browser, fn, { theme: 'ledger' });
+      if (fn === m4Tray || fn === m5ThemePicker || fn === m6Toasts) await withPage(browser, fn, { theme: 'ledger' });
       passed.push(name);
       console.log(`ok   ${name}${typeof note === 'string' && note ? ' (' + note + ')' : ''}`);
     } catch (e) {

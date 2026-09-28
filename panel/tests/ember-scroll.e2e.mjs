@@ -173,7 +173,7 @@ try {
     const menu = await page.locator('.theme-picker-list').boundingBox();
     const pane = await wrap.boundingBox();
     const last = await page.locator('.theme-picker-option').last().boundingBox();
-    assert.ok(menu.y >= pane.y && menu.y + menu.height <= pane.y + pane.height + 1, `${width}: theme menu clipped`);
+    assert.ok(menu.y >= pane.y && menu.y + menu.height <= pane.y + pane.height + 1, `${width}: theme menu clipped ${JSON.stringify({menu,pane})}`);
     assert.ok(last.y >= menu.y && last.y + last.height <= menu.y + menu.height + 1, `${width}: last palette clipped`);
     await assertNotCovered('.theme-picker-option:last-child');
     // A raw pointer click cannot quietly auto-scroll like locator.click().
@@ -213,6 +213,40 @@ try {
     await page.keyboard.press('Escape');
   }
   checks.push('Enabled mods switches between inline/tray and its last entry remains reachable in short/mobile windows');
+  // Undo must not cover either the scrolling settings or the Apply controls.
+  for (const [width, height] of [[1280,800], [900,600], [640,400], [390,640]]) {
+    for (const key of BOOLEAN_MODS) await page.request.post(`${sandbox.url}api/set`, { data: { key, value: key === 'mod_orb_pickup_radius' } });
+    await page.setViewportSize({ width, height });
+    await page.reload(); await waitBooted(page);
+    if (await page.locator('#enabledMods').getAttribute('data-form') === 'tray')
+      await page.locator('.enabled-mods-toggle').click();
+    await page.locator('#enabledMods .quick-disable').click();
+    await frames(page);
+    const toast = await page.locator('.undo-toast').boundingBox(), pane = await wrap.boundingBox();
+    assert.ok(toast.y >= pane.y + pane.height - 1 && toast.y + toast.height <= height, `${width}: Undo covers content or leaves viewport`);
+    const status = await page.locator('#toast.show').boundingBox();
+    if (status) assert.ok(status.y >= pane.y + pane.height - 1 &&
+      (status.y + status.height <= toast.y + 1 || toast.y + toast.height <= status.y + 1),
+      `${width}: status toast overlaps settings or Undo`);
+    await assertNotCovered('.undo-toast-button');
+    await assertNotCovered('#applyall');
+    await page.screenshot({ path: `artifacts/ember-scroll/undo-${width}.png` });
+    await page.locator('.undo-toast-button').click();
+    await page.waitForFunction(() => !document.querySelector('.undo-toast'));
+    assert.equal((await sandbox.state()).cfg.mod_orb_pickup_radius, true);
+  }
+  // Move an existing toast between layout hosts on a theme change, then Undo.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.reload(); await waitBooted(page);
+  await page.locator('#enabledMods .quick-disable').click();
+  await openTab(page, 'setup');
+  await page.selectOption('#theme', 'ledger');
+  await page.waitForFunction(() => document.querySelector('.undo-toast')?.parentElement === document.body);
+  await page.selectOption('#theme', 'ember');
+  await page.waitForFunction(() => !!document.querySelector('.ember-notices > .undo-toast'));
+  await page.locator('.undo-toast-button').click();
+  assert.equal((await sandbox.state()).cfg.mod_orb_pickup_radius, true);
+  checks.push('Undo reserves footer space at four sizes, remains clickable, and survives theme changes');
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));
   console.log(`e2e-ember-scroll: ${checks.length}/${checks.length} checks passed`);

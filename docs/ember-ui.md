@@ -15,7 +15,10 @@ Ember adds **Overview** and **Help**. The star on Overview selects up to three
 quick controls. Each edits the original setting, including its on/off switch;
 switching off retains the number for later. Shortcuts are stored on this
 device. **Find a setting** (Ctrl+K / Cmd+K) searches all sections, including
-Prime Evil Parts and Gems of Incarnation. **Edit pool** opens Satanic Zone Mods.
+Prime Evil Parts, Gems of Incarnation, Mods switches and Theme. Results use
+the current controls' labels and descriptions. Choosing one opens its section
+and focuses the original control (a disabled child focuses its row).
+**Edit pool** opens Satanic Zone Mods.
 
 The 2.0 features remain available: Enabled mods with Turn off and Undo, slider
 switches, gem search/filter/save, the plugin warning tooltips, and all four
@@ -31,6 +34,10 @@ their own scrolling when space is short. Opening either reveals its options
 above the action bar. The Enabled mods heading remains visible when collapsed.
 These in-flow menus open/close instantly; floating menus in the flat palettes
 keep their existing fades. The action is consistently named **Apply all now**.
+Undo lives in a separate row of the footer and fades without sliding across
+controls. Long names wrap there; the content pane reserves the actual height.
+Brief status messages occupy their own row instantly, without overlapping Undo.
+An active Undo follows theme changes without losing its action or timer.
 
 ## Development
 
@@ -69,6 +76,7 @@ npm --prefix panel run e2e
 npm --prefix panel run e2e:gems
 npm --prefix panel run e2e:ember
 npm --prefix panel run e2e:ember-scroll
+npm --prefix panel run e2e:review
 npm --prefix panel run e2e:finish
 npm --prefix panel run e2e:motion
 npm --prefix panel run e2e:polish

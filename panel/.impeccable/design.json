@@ -592,7 +592,7 @@
         "name": "Ember Forge",
         "source": "src/ember/",
         "reference": "../design/ember/reference.png",
-        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane and a separate bottom action row that reserves its actual height. In-flow theme and Enabled mods menus open/close instantly; apply status text uses at least --font-size-xs.",
+        "layout": "Desktop sidebar with Overview and Help; horizontal rail on narrow screens; a constrained scrollable content pane labelled by the current page title and a separate bottom action row that reserves its actual height, including a wrapping Undo row. In-flow theme and Enabled mods menus open/close instantly; Undo fades without movement. Global search indexes real sliders, switches and selects, with dedicated pool-filter destinations and a visible Theme trigger. Apply status text uses at least --font-size-xs.",
         "typography": {
           "display": "EmberFell (IM Fell English), Georgia, serif",
           "body": "Segoe UI, Arial, sans-serif",
@@ -603,7 +603,7 @@
           "Copper/stone texture surfaces, borders and glow",
           "Theme-scoped material colors and display typography"
         ],
-        "motion": "Shared token-based motion. Keep opacity and colour fades under reduced motion; remove movement. Keyboard actions remain instant.",
+        "motion": "Shared token-based tooltip motion; keep opacity and colour fades under reduced motion and remove movement. Keyboard actions remain instant. In-flow menus and brief footer status messages appear/close instantly. Undo fades without translation in its reserved footer row.",
         "figma": "Separate approved artwork; the existing three-palette Figma export is unchanged. Figma library work is deferred."
       },
       "componentPreviewScope": "Existing ds-* snippets describe the three flat palettes. Ember composition is documented in DESIGN.md and src/ember/."

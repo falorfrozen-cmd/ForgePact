@@ -100,9 +100,11 @@ Fragments and reads no drop rate, so the slider cannot scale it. See
 The default **Ember Forge** theme uses the approved forge artwork and a sidebar:
 **Overview**, **Character**, **World**, **Loot**, **Mods**, **Setup** and **Help**.
 Overview has customizable quick controls; **Find a setting** / Ctrl+K searches
-every section. All 2.0 settings and their on/off switches remain available.
+every section, including Mods switches and Theme, and focuses the chosen control.
+All 2.0 settings and their on/off switches remain available.
 Long pages have a visible scrollbar and support the mouse wheel and keyboard.
 The bottom action bar keeps its own space, so it cannot cover the final settings.
+Undo has its own row in that bar; long setting names wrap without hiding Apply.
 
 Ledger, Graphite and Sigil remain available in **Setup → Appearance → Theme**,
 with their horizontal tabs. Your explicit theme choice is preserved.

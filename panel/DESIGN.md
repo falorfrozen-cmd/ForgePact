@@ -484,8 +484,11 @@ Every write delegates to an existing setting handler; no game hooks or
 polling loop are added. At narrow widths the sidebar becomes a horizontal
 navigation rail and controls stack. Dialogs use native focus trapping.
 
-Shared tooltips and Undo keep the existing motion tokens, keyboard behavior
-and reduced-motion rules. In reduced motion, opacity and colour fades remain
+Undo occupies a separate footer row, with wrapping text and a reachable action,
+outside the content pane. Its opacity follows the existing motion tokens;
+it does not slide over the footer controls. Brief status messages open/close
+instantly in their own footer row. Shared tooltips keep the existing motion
+tokens, keyboard behavior and reduced-motion rules. In reduced motion, opacity and colour fades remain
 while movement is removed. Ember's theme menu
 and expanded Enabled mods list participate in the pane's scroll flow, reveal
 themselves on open and cap their list height to the pane. Every palette and
@@ -498,6 +501,12 @@ The artwork, typography, literal material colours and ornamentation are
 approved exceptions to the flat-panel rules below, confined to Ember. The
 material palette is fixed artwork-matching chrome; `palette.css` supplies the
 semantic colours of shared controls rather than recolouring that artwork.
+The native scrollbar's copper thumb and iron track are part of that material
+palette (`#b58251` and `#141516`). The scrollable main landmark is labelled by
+the current page title. Global search indexes the actual range, checkbox and
+select controls, omitting duplicate slider switches and individual pool entries;
+the pools have their own filter destinations. A hidden theme select resolves
+to the visible theme-picker trigger.
 Segoe UI is Ember's body face, with Arial as the system fallback; the existing
 arrow/check glyphs explicitly use Arial. No Arial font file is bundled. The
 existing Figma export and generated `tokens.css` are unchanged; shared Figma

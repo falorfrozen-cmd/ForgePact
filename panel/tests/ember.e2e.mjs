@@ -86,6 +86,51 @@ try {
   assert.equal(await page.locator('#nav-loot').getAttribute('aria-selected'),'true');
   checks.push('Global search reaches new Prime Evil and Gems of Incarnation controls');
 
+  const missingBefore = [
+    ['map_reveal', 'qolCard'], ['map_reveal_packs', 'qolCard'], ['map_reveal_spawn', 'qolCard'],
+    ['mod_pet_quest_pickup', 'qolCard'], ['mod_auto_prospect', 'qolCard'], ['mod_auto_prospect_bag', 'qolCard'],
+    ['mod_craft_mats', 'qolCard'], ['mod_toggle_indicator', 'qolCard'], ['mod_toggle_guard', 'qolCard'],
+    ['mod_restart_anytime', 'qolCard'], ['mod_orb_pickup_radius', 'qolCard'], ['mod_filter_max_relics', 'qolCard'],
+    ['mod_skill_timer_style', 'qolCard'], ['headhunter', 'itemsCard'], ['tyrant', 'itemsCard'], ['beacon', 'itemsCard'],
+    ['mod_gem_mythic', 'gemsCard'], ['mod_gem_maxroll', 'gemsCard'], ['den_on', 'densityCard'], ['enemyspeed_ct', 'speedCard'],
+  ];
+  for (const [id, card] of missingBefore) {
+    await page.keyboard.press('Control+k');
+    await page.locator('#emberSearchInput').fill(id.replaceAll('_', ' '));
+    // IDs provide an unambiguous query while the result itself uses the UI label.
+    const label = await page.locator('#'+id).evaluate(el => el.id === 'den_on' ? 'Enable monster density'
+      : el.closest('.row').querySelector('.label-copy,.lbl').textContent.trim().replace(/\s+/g,' '));
+    await page.locator('#emberSearchResults button').filter({has: page.locator('span', {hasText: label})}).first().click();
+    assert.equal(await page.locator('#'+card).evaluate(el => el.checkVisibility()), true, id);
+    await page.waitForFunction(id => {
+      const el = document.getElementById(id);
+      return document.activeElement === (el.disabled ? el.closest('.row') : el);
+    }, id);
+    assert.equal(await page.locator('#'+id).evaluate(el => document.activeElement === (el.disabled ? el.closest('.row') : el)), true,
+      id + ': focus=' + await page.evaluate(() => document.activeElement.outerHTML.slice(0, 180)));
+  }
+  // A real search-to-control edit must use the existing backend handler.
+  await page.keyboard.press('Control+k');
+  await page.locator('#emberSearchInput').fill('Beacon: every monster hunts you');
+  assert.equal(await page.locator('#emberSearchCount').textContent(), '1 setting found');
+  await page.locator('#emberSearchResults button').click();
+  await page.waitForFunction(() => document.activeElement?.id === 'beacon');
+  const beaconBefore = (await sandbox.state()).cfg.beacon;
+  await saved(() => page.keyboard.press('Space'));
+  assert.equal((await sandbox.state()).cfg.beacon, !beaconBefore);
+  for (const query of ['map', 'headhunter', 'beacon', 'pet', 'prospect']) {
+    await page.keyboard.press('Control+k');
+    await page.locator('#emberSearchInput').fill(query);
+    assert.ok(await page.locator('#emberSearchResults button').count() > 0, query);
+    await page.keyboard.press('Escape');
+  }
+  await page.keyboard.press('Control+k');
+  await page.locator('#emberSearchInput').fill('theme');
+  await page.locator('#emberSearchResults button').click();
+  await page.waitForFunction(() => document.activeElement?.matches('.theme-picker-trigger'));
+  assert.equal(await page.locator('.theme-picker-trigger').evaluate(el => document.activeElement === el), true);
+  checks.push('Global search finds all toggles and selects, focuses the real destination, and preserves its API handler');
+
   for(const theme of ['ledger','graphite','sigil','ember']) {
     await openTab(page,'setup');
     await page.locator('.theme-picker-trigger').click();

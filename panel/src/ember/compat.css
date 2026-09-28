@@ -3,7 +3,9 @@
    so its actual height (including wrapping/zoom) never hides the last setting. */
 html[data-theme="ember"] #appShell { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100dvh; min-height: 0; padding-bottom: 0; }
 html[data-theme="ember"] #wrap { width: 100%; min-height: 0; height: auto; overflow-x: hidden; overflow-y: auto; scrollbar-width: auto; scrollbar-gutter: stable; scrollbar-color: #b58251 #141516; overscroll-behavior-y: contain; scroll-padding: 80px 0 24px; padding-bottom: 24px; }
-html[data-theme="ember"] .ember-footer { position: relative; inset: auto; min-width: 0; margin: 12px 16px 16px; }
+html[data-theme="ember"] .ember-footer { position: relative; inset: auto; min-width: 0; margin: 12px 16px 16px; flex-wrap: wrap; row-gap: var(--space-4); }
+html[data-theme="ember"] .ember-notices { flex: 1 0 100%; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-3); }
+html[data-theme="ember"] .ember-notices:not(:has(.undo-toast, #toast.show)) { display: none; }
 html[data-theme="ember"] #wrap:focus-visible { outline-offset: -2px; }
 html[data-theme="ember"] .sidebar { position: fixed; inset: 0 auto 0 0; height: 100vh; display: flex; flex-direction: column; align-items: stretch; gap: 0; overflow-y: auto; }
 html[data-theme="ember"] .tabbar { display: flex; flex-direction: column; width: 100%; flex: 0 0 auto; overflow: visible; }
@@ -36,6 +38,7 @@ html[data-theme="ember"] .theme-picker-list { position: relative; top: auto; mar
 /* A short pane needs all of its height for an open menu. Let the status rail
    scroll away with it instead of covering the first choices. */
 html[data-theme="ember"] #wrap:has(.theme-picker[data-open], #enabledMods[data-open]) .control-dock { position: relative; }
+html[data-theme="ember"] #wrap:has(.theme-picker[data-open], #enabledMods[data-open]) { scroll-padding: var(--space-4) 0; }
 html[data-theme="ember"] .ember-footer .page-actions { margin: 0; }
 html[data-theme="ember"] #chipApply { font-size: var(--font-size-xs); }
 html[data-theme="ember"] #gemfilter_panel { background: #101214; }
@@ -43,8 +46,14 @@ html[data-theme="ember"] .ember-overview { grid-column: 1 / -1; }
 html[data-theme="ember"] .setting-icon { display: inline-block; width: 26px; height: 26px; flex: 0 0 26px; vertical-align: middle; }
 html[data-theme="ember"] .card h2 .setting-icon { width: 30px; height: 30px; flex-basis: 30px; }
 html[data-theme="ember"] .ember-footer .setting-icon { display: none; }
-html[data-theme="ember"] #toast { bottom: 124px; }
-html[data-theme="ember"] .undo-toast { bottom: calc(132px + var(--toast-h)); z-index: 160; }
+html[data-theme="ember"] #toast { position: relative; inset: auto; max-width: 100%; display: none; transform: none; transition: none; overflow-wrap: anywhere; }
+html[data-theme="ember"] #toast.show { display: flex; }
+/* Undo owns a footer row; its measured height, including wrapped names, is
+   reserved by the shell instead of covering the scroll pane or Apply. */
+html[data-theme="ember"] .undo-toast { position: relative; inset: auto; max-width: 100%; min-width: 0; transform: none; transition-property: opacity; }
+html[data-theme="ember"] .undo-toast-text { min-width: 0; overflow-wrap: anywhere; }
+html[data-theme="ember"] .undo-toast-button { flex: none; }
+@starting-style { html[data-theme="ember"] .undo-toast { transform: none; } }
 html[data-theme="ember"] .ember-footer #applyall:before { mask: none; }
 @media (hover: hover) and (pointer: fine) {
   html[data-theme="ember"] .ember-footer #applyall:hover { color: #ffe2bb; }
@@ -73,6 +82,4 @@ html:not([data-theme="ember"]) .ember-help { display: none !important; }
   html[data-theme="ember"] .brand:before { content: ''; width: 48px; height: 48px; background: var(--relief-anvil) center/contain no-repeat; }
   html[data-theme="ember"] #statusbar { margin-left: 0; flex-wrap: wrap; }
   html[data-theme="ember"] .ember-footer .page-actions { gap: 8px; }
-  html[data-theme="ember"] #toast { bottom: 145px; }
-  html[data-theme="ember"] .undo-toast { bottom: calc(153px + var(--toast-h)); }
 }

@@ -71,7 +71,7 @@ export function initEmberShell() {
   };
   const nav = document.querySelector(".tabbar");
   keepHome(document.getElementById('nav-setup'));
-  for (const selector of ['#saveIndicator', '#chipApply', '.page-actions', '.status-foot'])
+  for (const selector of ['#saveIndicator', '#chipApply', '.page-actions', '.status-foot', '#toast'])
     keepHome(document.querySelector(selector));
   nav.prepend(
     emberNavButton(
@@ -116,17 +116,22 @@ export function initEmberShell() {
     document.getElementById("chipApply"),
   );
   saved.append(saveCopy);
-  footer.append(saved, document.querySelector(".page-actions"));
+  const notices = document.createElement("div");
+  notices.className = "ember-notices";
+  footer.append(notices, saved, document.querySelector(".page-actions"));
   document.getElementById('appShell').append(footer);
   const credits = document.querySelector('.status-foot');
   credits.classList.add('sidebar-foot');
   const applyThemeLayout = () => {
     const ember = document.documentElement.dataset.theme === 'ember';
     for (const el of [footer, search, plugin, document.getElementById('nav-overview'), document.getElementById('nav-help')]) el.hidden = !ember;
+    for (const el of document.querySelectorAll('.undo-toast'))
+      (ember ? notices : document.body).append(el);
     if (ember) {
       nav.append(document.getElementById('nav-setup'), document.getElementById('nav-help'));
       saveCopy.append(document.getElementById('saveIndicator'), document.getElementById('chipApply'));
       footer.append(document.querySelector('.page-actions'));
+      notices.append(document.getElementById('toast'));
       document.querySelector('.sidebar').append(credits);
     } else {
       for (const [el, anchor] of homes) anchor.after(el);
@@ -448,14 +453,17 @@ function indexEmberSearch() {
     const tab = card.dataset.tab;
     if (["overview", "help"].includes(tab)) continue;
     for (const input of card.querySelectorAll(
-      "input[type=range],.feature-card input[type=checkbox],.style-select",
+      "input[type=range],input[type=checkbox][id],select[id]",
     )) {
+      // Slider switches already have their range entry; the two pools have
+      // dedicated search/filter destinations instead of hundreds of duplicates.
+      if (input.id.startsWith("sw_") || input.closest(".sat-list,#gemfilter_panel")) continue;
       const row = input.closest(".row"),
         label =
           row
             ?.querySelector(".label-copy,.lbl")
             ?.textContent.trim()
-            .split("\n")[0] ||
+            .replace(/\s+/g, " ") ||
           input.getAttribute("aria-label") ||
           input.id;
       if (!label) continue;
@@ -463,12 +471,15 @@ function indexEmberSearch() {
         ? row.nextElementSibling.textContent
         : "";
       emberSearchEntries.push({
-        label: input.id === "den" ? "Monster density" : label,
+        label: input.id === "den" ? "Monster density"
+          : input.id === "den_on" ? "Enable monster density" : label,
         tab,
         card: card.id,
-        input,
+        // Theme's native select is hidden behind the accessible custom picker.
+        input: input.id === "theme" ? row.querySelector(".theme-picker-trigger") : input,
         text: (
           label +
+          " " + input.id.replaceAll("_", " ") +
           " " +
           note +
           " " +
@@ -513,7 +524,7 @@ function renderEmberSearch() {
       .toLowerCase(),
     hits = emberSearchEntries.filter((e) => e.text.includes(query));
   document.getElementById("emberSearchCount").textContent = hits.length
-    ? `${hits.length} settings found`
+    ? `${hits.length} setting${hits.length === 1 ? "" : "s"} found`
     : "No settings found. Try another name or effect.";
   const box = document.getElementById("emberSearchResults");
   box.replaceChildren();
@@ -526,8 +537,17 @@ function renderEmberSearch() {
       openTab(hit.tab);
       if (hit.tab === "mods") openModsSubtab(hit.card);
       const row = hit.input.closest(".row") || hit.input;
-      row.scrollIntoView({ block: "center" });
-      hit.input.focus({ preventScroll: true });
+      // Child switches can be disabled until their parent is on. Show the
+      // actual setting without changing it just to make a search hit focusable.
+      const target = hit.input.disabled ? row : hit.input;
+      if (target === row) row.tabIndex = -1;
+      // Mods balances its columns in ResizeObserver on first reveal, moving
+      // rows and dropping focus. Wait for that layout before focusing the hit.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (activeTab !== hit.tab || !row.checkVisibility()) return;
+        row.scrollIntoView({ block: "center" });
+        target.focus({ preventScroll: true });
+      }));
       row.classList.add("ember-target");
       setTimeout(() => row.classList.remove("ember-target"), 1800);
     };
