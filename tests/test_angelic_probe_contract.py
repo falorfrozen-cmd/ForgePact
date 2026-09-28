@@ -323,6 +323,8 @@ class AngelicProbeSourceTests(unittest.TestCase):
     # ---- attribution: the two depths, compiled away from the player ---------
 
     def test_drop_hook_invokes_the_probe_scope_once_before_the_original(self):
+        # The gold bodies (#77) sit outside FP_DROP_HOOK and carry no probe
+        # scope: gold creates a coin, never an item an angelic roll decides.
         body = macro_definition(self.drop_manager, "FP_DROP_HOOK")
         self.assertEqual(body.count("BP_ANGELIC_PROBE_SCOPE("), 1)
         self.assertEqual(self.drop_manager.count("BP_ANGELIC_PROBE_SCOPE"), 1)
@@ -392,8 +394,21 @@ class PlayerBuildUnchangedTests(unittest.TestCase):
         cls.base_dm = (base / "DropManager.hpp").read_text(encoding="utf-8").replace("\r\n", "\n")
 
     def test_drop_manager_player_build_is_unchanged(self):
+        # Except gold, which #77 changed on purpose: DropGold and
+        # DropMonsterGold left FP_DROP_HOOK for their own bodies, written
+        # between `#undef FP_DROP_HOOK` and DropKeys, and the class gained
+        # GoldUnscaledCount(). test_drop_gold_behavior runs those bodies.
+        def without_gold(text):
+            text = strip_comments(strip_research_blocks(text))
+            end_macro = text.index("#undef FP_DROP_HOOK") + len("#undef FP_DROP_HOOK")
+            keys = text.index("PFUNC_YYGMLScript m_Orig_DropKeys")
+            text = text[:end_macro] + "\n" + text[keys:]
+            return "\n".join(line for line in text.split("\n")
+                             if line.strip() not in ("FP_DROP_HOOK(DropGold)", "FP_DROP_HOOK(DropMonsterGold)")
+                             and "GoldUnscaledCount" not in line)
+
         def player(text):
-            kept = [line for line in strip_comments(strip_research_blocks(text)).split("\n")
+            kept = [line for line in without_gold(text).split("\n")
                     if "BP_ANGELIC_PROBE_SCOPE" not in line]
             return normalised("\n".join(kept))
         self.assertEqual(player(self.dm), player(self.base_dm))

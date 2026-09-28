@@ -1864,7 +1864,8 @@ class CraftMatsContractTests(unittest.TestCase):
         # ItemCheckHash; and the json route's `o` on the save-shaped struct.
         self.assertEqual(code.count('"variable_struct_set"'), 2)
         setcount = self.body("static bool CmSetCount(")
-        self.assertLess(setcount.index('{ def, RValue("o"), RValue((double)count) }'), setcount.index("kCmCheckHashName"))
+        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), o });', setcount)
+        self.assertLess(setcount.index("if (!setO(RValue((double)count))) return false;"), setcount.index("kCmCheckHashName"))
         unit = self.body("static CmNewUnit CmMakeUnit(")
         self.assertIn('"0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string(cls)', unit)
         self.assertLess(unit.index("kCmFromJsonName"), unit.index("kCmAddToMapName"))
@@ -1914,6 +1915,57 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("CmCountByKey(save, key, kCmStashOwner)", take)
         self.assertIn("CmCountByKey(save, stackKey, kCmCharacterOwner)", take)
         self.assertIn("CmCellsHold(cellsNow, key)", take)
+
+    # Issue #80: the press gate named every refusal `unreadable`, and the
+    # adapter discarded ItemCheckHash's answer, so a take whose hash call never
+    # ran could still read as confirmed.
+    PRESS_REFUSALS = (
+        ("AlreadyServed", "already-served"),
+        ("Unpaired", "unpaired"),
+        ("UnnumberedRow", "unnumbered-row"),
+        ("OtherRow", "other-row"),
+        ("HashFailed", "hash-failed"),
+    )
+
+    def test_craftmats_press_refusals_are_one_kind_each_and_the_hash_call_is_checked(self):
+        header = strip_comments(self.header)
+        for kind, token in self.PRESS_REFUSALS:
+            # Its own token, its own line, its own stat field.
+            self.assertRegex(header, r"case CraftMatsRefusal::" + kind + r":\s+return \"" + token + r"\";", kind)
+            self.assertEqual(len(re.findall(r"case CraftMatsRefusal::" + kind + r":", header)), 2, kind)
+            self.assertIn(f'" {token}=" + std::to_string(Refused(CraftMatsRefusal::{kind}))', header, kind)
+        # The gate names each reason, and no longer the catch-all.
+        gate = strip_comments(function_body(self.header, "CraftMatsPressStep PressStep(long long self)"))
+        for kind in ("AlreadyServed", "Unpaired", "UnnumberedRow", "OtherRow"):
+            self.assertIn(f"why = CraftMatsRefusal::{kind};", gate, kind)
+        self.assertNotIn("CraftMatsRefusal::Unreadable", gate)
+        self.assertIn("Note(why);", gate)
+        # Each line the core has not said yet goes to the log, once per session.
+        self.assertIn("Out(mod.RefusalLine(r));", self.body("static void CmSayPending("))
+        # ItemCheckHash's answer decides: set `o`, call it, and when it did not
+        # dispatch put `o` back and tell the core the item's key, so the take's
+        # report is never confirmed and the press is refused before the game's.
+        setcount = self.body("static bool CmSetCount(")
+        order = [setcount.index(s) for s in (
+            "if (!setO(RValue((double)count))) return false;",
+            "if (CmCall(kCmCheckHashName, save, { item }, res)) return true;",
+            "setO(was);",
+            "ForgePact::CraftMatsMod::Instance().OnHashFailed(key);",
+        )]
+        self.assertEqual(order, sorted(order))
+        self.assertTrue(setcount.rstrip().endswith("return false;"))
+        self.assertIn('CmMember(def, "o", was)', setcount)
+        code = self.cm_code()
+        self.assertIsNone(re.search(r"^\s*CmCall\(kCmCheckHashName", code, re.MULTILINE), "the hash call's answer is discarded")
+        self.assertEqual(code.count("OnHashFailed("), 1)
+        # Every edit names the item it touches: the stash entry or the bag stack.
+        calls = re.findall(r"CmSetCount\(save, (\w+), (\w+), ", code)
+        self.assertEqual(len(calls), 4, calls)
+        self.assertEqual({(item, key) for item, key in calls}, {("source", "key"), ("stackItem", "stackKey")})
+        # The seam's effect is the core's: a hash failure fed before a report
+        # never reads as Taken.
+        report = strip_comments(function_body(self.header, "CraftMatsOutcome OnMoveReport(const CraftMatsMoveReport& r)"))
+        self.assertLess(report.index("if (hashFailed) {"), report.index("if (o == CraftMatsOutcome::Taken) {"))
 
     def test_craftmats_save_follows_a_confirmed_move_only(self):
         code = self.cm_code()

@@ -793,6 +793,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
             "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup",
             "satmods", "petquest",
+            # "Unstick the companion's loot" (#94, forgepact-pet-loot-stuck;
+            # test_pet_loot_unstick_contract.py).
+            "petunstick",
             # ForgePact #9 Stage B, merged from main: auto-prospect's own
             # player command (test_auto_prospect_contract.py pins it). Added
             # here because this set is an exact match, so another feature
@@ -1278,8 +1281,10 @@ class SkillTimerShipContractTests(unittest.TestCase):
         r'\{\s*"(?P<ability>[A-Za-z]+)",\s*HeroSiege::Objects::GameObject::(?P<obj>\w+),\s*'
         r'(?P<own>nullptr|"isMyClient"),\s*(?P<first>[\d.]+),\s*"(?P<display>[^"]+)"\s*\}')
     # abilityId -> (object, ownership, measuredFirst): session 8's four rows
-    # plus session 10's three (Progenies, Pickup Raid, Dissipating Tornado) -
-    # seven explicit rows in total.
+    # plus session 10's three (Progenies, Pickup Raid, Dissipating Tornado),
+    # plus issue #83's Mana Orb (workorder forgepact-dev2-bug-batch, Live 1:
+    # measured with the Chosen One upgrade, `own=unreadable`) - eight
+    # explicit rows in total.
     SHIP_SET = {
         "healingZone": ("White_Mage_Healing_Zone_obj", "nullptr", 1152.0),
         "bladeBarrier": ("Samurai_Blade_Barrier_obj", '"isMyClient"', 1296.0),
@@ -1288,6 +1293,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         "progeniesOfTheGreatCataclysm": ("Bard_Progenies_Amplifier_obj", "nullptr", 2880.0),
         "pickupRaid": ("Redneck_Pickup_Truck_obj", '"isMyClient"', 576.0),
         "dissipatingTornado": ("Dissipating_Tornado_obj", "nullptr", 432.0),
+        "manaOrb": ("White_Mage_Mana_Orb_obj", "nullptr", 5040.0),
     }
 
     def countdown_table(self):
@@ -1454,7 +1460,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
 class SkillTimerRuleContractTests(unittest.TestCase):
     """Rule-based coverage of untested skills (issue #55 follow-up, D-S4).
 
-    Companion to SkillTimerShipContractTests (the seven explicit rows) and
+    Companion to SkillTimerShipContractTests (the eight explicit rows) and
     test_toggle_skill_behavior.py's `rule/*` scenarios, which run the
     eligibility decision and the rule draw end to end against a controlled
     game API. This class pins the source text: the generated table matches
@@ -1488,6 +1494,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
     EXPLICIT_ROWS = {
         "healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost",
         "progeniesOfTheGreatCataclysm", "pickupRaid", "dissipatingTornado",
+        "manaOrb",
     }
 
     def test_generated_table_matches_the_sdk(self):
@@ -1533,7 +1540,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
         hotbar = function_body(player, "static bool SkillTimerEnumerateHotbar(")
         names = set(re.findall(r"GameObject::(\w+)", hotbar))
         self.assertEqual(names, {"UI_Hud_Talent_obj"})
-        # The only other literal enumerators anywhere are the seven explicit
+        # The only other literal enumerators anywhere are the eight explicit
         # rows (SkillTimerMod.hpp) and the generated header's own table.
         rule_section = self.header[self.header.index("struct SkillTimerRuleEntry"):]
         self.assertNotIn("GameObject::", rule_section)
@@ -1649,7 +1656,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
 
     def _forbidden_names(self):
         # Five sources, each contributing at least one name so an emptied
-        # regex can never pass silently: the seven explicit countdown rows'
+        # regex can never pass silently: the eight explicit countdown rows'
         # own display names, the toggle table's own abilityIds (read live,
         # context "Name-free player text (round 1)"), the measured
         # deny-list's abilityIds, the research doc's rule-selected ids
@@ -2942,15 +2949,16 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `skillstate` and `talentalloc` are toolkit #147's skill verbs
         # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
-        # (test_stash_bag_layout_contract.py), and `frameprof` the frame
-        # profiler (test_frame_profiler.py), and `farsleep` is far sleep's
-        # switch (test_far_sleep_contract.py).
+        # (test_stash_bag_layout_contract.py), `petunstick` is #94's
+        # companion loot unstick (test_pet_loot_unstick_contract.py), and
+        # `frameprof` the frame profiler (test_frame_profiler.py), and
+        # `farsleep` is far sleep's switch (test_far_sleep_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "frameprof", "farsleep"})
+                                        "petunstick", "frameprof", "farsleep"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

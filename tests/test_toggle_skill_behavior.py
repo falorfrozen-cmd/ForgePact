@@ -1029,6 +1029,15 @@ class ToggleSkillBehaviorTests(unittest.TestCase):
         for suffix in ("/first", "/second", "", "/fraction"):
             self.assertScenario("skilltimer/rows_keep_separate_latches" + suffix)
 
+    def test_skilltimer_mana_orb_row_latches_and_draws(self):
+        # Issue #83 (workorder forgepact-dev2-bug-batch): the eighth explicit
+        # row, Mana Orb, latches on its orb's first positive destroyTimer
+        # reading, draws a fraction of it, names itself on its own stat line,
+        # and (negative control) never latches on a non-positive reading.
+        for suffix in ("/row_exists", "/latch", "/fraction", "/stat_line",
+                       "/expired_never_latches", "/expired_draws_nothing"):
+            self.assertScenario("skilltimer/mana_orb_row_latches_and_draws" + suffix)
+
     # ---- session 12 (workorder forgepact-skilltimer-buff-countdown): the
     # shipped buff-carried rows (`buff/*`) --------------------------------
 

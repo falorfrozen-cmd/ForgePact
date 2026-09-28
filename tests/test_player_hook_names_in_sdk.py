@@ -24,6 +24,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_PATH = PROJECT_ROOT / "plugin" / "ModuleMain.cpp"
+# DropManager installs the drop-multiplier hooks by name from its own header,
+# so its names reach the player build too (#77 gave DropGold and
+# DropMonsterGold their own bodies there).
+DROP_MANAGER_PATH = PROJECT_ROOT / "plugin" / "include" / "ForgePact" / "DropManager.hpp"
 SDK_SCRIPTS_HEADER_PATH = PROJECT_ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
 
 SDK_CONSTANT_RE = re.compile(r'inline constexpr std::string_view (\w+) = "([^"]+)";')
@@ -128,14 +132,16 @@ class PlayerHookNamesInSdkTests(unittest.TestCase):
         cls.sdk_values = load_sdk_script_values()
         cls.plugin_text = PLUGIN_PATH.read_text(encoding="utf-8")
         cls.player_source = player_build_text(cls.plugin_text)
-        cls.entries = collect_hook_names(cls.player_source)
+        cls.drop_manager_source = player_build_text(DROP_MANAGER_PATH.read_text(encoding="utf-8"))
+        cls.entries = (collect_hook_names(cls.player_source)
+                       + collect_hook_names(cls.drop_manager_source))
 
     def test_scan_is_not_blind(self):
         # (c) Positive control: a parser that always returns nothing would
         # otherwise pass every other test in this file vacuously.
         self.assertGreater(len(self.entries), 0, "collected zero player-build hook names")
         names = {literal for _, literal, _ in self.entries}
-        for expected in ("EnemyDestroyKillProc", "EnemyRaritySettings"):
+        for expected in ("EnemyDestroyKillProc", "EnemyRaritySettings", "DropGold", "DropMonsterGold"):
             self.assertIn(expected, names, f"expected {expected!r} among {sorted(names)}")
 
     def test_every_player_hook_name_exists_in_the_sdk(self):

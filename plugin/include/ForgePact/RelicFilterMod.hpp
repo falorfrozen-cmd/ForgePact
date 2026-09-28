@@ -35,11 +35,21 @@ public:
     bool IsPending() const { return m_Pending.load(); }
     void ClearPending() { m_Pending.store(false); }
 
+    // Whether the arm-time scan line is still owed for the latest
+    // `relicfilter 1` (#93). ModuleMain.cpp's FrameCallback emits it once a
+    // player exists (after the hook install, when one is pending) through
+    // RelicFilterReportArmScan, which clears it: one line per arm. It is due
+    // on a re-arm with the DropRelic hook already in (`dropmult relic`
+    // installs it) too, where no install is pending.
+    bool IsArmScanDue() const { return m_ArmScanDue.load(); }
+    void ClearArmScanDue() { m_ArmScanDue.store(false); }
+
     // "relicfilter 1" / "relicfilter 0". `alreadyHooked` lets the caller
     // report accurate status text without this class needing to know about
     // the shared DropRelic trampoline it does not own.
     void SetEnabled(bool enabled, bool alreadyHooked) {
         m_Enabled.store(enabled);
+        m_ArmScanDue.store(enabled);
         if (enabled && !alreadyHooked) m_Pending.store(true);
         if (!enabled) m_Pending.store(false);
         Out(std::string("relicfilter -> ") + (enabled ? (alreadyHooked ? "ON" : "ON (armed, applies once you are in-game)") : "OFF"));
@@ -52,13 +62,20 @@ public:
     // yet, or the read threw). A caller that cannot tell those apart reports
     // "0 maxed relics" for a scan that never happened - which is exactly how
     // the dead scanner went unnoticed before 2026-09-14.
-    bool GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed) const {
+    //
+    // `equippedReport`, when given, receives what the SDK's equipped-slot read
+    // did (#93: the stage it stopped at, what it resolved, and its slot-0
+    // positive control), so a scan that ran and found nothing can still say
+    // whether the relic slots were read. Only the once-per-arm line asks for
+    // it; Hook_DropRelic's scan at every roll passes none.
+    bool GetPlayerMaxedRelics(std::unordered_set<int>& outMaxed,
+                              HeroSiege::Player::EquippedSlotScanReport* equippedReport = nullptr) const {
         outMaxed.clear();
         if (!m_Enabled.load()) return false;
         try {
             RValue player;
             if (!HhResolveLocalPlayer(player)) return false;
-            outMaxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player);
+            outMaxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player, equippedReport);
             return true;
         } catch (...) { return false; }
     }
@@ -76,6 +93,8 @@ private:
     // Set when `relicfilter 1` arrives before a player exists; ModuleMain's
     // FrameCallback installs the DropRelic hook later and calls ClearPending().
     std::atomic<bool> m_Pending{ false };
+    // Set by every `relicfilter 1`, cleared by the arm-time report or `0`.
+    std::atomic<bool> m_ArmScanDue{ false };
 };
 
 } // namespace ForgePact
