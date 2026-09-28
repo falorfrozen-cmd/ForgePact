@@ -833,6 +833,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "frameprof",
             # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
             "farsleep",
+            # Hidden loot sleep, the Mods tab's switch (test_hidden_loot_mod_contract.py).
+            "hiddenloot",
         }
         self.assertEqual(entries, expected)
 
@@ -1229,10 +1231,13 @@ class SkillTimerShipContractTests(unittest.TestCase):
 
     def test_html_has_one_select_with_five_styles_in_order(self):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
-        # control of record) is the page's only other <select>, so the skill
-        # timer is still the one select among the controls.
-        self.assertEqual(PANEL_PAGE.count("<select"), 2)
+        # control of record) and hidden loot sleep's show key
+        # (`#mod_hidden_loot_key`, test_hidden_loot_panel_contract.py pins its
+        # options) are the page's only other <select>s, so the skill timer is
+        # still the one select with these styles.
+        self.assertEqual(PANEL_PAGE.count("<select"), 3)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key">'), 1)
         m = re.search(
             r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
             PANEL_PAGE, re.S)
@@ -2953,12 +2958,13 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # companion loot unstick (test_pet_loot_unstick_contract.py), and
         # `frameprof` the frame profiler (test_frame_profiler.py), and
         # `farsleep` is far sleep's switch (test_far_sleep_contract.py).
+        # `hiddenloot` is hidden loot sleep's switch (test_hidden_loot_mod_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick", "frameprof", "farsleep"})
+                                        "petunstick", "frameprof", "farsleep", "hiddenloot"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

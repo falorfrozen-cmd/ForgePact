@@ -86,6 +86,8 @@ EXPECTED_PLAYER_COMMANDS = {
     "frameprof",
     # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
     "farsleep",
+    # Hidden loot sleep, the Mods tab's switch (test_hidden_loot_mod_contract.py).
+    "hiddenloot",
 }
 
 

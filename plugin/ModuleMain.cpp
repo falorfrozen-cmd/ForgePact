@@ -469,6 +469,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
+#include <ForgePact/HiddenLootMod.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -23198,6 +23199,16 @@ static void FlushModState(uint32_t frame)
             body += ",\"wakeRadius\":" + std::to_string(static_cast<long long>(fs.WakeRadius()));
             body += ",\"errors\":" + std::to_string(fs.StatsRef().errors) + "}";
         }
+        {
+            auto& hl = ForgePact::HiddenLootMod::Instance();
+            body += ",\"hiddenLoot\":{\"enabled\":"; body += hl.Enabled() ? "true" : "false";
+            body += ",\"route\":\""; body += hl.RouteName(); body += "\"";
+            body += ",\"key\":" + std::to_string(hl.Key());
+            body += ",\"asleep\":" + std::to_string(hl.AsleepNow());
+            body += ",\"shown\":" + std::to_string(hl.ShownNow());
+            body += ",\"held\":"; body += hl.Held() ? "true" : "false";
+            body += ",\"errors\":" + std::to_string(hl.StatsRef().errors) + "}";
+        }
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
         body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
@@ -39583,6 +39594,146 @@ static void FarSleepCommand(const std::string& rest)
     FarSleepStatus();
 }
 
+// ---- Hidden loot sleep (HiddenLootMod.hpp): the adapter -------------------
+// One hook, on LootGroundInit: all three ground-drop entry points call it (a
+// static reading), and it is where the game's filter leaves its verdict on
+// the new item. Nothing else in either build hooks it, so it gets both routes
+// (MiningOre already hooks LootGroundCreate, and the research build's item
+// inspection table-swaps LootGroundCreate and LootGroundCreateFromItem, which
+// would leave a second hook there table-only). The hook calls the game first
+// and then only hands over what the call carried; the class acts at the end
+// of the frame, in HiddenLootTick.
+static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
+static bool g_HiddenLootInstallTried = false;
+static bool g_HiddenLootVisibleNoted = false;
+static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& result = g_Orig_LootGroundInit(S, O, R, argc, A);
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (hl.Enabled()) {
+        const RValue none;
+        hl.OnInit(argc > 0 && A && A[0] ? *A[0] : none, argc > 1 && A && A[1] ? *A[1] : none, S ? RValue(S) : none);
+    }
+    return result;
+}
+// The one install attempt, on the first switch-on after setup. Both routes
+// means the drop calls reach the class; table-only or not installed means
+// the game's compiled calls may pass it by, so the class's pass over the
+// awake ground items every 18 frames takes over, and the log says so.
+static void HiddenLootInstall()
+{
+    g_HiddenLootInstallTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundInit), "fp_hiddenloot_init",
+                                  (PVOID)HookHiddenLootInit, &g_Orig_LootGroundInit, &native);
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (ok && native) { hl.SetRoute(ForgePact::HiddenLootMod::Route::Both); return; }
+    hl.SetRoute(ok ? ForgePact::HiddenLootMod::Route::TableOnly : ForgePact::HiddenLootMod::Route::None);
+    Out(std::string("hiddenloot: LootGroundInit hook ") + (ok ? "TABLE-ONLY" : "not installed")
+        + " - the game's own drop calls may pass it by, so a pass every 18 frames over the awake ground items"
+          " puts hidden loot to sleep instead");
+}
+// The show key: the async key state, polled once a frame by the class, and
+// counted only while the foreground window belongs to this process - a key
+// held in another window shows nothing.
+static bool HiddenLootKeyDown(int vk)
+{
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+static bool HiddenLootGameInFront()
+{
+    const HWND front = GetForegroundWindow();
+    if (!front) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(front, &pid);
+    return pid == GetCurrentProcessId();
+}
+static void HiddenLootTick()
+{
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (!hl.Enabled()) return;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    hl.OnFrame(g_RuntimeFrame, CurrentRoomKey(), [] { return FarSleepRoomInfo(); });
+    if (!g_HiddenLootVisibleNoted && hl.StatsRef().visibleUnwritten > 0) {
+        g_HiddenLootVisibleNoted = true;
+        Out("hiddenloot: note - the game did not take a write of the built-in visible; shown items appear"
+            " at the game's own filter refresh, within 0.3 s");
+    }
+}
+static std::string HiddenLootKeyText(int vk)
+{
+    return vk == 0 ? std::string("none") : std::to_string(vk);
+}
+// Shared by `hiddenloot stat` and `hiddenloot 0`; the live procedure reads
+// these fields by name.
+static std::string HiddenLootStatFields()
+{
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    const auto& st = hl.StatsRef();
+    return std::string("on=") + (hl.Enabled() ? "1" : "0")
+        + " route=" + hl.RouteName()
+        + " key=" + HiddenLootKeyText(hl.Key())
+        + " held=" + (hl.Held() ? "1" : "0")
+        + " inits=" + std::to_string(st.inits)
+        + " slept=" + std::to_string(st.slept)
+        + " asleep-now=" + std::to_string(hl.AsleepNow())
+        + " shown-now=" + std::to_string(hl.ShownNow())
+        + " visible=" + std::to_string(st.visible)
+        + " no-filter-var=" + std::to_string(st.noFilterVar)
+        + " unidentified=" + std::to_string(st.unidentified)
+        + " gone=" + std::to_string(st.gone)
+        + " passes=" + std::to_string(st.passes)
+        + " skipped-persistent=" + std::to_string(st.skippedPersistent)
+        + " errors=" + std::to_string(st.errors);
+}
+// `hiddenloot 1|0` (the panel's switch), `hiddenloot stat`, and
+// `hiddenloot key <vk>` (the show key: 0 for none, or 3-254; stored whether
+// or not the mod is on, and read only while it is).
+static void HiddenLootCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (arg == "1" || arg == "on") {
+        hl.SetInput(&HiddenLootKeyDown, &HiddenLootGameInFront);
+        if (g_Setup && !g_HiddenLootInstallTried) HiddenLootInstall();
+        const auto walk = hl.Enable(CurrentRoomKey(), [] { return FarSleepRoomInfo(); }, g_Setup);
+        Out(std::string("hiddenloot -> ON route=") + hl.RouteName() + " key=" + HiddenLootKeyText(hl.Key())
+            + " walk-slept=" + std::to_string(walk.slept) + " walk-visible=" + std::to_string(walk.visible)
+            + " walk-no-filter-var=" + std::to_string(walk.noFilterVar));
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        const auto off = hl.Disable();
+        Out("hiddenloot -> OFF woken=" + std::to_string(off.woken) + " exist-after=" + std::to_string(off.existAfter)
+            + " " + HiddenLootStatFields());
+        return;
+    }
+    if (arg == "stat") { Out("hiddenloot stat: " + HiddenLootStatFields()); return; }
+    if (arg == "key" || arg.rfind("key ", 0) == 0) {
+        const std::string value = TrimCopy(arg.substr(3));
+        const std::string stays = "; key stays " + HiddenLootKeyText(hl.Key());
+        const bool digits = !value.empty() && value.size() <= 4
+            && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (!digits) {
+            Out("hiddenloot: key refused - " + (value.empty() ? std::string("no key code given") : "'" + value + "' is not a key code") + stays);
+            return;
+        }
+        const int vk = std::stoi(value);
+        if (vk == 1 || vk == 2) {
+            Out("hiddenloot: key refused - " + std::to_string(vk) + " is a mouse button the game plays with" + stays);
+            return;
+        }
+        if (!hl.SetKey(vk)) {
+            Out("hiddenloot: key refused - " + std::to_string(vk) + " is outside 0 (none) and 3-254" + stays);
+            return;
+        }
+        Out("hiddenloot: key=" + HiddenLootKeyText(hl.Key()));
+        return;
+    }
+    Out("hiddenloot: usage hiddenloot 1 | 0 | stat | key <vk>");
+}
+// ---- end of the hidden loot sleep adapter
+
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
 // What the room's active instances are, object by object: how many, how
@@ -40057,7 +40208,7 @@ static void RunCommand(const std::string& line)
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep", "hiddenloot"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -40141,6 +40292,9 @@ static void RunCommand(const std::string& line)
     if (lc == "frameprof") { FrameProfCommand(rest); return; }
     // Far sleep: the Mods tab's switch, the same standalone early return.
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
+    // Hidden loot sleep: the Mods tab's switch and its show key, the same
+    // standalone early return.
+    if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -41480,6 +41634,12 @@ void FrameCallback(FWFrame& FrameContext)
     // again near a player (FarSleep.hpp). Nothing runs while it is off and
     // nothing it put to sleep is left asleep.
     if (g_Setup) FarSleepTick();
+
+    // Hidden loot sleep, toggled by `hiddenloot 1`: a drop the player's loot
+    // filter hides sleeps at the end of the frame it dropped in, and wakes
+    // while the show key is held (HiddenLootMod.hpp). Returns at once while
+    // it is off.
+    if (g_Setup) HiddenLootTick();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun
