@@ -125,6 +125,9 @@ also get new plugin commands for the stash, the bag and your skills.
 - **Status messages for screen readers.** Ember keeps its message area
   available to screen readers between messages, instead of removing it until
   new text appears.
+- **The plugin warning at the top of Ember stays clickable.** Its tooltip now
+  opens below the icon instead of on top of it, so hovering the warning no
+  longer hides the button that opens Setup.
 
 - **Reach the bottom of every Ember page.** Long pages now scroll with a visible
   scrollbar, mouse wheel and keyboard. The bottom action bar no longer covers
