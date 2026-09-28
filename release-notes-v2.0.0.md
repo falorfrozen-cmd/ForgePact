@@ -78,16 +78,22 @@ also get new plugin commands for the stash, the bag and your skills.
 ## Changed
 
 - **A new look for the whole panel.** The tabs sit in one bar along the top of
-  the window, each page is laid out in cards, and the panel comes in three
-  colour themes: **Ledger** (the default), **Graphite** and **Sigil**. Its
+  the window in Ledger, Graphite and Sigil. **Ember Forge**, the new default,
+  brings the approved anvil artwork, a sidebar, customizable Overview shortcuts
+  and a search across all settings. Your existing explicit theme choice stays
+  selected. Its
   fonts come with ForgePact, so the panel looks the same on every PC and still
   works with no internet connection. Every control sends the same settings to
   the game as before.
 - **Small touches.** The footer now reads "Created by Falor and ST4H". A light
   line separates the groups on the Modifiers tab. The Miner's Helmet card
   shows the helmet's stats in the accent colour.
-- **Tooltips and menus move gently.** Tooltips, the list of enabled mods, the
-  theme list and the messages at the bottom fade in; they appear at once when
+- **Tooltips and messages move gently.** In Ledger, Graphite and Sigil,
+  tooltips, bottom messages and floating menus fade in. Ember's tooltips
+  keep their fades; its
+  theme and enabled-mods lists open and close instantly; its Undo message
+  fades without moving in its own footer row, while brief status messages
+  appear instantly in a separate row. Animated elements appear at once when
   you use the keyboard, and they only fade, without moving, when your system is
   set to reduce motion. Buttons and tabs still ease into their hover colour
   with reduce motion on. A screen reader now reads the line under a slider along
@@ -109,6 +115,22 @@ also get new plugin commands for the stash, the bag and your skills.
   to Setup.
 
 ## Fixed
+
+- **Find every setting from Ember's search.** Map reveal, pet collection,
+  Headhunter, Beacon and other switches now appear alongside sliders.
+  Choosing a result takes you to the right section and focuses its control.
+  The zone-mod search stays reachable with Tab after jumping there.
+- **Undo stays clear of your settings.** Ember reserves a separate footer row
+  for the Undo message, including long names in small windows.
+- **Status messages for screen readers.** Ember keeps its message area
+  available to screen readers between messages, instead of removing it until
+  new text appears.
+
+- **Reach the bottom of every Ember page.** Long pages now scroll with a visible
+  scrollbar, mouse wheel and keyboard. The bottom action bar no longer covers
+  settings, including in short windows. Changing pages starts at the top again.
+  Theme choices and the expanded Enabled mods list also stay within the
+  scrollable area, so their last options remain reachable.
 
 - **Blank panel window when ForgePact's ports were all in use.** ForgePact
   tries five ports of its own (8780, 8801, 8899, 9133 and 9777). When all five

@@ -592,9 +592,11 @@ async function run(browser, { trace = false, control = null } = {}) {
 
     // A few mods on, inline: Turn off and Undo.
     await step(['turn-off-inline', 'undo'], async () => {
-      // The three entries enabled-mods-form.e2e.mjs shows inline at 1280;
-      // each Turn off is put back by its Undo.
-      const three = ['map_reveal', 'headhunter', 'mod_orb_pickup_radius'];
+      // Keep three real entries inline at the standard 1280px viewport, also
+      // with Ember's sidebar/visible scrollbar. The long orb-pickup label
+      // correctly overflows there; no performance budget or sample changes.
+      // Each Turn off is put back by its Undo.
+      const three = ['map_reveal', 'headhunter', 'beacon'];
       await setMods(ctx.page, three);
       assert(await $(ctx.page, () => document.getElementById('enabledMods').dataset.form) === 'inline', 'three entries at 1280 are not inline');
       await turnOffs(ctx, 'turn-off-inline', three, { undo: true });

@@ -972,7 +972,8 @@ async function noteSwitchedOffByValue({ page }) {
 // ---- Harness ----
 
 async function withPage(browser, { viewport = VIEWPORTS[1280], offline = false, routes = null } = {}, fn) {
-  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, offline });
+  // Preserve the approved flat-panel geometry; e2e:ember owns Ember's layout.
+  const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, offline, seed: { theme: 'ledger' } });
   let page = null;
   try {
     page = await openPanel(browser, sandbox, viewport, routes ? { routes } : {});

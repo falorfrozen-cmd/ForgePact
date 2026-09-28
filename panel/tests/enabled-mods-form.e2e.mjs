@@ -286,7 +286,10 @@ const passedAll = [];
 let failures = 0;
 try {
   for (const [name, fn] of GROUPS) {
-    const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null });
+    // This export's 1280px inline threshold belongs to the full-width Ledger
+    // layout. Ember reserves a sidebar and a scrollbar, so three long names
+    // correctly use its tray at that width (covered by ember-scroll.e2e.mjs).
+    const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, seed: { theme: 'ledger' } });
     const ctx = { sandbox, passed: [], note: '' };
     try {
       ctx.page = await openPanel(browser, sandbox);
