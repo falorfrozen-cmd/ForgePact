@@ -3,7 +3,7 @@
 
     py -3 tests/panel_sandbox_server.py [--legacy] [--dist <dir>] [--offline]
                                         [--satanic-minimum] [--seed <json file>]
-                                        [--src <dir>]
+                                        [--src <dir>] [--start-delay <seconds>]
 
 Used by `panel/tests/` (the behaviour oracle, the screenshot tool and the e2e
 suite). It reuses `test_satanic_panel.PanelSandbox` - an isolated
@@ -50,6 +50,13 @@ that ref's embedded page. The recording of the Gems of Incarnation controls
 main's last pre-port page. It refuses (exit 2) when the module it imported is
 not the one in `<dir>`.
 
+`--start-delay <seconds>` waits that long before anything is imported or the
+seed is read, so the port is reported at least that much later, on any
+machine: `tests/test_start_sandbox_report.py` needs a sandbox that misses
+`startSandbox`'s start limit. A start is no longer slow enough to count on:
+about 0.5 s since hs_game_sdk loads its tables on first use (hub PR #286), and
+0.25 s without the SDK beside the checkout.
+
 Prints `port=<n>` then `cmds=<path>` and serves until stdin closes. No route
 is added to the product for testing: everything here is a patch on the
 module the product already runs.
@@ -57,6 +64,7 @@ module the product already runs.
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,7 +107,17 @@ def main(argv=None):
                         help="merge this JSON object's top-level keys into the sandbox's forgepact.json")
     parser.add_argument("--src", type=Path, default=None,
                         help="import forgepact from this directory (e.g. an extracted git archive of src)")
+    parser.add_argument("--start-delay", type=float, default=0.0, metavar="SECONDS",
+                        help="wait this long before importing anything or reading --seed "
+                             "(a start that is late on any machine)")
     args = parser.parse_args(argv)
+    if args.start_delay < 0:
+        parser.error("--start-delay: must not be negative")
+    if args.start_delay:
+        # Before load(), where a slow start spent its time, and so before the
+        # seed is read (checking its keys needs forgepact.DEFAULTS): a late
+        # sandbox left running would find its seed gone, as one once did.
+        time.sleep(args.start_delay)
     PanelSandbox, forgepact = load(parser, args.src)
     if args.legacy and not hasattr(forgepact, "HTML"):
         # Without this, / answers the 503 "panel not built" JSON and a caller

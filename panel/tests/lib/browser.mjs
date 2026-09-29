@@ -59,6 +59,9 @@ const STDERR_TAIL = 20;
 // `src`, a directory holding another tree's forgepact.py, is passed as
 // `--src`: the server imports that module instead of this checkout's (with
 // `legacy`, it serves that tree's embedded page).
+// `startDelayMs` is passed as `--start-delay`: the server waits that long
+// before it imports anything or reads its seed, a start that misses a shorter
+// `startTimeoutMs` on any machine (test_start_sandbox_report.py's late case).
 //
 // The sandbox's stderr reaches this process's stderr line by line, each line
 // prefixed with the sandbox's port (its pid until it has one), so a suite's
@@ -67,13 +70,14 @@ const STDERR_TAIL = 20;
 // and a failed `state()` carry that text in their message, which is how a
 // refused connection says whether anything was still serving.
 export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null, src = null,
-  startTimeoutMs = SANDBOX_START_TIMEOUT_MS } = {}) {
+  startTimeoutMs = SANDBOX_START_TIMEOUT_MS, startDelayMs = 0 } = {}) {
   const args = ['-3', SANDBOX];
   if (legacy) args.push('--legacy');
   if (src) args.push('--src', src);
   if (dist) args.push('--dist', dist);
   if (offline) args.push('--offline');
   if (satanicMinimum) args.push('--satanic-minimum');
+  if (startDelayMs) args.push('--start-delay', String(startDelayMs / 1000));
   let seedDir = null;
   if (seed) {
     seedDir = mkdtempSync(join(tmpdir(), 'forgepact-seed-'));
