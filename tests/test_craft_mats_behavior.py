@@ -214,8 +214,37 @@ class CraftMatsBehaviorTests(unittest.TestCase):
 
     def test_target_press_crafts_only_when_every_take_is_confirmed(self):
         self.assertScenario("target/press_crafts_only_when_every_take_is_confirmed")
-        self.assertScenario("target/press_gate_is_vanilla_without_a_stash_count_and_refuses_what_it_cannot_pair")
         self.assertScenario("baseline/press_off_is_vanilla")
+
+    # ---- the press gate: one kind, counter and line per refusal (issue #80) ------
+    #
+    # Each refusal the gate makes has its own kind, token, line (the craft was
+    # refused and nothing moved) and counter, and only its own counter moves.
+    # The vanilla paths - no record, or a record the bag alone covered - stay
+    # the game's own press and name nothing.
+
+    def test_baseline_press_gate_is_vanilla_without_a_stash_count(self):
+        self.assertScenario("baseline/press_gate_is_vanilla_without_a_stash_count")
+
+    def test_target_press_refused_already_served(self):
+        self.assertScenario("target/press_refused_already_served")
+
+    def test_target_press_refused_unpaired(self):
+        self.assertScenario("target/press_refused_unpaired")
+
+    def test_target_press_refused_unnumbered_row(self):
+        self.assertScenario("target/press_refused_unnumbered_row")
+        self.assertScenario("target/press_refused_unnumbered_row_at_the_press")
+
+    def test_target_press_refused_other_row(self):
+        self.assertScenario("target/press_refused_other_row")
+
+    # ItemCheckHash not dispatching during a take's count edit: the take is not
+    # confirmed, the press is refused, `hash-failed` counts every time and its
+    # line names the item's key once; a put-back that did not land is a loss.
+
+    def test_target_hash_failed_take_is_unconfirmed_and_named_once(self):
+        self.assertScenario("target/hash_failed_take_is_unconfirmed_and_named_once")
 
     def test_target_consume_mismatch_turns_the_mod_off_for_the_session(self):
         self.assertScenario("target/consume_mismatch_turns_the_mod_off_for_the_session")

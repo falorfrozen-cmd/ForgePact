@@ -483,8 +483,10 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/ProspectWindowMod.hpp>
 #include <ForgePact/AutoProspectMod.hpp>
 #include <ForgePact/CraftMatsMod.hpp>
+#include <ForgePact/StashMoveAllMod.hpp>
 #include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
+#include <ForgePact/PetLootUnstickMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
@@ -1311,7 +1313,25 @@ static ForgePact::DeferredDensityCopies<DensityPlacementKey,DensityRecipe,Densit
 static int64_t g_DensityCopyRoom=INT64_MIN;
 static uint64_t g_DensityCopyCompleted=0,g_DensityCopyRefused=0,g_DensityCopyFailures=0;
 static std::string g_DensityCopyReason;
-static size_t DeferredDensityPending(){return g_DensityCopies.Pending();}
+// Rolling density copies (`densityroll`, Mods > Quality of Life, off by
+// default): with Monster Density above x1, the extra spawners are made only
+// within reach of the player instead of all at once when a zone loads. Every
+// spawner asks the game's timer system for the player's distance, and
+// timer_system_update walks every timer every frame: at x5 Act_01_01 held
+// 1,505 spawners (312 at x1) and the walk took 7-9% of the frame thread
+// (frameprof, 2026-09-28). A pack is born only once the player is within
+// 1,050 px of its spawner, so a copy made 3,000 px ahead is born exactly when
+// it would have been. Jobs out of reach wait in g_DensityCopies; they are
+// neither dropped nor counted as the budget's backlog.
+static double g_DensityRollReach=0.0;                                  // 0 = off, else the reach in px
+static constexpr double kDensityRollDefaultPx=3000.0;
+static double g_DensityReachNow=std::numeric_limits<double>::infinity(); // effective reach, see DensityRollRefresh
+static size_t g_DensityDue=0;                                            // jobs within reach at the last tick
+static bool DensityRolling(){return std::isfinite(g_DensityReachNow);}
+// Told of each copy made while rolling (the pack markers' family count); set
+// where PackMarkers is wired, left empty in the density harness.
+static void (*g_DensityCopyMade)(int objectIndex)=nullptr;
+static size_t DeferredDensityPending(){return DensityRolling()?g_DensityDue:g_DensityCopies.Pending();}
 static void ResetDeferredDensity(bool all){
     if(all)g_DensityCopies.Reset();else g_DensityCopies.NewZone();
     g_DensityCopyRoom=INT64_MIN;g_DensityCopyReason.clear();
@@ -1355,7 +1375,8 @@ static bool QueueDensityCopies(const DensityPlacementKey& key,bool layer,CInstan
 }
 
 static void DensityCopiesTick(){
-    if(!g_DensityCopies.Pending() || !g_Yytk || !ObserveDensityRoom())return;
+    if(!g_DensityCopies.Pending()){g_DensityDue=0;return;}
+    if(!g_Yytk || !ObserveDensityRoom())return;
     if(!ForgePact::MapRevealManager::Instance().HasReadableMap())return;
     RValue player;if(!HhResolveLocalPlayer(player))return;
     double x=0,y=0;
@@ -1365,7 +1386,7 @@ static void DensityCopiesTick(){
     for(unsigned attempts=0;attempts<ForgePact::AdaptivePopulationBudget::kMaxCopies && budget.CanCopy(ForgePact::MapRevealManager::Instance().WantsPackSpawn());++attempts){
         if(!ObserveDensityRoom())break;
         if(ForgePact::MapRevealManager::Instance().IsEnabled() && ForgePact::MapRevealManager::Instance().PacksEnabled() && !PopulationCapacityAvailable())break;
-        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame);if(!job)break;
+        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame,g_DensityReachNow);if(!job)break;
         CInstance* self=nullptr;CInstance* other=nullptr;
         if(!ResolveDensityContext(job->recipe.self,self) || !ResolveDensityContext(job->recipe.other,other)){
             g_DensityCopyReason="Waiting for native creation context";
@@ -1385,9 +1406,14 @@ static void DensityCopiesTick(){
             measured.SetObject(args[3].ToDouble());
             RValue result;orig(result,self,other,4,args);
             ++g_DensityCopyCompleted;BP_DIAG_INCREMENT(g_ExtraCreators);g_DensityCopyReason.clear();
+            // One copy at a time as the player walks: counted into its pack
+            // marker family, so the markers' growth poll does not re-list
+            // the whole zone for every copy.
+            if(DensityRolling() && g_DensityCopyMade)g_DensityCopyMade(static_cast<int>(args[3].ToDouble()));
         }catch(...){++g_DensityCopyFailures;g_DensityCopyReason="Native density copy failed; not retried";}
         g_KuyruktanYaratim=prior;g_DensityCopies.Complete(*job);
     }
+    g_DensityDue=DensityRolling()?g_DensityCopies.DueWithin(x,y,g_DensityReachNow):g_DensityCopies.Pending();
 }
 static uint64_t g_KuyrukToplam = 0;
 
@@ -3274,9 +3300,124 @@ static std::string EsyaAdiJson(const std::string& js)
 }
 #endif
 
+#ifndef FORGEPACT_RELEASE
+// ===== Live 1 research instruments (dev2 bug batch: #77, #95 part 1) ========
+// Research build only: neither command is in kPlayerCommands, and the player
+// build compiles none of this. Both only read.
+//
+// `goldtrace on|off|stat` (#77): while on, each DropGold / DropMonsterGold call
+// that passes a ForgePact drop hook appends its arguments to
+// bp_ipc\goldtrace.txt, one line per call, so a session can see which argument
+// is the coin's amount. LogDrop feeds it, and every FP_DROP_HOOK body calls
+// LogDrop after its original. At most kGoldTraceMaxLines lines a session,
+// because at `dropmult gold 100` one monster's gold is 10,000 DropGold calls.
+static bool g_GoldTraceOn = false;
+static bool g_GoldTraceFileFresh = false;   // truncated once, at the session's first `on`
+static long g_GoldTraceLines = 0;
+static long g_GoldTraceOverCap = 0;         // gold calls seen while on, after the cap
+static constexpr long kGoldTraceMaxLines = 400;
+
+static void GoldTraceAppend(const char* fn, int argc, RValue** A)
+{
+    if (!g_GoldTraceOn || !fn) return;
+    const std::string name = fn;
+    if (name != "DropGold" && name != "DropMonsterGold") return;
+    if (g_GoldTraceLines >= kGoldTraceMaxLines) { ++g_GoldTraceOverCap; return; }
+    try {
+        std::string line = name + " argc=" + std::to_string(argc);
+        for (int i = 0; i < argc && i < 32; ++i) {
+            line += " a" + std::to_string(i) + "=";
+            if (!A || !A[i]) { line += "null"; continue; }
+            const RValue& v = *A[i];
+            bool isNumber = true;
+            double number = 0.0;
+            switch (v.m_Kind) {
+            case VALUE_REAL:  number = v.ToDouble(); break;
+            case VALUE_INT32: number = (double)v.ToInt32(); break;
+            case VALUE_INT64: number = (double)v.ToInt64(); break;
+            case VALUE_BOOL:  number = v.ToBoolean() ? 1.0 : 0.0; break;
+            default: isNumber = false; break;
+            }
+            if (isNumber) {
+                char text[64];
+                sprintf_s(text, "%.6g", number);
+                line += text;
+            } else if (v.m_Kind == VALUE_STRING) {
+                std::string s = v.ToString();
+                if (s.size() > 40) s.resize(40);
+                line += "\"" + s + "\"";
+            } else {
+                line += "kind" + std::to_string((int)v.m_Kind);
+            }
+        }
+        std::ofstream f(IPC_DIR + "\\goldtrace.txt", std::ios::app);
+        f << line << "\n";
+        ++g_GoldTraceLines;
+    } catch (...) {}
+}
+
+// `lootcensus` (#95 part 1, #77): one line counting the ground loot and the
+// coins. Loot_Ground_obj and Coin_obj are resolved by their SDK names; the
+// walk reads each ground item's `lootFilterVisible` (the game's loot filter
+// verdict, checked with variable_instance_exists first) and its built-in
+// `visible`, up to kLootCensusWalkCap instances. `visible` is read directly,
+// the way the rest of this file reads it, rather than gated on
+// variable_instance_exists, which a GameMaker built-in may not answer true
+// for; an unreadable one is counted rather than guessed. The two trailing
+// counters say how many items the walk could not classify, so a zero
+// `hidden=` cannot come from an instrument that read nothing.
+static constexpr int kLootCensusWalkCap = 2048;
+
+static void LootCensus()
+{
+    try {
+        const double lootIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        const double coinIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Coin_obj))) }).ToDouble();
+        if (lootIdx < 0 || coinIdx < 0) {
+            Out("lootcensus: object not found (Loot_Ground_obj=" + std::to_string((long)lootIdx)
+                + " Coin_obj=" + std::to_string((long)coinIdx) + ")");
+            return;
+        }
+        const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
+        const long coins = (long)g_Yytk->CallBuiltin("instance_number", { RValue(coinIdx) }).ToDouble();
+        long hidden = 0, invisible = 0, walked = 0, noFilterVar = 0, unreadableVisible = 0;
+        const long toWalk = std::min<long>(ground, kLootCensusWalkCap);
+        for (long i = 0; i < toWalk; ++i) {
+            RValue inst;
+            try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) }); }
+            catch (...) { continue; }
+            if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            ++walked;
+            try {
+                if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("lootFilterVisible") }).ToBoolean()) {
+                    if (!g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("lootFilterVisible") }).ToBoolean()) ++hidden;
+                } else {
+                    ++noFilterVar;
+                }
+            } catch (...) { ++noFilterVar; }
+            try {
+                RValue visible = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("visible") });
+                if (visible.m_Kind == VALUE_UNDEFINED) ++unreadableVisible;
+                else if (!visible.ToBoolean()) ++invisible;
+            } catch (...) { ++unreadableVisible; }
+        }
+        Out("lootcensus: ground=" + std::to_string(ground) + " hidden=" + std::to_string(hidden)
+            + " invisible=" + std::to_string(invisible) + " coins=" + std::to_string(coins)
+            + " walked=" + std::to_string(walked)
+            + " no-filter-var=" + std::to_string(noFilterVar)
+            + " visible-unreadable=" + std::to_string(unreadableVisible));
+    } catch (...) { Out("lootcensus: read threw"); }
+}
+#endif
+
 static void LogDrop(const char* fn, RValue& res, int argc, RValue** A)
 {
     if (g_ItemTruthBuilding) return;   // Item Truth journals its own builds
+#ifndef FORGEPACT_RELEASE
+    GoldTraceAppend(fn, argc, A);      // #77 research: the gold scripts' arguments
+#endif
     try {
 #ifndef FORGEPACT_RELEASE
         if (g_TypeMapAktifTip >= 0) g_TypeMapKancaSayaci++;
@@ -5661,7 +5802,7 @@ static bool ToggleTableResolveIds()
                         // talent counts ruleDenied even when it has no object
                         // by name convention at all (bushido/holyForm/
                         // unholyForm/melonForm). D-R1: a talent id matching
-                        // one of the seven explicit rows above is never
+                        // one of the eight explicit rows above is never
                         // entered here.
                         if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
                             if (ForgePact::SkillTimerRuleDenied(name)) {
@@ -6322,7 +6463,7 @@ static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, d
 // ForgePact::kSkillTimerField among them - otherwise the same shape as
 // SkillTimerReadRow, written separately rather than shared because that
 // function always resolves its object by name fresh (SkillTimerResolveRowObject,
-// no caching - fine for seven explicit rows, wasteful for up to
+// no caching - fine for eight explicit rows, wasteful for up to
 // kSkillTimerRuleCap rule entries), while this one is handed an
 // already-resolved, cached objIdx.
 static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
@@ -8933,10 +9074,14 @@ static bool IsPetQuestExcluded(int objIdx)
 // machine, so the collect is something the player can watch happen rather
 // than items silently vanishing across the screen:
 //
-//   Idle   -> pick the nearest eligible on-screen item, remember its id
+//   Idle   -> walk the family from the selector's cursor, hand every eligible
+//             on-screen item to PetQuestSelector::Pick, which chooses the
+//             nearest one not held back; remember its id
 //   Travel -> step the pet toward it each frame (same x/y write PullOneGlobe
 //             uses for globes); on arrival, or on timeout, go to Collect
-//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down
+//   Collect-> re-read the game's own gates, invoke m_Questpickup, cool down,
+//             and tell the selector how it went: an item the collect left in
+//             place is held back so the next pick is another item (#94)
 //
 // Gates are re-read at collect time, never cached from selection: an item can
 // stop being collectable during the two seconds the pet is walking over.
@@ -8945,6 +9090,10 @@ static PetQuestPhase g_PetQuestPhase = PetQuestPhase::Idle;
 static double g_PetQuestTargetId = -4.0;
 static int    g_PetQuestTravelFrames = 0;
 static int    g_PetQuestCooldown = 0;
+// Issue #94: the selection with memory of failure and the family cursor, and
+// the clock its holds run on - one frame per tick while the mod is on.
+static ForgePact::PetQuestSelector g_PetQuestSelector;
+static int64_t g_PetQuestFrame = 0;
 
 static constexpr double kPetQuestSpeed = 11.0;        // px/frame; a brisk trot, not a teleport
 static constexpr double kPetQuestArriveR = 26.0;      // close enough to read as "the pet is on it"
@@ -8973,22 +9122,26 @@ static bool PetQuestItemIsCollectable(const RValue& inst)
     } catch (...) { return false; }
 }
 
-static bool PetQuestCollectOne(const RValue& inst)
+// Returns how the collect went, for the selector: Collected only when the
+// call ran and the item is gone; NoEffect when it ran and the item stayed;
+// Gate and Refused when it never ran.
+static ForgePact::PetQuestOutcome PetQuestCollectOne(const RValue& inst)
 {
+    using ForgePact::PetQuestOutcome;
     try {
-        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return false; }
+        if (!PetQuestItemIsCollectable(inst)) { InterlockedIncrement(&g_PetQuestRefusedGate); return PetQuestOutcome::Gate; }
         int lm = 0;
         try { lm = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootManagerObjIdx) }).ToDouble(); }
         catch (...) { lm = 0; }
-        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (lm <= 0) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue lmInst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootManagerObjIdx), RValue(0.0) });
         CInstance* lootMgr = HhResolveInstance(lmInst);
         CInstance* item = HhResolveInstance(inst);
-        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return false; }
+        if (!item || !lootMgr) { InterlockedIncrement(&g_PetQuestNoLootMgr); return PetQuestOutcome::Refused; }
         RValue method = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("m_Questpickup") });
         RValue result;
         std::vector<RValue> args{ RValue(g_PetQuestArg.load()) };
-        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return false;
+        if (!InvokeMethodValue(item, lootMgr, method, args, result)) return PetQuestOutcome::Refused;
         InterlockedIncrement(&g_PetQuestCollected);
         // Did the call actually do anything? m_Questpickup removes the item,
         // so an instance that is still there afterwards means the call
@@ -8998,17 +9151,28 @@ static bool PetQuestCollectOne(const RValue& inst)
         // §4 rule 3 still stands); it only separates "nothing ran" from "ran
         // and did nothing", which are otherwise identical from outside.
         try {
-            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean())
+            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
                 InterlockedIncrement(&g_PetQuestNoEffect);
+                return PetQuestOutcome::NoEffect;
+            }
         } catch (...) {}
-        return true;
-    } catch (...) { return false; }
+        return PetQuestOutcome::Collected;
+    } catch (...) { return PetQuestOutcome::Refused; }
+}
+
+// Every travel ends here, so the selector's open travel always closes with
+// the way it ended; an outcome that left the item in place holds it back.
+static void PetQuestEndTravel(ForgePact::PetQuestOutcome outcome)
+{
+    g_PetQuestSelector.Note(outcome, g_PetQuestFrame);
+    g_PetQuestPhase = PetQuestPhase::Idle;
 }
 
 static void PetQuestCollectorTick()
 {
     ResolvePetQuestAssets();
     if (g_QuestObjParentIdx < 0) return;
+    ++g_PetQuestFrame;
 
     CInstance* pet = nullptr;
     RValue petInst;
@@ -9024,7 +9188,10 @@ static void PetQuestCollectorTick()
     // No pet out, no fetching. The mod is "the pet collects quest items", so
     // without one it stays a counter - which is also what stops it running in
     // menus and cutscenes.
-    if (petInst.m_Kind == VALUE_UNDEFINED) { g_PetQuestPhase = PetQuestPhase::Idle; return; }
+    if (petInst.m_Kind == VALUE_UNDEFINED) {
+        if (g_PetQuestPhase == PetQuestPhase::Travel) PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
+        return;
+    }
 
     if (g_PetQuestCooldown > 0) { --g_PetQuestCooldown; return; }
 
@@ -9047,7 +9214,7 @@ static void PetQuestCollectorTick()
             // These items despawn on their own (deleteTimer), so losing one
             // mid-walk is ordinary, not an error.
             InterlockedIncrement(&g_PetQuestTargetLost);
-            g_PetQuestPhase = PetQuestPhase::Idle;
+            PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost);
             return;
         }
         try {
@@ -9063,9 +9230,11 @@ static void PetQuestCollectorTick()
                 // means something is holding the pet (its own AI winning the
                 // x/y tug-of-war, a teleport, a room change). Collect anyway:
                 // the fetch animation is cosmetic, the credit is the point.
+                // Unless that collect removed the item, the timeout holds it
+                // back: re-picking an item the pet cannot reach is #94's loop.
                 InterlockedIncrement(&g_PetQuestTravelTimeouts);
-                PetQuestCollectOne(target);
-                g_PetQuestPhase = PetQuestPhase::Idle;
+                const ForgePact::PetQuestOutcome r = PetQuestCollectOne(target);
+                PetQuestEndTravel(r == ForgePact::PetQuestOutcome::Collected ? r : ForgePact::PetQuestOutcome::Timeout);
                 g_PetQuestCooldown = kPetQuestCooldownFrames;
                 return;
             }
@@ -9076,15 +9245,21 @@ static void PetQuestCollectorTick()
                 g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("y"), RValue(py + dy * t) });
                 return;
             }
-            PetQuestCollectOne(target);
+            PetQuestEndTravel(PetQuestCollectOne(target));
         } catch (...) {}
-        g_PetQuestPhase = PetQuestPhase::Idle;
+        // A position read that threw closes the travel without holding the
+        // item; after a Note this is a no-op for the selector.
+        PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
         g_PetQuestCooldown = kPetQuestCooldownFrames;
         return;
     }
 
-    // --- Idle: choose the nearest eligible item on screen ------------------
-    int budget = 64;   // a runaway quest-item count on screen cannot cost a frame
+    // --- Idle: choose the nearest eligible item on screen not held back -----
+    // The walk reads at most kBudget family instances per tick (a runaway
+    // quest-item count cannot cost a frame) and starts where the last one
+    // stopped, wrapping, so an item past the budget is reached within a few
+    // ticks instead of never (#94). The static props share the family.
+    constexpr int kBudget = 64;
     int total = 0;
     try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_QuestObjParentIdx) }).ToDouble(); }
     catch (...) { return; }
@@ -9095,8 +9270,11 @@ static void PetQuestCollectorTick()
         petY = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
     } catch (...) { return; }
 
-    double bestD2 = -1.0, bestId = -4.0;
-    for (int i = 0; i < total && budget > 0; ++i, --budget) {
+    const int start = g_PetQuestSelector.NextStart(total, kBudget);
+    const int walk = (std::min)(total, kBudget);
+    std::vector<ForgePact::PetQuestCandidate> candidates;
+    for (int k = 0; k < walk; ++k) {
+        const int i = (start + k) % total;
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_QuestObjParentIdx), RValue((double)i) });
             if (inst.m_Kind == VALUE_UNDEFINED) continue;
@@ -9109,15 +9287,15 @@ static void PetQuestCollectorTick()
             InterlockedIncrement(&g_PetQuestOnScreen);
             if (!PetQuestItemIsCollectable(inst)) continue;
             const double dx = ix - petX, dy = iy - petY;
-            const double d2 = dx * dx + dy * dy;
-            if (bestD2 < 0.0 || d2 < bestD2) {
-                bestD2 = d2;
-                bestId = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
-            }
+            const double id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+            candidates.push_back({ id, dx * dx + dy * dy });
         } catch (...) {}
     }
-    if (bestD2 < 0.0) return;
-    g_PetQuestTargetId = bestId;
+    // None on screen, or every one held back: stay idle. The pet waits for a
+    // hold to expire rather than walking back to an item that just failed.
+    const std::optional<double> pick = g_PetQuestSelector.Pick(candidates, g_PetQuestFrame);
+    if (!pick) return;
+    g_PetQuestTargetId = *pick;
     g_PetQuestTravelFrames = 0;
     g_PetQuestPhase = PetQuestPhase::Travel;
 }
@@ -9134,9 +9312,12 @@ static void PetQuestCollectorStats()
               g_PetQuestPetSeen, g_PetQuestNoCam);
     Out(b);
     char c[320];
-    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | phase=%s arg=%.2f",
+    // `held back=` (#94): travels that ended with the item still in place
+    // (no effect, a gate refusal, a refused call, a timeout), each of which
+    // kept that item out of the picks for kPetQuestHoldFrames ticks.
+    sprintf_s(c, "  collected=%ld | skipped(gate)=%ld skipped(no Loot_Manager)=%ld | target lost=%ld travel timeouts=%ld | held back=%ld | phase=%s arg=%.2f",
               g_PetQuestCollected, g_PetQuestRefusedGate, g_PetQuestNoLootMgr,
-              g_PetQuestTargetLost, g_PetQuestTravelTimeouts,
+              g_PetQuestTargetLost, g_PetQuestTravelTimeouts, g_PetQuestSelector.HeldBack(),
               (g_PetQuestPhase == PetQuestPhase::Travel ? "travel" : "idle"), g_PetQuestArg.load());
     Out(c);
     // Structural refusals, reported separately from gameplay ones: these two
@@ -9155,6 +9336,334 @@ static void PetQuestCollectorStats()
                   g_PetQuestNoMethodFn, g_PetQuestBadBind);
         Out(d);
     }
+}
+
+// ---- pet moves on from loot it cannot pick up (#94, PetLootUnstickMod.hpp) --
+// The game's own companion loot pickup, not the quest collector above. Static
+// reading (docs/pet-loot-stuck-research.md): Companion_obj replaces its
+// `lootTarget` only once that instance has ceased to exist, so an item the
+// pickup keeps failing on pins the pet. This tick never picks anything up. It
+// watches the pet's target from outside, and when the same target has sat
+// within reach for kPetLootStuckFrames it does the three things the game
+// itself would read next: holds the item back through its own
+// `itemCompanionTimer` (ground items only; a coin has none), drops the pet's
+// `lootTarget`, and empties `lootList`, which the game rebuilds on its next
+// half-second scan without the held item.
+static bool g_PetLootAssetsResolved = false;
+static int  g_PetLootCompanionObjIdx = -1;
+static int  g_PetLootGroundObjIdx = -1;
+static int  g_PetLootCoinObjIdx = -1;
+
+static void ResolvePetLootUnstickAssets()
+{
+    if (g_PetLootAssetsResolved) return;
+    g_PetLootAssetsResolved = true;
+    auto assetIndex = [](const char* name, HeroSiege::Objects::GameObject fallback) -> int {
+        try {
+            const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }).ToDouble();
+            if (i >= 0) return i;
+        } catch (...) {}
+        return (int)fallback;
+    };
+    g_PetLootCompanionObjIdx = assetIndex("Companion_obj", HeroSiege::Objects::GameObject::Companion_obj);
+    g_PetLootGroundObjIdx = assetIndex("Loot_Ground_obj", HeroSiege::Objects::GameObject::Loot_Ground_obj);
+    g_PetLootCoinObjIdx = assetIndex("Coin_obj", HeroSiege::Objects::GameObject::Coin_obj);
+}
+
+// Is this object `family` or a child of it? The pet's scan collects by
+// family (a collision list over the parent object), so a child's target
+// must count as the parent.
+static bool PetLootIsOf(int objIdx, int family)
+{
+    if (objIdx < 0 || family < 0) return false;
+    if (objIdx == family) return true;
+    try {
+        return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)objIdx), RValue((double)family) }).ToBoolean();
+    } catch (...) { return false; }
+}
+
+// Two give-up outcomes PetLootUnstickMod's own counters do not name, kept
+// here and appended to `petunstick 0`'s line: a give-up write that threw (the
+// target was not dropped; the watch forgets it and may try again), and a
+// target of neither the ground-item nor the coin family (dropped with no
+// timer to set). Each logs its first occurrence once, with the reason or the
+// object index, and keeps the latest for the stat line.
+static std::atomic<long> g_PetLootGiveUpFailed{ 0 };
+static std::atomic<const char*> g_PetLootGiveUpFailedLast{ nullptr };
+static std::atomic<bool> g_PetLootGiveUpFailedLogged{ false };
+static std::atomic<long> g_PetLootOtherKind{ 0 };
+static std::atomic<int> g_PetLootOtherKindLast{ -1 };
+static std::atomic<bool> g_PetLootOtherKindLogged{ false };
+
+static void PetLootNoteGiveUpFailed(const char* why)
+{
+    g_PetLootGiveUpFailed.fetch_add(1);
+    g_PetLootGiveUpFailedLast.store(why);
+    if (!g_PetLootGiveUpFailedLogged.exchange(true))
+        Out(std::string("petunstick: could not give up a stuck target: ") + why +
+            " (counted as give-up failed=; logged once)");
+}
+
+static void PetLootNoteOtherKind(int objIdx)
+{
+    g_PetLootOtherKind.fetch_add(1);
+    g_PetLootOtherKindLast.store(objIdx);
+    if (!g_PetLootOtherKindLogged.exchange(true))
+        Out("petunstick: gave up a target that is neither a ground item nor a coin (object_index " +
+            std::to_string(objIdx) + "; counted as other kind=; logged once)");
+}
+
+// A ground item that does not carry `itemCompanionTimer`. The name comes from
+// a static reading, and variable_instance_set with a name the instance lacks
+// creates a stray variable without an error, so the write would count as held
+// back while holding nothing. The tick asks variable_instance_exists first and
+// on "no" writes nothing, counts it here with the object index (logged once),
+// and still drops the target.
+static std::atomic<long> g_PetLootTimerAbsent{ 0 };
+static std::atomic<int> g_PetLootTimerAbsentLast{ -1 };
+static std::atomic<bool> g_PetLootTimerAbsentLogged{ false };
+
+static void PetLootNoteTimerAbsent(int objIdx)
+{
+    g_PetLootTimerAbsent.fetch_add(1);
+    g_PetLootTimerAbsentLast.store(objIdx);
+    if (!g_PetLootTimerAbsentLogged.exchange(true))
+        Out("petunstick: a ground item has no itemCompanionTimer, so it was not held back, only dropped (object_index " +
+            std::to_string(objIdx) + "; counted as timer absent=; logged once)");
+}
+
+// Whether a give-up held. `held back=` counts the timer write returning, not
+// the item staying out of the pet's next scan. The game may hand a dropped
+// target back at once, in the Step right after the drop with no tick of "no
+// target" in between (a coin has no timer; a ground item's hold may not
+// take), or after the pet has had another target or none. Either way the
+// watch re-arms at each give-up, so the same target still in reach is given
+// up again kPetLootStuckFrames later, and `longest same-target=` stays at or
+// below the count. Every tick that sees a live target asks the header's
+// PetLootRepickRing whether it is one of the last few give-ups taken back
+// within kPetLootHoldFrames - straight back, or after leaving it - which
+// counts it once per give-up as a re-pick while held, by kind; the tick logs
+// the first. On a ground item it also reads the timer back: a positive value
+// says the hold took and the pet came back anyway, 0 or less says the game
+// reset it or the write never landed. A `fail` beside a rising `held back=`
+// then reads as "the same item came back" (re-picked > 0) or "distinct items,
+// one after another" (re-picked 0). Ages are in the watch's clock
+// (g_RuntimeFrame, one per FrameCallback), the hold in the game's own frames;
+// both run at the game's frame rate.
+static double g_PetLootPrevTarget = -1.0;   // the previous tick's live target, -1 for none
+static uint64_t g_PetLootPrevFrame = 0;
+// 0: no ground re-pick yet; 1: the timer was read back (value below); 2: it
+// could not be read. A separate state, so "unread" never passes for a value.
+static std::atomic<int> g_PetLootRepickTimerState{ 0 };
+static std::atomic<double> g_PetLootRepickTimerLast{ 0.0 };
+static std::atomic<bool> g_PetLootRepickLogged{ false };
+
+static void PetLootRememberGiveUp(double targetId, ForgePact::PetLootKind kind)
+{
+    ForgePact::PetLootUnstickMod::Instance().Repicks().Remember((int64_t)g_RuntimeFrame, targetId, kind);
+}
+
+// Called by the tick on every tick that saw a live target, after
+// instance_exists said yes, with the previous tick's live target (-1 for
+// none; every other tick route leaves it at none). The re-pick decision is the
+// header's, and sees a target equal to the previous tick's when it was given
+// up on the frame before; this adds only the game calls, the ground timer
+// read-back and the one log line.
+static void PetLootNoteTargetSeen(double targetId, const RValue& target, double prevTarget)
+{
+    const std::optional<ForgePact::PetLootRepick> hit = ForgePact::PetLootUnstickMod::Instance().Repicks().Seen(
+        (int64_t)g_RuntimeFrame, targetId, prevTarget >= 0.0 ? std::optional<double>(prevTarget) : std::nullopt);
+    if (!hit) return;
+    std::string timerText;
+    if (hit->kind == ForgePact::PetLootKind::Ground) {
+        double timer = 0.0;
+        bool read = false;
+        try {
+            timer = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("itemCompanionTimer") }).ToDouble();
+            read = std::isfinite(timer);
+        } catch (...) { read = false; }
+        if (read) {
+            g_PetLootRepickTimerLast.store(timer);
+            g_PetLootRepickTimerState.store(1);
+            timerText = ", its itemCompanionTimer reads " + std::to_string((long long)timer);
+        } else {
+            g_PetLootRepickTimerState.store(2);
+            timerText = ", its itemCompanionTimer could not be read";
+        }
+    }
+    if (!g_PetLootRepickLogged.exchange(true)) {
+        const char* kind = hit->kind == ForgePact::PetLootKind::Ground ? "ground item"
+                         : hit->kind == ForgePact::PetLootKind::Coin ? "coin" : "other kind";
+        Out(std::string("petunstick: the pet took back a ") + kind + " it gave up " +
+            std::to_string((long long)hit->age) + " frames ago" + timerText +
+            " (counted as re-picked while held=; logged once)");
+    }
+}
+
+static std::string PetLootLocalStatSuffix()
+{
+    const char* failed = g_PetLootGiveUpFailedLast.load();
+    std::string s = " give-up failed=" + std::to_string(g_PetLootGiveUpFailed.load());
+    if (failed) s += std::string(" (last ") + failed + ")";
+    s += " other kind=" + std::to_string(g_PetLootOtherKind.load());
+    if (g_PetLootOtherKind.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootOtherKindLast.load()) + ")";
+    s += " timer absent=" + std::to_string(g_PetLootTimerAbsent.load());
+    if (g_PetLootTimerAbsent.load() > 0)
+        s += " (last object_index " + std::to_string(g_PetLootTimerAbsentLast.load()) + ")";
+    const ForgePact::PetLootRepickRing& repicks = ForgePact::PetLootUnstickMod::Instance().Repicks();
+    s += " re-picked while held=" + std::to_string(repicks.Repicked()) +
+         " (ground " + std::to_string(repicks.Ground()) +
+         " coin " + std::to_string(repicks.Coin()) + ")";
+    const int timerState = g_PetLootRepickTimerState.load();
+    if (timerState == 1)
+        s += " (last ground timer read " + std::to_string((long long)g_PetLootRepickTimerLast.load()) + ")";
+    else if (timerState == 2)
+        s += " (last ground timer unreadable)";
+    return s;
+}
+
+// Called once per frame from FrameCallback while `petunstick 1` is on. The
+// watch's clock is g_RuntimeFrame, one per FrameCallback, so frames the mod
+// spent switched off are a gap and a run never straddles off and on.
+static void PetLootUnstickTick()
+{
+    ResolvePetLootUnstickAssets();
+    ForgePact::PetLootUnstickMod& mod = ForgePact::PetLootUnstickMod::Instance();
+    // Every tick is counted, and every early return below names its route,
+    // so `petunstick 0` tells "never found the pet" from "could not read it"
+    // from "nothing was ever stuck".
+    mod.NoteTick();
+
+    // The previous tick's live target, for the re-pick count: none unless
+    // this tick directly follows it and sees a live target again below.
+    const double prevTarget = g_RuntimeFrame == g_PetLootPrevFrame + 1 ? g_PetLootPrevTarget : -1.0;
+    g_PetLootPrevFrame = g_RuntimeFrame;
+    g_PetLootPrevTarget = -1.0;
+
+    // One number off an instance, in its own try: false when the read threw
+    // or gave something that is not a finite number.
+    auto readNumber = [](const RValue& inst, const char* name, double& out) -> bool {
+        try { out = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }).ToDouble(); }
+        catch (...) { return false; }
+        return std::isfinite(out);
+    };
+
+    // No pet out (menus, town without a companion): nothing to watch.
+    int n = 0;
+    try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_PetLootCompanionObjIdx) }).ToDouble(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet count"); return; }
+    if (n <= 0) { mod.Reset(); mod.NoteNoPet(); return; }
+    RValue pet;
+    try { pet = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_PetLootCompanionObjIdx), RValue(0.0) }); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("pet instance"); return; }
+
+    // The game writes `lootTarget` as a real: -4 (noone) at Create, an
+    // instance id after. Read the number, whatever kind carries it, and
+    // let instance_exists say whether it names something.
+    double targetId = 0.0;
+    if (!readNumber(pet, "lootTarget", targetId)) { mod.Reset(); mod.NoteUnreadable("lootTarget"); return; }
+    if (targetId < 0.0) { mod.Reset(); mod.NoteNoTarget(); return; }
+    RValue target = RValue(targetId);
+    bool targetExists = false;
+    try { targetExists = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); }
+    catch (...) { mod.Reset(); mod.NoteUnreadable("target instance_exists"); return; }
+    if (!targetExists) { mod.Reset(); mod.NoteTargetGone(); return; }
+    g_PetLootPrevTarget = targetId;
+    PetLootNoteTargetSeen(targetId, target, prevTarget);
+
+    double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
+    if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
+    if (!readNumber(pet, "y", py)) { mod.Reset(); mod.NoteUnreadable("pet y"); return; }
+    if (!readNumber(target, "x", tx)) { mod.Reset(); mod.NoteUnreadable("target x"); return; }
+    if (!readNumber(target, "y", ty)) { mod.Reset(); mod.NoteUnreadable("target y"); return; }
+    const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
+    if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+
+    // Give it up. The item first, so a throw below still leaves it held.
+    // Which kind it is decides only whether there is a timer to set, never
+    // whether the target is dropped: the pet is stuck on it either way.
+    double oiD = -1.0;
+    const bool kindRead = readNumber(target, "object_index", oiD);
+    if (!kindRead) mod.NoteUnreadable("target object_index");
+    const int oi = kindRead ? (int)oiD : -1;
+    bool isGround = false;
+    if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
+        isGround = true;
+        // Ask whether the item carries the name before writing it: a set on
+        // a name the instance lacks would create a stray variable and hold
+        // nothing. The check itself is not measured on this runner (no
+        // session has seen it answer true for a real ground item), so a
+        // `timer absent=` above 0 reads either way: the item lacks the name,
+        // or the check answers false for everything.
+        bool hasTimer = false;
+        try {
+            hasTimer = g_Yytk->CallBuiltin("variable_instance_exists",
+                { target, RValue("itemCompanionTimer") }).ToBoolean();
+        } catch (...) {
+            PetLootNoteGiveUpFailed("itemCompanionTimer exists check threw");
+            mod.Reset();
+            return;
+        }
+        if (hasTimer) {
+            try {
+                g_Yytk->CallBuiltin("variable_instance_set",
+                    { target, RValue("itemCompanionTimer"), RValue((double)ForgePact::kPetLootHoldFrames) });
+            } catch (...) {
+                PetLootNoteGiveUpFailed("itemCompanionTimer write threw");
+                mod.Reset();
+                return;
+            }
+            mod.NoteHeldBack();
+        } else {
+            // Not held back, but the target is still dropped below.
+            PetLootNoteTimerAbsent(oi);
+        }
+    }
+    try { g_Yytk->CallBuiltin("variable_instance_set", { pet, RValue("lootTarget"), RValue(-4.0) }); }
+    catch (...) {
+        PetLootNoteGiveUpFailed("lootTarget write threw");
+        mod.Reset();
+        return;
+    }
+    // Remembered for the re-pick count only once the target is dropped.
+    PetLootRememberGiveUp(targetId, isGround ? ForgePact::PetLootKind::Ground
+        : PetLootIsOf(oi, g_PetLootCoinObjIdx) ? ForgePact::PetLootKind::Coin : ForgePact::PetLootKind::Other);
+    // Counted only once the target is actually dropped.
+    if (!isGround && PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
+        // No timer on a coin: only the target is dropped, so a coin that
+        // sticks again is counted again.
+        mod.NoteCoinReleased();
+    } else if (!isGround && kindRead) {
+        // Neither family: no timer to set, the target is still dropped, and
+        // the object index is named once in the log. (An unreadable
+        // object_index was counted above as unreadable= instead.)
+        PetLootNoteOtherKind(oi);
+    }
+
+    // Empty the list rather than destroy it: it is the game's, and its next
+    // scan refills it. The gate is ds_exists(lootList, ds_type_list), never
+    // the value's kind (a live ds handle can arrive as a reference), and the
+    // clear is handed the RValue that was read, not a rebuilt real. Each
+    // refusal is counted with its reason: an uncleared list can hand the pet
+    // the held item straight back.
+    RValue lootListV;
+    try { lootListV = g_Yytk->CallBuiltin("variable_instance_get", { pet, RValue("lootList") }); }
+    catch (...) { mod.NoteListNotCleared("lootList read threw"); return; }
+    double listId = 0.0;
+    bool listFinite = false;
+    try { listId = lootListV.ToDouble(); listFinite = std::isfinite(listId); }
+    catch (...) { listFinite = false; }
+    if (!listFinite) { mod.NoteListNotCleared("lootList not a finite number"); return; }
+    bool listLive = false;
+    try {
+        // 2 is ds_type_list.
+        listLive = listId >= 0.0 &&
+            g_Yytk->CallBuiltin("ds_exists", { lootListV, RValue(2.0) }).ToBoolean();
+    } catch (...) { mod.NoteListNotCleared("ds_exists threw"); return; }
+    if (!listLive) { mod.NoteListNotCleared("lootList is not a live ds_list"); return; }
+    try { g_Yytk->CallBuiltin("ds_list_clear", { lootListV }); }
+    catch (...) { mod.NoteListNotCleared("ds_list_clear threw"); }
 }
 
 // ---- interaction/pickup trace (Phase 0.1 research, dev build only) --------
@@ -16920,6 +17429,39 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     BP_LOGDROP("DropRelic", _res, argc, A);
     return _res;
 }
+
+// The relic filter's arm-time line (#93), both builds. The hook's own report
+// above speaks only at a relic roll, and relics roll only in Satanic zones, so
+// without this nothing said what the scan saw until one dropped. FrameCallback
+// calls it once per `relicfilter 1`, after the DropRelic install, and the count
+// and ids come from the very set the scan just filled. A scan that did not run
+// says so instead of reading as "0 maxed relics" (the dead-scanner shape).
+// The line after it is the SDK's own report on the equipped relic slots
+// (`relicfilter: equipped slots mplr=.. owner=.. relic=.. control=..
+// stopped=..`), so a zero names the stage that stopped rather than reading
+// the same as a player with nothing maxed.
+static void RelicFilterReportArmScan()
+{
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    rf.ClearArmScanDue();
+    std::unordered_set<int> maxed;
+    HeroSiege::Player::EquippedSlotScanReport equipped;
+    const bool scanRan = rf.GetPlayerMaxedRelics(maxed, &equipped);
+    if (!scanRan) {
+        Out("relicfilter: scan did not run (no player yet)");
+        return;
+    }
+    std::vector<int> ids(maxed.begin(), maxed.end());
+    std::sort(ids.begin(), ids.end());
+    std::string list;
+    for (int id : ids) {
+        if (!list.empty()) list += ",";
+        list += std::to_string(id);
+    }
+    Out("relicfilter: scan found " + std::to_string(ids.size()) + " maxed relics (ids "
+        + (list.empty() ? std::string("none") : list) + ")");
+    Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport(equipped));
+}
 // The 19 domain hooks above (DropBossGems .. DropOreMaterials, including
 // DropKeys' dev-only diagnostic variant) moved to ForgePact::DropManager
 // (module includes anchor near the top of the file, after FirstToken).
@@ -22690,6 +23232,8 @@ static void FlushModState(uint32_t frame)
         body += ",\"queuedPacks\":" + std::to_string(reveal.QueuedPacks());
         auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
         body += ",\"queuedDensityCopies\":" + std::to_string(DeferredDensityPending());
+        body += ",\"deferredDensityCopies\":" + std::to_string(g_DensityCopies.Pending() - (std::min)(g_DensityCopies.Pending(), DeferredDensityPending()));
+        body += ",\"densityRollReach\":" + std::to_string(DensityRolling() ? std::llround(g_DensityReachNow) : 0LL);
         body += ",\"observedNativeBirthPacks\":" + std::to_string(reveal.NativeBirthPacks());
         body += ",\"completedDensityCopies\":" + std::to_string(g_DensityCopyCompleted);
         body += ",\"synchronousDensityFallbacks\":" + std::to_string(g_DensityCopyRefused);
@@ -24095,15 +24639,24 @@ static void CmNothingDone(ForgePact::CraftMatsMoveReport& r, int64_t sourceCount
 }
 
 // The inline edit Live 1k measured on a stash entry and on a bag stack: the
-// definition's `o` set, then ItemCheckHash(item) by name.
-static bool CmSetCount(CInstance* save, const RValue& item, int64_t count)
+// definition's `o` set, then ItemCheckHash(item) by name. When that call did
+// not dispatch, no hash was made for the new count (issue #80): `o` is put
+// back, which the item's hash was made for, the core is told the item's key,
+// and the edit reads as not made - the take is never confirmed, so the press
+// is refused before the game's call.
+static bool CmSetCount(CInstance* save, const RValue& item, const std::string& key, int64_t count)
 {
-    RValue def, res;
-    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def)) return false;
-    try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)count) }); }
-    catch (...) { return false; }
-    CmCall(kCmCheckHashName, save, { item }, res);
-    return true;
+    RValue def, was, res;
+    if (!CmMember(item, "itemDefinitionStruct", def) || !ApIsPlainStruct(def) || !CmMember(def, "o", was)) return false;
+    const auto setO = [&](const RValue& o) {
+        try { g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), o }); return true; }
+        catch (...) { return false; }
+    };
+    if (!setO(RValue((double)count))) return false;
+    if (CmCall(kCmCheckHashName, save, { item }, res)) return true;
+    setO(was);
+    ForgePact::CraftMatsMod::Instance().OnHashFailed(key);
+    return false;
 }
 
 // The bag's own stack of a material in the grid the game prefers for it: its
@@ -24218,7 +24771,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     CmNewUnit unit;
     if (stacked) {
         int64_t sc = -1, sb = -1;
-        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackBefore + t.amount)) {
+        if (!CmReadItem(stackItem, sc, sb, stackBefore) || !CmSetCount(save, stackItem, stackKey, stackBefore + t.amount)) {
             CmNothingDone(r, have);
             return out;
         }
@@ -24255,7 +24808,7 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
                 if (CmCellArray(t.entry, cellsNow)) CmCall(kCmGridRemoveName, save, { cellsNow, RValue(key) }, removed);
             }
         } else {
-            CmSetCount(save, source, have - t.amount);
+            CmSetCount(save, source, key, have - t.amount);
         }
     }
     auto sourceRead = [&]() {
@@ -24278,9 +24831,9 @@ static CmTakeResult CmTake(CInstance* save, const ForgePact::CraftMatsEntryTake&
     if (!sourceDone) {
         RValue res;
         if (t.whole && r.sourceEntryGone && !r.sourceCellGone) CmCall(kCmAddToMapName, save, { map9, RValue(key), source }, res);
-        if (!t.whole && destRose) CmSetCount(save, source, have);
+        if (!t.whole && destRose) CmSetCount(save, source, key, have);
         if (stacked) {
-            CmSetCount(save, stackItem, stackBefore);
+            CmSetCount(save, stackItem, stackKey, stackBefore);
         } else {
             CmCall(kCmGridRemoveName, save, { unit.grid, RValue(unit.key) }, res);
             if (CmCellsHold(unit.grid, unit.key) == 0) CmCall(kCmRemoveFromMapName, save, { map0, RValue(unit.key) }, res);
@@ -25601,6 +26154,40 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     if (capture && g_CpBacking.load() && !g_CpOwnLookup) CpCapture(safe, label, n, kept, S, argc, A, result);
 }
 
+// ForgePact #68's Live 1f (docs/stash-move-research.md, § Live procedure 1f;
+// `stashmoveall probe`, below the stashmoveall block): the id of the Move all
+// node the probe created (-1 none) and the craftprobe row of the script it
+// bound as the node's activation (empty for none). Route A's count: a call of
+// that row whose self is the node is one press the game dispatched. The
+// watched row (the bound one, or `watch:<script>` on an unbound node) is
+// counted apart, bound or not, so a call of the candidate with the node as
+// self that no click caused - the game's own loop over some UI object's
+// instances, say - shows up as row_calls_self_node on an unbound node and on
+// idle reads, and a detour_presses rise is not taken for a press unless those
+// stay 0 (the round-0 review of Live 1f's instrument). Written only by the
+// probe's commands, on the game thread.
+static std::atomic<long long> g_SmaProbeNodeId{ -1 };
+static std::string g_SmaProbeBound;
+static std::string g_SmaProbeWatch;
+static volatile long g_SmaProbeDetourPresses = 0;
+static volatile long g_SmaProbeRowCallsSelfNode = 0;
+
+static void SmaProbeSawCall(const char* label, CInstance* S)
+{
+    if (!S) return;
+    const bool bound = !g_SmaProbeBound.empty() && g_SmaProbeBound == label;
+    const bool watched = !g_SmaProbeWatch.empty() && g_SmaProbeWatch == label;
+    if (!bound && !watched) return;
+    try {
+        double id = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue("id") }), id)
+            || (long long)id != g_SmaProbeNodeId.load())
+            return;
+        if (watched) InterlockedIncrement(&g_SmaProbeRowCallsSelfNode);
+        if (bound) InterlockedIncrement(&g_SmaProbeDetourPresses);
+    } catch (...) {}
+}
+
 #define CRAFTPROBE_DETOUR(SAFE, LABEL) \
     static PFUNC_YYGMLScript g_CpOrig_##SAFE = nullptr; \
     static volatile long g_CpCalls_##SAFE = 0; \
@@ -25616,6 +26203,7 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
         static const bool countRow = CpIsCountRow(LABEL); \
         const long n = InterlockedIncrement(&g_CpCalls_##SAFE); \
         const bool logged = CpObserve(LABEL, n, &g_CpLogged_##SAFE, &g_CpLogOn_##SAFE, route, readsRoute, S, O, argc, A); \
+        if (g_SmaProbeNodeId.load() >= 0) SmaProbeSawCall(LABEL, S); \
         RValue& r = [&]() -> RValue& { \
             CpRouteFrame frame(route, n); \
             CpCountFrame list(g_CpRecipeListDepth, recipeList); \
@@ -25987,6 +26575,16 @@ static void CpAfter(const char* safe, const char* label, long n, bool logged, bo
     /* Toolkit #147's second stash and bag launch: the close button's      */ \
     /* routine, logged on the close row's click and replayed by name (P2-7). */ \
     X(UiACloseButton, "UiACloseButton", gml_Script_UiACloseButton) \
+    /* ForgePact #68 (docs/stash-move-research.md, Instrument): the item check */ \
+    /* the grid input processor runs around every bag-to-stash move.           */ \
+    X(ValidateItem, "ValidateItem", gml_Script_ValidateItem) \
+    /* ForgePact #68's Live 1f (docs/stash-move-research.md, Static reading 3): */ \
+    /* the node activation's binder, the focus every tab click sets, and the   */ \
+    /* two candidate dispatch scripts the probe's node is bound to.            */ \
+    X(UiSetActivationFunc, "UiSetActivationFunc", gml_Script_UiSetActivationFunc) \
+    X(UiSetFocus, "UiSetFocus", gml_Script_UiSetFocus) \
+    X(UiSetFloatingToFalse, "UiSetFloatingToFalse", gml_Script_UiSetFloatingToFalse) \
+    X(UiNodeClearNavigationFunc, "UiNodeClearNavigationFunc", gml_Script_UiNodeClearNavigationFunc) \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
 
@@ -35849,8 +36447,8 @@ static bool HandleTalentAllocCommand(const std::string& lc, const std::string& r
 // line from its own re-read at the point of use, or a line beginning
 // `<verb>: refused - ` saying why nothing (or nothing more) was called. There
 // is no `stashopen`: the by-name open crashed the game once and the hub opens
-// with the interact key (§ Decision, stashOpenRoute). There is no `stashmove`:
-// the moves are hs-drive-stash-move-research's.
+// with the interact key (§ Decision, stashOpenRoute). The move from the bag
+// into the stash is ForgePact #68's `stashmoveall` and `stashmove`, below.
 
 // The routines these verbs call by name, through the by-name dispatcher
 // talentalloc uses (GetNamedRoutinePointer on the SDK constant, then
@@ -36255,6 +36853,1407 @@ static bool HandleGiveItemCommand(const std::string& lc, const std::string& rest
     return false;
 }
 // ---- end stash and bag player verbs
+
+// `stashmoveall probe ...`, ForgePact #68's Live 1f instrument for the in-game
+// button (docs/stash-move-research.md, § Live procedure 1f), is research-build
+// code below the stashmoveall block; the player build has no probe, and
+// `stashmoveall probe` there prints the usage like any other unknown word.
+#ifndef FORGEPACT_RELEASE
+static bool SmaProbeCommand(const std::string& rest);
+#else
+static bool SmaProbeCommand(const std::string&) { return false; }
+#endif
+
+// The in-game Move all button (its own block, below the stashmoveall block,
+// since it writes the one thing the move never does: the label of the node
+// the mod itself made). Both builds.
+static void SmaButtonEnsure();
+static bool SmaButtonPoll();
+static void SmaButtonRemove();
+
+// ---- stashmoveall, stashmove: Move all into the stash (ForgePact #68)
+//
+// docs/stash-move-research.md § Decision and § Ship design. With the stash
+// open and the switch on, F4 in the game's window (or `stashmoveall run`)
+// moves every item on the bag tab on show into the stash tab on show, one
+// item at a time, through the game's own routines called by name in the order
+// and with the arguments the research replayed; `stashmove <fingerprint>`
+// moves one. ForgePact::StashMoveAllMod decides - the plan, the room check,
+// each outcome and the lines - and this adapter reads the game and acts.
+// Every instance is found by name and every routine by its SDK constant
+// (GetNamedRoutinePointer, then asset_get_index, then script_execute with
+// self and other apart, as TalentAllocDispatch resolves them). Nothing here
+// writes a container, a map entry or an item: the game's routines do, and
+// the stash's own close saves it. Only the tab on show is re-read, because
+// the other stash tabs have no container readable by name (RUNTIME_DATA_MODELS
+// § 17); an item is only ever handed the shown tab's array, and only after
+// that array reads room for it. Nothing runs on the frame path while the
+// switch is off; while it is on, the frame path reads one key.
+
+static constexpr TalentAllocScript kSmaValidate{ HeroSiege::Scripts::gml_Script_ValidateItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_ValidateItem) };
+static constexpr TalentAllocScript kSmaAddToStack{ HeroSiege::Scripts::gml_Script_StashAddToStack,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_StashAddToStack) };
+static constexpr TalentAllocScript kSmaPlace{ HeroSiege::Scripts::gml_Script_GridAddItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridAddItem) };
+static constexpr TalentAllocScript kSmaClear{ HeroSiege::Scripts::gml_Script_InvGridClearItemNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode) };
+static constexpr TalentAllocScript kSmaOwner{ HeroSiege::Scripts::gml_Script_ChangeItemOwner,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChangeItemOwner) };
+static constexpr TalentAllocScript kSmaRemove{ HeroSiege::Scripts::gml_Script_GridRemoveItem,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GridRemoveItem) };
+
+// The key: F4 (the owner's choice, 2026-09-28). No research hotkey uses it
+// (F5-F11 do), so the two builds never fire two things on one press.
+static constexpr int kSmaHotkey = VK_F4;
+// The button's node is made or removed at most every tenth frame while the
+// switch is on (its press is read every frame the node exists).
+static constexpr unsigned kSmaButtonEveryFrames = 10;
+// The bag grid and the stash grid, by the uiNodeCallstack each grid node
+// carries (Live 1b to 1e: the stash's grid node rebinds to the tab on show,
+// the bag's to the bag view on show).
+static constexpr const char* kSmaBagGrid = "InventoryGrid";
+static constexpr const char* kSmaStashGrid = "StashGrid";
+// The Socketable tab has no one array: each item sits in a one-cell grid node
+// of its own carrying this uiNodeCallstack (Live 1f and 1g, socketMergeRoute;
+// Controller_obj.stashSocketItemSlot is not the container, Live 1e finding 2).
+static constexpr const char* kSmaSocketGrid = "StashSocketGrid";
+// The item owners the moves pass: 0 the character, 9 the stash
+// (RUNTIME_DATA_MODELS § 17; ChangeItemOwner 0 to 9 on a shared page and on a
+// new Materials identity, Live 1d byname-shared-owner, Live 1e).
+static constexpr double kSmaCharacterOwner = 0.0;
+static constexpr double kSmaStashOwner = 9.0;
+// StashAddToStack's second and third arguments, as the game's own moves
+// passed them (Live 1c and 1d, § Decision gridMoveRoute and stackMoveRoute):
+// 0, 13 into the personal page; 9, 2 into a shared page and the Materials tab.
+static constexpr double kSmaPersonalStackA1 = 0.0, kSmaPersonalStackA2 = 13.0;
+static constexpr double kSmaSharedStackA1 = 9.0, kSmaSharedStackA2 = 2.0;
+// Its sixth: 0 in every recorded placement and Materials merge
+// (wholeStackMerge), 8 in the Socketable tab's merge (socketMergeRoute, the
+// value the game's own hand move there passed too, Live 1e).
+static constexpr double kSmaStackA5 = 0.0, kSmaSocketStackA5 = 8.0;
+static constexpr int kSmaPersonalTab = 0;
+
+// One by-name call, self and other passed apart, keeping the routine's
+// answer; TalentAllocDispatch's resolution, which drops the answer.
+static TalentAllocCall SmaCall(const TalentAllocScript& s, CInstance* self, CInstance* other,
+                               const std::vector<RValue>& args, RValue& res)
+{
+    res = RValue();
+    PVOID p = nullptr;
+    if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(s.routine.data(), &p)) || !p) return TalentAllocCall::NoRoutine;
+    double idx = -1;
+    RValue index;
+    try { index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(s.script)) }); }
+    catch (...) { return TalentAllocCall::NoScript; }
+    if (!ApNumber(index, idx) || idx < 0) return TalentAllocCall::NoScript;
+    std::vector<RValue> callArgs{ index };
+    for (const RValue& a : args) callArgs.push_back(a);
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(res, "script_execute", self, other, callArgs); }
+    catch (...) { return TalentAllocCall::Threw; }
+    return AurieSuccess(st) ? TalentAllocCall::Ran : TalentAllocCall::Failed;
+}
+
+// What one run stands on, found by name at the point of use.
+struct SmaScene {
+    RValue     window;            // UI_Stash_obj
+    RValue     bagNode;           // the bag's grid node (InventoryGrid)
+    RValue     stashNode;         // the stash's grid node (StashGrid)
+    CInstance* bag = nullptr;
+    CInstance* sg = nullptr;
+    RValue     map9;              // GetItemMap(9), for the shown tab's items
+    bool       map9Read = false;
+    std::map<std::string, std::pair<int64_t, int64_t>> ids;   // key -> class, base id (never changes)
+    ForgePact::StashMoveView view;
+};
+
+// A tab number UI_Stash_obj holds (tabSelected for the bag, stashTabSelected
+// for the stash); kUnreadTab when it cannot be read as a whole number.
+static int SmaTab(const RValue& window, const char* var)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { window, RValue(var) }).ToBoolean())
+            return ForgePact::StashMoveAllMod::kUnreadTab;
+        double d = 0;
+        if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { window, RValue(var) }), d) || d != std::floor(d))
+            return ForgePact::StashMoveAllMod::kUnreadTab;
+        return (int)d;
+    } catch (...) { return ForgePact::StashMoveAllMod::kUnreadTab; }
+}
+
+// The shown stash tab's own cell array: the stash grid node's nodeGrid for a
+// page ([y][x], it rebinds to the page on show), Controller_obj's
+// stashMaterialTab for the Materials tab (the array every Materials move
+// logged, Live 1c and 1e). No other tab's array is read, or has a name.
+static bool SmaShownArray(const SmaScene& s, int stashTab, RValue& cells)
+{
+    const ForgePact::StashMoveTab kind = ForgePact::StashMoveAllMod::TabOf(stashTab);
+    if (kind == ForgePact::StashMoveTab::Grid) return CmArrayVar(s.stashNode, "nodeGrid", cells);
+    if (kind != ForgePact::StashMoveTab::Materials) return false;
+    RValue handle;
+    CInstance* inst = nullptr;
+    return CmInstance(HeroSiege::Objects::GameObject::Controller_obj, handle, inst) && CmArrayVar(handle, kCmMaterialTabVar, cells);
+}
+
+// The cells of a two-level array as the core's grid: a cell holding an item
+// struct is filled. rows = 0 (unread) when a level is not an array or the
+// rows differ in length.
+static ForgePact::StashMoveGrid SmaGrid(const RValue& cells)
+{
+    ForgePact::StashMoveGrid g;
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return g;
+        const int rows = CmLength(cells);
+        int cols = -1;
+        std::vector<char> filled;
+        for (int r = 0; r < rows; ++r) {
+            const RValue line = CmAt(cells, r);
+            if (line.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveGrid();
+            const int n = CmLength(line);
+            if (cols >= 0 && n != cols) return ForgePact::StashMoveGrid();
+            cols = n;
+            for (int c = 0; c < n; ++c) filled.push_back(ApIsPlainStruct(CmAt(line, c)) ? 1 : 0);
+        }
+        if (rows > 0 && cols > 0) { g.rows = rows; g.cols = cols; g.filled = filled; }
+    } catch (...) { return ForgePact::StashMoveGrid(); }
+    return g;
+}
+
+// 1 the array's cell [row][col] holds `key`, 0 it holds nothing or another
+// item, -1 it could not be read.
+static int SmaArrayCellHolds(const RValue& cells, int row, int col, const std::string& key)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY || row < 0 || row >= CmLength(cells)) return -1;
+        const RValue line = CmAt(cells, row);
+        if (line.m_Kind != VALUE_ARRAY || col < 0 || col >= CmLength(line)) return -1;
+        RValue fp;
+        std::string text;
+        return ApCellFingerprint(CmAt(line, col), fp, text) && text == key ? 1 : 0;
+    } catch (...) { return -1; }
+}
+
+// The placement's answer cell on the shown tab: [y][x], the order measured on
+// the stash pages (Live 1: nodeGrid.<y>.<x>). The Materials array's order is a
+// static reading only ([x][y], RUNTIME_DATA_MODELS § 17), so there either
+// order holding the key confirms it.
+static int SmaAnswerCellHolds(const RValue& cells, int x, int y, const std::string& key, bool materials)
+{
+    const int yx = SmaArrayCellHolds(cells, y, x, key);
+    if (yx == 1 || !materials) return yx;
+    const int xy = SmaArrayCellHolds(cells, x, y, key);
+    if (xy == 1) return 1;
+    return yx == -1 && xy == -1 ? -1 : 0;
+}
+
+// The bag cell at x, y (nodeGrid[y][x] of the bag's grid node, re-read): 1 it
+// holds `key`, 0 not, -1 unread; the cell itself in `cell` for the clear.
+static int SmaBagCellHolds(const SmaScene& s, int x, int y, const std::string& key, RValue* cell = nullptr)
+{
+    try {
+        RValue c, fp;
+        std::string text;
+        if (!ApReadCell(s.bagNode, y, x, c)) return -1;
+        if (cell) *cell = c;
+        return ApCellFingerprint(c, fp, text) && text == key ? 1 : 0;
+    } catch (...) { return -1; }
+}
+
+// An item's class, base id and count (`o`, one when it has none; -1 when it
+// is there and not a whole number).
+static bool SmaReadIdentity(const RValue& item, int64_t& cls, int64_t& base, int64_t& count)
+{
+    RValue type, def, b, o;
+    if (!CmMember(item, "itemType", type) || !CmMember(item, "itemDefinitionStruct", def) || !CmMember(def, "b", b)) return false;
+    cls = CmWhole(type);
+    base = CmWhole(b);
+    count = CmMember(def, "o", o) ? CmWhole(o) : 1;
+    return cls >= 0 && base >= 0;
+}
+
+// The item a shown-tab key names: map 9 (the stash's, where the Materials tab
+// and a moved shared-page item answer) then map 0 (the personal page's, and a
+// bag item). A shared page's entries answer on neither by name (§ Decision,
+// mapOwnerRule), so they stay unidentified.
+static bool SmaResolve(const SmaScene& s, const std::string& key, RValue& item)
+{
+    if (s.map9Read && CmMapItem(s.map9, RValue(key), item)) return true;
+    return ApItemFromFingerprint(s.bag, RValue(key), item);
+}
+
+// The shown tab's stack of one identity: the sum of `o` over its items of
+// that class and base id. -1 when the array is unreadable or any of its items
+// could not be identified, since a missed item may be of that identity.
+static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+{
+    try {
+        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        std::vector<std::string> seen;
+        int64_t sum = 0;
+        const int n = CmLength(cells);
+        for (int i = 0; i < n; ++i) {
+            const RValue line = CmAt(cells, i);
+            if (line.m_Kind != VALUE_ARRAY) return -1;
+            const int m = CmLength(line);
+            for (int j = 0; j < m; ++j) {
+                RValue fp, item;
+                std::string key;
+                if (!ApCellFingerprint(CmAt(line, j), fp, key)) continue;
+                if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+                seen.push_back(key);
+                auto known = s.ids.find(key);
+                if (known != s.ids.end() && (known->second.first != cls || known->second.second != base)) continue;
+                int64_t c = -1, b = -1, o = -1;
+                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return -1;
+                s.ids[key] = { c, b };
+                if (c != cls || b != base) continue;
+                if (o < 0) return -1;
+                sum += o;
+            }
+        }
+        return sum;
+    } catch (...) { return -1; }
+}
+
+// The Socketable tab, read as what it is (socketMergeRoute): the set of
+// UI_Inventory_Grid_obj instances whose uiNodeCallstack is StashSocketGrid,
+// one item each, every cell's key resolved on map 9. 1 a node holds an item
+// of this class and base id (the first such node in `node`, its one-cell
+// nodeGrid in `cells`, the array its merge is handed), 0 none does, -1 a
+// node's cells or an item on one could not be read - every node is read, since
+// a missed item may be of this identity. Reads only.
+static int SmaSocketNode(SmaScene& s, int64_t cls, int64_t base, RValue& node, RValue& cells)
+{
+    node = RValue();
+    cells = RValue();
+    int found = 0;
+    try {
+        for (const RValue& h : TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj)) {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("uiNodeCallstack") });
+            if (v.m_Kind != VALUE_STRING || v.ToString() != kSmaSocketGrid) continue;
+            RValue grid;
+            if (!CmArrayVar(h, "nodeGrid", grid)) return -1;
+            const int64_t n = SmaStackSum(s, grid, cls, base);
+            if (n < 0) return -1;
+            if (n > 0 && !found) { node = h; cells = grid; found = 1; }
+        }
+    } catch (...) { return -1; }
+    return found;
+}
+
+// The shown tab's array re-read after a call: the Socketable tab's node the
+// item was handed (its own nodeGrid, found again on the node), else the
+// shown tab's own array.
+static bool SmaReread(const SmaScene& s, int stashTab, const RValue& node, RValue& cells)
+{
+    if (node.m_Kind != VALUE_UNDEFINED) return CmArrayVar(node, "nodeGrid", cells);
+    return SmaShownArray(s, stashTab, cells);
+}
+
+static bool SmaStackable(int64_t cls)
+{
+    return cls >= (int64_t)HeroSiege::Items::ItemType::Key && cls <= (int64_t)HeroSiege::Items::ItemType::Socketable;
+}
+
+// After the owner step 0 to 9: 1 the key still answers an item on map 0, 0
+// its map 0 answer is the undefined value, which is what a step that took
+// answered (Live 1d byname-shared-owner, Live 1e byname-material-new), -1 the
+// lookup did not run or answered something else.
+static int SmaKeyOnMap0(const SmaScene& s, const std::string& key)
+{
+    RValue item;
+    try {
+        if (!ApCallScript(kApFromFpName, s.bag, { RValue(key), RValue(0.0) }, item)) return -1;
+    } catch (...) { return -1; }
+    if (ApIsPlainStruct(item)) return 1;
+    return item.m_Kind == VALUE_UNDEFINED ? 0 : -1;
+}
+
+// A routine's answer for the report: what it returned when it ran, else why not.
+static std::string SmaAnswerText(const TalentAllocScript& script, TalentAllocCall c, const RValue& res)
+{
+    return c == TalentAllocCall::Ran ? Describe(res) : TalentAllocCallText(script, c);
+}
+
+// Everything one run stands on, read by name. False, with `why`, when a
+// grid node or the save object is not there; the view's own gaps (no stash
+// window, a tab that did not read) are the core's to refuse.
+static bool SmaReadScene(SmaScene& s, std::string& why)
+{
+    CInstance* stash = nullptr;
+    s.view = ForgePact::StashMoveView();
+    s.view.stashListed = CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, s.window, stash);
+    if (!s.view.stashListed) return true;
+    s.view.bagTab = SmaTab(s.window, "tabSelected");
+    s.view.stashTab = SmaTab(s.window, "stashTabSelected");
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, "uiNodeCallstack", kSmaBagGrid, s.bagNode, s.bag)) {
+        why = "no bag grid is listed (no UI_Inventory_Grid_obj carries uiNodeCallstack=" + std::string(kSmaBagGrid) + ")";
+        return false;
+    }
+    if (!StashVerbByString(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj, "uiNodeCallstack", kSmaStashGrid, s.stashNode, s.sg)) {
+        why = "no stash grid is listed (no UI_Inventory_Grid_obj carries uiNodeCallstack=" + std::string(kSmaStashGrid) + ")";
+        return false;
+    }
+    CInstance* save = CmSaveInstance();
+    s.map9Read = save && CmItemMap(save, kSmaStashOwner, s.map9);
+
+    RValue grid, shown;
+    if (!CmArrayVar(s.bagNode, "nodeGrid", grid)) { why = "the bag's cells could not be read"; return false; }
+    const bool shownRead = SmaShownArray(s, s.view.stashTab, shown);
+    const bool socket = ForgePact::StashMoveAllMod::TabOf(s.view.stashTab) == ForgePact::StashMoveTab::Socketable;
+    std::map<std::pair<int64_t, int64_t>, int64_t> stacks;   // identity -> the shown tab's sum
+    const int rows = CmLength(grid);
+    for (int y = 0; y < rows; ++y) {
+        const RValue line = CmAt(grid, y);
+        if (line.m_Kind != VALUE_ARRAY) { why = "the bag's cells could not be read"; return false; }
+        const int cols = CmLength(line);
+        for (int x = 0; x < cols; ++x) {
+            RValue fp, item;
+            ForgePact::StashMoveCell c;
+            if (!ApCellFingerprint(CmAt(line, x), fp, c.key)) continue;
+            c.x = x;
+            c.y = y;
+            int64_t cls = -1, base = -1, count = 1;
+            if (ApItemFromFingerprint(s.bag, fp, item) && SmaReadIdentity(item, cls, base, count)) {
+                c.itemClass = (int)cls;
+                c.stackable = SmaStackable(cls);
+            }
+            c.count = c.stackable ? count : 1;
+            if (c.stackable) {
+                const auto id = std::make_pair(cls, base);
+                if (!stacks.count(id)) {
+                    if (socket) {
+                        // The Socketable tab: the node holding its identity, if any.
+                        RValue node, cells;
+                        const int held = SmaSocketNode(s, cls, base, node, cells);
+                        stacks[id] = held == 1 ? SmaStackSum(s, cells, cls, base) : held;
+                    } else {
+                        stacks[id] = shownRead ? SmaStackSum(s, shown, cls, base) : -1;
+                    }
+                }
+                // A count that did not read is never merged: the merge passes it.
+                c.destinationStackRead = stacks[id] >= 0 && (count >= 1 || stacks[id] == 0);
+                c.destinationHasStack = stacks[id] > 0;
+            }
+            s.view.cells.push_back(c);
+        }
+    }
+    return true;
+}
+
+// One item through the game's own routines for its route, then the re-reads
+// the core decides on. `note` names an undo when one ran.
+static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::StashMovePlan& plan,
+                                             const ForgePact::StashMoveItem& it, std::string& note)
+{
+    using Mod = ForgePact::StashMoveAllMod;
+    const std::string& key = it.cell.key;
+    const bool materials = Mod::TabOf(plan.stashTab) == ForgePact::StashMoveTab::Materials;
+    const bool socket = Mod::TabOf(plan.stashTab) == ForgePact::StashMoveTab::Socketable;
+    auto skipped = [&](const std::string& why) {
+        ForgePact::StashMoveItem none = it;
+        none.route = ForgePact::StashMoveRoute::None;
+        none.refusal = why;
+        return Mod::NotAttempted(none);
+    };
+    if (it.route == ForgePact::StashMoveRoute::None) return Mod::NotAttempted(it);
+
+    // At the point of use: the item still in its bag cell and on map 0, and
+    // the shown tab still the planned one, with room for it.
+    RValue cell, item;
+    if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) != 1) return skipped("no longer in its bag cell");
+    int64_t cls = -1, base = -1, count = -1;
+    if (!ApItemFromFingerprint(s.bag, RValue(key), item) || !SmaReadIdentity(item, cls, base, count))
+        return skipped("not found on map 0");
+    // The array the item's route is handed: the shown tab's own, or on the
+    // Socketable tab the nodeGrid of the node holding the item's identity
+    // (none holding it is a new kind, a sum of 0).
+    RValue arr, node;
+    const bool tabStill = SmaTab(s.window, "stashTabSelected") == plan.stashTab;
+    const int held = tabStill && socket ? SmaSocketNode(s, cls, base, node, arr) : -1;
+    const bool arrRead = tabStill && (socket ? held >= 0 : SmaShownArray(s, plan.stashTab, arr));
+    // The route again, here: a stackable's stack sum re-read on the shown
+    // array just before its call, whatever the plan said, since an earlier
+    // item of this run may have made the stack it now joins (round-2 review:
+    // planned as a cell, the second item of such an identity merged one unit
+    // and stayed in the bag). Above 0 merges the whole count, 0 places, -1 is
+    // a skip that calls nothing.
+    ForgePact::StashMoveItem use = it;
+    int64_t before = -1;
+    if (it.cell.stackable) {
+        use.cell.count = count;
+        before = arrRead ? (held == 0 ? 0 : SmaStackSum(s, arr, cls, base)) : -1;
+        use = Mod::RouteAtUse(use, plan.stashTab, before);
+    }
+    const bool cellRoute = use.route == ForgePact::StashMoveRoute::Cell;
+    int room = -1;
+    // No placement on the Socketable tab has a measured array (socketRoute
+    // new: not-observed), so its room is never read as there.
+    if (arrRead && cellRoute && !socket) room = Mod::Room(SmaGrid(arr), use.width, use.height);
+    else if (arrRead && use.route == ForgePact::StashMoveRoute::Stack) room = before > 0 ? 1 : (before == 0 ? 0 : -1);
+    ForgePact::StashMoveResult skip;
+    if (!Mod::MayCall(use, room, skip)) return skip;
+
+    const bool personal = plan.stashTab == kSmaPersonalTab;
+    const double a1 = personal ? kSmaPersonalStackA1 : kSmaSharedStackA1;
+    const double a2 = personal ? kSmaPersonalStackA2 : kSmaSharedStackA2;
+    ForgePact::StashMoveReport r;
+    RValue res;
+    bool ownerRan = false;
+    auto notRun = [&](const TalentAllocScript& script, TalentAllocCall c) {
+        r.answered = false;
+        r.answer = TalentAllocCallText(script, c);
+    };
+    // A page's sequence opens with ValidateItem, self = other = the bag grid
+    // (gridMoveRoute); the Materials and Socketable tabs' recorded routes do not.
+    TalentAllocCall c = TalentAllocCall::Ran;
+    if (!materials && !socket) c = SmaCall(kSmaValidate, s.bag, s.bag, { item }, res);
+    if (c != TalentAllocCall::Ran) notRun(kSmaValidate, c);
+    else if (cellRoute) {
+        // StashAddToStack answers false for an item with no stack of its
+        // identity (every recorded placement), then GridAddItem places it on
+        // the shown tab's array and nowhere else.
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue(1.0), RValue(0.0) }, res);
+        if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
+        else if (res.m_Kind == VALUE_BOOL && res.ToBoolean()) {
+            // Merged where the plan saw no stack: nothing was placed, and
+            // the re-read below cannot confirm a cell.
+            r.answered = r.accepted = true;
+            r.answer = "StashAddToStack answered true (merged, not placed)";
+        } else {
+            c = SmaCall(kSmaPlace, s.bag, s.bag, { arr, item, RValue(0.0), RValue() }, res);
+            if (c != TalentAllocCall::Ran) notRun(kSmaPlace, c);
+            else {
+                r.answered = true;
+                r.accepted = ApAddSucceeded(res);
+                RValue vx, vy;
+                if (r.accepted && CmMember(res, "x", vx) && CmMember(res, "y", vy)) {
+                    r.destinationX = (int)CmWhole(vx);
+                    r.destinationY = (int)CmWhole(vy);
+                }
+                r.answer = r.accepted ? "success=true" : (ApIsPlainStruct(res) ? "success=false" : "GridAddItem answered " + Describe(res));
+                RValue now;
+                if (r.accepted && SmaShownArray(s, plan.stashTab, now)
+                    && SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials) == 1) {
+                    // Placed and read there: the game's own follow-ups, in the
+                    // order the replays ran them, each answer kept for the core.
+                    const TalentAllocCall vc = SmaCall(kSmaValidate, s.sg, s.bag, { item }, res);
+                    r.validateAnswer = SmaAnswerText(kSmaValidate, vc, res);
+                    if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+                        SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+                    // The owner step, only once the bag cell is empty: a shared
+                    // page and a new Materials identity (mapOwnerRule,
+                    // newMaterialRoute); none on the personal page. It took
+                    // only if the key then answers nothing on map 0.
+                    if (!personal) {
+                        r.ownerStep = 1;
+                        if (SmaBagCellHolds(s, it.cell.x, it.cell.y, key) == 0) {
+                            const TalentAllocCall oc = SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaCharacterOwner), RValue(kSmaStashOwner), RValue(key) }, res);
+                            ownerRan = oc == TalentAllocCall::Ran;
+                            r.ownerDispatched = ownerRan ? 1 : 0;
+                            r.ownerAnswer = SmaAnswerText(kSmaOwner, oc, res);
+                            r.keyOnMap0 = SmaKeyOnMap0(s, key);
+                        } else {
+                            r.ownerDispatched = 0;
+                            r.ownerAnswer = "not run: the bag cell did not read empty after the source clear";
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // A merge: the item's whole count (wholeStackMerge; one unit is the
+        // one-unit shape, stackMoveRoute), then the source clear only once
+        // the shown tab's sum rose by exactly that count. On the Socketable
+        // tab the array is the node's own and the sixth argument 8
+        // (socketMergeRoute), and the sum is that node's.
+        r.stackBefore = before;
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue((double)count),
+                                                    RValue(socket ? kSmaSocketStackA5 : kSmaStackA5) }, res);
+        if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
+        else {
+            r.answered = true;
+            r.accepted = res.m_Kind == VALUE_BOOL && res.ToBoolean();
+            r.answer = r.accepted ? "true" : "StashAddToStack answered " + Describe(res);
+            RValue now;
+            const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;
+            if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+                SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+        }
+    }
+
+    // The re-reads the core decides on: the tab on show, its own array and
+    // the bag cell - nothing else.
+    const int tabNow = SmaTab(s.window, "stashTabSelected");
+    r.shownTabChanged = tabNow == Mod::kUnreadTab ? -1 : (tabNow != plan.stashTab ? 1 : 0);
+    RValue now;
+    const bool nowRead = r.shownTabChanged == 0 && SmaReread(s, plan.stashTab, node, now);
+    r.sourceHasKey = SmaBagCellHolds(s, it.cell.x, it.cell.y, key);
+    if (cellRoute) {
+        if (!nowRead) r.destinationHasKey = -1;
+        else if (r.accepted && r.destinationX >= 0) r.destinationHasKey = SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials);
+        else r.destinationHasKey = CmCellsHold(now, key);
+    } else {
+        r.stackAfter = nowRead ? SmaStackSum(s, now, cls, base) : -1;
+    }
+    ForgePact::StashMoveResult out = Mod::Decide(use, r);
+
+    // The undo: a placed item whose bag cell did not clear is taken back out
+    // of the shown tab (GridRemoveItem, the measured shape), and the owner
+    // step reversed if it ran. Not measured live (Known Limitations).
+    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && nowRead
+        && r.sourceHasKey == 1 && CmCellsHold(now, key) == 1) {
+        SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);
+        if (ownerRan) SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaStashOwner), RValue(kSmaCharacterOwner), RValue(key) }, res);
+        RValue after;
+        const int left = SmaShownArray(s, plan.stashTab, after) ? CmCellsHold(after, key) : -1;
+        note = "undo " + key + ": taken back out of the stash tab by GridRemoveItem"
+            + std::string(left == 0 ? "" : " - NOT confirmed: the stash tab still reads it");
+    } else if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && r.ownerStep == 1
+               && r.sourceHasKey == 0 && r.destinationHasKey == 1) {
+        // The owner step did not take after the bag cell was cleared. Taking
+        // the item back out of the stash tab now would leave it in no grid at
+        // all (there is no by-name route back into the bag cell), so it stays
+        // where it was placed and the line says so.
+        note = "undo " + key + ": not run - the bag cell is already empty, so the item stays on the stash tab with "
+               "its owner step not taken";
+    }
+    return out;
+}
+
+// One run over the bag tab on show; every line starts with the verb.
+static void StashMoveAllRun()
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string verb = "stashmoveall";
+    if (!mod.IsEnabled()) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, mod.Plan({}).reason)); return; }
+    SmaScene s;
+    std::string why;
+    if (!SmaReadScene(s, why)) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, why)); return; }
+    const ForgePact::StashMovePlan plan = mod.Plan(s.view);
+    if (plan.refused) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, plan.reason)); return; }
+    ForgePact::StashMoveTally t = mod.Begin(plan);
+    for (const ForgePact::StashMoveItem& it : plan.items) {
+        std::string note;
+        const ForgePact::StashMoveResult res = SmaMoveOne(s, plan, it, note);
+        const bool go = mod.Record(t, res);
+        if (!note.empty()) t.lines.push_back(verb + ": " + note);
+        if (!go) break;
+    }
+    for (const std::string& line : t.lines) Out(line);
+    Out(ForgePact::StashMoveAllMod::SummaryLine(t));
+    // A loss: the state line the panel reads says the mod turned itself off,
+    // and the button goes with it.
+    if (t.stopped) Out(mod.StateLine());
+    if (t.stopped) SmaButtonRemove();
+}
+
+// `stashmoveall` bare | `1` | `0` | `run`. Each switch answers with the
+// state line too, so the last one in out.txt is the plugin's own state.
+static void StashMoveAllCommand(const std::string& rest)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string trimmed = TrimCopy(rest);
+    const std::string arg = Lower(trimmed);
+    if (arg.rfind("probe", 0) == 0 && SmaProbeCommand(trimmed)) return;
+    if (arg == "1" || arg == "on") {
+        // After a loss it stays off for the session, and says why.
+        if (!mod.SetEnabled(true)) { Out(mod.OffForSessionLine()); Out(mod.StateLine()); return; }
+        Out(ForgePact::StashMoveAllMod::SwitchLine(true));
+        Out(mod.StateLine());
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        mod.SetEnabled(false);
+        SmaButtonRemove();
+        Out(ForgePact::StashMoveAllMod::SwitchLine(false));
+        Out(mod.StateLine());
+        return;
+    }
+    if (arg == "run") { StashMoveAllRun(); return; }
+    Out(mod.StateLine());
+    Out("stashmoveall: usage - stashmoveall 1|0 switches it; stashmoveall run (or F4, with the stash open) moves the bag tab on show "
+        "into the stash tab on show; stashmove <fingerprint> moves one item");
+}
+
+// `stashmove <fingerprint>`: one item of the bag tab on show, through the
+// same per-item routine.
+static void StashMoveCommand(const std::string& rest)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const std::string verb = "stashmove";
+    const std::string key = TrimCopy(rest);
+    if (key.empty() || key.find(' ') != std::string::npos) {
+        Out(ForgePact::StashMoveAllMod::RefusalLine(verb, "usage: stashmove <fingerprint>, one bag key"));
+        return;
+    }
+    if (!mod.IsEnabled()) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, mod.Plan({}).reason)); return; }
+    SmaScene s;
+    std::string why;
+    if (!SmaReadScene(s, why)) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, why)); return; }
+    const ForgePact::StashMovePlan plan = mod.Plan(s.view);
+    if (plan.refused) { Out(ForgePact::StashMoveAllMod::RefusalLine(verb, plan.reason)); return; }
+    const auto it = std::find_if(plan.items.begin(), plan.items.end(),
+                                 [&](const ForgePact::StashMoveItem& i) { return i.cell.key == key; });
+    if (it == plan.items.end()) {
+        Out(ForgePact::StashMoveAllMod::RefusalLine(verb, key + " is not on the bag tab on show"));
+        return;
+    }
+    std::string note;
+    const ForgePact::StashMoveResult res = SmaMoveOne(s, plan, *it, note);
+    if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) mod.TurnOffForSession("item " + res.key + ": " + res.answer);
+    Out(ForgePact::StashMoveAllMod::SingleLine(res));
+    if (!note.empty()) Out(verb + ": " + note);
+    if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) Out(mod.StateLine());
+    if (res.outcome == ForgePact::StashMoveOutcome::Unconfirmed) SmaButtonRemove();
+}
+
+// Whether the foreground window belongs to this process (the game's).
+static bool SmaGameInForeground()
+{
+    const HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+}
+
+// Whether Alt, Ctrl or Shift is held: Alt+F4 closes the game, and none of
+// them may start a run.
+static bool SmaModifierHeld()
+{
+    return ((GetAsyncKeyState(VK_MENU) | GetAsyncKeyState(VK_CONTROL) | GetAsyncKeyState(VK_SHIFT)) & 0x8000) != 0;
+}
+
+// The hotkey and the button, from FrameCallback: nothing while the switch is
+// off (a button node still held from before is removed, and nothing of the
+// game is read to know that). While it is on, one key read a frame; the
+// button's node made or removed at most every tenth frame, and, while the
+// node exists, one mouse read a frame (SmaButtonPoll records a press inside
+// it for the core, nothing more). The modifiers, the foreground and the stash
+// window are asked only while the key is down or a press was recorded, and
+// the key's edge and the button's press, under that one guard, start one run
+// between them. The first frame after the switch turns on only notes the key,
+// so a key held while turning it on starts nothing.
+static void StashMoveAllTick()
+{
+    static bool s_WasOn = false;
+    static unsigned s_Frame = 0;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    // Off: a node still held (UiRemoveNode left it listed) is retried at the
+    // ensure step's pace, never every frame.
+    if (!mod.IsEnabled()) { s_WasOn = false; if ((s_Frame++ % kSmaButtonEveryFrames) == 0) SmaButtonRemove(); return; }
+    const bool down = (GetAsyncKeyState(kSmaHotkey) & 0x8000) != 0;
+    if (!s_WasOn) { s_WasOn = true; mod.KeyEdge(down, false, false, false); return; }
+    if ((s_Frame++ % kSmaButtonEveryFrames) == 0) SmaButtonEnsure();
+    const bool pressed = SmaButtonPoll();
+    bool fg = false, listed = false, modifier = false;
+    if (down || pressed) {
+        modifier = SmaModifierHeld();
+        fg = SmaGameInForeground();
+        RValue handle;
+        CInstance* inst = nullptr;
+        listed = fg && CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, handle, inst);
+    }
+    const bool key = mod.KeyEdge(down, fg, listed, modifier);
+    const bool button = mod.TakeButtonPress(fg, listed, modifier);
+    if (key || button) StashMoveAllRun();
+}
+
+// Each verb from its own helper, for the C1061 reason HandleMenuLayoutCommand gives.
+static bool HandleStashMoveAllCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashmoveall") { StashMoveAllCommand(rest); return true; }
+    return false;
+}
+
+static bool HandleStashMoveCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "stashmove") { StashMoveCommand(rest); return true; }
+    return false;
+}
+// ---- end stashmoveall, stashmove
+
+// ---- stashmoveall button: the in-game Move all button (ForgePact #68)
+//
+// docs/stash-move-research.md § Decision (buttonRoute, buttonOwner,
+// sortActivation) and § Ship design. While the switch is on and the stash is
+// open, a Move all button sits left of the backpack's Sort button; a click on
+// it does what F4 does. ForgePact::StashMoveAllMod decides whether the node
+// should exist and what a press is; this block reads the game and acts:
+// - the node: a UI_Button_Small_obj made by the game's own UiCreateNode, by
+//   name, with self = other = the UI_Stash_obj window on show (buttonOwner:
+//   the stash's own close destroys it, Live 1g), placed from the Sort node's
+//   row (found by its uiNodeCallstack InventorySort, never by its text, which
+//   reads Sort Tab: sortActivation), its uiNodeCallstack ForgePactMoveAll,
+//   and its activation LEFT UNDEFINED - no UiSetActivationFunc, no script
+//   hooked for it. A node with no activation runs nothing of the game's when
+//   clicked (the static reading of the node's own click event; Live 1g's
+//   click on one ran nothing and ended nothing). Live 1f's click on a node
+//   bound to a game script ended the game inside that script, which is why the
+//   activation route was dropped;
+// - the press (buttonRoute: poll, Live 1g): each frame the node exists, a left
+//   press read by name and the mouse's GUI point checked against the node's
+//   bbox read by name at that frame; a press inside is handed to the core,
+//   which the frame tick takes under F4's own guard - nothing moves here;
+// - removal: UiRemoveNode with the owner window as self while it is listed,
+//   else instance_destroy on the mod's own node (the window's close has
+//   already dropped it from the window's list); on `stashmoveall 0`, a loss,
+//   and whenever the core says the node should not exist.
+// The one write this block makes is the `text` of the node the mod made. A
+// node that cannot be made is reported once (`stashmoveall: button - ...`)
+// and the mod stays on: F4 and the verbs work without it.
+
+static constexpr TalentAllocScript kSmaUiCreateNode{ HeroSiege::Scripts::gml_Script_UiCreateNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiCreateNode) };
+static constexpr TalentAllocScript kSmaUiRemoveNode{ HeroSiege::Scripts::gml_Script_UiRemoveNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiRemoveNode) };
+static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";
+static constexpr const char* kSmaButtonText = "Move all";
+static constexpr const char* kSmaSortCallstack = "InventorySort";   // sortActivation (Live 1f and 1g)
+static constexpr double kSmaButtonGap = 8.0;                         // GUI units between the node and Sort
+static constexpr double kSmaMbLeft = 1.0;                            // mb_left
+
+static RValue g_SmaButton;               // the node the mod made, while it holds one
+static RValue g_SmaButtonOwner;          // the stash window it was made under
+static bool   g_SmaButtonHeld = false;
+
+// The instance is the mod's own button: listed, and carrying the call-stack
+// name only the mod gives a node (identified by what it is, not by an id that
+// the game could have given another instance).
+static bool SmaButtonIsOurs(const RValue& h)
+{
+    try {
+        if (h.m_Kind == VALUE_UNDEFINED || !g_Yytk->CallBuiltin("instance_exists", { h }).ToBoolean()) return false;
+        const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("uiNodeCallstack") });
+        return v.m_Kind == VALUE_STRING && v.ToString() == kSmaButtonCallstack;
+    } catch (...) { return false; }
+}
+
+static void SmaButtonForget()
+{
+    g_SmaButton = RValue();
+    g_SmaButtonOwner = RValue();
+    g_SmaButtonHeld = false;
+    ForgePact::StashMoveAllMod::Instance().NoteButtonHeld(false);
+}
+
+// Take the mod's node away now, if it holds one. Nothing is read while it
+// holds none, so the switch-off path of the frame tick reads nothing.
+static void SmaButtonRemove()
+{
+    if (!g_SmaButtonHeld) return;
+    if (!SmaButtonIsOurs(g_SmaButton)) { SmaButtonForget(); return; }   // the stash's close took it
+    RValue res;
+    CInstance* owner = nullptr;
+    try {
+        if (g_SmaButtonOwner.m_Kind != VALUE_UNDEFINED && g_Yytk->CallBuiltin("instance_exists", { g_SmaButtonOwner }).ToBoolean())
+            owner = HhResolveInstance(g_SmaButtonOwner);
+    } catch (...) { owner = nullptr; }
+    if (owner) {
+        const TalentAllocCall c = SmaCall(kSmaUiRemoveNode, owner, owner, { g_SmaButton }, res);
+        if (SmaButtonIsOurs(g_SmaButton)) {
+            // Still listed: destroying it by hand would leave the window's
+            // list naming a node that is gone, so it is left for the next try.
+            static bool s_Said = false;
+            if (!s_Said) Out("stashmoveall: button - UiRemoveNode left the node listed (" + SmaAnswerText(kSmaUiRemoveNode, c, res)
+                             + "); tried again while the switch is off or the stash closes");
+            s_Said = true;
+            return;
+        }
+    } else {
+        try { g_Yytk->CallBuiltin("instance_destroy", { g_SmaButton }); } catch (...) {}
+        if (SmaButtonIsOurs(g_SmaButton)) return;
+    }
+    SmaButtonForget();
+}
+
+// Make the node beside Sort; a refusal is reported once by the core's line.
+static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    auto refuse = [&](const std::string& why) {
+        const std::string line = mod.ButtonRefused(why);
+        if (!line.empty()) Out(line);
+    };
+    const double sx = MenuLayoutRead(sort, "x"), sy = MenuLayoutRead(sort, "y");
+    const double sw = MenuLayoutRead(sort, "bbox_right") - MenuLayoutRead(sort, "bbox_left");
+    if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) || sw <= 0) {
+        refuse("the Sort button's x, y or bbox did not read; nothing was called");
+        return;
+    }
+    double objIdx = -1;
+    RValue object;
+    try { object = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj))) }); }
+    catch (...) {}
+    if (!ApNumber(object, objIdx) || objIdx < 0) { refuse("asset_get_index found no UI_Button_Small_obj; nothing was called"); return; }
+    // UiCreateNode(x, y, object, activation, callstack name): the activation
+    // undefined, so a click on the node runs nothing of the game's.
+    RValue node;
+    const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
+        { RValue(sx - sw - kSmaButtonGap), RValue(sy), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
+    if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
+        refuse(c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c));
+        return;
+    }
+    g_SmaButton = node;
+    g_SmaButtonOwner = window;
+    g_SmaButtonHeld = true;
+    mod.NoteButtonHeld(true);
+    // The label: the one write, on the mod's own node, read back. Without it
+    // the node would be a blank button, so it is taken away again.
+    bool labelled = false;
+    try {
+        g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
+        const RValue text = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("text") });
+        labelled = text.m_Kind == VALUE_STRING && text.ToString() == kSmaButtonText;
+    } catch (...) { labelled = false; }
+    if (!labelled) {
+        SmaButtonRemove();
+        refuse("its label could not be set, so it was taken away again");
+    }
+}
+
+// The ensure step (StashMoveAllTick, at most every tenth frame while the
+// switch is on): the core's ButtonStep from what is listed now.
+static void SmaButtonEnsure()
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    RValue window, sort;
+    CInstance* stash = nullptr;
+    CInstance* sortInst = nullptr;
+    const bool stashListed = CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash);
+    const bool sortListed = stashListed
+        && StashVerbByString(HeroSiege::Objects::GameObject::UI_Button_Small_obj, "uiNodeCallstack", kSmaSortCallstack, sort, sortInst);
+    // Read as menulayout reads it (the Sort row's visible=1, Live 1f and 1g).
+    bool sortVisible = false;
+    try { sortVisible = sortListed && g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue("visible") }).ToBoolean(); }
+    catch (...) { sortVisible = false; }
+    if (g_SmaButtonHeld && !SmaButtonIsOurs(g_SmaButton)) SmaButtonForget();   // the stash's close took it
+    // The stash open with no visible Sort to sit beside, three ensure steps
+    // running: said once a session, so a button that never shows (a game
+    // patch renaming InventorySort, say) is not silence.
+    static int s_NoSort = 0;
+    static bool s_NoSortSaid = false;
+    s_NoSort = stashListed && !sortVisible ? s_NoSort + 1 : 0;
+    if (s_NoSort >= 3 && !s_NoSortSaid && mod.IsEnabled()) {
+        s_NoSortSaid = true;
+        Out(std::string("stashmoveall: button - not shown: no visible Sort button (uiNodeCallstack ") + kSmaSortCallstack
+            + ") is listed beside the stash" + (sortListed ? " (it is listed, not visible)" : "") + "; F4 still works");
+    }
+    switch (mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)) {
+    case ForgePact::StashMoveButtonStep::Create: SmaButtonCreate(stash, window, sort); break;
+    case ForgePact::StashMoveButtonStep::Remove: SmaButtonRemove(); break;
+    default: break;
+    }
+}
+
+// The press (buttonRoute: poll), each frame the node exists: a left press this
+// frame whose GUI point lies inside the node's bbox, read by name now, is
+// handed to the core, and nothing else happens here - the frame tick takes
+// it under F4's guard. True when one was handed over. Every left press read
+// is counted by the core, inside or as a miss (outside, or a point or box
+// that did not read), and a poll that threw too, so the state line tells a
+// click that moved nothing apart: poll-blind, bbox miss, or a guard drop.
+static bool SmaButtonPoll()
+{
+    if (!g_SmaButtonHeld) return false;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    try {
+        if (!g_Yytk->CallBuiltin("mouse_check_button_pressed", { RValue(kSmaMbLeft) }).ToBoolean()) return false;
+        const double mx = g_Yytk->CallBuiltin("device_mouse_x_to_gui", { RValue(0.0) }).ToDouble();
+        const double my = g_Yytk->CallBuiltin("device_mouse_y_to_gui", { RValue(0.0) }).ToDouble();
+        const double l = MenuLayoutRead(g_SmaButton, "bbox_left"), t = MenuLayoutRead(g_SmaButton, "bbox_top");
+        const double r = MenuLayoutRead(g_SmaButton, "bbox_right"), b = MenuLayoutRead(g_SmaButton, "bbox_bottom");
+        if (!ForgePact::StashMoveAllMod::PressInNode(mx, my, l, t, r, b)) {
+            mod.NoteButtonMiss(ForgePact::StashMoveAllMod::PressReads(mx, my, l, t, r, b));
+            return false;
+        }
+        mod.NoteButtonPress();
+        return true;
+    } catch (...) { mod.NoteButtonPollError(); return false; }
+}
+// ---- end stashmoveall button
+
+#ifndef FORGEPACT_RELEASE
+// ---- stashmoveall probe: the in-game button's instrument (ForgePact #68, Live 1f)
+//
+// docs/stash-move-research.md, § Static reading 3 and § Live procedure 1f.
+// Research build only: none of this is a player command. Two questions: how a
+// Move all node beside the bag's Sort button can reach the plugin, and
+// whether a socketable merges by name. So:
+//   probe sort [id:<n>]         the Sort node's row and its activation, hook-free
+//   probe create [<script>|none] [watch:<script>]
+//                               a UI_Button_Small_obj node made by UiCreateNode
+//                               with self = other = the stash window, callstack
+//                               ForgePactMoveAll, left of Sort; <script> bound as
+//                               its activation by UiSetActivationFunc; the
+//                               watched row (the bound one by default) counted
+//                               with the node as self even while unbound; and
+//                               whether the node's object is the UI object
+//                               ControllerCheckInput calls UiSetFloatingToFalse
+//                               on, or a child of it
+//   probe remove                UiRemoveNode with the same self (instance_destroy
+//                               on the probe's own node when the window is gone)
+//   probe show                  whether the node is listed, the counters, the
+//                               last press and both bboxes
+//   probe copy <key> <count>    giveitem's loader order with the template read
+//                               from map 9, so a stash socketable is copied into
+//                               the bag with no person
+// Route A's counter (detour_presses) is counted by the craftprobe detour of the
+// bound script's row when its self is the node, and row_calls_self_node by the
+// same detour for the watched row, bound or not (SmaProbeSawCall, with the
+// detours): an unbound node and idle reads are its negative controls. Route B
+// by SmaProbeTick, armed by `probe sort` or `probe create`: every left press
+// (poll_any_presses), those inside the Sort node's bbox (poll_sort_presses,
+// the poll's positive control: the Sort click of the procedure) and those
+// inside the node's bbox (poll_presses), the last press's GUI x,y kept beside
+// both bboxes as read at that frame. Every routine by its SDK constant through
+// SmaCall; the only write the probe makes itself is the `text` of the node it
+// created.
+
+static constexpr TalentAllocScript kSmaProbeCreate{ HeroSiege::Scripts::gml_Script_UiCreateNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiCreateNode) };
+static constexpr TalentAllocScript kSmaProbeRemove{ HeroSiege::Scripts::gml_Script_UiRemoveNode,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiRemoveNode) };
+static constexpr TalentAllocScript kSmaProbeBind{ HeroSiege::Scripts::gml_Script_UiSetActivationFunc,
+    SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiSetActivationFunc) };
+static constexpr const char* kSmaProbeCallstack = "ForgePactMoveAll";
+static constexpr const char* kSmaProbeText = "Move all";
+static constexpr double kSmaProbeGap = 8.0;    // GUI units between the node and Sort
+static constexpr double kSmaProbeMbLeft = 1.0; // mb_left
+
+static RValue g_SmaProbeNode;           // the node the probe created (a handle), while it is ours
+static RValue g_SmaProbeOwner;          // the stash window it was created under
+static long long g_SmaProbeSortId = -1; // `probe sort id:<n>`: the Sort node given by hand
+static volatile long g_SmaProbePollPresses = 0;     // left presses inside the node's bbox
+static volatile long g_SmaProbePollAnyPresses = 0;  // every left press the poll saw
+static volatile long g_SmaProbePollSortPresses = 0; // left presses inside the Sort node's bbox
+static bool g_SmaProbePollArmed = false;            // set by `probe sort` and `probe create`
+static std::string g_SmaProbeLastPress = "none";    // x,y and both bboxes, as read at that press
+
+static const char* const kSmaProbeTag = "stashmoveall probe: ";
+
+// An instance handle's id, or -1.
+static long long SmaProbeId(const RValue& h)
+{
+    double id = -1;
+    return PpInstanceId(h, id) ? (long long)id : -1;
+}
+
+static bool SmaProbeExists(const RValue& h)
+{
+    try { return h.m_Kind != VALUE_UNDEFINED && g_Yytk->CallBuiltin("instance_exists", { h }).ToBoolean(); }
+    catch (...) { return false; }
+}
+
+// The Sort node: the one given by id, else the UI_Button_Small_obj whose text
+// reads Sort.
+static bool SmaProbeSort(RValue& sort)
+{
+    if (g_SmaProbeSortId >= 0) {
+        sort = RValue((double)g_SmaProbeSortId);
+        return SmaProbeExists(sort);
+    }
+    CInstance* inst = nullptr;
+    return StashVerbByString(HeroSiege::Objects::GameObject::UI_Button_Small_obj, "text", "Sort", sort, inst);
+}
+
+// A node's row: the fields menulayout prints for it, read by name.
+static std::string SmaProbeRow(const RValue& n)
+{
+    return "id=" + MenuLayoutInteger(MenuLayoutRead(n, "id"))
+        + " x=" + MenuLayoutDecimal(MenuLayoutRead(n, "x")) + " y=" + MenuLayoutDecimal(MenuLayoutRead(n, "y"))
+        + " bbox=" + MenuLayoutDecimal(MenuLayoutRead(n, "bbox_left")) + "," + MenuLayoutDecimal(MenuLayoutRead(n, "bbox_top"))
+        + "," + MenuLayoutDecimal(MenuLayoutRead(n, "bbox_right")) + "," + MenuLayoutDecimal(MenuLayoutRead(n, "bbox_bottom"))
+        + " sprite=" + [&]() {
+              try {
+                  const double spr = g_Yytk->CallBuiltin("variable_instance_get", { n, RValue("sprite_index") }).ToDouble();
+                  if (!std::isfinite(spr)) return std::string(kMenuLayoutReadFailed);
+                  return spr < 0 ? std::string("none") : MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { RValue(spr) }).ToString());
+              } catch (...) { return std::string(kMenuLayoutReadFailed); }
+          }()
+        + " visible=" + StashVerbVar(n, "visible") + " enabled=" + StashVerbVar(n, "enabled")
+        + " uiNodeCallstack=" + StashVerbVar(n, "uiNodeCallstack") + " text=" + StashVerbVar(n, "text");
+}
+
+// What a node's activationFunc holds, read the way stashtab reads a tab
+// button's: a method's script (method_get_index, script_get_name), the
+// craftprobe row that names it, and whether its self is an instance or a
+// struct (method_get_self). Nothing is called.
+static std::string SmaProbeActivation(const RValue& n, std::string* scriptOut = nullptr)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { n, RValue("activationFunc") }).ToBoolean())
+            return "activationFunc=none (the node has no such variable)";
+        const RValue f = g_Yytk->CallBuiltin("variable_instance_get", { n, RValue("activationFunc") });
+        if (f.m_Kind == VALUE_UNDEFINED) return "activationFunc=undefined";
+        if (!g_Yytk->CallBuiltin("is_method", { f }).ToBoolean()) return "activationFunc=" + Describe(f) + " (not a method)";
+        std::string script;
+        const CpTarget* row = CpRowForMethod(f, script);
+        if (scriptOut) *scriptOut = script;
+        const RValue self = g_Yytk->CallBuiltin("method_get_self", { f });
+        std::string kind = "other " + Describe(self);
+        if (g_Yytk->CallBuiltin("is_struct", { self }).ToBoolean()) kind = "struct";
+        else if (SmaProbeExists(self)) kind = "instance id=" + std::to_string(SmaProbeId(self));
+        return "activationFunc=method script=" + (script.empty() ? std::string("<unnamed>") : script)
+            + " row=" + (row ? std::string(row->label) : std::string("none")) + " self=" + kind;
+    } catch (...) { return "activationFunc=<read failed>"; }
+}
+
+// A node's bbox as l,t,r,b, and whether the GUI point x,y falls inside it
+// (never, when a side did not read).
+static std::string SmaProbeBox(const RValue& n, double x, double y, bool& inside)
+{
+    const double l = MenuLayoutRead(n, "bbox_left"), t = MenuLayoutRead(n, "bbox_top");
+    const double r = MenuLayoutRead(n, "bbox_right"), b = MenuLayoutRead(n, "bbox_bottom");
+    inside = std::isfinite(l) && std::isfinite(t) && std::isfinite(r) && std::isfinite(b)
+        && x >= l && x <= r && y >= t && y <= b;
+    return MenuLayoutDecimal(l) + "," + MenuLayoutDecimal(t) + "," + MenuLayoutDecimal(r) + "," + MenuLayoutDecimal(b);
+}
+
+// § Static reading 3: ControllerCheckInput calls UiSetFloatingToFalse on the
+// instances of UI_Hud_Talent_obj (a loop over an object, which takes its
+// children too). If the node's object is that object or a child of it, the
+// game's own loop can call the candidate with the node as self, and a call
+// counted with the node as self says nothing about a press. Read by name:
+// asset_get_index, object_get_parent, object_is_ancestor.
+static std::string SmaProbeLoopCheck(double objIdx)
+{
+    const std::string loopObj(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj));
+    const std::string nodeObj(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj));
+    const std::string cand(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiSetFloatingToFalse));
+    const std::string caller(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ControllerCheckInput));
+    std::string line = "loop check - " + caller + " calls " + cand + " on " + loopObj + " instances (static reading)";
+    try {
+        double hud = -1;
+        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(loopObj) }), hud) || hud < 0)
+            return line + "; asset_get_index found no " + loopObj + ": not-run";
+        std::string parents;
+        double p = objIdx;
+        for (int i = 0; i < 16; ++i) {
+            p = g_Yytk->CallBuiltin("object_get_parent", { RValue(p) }).ToDouble();
+            if (!std::isfinite(p) || p < 0) break;
+            parents += ">" + MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { RValue(p) }).ToString());
+        }
+        const bool same = (long long)hud == (long long)objIdx;
+        const bool child = g_Yytk->CallBuiltin("object_is_ancestor", { RValue(objIdx), RValue(hud) }).ToBoolean();
+        line += "; node object " + nodeObj + " parents=" + (parents.empty() ? std::string("none") : parents.substr(1))
+            + " same=" + (same ? "1" : "0") + " child=" + (child ? "1" : "0");
+        line += (same || child)
+            ? " - CONFOUND: the game's own loop can call " + cand + " with the node as self, so it is unusable as the activation"
+            : " - no confound from that loop";
+    } catch (...) { line += "; the object reads threw: not-run"; }
+    return line;
+}
+
+static void SmaProbeForget()
+{
+    g_SmaProbeNodeId.store(-1);
+    g_SmaProbeBound.clear();
+    g_SmaProbeWatch.clear();
+    g_SmaProbeNode = RValue();
+    g_SmaProbeOwner = RValue();
+}
+
+static void SmaProbeSortCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = kSmaProbeTag;
+    if (tok.size() >= 3 && Lower(tok[2]).rfind("id:", 0) == 0) {
+        try { g_SmaProbeSortId = std::stoll(tok[2].substr(3)); }
+        catch (...) { Out(tag + "sort refused - id:<n> needs a whole number; nothing read"); return; }
+    }
+    RValue sort;
+    if (!SmaProbeSort(sort)) {
+        Out(tag + "sort not-found - no UI_Button_Small_obj reads text=Sort"
+            + std::string(g_SmaProbeSortId >= 0 ? " (and id:" + std::to_string(g_SmaProbeSortId) + " is not an instance)" : "")
+            + "; `menulayout UI_Button_Small_obj` lists them, then `stashmoveall probe sort id:<n>`");
+        return;
+    }
+    std::string script;
+    const std::string act = SmaProbeActivation(sort, &script);
+    Out(tag + "sort " + SmaProbeRow(sort));
+    Out(tag + "sort " + act);
+    // From here the frame poll counts every left press, so the procedure's
+    // click on Sort is the poll's positive control before any node exists.
+    g_SmaProbePollArmed = true;
+    Out(tag + "sort poll armed - poll_any_presses=" + std::to_string(g_SmaProbePollAnyPresses)
+        + " poll_sort_presses=" + std::to_string(g_SmaProbePollSortPresses));
+}
+
+static void SmaProbeCreateCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = kSmaProbeTag;
+    if (SmaProbeExists(g_SmaProbeNode)) {
+        Out(tag + "create refused - the probe's node id=" + std::to_string(SmaProbeId(g_SmaProbeNode))
+            + " exists; `stashmoveall probe remove` first; nothing was called");
+        return;
+    }
+    SmaProbeForget();
+    // `create [<script>|none] [watch:<script>]`: the script bound as the
+    // activation, and the row counted with the node as self (the bound one by
+    // default), so an unbound node can still count the candidate's calls.
+    std::string bind = "none", watch;
+    for (size_t i = 2; i < tok.size(); ++i) {
+        if (Lower(tok[i]).rfind("watch:", 0) == 0) watch = tok[i].substr(6);
+        else bind = tok[i];
+    }
+    if (watch.empty() && Lower(bind) != "none") watch = bind;
+    std::string watchRow;
+    if (!watch.empty()) {
+        const CpTarget* w = CpFindRow(watch);
+        if (!w) { Out(tag + "create refused - no craftprobe row names " + watch + ", so row_calls_self_node cannot count it; nothing was called"); return; }
+        watchRow = w->label;
+    }
+    RValue window, sort;
+    CInstance* stash = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::UI_Stash_obj, window, stash)) {
+        Out(tag + "create refused - no UI_Stash_obj is listed (open the stash); nothing was called");
+        return;
+    }
+    if (!SmaProbeSort(sort)) { Out(tag + "create refused - no Sort node (see `probe sort`); nothing was called"); return; }
+    const double sx = MenuLayoutRead(sort, "x"), sy = MenuLayoutRead(sort, "y");
+    const double sw = MenuLayoutRead(sort, "bbox_right") - MenuLayoutRead(sort, "bbox_left");
+    if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) || sw <= 0) {
+        Out(tag + "create refused - the Sort node's x, y or bbox did not read; nothing was called");
+        return;
+    }
+    // The script bound as the activation, by name; `none` leaves it unbound.
+    RValue script;
+    std::string row;
+    if (Lower(bind) != "none") {
+        double idx = -1;
+        try { script = g_Yytk->CallBuiltin("asset_get_index", { RValue(bind) }); } catch (...) {}
+        if (!ApNumber(script, idx) || idx < 0) {
+            Out(tag + "create refused - asset_get_index found no script " + bind + "; nothing was called");
+            return;
+        }
+        const CpTarget* t = CpFindRow(bind);
+        row = t ? t->label : "";
+    }
+    double objIdx = -1;
+    RValue object;
+    try { object = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj))) }); }
+    catch (...) {}
+    if (!ApNumber(object, objIdx) || objIdx < 0) { Out(tag + "create refused - asset_get_index found no UI_Button_Small_obj; nothing was called"); return; }
+
+    const double x = sx - sw - kSmaProbeGap, y = sy;
+    RValue node, res;
+    const TalentAllocCall c = SmaCall(kSmaProbeCreate, stash, stash,
+        { RValue(x), RValue(y), object, RValue(), RValue(std::string(kSmaProbeCallstack)) }, node);
+    if (c != TalentAllocCall::Ran || !SmaProbeExists(node)) {
+        Out(tag + "create failed - " + (c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaProbeCreate, c))
+            + "; supplied self=other=" + PpDescribeSelf(stash) + " x=" + MenuLayoutDecimal(x) + " y=" + MenuLayoutDecimal(y)
+            + " object=" + Describe(object) + " activation=" + Describe(RValue()) + " callstack=" + kSmaProbeCallstack);
+        return;
+    }
+    g_SmaProbeNode = node;
+    g_SmaProbeOwner = window;
+    g_SmaProbeNodeId.store(SmaProbeId(node));
+    std::string bindLine = "activation left unbound (none)";
+    if (script.m_Kind != VALUE_UNDEFINED) {
+        const TalentAllocCall b = SmaCall(kSmaProbeBind, stash, stash, { node, script }, res);
+        bindLine = "UiSetActivationFunc(node, " + bind + ") " + SmaAnswerText(kSmaProbeBind, b, res);
+        g_SmaProbeBound = row;
+        if (row.empty()) bindLine += " - no craftprobe row names " + bind + ", so detour_presses cannot count it";
+    }
+    // The node's label: the one write the probe makes, on its own node.
+    try { g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaProbeText)) }); }
+    catch (...) { bindLine += "; text could not be set"; }
+    g_SmaProbeDetourPresses = 0;
+    g_SmaProbeRowCallsSelfNode = 0;
+    g_SmaProbePollPresses = 0;
+    g_SmaProbeWatch = watchRow;
+    g_SmaProbePollArmed = true;
+    Out(tag + "created " + SmaProbeRow(node) + " owner=" + PpDescribeSelf(stash));
+    Out(tag + "created " + bindLine + "; " + SmaProbeActivation(node)
+        + "; watch=" + (watchRow.empty() ? std::string("none") : watchRow));
+    Out(tag + "created " + SmaProbeLoopCheck(objIdx));
+}
+
+static void SmaProbeRemoveCommand()
+{
+    const std::string tag = kSmaProbeTag;
+    if (!SmaProbeExists(g_SmaProbeNode)) {
+        Out(tag + "remove - no probe node is listed" + std::string(g_SmaProbeNodeId.load() >= 0
+            ? " (node id=" + std::to_string(g_SmaProbeNodeId.load()) + " is gone)" : "") + "; nothing was called");
+        SmaProbeForget();
+        return;
+    }
+    const long long id = SmaProbeId(g_SmaProbeNode);
+    RValue res;
+    std::string how;
+    CInstance* owner = SmaProbeExists(g_SmaProbeOwner) ? HhResolveInstance(g_SmaProbeOwner) : nullptr;
+    if (owner) {
+        const TalentAllocCall c = SmaCall(kSmaProbeRemove, owner, owner, { g_SmaProbeNode }, res);
+        how = "UiRemoveNode(node) with self=other=" + PpDescribeSelf(owner) + ": " + SmaAnswerText(kSmaProbeRemove, c, res);
+    } else {
+        try { g_Yytk->CallBuiltin("instance_destroy", { g_SmaProbeNode }); how = "the owner window is gone: instance_destroy on the probe's own node"; }
+        catch (...) { how = "the owner window is gone: instance_destroy threw"; }
+    }
+    const bool left = SmaProbeExists(RValue((double)id));
+    Out(tag + "remove node id=" + std::to_string(id) + " - " + how + "; listed after: " + (left ? "yes" : "no"));
+    if (!left) SmaProbeForget();
+}
+
+static void SmaProbeShowCommand()
+{
+    const std::string tag = kSmaProbeTag;
+    const bool listed = SmaProbeExists(g_SmaProbeNode);
+    Out(tag + "show node=" + (listed ? SmaProbeRow(g_SmaProbeNode) : std::string("none"))
+        + " bound=" + (g_SmaProbeBound.empty() ? std::string("none") : g_SmaProbeBound)
+        + " watch=" + (g_SmaProbeWatch.empty() ? std::string("none") : g_SmaProbeWatch)
+        + " poll_presses=" + std::to_string(g_SmaProbePollPresses)
+        + " detour_presses=" + std::to_string(g_SmaProbeDetourPresses)
+        + " row_calls_self_node=" + std::to_string(g_SmaProbeRowCallsSelfNode));
+    // The poll's own controls: every press it saw, those on Sort, and where
+    // the last one landed beside both bboxes as read at that frame.
+    RValue sort;
+    bool unused = false;
+    const std::string sortBox = SmaProbeSort(sort) ? SmaProbeBox(sort, 0, 0, unused) : std::string("none");
+    Out(tag + "show poll " + (g_SmaProbePollArmed ? "armed" : "not armed (run `probe sort` first)")
+        + " poll_any_presses=" + std::to_string(g_SmaProbePollAnyPresses)
+        + " poll_sort_presses=" + std::to_string(g_SmaProbePollSortPresses)
+        + " last_press=" + g_SmaProbeLastPress
+        + " sort_bbox=" + sortBox
+        + " node_bbox=" + (listed ? SmaProbeBox(g_SmaProbeNode, 0, 0, unused) : std::string("none")));
+    if (listed) Out(tag + "show " + SmaProbeActivation(g_SmaProbeNode));
+}
+
+// `probe copy <template> <count>`: giveitem's loader order (CreateItemSaveStruct,
+// LootTimestamp, InitItemFromJson, AddItemToMap on map 0, GetItemPreferredGrid(1,
+// item), GridAddItem) with the template read from map 9 instead of map 0, so a
+// stash item is copied into the bag and the stash item is left as it was. Its
+// own function rather than a helper giveitem shares, since giveitem's contract
+// pins its whole body (tests/test_stash_bag_layout_contract.py).
+static void SmaProbeCopyCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = "stashmoveall probe copy: ";
+    int count = 0;
+    if (tok.size() != 4 || !TalentAllocWhole(tok[3], 1000000, count)) {
+        Out(tag + "refused - usage: stashmoveall probe copy <template key on map 9> <count>; nothing was called");
+        return;
+    }
+    const std::string key = tok[2];
+    CInstance* save = CmSaveInstance();
+    if (!save) { Out(tag + "refused - no Console_Save_obj instance; nothing was called"); return; }
+    RValue map0, map9, source, type;
+    if (!CmItemMap(save, kCmStashOwner, map9)) { Out(tag + "refused - GetItemMap(9) answered no map; nothing more was called"); return; }
+    if (!CmMapItem(map9, RValue(key), source)) { Out(tag + "refused - template not found: map 9 holds no item " + key + "; nothing more was called"); return; }
+    if (!CmItemMap(save, kCmCharacterOwner, map0)) { Out(tag + "refused - GetItemMap(0) answered no map; nothing more was called"); return; }
+    const int64_t cls = CmMember(source, "itemType", type) ? CmWhole(type) : -1;
+    if (cls < 0) { Out(tag + "refused - template " + key + " has no whole itemType; nothing more was called"); return; }
+
+    RValue saved, o, stamp, item, added, res;
+    if (!CmCall(kCmSaveStructName, save, { source }, saved) || !ApIsPlainStruct(saved)) {
+        Out(tag + "refused - CreateItemSaveStruct answered no struct; nothing was made");
+        return;
+    }
+    const bool stackable = CmMember(saved, "o", o);
+    if (!stackable && count > 1) { Out(tag + "refused - count above 1 for a template with no o; nothing was made"); return; }
+    if (stackable) {
+        RValue def, own;
+        int64_t have = CmWhole(o);
+        if (CmMember(source, "itemDefinitionStruct", def) && CmMember(def, "o", own)) have = CmWhole(own);
+        if (have < 1 || count > have) {
+            Out(tag + "refused - count " + std::to_string(count) + " above the template's own o=" + std::to_string((long long)have) + "; nothing was made");
+            return;
+        }
+        try { g_Yytk->CallBuiltin("variable_struct_set", { saved, RValue("o"), RValue((double)count) }); }
+        catch (...) { Out(tag + "refused - the save struct's o could not be set; nothing was made"); return; }
+    }
+    if (!CmCall(kCmTimestampName, save, {}, stamp) || CmWhole(stamp) < 0) { Out(tag + "refused - LootTimestamp answered no whole number; nothing was made"); return; }
+    const std::string made = "0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string((long long)cls);
+    if (CmMapHas(map0, RValue(made)) != 0) { Out(tag + "refused - key " + made + " is taken or unreadable in map 0; nothing was made"); return; }
+    if (!CmCall(kCmFromJsonName, save, { saved, RValue(made) }, item) || !ApIsPlainStruct(item)) {
+        Out(tag + "refused - InitItemFromJson answered no item; nothing was placed");
+        return;
+    }
+    CmCall(kCmAddToMapName, save, { map0, RValue(made), item }, added);
+    if (CmMapHas(map0, RValue(made)) != 1) { Out(tag + "refused - AddItemToMap left no " + made + " in map 0; nothing was placed"); return; }
+    auto undo = [&](const std::string& why) {
+        RValue gone;
+        CmCall(kCmRemoveFromMapName, save, { map0, RValue(made) }, gone);
+        const int left = CmMapHas(map0, RValue(made));
+        Out(tag + "refused - " + why + "; " + made + " was taken out of map 0 again"
+            + (left == 0 ? std::string() : " - NOT confirmed: map 0 still answers " + std::to_string(left)));
+    };
+    RValue pref, cells;
+    if (!CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), item }, pref) || !ApPreferredGrid(pref, cells)) {
+        undo("GetItemPreferredGrid(1, item) answered no grid");
+        return;
+    }
+    const int before = GiveItemHeld(cells);
+    if (before < 0) { undo("the destination cells are unreadable"); return; }
+    if (!CmHasEmptyCell(cells)) { undo("the destination cells have no empty cell"); return; }
+    if (!CmCall(kCmPlaceName, save, { cells, item, RValue(0.0), RValue() }, res) || !ApAddSucceeded(res)) {
+        undo("GridAddItem answered no success");
+        return;
+    }
+    RValue prefNow, cellsNow;
+    if (!CmCall(kCmPreferredName, save, { RValue(kCmPreferredOwner), item }, prefNow) || !ApPreferredGrid(prefNow, cellsNow)) cellsNow = cells;
+    const int after = GiveItemHeld(cellsNow);
+    const int inMap = CmMapHas(map0, RValue(made));
+    const int inCells = CmCellsHold(cellsNow, made);
+    const int stashKept = CmMapHas(map9, RValue(key));
+    Out(tag + "key=" + made + " from=" + key + " before=" + std::to_string(before) + " after=" + std::to_string(after)
+        + " o=" + (stackable ? std::to_string(count) : std::string("none")) + " template on map 9: " + std::to_string(stashKept));
+    if (inMap == 1 && inCells == 1 && after == before + 1)
+        Out(tag + "confirmed - " + made + " in map 0 and in the destination cells");
+    else
+        Out(tag + "not confirmed - map 0 answers " + std::to_string(inMap) + ", the destination cells answer "
+            + std::to_string(inCells) + " for " + made + ", items " + std::to_string(before) + " -> " + std::to_string(after));
+}
+
+static bool SmaProbeCommand(const std::string& rest)
+{
+    std::istringstream in(rest);
+    std::vector<std::string> tok;
+    for (std::string t; in >> t;) tok.push_back(t);
+    if (tok.empty() || Lower(tok[0]) != "probe") return false;
+    const std::string sub = tok.size() >= 2 ? Lower(tok[1]) : std::string();
+    if (sub == "sort") SmaProbeSortCommand(tok);
+    else if (sub == "create") SmaProbeCreateCommand(tok);
+    else if (sub == "remove") SmaProbeRemoveCommand();
+    else if (sub == "show") SmaProbeShowCommand();
+    else if (sub == "copy") SmaProbeCopyCommand(tok);
+    else Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
+             "copy <template key on map 9> <count> (research build; docs/stash-move-research.md, Live procedure 1f)");
+    return true;
+}
+
+// Route B, from FrameCallback, once `probe sort` or `probe create` armed it:
+// every left press this frame is counted (poll_any_presses), and its GUI x,y
+// is kept beside the Sort node's and the probe node's bbox as read at that
+// frame; a press inside Sort's bbox counts poll_sort_presses (the positive
+// control: the procedure clicks Sort before any node exists) and one inside
+// the node's bbox poll_presses. So a node count of 0 can be told apart from
+// a poll that saw no press at all (read at the wrong time) and from a press
+// that landed outside the bbox (another space, or a missed click). Nothing is
+// read before the probe is armed.
+static void SmaProbeTick()
+{
+    if (!g_SmaProbePollArmed) return;
+    try {
+        if (!g_Yytk->CallBuiltin("mouse_check_button_pressed", { RValue(kSmaProbeMbLeft) }).ToBoolean()) return;
+        const double mx = g_Yytk->CallBuiltin("device_mouse_x_to_gui", { RValue(0.0) }).ToDouble();
+        const double my = g_Yytk->CallBuiltin("device_mouse_y_to_gui", { RValue(0.0) }).ToDouble();
+        InterlockedIncrement(&g_SmaProbePollAnyPresses);
+        bool inSort = false, inNode = false;
+        RValue sort;
+        const std::string sortBox = SmaProbeSort(sort) ? SmaProbeBox(sort, mx, my, inSort) : std::string("none");
+        std::string nodeBox = "none";
+        if (g_SmaProbeNodeId.load() >= 0 && SmaProbeExists(g_SmaProbeNode)) nodeBox = SmaProbeBox(g_SmaProbeNode, mx, my, inNode);
+        if (inSort) InterlockedIncrement(&g_SmaProbePollSortPresses);
+        if (inNode) InterlockedIncrement(&g_SmaProbePollPresses);
+        g_SmaProbeLastPress = MenuLayoutDecimal(mx) + "," + MenuLayoutDecimal(my)
+            + " (in_sort=" + (inSort ? "1" : "0") + " sort_bbox=" + sortBox
+            + " in_node=" + (inNode ? "1" : "0") + " node_bbox=" + nodeBox + ")";
+    } catch (...) {}
+}
+// ---- end stashmoveall probe
+#endif
 
 #ifndef FORGEPACT_RELEASE
 // ---- restartprobe: pause-menu Restart gate research (ForgePact issue #8) ---
@@ -38633,9 +40632,105 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
     return false;
 }
 
+#ifndef FORGEPACT_RELEASE
+// `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
+// sits above LogDrop.
+static void GoldTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    auto status = []() {
+        return std::string("goldtrace: ") + (g_GoldTraceOn ? "ON" : "OFF") + ", "
+            + std::to_string(g_GoldTraceLines) + " of " + std::to_string(kGoldTraceMaxLines)
+            + " lines this session (" + std::to_string(g_GoldTraceOverCap)
+            + " gold calls after the cap) -> bp_ipc\\goldtrace.txt";
+    };
+    if (v == "on" || v == "1") {
+        if (!g_GoldTraceFileFresh) {
+            std::ofstream(IPC_DIR + "\\goldtrace.txt", std::ios::trunc);
+            g_GoldTraceFileFresh = true;
+        }
+        // The gold scripts reach LogDrop only through the drop hooks, which
+        // `dropmult` installs only for a multiplier above 1. Install them here
+        // at their x1 pass-through, so `dropmult gold 1` is traced too;
+        // DropRelic is left to its own installers.
+        ForgePact::DropManager::Instance().InstallHooks();
+        g_GoldTraceOn = true;
+        Out(status());
+    } else if (v == "off" || v == "0") {
+        g_GoldTraceOn = false;
+        Out(status());
+    } else if (v.empty() || v == "stat") {
+        Out(status());
+    } else {
+        Out("goldtrace: usage -> goldtrace on | off | stat");
+    }
+}
+#endif
+
+// The Live 1 research instruments of the dev2 bug batch (`lootcensus`,
+// `goldtrace`), dispatched from their own function for the C1061 reason
+// HandleMenuProbeCommand gives. Answers false in the player build.
+static bool HandleLiveOneResearchCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "lootcensus") { LootCensus(); return true; }
+    if (lc == "goldtrace") { GoldTraceCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
 // Far sleep and the zone census read the game's compiled-code table from
 // the same anchor the frame profiler walks (defined in its section below).
 static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
+
+// ---- Rolling density copies: the reach and the command --------------------
+// The effective reach, once a second and on every `densityroll`. Filling the
+// map (`reveal spawn`) needs every copy at once, so it switches rolling off.
+// While a hunt is on (Beacon, or Tyrant's Crown for rares and champions) the
+// monsters within the wake radius keep stepping and hunting, and `beaconspawn`
+// makes the spawners there give birth - every spawner when the radius is off -
+// so the copies must exist that far out (all of them for a whole-map hunt).
+static void DensityRollCopyMade(int objectIndex) { ForgePact::PackMarkers::Instance().NoteCopy(objectIndex); }
+static void DensityRollRefresh()
+{
+    g_DensityCopyMade = &DensityRollCopyMade;
+    double reach = std::numeric_limits<double>::infinity();
+    if (g_DensityRollReach > 0.0) {
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        reach = g_DensityRollReach;
+        if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();
+        else if (HuntPolicy() != 0) {
+            if (g_BeWakeRadius < 0.0 || (g_BeWakeRadius == 0.0 && g_BeSpawnNear && BeaconActive()))
+                reach = std::numeric_limits<double>::infinity();
+            else if (g_BeWakeRadius > 0.0) reach = (std::max)(reach, g_BeWakeRadius + 500.0);
+        }
+    }
+    g_DensityReachNow = reach;
+}
+// `densityroll 1|0|<reach px>|stat` (the panel's switch sends 1 or 0).
+static void DensityRollCommand(const std::string& rest)
+{
+    std::string arg = Lower(rest);
+    arg.erase(0, arg.find_first_not_of(" \t"));
+    arg.erase(arg.find_last_not_of(" \t\r\n") + 1);
+    if (arg == "1" || arg == "on") g_DensityRollReach = kDensityRollDefaultPx;
+    else if (arg == "0" || arg == "off") g_DensityRollReach = 0.0;
+    else if (!arg.empty() && arg != "stat") {
+        double v = 0;
+        try { v = std::stod(arg); } catch (...) { v = 0; }
+        if (!(v >= 1500.0 && v <= 20000.0)) { Out("densityroll: usage densityroll 1 | 0 | <reach px, 1500-20000> | stat"); return; }
+        g_DensityRollReach = v;
+    }
+    DensityRollRefresh();
+    const size_t pending = g_DensityCopies.Pending();
+    std::string line = std::string("densityroll: ") + (g_DensityRollReach > 0.0 ? "on" : "off");
+    line += DensityRolling() ? ", reach " + std::to_string(std::llround(g_DensityReachNow)) + " px"
+        : (g_DensityRollReach > 0.0 ? ", every copy at once (filling the map or a whole-map hunt)" : "");
+    line += " | copies waiting " + std::to_string(pending) + ", due " + std::to_string(DeferredDensityPending())
+        + ", made " + std::to_string(g_DensityCopyCompleted);
+    Out(line);
+}
 
 // ---- Far sleep (FarSleep.hpp): the adapter --------------------------------
 // The names of the objects that own an event running every frame (Step,
@@ -39219,10 +41314,11 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest",
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
+        "stashmoveall", "stashmove", "densityroll"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -39230,6 +41326,21 @@ static void RunCommand(const std::string& line)
     }
 #endif
 
+    // `petunstick 1` / `petunstick 0` (#94), the pet quest collector's
+    // neighbour. It sits out here rather than as one more `else if` below:
+    // that chain is at MSVC's nesting limit (C1061). Turning it off prints
+    // what the mod did, so a report can tell "did nothing" from "did the
+    // wrong thing"; the counters are cheap and ship.
+    if (lc == "petunstick") {
+        std::string pv = Lower(rest);
+        while (!pv.empty() && std::isspace((unsigned char)pv.back())) pv.pop_back();
+        const bool enable = (pv == "1" || pv == "true" || pv == "on");
+        ForgePact::PetLootUnstickMod::Instance().SetEnabled(enable);
+        // SetEnabled prints the `petunstick -> ON|OFF` line itself; off adds
+        // what the mod did, where its ticks went and how each give-up ended.
+        if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine() + PetLootLocalStatSuffix());
+        return;
+    }
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
@@ -39238,6 +41349,7 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
     if (HandlePlayerWarpCommand(lc, rest)) return;
@@ -39245,6 +41357,8 @@ static void RunCommand(const std::string& line)
     if (HandleBagTabCommand(lc, rest)) return;
     if (HandleStashCloseCommand(lc, rest)) return;
     if (HandleGiveItemCommand(lc, rest)) return;
+    if (HandleStashMoveAllCommand(lc, rest)) return;
+    if (HandleStashMoveCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     // Toggle-skill research (issue #11), docs/toggle-skills-research.md. A
     // standalone early return rather than one more `else if` below: that chain
@@ -39290,6 +41404,8 @@ static void RunCommand(const std::string& line)
     if (lc == "frameprof") { FrameProfCommand(rest); return; }
     // Far sleep: the Mods tab's switch, the same standalone early return.
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
+    // Rolling density copies: the Mods tab's switch, the same early return.
+    if (lc == "densityroll") { DensityRollCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -40527,6 +42643,14 @@ void FrameCallback(FWFrame& FrameContext)
         PetQuestCollectorTick();
     }
 
+    // Pet moves on from loot it cannot pick up, toggled by `petunstick 1`
+    // (#94): gives the game's own companion loot pickup a nudge when the pet
+    // has sat on one item too long (see PetLootUnstickMod.hpp). No hook;
+    // everything goes through CallBuiltin.
+    if (ForgePact::PetLootUnstickMod::Instance().IsEnabled()) {
+        PetLootUnstickTick();
+    }
+
 #ifndef FORGEPACT_RELEASE
     // B4 Phase 0 research: `citrace pokekey`'s pending one-frame restore must
     // land regardless of whether `citrace <on|off>` tracing itself is armed -
@@ -40550,6 +42674,15 @@ void FrameCallback(FWFrame& FrameContext)
             HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
             Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
         }
+    }
+    // ...then, once per arm, the scan's own answer (#93): `relicfilter: scan
+    // found <n> maxed relics (ids ...)`. It waits for the install above when
+    // one is pending, and for a player either way, so an arm sent from the
+    // character screen with the hook already in (`dropmult relic`) is not
+    // spent on a scan that cannot run yet.
+    if (ForgePact::RelicFilterMod::Instance().IsArmScanDue() && !ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) RelicFilterReportArmScan();
     }
 
     // The shipped toggle table's talent ids (D-P1), the countdown's own
@@ -40612,8 +42745,21 @@ void FrameCallback(FWFrame& FrameContext)
     // again near a player (FarSleep.hpp). Nothing runs while it is off and
     // nothing it put to sleep is left asleep.
     if (g_Setup) FarSleepTick();
+    // Rolling density copies: the reach follows the map-fill and hunt
+    // settings, re-read once a second.
+    if (g_Setup && (g_RuntimeFrame % 60) == 0) DensityRollRefresh();
+
+    // Move all into the stash, toggled by `stashmoveall 1`: F4, read only
+    // while the switch is on (StashMoveAllTick). The move itself runs only on
+    // a press with the game in front and the stash open.
+    if (g_Setup) StashMoveAllTick();
 
 #ifndef FORGEPACT_RELEASE
+    // ForgePact #68's Live 1f instrument: the button probe's frame poll
+    // (Route B), which reads nothing until `stashmoveall probe sort` or
+    // `probe create` arms it.
+    if (g_Setup) SmaProbeTick();
+
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun
     // dibine Damien boss'u cagiriyor, F10 isinlanma portali aciyor,
     // F11 relic dusuruyor, F7/F8/F9 density'yi panelden bagimsiz

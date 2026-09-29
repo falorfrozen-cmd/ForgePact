@@ -10,6 +10,10 @@
 namespace ForgePact {
 // Plans survive leaving a zone; runnable jobs never do. A partially completed
 // placement resumes only when the game restores that original placement again.
+//
+// A `reach` (rolling copies): a job farther than it from the player waits - it
+// is neither taken nor dropped - and becomes due once the player comes within
+// reach. Without one every job is taken, nearest first.
 template<class Key,class Recipe,class Hash=std::hash<Key>> class DeferredDensityCopies {
     struct Plan{unsigned extras=0;uint64_t completed=0,scheduled=0;};
 public:
@@ -26,9 +30,19 @@ public:
     bool HasPlan(const Key& key)const{return m_Plans.count(key)!=0;}
     unsigned Target(const Key& key)const{auto it=m_Plans.find(key);return it==m_Plans.end()?0:it->second.extras;}
     size_t Pending()const{return m_Jobs.size()+m_Waiting.size();}
+    // The jobs within `reach` of (x,y): what rolling copies will make now, as
+    // opposed to Pending(), which also counts the ones still out of reach.
+    size_t DueWithin(double x,double y,double reach)const{
+        if(!std::isfinite(reach))return Pending();
+        const double r2=reach*reach;size_t n=0;
+        auto inReach=[&](const Job& j){const double dx=j.recipe.x-x,dy=j.recipe.y-y;return dx*dx+dy*dy<=r2;};
+        for(const auto& r:m_Jobs)if(inReach(r.job))++n;
+        for(const auto& j:m_Waiting)if(inReach(j))++n;
+        return n;
+    }
     void NewZone(){++m_Generation;m_Jobs.clear();m_Waiting.clear();m_HaveOrigin=false;m_Sequence=0;}
     void Reset(){NewZone();m_Plans.clear();}
-    std::optional<Job> TakeNearest(double x,double y,uint64_t frame=UINT64_MAX){
+    std::optional<Job> TakeNearest(double x,double y,uint64_t frame=UINT64_MAX,double reach=std::numeric_limits<double>::infinity()){
         if(!std::isfinite(x) || !std::isfinite(y))return std::nullopt;
         // The caller holds one player position throughout its frame batch.
         // Build distances once when that position changes, then select in
@@ -44,6 +58,7 @@ public:
         }
         while(!m_Jobs.empty()){
             if(!std::isfinite(m_Jobs.front().distance))return std::nullopt;
+            if(m_Jobs.front().distance>reach*reach)return std::nullopt;   // the nearest is out of reach: all wait
             std::pop_heap(m_Jobs.begin(),m_Jobs.end(),Farther{});
             Job job=std::move(m_Jobs.back().job);m_Jobs.pop_back();
             if(job.retryAt>frame){const auto retryAt=job.retryAt;Retry(std::move(job),retryAt);continue;}

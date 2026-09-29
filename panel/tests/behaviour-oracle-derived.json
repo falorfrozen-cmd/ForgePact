@@ -46,7 +46,10 @@
   "#sw_angelic_items",
   "#theme",
   "#sw_keys_primeevil",
-  "#mod_far_sleep"
+  "#mod_far_sleep",
+  "#mod_pet_loot_unstick",
+  "#mod_stash_move_all",
+  "#density_rolling"
  ],
  "steps": [
   {
@@ -4781,6 +4784,222 @@
     },
     "cmds": {
      "same": 410
+    }
+   }
+  },
+  {
+   "step": 413,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_pet_loot_unstick",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "petunstick 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 414,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_pet_loot_unstick",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "petunstick 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 415,
+   "control": "#mod_pet_loot_unstick",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 413
+    },
+    "cmds": {
+     "same": 413
+    }
+   }
+  },
+  {
+   "step": 416,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_pet_loot_unstick\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 414
+    },
+    "cmds": {
+     "same": 414
+    }
+   }
+  },
+  {
+   "step": 417,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 418,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 419,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 417
+    },
+    "cmds": {
+     "same": 417
+    }
+   }
+  },
+  {
+   "step": 420,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_stash_move_all\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 418
+    },
+    "cmds": {
+     "same": 418
+    }
+   }
+  },
+  {
+   "step": 421,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 422,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 423,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 421
+    },
+    "cmds": {
+     "same": 421
+    }
+   }
+  },
+  {
+   "step": 424,
+   "control": "#enabledMods .quick-disable[data-for=\"density_rolling\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 422
+    },
+    "cmds": {
+     "same": 422
     }
    }
   }

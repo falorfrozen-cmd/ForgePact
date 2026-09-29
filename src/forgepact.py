@@ -15,7 +15,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # and works with no compiled DLL at all, so tools/cut_release.py reads the
 # current version from here. Do NOT hand-edit it - `py tools/cut_release.py
 # <version>` moves every site at once and `--check` fails if they disagree.
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 import copy
 import hashlib
@@ -223,6 +223,11 @@ DEFAULTS = {
     # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
     # other mod toggles.
     "mod_pet_quest_pickup": False,
+    # The pet moves on from loot it cannot pick up (#94): when the game's own
+    # companion loot pickup sits on one item, the plugin holds that item back
+    # for the pet and lets it choose another (docs/pet-loot-stuck-research.md).
+    # Off by default like the other mod toggles.
+    "mod_pet_loot_unstick": False,
     # Auto-prospect (ForgePact #9): every item put into the Prospect Cube's
     # grid is prospected at once by the game's own Prospect. Off by default:
     # whatever is left in the grid when the game saves is lost.
@@ -250,11 +255,22 @@ DEFAULTS = {
     # bag is short of moves over. Off by default; offline only, like every mod
     # here.
     "mod_craft_mats": False,
+    # Move all into the stash (ForgePact #68, docs/stash-move-research.md):
+    # with the stash open, F4 moves the bag tab on show into the stash tab on
+    # show, each item by the game's own move; what the tab has no room for,
+    # or does not take, stays in the bag. Off by default; offline only, like
+    # every mod here.
+    "mod_stash_move_all": False,
     # Far scenery sleep (docs/far-sleep-research.md): a zone's far trees,
     # bushes, hay, rocks and fences sleep until a player comes near, so the
     # game stops walking them every frame. Off by default; offline only,
     # like every mod here.
     "mod_far_sleep": False,
+    # Rolling density copies (docs/population-performance-analysis.md): with
+    # Monster Density above x1 the extra spawners are made as the player
+    # approaches instead of all at once when a zone loads. Off by default;
+    # offline only, like every mod here.
+    "density_rolling": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -911,6 +927,9 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: no hook is installed, so unlike relicfilter
         # there is no arm/defer lifecycle to worry about.
         out.append("petquest 1")
+    if cfg.get("mod_pet_loot_unstick", False):
+        # Safe to send at launch: no hook, only a per-frame tick while on.
+        out.append("petunstick 1")
     if cfg.get("mod_auto_prospect", False):
         # Safe to send at launch: like relicfilter, the plugin only ARMS the mod
         # here and installs its hook once the game has settled.
@@ -936,11 +955,19 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
+    if cfg.get("mod_stash_move_all", False):
+        # Safe to send at launch: `stashmoveall 1` only turns the switch on;
+        # nothing moves until F4 is pressed with the stash open.
+        out.append("stashmoveall 1")
     if cfg.get("mod_far_sleep", False):
         # Safe to send at launch: `farsleep 1` only turns the switch on; the
         # plugin touches nothing before a zone has settled with a player in
         # it, and never in town or a menu.
         out.append("farsleep 1")
+    if cfg.get("density_rolling", False):
+        # Safe to send at launch: `densityroll 1` only sets the reach the
+        # plugin's density copy queue takes jobs within.
+        out.append("densityroll 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -1645,6 +1672,37 @@ def plugin_mod_state(cfg=None) -> dict:
         return {}
 
 
+STASH_MOVE_ALL_STATE = b"stashmoveall: state="
+STASH_MOVE_ALL_TAIL = 64 * 1024
+
+
+def stash_move_all_session(cfg=None) -> str:
+    """What Move all into the stash says it is doing: `on`, `off`, or
+    `off-after-loss` when a move it could not confirm turned it off for the
+    rest of the session (review of ForgePact #68: the switch kept showing on).
+
+    Read from the last `stashmoveall: state=` line of out.txt, which the
+    plugin prints on every switch and after a loss. out.txt is rotated at
+    plugin load, so its tail is this game session's; only the last 64 KB is
+    read, since the line is printed at each switch and the file grows to
+    megabytes. No line there (or no log) is an empty string: the plugin has
+    not said anything, which is not the same as off."""
+    try:
+        path = ipc_dir(cfg) / "out.txt"
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - STASH_MOVE_ALL_TAIL))
+            tail = fh.read()
+    except Exception:
+        return ""
+    at = tail.rfind(STASH_MOVE_ALL_STATE)
+    if at < 0:
+        return ""
+    state = tail[at + len(STASH_MOVE_ALL_STATE):].split(b"\n", 1)[0].split(b" ", 1)[0].strip()
+    return {b"on": "on", b"off": "off", b"off-for-this-session": "off-after-loss"}.get(state, "")
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1913,6 +1971,7 @@ class H(BaseHTTPRequestHandler):
                         "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
                         "pluginMods": plugin_mod_state(cfg),
+                        "stash_move_all_session": stash_move_all_session(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
@@ -2031,7 +2090,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "gem_filter":
                     value = gem_filter_value(val)
@@ -2113,6 +2172,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
                     elif key == "mod_pet_quest_pickup":
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
+                    elif key == "mod_pet_loot_unstick":
+                        send_cmds([f"petunstick {1 if cfg['mod_pet_loot_unstick'] else 0}"], cfg)
                     elif key == "mod_auto_prospect":
                         cmds = [f"autoprospect {1 if cfg['mod_auto_prospect'] else 0}"]
                         # Turning the parent on restates the child, as map
@@ -2133,6 +2194,10 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"craftmats {1 if cfg['mod_craft_mats'] else 0}"], cfg)
                     elif key == "mod_far_sleep":
                         send_cmds([f"farsleep {1 if cfg['mod_far_sleep'] else 0}"], cfg)
+                    elif key == "mod_stash_move_all":
+                        send_cmds([f"stashmoveall {1 if cfg['mod_stash_move_all'] else 0}"], cfg)
+                    elif key == "density_rolling":
+                        send_cmds([f"densityroll {1 if cfg['density_rolling'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

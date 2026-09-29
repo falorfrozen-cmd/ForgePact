@@ -30,11 +30,13 @@ namespace ForgePact {
 //   the last is the one the game used; a count with no decode before it makes
 //   the needs unreadable (BeginFind/OnDecode/OnFindCount/Needs);
 // - the press gate: the game's own press when no stash count was added, a
-//   refusal when the needs cannot be paired (PressStep), then Plan - the
-//   shortfall per input, need - k capped by a fresh stash count;
+//   refusal naming its one reason when the needs cannot serve this press
+//   (PressStep), then Plan - the shortfall per input, need - k capped by a
+//   fresh stash count;
 // - the split across entries, whole entries first and then a partial from the
 //   last (Split);
-// - the move outcome from both sides' re-reads (OnMoveReport), and the craft
+// - the move outcome from both sides' re-reads (OnMoveReport), never confirmed
+//   when ItemCheckHash did not dispatch for it (OnHashFailed), and the craft
 //   only when every take is confirmed (MayCraft);
 // - the consume check after the game's own press (OnConsume);
 // - the stash save only after a confirmed move (SaveDue), and the lines.
@@ -114,12 +116,19 @@ struct CraftMatsTake {
 };
 
 // Why a press or a take was not served, or a count was left alone. Each is
-// named once per session.
+// named once per session and counted every time. The four press-gate kinds
+// (issue #80) used to be one `unreadable`, which left a player's log unable to
+// say which of them stopped the press.
 enum class CraftMatsRefusal : int {
     None = 0,
     Unreadable,       // a count or amount the decision needed could not be read; nothing was taken
     NotTaken,         // the game declined a take and the stash tab is unchanged; nothing was taken
     StashUnreadable,  // the two tabs could not be read for a count; the game's own count stood
+    AlreadyServed,    // the press's needs record already served an earlier press; nothing moved
+    Unpaired,         // the record's counts could not be paired with the amounts decoded before them; nothing moved
+    UnnumberedRow,    // the adapter could not number the recipe row, the record's or the pressed one; nothing moved
+    OtherRow,         // the record was made for another recipe row than the one pressed; nothing moved
+    HashFailed,       // ItemCheckHash did not dispatch after a take's count edit; the take was not confirmed
     Count
 };
 
@@ -374,10 +383,12 @@ public:
 
     // Before the game's own DoCraftResult. Off, no record, or no stash count
     // added during that CraftFindRecipeItems call: the game's press, untouched.
-    // Otherwise the record must pair (Needs().readable), belong to this press's
-    // recipe row, and serve no earlier press; if not, the press is refused -
-    // the game's count came from the stash and nothing says what to move. A
-    // row the adapter could not number (-1) matches nothing, itself included.
+    // Otherwise the record must serve no earlier press (AlreadyServed), pair
+    // (Needs().readable, else Unpaired), and belong to this press's recipe row
+    // (UnnumberedRow, OtherRow); if not, the press is refused under that one
+    // reason - the game's count came from the stash and nothing says what to
+    // move. A row the adapter could not number (-1) matches nothing, itself
+    // included.
     CraftMatsPressStep PressStep(long long self) {
         if (!IsEnabled()) { m_WhileOff.fetch_add(1); return CraftMatsPressStep::Vanilla; }
         if (!m_FindOpen) return CraftMatsPressStep::Vanilla;
@@ -385,12 +396,15 @@ public:
         const bool used = m_FindUsed;
         m_FindUsed = true;
         if (!n.stashAdded) return CraftMatsPressStep::Vanilla;
-        if (used || !n.readable || n.self < 0 || n.self != self) {
-            Note(CraftMatsRefusal::Unreadable);
-            m_PressesRefused.fetch_add(1);
-            return CraftMatsPressStep::Refuse;
-        }
-        return CraftMatsPressStep::Plan;
+        CraftMatsRefusal why = CraftMatsRefusal::None;
+        if (used) why = CraftMatsRefusal::AlreadyServed;
+        else if (!n.readable) why = CraftMatsRefusal::Unpaired;
+        else if (n.self < 0 || self < 0) why = CraftMatsRefusal::UnnumberedRow;
+        else if (n.self != self) why = CraftMatsRefusal::OtherRow;
+        if (why == CraftMatsRefusal::None) return CraftMatsPressStep::Plan;
+        Note(why);
+        m_PressesRefused.fetch_add(1);
+        return CraftMatsPressStep::Refuse;
     }
 
     // One take across the material's entries in walk order: whole entries
@@ -429,9 +443,37 @@ public:
         return source && r.destAfter == r.destBefore + r.asked ? CraftMatsOutcome::Taken : CraftMatsOutcome::Loss;
     }
 
+    // The adapter's inline count edit is two steps, the definition's `o` and
+    // then ItemCheckHash(item) by name. When that call did not dispatch, the
+    // adapter puts `o` back and feeds the item's key here, before it reports
+    // the take's re-read: that take is then never confirmed (OnMoveReport). It
+    // is counted every time and named once, with the first key. While off
+    // nothing is taken, so a stray report changes nothing.
+    void OnHashFailed(const std::string& key) {
+        if (!IsEnabled()) return;
+        if (m_Refused[(int)CraftMatsRefusal::HashFailed].load() == 0) m_HashFailedKey = key;
+        Note(CraftMatsRefusal::HashFailed);
+        m_HashFailedPending = true;
+    }
+
+    // A take with a hash failure fed before its report is never Taken: re-read
+    // as it was (the count put back, the destination undone), it is NotTaken
+    // under `hash-failed` alone; re-read as moved, an edited count carries no
+    // fresh hash, and it is a loss.
     CraftMatsOutcome OnMoveReport(const CraftMatsMoveReport& r) {
         if (!IsEnabled()) return CraftMatsOutcome::NotTaken;
         const CraftMatsOutcome o = ClassifyMove(r);
+        const bool hashFailed = m_HashFailedPending;
+        m_HashFailedPending = false;
+        if (hashFailed) {
+            if (o == CraftMatsOutcome::NotTaken) return o;
+            Lose(o == CraftMatsOutcome::Taken
+                ? "ItemCheckHash did not run after a count edit and the count could not be put back, so an item holds a"
+                  " count its hash was not made for"
+                : "a move from the stash could not be confirmed on both sides (the stash entry and the bag or Cube,"
+                  " re-read after it), and ItemCheckHash did not run for it");
+            return CraftMatsOutcome::Loss;
+        }
         if (o == CraftMatsOutcome::Taken) {
             m_Taken.fetch_add(1);
             m_TakenUnits.fetch_add(r.asked);
@@ -549,6 +591,11 @@ public:
         case CraftMatsRefusal::Unreadable:      return "unreadable";
         case CraftMatsRefusal::NotTaken:        return "not-taken";
         case CraftMatsRefusal::StashUnreadable: return "stash-unreadable";
+        case CraftMatsRefusal::AlreadyServed:   return "already-served";
+        case CraftMatsRefusal::Unpaired:        return "unpaired";
+        case CraftMatsRefusal::UnnumberedRow:   return "unnumbered-row";
+        case CraftMatsRefusal::OtherRow:        return "other-row";
+        case CraftMatsRefusal::HashFailed:      return "hash-failed";
         default:                                return "none";
         }
     }
@@ -566,6 +613,21 @@ public:
         case CraftMatsRefusal::StashUnreadable:
             return head + "the stash's Materials and Socketable tabs could not be read for a recipe count; that count is"
                           " the bag's alone";
+        case CraftMatsRefusal::AlreadyServed:
+            return head + "the recipe counts that included the stash had already served an earlier press; the craft was"
+                          " refused, and nothing moved from the stash for it";
+        case CraftMatsRefusal::Unpaired:
+            return head + "a recipe count that included the stash could not be paired with the amount the recipe needs;"
+                          " the craft was refused, and nothing moved from the stash for it";
+        case CraftMatsRefusal::UnnumberedRow:
+            return head + "the recipe row could not be identified; the craft was refused, and nothing moved from the"
+                          " stash for it";
+        case CraftMatsRefusal::OtherRow:
+            return head + "the recipe counts that included the stash were made for another recipe row than the one"
+                          " pressed; the craft was refused, and nothing moved from the stash for it";
+        case CraftMatsRefusal::HashFailed:
+            return head + "ItemCheckHash did not run for " + m_HashFailedKey
+                + "; the take was not confirmed and the craft was refused";
         default:
             return head + "nothing";
         }
@@ -624,6 +686,11 @@ public:
             + " walks=" + std::to_string(Walks())
             + " stash-unreadable=" + std::to_string(Refused(CraftMatsRefusal::StashUnreadable))
             + " presses-refused=" + std::to_string(PressesRefused())
+            + " already-served=" + std::to_string(Refused(CraftMatsRefusal::AlreadyServed))
+            + " unpaired=" + std::to_string(Refused(CraftMatsRefusal::Unpaired))
+            + " unnumbered-row=" + std::to_string(Refused(CraftMatsRefusal::UnnumberedRow))
+            + " other-row=" + std::to_string(Refused(CraftMatsRefusal::OtherRow))
+            + " hash-failed=" + std::to_string(Refused(CraftMatsRefusal::HashFailed))
             + " consume(ok=" + std::to_string(ConsumeChecks()) + " mismatch=" + std::to_string(Mismatches()) + ")"
             + " session=" + (OffThisSession() ? "off" : "ok");
     }
@@ -679,6 +746,11 @@ private:
 
     unsigned                      m_ReportedMask = 0;
     std::vector<CraftMatsRefusal> m_Unreported;
+
+    // The first hash failure's item key, for its one line, and whether one was
+    // fed since the last take report.
+    std::string m_HashFailedKey;
+    bool        m_HashFailedPending = false;
 
     std::atomic<long>      m_Plans{ 0 };
     std::atomic<long>      m_PlansWithTakes{ 0 };

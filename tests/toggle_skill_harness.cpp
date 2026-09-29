@@ -102,6 +102,9 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // whose objects no toggle-table row names either.
                         Bard_Progenies_Amplifier_obj, Redneck_Pickup_Truck_obj,
                         Dissipating_Tornado_obj,
+                        // Issue #83 (workorder forgepact-dev2-bug-batch):
+                        // Mana Orb's orb, the eighth countdown row.
+                        White_Mage_Mana_Orb_obj,
                         // Issue #55 follow-up (D-S4): two synthetic objects for
                         // the rule map's own stand-in generated table below -
                         // this harness does not carry the real 700+-entry
@@ -128,6 +131,7 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Bard_Progenies_Amplifier_obj: return "Bard_Progenies_Amplifier_obj";
     case GameObject::Redneck_Pickup_Truck_obj: return "Redneck_Pickup_Truck_obj";
     case GameObject::Dissipating_Tornado_obj: return "Dissipating_Tornado_obj";
+    case GameObject::White_Mage_Mana_Orb_obj: return "White_Mage_Mana_Orb_obj";
     case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
     case GameObject::Skill_Controller_obj: return "Skill_Controller_obj";
     case GameObject::Player_Buff_Parent_obj: return "Player_Buff_Parent_obj";
@@ -2796,6 +2800,45 @@ int main() {
         bool half = false, full = false;
         for (const TextDraw& t : g_TextDraws) { if (t.text == "50%") half = true; if (t.text == "100%") full = true; }
         checkBool("skilltimer/rows_keep_separate_latches/fraction", half && full && g_TextDraws.size() == 2, true);
+    }
+
+    // 25. Issue #83: Mana Orb, the eighth explicit row, behaves like the
+    //     others. Its orb carries no readable ownership field (Live 1's sweep
+    //     read `own=unreadable`, so the row names none) and latches on its
+    //     first positive destroyTimer reading - 5040, Live 1's own `first=`
+    //     with the Chosen One upgrade - then draws the fraction left: 2520
+    //     reads 50%. Its own `skilltimer stat` line names it. Negative
+    //     control: a fresh orb reading -1 draws nothing and never latches.
+    const int kStMo = countdownRow("manaOrb");
+    checkBool("skilltimer/mana_orb_row_latches_and_draws/row_exists", kStMo >= 0, true);
+    resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+    resolveOnlyCountdownRow(kStMo, 253);
+    world.row0 = { { 253.0, 100.0, 200.0, 50.0, 60.0 } };
+    world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::White_Mage_Mana_Orb_obj)] = 602.0;
+    world.instancesByIndex[602.0] = { WithTimer(Unattributed(), MakeReal(5040.0)) };
+    g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+    if (kStMo >= 0) {
+        SkillTimerDraw();
+        checkNear("skilltimer/mana_orb_row_latches_and_draws/latch", g_SkillTimerRowState[kStMo].latch, 5040.0);
+        resetSkillTimerDrawRecord();
+        world.instancesByIndex[602.0] = { WithTimer(Unattributed(), MakeReal(2520.0)) };
+        SkillTimerDraw();
+        checkBool("skilltimer/mana_orb_row_latches_and_draws/fraction",
+                  g_TextDraws.size() == 1 && g_TextDraws.back().text == "50%", true);
+        const std::string line = SkillTimerRowCountersLine(kStMo);
+        checkBool("skilltimer/mana_orb_row_latches_and_draws/stat_line",
+                  line.rfind("manaOrb drawn=2 ", 0) == 0 && line.find(" latched=1 ") != std::string::npos, true);
+
+        resetWorld(); resetSkillTimer(); resetSkillTimerDrawRecord();
+        resolveOnlyCountdownRow(kStMo, 253);
+        world.row0 = { { 253.0, 100.0, 200.0, 50.0, 60.0 } };
+        world.objIndexByName[HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::White_Mage_Mana_Orb_obj)] = 602.0;
+        world.instancesByIndex[602.0] = { WithTimer(Unattributed(), MakeReal(-1.0)) };
+        g_SkillTimerStyle.store(ForgePact::SkillTimerStyle::Number);
+        SkillTimerDraw();
+        checkBool("skilltimer/mana_orb_row_latches_and_draws/expired_never_latches",
+                  !g_SkillTimerRowState[kStMo].latched && g_StRow[kStMo].expired == 1, true);
+        checkInt("skilltimer/mana_orb_row_latches_and_draws/expired_draws_nothing", (long long)g_TextDraws.size(), 0);
     }
     resolveOnlyCountdownRow(kStSoul, kToggleIndicatorTalentId);
 

@@ -25,6 +25,15 @@ with player-visible changes and no notes as an incomplete change, and this is
 that rule's first mechanical enforcement), and the plugin's boot line must
 reference `FORGEPACT_VERSION` rather than a literal.
 
+A Friday release's notes file must also say when the version ships, on a
+line of its own: `Release date: YYYY-MM-DD`. ForgePact releases on Fridays: a
+version ending in `.0` (a minor or major step, 2.0.0 -> 2.1.0 or 3.0.0) is a
+Friday release and its date must be a Friday. A version ending in anything else
+(2.0.1) is a hotfix, which can ship any day, so it needs no date at all; one
+it does give may be any day, but must still be a single real date. The date is
+checked here for shape only. `forgepact_tag.py` is what refuses to tag a
+Friday release before its date.
+
 The same `Site` list both writes and checks, so the setter and the checker
 cannot drift apart - that is the property worth copying from the hub's
 `tools/cut_release.py`, which this deliberately mirrors rather than imports.
@@ -44,8 +53,9 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
-from typing import List, NamedTuple, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -93,6 +103,48 @@ VERSION = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$
 #: Checked, never written: derived from the version rather than a site.
 RELEASE_NOTES = "release-notes-v{version}.md"
 BOOT_MARKER = "BloodPact plugin loaded"
+
+#: The line a release-notes file names its release date on. ISO so it sorts
+#: and parses one way; on a line of its own so it reads as a line in the
+#: published release body too.
+RELEASE_DATE = re.compile(r"(?m)^Release date: (?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})[ \t]*\r?$")
+RELEASE_DATE_EXAMPLE = "Release date: 2026-10-02"
+FRIDAY = 4  # date.weekday()
+
+
+def is_hotfix(version: str) -> bool:
+    """A version ending in anything but `.0` is a hotfix, which ships any day."""
+    return version.rsplit(".", 1)[-1] != "0"
+
+
+def notes_date(version: str, text: str) -> Tuple[Optional[date], Optional[str]]:
+    """The release date a notes file declares, or why it declares none that counts.
+
+    Returns `(date, None)` or `(None, problem)`. A Friday release (`X.Y.0`)
+    with no date, or whose date is not a Friday, is a problem. A hotfix needs
+    no date, so `(None, None)` means it gave none; one it gives may be any day.
+    """
+    found = RELEASE_DATE.findall(text)
+    if not found:
+        if is_hotfix(version):
+            return None, None
+        return None, (
+            f"has no release date: add a line reading `{RELEASE_DATE_EXAMPLE}` "
+            "under its heading"
+        )
+    if len(found) > 1:
+        return None, f"names {len(found)} release dates; give exactly one"
+    try:
+        when = date.fromisoformat(found[0])
+    except ValueError:
+        return None, f"release date {found[0]} is not a real date"
+    if not is_hotfix(version) and when.weekday() != FRIDAY:
+        return None, (
+            f"release date {when.isoformat()} is a {when.strftime('%A')}: "
+            f"{version} is a Friday release. Only a hotfix (a version not "
+            "ending in .0) ships on other days"
+        )
+    return when, None
 BOOT_LINE_FILE = "plugin/include/ForgePact/ModManager.hpp"
 
 
@@ -123,6 +175,21 @@ def derived(
     notes = root / RELEASE_NOTES.format(version=version)
     if notes.is_file():
         lines.append(f"  ok      {version}  {notes.name} -- the release notes exist")
+        when, problem = notes_date(version, notes.read_text(encoding="utf-8-sig"))
+        if problem:
+            ok = False
+            lines.append(f"  MISSING {version}  {notes.name} -- {problem}")
+        elif when is None:
+            lines.append(
+                f"  ok      {version}  {notes.name} -- a hotfix, which needs "
+                "no release date"
+            )
+        else:
+            kind = "a hotfix" if is_hotfix(version) else "a Friday release"
+            lines.append(
+                f"  ok      {version}  {notes.name} -- release date "
+                f"{when.isoformat()} ({when.strftime('%A')}), {kind}"
+            )
     elif notes_required:
         ok = False
         lines.append(
@@ -223,9 +290,10 @@ def cut(root: Path, new: str) -> List[str]:
 
     notes = root / RELEASE_NOTES.format(version=new)
     if not notes.is_file():
+        dated = "" if is_hotfix(new) else f", with a `{RELEASE_DATE_EXAMPLE}` line"
         done.append(
-            f"  NOTE  {notes.name} does not exist yet - write it before releasing; "
-            "--check will fail until you do"
+            f"  NOTE  {notes.name} does not exist yet - write it{dated}, before "
+            "releasing; --check will fail until you do"
         )
     return done
 

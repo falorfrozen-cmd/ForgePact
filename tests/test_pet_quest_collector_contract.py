@@ -277,6 +277,74 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         dispatch = self.plugin_code.split('lc == "petquest"', 1)[1][:1600]
         self.assertIn('pv.rfind("arg", 0)', dispatch)
 
+    # ---- issue #94: target selection with memory of failure ---------------
+    # The pet circled one item with many on screen. The Idle pick had no
+    # memory of a collect that left the item in place, a gate refusal or a
+    # travel timeout, and the family walk never read past its budget. The
+    # decision is PetQuestSelector in the header (its behaviour is pinned by
+    # test_pet_quest_collector_behavior.py); these pin that the tick uses it.
+
+    def _selector_source(self):
+        start = self.header.index("inline constexpr int64_t kPetQuestHoldFrames")
+        return self.header[start: self.header.index("// Pet Quest Collector: while enabled")]
+
+    def test_header_declares_the_selector(self):
+        self.assertIn("class PetQuestSelector", self.header)
+        self.assertIn("inline constexpr int64_t kPetQuestHoldFrames = 600;", self.header)
+        self.assertIn("inline constexpr size_t kPetQuestHoldMax = 32;", self.header)
+        for member in ("Pick(", "Note(", "Hold(", "NextStart(", "HeldBack()"):
+            self.assertIn(member, self._selector_source())
+
+    def test_selector_is_game_independent(self):
+        # The harness compiles it with no runtime stub; a game call creeping
+        # in would also make the choice untestable.
+        selector = self._selector_source()
+        for game in ("g_Yytk", "RValue", "CInstance", "CallBuiltin", "Out("):
+            self.assertNotIn(game, selector)
+
+    def test_tick_picks_through_the_selector_from_the_cursor(self):
+        tick = self._tick()
+        self.assertIn("g_PetQuestSelector.NextStart(total, kBudget)", tick)
+        self.assertIn("const int i = (start + k) % total;", tick)
+        self.assertIn("g_PetQuestSelector.Pick(candidates, g_PetQuestFrame)", tick)
+        self.assertIn("constexpr int kBudget = 64;", tick)   # the walk stays bounded per tick
+        # The pre-fix nearest-only choice is gone from the tick.
+        self.assertNotIn("bestD2", tick)
+
+    def test_every_travel_end_tells_the_selector_how_it_went(self):
+        # A travel that ended without a Note would leave the selector sending
+        # the pet to a stale target, so no path may set Idle by hand.
+        tick = self._tick()
+        self.assertNotIn("g_PetQuestPhase = PetQuestPhase::Idle", tick)
+        end = self._function_body("PetQuestEndTravel")
+        self.assertIn("g_PetQuestSelector.Note(outcome, g_PetQuestFrame)", end)
+        self.assertIn("g_PetQuestPhase = PetQuestPhase::Idle", end)
+        self.assertIn("PetQuestEndTravel(PetQuestCollectOne(target))", tick)
+        self.assertIn("PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost)", tick)
+        self.assertIn("ForgePact::PetQuestOutcome::Timeout", tick)
+        self.assertIn("PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned)", tick)
+
+    def test_collect_reports_no_effect_only_when_the_item_remained(self):
+        # The hold for "dispatched, item remained" rests on the same
+        # instance_exists read that counts it; nothing here invents a collect.
+        body = self._function_body("PetQuestCollectOne")
+        after = body[body.index("InvokeMethodValue("):]
+        self.assertLess(after.index("instance_exists"), after.index("return PetQuestOutcome::NoEffect;"))
+        self.assertIn("return PetQuestOutcome::Gate;", body)
+        self.assertIn("return PetQuestOutcome::Collected;", body)
+
+    def test_petquest_0_prints_held_back(self):
+        # The owner reads these lines in the #94 manual test: `petquest 0`
+        # prints the stats in the player build, now with `held back=`.
+        stats = self._function_body("PetQuestCollectorStats")
+        self.assertIn("held back=%ld", stats)
+        self.assertIn("g_PetQuestSelector.HeldBack()", stats)
+        self.assertIn("collected=%ld", stats)
+        self.assertIn("dispatched-but-item-remained=%ld", stats)
+        branch = self.plugin_code.split('lc == "petquest"', 1)[1][:2000]
+        after_guard = branch[branch.index("#endif"):]
+        self.assertIn("if (!enable) PetQuestCollectorStats();", after_guard)
+
 
     # ---- Plan C Phase C0: research tooling that INVOKES game code ---------
     # docs/pet-quest-collector-plan-c-direct-invocation.md. Every prior phase

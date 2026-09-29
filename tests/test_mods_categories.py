@@ -23,7 +23,7 @@ assertions pass on the pre-change panel and on the result.
 
 `ModsCategorySplitTests` pins the result: two Mods-tab cards named
 `qolCard`/`itemsCard`, in that order, neither repeating its sub-tab's name as
-a heading (the strip names them), `qolCard` holding exactly the ten Quality
+a heading (the strip names them), `qolCard` holding exactly the eleven Quality
 of Life controls in the assignment table's
 order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
 either source file.
@@ -47,10 +47,14 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
-from panel_source import panel_file, panel_source
+# `py -3 -m unittest tests.test_mods_categories` from the ForgePact root puts
+# the root, not tests/, on the path; discovery puts tests/ there itself.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from panel_source import panel_file, panel_source  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PANEL_DIR = pathlib.Path(os.environ.get("FORGEPACT_TEST_PANEL_DIR", str(ROOT / "src")))
@@ -66,6 +70,7 @@ QOL_CONTROL_IDS = [
     "map_reveal",
     "map_reveal_packs",
     "mod_pet_quest_pickup",
+    "mod_pet_loot_unstick",
     "mod_auto_prospect",
     "mod_auto_prospect_bag",
     "mod_toggle_indicator",
@@ -313,7 +318,7 @@ class ModsCategorySplitTests(unittest.TestCase):
             self.assertNotIn("<h2", body, f"{cid} still has a heading")
         self.assertNotIn("<h2>Quality of Life</h2>", HTML)
 
-    def test_qol_card_controls_are_exactly_the_ten_qol_ids_in_order(self):
+    def test_qol_card_controls_are_exactly_the_eleven_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")
         positions = []
         for control_id in QOL_CONTROL_IDS:

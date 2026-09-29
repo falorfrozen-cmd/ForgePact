@@ -4743,6 +4743,47 @@ same shape Blade Barrier's trailing `-1` reading already ships with.
 
 With these three added, the countdown ships seven explicit rows.
 
+#### Issue #83 (2026-09): Mana Orb, measured with the Chosen One upgrade
+
+Issue #83 reported no countdown on Mana Orb (White Mage) with the Chosen One
+upgrade (`subWhiteMageManaOrb12`). It was measured in Live 1 of workorder
+`forgepact-dev2-bug-batch` on 2026-09-27 (capture
+`forgepact-dev2-bug-batch-live-1.md`, kept on the driver's machine with the
+workorder; the session record is in `dev2-bug-batch-research.md`), on a
+research DLL, against the same Results rules (a)-(f) above.
+
+- **Why it drew nothing: no rule entry.** `skilltimer stat` listed 17 rule
+  rows and `manaOrb` (talent 253) was not among them, both with and without
+  the upgrade (`ruleRows=17 ruleDenied=44 ruleUnreadableFields=0
+  ruleNoName=260` on the first read). The generated name table does map
+  `manaorb` to `White_Mage_Mana_Orb_obj`, so the talent was ruled out before
+  the object lookup. The static reading's explanation is that the talent's
+  `abilityDuration` reads 0, which fails the rule's `duration > 0` test.
+  That was not measured: no `tgprobe talents dur` line for talent 253 was
+  taken in this session.
+- **The orb's own timer spans the cast.** With Chosen One allocated, two
+  `ojson White_Mage_Mana_Orb_obj destroyTimer` reads about 18 s apart gave
+  `4151.708064` and then `1599.867504`, a drop of about 142 per second, which
+  is the game's frame rate. `chosenOne` read `bool:true` beside it, with
+  `orbitRadius` at 0: the upgrade moves the orb onto the player but does not
+  change what carries its duration. The sweep row for the same cast:
+  `White_Mage_Mana_Orb_obj idx=5745 runtime=White_Mage_Mana_Orb_obj root=Player_Ability_Parent_obj app=1 present=0 draws=5033 first=5040.000000 last=-0.876816 min=-0.876816 max=5040.000000 timerUnreadable=0 maxInst=1 own=unreadable firstFrame=19664 lastFrame=24696 totalDraws=5033`.
+- **The plain cast was not observed.** The cast without Chosen One was
+  refused by the test driver (`cast_not_confirmed`: the slot's effect count
+  did not move within 10 s), so no orb existed to read. The row is shipped
+  on the Chosen One measurement alone, and the release notes claim only that
+  case. Because the draw latches each cast's own first reading (route B),
+  a plain orb with a different lifetime still draws a correct fraction if
+  its timer counts down the same way; that is expected but not observed.
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Mana Orb (`manaOrb`), with Chosen One | White Mage | `White_Mage_Mana_Orb_obj`, 5745 | ability | 1 (one cleared window) | `first=5040.000000` | - (plain cast refused `cast_not_confirmed`, not observed) | 5033 | unreadable | not taken (talent 253; `abilityDuration` 0 is the static reading, not measured) | ship | issue #83, owner's route decision (`object-timer`) from Live 1: only one cast, so rule (b)'s second `first=` is missing; `first > 0` (c); 5033 draws against 5040 (d); `own=unreadable` -> no ownership field (e); under `Player_Ability_Parent_obj`, not `Player_Sentry_Parent_obj` (f); `destroyTimer` 4151.71 -> 1599.87 over about 18 s, read directly |
+
+With Mana Orb added, the countdown ships eight explicit rows. The rule
+coverage expectation below was written when there were seven; `manaOrb` was
+never among its rule-selected rows, so its selection is unchanged.
+
 #### Rule coverage expectation
 
 D-S4 (owner, 2026-09-21, verbatim): "lets ship untested following a rule -
