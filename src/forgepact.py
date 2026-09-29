@@ -36,8 +36,8 @@ import offline_launcher
 # The Satanic Zone pools are all the panel takes from the SDK, and the import
 # names nothing else: a name from one of the SDK's generated tables
 # (GameObject, GameScript, ...) builds that table's whole IntEnum on every
-# panel start, sandbox and exe launch, used or not. Hub guide: ForgePact Known
-# Limitations item 31. tests/test_panel_sdk_import.py pins it.
+# panel start, sandbox and exe launch, used or not (hub hs-game-sdk guide,
+# "Import cost"). tests/test_panel_sdk_import.py pins it.
 try:
     from hs_game_sdk import SATANIC_BUFFS, SATANIC_DEBUFFS
 except ImportError:

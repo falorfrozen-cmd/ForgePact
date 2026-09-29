@@ -8,7 +8,7 @@ name the panel imports is paid for at every panel start, every sandbox a
 browser test starts and every launch of the packaged exe, used or not.
 src/forgepact.py used to import GameObject, GameScript and seven more names it
 never used, and so built the objects and scripts tables for nothing (hub
-guide, ForgePact Known Limitations item 31).
+hs-game-sdk guide, "Import cost").
 
 The table check imports the panel in a new interpreter, because a table this
 process already imported would hide a regression, and it reads what that
