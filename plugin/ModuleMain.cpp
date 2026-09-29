@@ -17435,53 +17435,6 @@ static void RelicFilterTestMaxed(const std::string& spec)
     Out("relicfilter testmaxed: " + std::to_string(count) + " id(s) treated as maxed");
 }
 
-// `relicfilter ground [clear]` (research build). It lists the relics lying on
-// the ground, by id, read from each Loot_Ground_obj's `itemInstance`. With
-// `clear` it also destroys them, so a test session never lets the character
-// pick one up. It changes nothing else.
-static void RelicFilterGround(bool clear)
-{
-    try {
-        const double lootIdx = g_Yytk->CallBuiltin("asset_get_index",
-            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
-        if (lootIdx < 0) { Out("relicfilter ground: Loot_Ground_obj not found"); return; }
-        const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
-        std::map<int, int> relics;
-        std::vector<RValue> toDestroy;
-        long noItem = 0, other = 0, unreadable = 0;
-        for (long i = 0; i < ground && i < 4096; ++i) {
-            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) });
-            if (inst.m_Kind == VALUE_UNDEFINED) { ++unreadable; continue; }
-            if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("itemInstance") }).ToBoolean()) { ++noItem; continue; }
-            RValue item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemInstance") });
-            if (item.m_Kind != VALUE_OBJECT) { ++unreadable; continue; }
-            RValue cls = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") });
-            if (cls.m_Kind != VALUE_REAL && cls.m_Kind != VALUE_INT32 && cls.m_Kind != VALUE_INT64) { ++unreadable; continue; }
-            if ((int)cls.ToDouble() != (int)HeroSiege::Items::ItemType::Relic) { ++other; continue; }
-            RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
-            RValue b = def.m_Kind == VALUE_OBJECT ? g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") }) : RValue();
-            if (b.m_Kind != VALUE_REAL && b.m_Kind != VALUE_INT32 && b.m_Kind != VALUE_INT64) { ++unreadable; continue; }
-            ++relics[(int)b.ToDouble()];
-            toDestroy.push_back(inst);
-        }
-        std::string ids;
-        long count = 0;
-        for (const auto& [id, n] : relics) {
-            if (!ids.empty()) ids += ",";
-            ids += std::to_string(id) + "x" + std::to_string(n);
-            count += n;
-        }
-        long cleared = 0;
-        if (clear) {
-            for (RValue& inst : toDestroy) {
-                try { g_Yytk->CallBuiltin("instance_destroy", { inst }); ++cleared; } catch (...) {}
-            }
-        }
-        Out("relicfilter ground: relics=" + std::to_string(count) + " ids=" + (ids.empty() ? std::string("none") : ids)
-            + " other=" + std::to_string(other) + " noitem=" + std::to_string(noItem)
-            + " unreadable=" + std::to_string(unreadable) + " cleared=" + std::to_string(cleared));
-    } catch (...) { Out("relicfilter ground: read threw"); }
-}
 #endif
 
 // The relic filter's arm-time line (#93), both builds. The hook's own lines
@@ -41549,8 +41502,6 @@ static void RunCommand(const std::string& line)
 #ifndef FORGEPACT_RELEASE
         } else if (sub.rfind("testmaxed", 0) == 0) {
             RelicFilterTestMaxed(sub.substr(9));
-        } else if (sub == "ground" || sub == "ground clear") {
-            RelicFilterGround(sub == "ground clear");
 #endif
         } else {
             bool enable = (rest == "1" || rest == "true" || rest == "on");

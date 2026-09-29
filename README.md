@@ -447,7 +447,7 @@ relicfilter -> ON (armed, applies once you are in-game)
 relicfilter: hook installed -> ON (GetRelicQuest, native detour)
 relicfilter: scan found 1 maxed relics (ids 140)
 relicfilter: equipped slots mplr=1 slots=18 ... relics=12:140@10 ... stopped=none
-relicfilter: relic tab key=1 online=no grid=156 cells=156 strings=14 ... maxed=none stopped=none
+relicfilter: relic tab key=1 profile=0 online=no grid=156 cells=156 nodes=14 strings=14 ... maxed=none stopped=none
 relicfilter: skipped maxed relic 140, the game picks again (1 since armed)
 ```
 

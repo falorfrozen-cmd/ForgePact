@@ -466,14 +466,17 @@ class TestRelicFilterLever(unittest.TestCase):
         self.assertIn("table-only", state)
         self.assertIn("if (!g_GetRelicQuestNative)", state)
 
-    def test_status_ships_and_the_research_instruments_do_not(self):
+    def test_status_ships_and_the_research_instrument_does_not(self):
         player = strip_comments(strip_research_blocks(self.plugin_code))
         branch = body(player, 'if (lc == "relicfilter")')
         self.assertIn("RelicFilterStatus();", branch)
         self.assertNotIn("RelicFilterTestMaxed", branch)
-        self.assertNotIn("RelicFilterGround", branch)
         self.assertNotIn("static void RelicFilterTestMaxed(", player)
-        self.assertNotIn("static void RelicFilterGround(", player)
+        # Live 1 (2026-09-30) found a ground census of Loot_Ground_obj blind to
+        # relics placed by a direct DropRelic call, so no such instrument ships
+        # in either build; the relic a drop built is read from CreateItemNew's
+        # research log instead.
+        self.assertNotIn("RelicFilterGround", self.plugin_code)
 
 
 class TestLiveOneResearchInstruments(unittest.TestCase):
