@@ -1,5 +1,5 @@
 // ST: the last /api/state payload - the saved settings (`cfg`), what the
-// plugin reports (`pluginMods`, `chain`, `launch`), and the tables the data
+// plugin reports (`pluginMods`, `chain`, `pluginBuild`, `launch`), and the tables the data
 // rows are drawn from (`spawners`, `drops`, `keys`, `stats`, `percentStats`,
 // the Satanic pools). boot() replaces it through setST(); the write queue and
 // the poll patch its fields in place.

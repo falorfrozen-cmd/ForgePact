@@ -1030,6 +1030,16 @@ After a Hero Siege update, press **Install Mod Plugin** again before launching. 
 the patched game exe during updates; ForgePact safely keeps the previous backup and prepares the
 new game build.
 
+After a **ForgePact** update, the plugin in your game is still the old one until it is replaced.
+ForgePact compares it with the plugin it ships, by reading the file, never by loading it. When
+the game's plugin is older, Setup, the status bar and the warning icon say so and point at
+**Install Mod Plugin**. **Launch Modded Game** replaces an older plugin itself before the game
+starts: only with the game closed, only the plugin file, and only when YYToolkit and AurieCore in
+the game are already the ones this ForgePact ships. Otherwise it launches as before and asks you to
+press **Install Mod Plugin**. Run from source, ForgePact only warns, since a plugin in the game
+may be your own build. Starting the game from Steam skips the launch step, so press
+**Install Mod Plugin** once after updating.
+
 All gameplay modifiers are **Off by default** for a new player. No manual hook,
 command file or DLL copying is required; the two buttons above handle installation
 and launch.
