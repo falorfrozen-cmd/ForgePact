@@ -7,39 +7,57 @@ run 36372423744 printed only "connect ECONNREFUSED 127.0.0.1:64600", which
 cannot tell a sandbox that had exited from one refusing connections while it
 served, and a traceback no one could place.
 
-Needs node and the panel's dev dependencies (browser.mjs imports
-playwright-core), not Edge or a built panel: no browser is started.
+The node script needs node and the panel's dev dependencies (browser.mjs
+imports playwright-core), not Edge or a built panel: no browser is started.
 """
 import json
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import panel_sandbox_server  # noqa: E402
 
 PANEL = Path(__file__).resolve().parents[1] / "panel"
 BROWSER_LIB = PANEL / "tests" / "lib" / "browser.mjs"
 
-# A sandbox with a seed that cannot report its port within 0.05 s, a seed key
-# the sandbox refuses (exit 2, a message on its stderr), then a sandbox that
-# starts, stops and is asked for its state afterwards. The two later cases take
-# long enough for a late sandbox left running to reach its seed and print the
-# failure the old start timeout caused.
-# The limit was 0.5 s while a start took seconds. Since the SDK loads its
-# tables on first use (hub PR #286) and the panel imports only the Satanic
-# pools, a start took 0.35-0.55 s (2026-09-28), so a sandbox sometimes started
-# in time: the case failed, and the sandbox it had started kept node running
-# until the 600 s timeout (2 of 5 runs). The interpreter's own start and the
-# panel's imports stay well above 0.05 s, and a sandbox that starts anyway is
-# now stopped.
+# Three sandboxes, and the script stops each one that starts:
+# - a seeded one told to wait 10 s before it imports anything or reads its
+#   seed (`startDelayMs`, the server's --start-delay), given 0.5 s to report
+#   its port;
+# - one with a seed key the server refuses (exit 2, a message on its stderr);
+# - one told to wait 1 s, which starts, stops and is asked for its state
+#   afterwards. That its start takes at least 1 s is the positive control:
+#   the delay reaches the server, so the first sandbox is late by construction.
+# The late case used to count on a start taking seconds (importing
+# hs_game_sdk alone did). Since the SDK loads its tables on first use (hub PR
+# #286) a start takes about 0.5 s, and 0.25 s without the SDK beside the
+# checkout, so that sandbox could start in time, and then nothing stopped it:
+# node never exited, and setUpClass waited out its 600 s timeout (2026-09-29).
+# A late sandbox left running, as the old start timeout left it, would wake
+# after its 10 s (longer than the timer's 5 s wait for it to close), find its
+# seed gone and print "--seed: cannot read"; node waits for it, since it
+# holds the pipes.
 SCRIPT = """
 import { startSandbox } from %(lib)s;
 const out = {};
-try { const started = await startSandbox({ seed: { theme: 'ledger' }, startTimeoutMs: 50 }); out.late = 'started'; await started.stop(); }
-catch (e) { out.late = e.message; }
-try { await startSandbox({ seed: { no_such_key: 1 } }); out.early = 'started'; }
-catch (e) { out.early = e.message; }
-const sandbox = await startSandbox({ offline: true });
+try {
+  const started = await startSandbox({ seed: { theme: 'ledger' }, startTimeoutMs: 500, startDelayMs: 10000 });
+  out.late = 'started';
+  await started.stop();
+} catch (e) { out.late = e.message; }
+try {
+  const started = await startSandbox({ seed: { no_such_key: 1 } });
+  out.early = 'started';
+  await started.stop();
+} catch (e) { out.early = e.message; }
+const asked = performance.now();
+const sandbox = await startSandbox({ offline: true, startDelayMs: 1000 });
+out.startMs = Math.round(performance.now() - asked);
 out.port = sandbox.port;
 await sandbox.stop();
 try { await sandbox.state(); out.gone = 'answered'; }
@@ -73,11 +91,15 @@ class StartSandboxReportTests(unittest.TestCase):
         cls.stderr = result.stderr
 
     def test_a_late_sandbox_is_stopped_before_its_seed_goes(self):
-        self.assertIn("did not report its port within 0.05 s and was stopped", self.out["late"])
+        self.assertIn("did not report its port within 0.5 s and was stopped", self.out["late"])
         self.assertRegex(self.out["late"], r"sandbox pid \d+ was stopped by SIGTERM")
         # Dropped while it still ran, the seed made the sandbox fail on the
         # missing file instead: "--seed: cannot read ...seed.json".
         self.assertNotIn("cannot read", self.stderr)
+
+    def test_a_start_delay_holds_the_port_back(self):
+        # Without it the late case is late only on a machine slow enough.
+        self.assertGreaterEqual(self.out["startMs"], 1000)
 
     def test_an_early_exit_quotes_the_sandboxs_own_reason(self):
         self.assertIn("sandbox server exited early", self.out["early"])
@@ -91,6 +113,38 @@ class StartSandboxReportTests(unittest.TestCase):
         port = self.out["port"]
         self.assertIn(f"ECONNREFUSED 127.0.0.1:{port}", self.out["gone"])
         self.assertIn(f"sandbox :{port} exited with code 0", self.out["gone"])
+
+
+class StartDelayTests(unittest.TestCase):
+    """The server's --start-delay comes before it imports anything or reads its seed.
+
+    Waiting only before the port line would still make the late case late, but
+    its sandbox would have read its seed by then, and "cannot read" could no
+    longer catch a seed dropped while the sandbox ran.
+    """
+
+    def steps(self, argv):
+        seen = []
+
+        class Loaded(Exception):
+            pass
+
+        def load(parser, src):
+            seen.append("load")
+            raise Loaded  # main() reads the seed after this
+
+        with patch.object(panel_sandbox_server, "time") as fake_time, \
+                patch.object(panel_sandbox_server, "load", side_effect=load):
+            fake_time.sleep.side_effect = lambda seconds: seen.append(("sleep", seconds))
+            with self.assertRaises(Loaded):
+                panel_sandbox_server.main(argv)
+        return seen
+
+    def test_the_delay_comes_before_the_import(self):
+        self.assertEqual(self.steps(["--start-delay", "10", "--seed", "seed.json"]), [("sleep", 10.0), "load"])
+
+    def test_no_delay_without_the_flag(self):
+        self.assertEqual(self.steps(["--seed", "seed.json"]), ["load"])
 
 
 if __name__ == "__main__":
