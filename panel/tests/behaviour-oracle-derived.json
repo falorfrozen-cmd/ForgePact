@@ -48,6 +48,7 @@
   "#sw_keys_primeevil",
   "#mod_far_sleep",
   "#mod_pet_loot_unstick",
+  "#mod_stash_move_all",
   "#density_rolling"
  ],
  "steps": [
@@ -4860,6 +4861,78 @@
   },
   {
    "step": 417,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 418,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 419,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 417
+    },
+    "cmds": {
+     "same": 417
+    }
+   }
+  },
+  {
+   "step": 420,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_stash_move_all\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 418
+    },
+    "cmds": {
+     "same": 418
+    }
+   }
+  },
+  {
+   "step": 421,
    "control": "#density_rolling",
    "action": "click",
    "expect": {
@@ -4882,7 +4955,7 @@
    }
   },
   {
-   "step": 418,
+   "step": 422,
    "control": "#density_rolling",
    "action": "click",
    "expect": {
@@ -4905,28 +4978,28 @@
    }
   },
   {
-   "step": 419,
+   "step": 423,
    "control": "#density_rolling",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 417
+     "same": 421
     },
     "cmds": {
-     "same": 417
+     "same": 421
     }
    }
   },
   {
-   "step": 420,
+   "step": 424,
    "control": "#enabledMods .quick-disable[data-for=\"density_rolling\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 418
+     "same": 422
     },
     "cmds": {
-     "same": 418
+     "same": 422
     }
    }
   }

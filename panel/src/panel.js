@@ -84,6 +84,22 @@ function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el
 function setClass(el,v){if(el&&el.className!==v)el.className=v}
 function setTitle(el,v){if(el&&el.title!==v)el.title=v}
 function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
+// Move all into the stash turns itself off for the rest of a session after a
+// move it could not confirm; the plugin's last `stashmoveall: state=` line
+// says so (`stash_move_all_session`), and the value beside the switch shows
+// it while the game runs (review of #68). The switch keeps the preference.
+// Without a loss it leaves the value as the switch painted it.
+function applyStashMoveAllSession(){
+  const v=document.getElementById('msmaval');
+  if(!v||!ST)return;
+  if(ST.gameRunning&&ST.stash_move_all_session==='off-after-loss'){
+    setText(v,'off (this session)');setClass(v,'val off');
+    setTitle(v,'Move all turned itself off for this game session after a move it could not confirm; it works again after restarting the game.');
+    return;
+  }
+  if(v.textContent==='off (this session)'){const on=!!ST.cfg?.mod_stash_move_all;setText(v,on?'on':'off');setClass(v,'val '+(on?'':'off'))}
+  setTitle(v,'');
+}
 function applyPluginModState(pm){
   const packMarkerStatus=document.getElementById('packMarkerStatus'), packMarkers=pm?.packMarkers;
   if(packMarkerStatus){
@@ -371,6 +387,10 @@ async function boot(){
     document.getElementById('mod_craft_mats').checked=mcm;
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
+    const msma=!!c.mod_stash_move_all;
+    document.getElementById('mod_stash_move_all').checked=msma;
+    document.getElementById('msmaval').textContent=msma?'on':'off';
+    document.getElementById('msmaval').className='val '+(msma?'':'off');
     const mfs=!!c.mod_far_sleep;
     document.getElementById('mod_far_sleep').checked=mfs;
     document.getElementById('mfsval').textContent=mfs?'on':'off';
@@ -618,6 +638,12 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_craft_mats',value:e.target.checked})});
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_stash_move_all').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_stash_move_all',value:e.target.checked})});
+        const v=document.getElementById('msmaval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        applyStashMoveAllSession();
+        toast('Move all into the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('mod_far_sleep').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_far_sleep',value:e.target.checked})});
@@ -938,10 +964,10 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
@@ -950,6 +976,7 @@ export function refreshSavedControls(){
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
+  applyStashMoveAllSession();
   document.getElementById('theme').value=applyTheme(c.theme);
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
@@ -1136,7 +1163,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods);document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

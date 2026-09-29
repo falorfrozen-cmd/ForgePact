@@ -54,6 +54,11 @@
         <span class="val" id="mcmval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Move all into the stash<br><span class="feature-description">With the stash open, click the Move all button beside your bag's Sort, or press F4, to move every item on the bag tab you see into the stash tab you see. Items the tab has no room for or does not take stay in your bag. If a move cannot be confirmed, it turns off until you restart. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_stash_move_all"><span class="sl"></span></label>
+        <span class="val" id="msmaval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span class="feature-description">For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
         <label class="switch"><input type="checkbox" id="mod_toggle_indicator"><span class="sl"></span></label>
         <span class="val" id="mtival">off</span>

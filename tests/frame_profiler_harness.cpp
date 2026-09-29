@@ -142,10 +142,17 @@ static void WorkerMain()
             else FpTop(fp::detail::Qpc() + Ms(16));
             break;
         case SpinWait: {
-            // A little real work, then the rest of the frame spun away.
-            const uint64_t frameStart = fp::detail::Qpc();
-            FpTop(frameStart + Ms(2));
-            FpFrameLimiter(frameStart + Ms(16));
+            // A little real work, then the rest of the frame spun away. The
+            // spin's deadline counts from the end of the work, not from the
+            // frame's start: on a loaded machine the work can be held up
+            // (the thread preempted), and with one deadline for the whole
+            // frame that delay came out of the spin, so the spin's share fell
+            // under the test's 60% (54.4% in a parallel suite run; 2 of 48
+            // harnesses run 24 at a time read 50.0% and 55.1%). Now a delay
+            // lengthens the work and never shortens the spin (72 harnesses
+            // run 24 at a time: lowest 71.7%).
+            FpTop(fp::detail::Qpc() + Ms(2));
+            FpFrameLimiter(fp::detail::Qpc() + Ms(14));
             break;
         }
         }

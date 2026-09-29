@@ -955,6 +955,10 @@ class ProspectWindowContractTests(unittest.TestCase):
         shipped = strip_research_blocks(self.plugin)
         self.assertNotIn("PpMoveCommand", shipped)
         for entry in self.player_commands():
+            # ForgePact #68's own shipped verbs (test_stash_move_all_contract.py)
+            # are named for the stash move, not this probe's `move`.
+            if entry in ("stashmoveall", "stashmove"):
+                continue
             for word in ("move", "grids", "cell"):
                 self.assertNotIn(word, entry)
         command = strip_comments(function_body(self.plugin, "static void PpCommand("))

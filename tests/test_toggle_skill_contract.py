@@ -833,6 +833,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "frameprof",
             # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
             "farsleep",
+            # Move all into the stash (ForgePact #68): the switch and its run,
+            # and the one-item verb (test_stash_move_all_contract.py).
+            "stashmoveall", "stashmove",
             # Rolling density copies' switch (test_rolling_density_contract.py).
             "densityroll",
         }
@@ -2954,7 +2957,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # (test_stash_bag_layout_contract.py), `petunstick` is #94's
         # companion loot unstick (test_pet_loot_unstick_contract.py),
         # `frameprof` the frame profiler (test_frame_profiler.py),
-        # `farsleep` is far sleep's switch (test_far_sleep_contract.py) and
+        # `farsleep` is far sleep's switch (test_far_sleep_contract.py),
+        # `stashmoveall` and `stashmove` are Move all into the stash's
+        # (ForgePact #68, test_stash_move_all_contract.py) and
         # `densityroll` rolling density copies'
         # (test_rolling_density_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
@@ -2962,7 +2967,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick", "frameprof", "farsleep", "densityroll"})
+                                        "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
+                                        "densityroll"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

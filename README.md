@@ -49,6 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
+| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button left of the backpack's Sort button, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. On the Socketable tab a single socketable joins the stack of its kind; a stack of more than one, or a new kind, stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
@@ -604,6 +605,69 @@ rounds, in
 [`docs/crafting-materials-research.md`](docs/crafting-materials-research.md);
 its `## Ship design` describes this mod and what has not been observed live.
 
+## Move all into the stash
+
+Mods tab → Quality of Life → **Move all into the stash**. Off by default.
+
+With the stash open, click the **Move all** button - it sits left of the
+backpack's **Sort** button while the switch is on - or press **F4**, and every
+item on the backpack tab you are looking at moves into the stash tab you are
+looking at, one item at a time,
+top-left first, row by row. Each item goes by the game's own move for it -
+the same routines a Ctrl + left click runs, called in the same order - so it
+lands exactly as a hand move would have put it, and the stash is saved when
+you close it, as after a hand move. ForgePact writes nothing into the stash
+itself.
+
+- **When the tab fills up**, the first items that fit move and the rest stay
+  in your backpack. They never spill onto another stash tab or page: an item
+  is only ever handed to the tab on show, and only after that tab has been
+  read to have room for it. The log names each item that stayed and why
+  (`no room on the shown tab`).
+- **Which tabs.** Any Personal or Shared stash page, from the backpack page
+  on show. The **Materials** tab, from a backpack page or from the
+  backpack's Materials view: a material whose kind already has a stack there
+  joins it whole, and one whose kind has none gets a cell of its own.
+  Anything the tab does not take (the Materials tab takes only materials)
+  stays in your backpack.
+- **The Socketable tab**, from the backpack's Socket view only: a socketable
+  whose kind is already on the tab joins that stack when it is a single one.
+  A stack of more than one socketable stays in your backpack (`a socketable
+  merge of more than one unit is not measured`), because only a single
+  socketable joining its stack there has been measured. A kind the tab
+  does not have yet stays in your backpack (`a new kind stays in the bag`),
+  because placing a new kind there has not been measured. The game itself
+  refuses jewels and Gems of Incarnation on that tab, and they stay too.
+- **Not supported yet:** the Unique tab, and the backpack's Key, Tarot and
+  Relic views. The button and F4 there move nothing, and the log says
+  `refused`. A stackable item whose stack on a Shared page cannot be
+  identified stays in your backpack too.
+- **Refused, not guessed.** If a move cannot be confirmed afterwards - the
+  item not where the game said it put it, or still in your backpack as well,
+  or the stash tab on show changed - the run stops, ForgePact takes the item
+  back out of the stash tab when it can, and the mod turns itself off until
+  the game is restarted (`off for this session`); the panel then shows
+  `off (this session)` beside the switch.
+- **The button** is there only while the switch is on and the stash is open
+  with the backpack's Sort button showing; turning the switch off takes it
+  away at once, and closing the stash closes it with the window. Turned on
+  while the stash is already open, the button may only appear after you
+  click a stash tab; F4 does not need the button. A click on
+  it does exactly what F4 does, once per click. If the button cannot be
+  shown, the log says so once (`stashmoveall: button - ...`) and F4 keeps
+  working.
+- The button and F4 do something only while the switch is on, the game is
+  the window in front and the stash is open, and never with Alt, Ctrl or
+  Shift held - so Alt + F4 still only closes the game.
+- Each press writes one line per item and a summary to the log, for example
+  `stashmoveall: moved 5 of 7 from bag tab 0 to stash tab 1; skipped 2`.
+  Tools can run the same move with the `stashmoveall run` command, or move
+  one item with `stashmove <fingerprint>`.
+
+How the game's own move was measured, over six research sessions, is in
+[`docs/stash-move-research.md`](docs/stash-move-research.md); its
+`## Ship design` describes this mod and what has not been observed in play.
+
 ## Gems of Incarnation
 
 Loot → **Gems of Incarnation**, the tab's last card: **Mythic Gems of
@@ -818,9 +882,11 @@ more) was done.
   established as working.
 
 There is no command that opens the stash by name (a by-name open ended the
-game once in the research, so the tool uses the interact key) and none that
-moves an item between the bag and the stash. How each was measured, and
-what it does not cover, is in
+game once in the research, so the tool uses the interact key). Moving items
+from the bag into the stash is [Move all into the stash](#move-all-into-the-stash)'s
+`stashmoveall run` and `stashmove <fingerprint>`, which need that mod
+switched on; nothing moves an item the other way. How each was measured,
+and what it does not cover, is in
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md).
 
 ## Frame profiler (where the game's frame time goes)

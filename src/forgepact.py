@@ -279,6 +279,12 @@ DEFAULTS = {
     # bag is short of moves over. Off by default; offline only, like every mod
     # here.
     "mod_craft_mats": False,
+    # Move all into the stash (ForgePact #68, docs/stash-move-research.md):
+    # with the stash open, F4 moves the bag tab on show into the stash tab on
+    # show, each item by the game's own move; what the tab has no room for,
+    # or does not take, stays in the bag. Off by default; offline only, like
+    # every mod here.
+    "mod_stash_move_all": False,
     # Far scenery sleep (docs/far-sleep-research.md): a zone's far trees,
     # bushes, hay, rocks and fences sleep until a player comes near, so the
     # game stops walking them every frame. Off by default; offline only,
@@ -973,6 +979,10 @@ def build_cmds(cfg: dict) -> list:
         # the switch on, and the plugin installs its hooks once the game has
         # settled.
         out.append("craftmats 1")
+    if cfg.get("mod_stash_move_all", False):
+        # Safe to send at launch: `stashmoveall 1` only turns the switch on;
+        # nothing moves until F4 is pressed with the stash open.
+        out.append("stashmoveall 1")
     if cfg.get("mod_far_sleep", False):
         # Safe to send at launch: `farsleep 1` only turns the switch on; the
         # plugin touches nothing before a zone has settled with a player in
@@ -1686,6 +1696,37 @@ def plugin_mod_state(cfg=None) -> dict:
         return {}
 
 
+STASH_MOVE_ALL_STATE = b"stashmoveall: state="
+STASH_MOVE_ALL_TAIL = 64 * 1024
+
+
+def stash_move_all_session(cfg=None) -> str:
+    """What Move all into the stash says it is doing: `on`, `off`, or
+    `off-after-loss` when a move it could not confirm turned it off for the
+    rest of the session (review of ForgePact #68: the switch kept showing on).
+
+    Read from the last `stashmoveall: state=` line of out.txt, which the
+    plugin prints on every switch and after a loss. out.txt is rotated at
+    plugin load, so its tail is this game session's; only the last 64 KB is
+    read, since the line is printed at each switch and the file grows to
+    megabytes. No line there (or no log) is an empty string: the plugin has
+    not said anything, which is not the same as off."""
+    try:
+        path = ipc_dir(cfg) / "out.txt"
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - STASH_MOVE_ALL_TAIL))
+            tail = fh.read()
+    except Exception:
+        return ""
+    at = tail.rfind(STASH_MOVE_ALL_STATE)
+    if at < 0:
+        return ""
+    state = tail[at + len(STASH_MOVE_ALL_STATE):].split(b"\n", 1)[0].split(b" ", 1)[0].strip()
+    return {b"on": "on", b"off": "off", b"off-for-this-session": "off-after-loss"}.get(state, "")
+
+
 def plugin_boot_count(cfg=None) -> int:
     """How many times the plugin has started, read from its own log.
 
@@ -1954,6 +1995,7 @@ class H(BaseHTTPRequestHandler):
                         "gameRunning": game_running(cfg),
                         "ipcOk": ipc_dir(cfg).exists(),
                         "pluginMods": plugin_mod_state(cfg),
+                        "stash_move_all_session": stash_move_all_session(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
@@ -2072,7 +2114,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "density_rolling", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "gem_filter":
                     value = gem_filter_value(val)
@@ -2176,6 +2218,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"craftmats {1 if cfg['mod_craft_mats'] else 0}"], cfg)
                     elif key == "mod_far_sleep":
                         send_cmds([f"farsleep {1 if cfg['mod_far_sleep'] else 0}"], cfg)
+                    elif key == "mod_stash_move_all":
+                        send_cmds([f"stashmoveall {1 if cfg['mod_stash_move_all'] else 0}"], cfg)
                     elif key == "density_rolling":
                         send_cmds([f"densityroll {1 if cfg['density_rolling'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":

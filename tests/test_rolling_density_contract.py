@@ -136,7 +136,8 @@ class RollingDensityPanelTests(unittest.TestCase):
 
     def test_the_live_switch_sends_one_or_zero(self):
         self.assertIn("""send_cmds([f"densityroll {1 if cfg['density_rolling'] else 0}"], cfg)""", self.source)
-        self.assertRegex(self.source, r'"mod_far_sleep", "density_rolling", "mod_craft_mats"')
+        # One of /api/set's live booleans (its place in that tuple is free).
+        self.assertRegex(self.source, r'elif key in \("density_on", "auto_apply", [^)]*"density_rolling", ')
 
 
 class RollingDensityPlayerTextTests(unittest.TestCase):

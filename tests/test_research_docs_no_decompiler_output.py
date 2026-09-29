@@ -94,6 +94,9 @@ STRICT_DOCS = (
     # attribution of each probe row in words, no offsets from the log lines.
     "angelic-roll-hook-research.md",
     "restart-always-available-research.md",
+    # Written to this standard from the start (ForgePact #68): the static
+    # reading as call order, argument counts and branches, in words.
+    "stash-move-research.md",
 )
 
 # One known-bad sample per category, built in pieces.

@@ -89,7 +89,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 123 switch clicks, 60 Turn off buttons, one theme step per theme', () => {
+test('the counts: 123 switch clicks, 61 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -97,7 +97,7 @@ test('the counts: 123 switch clicks, 60 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 123);
-  assert.equal(quick.length, 60);
+  assert.equal(quick.length, 61);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -174,7 +174,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'density_rolling']);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling']);
   for (const n of NATIVE_BOOLEANS) {
     assert.ok(BOOLEAN_MODS.includes(n.key), `${n.key}: the Enabled mods list shows it, so it has a Turn off button`);
     const cb = '#' + n.key;
@@ -196,6 +196,8 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   for (const n of NATIVE_BOOLEANS) assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), n.key);
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
   assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
+  // All of them sit on the Quality of Life sub-tab, so it is entered once and
+  // each boolean's four steps follow in turn.
   NATIVE_BOOLEANS.forEach(({ key, verb }, i) => {
     const first = at + 2 + 4 * i;
     const cb = '#' + key;
