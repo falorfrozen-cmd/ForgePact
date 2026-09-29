@@ -51,7 +51,7 @@ none of these diagnostic hooks or the recorder. See
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button left of the backpack's Sort button, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. On the Socketable tab a single socketable joins the stack of its kind; a stack of more than one, or a new kind, stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
-| **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
+| **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 
@@ -412,17 +412,30 @@ and live findings are in
 
 ## Remove owned relics from drop pool
 
-Mods tab → Quality of Life. While it is on, a relic that is already at 10/10 in your
-equipped slots, backpack or inventory is withheld when the game rolls a relic drop,
-so what lands is one you can still level.
+Mods tab → Quality of Life. While it is on, a relic you already own at 10/10 no longer
+drops. That covers relics worn in a relic slot and relics kept in the backpack's relic
+tab. When the game picks one for a relic drop, it picks again, so another relic drops
+in its place.
 
-It is not a forced reroll of the loot table: the maxed relics are excluded for the
-duration of that one roll and their normal drop rates are restored immediately
-afterwards, so every other relic keeps the odds the game gives it. Turning the
-toggle off restores vanilla behaviour for the session.
+Whether a relic drops at all is untouched. Every relic you can still level keeps the
+same odds as without the mod: the game picks among them exactly as it always does,
+only without the ones you have maxed. If every relic that can drop is already at
+10/10, the filter stands down, since there is nothing left to drop instead. Turning
+the toggle off restores vanilla behaviour for the session.
 
-The panel sends `relicfilter 1`, which only **arms** the mod — the `DropRelic` hook
-goes in later, once a player instance exists. Installing it during character
+**How it works.**
+- Every relic the game drops comes from a draw the game repeats while the relic it
+  drew is a quest relic (`GetRelicQuest`). That includes ordinary kills and both
+  Satanic zone kill rewards. ForgePact answers "quest relic" for your 10/10 relics as
+  well, so the game's own draw skips them.
+- Before 2.1.0 the filter changed each maxed relic's drop rate instead, and the relic
+  pick never reads that value. Its log said `holding back`, and the relic still
+  dropped (#125).
+- Now and then the game drops a copy of one of your equipped relics, to help you level
+  it. It never copies one that is already at 10/10.
+
+The panel sends `relicfilter 1`, which only **arms** the mod. The `GetRelicQuest` hook
+goes in later, once a player instance exists. Installing a hook during character
 selection stalled the runner for about a minute (measured 2026-09-09), so the plugin
 defers it to its frame callback. That is why the mod applies a moment after you are
 in-game rather than at launch.
@@ -431,51 +444,38 @@ The plugin reports what it is doing in `<game>\bin\bp_ipc\out.txt`:
 
 ```
 relicfilter -> ON (armed, applies once you are in-game)
-relicfilter: hook installed -> ON
-relicfilter: holding back 3 of 5 maxed relic(s) on this roll
+relicfilter: hook installed -> ON (GetRelicQuest, native detour)
+relicfilter: scan found 1 maxed relics (ids 140)
+relicfilter: equipped slots mplr=1 slots=18 ... relics=12:140@10 ... stopped=none
+relicfilter: relic tab key=1 online=no grid=156 cells=156 strings=14 ... maxed=none stopped=none
+relicfilter: skipped maxed relic 140, the game picks again (1 since armed)
 ```
 
-`out.txt` no longer keeps every session forever: once it passes 2 MB, the plugin
-rotates it to `out.prev.txt` the next time the game starts (never mid-session),
-replacing any older `out.prev.txt`, so old logs no longer pile up and the
-previous log is never lost. The log still grows during a session, so one long
-session can make either file larger than 2 MB. **If
-you're attaching a log to a bug report, attach both `out.txt` and
-`out.prev.txt`** — the session you actually want may be the one that was just
-rotated into the `.prev` file (e.g. the game crashed and you relaunched before
-sending the report).
-
-The first two lines only mean the mod is *armed and hooked* — until 1.3.19 they were
-all there was, and they printed just as happily while it held nothing back.
-
-The third line is the one that reports what actually happened, and it says which of
-these five states you are in. Only the first is the mod working:
+`out.txt` no longer keeps every session forever. Once it passes 2 MB, the plugin
+rotates it to `out.prev.txt` the next time the game starts (never mid-session) and
+replaces any older `out.prev.txt`. Old logs no longer pile up, and the previous log is
+never lost. The log still grows during a session, so one long session can make either
+file larger than 2 MB. **If you're attaching a log to a bug report, attach both
+`out.txt` and `out.prev.txt`.** The session you actually want may be the one that was
+just rotated into the `.prev` file, for example when the game crashed and you
+relaunched before sending the report.
 
 | Line | What it means |
 | --- | --- |
-| `holding back N of M maxed relic(s) on this roll` | Working. `M` maxed relics were found, `N` of them were withheld from this roll |
-| `scanned, no maxed relics to hold back` | Working, nothing to do — you own no relics at 10/10 yet |
-| `no player resolved yet, nothing scanned` | The scan did not run. Normal for a moment after the hook installs; persistent means it cannot find your character |
-| `all 156 relics maxed, filter stands down (nothing left to drop instead)` | Every relic is maxed, so there is nothing better to drop and the filter deliberately does nothing |
-| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table entry could not be read — usually an index that moved in a game update |
-| `found N maxed relic(s) but held back none (drop table write failed)` | Both worked, the change to the drop rate did not land |
+| `hook installed -> ON (GetRelicQuest, native detour)` | The hook is in and can act |
+| `hook installed -> FAILED (...)` | The filter cannot act on this game build. The reason is in the brackets |
+| `scan found N maxed relics (ids ...)` | Printed once when the filter arms: the relics it will skip. The two lines after it say what the equipped slots and the relic tab held, and `stopped=none` means each was read in full |
+| `scan did not run (no player yet)` | No character was found when the filter armed |
+| `skipped maxed relic N, the game picks again (K since armed)` | Working: the game drew relic N and drew again. The first 20 are listed one by one, then every 100th |
+| `every droppable relic is maxed, filter stands down (nothing left to drop instead)` | Every relic that can drop is at 10/10, so the filter lets the game's pick through |
 
-A working roll that could not hold back everything it found says so too, rather than
-rounding up: `holding back 2 of 5 maxed relic(s) on this roll (1 write(s) failed)`.
+`relicfilter status` prints the hook's state and how many maxed relics were skipped
+since the filter was armed. A session with relic drops and no `skipped` line can mean
+you own no relic at 10/10, or that none of your maxed relics came up. The arm lines
+and `relicfilter status` tell those apart.
 
-It is printed once per change of state, so a normal session stays quiet after the
-first line. **No line at all means the filter is not running.**
-
-The count is what the plugin *confirmed it changed* — each suppression is written
-through a status-returning call and then read back — not what the scan found and not
-what it attempted. Those are three different numbers, and the first two versions of
-this line reported the wrong one: the original printed the scan's input before the
-guards and writes had run at all, and its replacement counted the rollback list, which
-grows before each write and therefore still counted writes that threw or silently did
-nothing (both reported in review of PR #4). The rollback list is deliberately kept
-separate and still covers every *attempt*, because a write whose outcome is unknown
-must still be restored. `tests/test_relic_filter_behavior.py` runs the real hook
-against every case in this table.
+`tests/test_relic_filter_behavior.py` runs the real hook through the game's own draw
+against every line in this table.
 
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that

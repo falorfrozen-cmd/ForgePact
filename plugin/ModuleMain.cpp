@@ -17279,111 +17279,14 @@ static PFUNC_YYGMLScript g_Orig_DropRelic = nullptr;
 static volatile long g_cnt_DropRelic = 0;
 static int g_mult_DropRelic = 1;
 
-// (An earlier container-walking maxed-relic scan lived here; it was never
-// actually called - GetPlayerMaxedRelics uses the SDK's own
-// HeroSiege::Player::GetMaxedRelicIds - and was deleted as dead code rather
-// than migrated into ForgePact::RelicFilterMod.)
-
+// `dropmult relic`'s hook. Until ForgePact#125 the relic filter lived here too.
+// It wrote each maxed relic's `droprate.base` around this call, but no relic
+// pick reads that field (hub docs/models/relic-pick-spec.md), so it held
+// nothing back. The two Satanic kill relic routines never pass through
+// DropRelic either. The filter is Hook_GetRelicQuest below.
 static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
     if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? g_Orig_DropRelic(S,O,R,argc,A) : R;
     BP_DIAG_INCREMENT(g_cnt_DropRelic);
-
-    std::unordered_set<int> maxedRelics;
-    std::vector<std::pair<int, double>> modifiedBases;
-
-    size_t suppressed = 0;   // writes CONFIRMED to have landed, not writes attempted
-
-    if (ForgePact::RelicFilterMod::Instance().IsEnabled()) {
-        const bool scanRan = ForgePact::RelicFilterMod::Instance().GetPlayerMaxedRelics(maxedRelics);
-
-        if (!maxedRelics.empty() && maxedRelics.size() < static_cast<size_t>(kSeason10RelicRepoCount)) {
-            for (int rId : maxedRelics) {
-                if (!RepoIndexValid(16, rId)) continue;
-                RValue st;
-                if (!RepoStruct(16, rId, st)) continue;
-                try {
-                    RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
-                    if (dr.m_Kind == VALUE_OBJECT) {
-                        RValue curBase = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
-                        // Rollback bookkeeping FIRST and unconditionally: if the
-                        // write lands even partially, the restore below has to
-                        // know the vanilla value.  This list is therefore "what
-                        // to put back", never "what was suppressed" - the two
-                        // were the same variable until review of PR #4 pointed
-                        // out they answer different questions.
-                        modifiedBases.push_back({ rId, curBase.ToDouble() });
-
-                        // Status-returning call: CallBuiltin alone cannot fail
-                        // out loud - it hands back an unset RValue and the
-                        // catch below swallows a throw - so neither reaching
-                        // this line nor the rollback list growing is evidence
-                        // the base actually changed.
-                        CInstance* self = nullptr;
-                        g_Yytk->GetGlobalInstance(&self);
-                        RValue setResult;
-                        const AurieStatus setStatus = g_Yytk->CallBuiltinEx(
-                            setResult, "variable_struct_set", self, self,
-                            { dr, RValue("base"), RValue(1e18) });
-
-                        // ... and then confirm by reading the value back, which
-                        // is the only check that survives a call that reports
-                        // success while writing nothing.
-                        if (AurieSuccess(setStatus)) {
-                            RValue written = g_Yytk->CallBuiltin("variable_struct_get", { dr, RValue("base") });
-                            const bool numeric = written.m_Kind == VALUE_REAL
-                                              || written.m_Kind == VALUE_INT32
-                                              || written.m_Kind == VALUE_INT64;
-                            if (numeric && written.ToDouble() >= 1e18) ++suppressed;
-                        }
-                    }
-                } catch (...) {}
-            }
-        }
-
-        // Report what the filter DID, never what the scan handed it.  Reported
-        // after the guards and the writes above, because those are what decide
-        // whether anything is actually held back: the first version of this
-        // line printed the scan's input count before either had run, so it
-        // announced "holding back 156" on the all-maxed path that deliberately
-        // skips filtering, and "holding back 1" when the repository lookup
-        // failed and nothing was written (REPORTED 2026-09-15 in review of
-        // PR #4).  A diagnostic added to prove the mod works is worthless if it
-        // can say so when it did not - that was the original bug here.
-        //
-        // The all-maxed bypass itself is existing gameplay policy and is left
-        // alone: with every relic maxed there is nothing left to drop instead,
-        // so the filter stands down rather than blocking relic drops entirely.
-        // One line per change of state, so a normal session stays quiet.
-        {
-            static std::string s_lastReport;
-            std::string report;
-            if (!scanRan) {
-                report = "relicfilter: no player resolved yet, nothing scanned";
-            } else if (maxedRelics.empty()) {
-                report = "relicfilter: scanned, no maxed relics to hold back";
-            } else if (maxedRelics.size() >= static_cast<size_t>(kSeason10RelicRepoCount)) {
-                report = "relicfilter: all " + std::to_string(maxedRelics.size())
-                       + " relics maxed, filter stands down (nothing left to drop instead)";
-            } else if (modifiedBases.empty()) {
-                report = "relicfilter: found " + std::to_string(maxedRelics.size())
-                       + " maxed relic(s) but held back none (repository lookup failed)";
-            } else if (suppressed == 0) {
-                report = "relicfilter: found " + std::to_string(maxedRelics.size())
-                       + " maxed relic(s) but held back none (drop table write failed)";
-            } else if (suppressed < modifiedBases.size()) {
-                report = "relicfilter: holding back " + std::to_string(suppressed)
-                       + " of " + std::to_string(maxedRelics.size())
-                       + " maxed relic(s) on this roll ("
-                       + std::to_string(modifiedBases.size() - suppressed)
-                       + " write(s) failed)";
-            } else {
-                report = "relicfilter: holding back " + std::to_string(suppressed)
-                       + " of " + std::to_string(maxedRelics.size())
-                       + " maxed relic(s) on this roll";
-            }
-            if (report != s_lastReport) { s_lastReport = report; Out(report); }
-        }
-    }
 
     for (int i = 1; i < g_mult_DropRelic; i++) {
         RValue t;
@@ -17391,62 +17294,218 @@ static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, R
     }
     RValue& _res = g_Orig_DropRelic ? g_Orig_DropRelic(S, O, R, argc, A) : R;
 
-    for (const auto& p : modifiedBases) {
-        RValue st;
-        if (RepoStruct(16, p.first, st)) {
-            try {
-                RValue dr = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue("droprate") });
-                if (dr.m_Kind == VALUE_OBJECT) {
-                    g_Yytk->CallBuiltin("variable_struct_set", { dr, RValue("base"), RValue(p.second) });
-                }
-            } catch (...) {}
-        }
-    }
-
-    // Secondary guarantee: If dropped result or instance is in maxedRelics, reroll to unmaxed relic
-    if (ForgePact::RelicFilterMod::Instance().IsEnabled() && !maxedRelics.empty() && maxedRelics.size() < static_cast<size_t>(kSeason10RelicRepoCount)) {
-        std::vector<int> validRelics;
-        for (int i = 0; i < kSeason10RelicRepoCount; ++i) {
-            if (maxedRelics.find(i) == maxedRelics.end()) {
-                validRelics.push_back(i);
-            }
-        }
-        if (!validRelics.empty()) {
-            try {
-                if (_res.m_Kind == VALUE_OBJECT && _res.m_Object) {
-                    if (g_Yytk->CallBuiltin("variable_struct_exists", { _res, RValue("b") }).ToBoolean()) {
-                        int b = static_cast<int>(g_Yytk->CallBuiltin("variable_struct_get", { _res, RValue("b") }).ToDouble());
-                        if (maxedRelics.find(b) != maxedRelics.end()) {
-                            int pick = validRelics[std::rand() % validRelics.size()];
-                            g_Yytk->CallBuiltin("variable_struct_set", { _res, RValue("b"), RValue(static_cast<double>(pick)) });
-                        }
-                    }
-                }
-            } catch (...) {}
-        }
-    }
-
     BP_LOGDROP("DropRelic", _res, argc, A);
     return _res;
 }
 
-// The relic filter's arm-time line (#93), both builds. The hook's own report
-// above speaks only at a relic roll, and relics roll only in Satanic zones, so
+// The relic filter's lever (#125). Every relic the game places is picked by a
+// loop that asks GetRelicQuest(id) and draws again while the answer is true.
+// The loop runs in DropRelic and in both Satanic kill relic routines, which
+// are the script's only callers (hub docs/models/relic-pick-spec.md).
+// Answering true for a relic the player owns at 10/10 makes the game's own
+// loop skip that relic, so every other relic keeps the odds the game gives it.
+// YYC calls the script directly, so this hook acts only as a native detour
+// (g_GetRelicQuestNative).
+static PFUNC_YYGMLScript g_Orig_GetRelicQuest = nullptr;
+static bool g_GetRelicQuestNative = false;
+// The first skips are logged one by one. After that the log keeps only every
+// 100th, so a player with many maxed relics in a relic-rich zone does not flood
+// out.txt. `relicfilter status` always has the full count.
+static constexpr long kRelicSkipLinesLogged = 20;
+
+static RValue& Hook_GetRelicQuest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    RValue& res = g_Orig_GetRelicQuest ? g_Orig_GetRelicQuest(S, O, R, argc, A) : R;
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    // AFK FARM's own reward delivery gets the game's answer untouched.
+    if (!rf.IsEnabled() || HeroSiege::RewardScope::Active()) return res;
+    if (argc < 1 || !A || !A[0]) return res;
+    const RValue& arg = *A[0];
+    if (arg.m_Kind != VALUE_REAL && arg.m_Kind != VALUE_INT32 && arg.m_Kind != VALUE_INT64) return res;
+    const int id = static_cast<int>(arg.ToDouble());
+    const bool gameAnswer = res.ToBoolean();
+    if (gameAnswer) return res;
+
+    bool scanRan = false;
+    const std::unordered_set<int>& maxed = rf.MaxedForFrame(g_RuntimeFrame, scanRan);
+    if (!scanRan || maxed.count(id) == 0) return res;
+
+    // The original is probed once for the game's own answer on every id, so a
+    // maxed relic is skipped only while another relic is still left.
+    const bool relicLeft = ForgePact::RelicFilterMod::AnyRelicLeft(maxed, [&](int other) {
+        return rf.IsQuestCached(other, [&](int probeId) {
+            if (!g_Orig_GetRelicQuest) return false;
+            RValue probeResult;
+            RValue probeArg(static_cast<double>(probeId));
+            RValue* probeArgs[1] = { &probeArg };
+            return g_Orig_GetRelicQuest(S, O, probeResult, 1, probeArgs).ToBoolean();
+        });
+    });
+    if (rf.NoteStandDown(!relicLeft)) {
+        Out(relicLeft
+            ? std::string("relicfilter: a droppable relic is left again, maxed relics are skipped")
+            : std::string("relicfilter: every droppable relic is maxed, filter stands down (nothing left to drop instead)"));
+    }
+    if (!ForgePact::RelicFilterMod::QuestAnswer(gameAnswer, id, maxed, relicLeft)) return res;
+
+    const long skips = rf.NoteSkip(id);
+    if (skips <= kRelicSkipLinesLogged || skips % 100 == 0) {
+        Out("relicfilter: skipped maxed relic " + std::to_string(id) + ", the game picks again ("
+            + std::to_string(skips) + " since armed)");
+    }
+    res = RValue(true);
+    return res;
+}
+
+// What the relic filter's hook is doing, for the install line and `relicfilter status`.
+static std::string RelicFilterHookState()
+{
+    if (!g_Orig_GetRelicQuest) return "FAILED (GetRelicQuest not found)";
+    if (!g_GetRelicQuestNative)
+        return "FAILED (GetRelicQuest is table-only: the game calls it directly, so the filter cannot act)";
+    return "ON (GetRelicQuest, native detour)";
+}
+
+// `relicfilter status`, both builds: whether the filter is armed, the hook's
+// state, and what the filter has done since it was armed.
+static void RelicFilterStatus()
+{
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    std::string line = "relicfilter status: ";
+    if (!rf.IsEnabled()) line += "OFF";
+    else if (rf.IsPending()) line += "armed, hook not installed yet (waits for a player in-game)";
+    else line += RelicFilterHookState();
+    line += " | skipped " + std::to_string(rf.Skips()) + " maxed relic(s) since armed";
+    if (rf.LastSkip() >= 0) line += " (last " + std::to_string(rf.LastSkip()) + ")";
+    line += std::string(" | stands down: ") + (rf.StoodDown() ? "yes, every droppable relic is maxed" : "no");
+#ifndef FORGEPACT_RELEASE
+    line += " | testmaxed=" + std::to_string(rf.TestMaxed().size());
+#endif
+    Out(line);
+}
+
+#ifndef FORGEPACT_RELEASE
+// `relicfilter testmaxed <spec>|off` (research build). It treats these relic
+// ids as maxed on top of the scan's, so a live check can prove the lever
+// without a real 10/10 relic. The spec is ranges and ids, with an optional
+// `except` list: `0-140 except 7,31`.
+static void RelicFilterTestMaxed(const std::string& spec)
+{
+    auto& rf = ForgePact::RelicFilterMod::Instance();
+    std::string text = Lower(TrimCopy(spec));
+    if (text.empty() || text == "off" || text == "0") {
+        rf.SetTestMaxed({});
+        Out("relicfilter testmaxed: off");
+        return;
+    }
+    std::string keep = text, drop;
+    const size_t except = text.find("except");
+    if (except != std::string::npos) {
+        keep = text.substr(0, except);
+        drop = text.substr(except + 6);
+    }
+    const auto parse = [](const std::string& part, std::unordered_set<int>& out) {
+        std::string token;
+        std::stringstream ss(part);
+        while (std::getline(ss, token, ',')) {
+            std::stringstream words(token);
+            std::string word;
+            while (words >> word) {
+                try {
+                    const size_t dash = word.find('-');
+                    if (dash != std::string::npos && dash > 0) {
+                        const int lo = std::stoi(word.substr(0, dash));
+                        const int hi = std::stoi(word.substr(dash + 1));
+                        for (int id = lo; id <= hi && id < ForgePact::kRelicPickIdCount; ++id) {
+                            if (id >= 0) out.insert(id);
+                        }
+                    } else {
+                        const int id = std::stoi(word);
+                        if (id >= 0 && id < ForgePact::kRelicPickIdCount) out.insert(id);
+                    }
+                } catch (...) {}
+            }
+        }
+    };
+    std::unordered_set<int> ids, excluded;
+    parse(keep, ids);
+    parse(drop, excluded);
+    for (int id : excluded) ids.erase(id);
+    const size_t count = ids.size();
+    rf.SetTestMaxed(std::move(ids));
+    Out("relicfilter testmaxed: " + std::to_string(count) + " id(s) treated as maxed");
+}
+
+// `relicfilter ground [clear]` (research build). It lists the relics lying on
+// the ground, by id, read from each Loot_Ground_obj's `itemInstance`. With
+// `clear` it also destroys them, so a test session never lets the character
+// pick one up. It changes nothing else.
+static void RelicFilterGround(bool clear)
+{
+    try {
+        const double lootIdx = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        if (lootIdx < 0) { Out("relicfilter ground: Loot_Ground_obj not found"); return; }
+        const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
+        std::map<int, int> relics;
+        std::vector<RValue> toDestroy;
+        long noItem = 0, other = 0, unreadable = 0;
+        for (long i = 0; i < ground && i < 4096; ++i) {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) });
+            if (inst.m_Kind == VALUE_UNDEFINED) { ++unreadable; continue; }
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("itemInstance") }).ToBoolean()) { ++noItem; continue; }
+            RValue item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemInstance") });
+            if (item.m_Kind != VALUE_OBJECT) { ++unreadable; continue; }
+            RValue cls = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") });
+            if (cls.m_Kind != VALUE_REAL && cls.m_Kind != VALUE_INT32 && cls.m_Kind != VALUE_INT64) { ++unreadable; continue; }
+            if ((int)cls.ToDouble() != (int)HeroSiege::Items::ItemType::Relic) { ++other; continue; }
+            RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+            RValue b = def.m_Kind == VALUE_OBJECT ? g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("b") }) : RValue();
+            if (b.m_Kind != VALUE_REAL && b.m_Kind != VALUE_INT32 && b.m_Kind != VALUE_INT64) { ++unreadable; continue; }
+            ++relics[(int)b.ToDouble()];
+            toDestroy.push_back(inst);
+        }
+        std::string ids;
+        long count = 0;
+        for (const auto& [id, n] : relics) {
+            if (!ids.empty()) ids += ",";
+            ids += std::to_string(id) + "x" + std::to_string(n);
+            count += n;
+        }
+        long cleared = 0;
+        if (clear) {
+            for (RValue& inst : toDestroy) {
+                try { g_Yytk->CallBuiltin("instance_destroy", { inst }); ++cleared; } catch (...) {}
+            }
+        }
+        Out("relicfilter ground: relics=" + std::to_string(count) + " ids=" + (ids.empty() ? std::string("none") : ids)
+            + " other=" + std::to_string(other) + " noitem=" + std::to_string(noItem)
+            + " unreadable=" + std::to_string(unreadable) + " cleared=" + std::to_string(cleared));
+    } catch (...) { Out("relicfilter ground: read threw"); }
+}
+#endif
+
+// The relic filter's arm-time line (#93), both builds. The hook's own lines
+// above appear only at a relic roll, and relics roll only in Satanic zones, so
 // without this nothing said what the scan saw until one dropped. FrameCallback
-// calls it once per `relicfilter 1`, after the DropRelic install, and the count
-// and ids come from the very set the scan just filled. A scan that did not run
-// says so instead of reading as "0 maxed relics" (the dead-scanner shape).
-// The line after it is the SDK's own report on the equipped relic slots
-// (`relicfilter: equipped slots mplr=.. owner=.. relic=.. control=..
-// stopped=..`), so a zero names the stage that stopped rather than reading
-// the same as a player with nothing maxed.
+// calls it once per `relicfilter 1`, after the GetRelicQuest install, and the
+// count and ids come from the very set the scan just filled. A scan that did
+// not run says so instead of reading as "0 maxed relics" (the dead-scanner
+// shape).
+// The two lines after it are the SDK's own reports:
+// - the equipped relic slots (`relicfilter: equipped slots mplr=.. owner=..
+//   relic=.. control=.. stopped=..`, #93);
+// - the relic tab (`relicfilter: relic tab key=.. strings=.. relic=..
+//   maxed=.. stopped=..`, #125).
+// A zero then names the stage that stopped, rather than reading the same as a
+// player with nothing maxed.
 static void RelicFilterReportArmScan()
 {
     auto& rf = ForgePact::RelicFilterMod::Instance();
     rf.ClearArmScanDue();
     std::unordered_set<int> maxed;
     HeroSiege::Player::EquippedSlotScanReport equipped;
-    const bool scanRan = rf.GetPlayerMaxedRelics(maxed, &equipped);
+    HeroSiege::Player::RelicTabScanReport tab;
+    const bool scanRan = rf.GetPlayerMaxedRelics(maxed, &equipped, &tab);
     if (!scanRan) {
         Out("relicfilter: scan did not run (no player yet)");
         return;
@@ -17461,12 +17520,14 @@ static void RelicFilterReportArmScan()
     Out("relicfilter: scan found " + std::to_string(ids.size()) + " maxed relics (ids "
         + (list.empty() ? std::string("none") : list) + ")");
     Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport(equipped));
+    Out("relicfilter: relic tab " + HeroSiege::Player::FormatRelicTabScanReport(tab));
 }
 // The 19 domain hooks above (DropBossGems .. DropOreMaterials, including
 // DropKeys' dev-only diagnostic variant) moved to ForgePact::DropManager
 // (module includes anchor near the top of the file, after FirstToken).
-// DropRelic stays here - shared chokepoint with RelicFilterMod, see its
-// own comment. LootGroundCreate/LootGroundCreateFromItem below are a
+// DropRelic stays here as `dropmult relic`'s own hook. The relic filter
+// left it for GetRelicQuest in #125, see Hook_GetRelicQuest.
+// LootGroundCreate/LootGroundCreateFromItem below are a
 // separate research-tracing feature, not part of dropmult, and stay too.
 // Esyayi YERE koyan fonksiyon - "yaratildi" ile "dustu" farkini olcmek icin.
 DROP_HOOK(LootGroundCreate)
@@ -18628,8 +18689,9 @@ static void SetDropMult(const std::string& name, int n)
     // multiplier is requested; x1 is native behaviour and needs no interception.
     // (Also installs the shared DropRelic hook - see InstallDropMultHooks.)
     if (n > 1) InstallDropMultHooks();
-    // "relic" is the one target ForgePact::DropManager doesn't own - see its
-    // class comment (Hook_DropRelic is shared with RelicFilterMod).
+    // "relic" is the one target ForgePact::DropManager doesn't own: its hook,
+    // Hook_DropRelic, stayed in this file when the relic filter still shared it
+    // (the filter moved to GetRelicQuest in #125).
     if (l == "relic") { g_mult_DropRelic = n; Out("dropmult " + name + " -> " + std::to_string(n)); return; }
     ForgePact::DropManager::Instance().SetMultiplier(name, n);
 }
@@ -41481,12 +41543,24 @@ static void RunCommand(const std::string& line)
         return;
     }
     if (lc == "relicfilter") {
-        bool enable = (rest == "1" || rest == "true" || rest == "on");
-        // Hooking DropRelic while character selection is still running stalls the
-        // runner.  Arm it instead: the frame callback installs the hook once the
-        // setup gate has passed and a real player instance exists, so the panel
-        // can send this at launch (build_cmds) and it still applies in-game.
-        ForgePact::RelicFilterMod::Instance().SetEnabled(enable, g_Orig_DropRelic != nullptr);
+        const std::string sub = Lower(TrimCopy(rest));
+        if (sub == "status") {
+            RelicFilterStatus();
+#ifndef FORGEPACT_RELEASE
+        } else if (sub.rfind("testmaxed", 0) == 0) {
+            RelicFilterTestMaxed(sub.substr(9));
+        } else if (sub == "ground" || sub == "ground clear") {
+            RelicFilterGround(sub == "ground clear");
+#endif
+        } else {
+            bool enable = (rest == "1" || rest == "true" || rest == "on");
+            // Hooking a script while character selection is still running
+            // stalls the runner. Arm it instead: the frame callback installs
+            // the GetRelicQuest hook once the setup gate has passed and a real
+            // player instance exists, so the panel can send this at launch
+            // (build_cmds) and it still applies in-game.
+            ForgePact::RelicFilterMod::Instance().SetEnabled(enable, g_Orig_GetRelicQuest != nullptr);
+        }
     } else if (lc == "orbpickup") {
         std::string ov = Lower(rest);
         while (!ov.empty() && std::isspace((unsigned char)ov.back())) ov.pop_back();
@@ -42662,17 +42736,23 @@ void FrameCallback(FWFrame& FrameContext)
     MkRoomTick();
 #endif
 
-    // Relic filter, armed by `relicfilter 1`: the DropRelic hook goes in only
-    // once the runner has settled AND a real player exists.  Installing it during
-    // character selection stalled the game for about a minute, which is why the
-    // panel used to withhold the command entirely and the mod never applied
-    // after a restart (user report 2026-09-09).  Checked once a second at most.
+    // Relic filter, armed by `relicfilter 1`: the GetRelicQuest hook goes in
+    // only once the runner has settled AND a real player exists. Installing a
+    // hook (DropRelic, then) during character selection stalled the game for
+    // about a minute, which is why the panel used to withhold the command
+    // entirely and the mod never applied after a restart (user report
+    // 2026-09-09). Checked once a second at most. The game calls GetRelicQuest
+    // directly, so a table-only install is reported as the failure it is.
     if (ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup && (fc % 60) == 0) {
         RValue player;
         if (HhResolveLocalPlayer(player)) {
             ForgePact::RelicFilterMod::Instance().ClearPending();
-            HookOneScript("DropRelic", "bp_drelic", (PVOID)Hook_DropRelic, &g_Orig_DropRelic);
-            Out(std::string("relicfilter: hook installed -> ") + (g_Orig_DropRelic ? "ON" : "FAILED (DropRelic not found)"));
+            if (!g_Orig_GetRelicQuest) {
+                bool native = false;
+                HookOneScript("GetRelicQuest", "bp_grelicq", (PVOID)Hook_GetRelicQuest, &g_Orig_GetRelicQuest, &native);
+                g_GetRelicQuestNative = native;
+            }
+            Out("relicfilter: hook installed -> " + RelicFilterHookState());
         }
     }
     // ...then, once per arm, the scan's own answer (#93): `relicfilter: scan

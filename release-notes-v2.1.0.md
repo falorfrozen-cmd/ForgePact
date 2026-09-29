@@ -10,6 +10,9 @@ A new **Extra packs as you approach** switch, off by default, makes Monster
 Density's extra spawners only as you come near them, so high density costs the
 game less every frame.
 
+**Remove owned relics from drop pool** now really keeps your 10/10 relics from
+dropping.
+
 ## New
 
 - **Move all into the stash** (Mods → Quality of Life, off by default). With the
@@ -64,12 +67,26 @@ game less every frame.
     it copies anything, and a file that is in use is reported in plain words
     instead of a raw Windows error.
 
+## Fixed
+
+- **Remove owned relics from drop pool now works.**
+  - Before, a relic you already had at 10/10 kept dropping even with the switch on,
+    while ForgePact's log said it was holding that relic back.
+    - The switch changed a value the game does not use when it picks a relic.
+    - Relics from Satanic zone kills never went through it at all.
+    - Relics in your backpack's relic tab were not checked.
+  - Now, when the game picks a relic you own at 10/10, worn or in the relic tab, it
+    picks again. Another relic drops in its place, and every other relic keeps its
+    usual odds.
+  - If every relic that can drop is already at 10/10, the switch stands down.
+  - `relicfilter status` in the log shows how many maxed relics it has skipped.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
-are missing before using **Install Mod Plugin**. Move all into the stash and
-Extra packs as you approach are in the plugin. **Launch Modded Game** brings
+are missing before using **Install Mod Plugin**. Move all into the stash,
+Extra packs as you approach and the relic fix are in the plugin. **Launch Modded Game** brings
 the plugin up to date for you. If you start the game from Steam instead, or
 ForgePact's warning asks for it,
 press **Install Mod Plugin** once after updating.
