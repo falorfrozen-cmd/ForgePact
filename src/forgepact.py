@@ -1523,15 +1523,30 @@ def op_install_mod(cfg) -> dict:
     except Exception as e:
         return {"err": f"could not validate/prepare the clean exe backup: {e}"}
 
-    _sh.copy2(core, b / "AurieCore.dll")
-    (b / "mods" / "aurie").mkdir(parents=True, exist_ok=True)
-    (b / "mods" / "native").mkdir(parents=True, exist_ok=True)
-    _sh.copy2(yytk, b / "mods" / "aurie" / "YYToolkit.dll")
-    _sh.copy2(plug, b / "mods" / "aurie" / "BloodPactPlugin.dll")
-    steps.append("mod DLLs installed/updated")
-    if sensor is not None:
-        _sh.copy2(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
-        steps.append("HS Offline Tracker sensor installed")
+    # Checked again here, not only on entry: the backup work above can take a
+    # while, and a DLL the game has loaded cannot be overwritten (issue #123).
+    if game_running(cfg):
+        return {"err": "Close the game first, then click Install again."}
+    copying = "AurieCore.dll"
+    try:
+        _sh.copy2(core, b / "AurieCore.dll")
+        copying = "the mods folder"
+        (b / "mods" / "aurie").mkdir(parents=True, exist_ok=True)
+        (b / "mods" / "native").mkdir(parents=True, exist_ok=True)
+        copying = "YYToolkit.dll"
+        _sh.copy2(yytk, b / "mods" / "aurie" / "YYToolkit.dll")
+        copying = "BloodPactPlugin.dll"
+        _sh.copy2(plug, b / "mods" / "aurie" / "BloodPactPlugin.dll")
+        steps.append("mod DLLs installed/updated")
+        if sensor is not None:
+            copying = TRACKER_SENSOR_DLL
+            _sh.copy2(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
+            steps.append("HS Offline Tracker sensor installed")
+    except OSError as e:
+        # Before this, the handler's catch-all answered HTTP 500 with the raw
+        # "[WinError 32] ..." text in a toast.
+        return {"err": f"Could not write {copying} ({e.strerror or e}). It is in use or read-only: "
+                       "close the game and any other tool using the mod files, then click Install again."}
     if not patched_before_install:
         patch_error = ""
         patch_output = ""
@@ -1562,7 +1577,7 @@ def op_install_mod(cfg) -> dict:
         steps.append("exe already patched")
     return {"ok": "MOD INSTALLED: " + ", ".join(steps) +
                   " - NOTE: only works on an EAC-free copy (online/EAC games will bounce back to the clean exe).",
-            "chain": mod_chain(cfg)}
+            "chain": mod_chain(cfg), "pluginBuild": plugin_build_state(cfg, use_cache=False)}
 
 
 def op_remove_mod(cfg) -> dict:
@@ -1615,7 +1630,7 @@ def op_remove_mod(cfg) -> dict:
     steps.append("mod files removed")
     return {"ok": "MOD REMOVED: " + ", ".join(steps) +
                   ". The game is back to its original (un-modded) exe. The .aurie_backup is kept so you can re-install anytime.",
-            "chain": mod_chain(cfg)}
+            "chain": mod_chain(cfg), "pluginBuild": plugin_build_state(cfg, use_cache=False)}
 
 
 LAST = {"applied": None, "queued": False}
@@ -1895,6 +1910,177 @@ def watcher():
             pass
 
 
+# ---- the plugin in the game vs the one this ForgePact ships (issue #123) ----
+# Updating ForgePact replaces the panel and its modfiles, never the copy in the
+# game's mods\aurie: only Install Mod Plugin writes that one.  So after an
+# update the game went on loading the old plugin with nothing saying so, and a
+# switch the old plugin does not know showed ON while the plugin answered
+# "command unavailable in player build" (Move all into the stash's
+# `stashmoveall` and Extra packs' `densityroll`, sent to the plugin of the
+# release before them).  No version is written here: this file names its own
+# exactly once (VersionStampTests).
+#
+# Which build a DLL is, is read from its bytes, never by loading it: LoadLibrary
+# would run the plugin's initialisers inside the panel and hold the file open.
+# ModManager.hpp's boot line, "==== BloodPact plugin loaded ==== v<x.y.z>", is a
+# string literal every plugin since 1.3.20 carries; older plugins carry the
+# marker with no version.  The version is for the person reading the message;
+# the SHA-256 decides whether two files are the same build, because a recut or
+# a build from source carries the same version in different bytes.
+PLUGIN_DLL = "BloodPactPlugin.dll"
+_PLUGIN_VERSION_RE = re.compile(re.escape(BOOT_MARKER) + rb" ==== v(\d+(?:\.\d+){1,3})")
+# The states in which the panel asks for Install Mod Plugin.
+PLUGIN_STALE_STATES = ("older", "different", "unknown")
+_PLUGIN_FACTS_LOCK = threading.Lock()
+_PLUGIN_FACTS: dict = {}
+
+
+def plugin_dll_facts(path: Path, use_cache: bool = True) -> dict | None:
+    """{"sha256", "marker", "version"} of one plugin DLL, or None if unreadable.
+
+    /api/state is polled for the whole session, so the answer is cached by
+    (size, mtime_ns), as offline_launcher._exe_facts caches the exe's: a
+    changed file is a different key, so an Install shows on the next poll.
+    A launch decision passes use_cache=False.
+    """
+    name = str(path).lower()
+    try:
+        before = path.stat()
+        key = (before.st_size, before.st_mtime_ns)
+        if use_cache:
+            with _PLUGIN_FACTS_LOCK:
+                hit = _PLUGIN_FACTS.get(name)
+            if hit is not None and hit[0] == key:
+                return hit[1]
+        data = path.read_bytes()
+        after = path.stat()
+    except OSError:
+        return None
+    found = _PLUGIN_VERSION_RE.search(data)
+    facts = {"sha256": hashlib.sha256(data).hexdigest(),
+             "marker": BOOT_MARKER in data,
+             "version": found.group(1).decode("ascii") if found else None}
+    # A file rewritten while it was being read is answered, not remembered.
+    if (after.st_size, after.st_mtime_ns) == key:
+        with _PLUGIN_FACTS_LOCK:
+            _PLUGIN_FACTS[name] = (key, facts)
+    return facts
+
+
+def _plugin_version_key(version: str) -> tuple:
+    parts = [int(part) for part in version.split(".")]
+    return tuple(parts + [0] * (4 - len(parts)))
+
+
+def plugin_build_state(cfg=None, use_cache: bool = True) -> dict:
+    """How the plugin in the game compares with the one this ForgePact ships.
+
+    `state` is one of:
+      missing    no plugin in the game (mod_chain() already says so);
+      no-bundle  nothing to compare with: a source checkout that has not run
+                 Prepare-Plugin.bat, or a release extracted without modfiles;
+      current    the same file, byte for byte;
+      older      an older ForgePact's plugin (one from before 1.3.20 carries
+                 no version, so it is older than any that does);
+      newer      a newer ForgePact's plugin, under an older panel;
+      different  the same version in different bytes (a recut, or a build
+                 from source);
+      unknown    a file under the plugin's name that cannot be read or that
+                 carries no ForgePact boot line.
+    `installed` and `bundled` are each side's version, None when it has none.
+    """
+    installed_path = exe_path(cfg).parent / "mods" / "aurie" / PLUGIN_DLL
+    if not installed_path.exists():
+        return {"state": "missing", "installed": None, "bundled": None}
+    installed = plugin_dll_facts(installed_path, use_cache)
+    bundled_path = find_src(PLUGIN_DLL, PLUGIN_SOURCES)
+    bundled = plugin_dll_facts(bundled_path, use_cache) if bundled_path is not None else None
+    result = {"installed": installed["version"] if installed else None,
+              "bundled": bundled["version"] if bundled else None}
+    # Byte-identical is current whatever the bytes say: sameness is the hash's
+    # to decide, and the boot line only names the build.
+    if installed is None:
+        state = "unknown"
+    elif bundled is not None and installed["sha256"] == bundled["sha256"]:
+        state = "current"
+    elif not installed["marker"]:
+        state = "unknown"
+    elif bundled is None:
+        state = "no-bundle"
+    elif installed["version"] is None:
+        state = "older"
+    elif bundled["version"] is None:
+        state = "different"
+    else:
+        mine = _plugin_version_key(installed["version"])
+        shipped = _plugin_version_key(bundled["version"])
+        state = "older" if mine < shipped else "newer" if mine > shipped else "different"
+    result["state"] = state
+    return result
+
+
+def plugin_stale_advice(build: dict) -> str:
+    """What to tell a player whose game has a stale plugin; "" when it has not."""
+    state = build.get("state")
+    installed = "v" + build["installed"] if build.get("installed") else "an old version"
+    shipped = "v" + build["bundled"] if build.get("bundled") else "a newer one"
+    if state == "older":
+        lead = f"The mod plugin in the game is {installed}, but this ForgePact ships {shipped}."
+    elif state == "different":
+        lead = f"The mod plugin in the game is not the {installed} build this ForgePact ships."
+    elif state == "unknown":
+        lead = "The mod plugin file in the game is not one this ForgePact can read."
+    else:
+        return ""
+    return lead + " Close the game, then click Install Mod Plugin in Setup."
+
+
+def refresh_stale_plugin(cfg) -> str:
+    """Put this ForgePact's plugin into the game when the game's is older.
+
+    Called only by launch_modded_game(), as offline_launcher.launch_game()'s
+    `prepare` step.  That runs after launch_safety_blocker() has found no
+    Hero_Siege.exe running (it refuses when the processes cannot be listed) and
+    before the game starts, so the file replaced here is not loaded; the copy
+    is staged beside it and swapped in whole (_atomic_verified_copy), so a
+    failure leaves the old plugin as it was.
+
+    It replaces BloodPactPlugin.dll and nothing else, and only when:
+    - this is a release build of ForgePact (frozen).  From source, a plugin in
+      the game is a developer's own build or a hand-installed test DLL;
+    - the game's plugin is older than the bundled one: never a newer one, the
+      same version in other bytes, or a file this panel cannot identify;
+    - the game's YYToolkit.dll and AurieCore.dll are byte-identical to the
+      bundled ones.  The plugin is compiled against YYToolkit's headers and
+      the two must match (a mismatch crashes on a vtable), and those DLLs are
+      shared with other tools such as HS Offline Tracker, so replacing them
+      stays Install Mod Plugin's job, done when the player clicks it.
+    Otherwise nothing is written and the answer is the advice to click
+    Install Mod Plugin, for the launch message: the launch goes ahead as it
+    did before this existed.  Returns "" when there is nothing to say, and
+    never raises.
+    """
+    try:
+        build = plugin_build_state(cfg, use_cache=False)
+        advice = plugin_stale_advice(build)
+        if build["state"] != "older" or not getattr(sys, "frozen", False):
+            return advice
+        game = exe_path(cfg).parent
+        for name, installed in (("YYToolkit.dll", game / "mods" / "aurie" / "YYToolkit.dll"),
+                                ("AurieCore.dll", game / "AurieCore.dll")):
+            bundled = find_src(name, MODFILE_SOURCES)
+            if bundled is None or not installed.exists() or _sha256_file(bundled) != _sha256_file(installed):
+                return advice
+        _atomic_verified_copy(find_src(PLUGIN_DLL, PLUGIN_SOURCES), game / "mods" / "aurie" / PLUGIN_DLL)
+        after = plugin_build_state(cfg, use_cache=False)
+    except Exception as exc:
+        return f"The mod plugin could not be updated ({exc}). Close the game, then click Install Mod Plugin in Setup."
+    if after["state"] != "current":
+        return plugin_stale_advice(after) or "The mod plugin could not be updated."
+    was = "v" + build["installed"] if build["installed"] else "an old version"
+    return f"Mod plugin updated from {was} to v{after['installed']} before launch."
+
+
 def launch_modded_game(cfg: dict) -> dict:
     """Use the embedded launcher with this panel's path, never a second config."""
     def validate_plugin() -> str:
@@ -1903,7 +2089,18 @@ def launch_modded_game(cfg: dict) -> dict:
             return "The mod plugin installation is incomplete. Close the game and click Install Mod Plugin first."
         return ""
 
-    return offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin)
+    notes = []
+
+    def refresh_plugin() -> None:
+        note = refresh_stale_plugin(cfg)
+        if note:
+            notes.append(note)
+
+    result = offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin,
+                                          prepare=refresh_plugin)
+    if notes and result.get("ok"):
+        result["ok"] = result["ok"] + " " + " ".join(notes)
+    return result
 
 
 def _panel_dist() -> Path:
@@ -1998,6 +2195,7 @@ class H(BaseHTTPRequestHandler):
                         "stash_move_all_session": stash_move_all_session(cfg),
                         "eacStatus": eac_status(_exe) if _exe.exists() else "",
                         "chain": mod_chain(cfg),
+                        "pluginBuild": plugin_build_state(cfg),
                         "spawners": [[k, i, l, mx] for k, i, l, mx in SPAWNERS],
                         "drops": [[k, l, h] for k, l, h in DROPS],
                         "stats": [[k, l, mx, step] for k, l, mx, step in STATS],

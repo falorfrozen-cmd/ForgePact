@@ -51,14 +51,27 @@ game less every frame.
   With Reveal full map's **Really spawn every pack on arrival (heavy)**, every
   spawner is made at once as before, and while the Beacon or Tyrant's Crown
   has monsters hunting you, the switch reaches as far as the hunt does.
+- **ForgePact now notices an old mod plugin in your game.** Updating ForgePact
+  never replaced the plugin inside the game, so after an update the game kept
+  the previous version's plugin: new switches showed ON and did nothing, and
+  nothing said why. ForgePact now compares the plugin in your game with the one
+  it ships. When yours is older, Setup, the status bar and the warning icon say
+  so, and **Launch Modded Game** puts the new plugin in place before the game
+  starts. It does this only while the game is closed. When an update also
+  changes YYToolkit or AurieCore, it leaves them alone and asks you to press
+  **Install Mod Plugin** instead.
+  - **Install Mod Plugin** now checks again that the game is closed right before
+    it copies anything, and a file that is in use is reported in plain words
+    instead of a raw Windows error.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. Move all into the stash and
-Extra packs as you approach are in the plugin, so
-press **Install Mod Plugin** once after updating - updating only the panel
-leaves the old plugin in place.
+Extra packs as you approach are in the plugin. **Launch Modded Game** brings
+the plugin up to date for you. If you start the game from Steam instead, or
+ForgePact's warning asks for it,
+press **Install Mod Plugin** once after updating.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

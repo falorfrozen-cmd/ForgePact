@@ -2,6 +2,7 @@ import { ST } from '../state.svelte.js';
 import { activeTab, openTab, openModsSubtab } from '../nav.js';
 import { toast } from '../panel.js';
 import { switchControlId } from '../enabled-mods.js';
+import { pluginBuildNotice } from '../lib/plugin-build.js';
 
 // Presentation only. All writes go through the existing controls and serialized API.
 const EMBER_QUICK = {
@@ -419,20 +420,26 @@ function updateEmberStatus() {
   if (!plugin) return;
 
   const ch = ST.chain || {},
-    installed = ch.patched && ch.aurieCore && ch.yytk && ch.plugin;
+    installed = ch.patched && ch.aurieCore && ch.yytk && ch.plugin,
+    // Installed can still mean an older ForgePact's plugin (issue #123).
+    stale = installed ? pluginBuildNotice(ST.pluginBuild) : null;
   // Existing state proves files are installed, not a current-session heartbeat.
   // Never misrepresent an old modstate file as a live plugin connection.
-  const text = installed
-    ? "Plugin installed"
-    : ch.exeExists
-      ? "Plugin missing"
-      : "Setup needed";
+  const text = stale
+    ? stale.chip[0].toUpperCase() + stale.chip.slice(1)
+    : installed
+      ? "Plugin installed"
+      : ch.exeExists
+        ? "Plugin missing"
+        : "Setup needed";
   if (plugin.textContent !== text) plugin.textContent = text;
-  const cls = 'chip ' + (installed ? 'on' : 'warn');
+  const cls = 'chip ' + (installed && !stale ? 'on' : 'warn');
   if (plugin.className !== cls) plugin.className = cls;
-  const title = installed
-    ? "Required plugin files are present. This is not a live connection check."
-    : "Choose your game and install its plugin in Setup.";
+  const title = stale
+    ? stale.warning
+    : installed
+      ? "Required plugin files are present. This is not a live connection check."
+      : "Choose your game and install its plugin in Setup.";
   if (plugin.title !== title) plugin.title = title;
 }
 function openEmberQuickChoices() {

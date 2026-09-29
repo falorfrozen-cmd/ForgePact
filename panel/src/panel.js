@@ -15,6 +15,7 @@ import { setupModsColumns } from './mods-columns.js';
 import { pollDelayMs, pollNextChangeAt } from './poll-policy.js';
 import { switchControlId, switchOn } from './enabled-mods.js';
 import { renderEnabledMods } from './lib/enabled-mods-list.js';
+import { pluginBuildNotice } from './lib/plugin-build.js';
 import { applyTheme } from './theme.js';
 
 let tmr=null;
@@ -457,18 +458,21 @@ function status(){
   const g=document.getElementById('chipGame'), a=document.getElementById('chipApply');
   const ch=ST.chain||{};
   const ok=ch.patched&&ch.aurieCore&&ch.yytk&&ch.plugin;
-  setText(g,ST.gameRunning?(ok?'Game open':'Game open · plugin missing'):'Game offline');
+  // An installed plugin can still be an older ForgePact's: updating ForgePact
+  // never replaces the copy in the game (issue #123, lib/plugin-build.js).
+  const stale=ok?pluginBuildNotice(ST.pluginBuild):null;
+  setText(g,ST.gameRunning?(ok?(stale?'Game open · '+stale.chip:'Game open'):'Game open · plugin missing'):'Game offline');
   setTitle(g,ST.gameRunning?'This detects the game process. The plugin must be installed and loaded to apply modifiers.':'Settings are saved locally. Auto-apply sends them on game launch when enabled.');
-  setClass(g,'chip '+(ST.gameRunning?(ok?'on':'warn'):'off'));
+  setClass(g,'chip '+(ST.gameRunning?(ok&&!stale?'on':'warn'):'off'));
   setText(a,ST.lastApplied?('commands sent: '+ST.lastApplied+(ST.queued?' (queued)':'')):'No settings sent this session');
   setClass(a,'chip '+(ST.lastApplied?'warn':'off'));
   const warning=document.getElementById('pluginWarning');
-  setHidden(warning,!!ok);
-  setText(document.getElementById('pluginWarningText'),ch.exeExists?
+  setHidden(warning,!!ok&&!stale);
+  setText(document.getElementById('pluginWarningText'),stale?stale.warning:ch.exeExists?
     'Plugin not installed. Your settings are saved, but modifiers cannot apply. Close the game, then install the plugin in Setup.':
     'Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.');
   const cn=document.getElementById('chainnote');
-  if(ok){setText(cn,'');}
+  if(ok&&!stale){setText(cn,'');}
   else{
     const miss=[];
     if(!ch.patched)miss.push('exe not patched');
@@ -477,8 +481,10 @@ function status(){
     if(!ch.plugin)miss.push('mod plugin');
     // The button's name is a mono run with no quotes (finish review F5), in one
     // span so #chainnote's flex row keeps it inline. Written only when the
-    // words change, as setText() does, so an idle poll mutates nothing.
-    const lead='mod chain incomplete: '+miss.join(', ')+' - click ';
+    // words change, as setText() does, so an idle poll mutates nothing. A
+    // stale plugin's words carry only digits and dots from the backend
+    // (plugin_build_state's version pattern), so they are safe in the markup.
+    const lead=(stale?stale.chain:'mod chain incomplete: '+miss.join(', '))+' - click ';
     if(cn.textContent!==lead+'Install Mod Plugin (game must be closed)')cn.innerHTML=`<span>${lead}<span class="chain-command">Install Mod Plugin</span> (game must be closed)</span>`;
     cn.style.color='var(--color-warn)';
   }
@@ -788,6 +794,7 @@ function bind(){
     const res=await j('/api/installmod',{method:'POST',body:'{}'});
     btn.disabled=false; btn.textContent='Install Mod Plugin';
     if(res.chain)ST.chain=res.chain;
+    if(res.pluginBuild)ST.pluginBuild=res.pluginBuild;
     toast(res.ok||res.err); status();
   };
   document.getElementById('removeplugin').onclick=async()=>{
@@ -796,6 +803,7 @@ function bind(){
     const res=await j('/api/removeplugin',{method:'POST',body:'{}'});
     btn.disabled=false; btn.textContent='Remove Plugin';
     if(res.chain)ST.chain=res.chain;
+    if(res.pluginBuild)ST.pluginBuild=res.pluginBuild;
     toast(res.ok||res.err); status();
   };
   document.getElementById('exesave').onclick=async()=>{
@@ -1163,7 +1171,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }
