@@ -57,7 +57,8 @@ game less every frame.
 Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. Move all into the stash and
-Extra packs as you approach are in the plugin, so press **Install Mod Plugin**
-once after updating - updating only the panel leaves the old plugin in place.
+Extra packs as you approach are in the plugin, so
+press **Install Mod Plugin** once after updating - updating only the panel
+leaves the old plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

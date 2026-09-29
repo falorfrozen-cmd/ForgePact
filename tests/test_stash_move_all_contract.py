@@ -564,7 +564,8 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertEqual(forgepact.build_cmds(on).count("stashmoveall 1"), 1)
         source = (ROOT / "src" / "forgepact.py").read_text(encoding="utf-8")
         self.assertIn('send_cmds([f"stashmoveall {1 if cfg[\'mod_stash_move_all\'] else 0}"], cfg)', source)
-        self.assertIn('"mod_far_sleep", "mod_stash_move_all", "mod_craft_mats"', source)
+        # One of /api/set's live booleans (its place in that tuple is free).
+        self.assertRegex(source, r'elif key in \("density_on", "auto_apply", [^)]*"mod_stash_move_all", ')
         mods = panel_file("tabs/Mods.svelte")
         row = mods[mods.index('id="mod_stash_move_all"') - 700:mods.index('id="msmaval"')]
         self.assertIn("Move all into the stash<br>", row)

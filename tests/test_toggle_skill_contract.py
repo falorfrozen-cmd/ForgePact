@@ -2968,7 +2968,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll"})        self.assertEqual(before - now, set())
+                                        "densityroll"})
+        self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
     # A research-only probe that draws a *named* sprite, or today's shipped
