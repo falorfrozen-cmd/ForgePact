@@ -15,7 +15,7 @@ export const BOOLEAN_MODS = [
   'map_reveal', 'headhunter', 'tyrant', 'beacon', 'mod_filter_max_relics',
   'mod_orb_pickup_radius', 'mod_pet_quest_pickup', 'mod_pet_loot_unstick', 'mod_auto_prospect',
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
-  'mod_far_sleep', 'mod_gem_mythic', 'mod_gem_maxroll',
+  'mod_far_sleep', 'density_rolling', 'mod_gem_mythic', 'mod_gem_maxroll',
 ];
 
 // The sliders that carry an on/off switch, in the order src/forgepact.py's

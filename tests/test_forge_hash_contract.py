@@ -86,6 +86,9 @@ EXPECTED_PLAYER_COMMANDS = {
     "frameprof",
     # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
     "farsleep",
+    # Rolling density copies, the Mods tab's switch
+    # (test_rolling_density_contract.py).
+    "densityroll",
 }
 
 
