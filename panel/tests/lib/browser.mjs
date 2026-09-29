@@ -40,10 +40,11 @@ export function parseArgs(argv) {
 }
 
 // How long a sandbox may take to print its port (`startTimeoutMs` overrides
-// it). Starting one costs about 4.5 s on an idle machine, most of it
-// importing hs_game_sdk, and much longer beside three other browser suites on
-// four cores (up to 41 s measured), so the limit is only there to name a
-// sandbox that hangs.
+// it). Starting one cost about 4.5 s on an idle machine while importing
+// hs_game_sdk built every table, and up to 41 s beside three other browser
+// suites on four cores; since the SDK loads its tables on first use (hub
+// PR #286) and the panel imports only the Satanic pools, it takes about
+// 0.45 s. The limit is only there to name a sandbox that hangs.
 export const SANDBOX_START_TIMEOUT_MS = 120000;
 // How many of a sandbox's last stderr lines an error quotes.
 const STDERR_TAIL = 20;
