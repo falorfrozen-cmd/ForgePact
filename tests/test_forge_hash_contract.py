@@ -89,6 +89,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Move all into the stash (ForgePact #68): the Mods tab's switch and its
     # run, and the one-item verb (test_stash_move_all_contract.py).
     "stashmoveall", "stashmove",
+    # Rolling density copies, the Mods tab's switch
+    # (test_rolling_density_contract.py).
+    "densityroll",
 }
 
 

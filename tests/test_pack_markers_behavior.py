@@ -76,6 +76,10 @@ class PackMarkersBehaviorTests(unittest.TestCase):
     def test_all_scenarios_pass(self):
         self.assertIn("RESULT OK", self.output, self.output)
 
+    def test_a_rolling_density_copy_does_not_relist_the_zone(self):
+        self.assertScenario("copy/no_relisting")
+        self.assertScenario("copy/real_growth_still_lists")
+
     def test_nothing_is_asked_of_the_game_while_off_or_loading(self):
         self.assertScenario("off/no_calls")
         self.assertScenario("loading/no_enumeration")

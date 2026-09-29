@@ -5,7 +5,8 @@ Status: **analysis; option A implemented the same day as pack markers**
 the panel's monster sub-toggle now mean markers; the real spawn pass moved to
 `reveal spawn` / `map_reveal_spawn`, off by default), plus option D's count
 gate in `BeWakeObject`. Live look and cost of the markers are still to be
-confirmed in-game. Written after the five-second early population candidate
+confirmed in-game. Section 8 adds rolling density copies (2026-09-28,
+opt-in `densityroll`). Written after the five-second early population candidate
 failed live acceptance at 4x density (see
 [population-capacity.md](population-capacity.md)). Every game mechanism below
 was read from a local decompilation of the game's own scripts (June 2026 image
@@ -214,3 +215,74 @@ thousands of monsters alive:
   `Draw_Enemy_Buff_obj`, `Corpse_obj`, `Controller_obj`, `objMinimap`.
 - Earlier live measurements reused: creator census (map-reveal-research.md
   section 10), profile captures and frame intervals (population-capacity.md).
+
+## 8. Rolling density copies (2026-09-28)
+
+Option B's idea, applied to Monster Density's own copies. Density copies each
+spawner (at 5x, four copies per spawner), and `DeferredDensityCopies` made all
+of them within seconds of arrival. Every spawner, original or copy, then keeps
+a timer in the game's timer list (`global.__timer_list`, walked every frame by
+`timer_system_update` in `Menu_Controller_obj`'s Step) that asks whether a
+player is within 1050 px. The timer system pauses rather than drops the timer
+of a deactivated owner, so deactivation would not shorten that walk; not
+making the far copies does.
+
+**What it does.** `densityroll 1` (panel: Mods → Quality of Life → Extra packs
+as you approach, `density_rolling`, off by default) keeps the plan for every
+copy but makes a copy only while a player is within the reach of its
+original: 3000 px by default, `densityroll <1500-20000>` to change it.
+
+- `DeferredDensityCopies::TakeNearest(x, y, frame, reach)` leaves farther jobs
+  queued (never dropped), and `DueWithin` counts the jobs inside the reach.
+  `DeferredDensityPending()` hands only that count to
+  `AdaptivePopulationBudget`, so waiting copies do not raise the per-frame
+  budget; the copies that do become due are made nearest first under the
+  same budget as before.
+- The reach is recomputed once a second (`DensityRollRefresh`). It becomes
+  infinite, which is the old behaviour, while `reveal spawn` is on, since
+  that pass needs every spawner. While a hunt is on (`HuntPolicy() != 0`:
+  Beacon, or Tyrant's Crown for rares and champions) it is at least the wake
+  radius + 500, because monsters within the radius keep hunting. A whole-map
+  radius makes it infinite, and so does `beaconspawn` with the radius off,
+  because that experiment makes every spawner give birth.
+- A copy made while rolling is reported to `PackMarkers::NoteCopy`, so the
+  marker pass counts it with its family instead of listing it as a new pack.
+- A zone revisit restores every spawner, copies included, through the game's
+  zone state; the placement guard keeps a copy from being made twice.
+
+**Measured live** (research build 139C81ECFC87, density 5, Act_01_01). Each
+game was fresh, because a second visit to a zone restores its spawners from
+zone state.
+
+| Same zone, same spot | rolling on | after `densityroll 0` (every copy) |
+| --- | --- | --- |
+| copies made / waiting | 120 / 1140 | 1260 / 0 |
+| spawners in the zone | 430 | 1570 |
+| monsters in the zone | 460 | 939 |
+| spawners / monsters within 1500 px | 34 / 184 | 34 / 184 |
+| instances | 8543 | 11193 |
+| `timer_system_update`, share of samples | 2.1% | 8.7% |
+| frame work (60 fps cap, 15 s capture) | 69.7% | 84.0% |
+
+- The 479 extra monsters with every copy are all idle `*_Passive_obj`
+  monsters (Legion skeletons and archers, spiders, zombies), none within
+  1500 px of the player: they appeared as the 1140 waiting copies were made,
+  so a spawner's idle monsters come with the spawner, not with its pack.
+- The rolling capture had one 65.8 ms frame while standing still with nothing
+  due; its p99 was 16.9 ms against 18.9 ms with every copy. The cause of the
+  one long frame was not identified.
+- **Teleports:** three `playerwarp` hops of about 4500 px, each onto a spawner
+  more than 4500 px from every earlier spot, made 212, 200 and 304 copies. `due` was 0 at the first check, 3.2-4.0 s after each warp.
+  `densityroll 0` then made the remaining 392, and the spawners within
+  1500 px of the player stayed at 228.
+- **With far scenery sleep as well**, another fresh game of the same zone ran
+  at 53.1%. The layout and entry point differ between games, so this is not
+  a like-for-like figure.
+- Not measured: a walk at normal speed (the teleports are the harder case),
+  and a live run with a Beacon or Tyrant's Crown hunt. The reach rule for
+  those is pinned by `tests/test_rolling_density_contract.py`.
+- Offline: `tests/adaptive_population.cpp` (a job out of reach waits, is
+  neither taken nor dropped, and becomes due as the player comes near),
+  `tests/density_population_harness.cpp` (the production `DensityCopiesTick`
+  with a reach against a controlled runner), `tests/pack_markers_harness.cpp`
+  (`copy/no_relisting`, `copy/real_growth_still_lists`).

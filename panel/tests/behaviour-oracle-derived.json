@@ -48,7 +48,8 @@
   "#sw_keys_primeevil",
   "#mod_far_sleep",
   "#mod_pet_loot_unstick",
-  "#mod_stash_move_all"
+  "#mod_stash_move_all",
+  "#density_rolling"
  ],
  "steps": [
   {
@@ -4927,6 +4928,78 @@
     },
     "cmds": {
      "same": 418
+    }
+   }
+  },
+  {
+   "step": 421,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 422,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 423,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 421
+    },
+    "cmds": {
+     "same": 421
+    }
+   }
+  },
+  {
+   "step": 424,
+   "control": "#enabledMods .quick-disable[data-for=\"density_rolling\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 422
+    },
+    "cmds": {
+     "same": 422
     }
    }
   }
