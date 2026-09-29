@@ -80,6 +80,7 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
+  { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
 ];
 const setPost = (body) => [{ url: '/api/set', body }];
 

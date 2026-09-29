@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 16);
+  assert.equal(BOOLEAN_MODS.length, 17);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -52,6 +52,12 @@ test('far scenery sleep is an entry while on, and off by default', () => {
   assert.ok(BOOLEAN_MODS.includes('mod_far_sleep'));
   assert.equal(DEFAULTS.mod_far_sleep, false);
   assert.deepEqual(enabledControls(cfg({ mod_far_sleep: true })), ['mod_far_sleep']);
+});
+
+test('extra packs as you approach is an entry while on, and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('density_rolling'));
+  assert.equal(DEFAULTS.density_rolling, false);
+  assert.deepEqual(enabledControls(cfg({ density_rolling: true })), ['density_rolling']);
 });
 
 test('the skill timer is an entry for any style but off', () => {

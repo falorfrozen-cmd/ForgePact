@@ -833,6 +833,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "frameprof",
             # Far sleep, the Mods tab's switch (test_far_sleep_contract.py).
             "farsleep",
+            # Rolling density copies' switch (test_rolling_density_contract.py).
+            "densityroll",
         }
         self.assertEqual(entries, expected)
 
@@ -2950,15 +2952,17 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # (test_skill_actions_contract.py), and `playerwarp`, `stashtab`,
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
         # (test_stash_bag_layout_contract.py), `petunstick` is #94's
-        # companion loot unstick (test_pet_loot_unstick_contract.py), and
-        # `frameprof` the frame profiler (test_frame_profiler.py), and
-        # `farsleep` is far sleep's switch (test_far_sleep_contract.py).
+        # companion loot unstick (test_pet_loot_unstick_contract.py),
+        # `frameprof` the frame profiler (test_frame_profiler.py),
+        # `farsleep` is far sleep's switch (test_far_sleep_contract.py) and
+        # `densityroll` rolling density copies'
+        # (test_rolling_density_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick", "frameprof", "farsleep"})
+                                        "petunstick", "frameprof", "farsleep", "densityroll"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

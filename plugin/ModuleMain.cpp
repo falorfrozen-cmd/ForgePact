@@ -1312,7 +1312,25 @@ static ForgePact::DeferredDensityCopies<DensityPlacementKey,DensityRecipe,Densit
 static int64_t g_DensityCopyRoom=INT64_MIN;
 static uint64_t g_DensityCopyCompleted=0,g_DensityCopyRefused=0,g_DensityCopyFailures=0;
 static std::string g_DensityCopyReason;
-static size_t DeferredDensityPending(){return g_DensityCopies.Pending();}
+// Rolling density copies (`densityroll`, Mods > Quality of Life, off by
+// default): with Monster Density above x1, the extra spawners are made only
+// within reach of the player instead of all at once when a zone loads. Every
+// spawner asks the game's timer system for the player's distance, and
+// timer_system_update walks every timer every frame: at x5 Act_01_01 held
+// 1,505 spawners (312 at x1) and the walk took 7-9% of the frame thread
+// (frameprof, 2026-09-28). A pack is born only once the player is within
+// 1,050 px of its spawner, so a copy made 3,000 px ahead is born exactly when
+// it would have been. Jobs out of reach wait in g_DensityCopies; they are
+// neither dropped nor counted as the budget's backlog.
+static double g_DensityRollReach=0.0;                                  // 0 = off, else the reach in px
+static constexpr double kDensityRollDefaultPx=3000.0;
+static double g_DensityReachNow=std::numeric_limits<double>::infinity(); // effective reach, see DensityRollRefresh
+static size_t g_DensityDue=0;                                            // jobs within reach at the last tick
+static bool DensityRolling(){return std::isfinite(g_DensityReachNow);}
+// Told of each copy made while rolling (the pack markers' family count); set
+// where PackMarkers is wired, left empty in the density harness.
+static void (*g_DensityCopyMade)(int objectIndex)=nullptr;
+static size_t DeferredDensityPending(){return DensityRolling()?g_DensityDue:g_DensityCopies.Pending();}
 static void ResetDeferredDensity(bool all){
     if(all)g_DensityCopies.Reset();else g_DensityCopies.NewZone();
     g_DensityCopyRoom=INT64_MIN;g_DensityCopyReason.clear();
@@ -1356,7 +1374,8 @@ static bool QueueDensityCopies(const DensityPlacementKey& key,bool layer,CInstan
 }
 
 static void DensityCopiesTick(){
-    if(!g_DensityCopies.Pending() || !g_Yytk || !ObserveDensityRoom())return;
+    if(!g_DensityCopies.Pending()){g_DensityDue=0;return;}
+    if(!g_Yytk || !ObserveDensityRoom())return;
     if(!ForgePact::MapRevealManager::Instance().HasReadableMap())return;
     RValue player;if(!HhResolveLocalPlayer(player))return;
     double x=0,y=0;
@@ -1366,7 +1385,7 @@ static void DensityCopiesTick(){
     for(unsigned attempts=0;attempts<ForgePact::AdaptivePopulationBudget::kMaxCopies && budget.CanCopy(ForgePact::MapRevealManager::Instance().WantsPackSpawn());++attempts){
         if(!ObserveDensityRoom())break;
         if(ForgePact::MapRevealManager::Instance().IsEnabled() && ForgePact::MapRevealManager::Instance().PacksEnabled() && !PopulationCapacityAvailable())break;
-        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame);if(!job)break;
+        auto job=g_DensityCopies.TakeNearest(x,y,g_RuntimeFrame,g_DensityReachNow);if(!job)break;
         CInstance* self=nullptr;CInstance* other=nullptr;
         if(!ResolveDensityContext(job->recipe.self,self) || !ResolveDensityContext(job->recipe.other,other)){
             g_DensityCopyReason="Waiting for native creation context";
@@ -1386,9 +1405,14 @@ static void DensityCopiesTick(){
             measured.SetObject(args[3].ToDouble());
             RValue result;orig(result,self,other,4,args);
             ++g_DensityCopyCompleted;BP_DIAG_INCREMENT(g_ExtraCreators);g_DensityCopyReason.clear();
+            // One copy at a time as the player walks: counted into its pack
+            // marker family, so the markers' growth poll does not re-list
+            // the whole zone for every copy.
+            if(DensityRolling() && g_DensityCopyMade)g_DensityCopyMade(static_cast<int>(args[3].ToDouble()));
         }catch(...){++g_DensityCopyFailures;g_DensityCopyReason="Native density copy failed; not retried";}
         g_KuyruktanYaratim=prior;g_DensityCopies.Complete(*job);
     }
+    g_DensityDue=DensityRolling()?g_DensityCopies.DueWithin(x,y,g_DensityReachNow):g_DensityCopies.Pending();
 }
 static uint64_t g_KuyrukToplam = 0;
 
@@ -23207,6 +23231,8 @@ static void FlushModState(uint32_t frame)
         body += ",\"queuedPacks\":" + std::to_string(reveal.QueuedPacks());
         auto& budget=ForgePact::AdaptivePopulationBudget::Instance();
         body += ",\"queuedDensityCopies\":" + std::to_string(DeferredDensityPending());
+        body += ",\"deferredDensityCopies\":" + std::to_string(g_DensityCopies.Pending() - (std::min)(g_DensityCopies.Pending(), DeferredDensityPending()));
+        body += ",\"densityRollReach\":" + std::to_string(DensityRolling() ? std::llround(g_DensityReachNow) : 0LL);
         body += ",\"observedNativeBirthPacks\":" + std::to_string(reveal.NativeBirthPacks());
         body += ",\"completedDensityCopies\":" + std::to_string(g_DensityCopyCompleted);
         body += ",\"synchronousDensityFallbacks\":" + std::to_string(g_DensityCopyRefused);
@@ -39211,6 +39237,54 @@ static bool HandleLiveOneResearchCommand(const std::string& lc, const std::strin
 // the same anchor the frame profiler walks (defined in its section below).
 static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
 
+// ---- Rolling density copies: the reach and the command --------------------
+// The effective reach, once a second and on every `densityroll`. Filling the
+// map (`reveal spawn`) needs every copy at once, so it switches rolling off.
+// While a hunt is on (Beacon, or Tyrant's Crown for rares and champions) the
+// monsters within the wake radius keep stepping and hunting, and `beaconspawn`
+// makes the spawners there give birth - every spawner when the radius is off -
+// so the copies must exist that far out (all of them for a whole-map hunt).
+static void DensityRollCopyMade(int objectIndex) { ForgePact::PackMarkers::Instance().NoteCopy(objectIndex); }
+static void DensityRollRefresh()
+{
+    g_DensityCopyMade = &DensityRollCopyMade;
+    double reach = std::numeric_limits<double>::infinity();
+    if (g_DensityRollReach > 0.0) {
+        auto& reveal = ForgePact::MapRevealManager::Instance();
+        reach = g_DensityRollReach;
+        if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();
+        else if (HuntPolicy() != 0) {
+            if (g_BeWakeRadius < 0.0 || (g_BeWakeRadius == 0.0 && g_BeSpawnNear && BeaconActive()))
+                reach = std::numeric_limits<double>::infinity();
+            else if (g_BeWakeRadius > 0.0) reach = (std::max)(reach, g_BeWakeRadius + 500.0);
+        }
+    }
+    g_DensityReachNow = reach;
+}
+// `densityroll 1|0|<reach px>|stat` (the panel's switch sends 1 or 0).
+static void DensityRollCommand(const std::string& rest)
+{
+    std::string arg = Lower(rest);
+    arg.erase(0, arg.find_first_not_of(" \t"));
+    arg.erase(arg.find_last_not_of(" \t\r\n") + 1);
+    if (arg == "1" || arg == "on") g_DensityRollReach = kDensityRollDefaultPx;
+    else if (arg == "0" || arg == "off") g_DensityRollReach = 0.0;
+    else if (!arg.empty() && arg != "stat") {
+        double v = 0;
+        try { v = std::stod(arg); } catch (...) { v = 0; }
+        if (!(v >= 1500.0 && v <= 20000.0)) { Out("densityroll: usage densityroll 1 | 0 | <reach px, 1500-20000> | stat"); return; }
+        g_DensityRollReach = v;
+    }
+    DensityRollRefresh();
+    const size_t pending = g_DensityCopies.Pending();
+    std::string line = std::string("densityroll: ") + (g_DensityRollReach > 0.0 ? "on" : "off");
+    line += DensityRolling() ? ", reach " + std::to_string(std::llround(g_DensityReachNow)) + " px"
+        : (g_DensityRollReach > 0.0 ? ", every copy at once (filling the map or a whole-map hunt)" : "");
+    line += " | copies waiting " + std::to_string(pending) + ", due " + std::to_string(DeferredDensityPending())
+        + ", made " + std::to_string(g_DensityCopyCompleted);
+    Out(line);
+}
+
 // ---- Far sleep (FarSleep.hpp): the adapter --------------------------------
 // The names of the objects that own an event running every frame (Step,
 // Begin/End Step, Draw GUI and its begin/end), read once from the game's
@@ -39796,7 +39870,7 @@ static void RunCommand(const std::string& line)
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
-        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep"
+        "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep", "densityroll"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -39880,6 +39954,8 @@ static void RunCommand(const std::string& line)
     if (lc == "frameprof") { FrameProfCommand(rest); return; }
     // Far sleep: the Mods tab's switch, the same standalone early return.
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
+    // Rolling density copies: the Mods tab's switch, the same early return.
+    if (lc == "densityroll") { DensityRollCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -41219,6 +41295,9 @@ void FrameCallback(FWFrame& FrameContext)
     // again near a player (FarSleep.hpp). Nothing runs while it is off and
     // nothing it put to sleep is left asleep.
     if (g_Setup) FarSleepTick();
+    // Rolling density copies: the reach follows the map-fill and hunt
+    // settings, re-read once a second.
+    if (g_Setup && (g_RuntimeFrame % 60) == 0) DensityRollRefresh();
 
 #ifndef FORGEPACT_RELEASE
     // Gelistirici kisayollari.  Yayin derlemesinde YOK: F6 oyuncunun
