@@ -546,6 +546,65 @@ measured. Live 1f (§ Live procedure 1f) measures it.
     it; the stash's own close destroyed a listed node; and a reopen listed
     none.
 
+### Static reading 4: the stack cap and the button's origin
+
+ForgePact #131. The owner reported on 2026-09-30 that the shipped button was
+"positioned wrong. its right bottom corner is in the middle of the correct
+position", and that items stayed in the bag with room on the tab, "especially
+materials and socketables"; the Materials tab can hold several stacks of one
+item, 999 each, and the Socketable tab only one. Both causes were settled from
+the code, the earlier captures and one local reading, without a new session.
+Labels as in § Static reading 3: (R) read locally, in our words; (M) measured.
+
+- (R) **The stack cap.** `StashAddToStack`, after checking that the item's
+  class is one of the stackable classes (12 to 15), takes a cap from its
+  sixth argument: 999 when that argument does not carry flag 8, 999999 when
+  it does. It then walks the array it was handed; for each item of the moved
+  item's identity it merges only when that stack's count plus the moved count
+  stays at or below the cap (through `InventoryStackUpdateAndRemove`) and
+  answers true; a stack that would pass the cap is passed over for the next
+  one, and after the last it answers false. So the first stack in array order
+  that fits the whole count takes it, a stack is never topped up with part of
+  an item, and a merge that finds no stack with room answers false. The
+  measured merges pass 0 on the pages and the Materials tab and 8 on the
+  Socketable tab (Live 1c to 1g), so a Materials or page stack caps at 999 and
+  a socketable stack at 999999. Not read: whether the count added is the fifth
+  argument or the item's own `o` (the mod passes the whole count as the fifth,
+  so both readings agree), and the walk order beyond "array order".
+- (M, from the code and Live 2) **Why items stayed.** The first release sent a
+  stackable to the stack routine whenever the identity's sum on the tab was
+  above 0, so a material whose only stack held 999 went to a merge the game
+  refused, answered false, and was skipped with a free cell beside it; nothing
+  tried a new stack. And the Socketable tab's multi-unit merge was off
+  (`socketWholeStackMerge`), so every bag socketable stack of more than one was
+  a planned skip - most bag socketables are stacks.
+- (M) **The node's origin.** Live 1f and 1g measured the same numbers: the
+  Sort node at x 2303.5, y 1198.9 with the bbox 2303.5, 1198.9, 2485.9,
+  1261.6 (its origin at its bbox top-left), and the Move all node at x 2113.1,
+  y 1198.9 with the bbox 2016.2, 1176.1, 2211.9, 1221.7 (sprite
+  `Menu_Button_Chat_spr`; its origin within one GUI unit of its bbox centre).
+  `UiCreateNode`'s x, y are the new node's origin, and the first release
+  computed them as though that origin were the top-left, as Sort's is: Sort's
+  x less its width less 8, and Sort's y. The box was centred on the point
+  meant for its top-left corner, and its bottom-right corner (2211.9, 1221.7)
+  fell inside the box it should occupy, near its centre - the owner's report.
+  The node's extents about its origin are left 96.9, up 22.8, right 98.8,
+  down 22.8; the target (right edge 8 left of Sort, vertical centre Sort's) is
+  the origin 2196.7, 1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at
+  the 2560x1440 GUI of save slot 14's sessions. The measured width, 195.7, is
+  not a whole sprite size, so a GUI scale is in play that the sprite functions
+  do not know: the mod reads the extents from the node itself.
+- **Rejected:** moving the node by writing its x and y (whether the UI layer
+  draws and hit-tests from them or from members its parent's step recomputes
+  is unread and unmeasured; remove-and-create is measured); the origin from
+  the sprite's size (the scale above); a fixed offset from these numbers
+  (right today, silently wrong after a sprite or scale change); keeping the
+  sum rule and letting the game decide (its false leaves the item in the bag
+  beside a free cell); passing 1 as the placement route's count (were the game
+  to merge there, a stack with room for one unit would take one unit of a
+  larger stack); and splitting an item across two stacks (not what the game's
+  own Ctrl + click does).
+
 ## Instrument
 
 The instrument is `craftprobe` (research build only; the toolkit guide's
@@ -1319,6 +1378,37 @@ is `fail (crash - ...)` with the verdict word first, and every later check is
 `fail`, `not-observed` (with what was supplied) or `not-run (instrument:
 ...)`.
 
+### Live procedure 3
+
+ForgePact #131's confirmation of § Static reading 4 and the fixed player
+code. The procedure is Live procedure 1 of the workorder
+`.claude/workorders/forgepact-68-move-all-fix-context.md` (kept on the owner's
+machine with the plan); this is its summary. It runs the **research build**,
+because its setup copies stash items into the bag with `stashmoveall probe
+copy`, which the player build compiles out; the Move all code is the same
+source in both builds. Save slot 14, the mod off at launch, the session's saves
+backed up first and restored at the end. Positive controls first: the lease's
+DLL hash (`dll-hash`), the state line (`marker`), a by-name tab switch
+(`control`) and the first `probe copy` reading `confirmed` (`copy-control`).
+Then, in order: with the mod off, no `ForgePactMoveAll` row beside Sort's
+(`off-baseline-button`); on, exactly one, its bbox right edge within 1 GUI unit
+of Sort's left less 8 and its vertical centre within 1 of Sort's
+(`button-placed`), and a click at its centre starting one run
+(`button-press`). On the Materials tab: bag materials whose kind had no stack
+placed and those whose stack fit merged (`material-new`); a copy of a kind
+with one stack sized so its merge would pass 999 placed as a new stack in a
+new cell, the old stack unchanged (`material-overflow`); and a second copy
+merged into the new stack while the full one stayed unchanged
+(`material-partial`) - the two checks that measure the cap. On the Socketable
+tab: an orb stack of 3 merged, its node rising by exactly 3 (`socket-whole`),
+a single gem merged (`socket-single`), and a kind the tab lacks stayed in the
+bag (`socket-new-stays`). Then the close and reopen (`close-survives`,
+`reopen-shows`) and the saved files (`saved-stash-has-keys`,
+`saved-bag-lacks-keys`, `no-duplicate`). The cases are the ordinary ones (a
+page by the button, a Materials merge, a single socketable) and the outliers
+that take another path (a full Materials stack, a partial beside a full one, a
+socketable stack, a kind the tab lacks).
+
 ## Results
 
 ### Live 1 results
@@ -1802,12 +1892,30 @@ should exist: the switch on, a `UI_Stash_obj` listed, and the bag's Sort button
 listed and visible - the `UI_Button_Small_obj` whose `uiNodeCallstack` reads
 `InventorySort`, found by that name and never by its text (`Sort Tab`). To make
 it, `UiCreateNode` is called by name with self and other the stash window and
-five arguments: x (the Sort node's x, less its own bbox width, less 8), y (the
-Sort node's y), the object `UI_Button_Small_obj` by `asset_get_index`, the
+five arguments: x and y (the node's origin, below), the object
+`UI_Button_Small_obj` by `asset_get_index`, the
 activation **undefined**, and the call-stack name `ForgePactMoveAll`; then the
 node's own `text` is set to `Move all` and read back, the one write the button
 makes, on the instance the mod made (a node whose label does not read back is
-taken away again). No `UiSetActivationFunc`, and no script hooked for it: a node
+taken away again). **Its place (ForgePact #131):** x and y are the node's
+origin, which for `UI_Button_Small_obj` is its bbox centre while the Sort
+node's is its top-left (§ Static reading 4). The first release passed Sort's x
+less Sort's width less 8, and Sort's y, as if the new node's origin were its
+top-left, so the button sat centred on the point meant for its top-left corner.
+The core's `ButtonOrigin` now gives the origin at which the node's bbox right
+edge is 8 GUI units left of Sort's bbox left edge and its vertical centre is
+Sort's, from Sort's bbox and the node's own extents about its origin (left,
+up, right, down), read by name from the node after it is made and labelled and
+kept for the session. The session's first node is made at a provisional origin
+(a box of Sort's own size about its origin); when a node's read bbox is not
+within 1 GUI unit of the target (`ButtonOnTarget`) it is removed with
+`UiRemoveNode` and made again at the origin its measured extents give, in the
+same ensure step, so a step makes at most two. One still off after that is
+kept and said once, `stashmoveall: button - placed <dx>,<dy> off beside Sort;
+F4 still works`, and never turns the mod off. With the measured extents
+(96.9, 22.8, 98.8, 22.8) and the Live 1g Sort box that is the origin 2196.7,
+1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at a 2560x1440 GUI.
+No `UiSetActivationFunc`, and no script hooked for it: a node
 with no activation runs nothing of the game's when clicked (Static reading 3;
 Live 1g's click on one showed only that no armed routine logged a call with it
 as self and no dialog appeared), while Live 1f's click on a node bound to a game
@@ -1831,7 +1939,7 @@ never a press). A press inside is handed to the core and nothing more happens in
 the poll; the frame tick then takes it under F4's own guard (the game in front,
 the stash listed, no modifier held), and a key edge and a press in the same
 frame start one run between them. A node that cannot be made (the Sort row's
-x, y or bbox not read, `UiCreateNode` refusing, the label not taking) is
+bbox not read, `UiCreateNode` refusing, the label not taking) is
 reported once, `stashmoveall: button - <reason>; F4 still works`, is not tried
 again until the stash is opened again or the switch turned on again, and never
 turns the mod off. A stash open for three ensure steps with no visible Sort
@@ -1878,20 +1986,32 @@ they are not settings.
 
 **The plan.** Each item of the bag view on show once, row by row from the
 top-left, a multi-cell item by its top-left cell, with its footprint taken from
-the cells its key covers. Per item, on a stash page: a stackable (class 12 to
-15) with a stack of its identity (class and base id) on the tab goes onto that
-stack, anything else into a cell. On the Materials tab: class 14 onto the stack
-of its identity when there is one, else into a cell of the tab
-(`newMaterialRoute`); any other class is a skip that calls nothing (`not taken
-by the Materials tab`). On the Socketable tab: class 15 onto the node of its
-identity when there is one (`socketMergeRoute`; there is no non-stackable case,
-the gem merged too), and a kind with no node there a planned skip,
-`a new kind stays in the bag` (`socketRoute` new: not measured); any other
-class `not taken by the Socketable tab`. A merge of more than one unit follows `wholeStackMerge`
-on a stash page and the Materials tab, where it was measured; on the Socketable tab it follows
-its own flag, `socketWholeStackMerge`, off, since Live 1f measured that tab's merge with a count
-of 1 only, so such a socketable is a planned skip that stays in the bag (`a socketable merge of
-more than one unit is not measured`).
+the cells its key covers. The route is decided per stack, not per sum
+(ForgePact #131): the core is handed the count of each stack of the item's
+identity (class and base id) on the tab, in the array's order, and models the
+game's merge (§ Static reading 4) - a stack takes the whole count only while
+its count plus the item's stays at or below the cap, 999, or 999999 when the
+sixth argument carries flag 8 (the Socketable tab's merge). Per item, on a
+stash page: a stackable (class 12 to 15) with a stack of its identity that has
+room for its whole count goes onto that stack; one whose every stack there is
+too full, or that has none, goes into a free cell as a new stack; anything
+else into a cell. On the Materials tab, which holds several stacks of one kind
+(the owner, 2026-09-30): class 14 onto a stack of its identity with room for
+it, else into a cell of the tab as a new stack (`newMaterialRoute`, whether the
+kind is absent or every stack of it is full); any other class is a skip that
+calls nothing (`not taken by the Materials tab`). On the Socketable tab, which
+holds one stack per kind: class 15 onto the node of its identity when that
+node has room for it (`socketMergeRoute`; there is no non-stackable case, the
+gem merged too), whatever its count (`socketWholeStackMerge`, on since #131,
+Live procedure 3's `socket-whole` confirming it); a full node is a skip, `its
+stack on the shown tab is full`, never a second stack; and a kind with no node
+there a planned skip, `a new kind stays in the bag` (`socketRoute` new: not
+measured - the tab's 106 one-cell slots are fixed, and which empty one takes
+which kind is neither read nor measured); any other class `not taken by the
+Socketable tab`. A merge of more than one unit follows `wholeStackMerge` on a
+stash page and the Materials tab and `socketWholeStackMerge` on the Socketable
+tab; either flag off makes such an item a planned skip. An item is never split
+between two stacks: the game's own merge takes the whole count or none.
 A stackable whose stack on the tab cannot be read - a shared page's entries
 answer on no map by name (`mapOwnerRule`) - is a skip, never read as "no
 stack". The plan's route is not the last word: a stackable's route is decided
@@ -1903,11 +2023,13 @@ still holds the key and the item still answers on map 0, `stashTabSelected`
 still reads the planned tab, and the shown tab's own array (the stash grid
 node's `nodeGrid` on a page, `Controller_obj.stashMaterialTab` on the Materials
 tab) reads room for it - a free block of the item's footprint, or a stack of its
-identity. For a stackable the route is decided here, from its identity's sum
-re-read on that array just before the first call and its count re-read with it
-(`RouteAtUse` in the core), whatever the plan said: a sum above 0 is the stack
-routine with the whole count, 0 the placement, and a sum that could not be read
-a skip (`its stack on the shown tab could not be read`). The round-2 review of
+identity with room for its whole count (`StackRoom`; a full stack is no room,
+since the game's merge would answer false). For a stackable the route is
+decided here, from its identity's stacks re-read on that array just before the
+first call and its count re-read with it (`RouteAtUse` in the core), whatever
+the plan said: a stack with room is the stack routine with the whole count,
+none with room the placement of a new stack, and stacks or a count that could
+not be read a skip (`its stack on the shown tab could not be read`). The round-2 review of
 the first player build found why: two bag items of one identity the tab lacked
 were both planned into cells, the first made the stack, and the second's
 `StashAddToStack` found it and merged one unit while its bag cell stayed - a
@@ -1919,8 +2041,13 @@ apart:
 
 - into a cell on a stash page: `ValidateItem` (self and other the bag grid, the
   item), `StashAddToStack` (the same self and other, the shown tab's array,
-  0 and 13 on the personal tab or 9 and 2 on a shared tab, the item, 1, 0),
-  expected to answer false, then `GridAddItem` (the same self and other and
+  0 and 13 on the personal tab or 9 and 2 on a shared tab, the item, its whole
+  count for a stackable - the value the measured merge passes, so a merge the
+  game makes here takes the whole item, never one unit of it (#131) - or 1
+  for anything else, 0), expected to answer false; a true answer is decided
+  as a merge (the core's `AsMerge`): the bag cell cleared only after the
+  identity's sum rose by exactly the count, and moved only on that sum. Then
+  `GridAddItem` (the same self and other and
   array, the item, 0, undefined). On `success=true` and the key read at the
   answer's cell: `ValidateItem` with self the stash grid and other the bag grid,
   the source clear (`InvGridClearItemNode`, self and other the bag grid, the
@@ -2027,3 +2154,12 @@ tab. One gap was seen, in the first run: switched on again with the stash
 still open, the button came back only after a stash tab click; the cause was
 not established, and the third run clicked a tab after switching on rather
 than test it again.
+
+**ForgePact #131, not observed before Live procedure 3:** the stack cap (a
+static reading, § Static reading 4), a stackable placed as a new stack beside
+a full one of its kind, a merge into a second stack of a kind, the Socketable
+tab's merge of more than one unit (`socketWholeStackMerge`, turned on in the
+same change), a true answer on the placement route decided as a merge, and the
+button at its new origin, remade once when off target. Live procedure 3's
+`material-overflow`, `material-partial`, `socket-whole` and `button-placed`
+are those checks.

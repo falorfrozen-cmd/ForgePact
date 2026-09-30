@@ -36947,6 +36947,10 @@ static constexpr double kSmaSharedStackA1 = 9.0, kSmaSharedStackA2 = 2.0;
 // (wholeStackMerge), 8 in the Socketable tab's merge (socketMergeRoute, the
 // value the game's own hand move there passed too, Live 1e).
 static constexpr double kSmaStackA5 = 0.0, kSmaSocketStackA5 = 8.0;
+// The cap the core's model reads from that argument (ForgePact #131: 999
+// without flag 8, 999999 with it) is the one for the value passed here.
+static_assert((int)kSmaStackA5 == ForgePact::StashMoveAllMod::kPageStackFlags, "the pages' sixth argument");
+static_assert((int)kSmaSocketStackA5 == ForgePact::StashMoveAllMod::kSocketStackFlags, "the Socketable tab's sixth argument");
 static constexpr int kSmaPersonalTab = 0;
 
 // One by-name call, self and other passed apart, keeping the routine's
@@ -37097,19 +37101,22 @@ static bool SmaResolve(const SmaScene& s, const std::string& key, RValue& item)
     return ApItemFromFingerprint(s.bag, RValue(key), item);
 }
 
-// The shown tab's stack of one identity: the sum of `o` over its items of
-// that class and base id. -1 when the array is unreadable or any of its items
-// could not be identified, since a missed item may be of that identity.
-static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+// The shown tab's stacks of one identity (ForgePact #131): the count (`o`) of
+// each of its items of that class and base id, in the array's order, each
+// item once. Unread as a whole when the array is unreadable or any of its
+// items could not be identified, since a missed item may be of that identity.
+// The Materials tab holds several stacks of one kind, 999 each at most, so
+// the core decides from each stack, not from their sum.
+static ForgePact::StashMoveStacks SmaStacks(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
 {
+    ForgePact::StashMoveStacks out;
     try {
-        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        if (cells.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveStacks();
         std::vector<std::string> seen;
-        int64_t sum = 0;
         const int n = CmLength(cells);
         for (int i = 0; i < n; ++i) {
             const RValue line = CmAt(cells, i);
-            if (line.m_Kind != VALUE_ARRAY) return -1;
+            if (line.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveStacks();
             const int m = CmLength(line);
             for (int j = 0; j < m; ++j) {
                 RValue fp, item;
@@ -37120,15 +37127,23 @@ static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_
                 auto known = s.ids.find(key);
                 if (known != s.ids.end() && (known->second.first != cls || known->second.second != base)) continue;
                 int64_t c = -1, b = -1, o = -1;
-                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return -1;
+                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return ForgePact::StashMoveStacks();
                 s.ids[key] = { c, b };
                 if (c != cls || b != base) continue;
-                if (o < 0) return -1;
-                sum += o;
+                if (o < 0) return ForgePact::StashMoveStacks();
+                out.counts.push_back(o);
             }
         }
-        return sum;
-    } catch (...) { return -1; }
+        out.read = true;
+        return out;
+    } catch (...) { return ForgePact::StashMoveStacks(); }
+}
+
+// The same identity's sum on the shown tab, which a merge is confirmed by: -1
+// when the stacks did not read.
+static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+{
+    return ForgePact::StashMoveAllMod::StackSum(SmaStacks(s, cells, cls, base));
 }
 
 // The Socketable tab, read as what it is (socketMergeRoute): the set of
@@ -37217,7 +37232,7 @@ static bool SmaReadScene(SmaScene& s, std::string& why)
     if (!CmArrayVar(s.bagNode, "nodeGrid", grid)) { why = "the bag's cells could not be read"; return false; }
     const bool shownRead = SmaShownArray(s, s.view.stashTab, shown);
     const bool socket = ForgePact::StashMoveAllMod::TabOf(s.view.stashTab) == ForgePact::StashMoveTab::Socketable;
-    std::map<std::pair<int64_t, int64_t>, int64_t> stacks;   // identity -> the shown tab's sum
+    std::map<std::pair<int64_t, int64_t>, ForgePact::StashMoveStacks> stacks;   // identity -> the shown tab's stacks
     const int rows = CmLength(grid);
     for (int y = 0; y < rows; ++y) {
         const RValue line = CmAt(grid, y);
@@ -37239,17 +37254,19 @@ static bool SmaReadScene(SmaScene& s, std::string& why)
                 const auto id = std::make_pair(cls, base);
                 if (!stacks.count(id)) {
                     if (socket) {
-                        // The Socketable tab: the node holding its identity, if any.
+                        // The Socketable tab: the one node holding its identity, if any.
                         RValue node, cells;
                         const int held = SmaSocketNode(s, cls, base, node, cells);
-                        stacks[id] = held == 1 ? SmaStackSum(s, cells, cls, base) : held;
+                        ForgePact::StashMoveStacks none;
+                        none.read = held == 0;
+                        stacks[id] = held == 1 ? SmaStacks(s, cells, cls, base) : none;
                     } else {
-                        stacks[id] = shownRead ? SmaStackSum(s, shown, cls, base) : -1;
+                        stacks[id] = shownRead ? SmaStacks(s, shown, cls, base) : ForgePact::StashMoveStacks();
                     }
                 }
-                // A count that did not read is never merged: the merge passes it.
-                c.destinationStackRead = stacks[id] >= 0 && (count >= 1 || stacks[id] == 0);
-                c.destinationHasStack = stacks[id] > 0;
+                // A count that did not read is never moved (the core's rule):
+                // both routes pass it.
+                c.destinationStacks = stacks[id];
             }
             s.view.cells.push_back(c);
         }
@@ -37288,25 +37305,33 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     const bool tabStill = SmaTab(s.window, "stashTabSelected") == plan.stashTab;
     const int held = tabStill && socket ? SmaSocketNode(s, cls, base, node, arr) : -1;
     const bool arrRead = tabStill && (socket ? held >= 0 : SmaShownArray(s, plan.stashTab, arr));
-    // The route again, here: a stackable's stack sum re-read on the shown
-    // array just before its call, whatever the plan said, since an earlier
-    // item of this run may have made the stack it now joins (round-2 review:
-    // planned as a cell, the second item of such an identity merged one unit
-    // and stayed in the bag). Above 0 merges the whole count, 0 places, -1 is
-    // a skip that calls nothing.
+    // The route again, here: a stackable's stacks re-read on the shown array
+    // just before its call, whatever the plan said, since an earlier item of
+    // this run may have made or filled the stack it now meets (round-2
+    // review: planned as a cell, the second item of such an identity merged
+    // one unit and stayed in the bag). The core decides per stack (ForgePact
+    // #131): a stack with room for the whole count merges, none with room
+    // places a new stack, stacks that did not read are a skip that calls
+    // nothing. `before` is their sum, which a merge is confirmed by.
     ForgePact::StashMoveItem use = it;
+    ForgePact::StashMoveStacks stacksNow;
     int64_t before = -1;
     if (it.cell.stackable) {
         use.cell.count = count;
-        before = arrRead ? (held == 0 ? 0 : SmaStackSum(s, arr, cls, base)) : -1;
-        use = Mod::RouteAtUse(use, plan.stashTab, before);
+        if (arrRead && held == 0) stacksNow.read = true;
+        else if (arrRead) stacksNow = SmaStacks(s, arr, cls, base);
+        before = Mod::StackSum(stacksNow);
+        use = Mod::RouteAtUse(use, plan.stashTab, stacksNow);
     }
     const bool cellRoute = use.route == ForgePact::StashMoveRoute::Cell;
     int room = -1;
     // No placement on the Socketable tab has a measured array (socketRoute
-    // new: not-observed), so its room is never read as there.
+    // new: not-observed), so its room is never read as there. The stack
+    // route's room is a stack with room for the whole count, not any stack:
+    // a full one answers false and moves nothing.
     if (arrRead && cellRoute && !socket) room = Mod::Room(SmaGrid(arr), use.width, use.height);
-    else if (arrRead && use.route == ForgePact::StashMoveRoute::Stack) room = before > 0 ? 1 : (before == 0 ? 0 : -1);
+    else if (arrRead && use.route == ForgePact::StashMoveRoute::Stack)
+        room = Mod::StackRoom(stacksNow, use.cell.count, Mod::CapFor(plan.stashTab));
     ForgePact::StashMoveResult skip;
     if (!Mod::MayCall(use, room, skip)) return skip;
 
@@ -37322,20 +37347,32 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     };
     // A page's sequence opens with ValidateItem, self = other = the bag grid
     // (gridMoveRoute); the Materials and Socketable tabs' recorded routes do not.
+    // A merge the item takes (the stack route, or a true answer on the cell
+    // route): decided on its identity's sum.
+    bool merge = false;
     TalentAllocCall c = TalentAllocCall::Ran;
     if (!materials && !socket) c = SmaCall(kSmaValidate, s.bag, s.bag, { item }, res);
     if (c != TalentAllocCall::Ran) notRun(kSmaValidate, c);
     else if (cellRoute) {
         // StashAddToStack answers false for an item with no stack of its
-        // identity (every recorded placement), then GridAddItem places it on
-        // the shown tab's array and nowhere else.
-        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue(1.0), RValue(0.0) }, res);
+        // identity that has room for it (every recorded placement), then
+        // GridAddItem places it on the shown tab's array and nowhere else. A
+        // stackable passes its whole count, the value the measured merge
+        // passes (ForgePact #131): were the game to merge after all, it takes
+        // the whole item, never one unit of it; a non-stackable keeps the
+        // measured placement shape.
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item,
+                                                    RValue(use.cell.stackable ? (double)count : 1.0), RValue(kSmaStackA5) }, res);
         if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
         else if (res.m_Kind == VALUE_BOOL && res.ToBoolean()) {
-            // Merged where the plan saw no stack: nothing was placed, and
-            // the re-read below cannot confirm a cell.
+            // It joined a stack the model read as without room for it:
+            // decided as a merge by the sum below. A non-stackable cannot
+            // merge, so its true answer stays on the cell route, where
+            // nothing was placed and the re-read cannot confirm it.
             r.answered = r.accepted = true;
-            r.answer = "StashAddToStack answered true (merged, not placed)";
+            merge = use.cell.stackable;
+            r.answer = merge ? "true (StashAddToStack joined it to a stack of its kind)"
+                             : "StashAddToStack answered true for an item that does not stack";
         } else {
             c = SmaCall(kSmaPlace, s.bag, s.bag, { arr, item, RValue(0.0), RValue() }, res);
             if (c != TalentAllocCall::Ran) notRun(kSmaPlace, c);
@@ -37379,10 +37416,9 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
         }
     } else {
         // A merge: the item's whole count (wholeStackMerge; one unit is the
-        // one-unit shape, stackMoveRoute), then the source clear only once
-        // the shown tab's sum rose by exactly that count. On the Socketable
-        // tab the array is the node's own and the sixth argument 8
-        // (socketMergeRoute), and the sum is that node's.
+        // one-unit shape, stackMoveRoute) into a stack the core read as with
+        // room for it. On the Socketable tab the array is the node's own and
+        // the sixth argument 8 (socketMergeRoute), and the sum is that node's.
         r.stackBefore = before;
         c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue((double)count),
                                                     RValue(socket ? kSmaSocketStackA5 : kSmaStackA5) }, res);
@@ -37391,12 +37427,22 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
             r.answered = true;
             r.accepted = res.m_Kind == VALUE_BOOL && res.ToBoolean();
             r.answer = r.accepted ? "true" : "StashAddToStack answered " + Describe(res);
-            RValue now;
-            const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;
-            if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
-                SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+            merge = true;
         }
     }
+    if (merge) {
+        // The source clear only once the shown tab's sum rose by exactly the
+        // item's count; the core decides it as a merge (AsMerge on the cell
+        // route), so a unit taken from a larger stack is never a move.
+        r.stackBefore = before;
+        RValue now;
+        const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;
+        if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+            SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+        if (cellRoute) use = Mod::AsMerge(use);
+    }
+    // What the item's outcome is read as: a placement, or a merge.
+    const bool placing = cellRoute && !merge;
 
     // The re-reads the core decides on: the tab on show, its own array and
     // the bag cell - nothing else.
@@ -37405,7 +37451,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     RValue now;
     const bool nowRead = r.shownTabChanged == 0 && SmaReread(s, plan.stashTab, node, now);
     r.sourceHasKey = SmaBagCellHolds(s, it.cell.x, it.cell.y, key);
-    if (cellRoute) {
+    if (placing) {
         if (!nowRead) r.destinationHasKey = -1;
         else if (r.accepted && r.destinationX >= 0) r.destinationHasKey = SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials);
         else r.destinationHasKey = CmCellsHold(now, key);
@@ -37417,7 +37463,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     // The undo: a placed item whose bag cell did not clear is taken back out
     // of the shown tab (GridRemoveItem, the measured shape), and the owner
     // step reversed if it ran. Not measured live (Known Limitations).
-    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && nowRead
+    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing && nowRead
         && r.sourceHasKey == 1 && CmCellsHold(now, key) == 1) {
         SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);
         if (ownerRan) SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaStashOwner), RValue(kSmaCharacterOwner), RValue(key) }, res);
@@ -37425,7 +37471,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
         const int left = SmaShownArray(s, plan.stashTab, after) ? CmCellsHold(after, key) : -1;
         note = "undo " + key + ": taken back out of the stash tab by GridRemoveItem"
             + std::string(left == 0 ? "" : " - NOT confirmed: the stash tab still reads it");
-    } else if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && r.ownerStep == 1
+    } else if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing && r.ownerStep == 1
                && r.sourceHasKey == 0 && r.destinationHasKey == 1) {
         // The owner step did not take after the bag cell was cleared. Taking
         // the item back out of the stash tab now would leave it in no grid at
@@ -37601,7 +37647,9 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   name, with self = other = the UI_Stash_obj window on show (buttonOwner:
 //   the stash's own close destroys it, Live 1g), placed from the Sort node's
 //   row (found by its uiNodeCallstack InventorySort, never by its text, which
-//   reads Sort Tab: sortActivation), its uiNodeCallstack ForgePactMoveAll,
+//   reads Sort Tab: sortActivation) - its right edge 8 GUI units left of
+//   Sort's box and its vertical centre on Sort's, from the extents measured on
+//   the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
 //   and its activation LEFT UNDEFINED - no UiSetActivationFunc, no script
 //   hooked for it. A node with no activation runs nothing of the game's when
 //   clicked (the static reading of the node's own click event; Live 1g's
@@ -37684,7 +37732,34 @@ static void SmaButtonRemove()
     SmaButtonForget();
 }
 
+// A node's bbox, read by name as menulayout reads it (NaN a side that did not).
+static ForgePact::StashMoveBox SmaBox(const RValue& inst)
+{
+    ForgePact::StashMoveBox b;
+    b.left = MenuLayoutRead(inst, "bbox_left");
+    b.top = MenuLayoutRead(inst, "bbox_top");
+    b.right = MenuLayoutRead(inst, "bbox_right");
+    b.bottom = MenuLayoutRead(inst, "bbox_bottom");
+    return b;
+}
+
+// The node's extents about its origin, measured on the first node of the
+// session and kept (ForgePact #131): UiCreateNode's x, y are the node's
+// origin, which for UI_Button_Small_obj is its bbox centre, not its top-left
+// as for Sort (Live 1f and 1g), so the origin that puts it beside Sort is
+// worked out from them.
+static ForgePact::StashMoveExtents g_SmaButtonExtents;
+static bool g_SmaButtonExtentsRead = false;
+
 // Make the node beside Sort; a refusal is reported once by the core's line.
+// Its right edge sits kSmaButtonGap GUI units left of Sort's bbox and its
+// vertical centre on Sort's (the core's ButtonOrigin). The node's extents are
+// read from the node itself after it is made and labelled; until they have
+// been read once this session it is made at a provisional origin, and a node
+// that is not within one GUI unit of its place is taken away with UiRemoveNode
+// and made again at the corrected origin, in this same step - at most two
+// UiCreateNode calls. One still off after that is kept and said once; it
+// never turns the mod off.
 static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
 {
     auto& mod = ForgePact::StashMoveAllMod::Instance();
@@ -37692,10 +37767,9 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
         const std::string line = mod.ButtonRefused(why);
         if (!line.empty()) Out(line);
     };
-    const double sx = MenuLayoutRead(sort, "x"), sy = MenuLayoutRead(sort, "y");
-    const double sw = MenuLayoutRead(sort, "bbox_right") - MenuLayoutRead(sort, "bbox_left");
-    if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) || sw <= 0) {
-        refuse("the Sort button's x, y or bbox did not read; nothing was called");
+    const ForgePact::StashMoveBox sortBox = SmaBox(sort);
+    if (!ForgePact::StashMoveAllMod::BoxReads(sortBox)) {
+        refuse("the Sort button's bbox did not read; nothing was called");
         return;
     }
     double objIdx = -1;
@@ -37704,30 +37778,68 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
     catch (...) {}
     if (!ApNumber(object, objIdx) || objIdx < 0) { refuse("asset_get_index found no UI_Button_Small_obj; nothing was called"); return; }
     // UiCreateNode(x, y, object, activation, callstack name): the activation
-    // undefined, so a click on the node runs nothing of the game's.
-    RValue node;
-    const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
-        { RValue(sx - sw - kSmaButtonGap), RValue(sy), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
-    if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
-        refuse(c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c));
+    // undefined, so a click on the node runs nothing of the game's. Then the
+    // label: the one write, on the mod's own node, read back. Without it the
+    // node would be a blank button, so it is taken away again.
+    auto make = [&](double x, double y, std::string& why) -> bool {
+        RValue node;
+        const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
+            { RValue(x), RValue(y), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
+        if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
+            why = c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c);
+            return false;
+        }
+        g_SmaButton = node;
+        g_SmaButtonOwner = window;
+        g_SmaButtonHeld = true;
+        mod.NoteButtonHeld(true);
+        bool labelled = false;
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
+            const RValue text = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("text") });
+            labelled = text.m_Kind == VALUE_STRING && text.ToString() == kSmaButtonText;
+        } catch (...) { labelled = false; }
+        if (!labelled) {
+            SmaButtonRemove();
+            why = "its label could not be set, so it was taken away again";
+            return false;
+        }
+        return true;
+    };
+    // Where the node was made, its extents from it (kept for the session),
+    // and whether it is on target.
+    auto measure = [&](ForgePact::StashMoveBox& box) -> bool {
+        box = SmaBox(g_SmaButton);
+        ForgePact::StashMoveExtents e;
+        if (ForgePact::StashMoveAllMod::ExtentsOf(MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), box, e)) {
+            g_SmaButtonExtents = e;
+            g_SmaButtonExtentsRead = true;
+        }
+        return ForgePact::StashMoveAllMod::ButtonOnTarget(sortBox, box, kSmaButtonGap);
+    };
+    double x = 0, y = 0;
+    const ForgePact::StashMoveExtents first = g_SmaButtonExtentsRead ? g_SmaButtonExtents
+                                                                     : ForgePact::StashMoveAllMod::ProvisionalExtents(sortBox);
+    std::string why;
+    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, first, kSmaButtonGap, x, y)) {
+        refuse("the Sort button's bbox did not give an origin; nothing was called");
         return;
     }
-    g_SmaButton = node;
-    g_SmaButtonOwner = window;
-    g_SmaButtonHeld = true;
-    mod.NoteButtonHeld(true);
-    // The label: the one write, on the mod's own node, read back. Without it
-    // the node would be a blank button, so it is taken away again.
-    bool labelled = false;
-    try {
-        g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
-        const RValue text = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("text") });
-        labelled = text.m_Kind == VALUE_STRING && text.ToString() == kSmaButtonText;
-    } catch (...) { labelled = false; }
-    if (!labelled) {
+    if (!make(x, y, why)) { refuse(why); return; }
+    ForgePact::StashMoveBox box;
+    if (measure(box)) return;
+    // Off target: made again once, at the origin its own extents give, if
+    // they read and UiRemoveNode took the first away.
+    if (g_SmaButtonExtentsRead
+        && ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, g_SmaButtonExtents, kSmaButtonGap, x, y)) {
         SmaButtonRemove();
-        refuse("its label could not be set, so it was taken away again");
+        if (!g_SmaButtonHeld) {
+            if (!make(x, y, why)) { refuse(why); return; }
+            if (measure(box)) return;
+        }
     }
+    const std::string line = mod.ButtonOffTarget(sortBox, box, kSmaButtonGap);
+    if (!line.empty()) Out(line);
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the

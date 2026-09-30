@@ -12,6 +12,12 @@ starts a run with the game in front and the stash open; each item is re-read
 and decided before the next; a refusal skips and a loss turns the mod off; and
 the panel, README, release notes and research doc say what the mod does
 (docs/stash-move-research.md, § Ship design).
+
+ForgePact #131: the button's origin comes from the core's ButtonOrigin and the
+extents measured on the node itself, with at most two UiCreateNode calls per
+creation step; the cell route's StashAddToStack passes a stackable's whole
+count and a true answer there is confirmed as a merge by the sum; and the stack
+route's room is a stack with room for the whole count, not any stack.
 """
 import re
 import sys
@@ -242,7 +248,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("if (!mod.SetEnabled(true)) { Out(mod.OffForSessionLine()); Out(mod.StateLine()); return; }", cmd)
         # The undo runs only for a placed item whose bag cell did not clear.
         one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
-        undo = one[one.index("out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute"):]
+        undo = one[one.index("out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing"):]
         self.assertIn("r.sourceHasKey == 1 && CmCellsHold(now, key) == 1", undo)
         self.assertIn("SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);", undo)
 
@@ -250,12 +256,14 @@ class StashMoveAllContractTests(unittest.TestCase):
 
     def test_cell_route_rereads_the_stack_sum_before_stash_add_to_stack(self):
         # The route is decided at the point of use: before the item's first
-        # call, a stackable's sum is re-read on the shown array and the core's
-        # RouteAtUse decides, whatever the plan said; the branch taken is the
-        # one it answers, and the outcome is decided on that item.
+        # call, a stackable's stacks are re-read on the shown array and the
+        # core's RouteAtUse decides, whatever the plan said; the branch taken
+        # is the one it answers, and the outcome is decided on that item.
+        # Since #131 the core is handed each stack, not their sum.
         one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
-        reread = one.index("before = arrRead ? (held == 0 ? 0 : SmaStackSum(s, arr, cls, base)) : -1;")
-        at_use = one.index("use = Mod::RouteAtUse(use, plan.stashTab, before);")
+        reread = one.index("else if (arrRead) stacksNow = SmaStacks(s, arr, cls, base);")
+        at_use = one.index("use = Mod::RouteAtUse(use, plan.stashTab, stacksNow);")
+        self.assertLess(reread, one.index("before = Mod::StackSum(stacksNow);"))
         self.assertLess(reread, at_use)
         self.assertIn("if (it.cell.stackable) {", one[:reread])
         self.assertLess(at_use, one.index("SmaCall(kSmaAddToStack"))
@@ -268,8 +276,12 @@ class StashMoveAllContractTests(unittest.TestCase):
         # The core's helper decides with the same rules as the plan.
         at = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"),
                            "static StashMoveItem RouteAtUse(")
-        self.assertIn("RouteFor(TabOf(stashTab), planned.cell, read, stackSumNow > 0, routes, item);", at)
-        self.assertIn("RouteFor(tab, c, c.destinationStackRead, c.destinationHasStack, routes, item);", self.header)
+        self.assertIn("RouteFor(TabOf(stashTab), planned.cell, stacksNow, routes, item);", at)
+        self.assertIn("RouteFor(tab, c, c.destinationStacks, routes, item);", self.header)
+        # The plan reads each identity's stacks the same way.
+        scene = self.body("static bool SmaReadScene(")
+        self.assertIn("stacks[id] = shownRead ? SmaStacks(s, shown, cls, base) : ForgePact::StashMoveStacks();", scene)
+        self.assertIn("c.destinationStacks = stacks[id];", scene)
 
     def test_key_edge_ignores_a_held_modifier(self):
         # Alt+F4 closes the game: any held Alt, Ctrl or Shift is no edge.
@@ -350,7 +362,99 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("if (r.keyOnMap0 == 1)", decide)
         self.assertIn("if (r.keyOnMap0 != 0)", decide)
 
+    # ---- #131: the per-stack rule at the point of use ---------------------------
+
+    def test_cell_route_passes_the_whole_count_and_confirms_a_merge_by_the_sum(self):
+        # The cell route's first StashAddToStack carries a stackable's whole
+        # count, the value the measured merge passes, so a merge the game
+        # makes there takes the whole item, never one unit of it. A true
+        # answer is decided as a merge: the sum re-read, the bag cell cleared
+        # only after it rose by exactly the count, and the core's AsMerge puts
+        # the item on the stack route so Decide confirms it by the sum.
+        one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
+        cell = one[one.index("else if (cellRoute) {"):one.index("if (merge) {")]
+        self.assertIn("RValue(use.cell.stackable ? (double)count : 1.0), RValue(kSmaStackA5) }, res);", cell)
+        self.assertNotIn("RValue(1.0), RValue(0.0) }", one)
+        self.assertIn("merge = use.cell.stackable;", cell)
+        self.assertNotIn("merged, not placed", self.plugin)
+        followup = one[one.index("if (merge) {"):one.index("const bool placing = cellRoute && !merge;")]
+        self.assertIn("r.stackBefore = before;", followup)
+        self.assertIn("const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;",
+                      followup)
+        self.assertLess(followup.index("after - before == count"), followup.index("SmaCall(kSmaClear"))
+        self.assertIn("if (cellRoute) use = Mod::AsMerge(use);", followup)
+        # The outcome is read as a merge: the stack re-read, no placement undo.
+        self.assertLess(one.index("const bool placing = cellRoute && !merge;"), one.index("Mod::Decide(use, r)"))
+        self.assertIn("if (placing) {", one)
+        self.assertIn("out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing && nowRead", one)
+        # The core's side: AsMerge is the stack route, nothing else changed.
+        merge = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static StashMoveItem AsMerge(")
+        self.assertIn("merged.route = StashMoveRoute::Stack;", merge)
+        # The sixth argument is the measured one, and the core's cap is read
+        # for the same value.
+        self.assertIn("static_assert((int)kSmaStackA5 == ForgePact::StashMoveAllMod::kPageStackFlags", self.code)
+        self.assertIn("static_assert((int)kSmaSocketStackA5 == ForgePact::StashMoveAllMod::kSocketStackFlags", self.code)
+        self.assertIn("return (sixthArgument & kStackFlag8) ? kStackCapFlag8 : kStackCap;", self.header)
+        self.assertIn("static constexpr int64_t kStackCap = 999;", self.header)
+        self.assertIn("static constexpr int64_t kStackCapFlag8 = 999999;", self.header)
+
+    def test_stack_route_room_is_a_stack_with_room_not_any_stack(self):
+        # A full stack answers false and moves nothing, so the stack route's
+        # room is the core's "a stack of the identity has room for the whole
+        # count" at the cap the route's sixth argument sets - never "a stack
+        # exists" (the sum-only rule the owner's report of 2026-09-30 found).
+        one = self.body("static ForgePact::StashMoveResult SmaMoveOne(")
+        self.assertIn("room = Mod::StackRoom(stacksNow, use.cell.count, Mod::CapFor(plan.stashTab));", one)
+        self.assertNotIn("before > 0 ? 1", one)
+        self.assertLess(one.index("Mod::StackRoom("), one.index("Mod::MayCall(use, room, skip)"))
+        # Unread stacks are unread as a whole, never "none there".
+        stacks = self.body("static ForgePact::StashMoveStacks SmaStacks(")
+        self.assertIn("out.read = true;", stacks)
+        self.assertEqual(stacks.count("return ForgePact::StashMoveStacks();"), 5)
+        room = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static int StackRoom(")
+        self.assertIn("return fit >= 0 ? 1 : (fit == kNoStackFits ? 0 : -1);", room)
+        fits = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static int StackThatFits(")
+        self.assertIn("if (!stacks.read || count < 1) return kStacksUnknown;", fits)
+        self.assertIn("if (stacks.counts[i] + count <= cap) return (int)i;", fits)
+
     # ---- the in-game button (buttonRoute: poll, Live 1g) ------------------------
+
+    def test_button_origin_comes_from_the_core_and_the_measured_extents(self):
+        # #131: UiCreateNode's x, y are the node's origin, UI_Button_Small_obj's
+        # being its bbox centre and Sort's its top-left (Live 1f and 1g). The
+        # origin is the core's ButtonOrigin from Sort's bbox and the extents
+        # read from the node itself after it is made and labelled (kept for
+        # the session), never a formula built on Sort's top-left or a
+        # constant; an off-target node is taken away by UiRemoveNode and made
+        # again once, so a step makes at most two; one still off is kept and
+        # said once, and the mod stays on.
+        create = self.body("static void SmaButtonCreate(")
+        self.assertNotIn("sx - sw - kSmaButtonGap", create)
+        self.assertEqual(create.count("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, "), 2)
+        self.assertIn("const ForgePact::StashMoveBox sortBox = SmaBox(sort);", create)
+        self.assertIn('ExtentsOf(MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), box, e)', create)
+        self.assertIn("ForgePact::StashMoveAllMod::ButtonOnTarget(sortBox, box, kSmaButtonGap)", create)
+        self.assertIn(": ForgePact::StashMoveAllMod::ProvisionalExtents(sortBox);", create)
+        # One UiCreateNode site, reached at most twice: the first make, and one
+        # more only after UiRemoveNode took the first away.
+        self.assertEqual(self.button_block().count("SmaCall(kSmaUiCreateNode"), 1)
+        self.assertEqual(len(re.findall(r"\bmake\(x, y, why\)", create)), 2)
+        second = create[create.index("SmaButtonRemove();\n        if (!g_SmaButtonHeld) {"):]
+        self.assertIn("make(x, y, why)", second)
+        self.assertLess(create.index("if (measure(box)) return;"), create.index("SmaButtonRemove();\n        if (!g_SmaButtonHeld)"))
+        # Still off: said once by the core, the mod left on.
+        self.assertIn("const std::string line = mod.ButtonOffTarget(sortBox, box, kSmaButtonGap);", create)
+        self.assertIn('" off beside Sort; F4 still works"', self.header)
+        off = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "std::string ButtonOffTarget(")
+        self.assertNotIn("TurnOffForSession", off)
+        self.assertNotIn("SetEnabled", off)
+        # No x or y is written to the node: only its text.
+        self.assertEqual(self.button_block().count("variable_instance_set"), 1)
+        origin = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static bool ButtonOrigin(")
+        self.assertIn("x = sort.left - gap - node.right;", origin)
+        self.assertIn("y = (sort.top + sort.bottom) / 2 - (node.down - node.up) / 2;", origin)
+        self.assertIn("static constexpr double kSmaButtonGap = 8.0;", self.button_block())
+        self.assertIn("static constexpr double kButtonTolerance = 1.0;", self.header)
 
     def button_block(self):
         start, end = self.plugin.index(BUTTON_BLOCK[0]), self.plugin.index(BUTTON_BLOCK[1])
@@ -432,8 +536,8 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertNotIn("kSmaProbeBind", release)
         # UiCreateNode's fourth argument, the activation, is undefined.
         create = self.body("static void SmaButtonCreate(")
-        self.assertRegex(create, r"SmaCall\(kSmaUiCreateNode, stash, stash,\s*\{ RValue\(sx - sw - kSmaButtonGap\), "
-                                 r"RValue\(sy\), object, RValue\(\), RValue\(std::string\(kSmaButtonCallstack\)\) \}, node\);")
+        self.assertRegex(create, r"SmaCall\(kSmaUiCreateNode, stash, stash,\s*\{ RValue\(x\), "
+                                 r"RValue\(y\), object, RValue\(\), RValue\(std::string\(kSmaButtonCallstack\)\) \}, node\);")
         # Positive control: the research build's probe still carries the bind.
         self.assertIn("SmaCall(kSmaProbeBind, stash, stash, { node, script }, res);", strip_comments(self.plugin))
 
@@ -521,10 +625,13 @@ class StashMoveAllContractTests(unittest.TestCase):
         # one-cell nodeGrid with 9, 2, the item, its count and 8.
         self.assertIn("bool socketMerge = true;", self.header)
         self.assertIn("bool socketNew = false;", self.header)
-        # Live 1f measured a one-unit merge only: more than one unit is a
-        # planned skip on this tab, whatever the Materials tab's rule says.
-        self.assertIn("bool socketWholeStackMerge = false;", self.header)
-        self.assertIn("else if (many && !materials && !routes.socketWholeStackMerge)", self.header)
+        # Live 1f measured a one-unit merge only; #131 turns the whole-count
+        # merge on (Live procedure 3's socket-whole confirms it), and the flag
+        # still decides it, so turning it off makes a stack a planned skip.
+        self.assertIn("bool socketWholeStackMerge = true;", self.header)
+        self.assertIn("else if (many && socket && !routes.socketWholeStackMerge)", self.header)
+        # One stack per kind: a full one is a skip, never a second stack.
+        self.assertIn('if (!stacks.counts.empty()) item.refusal = "its stack on the shown tab is full";', self.header)
         self.assertIn('static constexpr const char* kSmaSocketGrid = "StashSocketGrid";', self.code)
         self.assertNotIn("stashSocketItemSlot", self.code)
         self.assertNotIn("kCmSocketTabVar", self.code)
@@ -607,10 +714,15 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertRegex(new, r"fill|full|room")
         self.assertRegex(new, SPILL)
         self.assertIn("Socketable", new)
-        # A socketable stack of more than one stays in the bag
-        # (socketWholeStackMerge off): both say so.
-        self.assertIn("more than one", section)
-        self.assertIn("more than one", new)
+        # #131: a stash stack holds up to 999, a stackable starts a new stack
+        # when none of its kind has room, and a socketable stack now joins its
+        # kind's one stack: both say so, and neither keeps the old skip.
+        new_section = new[:new.find("\n## ", 1)]
+        for text in (section, new_section):
+            self.assertIn("999", text)
+            self.assertRegex(text, r"new stack")
+            self.assertNotIn("A stack of more than one socketable stays", text)
+            self.assertNotIn("a socketable merge of more than one unit is not measured", text)
         self.assertIn("\n## How to update\n", notes)
 
     def test_readme_notes_and_panel_name_the_button(self):

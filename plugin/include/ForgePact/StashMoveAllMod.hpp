@@ -46,28 +46,40 @@ namespace ForgePact {
 //   and it is that tab's only source (the view every socketable merge was
 //   measured from, Live 1f and 1g); a stash page from a bag sub-tab is
 //   refused as unmeasured (Plan);
-// - the route per item for the shown stash tab: a grid tab (0, 1..19) takes
-//   anything through the tab routine, or through the stack routine when a
-//   stack of the item's identity is already there; the Materials tab (-4)
-//   takes only class 14 and the Socketable tab (-2) only class 15: onto the
-//   stack of the item's identity when there is one, else into a cell through
-//   the tab placement, each only where kMeasuredRoutes says the research
-//   reproduced it by name (a route not reproduced is a planned skip); any
-//   other class there is a skip that calls nothing; the Unique tab (-5), the
-//   Socketable tab while no socketable path is measured, and any number not
-//   listed here refuse the run (TabOf, Plan);
+// - the route per item for the shown stash tab, from each stack of the item's
+//   identity there and the game's merge rule as a model (ForgePact #131:
+//   StackCap, StackThatFits - a stack takes the whole count only while it
+//   stays at or below 999, or 999999 with the sixth argument's flag 8): a grid
+//   tab (0, 1..19) takes anything through the tab routine, or through the
+//   stack routine when a stack of the item's identity has room for its whole
+//   count; the Materials tab (-4) takes only class 14 and the Socketable tab
+//   (-2) only class 15: onto a stack of the item's identity with room for it,
+//   else into a cell through the tab placement - on the Materials tab a new
+//   stack also when every stack of its kind is too full, while the Socketable
+//   tab holds one stack per kind and a full one is a skip - each only where
+//   kMeasuredRoutes says the research reproduced it by name (a route not
+//   reproduced is a planned skip); any other class there is a skip that calls
+//   nothing; the Unique tab (-5), the Socketable tab while no socketable path
+//   is measured, and any number not listed here refuse the run (TabOf, Plan,
+//   RouteFor);
 // - the route again at the point of use: a stackable's route is decided once
-//   more from the stack sum the adapter re-reads on the shown tab just before
+//   more from the stacks the adapter re-reads on the shown tab just before
 //   its call, whatever the plan said, because an earlier item of the same run
-//   may have made that stack (round-2 review: two bag items of one identity
-//   the tab lacked duplicated a unit) - a sum above 0 merges, 0 places, a sum
-//   that could not be read is a skip (RouteAtUse);
+//   may have made or filled that stack (round-2 review: two bag items of one
+//   identity the tab lacked duplicated a unit) - a stack with room merges,
+//   none with room places, stacks that could not be read are a skip
+//   (RouteAtUse); a true answer on the cell route is decided as a merge
+//   (AsMerge);
 // - never overflow (the owner's 2026-09-28 rule): before each item's call the
 //   adapter re-reads the shown stash tab's room for it - a free block of the
 //   item's footprint on the shown tab's own cells (Room), or a stack of its
-//   identity there - and an item the shown tab has no room for (or whose room
-//   could not be read) is a skip that calls nothing, so it stays in the bag
-//   and every other stash tab is left as it was (MayCall);
+//   identity there with room for its whole count (StackRoom) - and an item
+//   the shown tab has no room for (or whose room could not be read) is a skip
+//   that calls nothing, so it stays in the bag and every other stash tab is
+//   left as it was (MayCall);
+// - the in-game button's place: its origin from Sort's bbox and the node's
+//   own extents, measured on it, so its right edge sits 8 GUI units left of
+//   Sort and its vertical centre on Sort's (ButtonOrigin, ButtonOnTarget);
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
 //   when the stash tab on show is still the planned one, the source cell no
 //   longer holds the key, and either the destination holds it (a cell) or the
@@ -106,19 +118,43 @@ enum class StashMoveOutcome : int { Moved = 1, Skipped, Unconfirmed };
 // What the frame tick does with the in-game button's node this frame.
 enum class StashMoveButtonStep : int { Keep = 0, Create, Remove };
 
+// The shown stash tab's stacks of one identity, as the adapter read them:
+// each stack's count, in the array's order (on the Socketable tab, the one
+// node that holds the identity). `read` is false when the array, or any item
+// on it, could not be read - a shared page's entries answer on no map by
+// name - so "no stack of this identity" is never told from "one the read
+// missed": unknown is not empty (ForgePact #131).
+struct StashMoveStacks {
+    bool                 read = false;
+    std::vector<int64_t> counts;
+};
+
 // One occupied cell of the bag tab on show, as the adapter read it.
 struct StashMoveCell {
-    int         x = -1;
-    int         y = -1;
-    std::string key;                       // the item's fingerprint, its map 0 key
-    int         itemClass = -1;            // the item's class (itemType)
-    bool        stackable = false;
-    int64_t     count = 1;                 // the stack count; 1 for a single item
-    bool        destinationHasStack = false;  // the shown stash tab holds a stack of this identity
-    // False when the shown tab holds an item whose identity could not be
-    // read (a shared page's entries answer on no map by name), so "no stack
-    // of this identity" cannot be told from "one the read missed".
-    bool        destinationStackRead = true;
+    int             x = -1;
+    int             y = -1;
+    std::string     key;                   // the item's fingerprint, its map 0 key
+    int             itemClass = -1;        // the item's class (itemType)
+    bool            stackable = false;
+    int64_t         count = 1;             // the stack count; 1 for a single item; below 1 unread
+    StashMoveStacks destinationStacks;     // the shown stash tab's stacks of this identity
+};
+
+// A node's bbox in GUI units, as the adapter read it (NaN a side that did
+// not read), and a node's extents: the distance from its origin (the x, y
+// UiCreateNode is given) to each side of its bbox.
+struct StashMoveBox {
+    double left = std::nan("");
+    double top = std::nan("");
+    double right = std::nan("");
+    double bottom = std::nan("");
+};
+
+struct StashMoveExtents {
+    double left = 0;
+    double up = 0;
+    double right = 0;
+    double down = 0;
 };
 
 // What the adapter read before a run: whether the stash window is listed, and
@@ -151,11 +187,15 @@ struct StashMoveRoutes {
     bool socketMerge = true;      // socketMergeRoute: byname (Live 1f and 1g; orb and gem, every identity with a node merges)
     bool newMaterial = true;      // newMaterialRoute: byname
     bool wholeStackMerge = true;  // wholeStackMerge: byname (on the Materials tab)
-    // The Socketable tab's merge of more than one unit: Live 1f measured its
-    // merge with a count of 1 only (an orb and a gem), and wholeStackMerge
-    // was measured on the Materials tab, so that tab reads this flag instead
-    // and such a socketable stays in the bag.
-    bool socketWholeStackMerge = false;
+    // The Socketable tab's merge of more than one unit. Live 1f measured its
+    // merge with a count of 1 only (an orb and a gem), so this was off and a
+    // socketable stack stayed in the bag. ForgePact #131 turns it on: most bag
+    // socketables are stacks, the merge passes the whole count as the Materials
+    // tab's measured merge does, and a stack that did not rise by exactly it
+    // is still unconfirmed and stops the run. Live procedure 1 of that fix
+    // (docs/stash-move-research.md § Live procedure 3, check socket-whole)
+    // is its confirmation.
+    bool socketWholeStackMerge = true;
 };
 
 // The shown stash tab's own cells as the adapter read them, [row][col] like
@@ -317,6 +357,94 @@ public:
             && std::isfinite(right) && std::isfinite(bottom) && left <= right && top <= bottom;
     }
 
+    // ---- the button's place (ForgePact #131) --------------------------------
+    //
+    // UiCreateNode's x, y are the new node's origin, and for UI_Button_Small_obj
+    // that origin is its bbox centre, while the Sort node's is its bbox top-left
+    // (measured, Live 1f and 1g: the same numbers both times). The first
+    // release placed the node as if its origin were its top-left, so the box
+    // sat centred on the point meant for its top-left corner (the owner's
+    // report of 2026-09-30). The origin is now worked out from Sort's bbox and
+    // the node's own extents, measured on the node after it is made, so a
+    // sprite or GUI-scale change in a game patch still places it right.
+
+    // Within this many GUI units of the target, the node is on target.
+    static constexpr double kButtonTolerance = 1.0;
+
+    // Every side read (finite) and the box not inside out.
+    static bool BoxReads(const StashMoveBox& b) {
+        return std::isfinite(b.left) && std::isfinite(b.top) && std::isfinite(b.right) && std::isfinite(b.bottom)
+            && b.left <= b.right && b.top <= b.bottom;
+    }
+
+    // A node's extents from its origin and its bbox, read together; false
+    // when any of them did not read.
+    static bool ExtentsOf(double x, double y, const StashMoveBox& box, StashMoveExtents& e) {
+        if (!std::isfinite(x) || !std::isfinite(y) || !BoxReads(box)) return false;
+        e.left = x - box.left;
+        e.up = y - box.top;
+        e.right = box.right - x;
+        e.down = box.bottom - y;
+        return true;
+    }
+
+    // Before the node has been measured in a session: a box of Sort's own
+    // size about its origin, so the first node is already near its place.
+    static StashMoveExtents ProvisionalExtents(const StashMoveBox& sort) {
+        StashMoveExtents e;
+        e.left = e.right = (sort.right - sort.left) / 2;
+        e.up = e.down = (sort.bottom - sort.top) / 2;
+        return e;
+    }
+
+    // The origin to give UiCreateNode: the node's bbox right edge `gap` GUI
+    // units left of Sort's bbox left edge, and its vertical centre Sort's.
+    // False when Sort's box or the extents did not read.
+    static bool ButtonOrigin(const StashMoveBox& sort, const StashMoveExtents& node, double gap, double& x, double& y) {
+        if (!BoxReads(sort) || !std::isfinite(gap) || !std::isfinite(node.left) || !std::isfinite(node.up)
+            || !std::isfinite(node.right) || !std::isfinite(node.down))
+            return false;
+        x = sort.left - gap - node.right;
+        y = (sort.top + sort.bottom) / 2 - (node.down - node.up) / 2;
+        return true;
+    }
+
+    // How far a node's box sits from that target: dx its right edge from
+    // Sort's left edge less the gap, dy its vertical centre from Sort's.
+    static bool ButtonOffset(const StashMoveBox& sort, const StashMoveBox& node, double gap, double& dx, double& dy) {
+        if (!BoxReads(sort) || !BoxReads(node) || !std::isfinite(gap)) return false;
+        dx = node.right - (sort.left - gap);
+        dy = (node.top + node.bottom) / 2 - (sort.top + sort.bottom) / 2;
+        return true;
+    }
+
+    // The node's read box is within kButtonTolerance of the target on both
+    // counts. A box that did not read is never on target.
+    static bool ButtonOnTarget(const StashMoveBox& sort, const StashMoveBox& node, double gap) {
+        double dx = 0, dy = 0;
+        if (!ButtonOffset(sort, node, gap, dx, dy)) return false;
+        return std::fabs(dx) <= kButtonTolerance && std::fabs(dy) <= kButtonTolerance;
+    }
+
+    // A node still off target after its second creation is kept (F4 and the
+    // press still work) and said once a session - empty when already said;
+    // it never turns the mod off.
+    std::string ButtonOffTarget(const StashMoveBox& sort, const StashMoveBox& node, double gap) {
+        if (m_ButtonOffSaid) return std::string();
+        m_ButtonOffSaid = true;
+        double dx = 0, dy = 0;
+        if (!ButtonOffset(sort, node, gap, dx, dy))
+            return "stashmoveall: button - its box did not read after it was made, so its place beside Sort is "
+                   "unchecked; F4 still works";
+        return "stashmoveall: button - placed " + Tenths(dx) + "," + Tenths(dy) + " off beside Sort; F4 still works";
+    }
+
+    // A number to a tenth, for the lines.
+    static std::string Tenths(double v) {
+        const long long t = std::llround(std::fabs(v) * 10);
+        return std::string(v < 0 && t != 0 ? "-" : "") + std::to_string(t / 10) + "." + std::to_string(t % 10);
+    }
+
     // Where each press went, for the state line (the review of Phase C: the
     // player build has no probe, so a click that moved nothing must still say
     // why). The adapter says whether it holds a node; each left press it read
@@ -439,76 +567,158 @@ public:
                     continue;
                 }
             }
-            RouteFor(tab, c, c.destinationStackRead, c.destinationHasStack, routes, item);
+            RouteFor(tab, c, c.destinationStacks, routes, item);
             plan.items.push_back(item);
         }
         if (plan.items.empty()) return refuse("nothing to move");
         return plan;
     }
 
-    // The route of an item the shown tab takes, from what is known of its
-    // identity's stack there: `stackRead` false when it could not be read,
-    // else `hasStack`. A stackable whose stack is unknown is a skip, since the
-    // game's stack routine would merge into one the read missed; a special
-    // tab's merge and new-identity placement only where the research
-    // reproduced them by name.
-    static void RouteFor(StashMoveTab tab, const StashMoveCell& c, bool stackRead, bool hasStack,
+    // ---- the game's merge, as a model (ForgePact #131) -----------------------
+    //
+    // Static reading (R) of StashAddToStack, 2026-09-30, in our words: it sets
+    // a cap from its sixth argument - 999 without flag 8, 999999 with it - then
+    // walks the array it is handed, and for each item of the moved item's
+    // identity it merges the moved count only when that stack's count plus it
+    // stays at or below the cap, answering true; a stack that would pass the
+    // cap is passed over for the next, and it answers false after the last.
+    // So the first stack that fits the whole count takes it, and nothing is
+    // ever split. The measured merges pass 0 on the pages and the Materials
+    // tab and 8 on the Socketable tab (Live 1c to 1g). The order of the walk
+    // beyond "array order" is not read, so nothing here depends on which
+    // stack takes it, only on whether one does; the adapter confirms a merge
+    // by the identity's sum. Live procedure 3's material-overflow and
+    // material-partial measure the cap.
+
+    static constexpr int64_t kStackCap = 999;
+    static constexpr int64_t kStackCapFlag8 = 999999;
+    static constexpr int     kStackFlag8 = 8;
+    // StashAddToStack's sixth argument as the game's own moves passed it.
+    static constexpr int kPageStackFlags = 0;     // the pages and the Materials tab
+    static constexpr int kSocketStackFlags = 8;   // the Socketable tab
+    // StackThatFits's answers other than an index.
+    static constexpr int kNoStackFits = -1;
+    static constexpr int kStacksUnknown = -2;
+
+    static int64_t StackCap(int sixthArgument) {
+        return (sixthArgument & kStackFlag8) ? kStackCapFlag8 : kStackCap;
+    }
+
+    static int StackFlagsFor(StashMoveTab tab) {
+        return tab == StashMoveTab::Socketable ? kSocketStackFlags : kPageStackFlags;
+    }
+
+    // The cap a merge into this stash tab meets, from the sixth argument the
+    // route passes there.
+    static int64_t CapFor(int stashTab) { return StackCap(StackFlagsFor(TabOf(stashTab))); }
+
+    // The stack the game's merge takes the whole count into: its index in
+    // the list, kNoStackFits when none has room for it (or there is none),
+    // kStacksUnknown when the list, a stack in it, or the count did not read
+    // - never "fits" and never "full".
+    static int StackThatFits(const StashMoveStacks& stacks, int64_t count, int64_t cap) {
+        if (!stacks.read || count < 1) return kStacksUnknown;
+        for (int64_t n : stacks.counts)
+            if (n < 0) return kStacksUnknown;
+        for (size_t i = 0; i < stacks.counts.size(); ++i)
+            if (stacks.counts[i] + count <= cap) return (int)i;
+        return kNoStackFits;
+    }
+
+    // The stack route's room, for MayCall: 1 a stack of the identity has room
+    // for the whole count, 0 none has, -1 unknown. A stack that exists is not
+    // room: a full one answers false and moves nothing.
+    static int StackRoom(const StashMoveStacks& stacks, int64_t count, int64_t cap) {
+        const int fit = StackThatFits(stacks, count, cap);
+        return fit >= 0 ? 1 : (fit == kNoStackFits ? 0 : -1);
+    }
+
+    // The identity's sum on the shown tab, the value a merge is confirmed by;
+    // -1 when the list or a stack in it did not read.
+    static int64_t StackSum(const StashMoveStacks& stacks) {
+        if (!stacks.read) return -1;
+        int64_t sum = 0;
+        for (int64_t n : stacks.counts) {
+            if (n < 0) return -1;
+            sum += n;
+        }
+        return sum;
+    }
+
+    // The route of an item the shown tab takes, from its identity's stacks
+    // there (ForgePact #131, per stack, not per sum):
+    // - a stackable whose stacks or count are unknown is a skip, since the
+    //   game's stack routine would merge into one the read missed;
+    // - a stack with room for the whole count (StackThatFits): the merge,
+    //   where the tab's own measurement allows its count;
+    // - none with room, on a page or the Materials tab: a new stack in a free
+    //   cell (the tab placement; on Materials, newMaterialRoute's);
+    // - none with room on the Socketable tab, which holds one stack per kind:
+    //   a full stack is a skip, never a second one; no stack a new kind.
+    // A non-stackable on a page is always the placement.
+    static void RouteFor(StashMoveTab tab, const StashMoveCell& c, const StashMoveStacks& stacks,
                          const StashMoveRoutes& routes, StashMoveItem& item) {
         item.route = StashMoveRoute::None;
         item.refusal.clear();
+        if (tab == StashMoveTab::Grid && !c.stackable) { item.route = StashMoveRoute::Cell; return; }
+        const bool socket = tab == StashMoveTab::Socketable;
         const bool many = c.count > 1;
-        const char* unread = "its stack on the shown tab could not be read";
-        if (tab == StashMoveTab::Grid) {
-            if (c.stackable && !stackRead) {
-                item.refusal = unread;
-            } else if (c.stackable && hasStack) {
-                if (many && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
-                else item.route = StashMoveRoute::Stack;
-            } else {
-                item.route = StashMoveRoute::Cell;
-            }
-            return;
-        }
-        const bool materials = tab == StashMoveTab::Materials;
-        if (!stackRead) {
-            item.refusal = unread;
-        } else if (hasStack) {
+        const int fit = StackThatFits(stacks, c.count, StackCap(StackFlagsFor(tab)));
+        if (fit == kStacksUnknown) { item.refusal = "its stack on the shown tab could not be read"; return; }
+        if (fit >= 0) {
             // The one-unit merge is measured on the Materials tab
             // (stackMoveRoute); the Socketable tab's by socketMergeRoute, on
             // the item's own node, with no non-stackable case (the gem Live
             // 1e read as one merged too, Live 1f). More than one unit follows
-            // each tab's own measurement: wholeStackMerge on the Materials
-            // tab, socketWholeStackMerge on the Socketable tab.
-            if (!materials && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
-            else if (many && materials && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
-            else if (many && !materials && !routes.socketWholeStackMerge)
+            // each tab's own flag: wholeStackMerge on the pages and the
+            // Materials tab, socketWholeStackMerge on the Socketable tab.
+            if (socket && !routes.socketMerge) item.refusal = "a socketable merge is not measured";
+            else if (many && !socket && !routes.wholeStackMerge) item.refusal = "whole-stack merge not measured";
+            else if (many && socket && !routes.socketWholeStackMerge)
                 item.refusal = "a socketable merge of more than one unit is not measured";
             else item.route = StashMoveRoute::Stack;
-        } else {
-            const bool placed = materials ? routes.newMaterial : routes.socketNew;
-            if (placed) item.route = StashMoveRoute::Cell;
-            else item.refusal = "a new kind stays in the bag";
+            return;
         }
+        if (socket) {
+            if (!stacks.counts.empty()) item.refusal = "its stack on the shown tab is full";
+            else if (routes.socketNew) item.route = StashMoveRoute::Cell;
+            else item.refusal = "a new kind stays in the bag";
+            return;
+        }
+        // A new stack on the Materials tab is the new-identity placement
+        // (newMaterialRoute), whether its kind is absent or every stack of it
+        // is full; on a page, the tab placement.
+        if (tab == StashMoveTab::Materials && !routes.newMaterial) item.refusal = "a new kind stays in the bag";
+        else item.route = StashMoveRoute::Cell;
     }
 
     // The route decided again at the point of use (round-2 review). The plan
     // read the shown tab's stacks once, before the run; an earlier item of the
-    // same run may since have made the stack a later item of its identity
-    // joins. So just before a stackable's call the adapter re-reads that
-    // identity's sum on the shown tab and this decides with it, whatever the
-    // plan said: above 0 the stack routine with the item's whole count, 0 the
-    // placement, -1 (unread) a skip that calls nothing. `planned.cell.count`
-    // is the count re-read at the same moment; one that did not read (below
-    // 1) is never merged, since the merge passes it. A planned skip stays one
-    // with its own reason, and a non-stackable keeps its placement: it needs
-    // no sum.
-    static StashMoveItem RouteAtUse(const StashMoveItem& planned, int stashTab, int64_t stackSumNow,
+    // same run may since have made or filled the stack a later item of its
+    // identity meets. So just before a stackable's call the adapter re-reads
+    // that identity's stacks on the shown tab and this decides with them,
+    // whatever the plan said (RouteFor's rule). `planned.cell.count` is the
+    // count re-read at the same moment; one that did not read (below 1) is
+    // never moved, since both routes pass it. A planned skip stays one with
+    // its own reason, and a non-stackable keeps its placement: it needs no
+    // stacks.
+    static StashMoveItem RouteAtUse(const StashMoveItem& planned, int stashTab, const StashMoveStacks& stacksNow,
                                     const StashMoveRoutes& routes = kMeasuredRoutes) {
         if (planned.route == StashMoveRoute::None || !planned.cell.stackable) return planned;
         StashMoveItem item = planned;
-        const bool read = stackSumNow >= 0 && (stackSumNow == 0 || planned.cell.count >= 1);
-        RouteFor(TabOf(stashTab), planned.cell, read, stackSumNow > 0, routes, item);
+        RouteFor(TabOf(stashTab), planned.cell, stacksNow, routes, item);
         return item;
+    }
+
+    // The cell route's StashAddToStack answered true: the game merged where
+    // the model read no stack with room for the whole count. The item is
+    // decided as a merge - moved only when its identity's sum rose by exactly
+    // its count - never as a placement, so it cannot read as a loss by
+    // construction, nor as a move when one unit was taken from a larger stack.
+    static StashMoveItem AsMerge(const StashMoveItem& item) {
+        StashMoveItem merged = item;
+        merged.route = StashMoveRoute::Stack;
+        return merged;
     }
 
     // The columns and rows one key's cells cover in the bag; 1 by 1 when it
@@ -745,6 +955,7 @@ private:
     std::atomic<const char*> m_LastDrop{"none"};
     bool              m_KeyWasDown = false;
     bool              m_ButtonRefused = false;   // a refusal already reported, while the stash stays open
+    bool              m_ButtonOffSaid = false;   // the off-target line already said this session
     std::string       m_OffReason;
 };
 

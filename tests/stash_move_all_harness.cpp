@@ -86,8 +86,24 @@
 // the header had either; the first error line was `error C2039:
 // 'socketWholeStackMerge': is not a member of 'ForgePact::StashMoveRoutes'`,
 // 2026-09-28.
+//
+// ForgePact #131 (the owner's report of 2026-09-30: the button sat with its
+// bottom-right corner in the middle of where it belongs, and items stayed in
+// the bag with room on the tab). The game's merge as a model (a stack takes
+// the whole count only while it stays at or below the cap, 999, or 999999
+// with the sixth argument's flag 8: the static reading of StashAddToStack);
+// the route and room rule per stack, not per sum (a full stack of the kind on
+// Materials or a page starts a new stack in a free cell, a stack with room
+// takes the merge, the Socketable tab's one stack takes a socketable of any
+// count and is never doubled); a true answer on the cell route decided as a
+// merge by the sum; and the button's origin from Sort's box and the node's own
+// extents (UI_Button_Small_obj's origin is its bbox centre, the Sort node's
+// its top-left: Live 1f and 1g). Written before the header had them; the
+// first error line was `error C2039: 'StashMoveStacks': is not a member of
+// 'ForgePact'` (on its using-declaration), 2026-09-30.
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -96,6 +112,9 @@
 
 // PRODUCTION_STASHMOVEALL
 
+using ForgePact::StashMoveStacks;
+using ForgePact::StashMoveBox;
+using ForgePact::StashMoveExtents;
 using ForgePact::StashMoveAllMod;
 using ForgePact::StashMoveButtonStep;
 using ForgePact::StashMoveCell;
@@ -119,6 +138,28 @@ static void Check(const std::string& label, bool ok, const std::string& detail)
     else { std::cout << "FAIL " << label << " " << detail << "\n"; ++g_Failures; }
 }
 
+// The shown tab's stacks of one identity, each stack's count in the array's
+// order, as the adapter read them.
+static StashMoveStacks Stacks(const std::vector<long long>& counts)
+{
+    StashMoveStacks s;
+    s.read = true;
+    for (long long n : counts) s.counts.push_back(n);
+    return s;
+}
+
+// The round-2 scenarios' one-number form of a re-read: -1 unread, 0 no stack
+// of the identity, else one stack of that count.
+static StashMoveStacks Sum(long long n)
+{
+    if (n < 0) return StashMoveStacks();
+    return n == 0 ? Stacks({}) : Stacks({n});
+}
+
+// A stack with room for any count these scenarios move (the Materials cap is
+// 999): what "a stack of its identity is there" meant before #131.
+static const std::vector<long long> kRoomyStack = {100};
+
 static StashMoveCell Cell(int x, int y, const std::string& key, int itemClass,
                           bool stackable = false, long long count = 1, bool destinationHasStack = false)
 {
@@ -129,7 +170,7 @@ static StashMoveCell Cell(int x, int y, const std::string& key, int itemClass,
     c.itemClass = itemClass;
     c.stackable = stackable;
     c.count = count;
-    c.destinationHasStack = destinationHasStack;
+    c.destinationStacks = Stacks(destinationHasStack ? kRoomyStack : std::vector<long long>());
     return c;
 }
 
@@ -239,6 +280,7 @@ static std::string Joined(const std::vector<std::string>& lines)
 }
 
 static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMaterial, bool wholeStackMerge);
+static StashMoveReport MergedWherePlannedACell();
 
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
@@ -358,7 +400,7 @@ static void TargetStackablePlansStack()
     // page's entries answer on no map by name) is a skip, never "no stack";
     // a non-stackable does not need the read.
     StashMoveView unreadStack = grid;
-    for (StashMoveCell& c : unreadStack.cells) { c.destinationHasStack = false; c.destinationStackRead = false; }
+    for (StashMoveCell& c : unreadStack.cells) c.destinationStacks = StashMoveStacks();
     StashMovePlan u = mod.Plan(unreadStack);
     ok = ok && u.items.size() == 3 && u.items[0].route == StashMoveRoute::None && u.items[1].route == StashMoveRoute::None
         && u.items[0].refusal == "its stack on the shown tab could not be read" && u.items[2].route == StashMoveRoute::Cell;
@@ -366,7 +408,7 @@ static void TargetStackablePlansStack()
     // its identity is there, else into a cell (newMaterialRoute). Another
     // class is planned as a skip that calls nothing.
     StashMoveView mats = MixedView(-4);
-    mats.cells[0].destinationHasStack = true;
+    mats.cells[0].destinationStacks = Stacks(kRoomyStack);
     StashMovePlan m = mod.Plan(mats);
     for (const StashMoveItem& i : m.items) {
         bool mine = i.cell.itemClass == 14;
@@ -378,7 +420,7 @@ static void TargetStackablePlansStack()
     // Live 1f measured (more than one: its own scenario below).
     StashMoveView sock = MixedView(-2);
     sock.bagTab = -2;
-    sock.cells[6].destinationHasStack = true;
+    sock.cells[6].destinationStacks = Stacks(kRoomyStack);
     sock.cells[6].count = 1;
     StashMovePlan s = mod.Plan(sock);
     for (const StashMoveItem& i : s.items) {
@@ -796,9 +838,9 @@ static void TargetSocketableMergesAnIdentityWithANode()
     // socketMergeRoute: byname (Live 1f byname-socket-merge, Live 1g): a
     // socketable whose identity has a node on the tab merges by its whole
     // count, confirmed only on that identity's count rising by exactly it; a
-    // ring is not taken there. Live 1f measured one unit only, so a count
-    // above 1 merges only with socketWholeStackMerge on (the next scenario
-    // pins it off); the gem's merge is checked with it turned on.
+    // ring is not taken there. A count above 1 merges while
+    // socketWholeStackMerge is on (on since #131; its own scenario below
+    // pins both states); the gem's merge is checked with it on.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
     const StashMovePlan p = mod.Plan(SocketView());
@@ -817,8 +859,8 @@ static void TargetSocketableMergesAnIdentityWithANode()
     ok = ok && StashMoveAllMod::Decide(pw.items[1], Stacked(2, 3)).outcome == StashMoveOutcome::Unconfirmed;
     // At the point of use the sum decides, as on the Materials tab: a node
     // still there is merged into, an unread sum is a skip that calls nothing.
-    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, 81).route == StashMoveRoute::Stack
-        && StashMoveAllMod::RouteAtUse(p.items[0], -2, -1).refusal == "its stack on the shown tab could not be read";
+    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, Sum(81)).route == StashMoveRoute::Stack
+        && StashMoveAllMod::RouteAtUse(p.items[0], -2, Sum(-1)).refusal == "its stack on the shown tab could not be read";
     // Negative control: with the merge not measured (socketMergeRoute
     // not-observed) the tab is refused as a destination, as before Live 1f.
     const StashMovePlan off = StashMoveAllMod::PlanWith(SocketView(), Flipped(false, false, true, true), true);
@@ -844,7 +886,7 @@ static void TargetSocketableNewKindStaysInTheBag()
     ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
     // At the point of use too: a sum of 0 is a new kind, still a skip.
     StashMoveItem planned = p.items[0];
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 0).refusal == "a new kind stays in the bag";
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, Sum(0)).refusal == "a new kind stays in the bag";
     // Negative control: were the new-identity placement measured, it would
     // go into a cell.
     const StashMovePlan withNew = StashMoveAllMod::PlanWith(SocketView(), Flipped(true, true, true, true), true);
@@ -852,44 +894,349 @@ static void TargetSocketableNewKindStaysInTheBag()
     Check("target/socketable_new_kind_stays_in_the_bag", ok, Keys(p) + " " + p.items[2].refusal);
 }
 
-static void TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip()
+static void TargetSocketableWholeStackMergesIntoItsOneStack()
 {
-    // Live 1f measured the Socketable tab's merge with a count of 1 only (an
-    // orb and a gem); wholeStackMerge was measured on the Materials tab. So
-    // the Socketable tab reads its own flag, socketWholeStackMerge, off: a
-    // socketable of more than one unit is a skip that calls nothing and stays
-    // in the bag, the run goes on, and one unit still merges.
-    const char* why = "a socketable merge of more than one unit is not measured";
+    // #131: most bag socketables are stacks, and the flag that kept a stack of
+    // more than one in the bag (Live 1f measured the Socketable tab's merge
+    // with one unit only) is on, confirmed by Live procedure 3's socket-whole.
+    // The tab holds one stack per kind (owner, 2026-09-30), and its merge
+    // passes the sixth argument 8, so the cap is 999999: [81] + 3 merges by
+    // the whole count, moved only on that node's count rising by exactly 3.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
     const StashMovePlan p = mod.Plan(SocketView());
-    bool ok = !StashMoveAllMod::kMeasuredRoutes.socketWholeStackMerge && StashMoveAllMod::kMeasuredRoutes.wholeStackMerge
+    bool ok = StashMoveAllMod::kMeasuredRoutes.socketWholeStackMerge && !StashMoveAllMod::kMeasuredRoutes.socketNew
         && !p.refused && p.items.size() == 4
-        && p.items[0].route == StashMoveRoute::Stack && p.items[0].cell.count == 1
-        && p.items[1].route == StashMoveRoute::None && p.items[1].refusal == why;
+        && p.items[1].cell.key == "0-0-38-15" && p.items[1].route == StashMoveRoute::Stack && p.items[1].cell.count == 3;
+    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(p.items[1], -2, Stacks({81}));
+    ok = ok && atUse.route == StashMoveRoute::Stack && atUse.cell.count == 3;
+    StashMoveResult none;
+    ok = ok && StashMoveAllMod::StackRoom(Stacks({81}), 3, StashMoveAllMod::CapFor(-2)) == 1
+        && StashMoveAllMod::MayCall(atUse, 1, none);
+    const StashMoveResult moved = StashMoveAllMod::Decide(atUse, Stacked(81, 84));
+    ok = ok && moved.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(moved) == "stashmoveall: item 0-0-38-15 -> stack";
+    // One unit short is a loss, never a move.
+    ok = ok && StashMoveAllMod::Decide(atUse, Stacked(81, 82)).outcome == StashMoveOutcome::Unconfirmed;
+    // A single socketable still merges (the ordinary case Live 1f measured).
+    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, Stacks({81})).route == StashMoveRoute::Stack;
+    // Negative control: with the flag off (the state before #131), a stack
+    // of more than one is a planned skip and one unit still merges.
+    const char* why = "a socketable merge of more than one unit is not measured";
+    StashMoveRoutes off = StashMoveAllMod::kMeasuredRoutes;
+    off.socketWholeStackMerge = false;
+    const StashMovePlan po = StashMoveAllMod::PlanWith(SocketView(), off, true);
+    ok = ok && po.items.size() == 4 && po.items[1].route == StashMoveRoute::None && po.items[1].refusal == why
+        && po.items[0].route == StashMoveRoute::Stack
+        && StashMoveAllMod::RouteAtUse(p.items[1], -2, Stacks({81}), off).refusal == why;
+    Check("target/socketable_whole_stack_merges_into_its_one_stack", ok,
+          Keys(p) + " " + (p.items.size() > 1 ? std::to_string((int)p.items[1].route) + p.items[1].refusal : std::string()));
+}
+
+static void TargetFullSocketableStackNeverStartsASecondStack()
+{
+    // The Socketable tab has one stack per kind: a stack its merge cannot
+    // take (999999 is the cap with flag 8) is a skip with its own reason, and
+    // no placement is tried, since the tab never holds a second stack of a
+    // kind. No stack at all is still a new kind (socketNew: not-observed).
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveItem gem;
+    gem.cell = Cell(1, 0, "0-0-38-15", 15, true, 1, true);
+    gem.route = StashMoveRoute::Stack;
+    const StashMoveItem full = StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999999}));
+    bool ok = full.route == StashMoveRoute::None && full.refusal == "its stack on the shown tab is full";
     StashMoveResult skip;
-    ok = ok && !StashMoveAllMod::MayCall(p.items[1], 1, skip) && skip.outcome == StashMoveOutcome::Skipped
-        && StashMoveAllMod::ItemLine(skip) == std::string("stashmoveall: item 0-0-38-15 -> skipped: ") + why;
-    StashMoveTally t = mod.Begin(p);
+    ok = ok && !StashMoveAllMod::MayCall(full, 1, skip)
+        && StashMoveAllMod::ItemLine(skip) == "stashmoveall: item 0-0-38-15 -> skipped: its stack on the shown tab is full";
+    StashMoveTally t;
     ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
-    // At the point of use too: a merge planned under another rule, re-read
-    // with 3 units, is the same skip; with 1 unit it merges.
-    StashMoveItem planned = p.items[0];
-    planned.cell.count = 3;
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).refusal == why;
-    planned.cell.count = 1;
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).route == StashMoveRoute::Stack;
-    // The Materials tab keeps its own measured rule: 15 units still merge.
-    const StashMovePlan mats = mod.Plan(MaterialsView(-4));
-    ok = ok && mats.items.size() == 3 && mats.items[0].route == StashMoveRoute::Stack && mats.items[0].cell.count == 15;
-    // Negative control: were the multi-unit socket merge measured, the gem
-    // would merge by its whole count.
-    StashMoveRoutes whole = StashMoveAllMod::kMeasuredRoutes;
-    whole.socketWholeStackMerge = true;
-    const StashMovePlan withWhole = StashMoveAllMod::PlanWith(SocketView(), whole, true);
-    ok = ok && withWhole.items.size() == 4 && withWhole.items[1].route == StashMoveRoute::Stack;
-    Check("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip", ok,
-          Keys(p) + " " + (p.items.size() > 1 ? p.items[1].refusal : std::string()));
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({})).refusal == "a new kind stays in the bag";
+    // Even with the new-kind placement turned on, a full stack is no new one.
+    StashMoveRoutes withNew = StashMoveAllMod::kMeasuredRoutes;
+    withNew.socketNew = true;
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999999}), withNew).refusal == "its stack on the shown tab is full";
+    // Negative control: one unit below the cap still takes it.
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999998})).route == StashMoveRoute::Stack;
+    Check("target/full_socketable_stack_never_starts_a_second_stack", ok, full.refusal);
+}
+
+// ---- #131: the game's merge rule, and the per-stack route --------------------
+
+static void BaselineGameMergeTakesAStackOnlyWhileTheSumStaysAtTheCap()
+{
+    // The static reading of StashAddToStack (2026-09-30): the cap is 999, or
+    // 999999 when the sixth argument carries flag 8; the first stack of the
+    // identity, in array order, whose count plus the moved count is at or
+    // below the cap takes the whole count; none does, and the answer is
+    // false. A list that could not be read is unknown, never "fits" or "full".
+    using M = StashMoveAllMod;
+    const int64_t cap = M::StackCap(0);
+    bool ok = cap == 999 && M::StackCap(8) == 999999 && M::StackCap(9) == 999999 && M::StackCap(2) == 999
+        && M::CapFor(-4) == 999 && M::CapFor(0) == 999 && M::CapFor(7) == 999 && M::CapFor(-2) == 999999;
+    ok = ok && M::StackThatFits(Stacks({998}), 1, cap) == 0
+        && M::StackThatFits(Stacks({999}), 1, cap) == M::kNoStackFits
+        && M::StackThatFits(Stacks({999, 400}), 500, cap) == 1
+        && M::StackThatFits(Stacks({949}), 50, cap) == 0
+        && M::StackThatFits(Stacks({950}), 50, cap) == M::kNoStackFits
+        && M::StackThatFits(Stacks({}), 1, cap) == M::kNoStackFits;
+    // The first that fits, not the fullest or the emptiest.
+    ok = ok && M::StackThatFits(Stacks({10, 20}), 5, cap) == 0;
+    // Unknown: the list unread, a stack in it unread, or the count unread.
+    ok = ok && M::StackThatFits(StashMoveStacks(), 1, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5, -1}), 1, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5}), 0, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5}), -1, cap) == M::kStacksUnknown;
+    // The same answers as the room a stack route has, and the sum it is
+    // confirmed by.
+    ok = ok && M::StackRoom(Stacks({998}), 1, cap) == 1 && M::StackRoom(Stacks({999}), 1, cap) == 0
+        && M::StackRoom(StashMoveStacks(), 1, cap) == -1
+        && M::StackSum(Stacks({999, 400})) == 1399 && M::StackSum(Stacks({})) == 0
+        && M::StackSum(StashMoveStacks()) == -1 && M::StackSum(Stacks({3, -1})) == -1;
+    // Negative control: the sum-only rule this replaces would have merged
+    // [999] + 1, which the game refuses.
+    ok = ok && M::StackSum(Stacks({999})) > 0 && M::StackThatFits(Stacks({999}), 1, cap) < 0;
+    Check("baseline/game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap", ok, "");
+}
+
+// The Materials tab (sixth argument 0, cap 999), from its view: one bag
+// material of `count` whose identity has `stacks` on the tab.
+static StashMoveItem MaterialAtUse(long long count, const StashMoveStacks& stacks, const std::string& key = "0-0-72-14")
+{
+    StashMoveItem it;
+    it.cell = Cell(0, 0, key, 14, true, count, true);
+    it.route = StashMoveRoute::Stack;
+    return StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, stacks);
+}
+
+static void TargetFullMaterialsStackOverflowsIntoAFreeCell()
+{
+    // The owner's report: a Materials stack at 999 left the next unit in the
+    // bag although the tab had free cells. [999] + 1 with room is a new stack
+    // in a cell (the tab placement, as a new identity takes); the ordinary
+    // cases beside it: [100] + 50 merges, a new identity with room is placed.
+    const int64_t cap = StashMoveAllMod::CapFor(StashMoveAllMod::kMaterialsTab);
+    const StashMoveItem full = MaterialAtUse(1, Stacks({999}));
+    StashMoveResult none;
+    bool ok = full.route == StashMoveRoute::Cell && StashMoveAllMod::MayCall(full, 1, none);
+    const StashMoveResult placed = StashMoveAllMod::Decide(full, PlacedCell(4, 2));
+    ok = ok && placed.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(placed) == "stashmoveall: item 0-0-72-14 -> cell 4,2";
+    const StashMoveItem ordinary = MaterialAtUse(50, Stacks({100}));
+    ok = ok && ordinary.route == StashMoveRoute::Stack && StashMoveAllMod::StackRoom(Stacks({100}), 50, cap) == 1
+        && StashMoveAllMod::Decide(ordinary, Stacked(100, 150)).outcome == StashMoveOutcome::Moved;
+    ok = ok && MaterialAtUse(50, Stacks({})).route == StashMoveRoute::Cell;
+    // Negative control: before #131 any stack of the kind meant a merge, the
+    // game answered false, and a false with both sides unchanged is a skip.
+    StashMoveItem sumOnly = full;
+    sumOnly.route = StashMoveRoute::Stack;
+    StashMoveReport refused = Refused("StashAddToStack answered false");
+    refused.stackBefore = 999;
+    refused.stackAfter = 999;
+    ok = ok && StashMoveAllMod::Decide(sumOnly, refused).outcome == StashMoveOutcome::Skipped;
+    Check("target/full_materials_stack_overflows_into_a_free_cell", ok,
+          std::to_string((int)full.route) + " " + full.refusal);
+}
+
+static void TargetMaterialsMergeSkipsTheFullStackForOneWithRoom()
+{
+    // The tab holds several stacks of a kind (owner, 2026-09-30): [999, 400]
+    // + 500 merges (the game takes the second stack), confirmed on the kind's
+    // sum rising by 500.
+    const StashMoveItem it = MaterialAtUse(500, Stacks({999, 400}));
+    bool ok = it.route == StashMoveRoute::Stack
+        && StashMoveAllMod::StackThatFits(Stacks({999, 400}), 500, 999) == 1
+        && StashMoveAllMod::StackRoom(Stacks({999, 400}), 500, 999) == 1;
+    ok = ok && StashMoveAllMod::Decide(it, Stacked(1399, 1899)).outcome == StashMoveOutcome::Moved;
+    // Negative control: [999, 600] + 500 fits neither, so it is a new cell.
+    ok = ok && MaterialAtUse(500, Stacks({999, 600})).route == StashMoveRoute::Cell;
+    Check("target/materials_merge_skips_the_full_stack_for_one_with_room", ok, it.refusal);
+}
+
+static void TargetMergeAtExactlyTheCapIsAMerge()
+{
+    // The cap is inclusive: [949] + 50 reaches 999 exactly and merges;
+    // [950] + 50 would pass it and starts a new stack instead.
+    bool ok = MaterialAtUse(50, Stacks({949})).route == StashMoveRoute::Stack
+        && MaterialAtUse(50, Stacks({950})).route == StashMoveRoute::Cell
+        && MaterialAtUse(1, Stacks({998})).route == StashMoveRoute::Stack;
+    Check("target/merge_at_exactly_the_cap_is_a_merge", ok, "");
+}
+
+static void TargetNoStackFitsAndNoFreeCellStaysInTheBag()
+{
+    // Never overflow (D4) holds for a new stack too: [999, 600] + 500 with no
+    // free block on the shown tab calls nothing and stays in the bag; the
+    // room read failing calls nothing either; with room, it is placed.
+    const StashMoveItem it = MaterialAtUse(500, Stacks({999, 600}));
+    StashMoveResult skip, unread, none;
+    bool ok = it.route == StashMoveRoute::Cell
+        && !StashMoveAllMod::MayCall(it, 0, skip) && skip.outcome == StashMoveOutcome::Skipped
+        && StashMoveAllMod::ItemLine(skip) == "stashmoveall: item 0-0-72-14 -> skipped: no room on the shown tab"
+        && !StashMoveAllMod::MayCall(it, -1, unread) && unread.answer == "the shown tab's room could not be read"
+        && StashMoveAllMod::MayCall(it, 1, none);
+    // A stack list that could not be read is a skip, never a new stack.
+    const StashMoveItem u = MaterialAtUse(500, StashMoveStacks());
+    ok = ok && u.route == StashMoveRoute::None && u.refusal == "its stack on the shown tab could not be read";
+    // A new stack on the Materials tab is the new-identity placement: not
+    // measured, it stays in the bag.
+    StashMoveItem planned;
+    planned.cell = Cell(0, 0, "0-0-72-14", 14, true, 1, true);
+    planned.route = StashMoveRoute::Stack;
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, StashMoveAllMod::kMaterialsTab, Stacks({999}),
+                                           Flipped(false, true, false, true)).refusal == "a new kind stays in the bag";
+    Check("target/no_stack_fits_and_no_free_cell_stays_in_the_bag", ok, skip.answer + " | " + u.refusal);
+}
+
+static void TargetFullKeyStackOnAPageOverflowsIntoAFreeCell()
+{
+    // A stash page (the personal one, the sixth argument 0, cap 999): a key
+    // stack at 999 is no merge for one more key; with room it goes into a
+    // free cell of the page. Negative control: [998] merges.
+    StashMoveItem key;
+    key.cell = Cell(0, 0, "0-0-5-12", 12, true, 1, true);
+    key.route = StashMoveRoute::Stack;
+    const StashMoveItem full = StashMoveAllMod::RouteAtUse(key, 0, Stacks({999}));
+    StashMoveResult none;
+    bool ok = StashMoveAllMod::CapFor(0) == 999 && full.route == StashMoveRoute::Cell && StashMoveAllMod::MayCall(full, 1, none)
+        && StashMoveAllMod::Decide(full, PlacedCell(3, 0)).outcome == StashMoveOutcome::Moved;
+    ok = ok && StashMoveAllMod::RouteAtUse(key, 0, Stacks({998})).route == StashMoveRoute::Stack;
+    // The plan says the same before the run.
+    StashMoveView v;
+    v.stashListed = true; v.bagTab = 0; v.stashTab = 0;
+    v.cells = { Cell(0, 0, "0-0-5-12", 12, true, 1) };
+    v.cells[0].destinationStacks = Stacks({999});
+    const StashMovePlan p = StashMoveAllMod::PlanWith(v, StashMoveAllMod::kMeasuredRoutes, true);
+    ok = ok && p.items.size() == 1 && p.items[0].route == StashMoveRoute::Cell;
+    Check("target/full_key_stack_on_a_page_overflows_into_a_free_cell", ok, full.refusal);
+}
+
+static void TargetUnexpectedMergeOnTheCellRouteIsConfirmedAsAMerge()
+{
+    // The cell route's StashAddToStack now carries the item's whole count
+    // (the value the measured merge passes). A true answer there is the game
+    // merging where the model read no stack with room: decided as a merge,
+    // moved only when the kind's sum rose by exactly the count, never a loss
+    // by construction and never a unit taken from a larger stack.
+    StashMoveItem it = MaterialAtUse(5, Stacks({999}));
+    bool ok = it.route == StashMoveRoute::Cell;
+    const StashMoveItem merge = StashMoveAllMod::AsMerge(it);
+    ok = ok && merge.route == StashMoveRoute::Stack && merge.cell.key == it.cell.key && merge.cell.count == 5;
+    const StashMoveResult moved = StashMoveAllMod::Decide(merge, Stacked(999, 1004));
+    ok = ok && moved.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(moved) == "stashmoveall: item 0-0-72-14 -> stack";
+    // Anything else is unconfirmed: one unit taken, or the bag cell kept.
+    ok = ok && StashMoveAllMod::Decide(merge, Stacked(999, 1000)).outcome == StashMoveOutcome::Unconfirmed
+        && StashMoveAllMod::Decide(merge, Stacked(999, 1004, 1)).outcome == StashMoveOutcome::Unconfirmed;
+    // Negative control: decided on the cell route, the same answer cannot be
+    // confirmed (nothing was placed) - the round-2 duplicate's shape.
+    ok = ok && StashMoveAllMod::Decide(it, MergedWherePlannedACell()).outcome == StashMoveOutcome::Unconfirmed;
+    Check("target/unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge", ok, "");
+}
+
+// ---- #131: the button's origin ----------------------------------------------
+
+// Live 1f and 1g, the same numbers both times (2560x1440 GUI, save slot 14):
+// the Sort node's x, y and bbox, and the Move all node the old formula made.
+static StashMoveBox Box(double l, double t, double r, double b)
+{
+    StashMoveBox box;
+    box.left = l; box.top = t; box.right = r; box.bottom = b;
+    return box;
+}
+static const StashMoveBox kSortBox = Box(2303.5, 1198.9, 2485.9, 1261.6);
+static const double kSortX = 2303.5, kSortY = 1198.9;
+static const StashMoveBox kOldNodeBox = Box(2016.2, 1176.1, 2211.9, 1221.7);
+static const double kOldNodeX = 2113.1, kOldNodeY = 1198.9;
+static const double kGap = 8.0;
+
+static bool Near(double a, double b, double tol) { return a - b <= tol && b - a <= tol; }
+
+static void BaselineButtonSmallOriginIsItsCentreAndSortOriginItsTopLeft()
+{
+    // What UiCreateNode's x, y are: the node's origin, which for
+    // UI_Button_Small_obj (sprite Menu_Button_Chat_spr) lies at its bbox
+    // centre, while the Sort node's lies at its bbox top-left.
+    bool ok = Near(kOldNodeX, (kOldNodeBox.left + kOldNodeBox.right) / 2, 1.0)
+        && Near(kOldNodeY, (kOldNodeBox.top + kOldNodeBox.bottom) / 2, 1.0)
+        && Near(kSortX, kSortBox.left, 0.05) && Near(kSortY, kSortBox.top, 0.05);
+    StashMoveExtents e;
+    ok = ok && StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e)
+        && Near(e.left, 96.9, 0.05) && Near(e.up, 22.8, 0.05) && Near(e.right, 98.8, 0.05) && Near(e.down, 22.8, 0.05);
+    // The old formula: Sort's x less its width less the gap, Sort's y, as if
+    // the new node's origin were its top-left - which gives the origin Live
+    // 1f and 1g measured.
+    const double oldX = kSortX - (kSortBox.right - kSortBox.left) - kGap;
+    ok = ok && Near(oldX, kOldNodeX, 0.05) && Near(kSortY, kOldNodeY, 0.05);
+    // Negative control: a box that did not read gives no extents.
+    StashMoveExtents none;
+    ok = ok && !StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, StashMoveBox(), none)
+        && !StashMoveAllMod::ExtentsOf(std::nan(""), kOldNodeY, kOldNodeBox, none);
+    Check("baseline/button_small_origin_is_its_centre_and_sort_origin_its_top_left", ok, "");
+}
+
+static void TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt()
+{
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    double x = 0, y = 0;
+    bool ok = StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, x, y) && Near(x, 2196.7, 0.05) && Near(y, 1230.25, 0.05);
+    // The box it gives: right edge the gap left of Sort, the vertical centre
+    // Sort's; on target, and clear of Sort.
+    const StashMoveBox target = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    ok = ok && Near(target.left, 2099.8, 0.05) && Near(target.top, 1207.45, 0.05)
+        && Near(target.right, 2295.5, 0.05) && Near(target.bottom, 1253.05, 0.05)
+        && target.right < kSortBox.left && StashMoveAllMod::ButtonOnTarget(kSortBox, target, kGap);
+    // Within 1 GUI unit is on target; 1.5 off is not.
+    ok = ok && StashMoveAllMod::ButtonOnTarget(kSortBox, Box(target.left + 0.9, target.top, target.right + 0.9, target.bottom), kGap)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, Box(target.left, target.top + 1.5, target.right, target.bottom + 1.5), kGap);
+    // Extents measured on the node, not built in: a node half the size (a
+    // GUI scale change) is still placed right.
+    StashMoveExtents half;
+    half.left = e.left / 2; half.up = e.up / 2; half.right = e.right / 2; half.down = e.down / 2;
+    double hx = 0, hy = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, half, kGap, hx, hy)
+        && StashMoveAllMod::ButtonOnTarget(kSortBox, Box(hx - half.left, hy - half.up, hx + half.right, hy + half.down), kGap);
+    // The first creation of a session, before any extents are measured, sits
+    // at a provisional origin: a box of Sort's own size about its centre.
+    double px = 0, py = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, StashMoveAllMod::ProvisionalExtents(kSortBox), kGap, px, py)
+        && Near(px, 2303.5 - 8 - 91.2, 0.05) && Near(py, 1230.25, 0.05);
+    // The line for a node still off target after the second creation: said
+    // once, the offsets to a tenth, and the mod stays on.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // (dy is -31.35 on paper, so its last digit is left to the rounding.)
+    const std::string off = mod.ButtonOffTarget(kSortBox, kOldNodeBox, kGap);
+    const std::string head = "stashmoveall: button - placed -83.6,-31.", tail = " off beside Sort; F4 still works";
+    ok = ok && off.rfind(head, 0) == 0 && off.size() == head.size() + 1 + tail.size()
+        && off.compare(off.size() - tail.size(), tail.size(), tail) == 0
+        && mod.ButtonOffTarget(kSortBox, kOldNodeBox, kGap).empty() && mod.IsEnabled();
+    // Negative controls: a Sort box that did not read gives no origin; a node
+    // box that did not read is never on target.
+    double nx = 0, ny = 0;
+    ok = ok && !StashMoveAllMod::ButtonOrigin(StashMoveBox(), e, kGap, nx, ny)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, StashMoveBox(), kGap);
+    Check("target/button_right_edge_sits_the_gap_left_of_sort_centred_on_it", ok,
+          std::to_string(x) + "," + std::to_string(y) + " " + off);
+}
+
+static void TargetOldButtonOriginPutItsCornerInsideTheTargetBox()
+{
+    // The owner's report, reproduced from the measured numbers: the old
+    // origin centred the node on the point meant for its top-left corner, so
+    // its bottom-right corner (2211.9, 1221.7) lies inside the box it should
+    // occupy. The old box is off target; the new one is on it.
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    double x = 0, y = 0;
+    StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, x, y);
+    const StashMoveBox target = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    const double cx = kOldNodeX + e.right, cy = kOldNodeY + e.down;
+    bool ok = Near(cx, 2211.9, 0.05) && Near(cy, 1221.7, 0.05)
+        && StashMoveAllMod::PressInNode(cx, cy, target.left, target.top, target.right, target.bottom)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, kOldNodeBox, kGap)
+        && StashMoveAllMod::ButtonOnTarget(kSortBox, target, kGap);
+    // Negative control: the old box's own top-left is outside the target box.
+    ok = ok && !StashMoveAllMod::PressInNode(kOldNodeBox.left, kOldNodeBox.top, target.left, target.top, target.right, target.bottom);
+    Check("target/old_button_origin_put_its_corner_inside_the_target_box", ok, "");
 }
 
 static void TargetShownTabRoom()
@@ -932,7 +1279,7 @@ static void TargetLines()
     mod.SetEnabled(true);
     ok = ok && mod.StateLine() == "stashmoveall: state=on key=F4" + kIdleButton;
     StashMoveView mats = MixedView(-4);
-    mats.cells[0].destinationHasStack = true;
+    mats.cells[0].destinationStacks = Stacks(kRoomyStack);
     StashMovePlan p = mod.Plan(mats);
     StashMoveTally t = mod.Begin(p);
     // Planned order: 0-0-20-7 (class 7), 0-0-10-18, 0-0-40-14 (stack), 0-0-30-15.
@@ -993,13 +1340,13 @@ static bool SecondItemOfOneIdentity(int stashTab, int itemClass, std::string& de
         && p.items[1].route == StashMoveRoute::Cell;
     StashMoveTally t = mod.Begin(p);
     // The first: its identity is still not on the tab (the sum re-reads 0).
-    const StashMoveItem first = StashMoveAllMod::RouteAtUse(p.items[0], stashTab, 0);
+    const StashMoveItem first = StashMoveAllMod::RouteAtUse(p.items[0], stashTab, Sum(0));
     ok = ok && first.route == StashMoveRoute::Cell;
     StashMoveResult one;
     ok = ok && StashMoveAllMod::MayCall(first, 1, one);
     ok = ok && mod.Record(t, StashMoveAllMod::Decide(first, PlacedCell(0, 0)));
     // The second: the first's 5 units are on the tab now.
-    const StashMoveItem second = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5);
+    const StashMoveItem second = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, Sum(5));
     ok = ok && second.route == StashMoveRoute::Stack && second.cell.count == 3;
     const StashMoveResult merged = StashMoveAllMod::Decide(second, Stacked(5, 8));
     ok = ok && merged.outcome == StashMoveOutcome::Moved && merged.route == StashMoveRoute::Stack
@@ -1011,11 +1358,11 @@ static bool SecondItemOfOneIdentity(int stashTab, int itemClass, std::string& de
     // The whole-count rule still holds at the point of use: not measured,
     // more than one unit is a skip and one unit merges.
     const StashMoveRoutes noWhole = Flipped(false, false, true, false);
-    const StashMoveItem many = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5, noWhole);
+    const StashMoveItem many = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, Sum(5), noWhole);
     StashMoveItem unit = p.items[1];
     unit.cell.count = 1;
     ok = ok && many.route == StashMoveRoute::None && many.refusal == "whole-stack merge not measured"
-        && StashMoveAllMod::RouteAtUse(unit, stashTab, 5, noWhole).route == StashMoveRoute::Stack;
+        && StashMoveAllMod::RouteAtUse(unit, stashTab, Sum(5), noWhole).route == StashMoveRoute::Stack;
     detail = Keys(p) + " second=" + std::to_string((int)second.route) + " " + Joined(t.lines);
     return ok;
 }
@@ -1029,7 +1376,7 @@ static void TargetSecondItemMergesAtUseOnMaterials()
     StashMoveItem it;
     it.cell = Cell(0, 0, "0-0-83-14", 14, true, 4, false);
     it.route = StashMoveRoute::Cell;
-    ok = ok && StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, 0, Flipped(false, false, false, true)).refusal
+    ok = ok && StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, Sum(0), Flipped(false, false, false, true)).refusal
         == "a new kind stays in the bag";
     Check("target/second_item_of_one_identity_merges_at_the_point_of_use_on_materials", ok, detail);
 }
@@ -1051,31 +1398,35 @@ static void TargetUnreadableStackSumAtUseSkips()
     it.route = StashMoveRoute::Cell;
     // The sum could not be re-read: a skip that calls nothing, whatever the
     // plan said, and the run goes on.
-    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(it, 3, -1);
+    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(it, 3, Sum(-1));
     bool ok = atUse.route == StashMoveRoute::None && atUse.refusal == "its stack on the shown tab could not be read";
     StashMoveResult skip;
     ok = ok && !StashMoveAllMod::MayCall(atUse, 1, skip) && skip.outcome == StashMoveOutcome::Skipped
         && skip.answer == "its stack on the shown tab could not be read";
     StashMoveItem stacked = it;
     stacked.route = StashMoveRoute::Stack;
-    ok = ok && StashMoveAllMod::RouteAtUse(stacked, 3, -1).route == StashMoveRoute::None;
-    // A count that did not read is never merged: the merge passes it.
+    ok = ok && StashMoveAllMod::RouteAtUse(stacked, 3, Sum(-1)).route == StashMoveRoute::None;
+    // A count that did not read is never merged: the merge passes it. Since
+    // #131 the cell route passes it too, so it is never placed either.
     StashMoveItem noCount = it;
     noCount.cell.count = -1;
-    ok = ok && StashMoveAllMod::RouteAtUse(noCount, 3, 4).route == StashMoveRoute::None;
+    ok = ok && StashMoveAllMod::RouteAtUse(noCount, 3, Sum(4)).route == StashMoveRoute::None
+        && StashMoveAllMod::RouteAtUse(noCount, 3, Sum(0)).route == StashMoveRoute::None;
+    // One stack of the list that could not be read makes the whole list unread.
+    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, Stacks({4, -1})).refusal == "its stack on the shown tab could not be read";
     StashMoveTally t;
     ok = ok && mod.Record(t, skip) && t.skipped == 1 && !t.stopped && mod.IsEnabled();
     // Negative controls: a sum of 0 is a cell; a non-stackable needs no sum;
     // a planned skip stays a skip with its own reason.
-    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, 0).route == StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, Sum(0)).route == StashMoveRoute::Cell;
     StashMoveItem ring;
     ring.cell = Cell(1, 0, "0-0-85-7", 7);
     ring.route = StashMoveRoute::Cell;
-    ok = ok && StashMoveAllMod::RouteAtUse(ring, 3, -1).route == StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(ring, 3, Sum(-1)).route == StashMoveRoute::Cell;
     StashMoveItem refused;
     refused.cell = Cell(2, 0, "0-0-86-7", 7);
     refused.refusal = "not taken by the Materials tab";
-    const StashMoveItem still = StashMoveAllMod::RouteAtUse(refused, StashMoveAllMod::kMaterialsTab, 3);
+    const StashMoveItem still = StashMoveAllMod::RouteAtUse(refused, StashMoveAllMod::kMaterialsTab, Sum(3));
     ok = ok && still.route == StashMoveRoute::None && still.refusal == "not taken by the Materials tab";
     Check("target/unreadable_stack_sum_at_the_point_of_use_skips", ok, atUse.refusal + " " + Joined(t.lines));
 }
@@ -1376,7 +1727,18 @@ int main()
     BaselineSocketableTabTakesOnlyTheBagSocketView();
     TargetSocketableMergesAnIdentityWithANode();
     TargetSocketableNewKindStaysInTheBag();
-    TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip();
+    TargetSocketableWholeStackMergesIntoItsOneStack();
+    TargetFullSocketableStackNeverStartsASecondStack();
+    BaselineGameMergeTakesAStackOnlyWhileTheSumStaysAtTheCap();
+    TargetFullMaterialsStackOverflowsIntoAFreeCell();
+    TargetMaterialsMergeSkipsTheFullStackForOneWithRoom();
+    TargetMergeAtExactlyTheCapIsAMerge();
+    TargetNoStackFitsAndNoFreeCellStaysInTheBag();
+    TargetFullKeyStackOnAPageOverflowsIntoAFreeCell();
+    TargetUnexpectedMergeOnTheCellRouteIsConfirmedAsAMerge();
+    BaselineButtonSmallOriginIsItsCentreAndSortOriginItsTopLeft();
+    TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt();
+    TargetOldButtonOriginPutItsCornerInsideTheTargetBox();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

@@ -31,14 +31,27 @@ material identity goes into a cell of the Materials tab, a whole stack merges
 by its count, and the bag's Materials view feeds the Materials tab only. Live
 1f and 1g decided the Socketable tab (socketMergeRoute: byname): fed from the
 bag's Socket view only, a socketable whose identity has a node on the tab
-merges and a new kind stays in the bag; since Live 1f measured that merge with
-one unit only, a socketable of more than one unit stays in the bag too
-(socketWholeStackMerge off; the Materials tab's wholeStackMerge is its own
-measurement). And the in-game
+merges and a new kind stays in the bag. And the in-game
 Move all button (buttonRoute: poll): its node exists only while the switch is
 on and the stash and Sort are listed, a left press inside its bbox is a press,
 taken once under the key's guard, and a node that cannot be made is reported
 once without turning the mod off.
+
+ForgePact #131 (the owner's report of 2026-09-30): the route is decided per
+stack, not per sum. The game's merge (the static reading of StashAddToStack)
+takes the first stack of the kind whose count plus the item's stays at or
+below the cap, 999, or 999999 with the sixth argument's flag 8 (the Socketable
+tab's merge); the baseline pins that model. So on the Materials tab and a
+stash page a stackable joins a stack with room for its whole count, and when
+every stack of its kind is too full it starts a new stack in a free cell of
+the same tab (no free cell: it stays in the bag); the Socketable tab, one
+stack per kind, takes a socketable of any count onto that stack
+(socketWholeStackMerge on, confirmed by Live procedure 3's socket-whole; the
+flag off is kept as a negative control) and never starts a second stack; a
+true answer on the cell route is decided as a merge by the sum. The button's
+origin comes from Sort's box and the node's own extents: its right edge 8 GUI
+units left of Sort, centred on it (UI_Button_Small_obj's origin is its bbox
+centre, the Sort node's its top-left, Live 1f and 1g).
 """
 import os
 import shutil
@@ -218,13 +231,69 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # placement would go into a cell.
         self.assertScenario("target/socketable_new_kind_stays_in_the_bag")
 
-    def test_target_socketable_merge_of_more_than_one_unit_is_a_planned_skip(self):
-        # Live 1f measured the socket merge with one unit only, so
-        # socketWholeStackMerge is off: more than one unit is a skip that
-        # calls nothing, one unit still merges, and the Materials tab keeps
-        # its own whole-stack merge. Negative control: with the flag on the
-        # gem merges by its whole count.
-        self.assertScenario("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip")
+    def test_target_socketable_whole_stack_merges_into_its_one_stack(self):
+        # #131: socketWholeStackMerge is on; [81] + 3 merges by the whole
+        # count, confirmed on the node rising by exactly 3. Negative control:
+        # with the flag off, the same stack is a planned skip.
+        self.assertScenario("target/socketable_whole_stack_merges_into_its_one_stack")
+
+    def test_target_full_socketable_stack_never_starts_a_second_stack(self):
+        # [999999] + 1 stays with the full-stack reason, even were the new
+        # kind's placement measured. Negative control: [999998] + 1 merges.
+        self.assertScenario("target/full_socketable_stack_never_starts_a_second_stack")
+
+    # ---- #131: the game's merge rule and the per-stack route ------------------
+
+    def test_baseline_game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap(self):
+        # The static reading of StashAddToStack: cap 999, 999999 with flag 8;
+        # the first stack that fits the whole count; unread is unknown.
+        self.assertScenario("baseline/game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap")
+
+    def test_target_full_materials_stack_overflows_into_a_free_cell(self):
+        # The owner's report: [999] + 1 with room is a new stack in a cell.
+        # Negative control: the sum-only rule's merge was refused and skipped.
+        self.assertScenario("target/full_materials_stack_overflows_into_a_free_cell")
+
+    def test_target_materials_merge_skips_the_full_stack_for_one_with_room(self):
+        # [999, 400] + 500 merges; negative control [999, 600] + 500 is a cell.
+        self.assertScenario("target/materials_merge_skips_the_full_stack_for_one_with_room")
+
+    def test_target_merge_at_exactly_the_cap_is_a_merge(self):
+        # [949] + 50 merges; negative control [950] + 50 is a cell.
+        self.assertScenario("target/merge_at_exactly_the_cap_is_a_merge")
+
+    def test_target_no_stack_fits_and_no_free_cell_stays_in_the_bag(self):
+        # Never overflow holds for a new stack: no room calls nothing, an
+        # unread list is a skip. Negative control: with room, it is placed.
+        self.assertScenario("target/no_stack_fits_and_no_free_cell_stays_in_the_bag")
+
+    def test_target_full_key_stack_on_a_page_overflows_into_a_free_cell(self):
+        # A stash page too. Negative control: [998] + 1 merges.
+        self.assertScenario("target/full_key_stack_on_a_page_overflows_into_a_free_cell")
+
+    def test_target_unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge(self):
+        # The cell route passes the whole count; a true answer there is
+        # decided as a merge by the sum. Negative control: decided on the
+        # cell route it cannot be confirmed.
+        self.assertScenario("target/unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge")
+
+    # ---- #131: the button's origin ---------------------------------------------
+
+    def test_baseline_button_small_origin_is_its_centre_and_sort_origin_its_top_left(self):
+        # Live 1f and 1g's geometry, and the old formula reproducing the
+        # measured origin. Negative control: a box that did not read.
+        self.assertScenario("baseline/button_small_origin_is_its_centre_and_sort_origin_its_top_left")
+
+    def test_target_button_right_edge_sits_the_gap_left_of_sort_centred_on_it(self):
+        # ButtonOrigin gives 2196.7, 1230.25 from the measured extents; a node
+        # of another size is still placed right; the off-target line is said
+        # once. Negative controls: unread boxes.
+        self.assertScenario("target/button_right_edge_sits_the_gap_left_of_sort_centred_on_it")
+
+    def test_target_old_button_origin_put_its_corner_inside_the_target_box(self):
+        # The report reproduced: the old box's bottom-right corner lies inside
+        # the target box. Negative control: its top-left does not.
+        self.assertScenario("target/old_button_origin_put_its_corner_inside_the_target_box")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
