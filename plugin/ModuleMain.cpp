@@ -35440,7 +35440,7 @@ static void TgProbeCast(const std::string& rest)
     if (!self) { Out("tgprobe cast: the player instance did not resolve"); return; }
     try {
         RValue r;
-        const AurieStatus st = g_Yytk->CallGameScriptEx(r, "gml_Script_TalentUse", self, self,
+        const AurieStatus st = g_Yytk->CallGameScriptEx(r, HeroSiege::Scripts::gml_Script_TalentUse.data(), self, self,
             { player, RValue((double)id), RValue(1.0), RValue(false), RValue(true) });
         Out("tgprobe cast " + std::to_string(id) + ": frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
             + " st=" + std::to_string((int)st) + " ret=" + Describe(r));
