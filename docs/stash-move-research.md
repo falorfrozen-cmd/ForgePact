@@ -570,7 +570,9 @@ Labels as in § Static reading 3: (R) read locally, in our words; (M) measured.
   Socketable tab (Live 1c to 1g), so a Materials or page stack caps at 999 and
   a socketable stack at 999999. Not read: whether the count added is the fifth
   argument or the item's own `o` (the mod passes the whole count as the fifth,
-  so both readings agree), and the walk order beyond "array order".
+  so both readings agree), and the walk order beyond "array order". Live 3
+  later measured the 999 cap on the Materials tab (§ Decision,
+  `stackCapRule`); the 999999 cap stays this reading.
 - (M, from the code and Live 2) **Why items stayed.** The first release sent a
   stackable to the stack routine whenever the identity's sum on the tab was
   above 0, so a material whose only stack held 999 went to a merge the game
@@ -1798,6 +1800,73 @@ exercised less than its name says:
 | saved-bag-lacks-keys | the same keys in the bag's saved file | as above | none of the 14 in `inventory_order_13.hss` | pass |
 | no-duplicate | every moved key under exactly one container | as above | each of the 14 under exactly one container, as in the last in-game listing; the merged key in none | pass |
 
+### Live 3 results
+
+Live 3 ran on 2026-09-30 on the **research build** (§ Live procedure 3),
+`plugin_build/BloodPactPlugin_rel.dll` SHA-256
+`810d28da164b1ec0b9a9306b313559d3984b4de10a8ec6cc917322826df60e62`, slot 14,
+fully automatic (the character picked by name at once; capture
+`.claude/workorders/forgepact-68-move-all-fix-live-1.md` on the owner's
+machine). It is ForgePact #131's confirmation. **17 of the 18 checks passed
+and one, `material-new`, was not run**; `tools/live_checks.py` reads the same
+18 verdicts from the capture's `## Checks` block. The game never ended, and
+the saves were restored afterwards and inspected clean.
+
+These ran otherwise than the procedure first said:
+
+- **material-new was not run.** No bag material was of a kind with no stack
+  on the tab: the bag's two (base ids 72 and 73, counts 27 and 3) each met a
+  full stack of 999. Both went `-> cell` as new stacks beside the full ones
+  (the kind sums 999 to 1026 and 999 to 1002), which is the full-stack case,
+  not the new-kind one. A new kind placed as a new stack by the #131 adapter
+  is therefore **not observed** here (Live 2's `case-material-new` saw it on
+  the #68 adapter).
+- **button-placed passed on the relation, not on the absolute box.** The
+  procedure's expected box (about 2099.8,1207.5,2295.5,1253.1) was worked out
+  from Live 1f and 1g's Sort, and this session's GUI scale was another: Sort
+  192 wide against 182.4, the node 206 against 195.7. The relation held
+  exactly (below), which is what reading the extents from the node is for.
+  The node's x, y (2178.0, 1295.0) sat within one GUI unit of its bbox
+  centre, as in Live 1f and 1g.
+- **button-press counted 4 presses**, not the 1 expected: `in_node=1` and
+  `taken=1` as expected, and the 3 `outside` are, by inference, the three
+  setup Ctrl + clicks that refilled the bag from the Personal tab
+  (`hs_give_item` refuses grid-tab items, as in Live 2).
+- **socket-whole needed a clean re-run.** The first run's copy of 3 of the
+  orb merged (`-> stack`), but the orb's node rose by 8 (84 to 92): the bag's
+  Socket view held 54 socketables, and other orbs of that kind merged in the
+  same run (inferred; the bag was not read before the press). A re-run with
+  only the 20 skipped keys and a new copy of 3 in the bag raised the node by
+  exactly 3 (92 to 95).
+- **socket-single used base id 8**, because the node of base id 38 read no
+  numeric `o`; the procedure allows any two filled kinds. **K_M was base id
+  60** (`o` 875), because base ids 72 and 73 held two stacks each after
+  step 5 and the procedure asks for a kind with one.
+- **hs_stash_close answered `not confirmed`** though the window closed (a
+  screenshot, the game running, and a new stash window id on the reopen): an
+  hs-drive gap, not a result of the mod.
+
+| Check | What it reads | Supplied | Result | Verdict |
+|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build | - | lease `dll_sha256` 810d28da..., equal to the build's, unchanged since taken | pass |
+| marker | the first line of bare `stashmoveall` | - | `state=off key=F4 button=none`, every counter 0, `button_place=none` | pass |
+| control | a stash tab switch by name | `hs_stash_tab("shared1")` | `stashtab: before=0 after=1 handler=UiAStashTabClick` | pass |
+| copy-control | the first `probe copy` | a copy of K_M (base id 60) with `o` 125 | `confirmed`; the bag's Materials view gained one key with `o` 125 | pass |
+| off-baseline-button | the stash's small buttons with the switch off | `menulayout UI_Button_Small_obj` | five rows, Sort's (`InventorySort`) bbox 2290.0,1262.0,2482.0,1328.0, none `ForgePactMoveAll` | pass |
+| button-placed | the button's row against Sort's | `stashmoveall 1`, then a stash tab clicked | one `ForgePactMoveAll` row, `text=Move all`, `visible=1`, bbox 2076.0,1271.0,2282.0,1319.0: its right edge 2282 is Sort's left less 8, its vertical centre 1295 is Sort's; the mod's own line `placed beside Sort` named the same box | pass |
+| button-press | a scripted click at the button's centre | 3 items on bag page 0 (put there by setup Ctrl + clicks), a left click at GUI 2178,1295 | `moved 3 of 3 from bag tab 0 to stash tab 0; skipped 0`, each `-> cell`; `presses=4 in_node=1 outside=3 taken=1`; the keys on the Personal tab, the bag page empty | pass (presses 4, not 1; `in_node` and `taken` as expected, the 3 outside inferred to be the setup clicks) |
+| material-new | a bag material whose kind has no stack on the tab | the bag's Materials view: base ids 72 (27) and 73 (3), each beside a full 999 stack | no kind without a stack was available; both `-> cell` as new stacks (sums 999 to 1026 and 999 to 1002), the bag empty - the full-stack case, not the new-kind one | not-run (no bag material with a stackless base id; `-> cell` seen only for the full-stack case) |
+| material-overflow | a unit that would carry K_M past 999 | U1, a copy of K_M (base id 60, `o` 875) with `o` 125, F4 | U1 `-> cell 4,0`, a new stack of 125; K_M still 875; the kind's sum 875 to 1000; U1 in no bag cell; no stack above 999; `skipped 0` | pass |
+| material-partial | a unit that fits the new stack but not K_M | U2, a copy with `o` 129, F4 | U2 `-> stack` into U1's stack (125 to 254), K_M still 875 (875 + 129 would pass 999); the sum 1000 to 1129; U2 in no bag cell; no stack above 999 | pass |
+| socket-whole | the orb's node after a stack of 3 merged | U_ORB, a copy of the orb (base id 118) with `o` 3, F4 | first run `-> stack`, the node 84 to 92 (+8: other orbs of the kind in the bag merged in the same run, inferred); clean re-run, a new copy of 3: `-> stack`, the node 92 to 95, exactly +3; no copy in a bag cell | pass (exactly +3 on the clean re-run) |
+| socket-single | a gem's node after one unit merged | U_GEM, a copy of a gem (base id 8) with `o` 1 | `-> stack`, the node 196 to 197; U_GEM in no bag cell | pass |
+| socket-new-stays | the bag socketables whose kind has no node | the rest of the bag's Socket view | 20 lines `skipped: a new kind stays in the bag` (first run `moved 36 of 56 ... skipped 20`, re-run `moved 1 of 21 ... skipped 20`); those 20 exactly the bag's filled cells afterwards | pass |
+| close-survives | the game after the stash close | `hs_stash_close` | `hs_status` running, the window closed on a screenshot, a new stash window id on the reopen; the tool itself answered `not confirmed` (an hs-drive gap) | pass |
+| reopen-shows | the reopened stash | `hs_stash_open` | step 4's 3 keys on the Personal tab; U1 (254) and step 5's two on the Materials tab; the bag holding only the 20 skipped socket keys; U2, U_ORB and U_GEM in no grid | pass |
+| saved-stash-has-keys | the placed keys in the saved files | `tools/save_item_keys.py --key` on `herosiege13.hss`, `stash.hss`, `inventory_order_13.hss` | step 4's 3 under `herosiege13.hss` `inventory.personal_stash`; step 5's 2 and U1 under `stash.hss` `material_tab` | pass |
+| saved-bag-lacks-keys | the same keys in the bag's saved file | as above | `inventory_order_13.hss` holds only the 20 skipped keys, under `inventory_socket_tab` | pass |
+| no-duplicate | every placed key under exactly one container | as above | each placed key under exactly one container; U2, both U_ORB copies and U_GEM (merged away) in no file | pass |
+
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
@@ -1839,7 +1908,11 @@ reads, click inside the unbound node and click outside it all passed with
 the game running), `buttonOwner` (what removes the node when the stash
 closes), `sortActivation` (the Sort node the button is placed beside, and
 how it is found) and `socketMergeRoute` (the Socketable tab's merge by
-name); `socketRoute`'s `merge:` part is rewritten from Live 1f.
+name); `socketRoute`'s `merge:` part is rewritten from Live 1f. Live 3
+(ForgePact #131) set the last three, from that session alone:
+`stackCapRule` (from `material-overflow` and `material-partial`),
+`socketWholeStackMerge` (from `socket-whole`) and `buttonPlacement` (from
+`button-placed`, with the boxes it read).
 
 gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
 stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
@@ -1854,7 +1927,10 @@ wholeStackMerge: byname (Live 1e byname-merge-whole): StashAddToStack, self = ot
 buttonRoute: poll (Live 1g sort-click-control, node-idle, node-press-poll-unbound and node-press-negative, all pass, the game running throughout): the Move all node is created with its activation left undefined (UiCreateNode's fourth argument undefined, UiSetActivationFunc never called, no script hooked for it), and the plugin's frame tick reads a left press and the mouse's GUI point by name and counts a press inside the node's box, read at that frame, as the button press. On a click on the unbound node no armed row logged a call with the node as self and no dialog appeared (that nothing of the game's runs is Static reading 3, not measured), and the poll counted it once; a click on the panel background beside it counted only as a press outside both buttons. The activation route is dropped: Live 1f's click on a node bound to UiSetFloatingToFalse reached the plugin's detour through the node's user event 15 (self the node, other the stash window, one argument, the node's activationArgs) and then ended the game with "bool argument is unset" inside that script (Live 1f node-press-activation, fail (crash)). The node survived a bag and a stash tab switch (Live 1g node-survives-tab-switch), so it needs no recreate on a tab switch
 buttonOwner: UI_Stash_obj (Live 1g node-gone-on-close and reopen-no-stale-node, pass): the node is created with self = other = the UI_Stash_obj window on show, UiRemoveNode with that same self removes it (Live 1g node-removed-by-name), and the stash's own close destroys a node still listed, so a reopen finds none
 sortActivation: InventorySortTab self=instance (Live 1f and Live 1g sort-activation, pass): the bag's Sort button is the UI_Button_Small_obj whose uiNodeCallstack is InventorySort, text Sort Tab (not Sort), activationArgs [1], its activation InventorySortTab bound with the Sort node itself as self; the button is found by that call-stack name, never by its text (the stash side's own sort button is StashSort, also Sort Tab)
-socketMergeRoute: byname (orb and gem; every identity with a node on the tab merges) (Live 1f byname-socket-merge and byname-socket-nonstack, Live 1g byname-socket-merge, merge-close, reopen-shows, saved-stash-has-keys and saved-bag-lacks-keys): StashAddToStack with self = other = the bag grid (its Socket sub-tab on show), the nodeGrid of the StashSocketGrid node holding the item's identity (one cell; the tab is read as the set of those nodes, each cell's key resolved on map 9), 9, 2, the item, its count, 8, answering true, the node's o rising by exactly the count (orb, base id 118: 81 to 82 in both sessions); then InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined. The gem (base id 38) merged the same way and gained o=2, so it is stackable (Live 1e's missing o was a count of 1) and there is no non-stackable case on this tab. The merged unit's key reached no saved file and the orb stayed under stash.hss socket_tab. Measured with a count of 1; a new identity on this tab stays unmeasured by name (socketRoute new:)
+socketMergeRoute: byname (orb and gem; every identity with a node on the tab merges) (Live 1f byname-socket-merge and byname-socket-nonstack, Live 1g byname-socket-merge, merge-close, reopen-shows, saved-stash-has-keys and saved-bag-lacks-keys): StashAddToStack with self = other = the bag grid (its Socket sub-tab on show), the nodeGrid of the StashSocketGrid node holding the item's identity (one cell; the tab is read as the set of those nodes, each cell's key resolved on map 9), 9, 2, the item, its count, 8, answering true, the node's o rising by exactly the count (orb, base id 118: 81 to 82 in both sessions); then InvGridClearItemNode with self = other = the bag grid, the item's anchor cell node and undefined. The gem (base id 38) merged the same way and gained o=2, so it is stackable (Live 1e's missing o was a count of 1) and there is no non-stackable case on this tab. The merged unit's key reached no saved file and the orb stayed under stash.hss socket_tab. Measured with a count of 1 by the probe, and with a stack of 3 through the shipped adapter in Live 3 (socketWholeStackMerge below); a new identity on this tab stays unmeasured by name (socketRoute new:)
+stackCapRule: measured 999 on the Materials tab (Live 3 material-overflow and material-partial, pass): with the sixth argument 0, a stack takes a unit only while its count plus the unit's stays at or below 999. A unit of 125 beside its kind's one stack of 875 (1000 together) was placed as a new stack of 125 in a free cell, the 875 left unchanged; a unit of 129 then passed over the 875 (1004 together) and merged into the stack of 125, which read 254; no stack read above 999 and neither run skipped anything. The same session's two bag materials beside full stacks of 999 each started a new stack too (material-new's setup). The mod's per-stack route (§ Ship design) therefore matches the game's merge on the Materials tab. Not measured: the cap of 999999 with flag 8 (the Socketable tab's stacks read far below 999, so it stays § Static reading 4's reading), a merge that lands exactly on 999, and which of two stacks with room takes the unit (the reading says the first in array order)
+socketWholeStackMerge: on (Live 3 socket-whole and socket-single, pass): through the shipped adapter on the research build, a copy of 3 of the orb (base id 118) merged into its kind's one StashSocketGrid node, `-> stack`, and the node's o rose by exactly 3 (92 to 95) on a clean re-run with only kinds the tab lacks left in the bag; the first run read +8 (84 to 92) because other orbs of that kind in the bag merged in the same run (inferred; the bag was not read before the press). A single gem (base id 8) raised its node by exactly 1. No merged unit's key reached a saved file. The flag stays on as #131 shipped it; a kind with no node still stays in the bag (socket-new-stays, 20 skipped)
+buttonPlacement: beside Sort, at ButtonOrigin's origin (Live 3 button-placed and button-press, pass): Sort's bbox read 2290.0,1262.0,2482.0,1328.0 and the Move all node's 2076.0,1271.0,2282.0,1319.0 (its x, y 2178.0, 1295.0, within one GUI unit of its bbox centre): its right edge exactly 8 left of Sort's left edge and both vertical centres at 1295, the mod's own `placed beside Sort` line naming the same box. The absolute box the procedure expected from Live 1f and 1g's numbers did not apply at this session's GUI scale (Sort 192 wide against 182.4, the node 206 against 195.7); the relation held, which is why the extents are read from the node rather than fixed. A click at the node's centre started one run (`in_node=1 taken=1`; `presses=4` counts the setup's three Ctrl + clicks, inferred). Not observed: a node first made off target and remade, and the off-target line
 
 ## Ship design
 
@@ -2019,7 +2095,7 @@ calls nothing (`not taken by the Materials tab`). On the Socketable tab, which
 holds one stack per kind: class 15 onto the node of its identity when that
 node has room for it (`socketMergeRoute`; there is no non-stackable case, the
 gem merged too), whatever its count (`socketWholeStackMerge`, on since #131,
-Live procedure 3's `socket-whole` confirming it); a full node is a skip, `its
+confirmed by Live 3's `socket-whole`); a full node is a skip, `its
 stack on the shown tab is full`, never a second stack; and a kind with no node
 there a planned skip, `a new kind stays in the bag` (`socketRoute` new: not
 measured - the tab's 106 one-cell slots are fixed, and which empty one takes
@@ -2171,11 +2247,15 @@ still open, the button came back only after a stash tab click; the cause was
 not established, and the third run clicked a tab after switching on rather
 than test it again.
 
-**ForgePact #131, not observed before Live procedure 3:** the stack cap (a
-static reading, § Static reading 4), a stackable placed as a new stack beside
-a full one of its kind, a merge into a second stack of a kind, the Socketable
-tab's merge of more than one unit (`socketWholeStackMerge`, turned on in the
-same change), a true answer on the placement route decided as a merge, and the
-button at its new origin, remade once when off target. Live procedure 3's
-`material-overflow`, `material-partial`, `socket-whole` and `button-placed`
-are those checks.
+**ForgePact #131, observed in Live 3** (2026-09-30, § Live 3 results, 17 of
+18 checks passed, one not run): the stack cap of 999 on the Materials tab - a
+stackable placed as a new stack beside a full one of its kind, and a later
+one merged into that second stack while the full one stayed unchanged
+(`material-overflow`, `material-partial`); the Socketable tab's merge of a
+stack of 3 (`socket-whole`, `socketWholeStackMerge`); and the button at its
+new origin, its right edge 8 left of Sort's and level with it
+(`button-placed`). **Still not observed:** a new material kind placed by the
+#131 adapter (`material-new` not run: no bag material lacked a stack of its
+kind; Live 2 saw one placed by the #68 adapter), the cap of 999999 with flag
+8 (a static reading, § Static reading 4), a true answer on the placement
+route decided as a merge, and the button remade once when off target.
