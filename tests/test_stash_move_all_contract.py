@@ -426,27 +426,33 @@ class StashMoveAllContractTests(unittest.TestCase):
     def test_button_origin_comes_from_the_core_and_the_measured_extents(self):
         # #131: UiCreateNode's x, y are the node's origin, UI_Button_Small_obj's
         # being its bbox centre and Sort's its top-left (Live 1f and 1g). The
-        # origin is the core's ButtonOrigin from Sort's bbox and the extents
-        # read from the node itself after it is made and labelled (kept for
-        # the session), never a formula built on Sort's top-left or a
-        # constant; an off-target node is taken away by UiRemoveNode and made
-        # again once, so a Create step makes at most two; one still off is
-        # kept and said once, and the mod stays on.
+        # origin is the core's TargetOrigin from the target the core works out
+        # from Sort's bbox (ButtonTarget: the Mercenary button's box, the owner
+        # 2026-09-30) and the extents read from the node itself after it is
+        # made and labelled (kept for the session), never a formula built on
+        # Sort's top-left or a constant; an off-target node is taken away by
+        # UiRemoveNode and made again once, so a Create step makes at most
+        # two; one still off is kept and said once, and the mod stays on.
         header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
         create = self.body("static void SmaButtonCreate(")
         self.assertNotIn("sx - sw - kSmaButtonGap", create)
         self.assertIn("const ForgePact::StashMoveBox sortBox = SmaBox(sort);", create)
-        self.assertIn('const ForgePact::StashMoveExtents extents = mod.ButtonExtents(sortBox, MenuLayoutRead(sort, "x"), '
-                      'MenuLayoutRead(sort, "y"));', create)
-        self.assertIn("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, extents, kSmaButtonGap, x, y)", create)
+        self.assertIn("ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,\n        "
+                      "ForgePact::StashMoveBox(), kSmaButtonGap, target);", create)
+        self.assertIn('const ForgePact::StashMoveExtents extents = mod.ButtonExtentsFor(sortBox, target, '
+                      'MenuLayoutRead(sort, "x"),', create)
+        self.assertIn("ForgePact::StashMoveAllMod::TargetOrigin(target, extents, x, y)", create)
+        self.assertLess(create.index("ButtonTarget("), create.index("ButtonExtentsFor("))
         self.assertLess(create.index("SmaButtonMake(stash, window, x, y, why)"), create.index("mod.NoteButtonMade(false);"))
         # The extents: measured on a settled node this session; before that
         # Sort's own about its x, y (the node wears Sort's look, owner scope
-        # 2026-09-30); the centred box of Sort's size when those did not read.
-        extents = function_body(header, "StashMoveExtents ButtonExtents(")
+        # 2026-09-30), scaled to the target's size; the centred box of the
+        # target's size when those did not read.
+        extents = function_body(header, "StashMoveExtents ButtonExtentsFor(")
         order = [extents.index(t) for t in ("if (m_ButtonExtentsRead) return m_ButtonExtents;",
-                                            "if (ExtentsOf(sortX, sortY, sort, own)) return own;",
-                                            "return ProvisionalExtents(sort);")]
+                                            "if (!ButtonScale(sort, target, sx, sy)) sx = sy = 1;",
+                                            "if (ExtentsOf(sortX, sortY, sort, own)) {",
+                                            "return ProvisionalExtents(BoxReads(target) ? target : sort);")]
         self.assertEqual(order, sorted(order))
         # Review of round 0 (instrument blindness): the place is never judged
         # in the frame the node is made - Create reads no box of the node -
@@ -458,23 +464,33 @@ class StashMoveAllContractTests(unittest.TestCase):
         check = self.body("static void SmaButtonCheck(")
         self.assertTrue(check.lstrip("{ \n").startswith("if (!g_SmaButtonHeld) return;"))
         self.assertIn('"variable_instance_get", { g_SmaButton, RValue("visible") }', check)
-        self.assertIn('mod.ButtonCheck(visible, SmaBox(sort),\n        MenuLayoutRead(g_SmaButton, "x"), '
-                      'MenuLayoutRead(g_SmaButton, "y"), SmaBox(g_SmaButton), kSmaButtonGap, x, y, line);', check)
+        self.assertIn("ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,\n        "
+                      "ForgePact::StashMoveBox(), kSmaButtonGap, target);", check)
+        self.assertIn('const double nodeX = MenuLayoutRead(g_SmaButton, "x"), nodeY = MenuLayoutRead(g_SmaButton, "y");',
+                      check)
+        self.assertIn("mod.ButtonCheck(visible, sortBox, target, ref,\n        nodeX, nodeY, SmaBox(g_SmaButton), x, y, line);",
+                      check)
         self.assertIn("default: SmaButtonCheck(stash, window, sort); break;", self.body("static void SmaButtonEnsure("))
         judge = function_body(header, "StashMoveButtonCheck ButtonCheck(")
+        # The last ButtonCheck is the one the adapter calls, with the target;
+        # the old rule's overload before it hands it SortRuleBox.
+        self.assertIn("const StashMoveBox& target,\n                                     StashMoveButtonRef ref, double nodeX",
+                      header[header.rindex("StashMoveButtonCheck ButtonCheck("):])
+        self.assertIn("return ButtonCheck(visible, sort, SortRuleBox(sort, gap), StashMoveButtonRef::Sort, nodeX, nodeY, "
+                      "box, x, y, line);", self.header)
         self.assertIn("if (m_ButtonMakes == 0 || m_ButtonChecked) return StashMoveButtonCheck::Keep;", judge)
-        self.assertIn("const bool reads = visible && BoxReads(box) && BoxReads(sort);", judge)
+        self.assertIn("const bool reads = visible && BoxReads(box) && BoxReads(sort) && BoxReads(target);", judge)
         self.assertIn("const bool settled = reads && m_ButtonHaveLast && SameBox(box, m_ButtonLast) "
                       "&& SameBox(sort, m_ButtonLastSort);", judge)
         self.assertLess(judge.index("if (!settled) {"), judge.index("ExtentsOf(nodeX, nodeY, box, e)"))
-        self.assertLess(judge.index("ExtentsOf(nodeX, nodeY, box, e)"), judge.index("ButtonOnTarget(sort, box, gap)"))
+        self.assertLess(judge.index("ExtentsOf(nodeX, nodeY, box, e)"), judge.index("OnTarget(target, box)"))
         self.assertIn("static constexpr int kButtonSettleSteps = 6;", self.header)
         # One UiCreateNode site, reached at most twice per Create step: the
         # first make, and one more only after the core asked for it once and
         # UiRemoveNode took the first away.
         self.assertEqual(self.button_block().count("SmaCall(kSmaUiCreateNode"), 1)
         self.assertEqual(self.button_block().count("SmaButtonMake(stash, window, x, y, why)"), 2)
-        self.assertIn("if (!m_ButtonRemakeAsked && ButtonOrigin(sort, e, gap, x, y)) {", judge)
+        self.assertIn("if (!m_ButtonRemakeAsked && TargetOrigin(target, e, x, y)) {", judge)
         self.assertLess(judge.index("if (!m_ButtonRemakeAsked"), judge.index("m_ButtonRemakeAsked = true;"))
         made = function_body(header, "void NoteButtonMade(bool remake)")
         self.assertIn("if (!remake) m_ButtonRemakeAsked = false;", made)
@@ -484,41 +500,49 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertEqual(order, sorted(order))
         # Still off: said once by the core, the mod left on; placed on target
         # is said once too, and the state line carries what the check read.
-        self.assertIn("line = ButtonOffTarget(sort, box, gap);", judge)
-        self.assertIn('" off beside Sort; F4 still works"', self.header)
-        self.assertIn('"stashmoveall: button - placed beside Sort, box "', self.header)
-        for field in ('" button_place="', '" button_box="', '" button_extents="', '" button_makes="', '" button_step="'):
+        self.assertIn("line = TargetOffLine(target, box, ref);", judge)
+        self.assertIn('"stashmoveall: button - placed " + Tenths(dx) + "," + Tenths(dy) + " off " + OffWords(ref)',
+                      self.header)
+        self.assertIn('"stashmoveall: button - placed " + PlaceWords(ref) + ", box " + BoxText(box);', self.header)
+        for field in ('" button_place="', '" button_box="', '" button_extents="', '" button_makes="', '" button_step="',
+                      '" button_ref="'):
             self.assertIn(field, self.header, field)
-        for body in (function_body(header, "std::string ButtonOffTarget("), judge):
+        for body in (function_body(header, "std::string TargetOffLine("), function_body(header, "std::string NoteButtonRef("),
+                     judge):
             self.assertNotIn("TurnOffForSession", body)
             self.assertNotIn("SetEnabled", body)
         # No x or y is written to the node: only its text and Sort's look.
         self.assertEqual(self.button_block().count("variable_instance_set"), 2)
         for var in ('"x"', '"y"'):
             self.assertNotIn(var, self.body("static ForgePact::StashMoveButtonLook SmaButtonLook("), var)
-        origin = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static bool ButtonOrigin(")
-        self.assertIn("x = sort.left - gap - node.right;", origin)
-        self.assertIn("y = (sort.top + sort.bottom) / 2 - (node.down - node.up) / 2;", origin)
+        origin = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static bool TargetOrigin(")
+        self.assertIn("x = target.right - node.right;", origin)
+        self.assertIn("y = (target.top + target.bottom) / 2 - (node.down - node.up) / 2;", origin)
+        # The old rule survives only as the fallback box.
+        rule = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static StashMoveBox SortRuleBox(")
+        self.assertIn("b.right = sort.left - gap;", rule)
         self.assertIn("static constexpr double kSmaButtonGap = 8.0;", self.button_block())
         self.assertIn("static constexpr double kButtonTolerance = 1.0;", self.header)
 
     def test_button_takes_sorts_look_read_from_sort_by_name(self):
         # Owner scope, 2026-09-30: the button has the Sort Tab button's look
-        # and size. The variables that carry a node's sprite and size are read
-        # off the Sort node by name each time and written onto the mod's own
-        # node as read - never a sprite named, looked up or sized here, never
-        # a routine called for it - then read back off both, and the core is
-        # told whether the look took. A look that did not take keeps the node.
+        # and size. The variables that carry a node's sprite and size (and,
+        # since Live 5, its label's place and font) are read off the Sort node
+        # by name each time and written onto the mod's own node - never a
+        # sprite named, looked up or sized here, never a routine called for it
+        # - then read back, and the core is told whether the look took. A look
+        # that did not take keeps the node.
         block = self.button_block()
-        self.assertIn('static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale" };',
+        self.assertIn('static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", ',
                       block)
         look = self.body("static ForgePact::StashMoveButtonLook SmaButtonLook(")
-        self.assertIn("for (const char* var : kSmaLookVars) {", look)
+        self.assertIn("const char* var = kSmaLookVars[i];", look)
         self.assertIn('const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });', look)
-        self.assertIn('if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var), v });', look)
-        self.assertIn("got = MenuLayoutRead(g_SmaButton, var);", look)
+        self.assertIn('if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),', look)
+        self.assertIn('if (!SmaLookNumber(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(var) }), got))',
+                      look)
         order = [look.index(t) for t in ('"variable_instance_get", { sort,', "if (!std::isfinite(want))",
-                                         "if (copy)", "got = MenuLayoutRead(g_SmaButton, var);")]
+                                         "if (copy)", '"variable_instance_get", { g_SmaButton,')]
         self.assertEqual(order, sorted(order))
         for word in ("ForgePact::StashMoveButtonLook::Unread", "ForgePact::StashMoveButtonLook::Differs",
                      "ForgePact::StashMoveButtonLook::Sort"):
@@ -535,14 +559,15 @@ class StashMoveAllContractTests(unittest.TestCase):
         # told of the make; re-read, not re-written, each step the node is
         # checked, before the check.
         create = self.body("static void SmaButtonCreate(")
-        order = [create.index(t) for t in ("SmaButtonMake(stash, window, x, y, why)", "mod.NoteButtonMade(false);",
-                                           "mod.NoteButtonLook(SmaButtonLook(sort, true));")]
+        copied = "mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sort, sortBox, target, x, y)));"
+        order = [create.index(t) for t in ("SmaButtonMake(stash, window, x, y, why)", "mod.NoteButtonMade(false);", copied)]
         self.assertEqual(order, sorted(order))
         check = self.body("static void SmaButtonCheck(")
-        self.assertLess(check.index("if (mod.ButtonLookWanted()) mod.NoteButtonLook(SmaButtonLook(sort, false));"),
+        self.assertLess(check.index("if (mod.ButtonLookWanted())\n        mod.NoteButtonLook(SmaButtonLook(sort, false, "
+                                    "SmaButtonLookFrame(sort, sortBox, target, nodeX, nodeY)));"),
                         check.index("mod.ButtonCheck("))
-        self.assertLess(check.index("mod.NoteButtonMade(true);"), check.index("mod.NoteButtonLook(SmaButtonLook(sort, true));"))
-        self.assertEqual(block.count("SmaButtonLook(sort, true)"), 2)
+        self.assertLess(check.index("mod.NoteButtonMade(true);"), check.index(copied))
+        self.assertEqual(block.count("SmaButtonLook(sort, true,"), 2)
         make = self.body("static bool SmaButtonMake(")
         self.assertNotIn("SmaButtonLook", make)
         # The core keeps the look judged: a read after the node was decided
@@ -552,25 +577,28 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("if (m_ButtonMakes == 0 || m_ButtonChecked) return;", noted)
 
     def test_button_size_is_judged_against_sorts_on_the_settled_box(self):
-        # The size rule: width and height each within kButtonTolerance of
-        # Sort's, an unread box never. Judged with the look on the settled
-        # read the place was judged on, for a node kept (on target, or still
-        # off) and never for one about to be remade; either off is kept,
-        # never a remake for it, said once a session each on its own line,
-        # and the mod stays on.
+        # The size rule: width and height each within kButtonTolerance of the
+        # target's (Sort's under the old rule, the Mercenary button's since
+        # the owner's 2026-09-30 request), an unread box never. Judged with
+        # the look on the settled read the place was judged on, for a node
+        # kept (on target, or still off) and never for one about to be
+        # remade; either off is kept, never a remake for it, said once a
+        # session each on its own line, and the mod stays on.
         header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
-        sized = strip_comments(function_body(header, "static bool ButtonSortSized("))
-        self.assertIn("if (!BoxReads(sort) || !BoxReads(node)) return false;", sized)
+        sized = strip_comments(function_body(header, "static bool TargetSized("))
+        self.assertIn("if (!BoxReads(target) || !BoxReads(node)) return false;", sized)
         self.assertEqual(sized.count("<= kButtonTolerance"), 2)
+        self.assertIn("return TargetSized(sort, node);", strip_comments(function_body(header, "static bool ButtonSortSized(")))
         judge = strip_comments(function_body(header, "StashMoveButtonCheck ButtonCheck("))
-        self.assertEqual(judge.count("JudgeLook(sort, box, line);"), 2)
-        self.assertLess(judge.index("if (!settled) {"), judge.index("JudgeLook(sort, box, line);"))
-        self.assertLess(judge.index('NotePlace("on", box, &e);'), judge.index("JudgeLook(sort, box, line);"))
+        self.assertEqual(judge.count("JudgeLook(target, ref, box, line);"), 2)
+        self.assertLess(judge.index("if (!settled) {"), judge.index("JudgeLook(target, ref, box, line);"))
+        self.assertLess(judge.index('NotePlace("on", box, &e);'), judge.index("JudgeLook(target, ref, box, line);"))
         remake = judge[judge.index("if (!m_ButtonRemakeAsked"):judge.index("return StashMoveButtonCheck::Remake;")]
         self.assertNotIn("JudgeLook", remake)
-        self.assertLess(judge.index("line = ButtonOffTarget(sort, box, gap);"), judge.rindex("JudgeLook(sort, box, line);"))
+        self.assertLess(judge.index("line = TargetOffLine(target, box, ref);"),
+                        judge.rindex("JudgeLook(target, ref, box, line);"))
         look = strip_comments(function_body(header, "void JudgeLook("))
-        self.assertIn("if (!ButtonSortSized(sort, box))", look)
+        self.assertIn("if (!TargetSized(target, box))", look)
         for flag in ("m_ButtonSizeSaid", "m_ButtonLookSaid", "m_ButtonLookUnreadSaid"):
             self.assertIn(f"SayButtonOff({flag},", look, flag)
         self.assertIn('line += (line.empty() ? "" : "\\n") + said;', look)
@@ -578,6 +606,128 @@ class StashMoveAllContractTests(unittest.TestCase):
             self.assertNotIn(word, look, word)
         for field in ('" button_look="', '" button_size="'):
             self.assertIn(field, self.header, field)
+
+    def test_button_label_members_are_read_from_sort_by_name_and_read_back(self):
+        # Live 5 (docs/stash-move-research.md § Decision buttonLabel): with the
+        # members that place the label and give it Sort's font and shadow
+        # copied, the node's label is drawn centred like Sort's. They are read
+        # off the Sort node by name at that moment - no member's value typed
+        # here, no member named outside the one list - written onto the mod's
+        # own node, each read back, and the look verdict covers every one. The
+        # two that hold an absolute GUI position (the corner of the box the
+        # game keeps beside the sprite) are moved by the node's offset from
+        # Sort's x, y, read by name, so the node's is its own box's.
+        block = self.button_block()
+        m = re.search(r"static constexpr const char\* kSmaLookVars\[\] = \{([^}]*)\};", block)
+        self.assertIsNotNone(m)
+        names = re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"', m.group(1))
+        self.assertEqual(names[:3], ["sprite_index", "image_xscale", "image_yscale"])
+        for member in ("textFont", "dropShadow", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth",
+                       "navBboxHeight"):
+            self.assertIn(member, names, member)
+        # Named once in the whole button block: the list.
+        for member in names:
+            self.assertEqual(block.count(f'"{member}"'), 1, member)
+        w = re.search(r"static constexpr SmaLookWrite kSmaLookWrites\[\] = \{([^}]*)\};", block)
+        self.assertIsNotNone(w)
+        writes = re.findall(r"SmaLookWrite::(\w+)", w.group(1))
+        self.assertEqual(len(writes), len(names))
+        self.assertIn("static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / "
+                      "sizeof(kSmaLookWrites[0]),", block)
+        by = dict(zip(names, writes))
+        self.assertEqual({n for n, k in by.items() if k.startswith("Shift")}, {"navBboxX", "navBboxY"})
+        self.assertEqual(by["navBboxX"], "ShiftX")
+        self.assertEqual(by["navBboxY"], "ShiftY")
+        self.assertEqual({n for n, k in by.items() if k.startswith("Scale")},
+                         {"image_xscale", "image_yscale", "navBboxWidth", "navBboxHeight"})
+        for member in ("sprite_index", "textFont", "dropShadow", "drawXOffset", "drawYOffset"):
+            self.assertEqual(by[member], "AsRead", member)
+        look = self.body("static ForgePact::StashMoveButtonLook SmaButtonLook(")
+        # Every entry, read off Sort by name, then (on a copy) written onto the
+        # mod's own node, then read back off it.
+        self.assertIn("for (size_t i = 0; i < sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]); ++i) {", look)
+        order = [look.index(t) for t in ('"variable_instance_get", { sort, RValue(var) }', "switch (kSmaLookWrites[i]) {",
+                                         '"variable_instance_set", { g_SmaButton, RValue(var),',
+                                         '"variable_instance_get", { g_SmaButton, RValue(var) }',
+                                         "if (std::fabs(got - want) > 1e-6) differs = true;")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("kSmaLookWrites[i] == SmaLookWrite::AsRead ? v : RValue(want)", look)
+        self.assertEqual(look.count("return ForgePact::StashMoveButtonLook::Unread;"), 4)
+        # No value typed: the only string literals are the two builtins, and
+        # the only numbers the loop's start and the compare's tolerance.
+        self.assertEqual(set(re.findall(r'"([^"]*)"', look)), {"variable_instance_get", "variable_instance_set"})
+        self.assertEqual(set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?:e-?\d+)?", look)), {"0", "1e-6"})
+        # A bool (dropShadow) is read as one, never through ToDouble.
+        number = self.body("static bool SmaLookNumber(")
+        self.assertIn("if (v.m_Kind == VALUE_BOOL) { out = v.ToBoolean() ? 1.0 : 0.0; return true; }", number)
+        self.assertIn("return ApNumber(v, out);", number)
+        # The shift: the node's x, y less Sort's, read by name now; the scale:
+        # the core's ButtonScale, 1 when it has no size to divide.
+        frame = self.body("static SmaLookFrame SmaButtonLookFrame(")
+        self.assertIn('f.dx = x - MenuLayoutRead(sort, "x");', frame)
+        self.assertIn('f.dy = y - MenuLayoutRead(sort, "y");', frame)
+        self.assertIn("if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;", frame)
+        self.assertNotIn("variable_instance_set", frame)
+        # The decision line names every member past the first three.
+        decision = [l for l in DOC.read_text(encoding="utf-8").splitlines() if l.startswith("buttonLabel: ")]
+        self.assertEqual(len(decision), 1)
+        for member in names[3:]:
+            self.assertIn(member, decision[0], member)
+
+    def test_button_target_is_the_mercenary_box_never_a_pixel_constant(self):
+        # The owner, 2026-09-30: the node's box is the Mercenary button's.
+        # Live 5 found that button not listed while the stash is open
+        # (merc-route: relation), so the target is Sort's box moved and sized
+        # by fractions of Sort's width and height, which follow the GUI scale;
+        # no GUI-unit number appears in the target rule, and the old rule
+        # (SortRuleBox) is only the fallback, said once.
+        header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        consts = dict(re.findall(r"static constexpr double (kMerc\w+) = (-?[\d.]+);", header))
+        self.assertEqual(set(consts), {"kMercLeftOfSort", "kMercTopOfSort", "kMercWidthOfSort", "kMercHeightOfSort"})
+        for name, value in consts.items():
+            self.assertLessEqual(abs(float(value)), 2.0, name)
+        self.assertAlmostEqual(float(consts["kMercLeftOfSort"]), -196 / 192, places=12)
+        self.assertEqual(float(consts["kMercTopOfSort"]), 0.0)
+        self.assertEqual(float(consts["kMercWidthOfSort"]), 1.0)
+        self.assertEqual(float(consts["kMercHeightOfSort"]), 1.0)
+        relation = strip_comments(function_body(header, "static StashMoveBox RelationBox("))
+        for name in consts:
+            self.assertIn(name, relation, name)
+        target = strip_comments(function_body(header, "static StashMoveButtonRef ButtonTarget("))
+        for body in (relation, target):
+            self.assertEqual(re.findall(r"(?<![\w.])\d+(?:\.\d+)?", body), [], body)
+        # The origin and the check take the target as handed: a midpoint is
+        # their only number.
+        for sig in ("static bool TargetOrigin(", "static bool TargetOffset("):
+            self.assertEqual(set(re.findall(r"(?<![\w.])\d+(?:\.\d+)?", strip_comments(function_body(header, sig)))), {"2"})
+        order = [target.index(t) for t in ("if (!BoxReads(sort)) return StashMoveButtonRef::None;",
+                                           "route == StashMoveButtonRef::Mercenary && BoxSized(mercenary)",
+                                           "const StashMoveBox r = RelationBox(sort);",
+                                           "target = SortRuleBox(sort, gap);")]
+        self.assertEqual(order, sorted(order))
+        # The adapter: the route Live 5 set, the core's target at the make
+        # and at every check, the fallback said by the core's line; no
+        # Mercenary box read, and no box number typed.
+        block = self.button_block()
+        self.assertIn("static constexpr ForgePact::StashMoveButtonRef kSmaButtonRoute = "
+                      "ForgePact::StashMoveButtonRef::Relation;", block)
+        self.assertEqual(block.count("ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,"), 2)
+        create = self.body("static void SmaButtonCreate(")
+        order = [create.index(t) for t in ("ButtonTarget(", "const std::string fallback = mod.NoteButtonRef(ref);",
+                                           "if (!fallback.empty()) Out(fallback);", "TargetOrigin(target, extents, x, y)",
+                                           "SmaButtonMake(stash, window, x, y, why)")]
+        self.assertEqual(order, sorted(order))
+        self.assertNotIn("UI_Button_Open_Mercenary_obj", block)
+        self.assertNotIn("InventoryMercenary", block)
+        for number in ("2094", "2286", "2290", "1262", "1328", "196", "192"):
+            self.assertIsNone(re.search(rf"(?<![\w.]){number}(?![\w.])", block), number)
+            self.assertIsNone(re.search(rf"(?<![\w.]){number}(?![\w.])", self.header), number)
+        # The state line names the target, and the fallback line never turns
+        # the mod off.
+        self.assertIn('+ " button_ref=" + RefWord(m_PlaceRef);', self.header)
+        ref = strip_comments(function_body(header, "std::string NoteButtonRef("))
+        self.assertIn("if (ref != StashMoveButtonRef::Sort) return std::string();", ref)
+        self.assertIn("SayButtonOff(m_ButtonFallbackSaid,", ref)
 
     def button_block(self):
         start, end = self.plugin.index(BUTTON_BLOCK[0]), self.plugin.index(BUTTON_BLOCK[1])
@@ -624,7 +774,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         # from_sort_by_name).
         self.assertEqual(block.count("variable_instance_set"), 2)
         self.assertIn('"variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) }', create)
-        self.assertIn('"variable_instance_set", { g_SmaButton, RValue(var), v }',
+        self.assertIn('"variable_instance_set", { g_SmaButton, RValue(var),',
                       self.body("static ForgePact::StashMoveButtonLook SmaButtonLook("))
         # Removal: UiRemoveNode with the owner window as self while it is
         # listed, instance_destroy on the mod's own node only when it is not.

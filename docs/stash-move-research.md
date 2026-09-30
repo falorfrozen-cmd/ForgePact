@@ -1626,6 +1626,34 @@ right after it (`bag-after-close`). The cases are the backpack's Sort, the
 stash's Sort, the Mercenary button (with the bag alone, and with the stash if
 listed) and the mod's node, in two trial tiers.
 
+### Live procedure 6
+
+The confirmation of the fix Live 5 decided (§ Decision `buttonTarget`,
+`buttonLabel`; § Ship design, the button's place and look). The procedure is
+Live procedure 2 of the same workorder's context file; this is its summary. It
+runs the **research build**, because it reads the members with `probe dump`
+and `probe diff`. Save slot 14, the mod off at launch, the saves backed up
+first and restored at the end, every screenshot `grab_window`. Positive
+controls first: the lease's DLL hash (`dll-hash`), the bare state line, whose
+first line now carries `button_ref=` (`marker`), and a by-name tab switch
+(`control`). Then, with the bag open on its own (the `C` key), the Mercenary
+row and InventorySort's, quoted (`merc-read`). With the stash open and the
+mod on, after a tab switch and about 2 s: exactly one `ForgePactMoveAll` row,
+`text=Move all`, visible, its bbox within 1 GUI unit of the Mercenary box on
+each side - of the box Live 5's fractions give from this open's InventorySort
+when the Mercenary row did not read (`button-placed`); the bare state line
+reading `button_place=on`, `button_look=sort` and `button_ref=relation`
+(`button-state`); `tools/button_label_check.py` on the screenshot, the node's
+box against Sort's, exiting 0 (`label-centred`); a click at the centre of the
+node's box moving what two stash items Ctrl + clicked into the bag hold, with
+`in_node` and `taken` each up by 1 (`button-press`); dumps of Sort and the
+node and their diff, where none of the members the mod copies as read shows
+on a `~` or `-` line, and the two it moves (`navBboxX`, `navBboxY`) differ by
+exactly the node's offset from Sort, the others it scales being equal at this
+Sort-sized target (`look-members`); the close (`close-survives`), and a reopen
+placed the same way with the label check exiting 0 again (`reopen-placed`).
+The cases are the session's first node, a reopened node and one press.
+
 ## Results
 
 ### Live 1 results
@@ -2139,6 +2167,57 @@ draws with it.
 | reopen-placed | the reopened stash's button | `hs_stash_open`, Shared 1 then Personal, about 2.5 s | Sort id 263002 bbox 2290.0,1262.0,2482.0,1328.0; one `ForgePactMoveAll` row, id 263037, bbox 2090.0,1262.0,2282.0,1328.0; `button_place=on button_look=sort button_makes=1` | pass |
 | button-drawn (not a procedure check) | what the game draws for the node | the step 3 screenshot, and the reopen's | the box drawn at the node's bbox with no label inside it; a clipped end of `Move all` at about its top-left corner, under the frame above and behind the bag sub-tab icon beside it; the box read by the owner as dark and empty, not Sort's red look (the backpack's Sort Tab beside it is drawn the same dark way in that frame) | fail (visual, screenshot) |
 
+### Live 5 results
+
+Live 5 ran on 2026-09-30 on the **research build** (§ Live procedure 5),
+`plugin_build/BloodPactPlugin_rel.dll` SHA-256
+`e80f30dec0548fa8fabdabc2facd0ad6d29d97a614c31dc276accc95474c9980` (the
+lease's hash, equal to the build's), slot 14, fully automatic: the character
+was picked by name at once, and the owner's bag key, `C`, opened the bag on
+its own through `hs_input` and closed it again, so no step was done by hand
+(capture `.claude/workorders/forgepact-68-move-all-fix2-live-1.md` on the
+owner's machine). **16 of the 18 checks passed and two failed, both of them
+research checks whose failure is a finding**: the Mercenary button is not
+listed while the stash is open (`merc-stash-listed`), and `lookcopy missing`
+had nothing to write (`label-trial-missing`); the `changed` tier then centred
+the label. `tools/live_checks.py` reads the same 18 verdicts from the
+capture's `## Checks` block. The game never ended, and the saves were
+restored afterwards and inspected clean. GUI and window 2560x1440 throughout.
+
+What it settled. **Where Move all goes:** with the bag open on its own the
+game's own Mercenary button (a `UI_Button_Open_Mercenary_obj`) sits left of
+InventorySort, Sort's size, level with it, its right edge 4 GUI units left of
+Sort's; with the stash open it is not listed at all, while InventorySort's box
+is the same in both states. So the target is Sort's box moved and sized by
+that relation (§ Decision `buttonTarget`). **What centres the label:** after
+`lookcopy changed` wrote InventorySort's 13 differing writable members onto
+the node, the label check read the node's label centred like Sort's, with the
+node's box unchanged (§ Decision `buttonLabel`). No struct or array member
+differed between the Sorts and the node beyond `activationArgs` (the node's
+dump read `nested=0`, Sort's `nested=1`), so no label place was hidden inside
+one.
+
+| Check | What it reads | Supplied | Result | Verdict |
+|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build | - | lease `dll_sha256` e80f30de...9980, `dll_status hashed` | pass |
+| marker | `stashmoveall probe help` | - | the usage line naming `dump <label> id:<n>`, `diff <a> <b>` and `lookcopy id:<src> missing\|changed` | pass |
+| control | a stash tab switch by name | `hs_stash_tab("shared1")`, run at step 4 (it refuses `stash_not_open` before) | `stashtab: before=0 after=1 handler=UiAStashTabClick` | pass |
+| bag-alone-open | InventorySort with the bag open on its own | `hs_input` key `C` (vk 67), 1 s; `menulayout UI_Button_Small_obj` | id 262027 `gui=2290.0,1262.0` bbox 2290.0,1262.0,2482.0,1328.0 (192x66), `visible=1`, `uiNodeCallstack=InventorySort`; header `gui=2560x1440` | pass |
+| merc-bag-read | the Mercenary button's row, bag alone | `menulayout UI_Button_Open_Mercenary_obj` | `UI_Button_Open_Mercenary_obj` id 262039 `gui=2094.0,1262.0` bbox 2094.0,1262.0,2286.0,1328.0 (192x66), `visible=1`, sprite `Inventory_Tab_Button_Solid_spr`, `uiNodeCallstack=InventoryMercenary`, `text=Mercenary`; its right edge 2286 left of Sort's 2290, the same top and bottom | pass |
+| dump-control | the instrument on a known node | `probe dump sortbag id:262027` | `names=85 nested=1`, `uiNodeCallstack=InventorySort`, `text=Sort Tab` | pass |
+| merc-label | the label tool on the Mercenary button (research) | the bag-alone screenshot, box 2094,1262,2286,1328 against Sort's | `box: centred ... offset=0.5,2.0`, `ref: centred ... offset=-0.5,-1.0`, exit 0 | pass |
+| merc-stash-listed | the Mercenary node with the stash open (research) | `hs_stash_open`, Personal; `menulayout UI_Button_Open_Mercenary_obj` | `listed=0 absent=none`: not listed | fail (research: not listed) |
+| sort-same-both | InventorySort's box with the stash open (research) | `menulayout UI_Button_Small_obj` | id 262329 bbox 2290.0,1262.0,2482.0,1328.0, equal to the bag-alone box on every side; StashSort id 262363 | pass |
+| node-made | the mod's node | `stashmoveall 1`, Shared 1 then Personal, 2 s | one `ForgePactMoveAll` row, id 262500, bbox 2090.0,1262.0,2282.0,1328.0, `text=Move all`, `visible=1` | pass |
+| label-tool-control | the label tool's reference | the node's screenshot, box N against Sort's | `ref: centred` (548 label px, offset -0.5,-1.0) on every run; exits 0 or 1, never 2 | pass |
+| label-baseline | Live 4's defect, reproduced | the same run | `box: not centred (offset,edge,pixels)`, 175 px, label box 2096,1262,2138,1270, offset -69.0,-29.0, exit 1 | pass |
+| dump-diff | the dumps' differences | `probe dump` of both Sorts, StashSort and the node; four diffs | `diff sortstash node: changed=21 added=0 removed=1`; `diff merc node: changed=21 added=0 removed=0`; `diff sortstash stashsort: changed=24 added=0 removed=0`; `diff sortbag sortstash: changed=3 added=0 removed=0` (only `id`, `masterUi`, `parent`) | pass |
+| label-trial-missing | `lookcopy missing` from Sort, then the label tool | `probe lookcopy id:262329 missing` | `wrote=0 ... excluded=1`: the node lacks no member Sort has; the label still at its corner, exit 1 | fail (nothing to write) |
+| label-trial-changed | `lookcopy changed` from Sort, then the label tool | `probe lookcopy id:262329 changed` | 13 members written and read back (`dropShadow`, `textFont`, `createX`, `drawXOffset`, `drawYOffset`, `navBboxHeight`, `navBboxWidth`, `navBboxX`, `navBboxY`, `naviDown`, `naviDownPrev`, `naviRight`, `naviRightPrev`); the node's bbox unchanged; `box: centred`, 532 px, label box 2136,1286,2238,1303, offset 1.0,-0.5, exit 0 | pass |
+| trial-press | a click on the node after the trial | a left click at 2186,1295 | `in_node` 0 to 1, `presses=1 taken=1` (the bag page empty, no `moved` line) | pass |
+| close-survives | the game after the stash close | `hs_stash_close` | `hs_status` running (pid 80924); the tool answered `not confirmed`, the screenshot shows stash and bag closed | pass |
+| bag-after-close | InventorySort and the Mercenary row after the close (research) | `menulayout` of both objects | neither listed (`listed=0` each) | pass |
+
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
@@ -2186,7 +2265,11 @@ name); `socketRoute`'s `merge:` part is rewritten from Live 1f. Live 3
 `socketWholeStackMerge` (from `socket-whole`) and `buttonPlacement` (from
 `button-placed`, with the boxes it read). Live 4 (ForgePact #131, owner scope)
 set `buttonLook`, from `button-placed`, `button-state` and `button-look` and
-from the screenshot the checks do not read.
+from the screenshot the checks do not read. Live 5 (ForgePact #131, the
+owner's request of 2026-09-30) set the last two, from that session alone:
+`buttonTarget` (from `merc-bag-read`, `merc-stash-listed`, `sort-same-both`
+and `merc-label`) and `buttonLabel` (from `dump-diff`, `label-baseline` and
+the two trial tiers).
 
 gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
 stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
@@ -2206,6 +2289,8 @@ stackCapRule: measured 999 on the Materials tab (Live 3 material-overflow and ma
 socketWholeStackMerge: on (Live 3 socket-whole and socket-single, pass): through the shipped adapter on the research build, a copy of 3 of the orb (base id 118) merged into its kind's one StashSocketGrid node, `-> stack`, and the node's o rose by exactly 3 (92 to 95) on a clean re-run with only kinds the tab lacks left in the bag; the first run read +8 (84 to 92) because other orbs of that kind in the bag merged in the same run (inferred; the bag was not read before the press). A single gem (base id 8) raised its node by exactly 1. No merged unit's key reached a saved file. The flag stays on as #131 shipped it; a kind with no node still stays in the bag (socket-new-stays, 20 skipped)
 buttonPlacement: beside Sort, at ButtonOrigin's origin (Live 3 button-placed and button-press, pass): Sort's bbox read 2290.0,1262.0,2482.0,1328.0 and the Move all node's 2076.0,1271.0,2282.0,1319.0 (its x, y 2178.0, 1295.0, within one GUI unit of its bbox centre): its right edge exactly 8 left of Sort's left edge and both vertical centres at 1295, the mod's own `placed beside Sort` line naming the same box. The absolute box the procedure expected from Live 1f and 1g's numbers did not apply at this session's GUI scale (Sort 192 wide against 182.4, the node 206 against 195.7); the relation held, which is why the extents are read from the node rather than fixed. A click at the node's centre started one run (`in_node=1 taken=1`; `presses=4` counts the setup's three Ctrl + clicks, inferred). Not observed: a node first made off target and remade, and the off-target line
 buttonLook: size and sprite taken, drawn look not Sort's (Live 4 button-placed, button-state and button-look pass on their numbers; the step 3 screenshot fails): with `sprite_index`, `image_xscale` and `image_yscale` copied from the Sort node, the session's first node, made with Sort's own extents at x, y 2090, 1262, read the bbox 2090.0,1262.0,2282.0,1328.0 (192x66) beside Sort's 2290.0,1262.0,2482.0,1328.0 (192x66), right edge exactly 8 left of Sort's, centres both at 1295, with one make; `menulayout` and `probe sort` read the node's sprite as `Inventory_Tab_Button_Solid_spr`, the same as Sort's, and the state line `button_look=sort button_size=192.0x66.0`; the reopen's node, made from the measured extents 0,0,192,66, read the same box. So the copied sprite and scale persisted on the node through two ensure steps, a tab switch and a reopen, and its bbox followed them. That is not the look: those reads are of the member the mod wrote. In the screenshot the node's box is drawn empty, its `Move all` label is not inside it (a clipped end of the text shows at about the box's top-left corner, under the frame above it), and the owner reads the box as dark rather than Sort's red look (the backpack's Sort Tab in the same frame is drawn the same dark way; the red Sort Tab there is the stash's own `StashSort`). Not a pass for what the player sees. Not established: where the game draws a node's `text` (centred on its x, y is the inference, since that point moved from the box's centre to its corner with the sprite), how the Sort node gets its label centred, and what the owner's red look is. The button still works (the click moved 2 of 2)
+buttonTarget: relation (Live 5 merc-bag-read, sort-same-both and merc-label pass; merc-stash-listed fail, which is the finding): the button the owner points at is the game's own Mercenary button, a `UI_Button_Open_Mercenary_obj` (SDK object 5004) with `uiNodeCallstack` `InventoryMercenary`, `text` `Mercenary` and sprite `Inventory_Tab_Button_Solid_spr` (Sort's), its x, y its top-left. With the bag open on its own (the `C` key) its box read 2094.0,1262.0,2286.0,1328.0 (192x66) beside InventorySort's 2290.0,1262.0,2482.0,1328.0 (192x66); with the stash open `menulayout UI_Button_Open_Mercenary_obj` listed none, and InventorySort's box read 2290.0,1262.0,2482.0,1328.0 again; after the stash's close neither was listed. As fractions of InventorySort's width and height, the Mercenary box's left edge is -196/192 (about -1.0208) of Sort's width from Sort's left edge, its top edge 0 of Sort's height from Sort's top, its width 1 and its height 1 - its right edge 4 GUI units, 1/48 of Sort's width, short of Sort's left edge, where the old rule put the node's 8 short (2090.0,1262.0,2282.0,1328.0). The label check read the Mercenary button's own label centred (offset 0.5, 2.0; Sort's -0.5, -1.0). So the node's target is InventorySort's box moved and sized by those fractions, read by name at each ensure step, never a GUI-unit constant; a Mercenary node listed with the stash open (merc-route live) would be read instead, and the old rule is the fallback only. Not measured: the relation at another GUI scale (the fractions are expected to follow it, as both nodes' sizes followed the 1.0526 scale between Live 1f/1g and Live 3), and whether the game ever lists the Mercenary node with the stash open
+buttonLabel: members (Live 5 label-trial-changed pass, label-baseline pass, label-trial-missing fail): the node lacks no member InventorySort has (`lookcopy missing` wrote nothing, one excluded). `lookcopy changed` from the stash-open InventorySort (id 262329) wrote its 13 differing writable members onto the node, each read back equal - `dropShadow` false (the node's true), `textFont` `__newfont2` (the node's `__newfont6`), `createX` 2290 (2090), `drawXOffset` 48 (0), `drawYOffset` 9 (-7), `navBboxX` 2290 (1988), `navBboxY` 1262 (1238), `navBboxWidth` 192 (206), `navBboxHeight` 66 (48), and `naviDown`, `naviDownPrev`, `naviRight`, `naviRightPrev` false (true) - and the label check then read the node's label centred like Sort's (532 label pixels against Sort's 548, offset 1.0, -0.5, label box 2136,1286,2238,1303) where it had read it at the box's top-left corner (offset -69, -29), the node's bbox unchanged at 2090.0,1262.0,2282.0,1328.0. The 13 were written together, so the trial does not separate which of them places the label. What the numbers do show: the label's left edge sits at the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338, its label box's left edge; the node after the copy 2090 + 48 = 2138 against 2136), so `drawXOffset` and `drawYOffset` place the label relative to the node's own x, y; `createX` and `navBboxX` were written as Sort's absolute 2290 and the label was still drawn inside the node's box 200 units left of that, so neither places it across (inferred from the one trial); whether `navBboxY`/`navBboxHeight` place it vertically is not separated, since after the copy Sort's and the node's are level. The members holding an absolute GUI position are `createX`, `navBboxX` and `navBboxY` (on Sort, its own box's corner; on the node, the corner of its box as first made under its own centred sprite, never updated when it took Sort's sprite). The mod copies `textFont`, `dropShadow`, `drawXOffset` and `drawYOffset` as read, `navBboxX` and `navBboxY` moved by the node's offset from Sort's x, y, and `navBboxWidth` and `navBboxHeight` scaled with the target, so the box the game keeps beside the node is its own; it leaves out `createX` (the node's own creation x, already its origin, so moving Sort's would give the same value) and the four `navi*` flags (navigation state, not the look; whether they touch the label is not read). Not established: that this subset alone centres the label (Live 6's `label-centred`), and whether the game recomputes any of them later (Live 5 read them back only once)
 
 ## Ship design
 
@@ -2287,6 +2372,33 @@ in its own sprite (96.9, 22.8, 98.8, 22.8) and the Live 1g Sort box that is
 the origin 2196.7, 1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at a
 2560x1440 GUI.
 
+**Its target: the Mercenary button's box (the owner, 2026-09-30; § Decision
+`buttonTarget`).** The box above was the old rule. The owner asked for the
+place where the game draws its own `Mercenary` button when the bag is open
+without the stash, "use its coordinates". Live 5 found that button, a
+`UI_Button_Open_Mercenary_obj`, Sort's size and level with it, its right edge
+4 GUI units left of Sort's, and not listed at all while the stash is open. So
+on each Create and ensure step the core's `ButtonTarget` works the target out
+from InventorySort's bbox, read by name, by Live 5's relation as fractions of
+Sort's width and height (`kMercLeftOfSort` -196/192, `kMercTopOfSort` 0,
+`kMercWidthOfSort` 1, `kMercHeightOfSort` 1): at Live 5's GUI the box
+2094, 1262, 2286, 1328. Fractions, not GUI units, because the GUI scale moves
+both boxes together (1.0526 between Live 1f/1g and Live 3). The origin is the
+core's `TargetOrigin` (the node's right edge on the target's, its vertical
+centre the target's), the check the same `ButtonCheck` against that target
+(`OnTarget` for the place, `TargetSized` for the size), and the lines say
+`placed in the Mercenary button's place, box <l,t,r,b>` and `placed <dx>,<dy>
+off the Mercenary button's place`. When the target cannot be worked out (a
+Sort box with no width or height to scale by; under the live route, a
+Mercenary box that did not read) the old rule's box stands in and
+`stashmoveall: button - the Mercenary button's place could not be worked out,
+so it sits beside Sort by the old rule; F4 still works` is said once. The
+state line gains `button_ref=<none|mercenary|relation|sort>` (this build:
+`relation`), and `button_size=` is judged against the target's size. A target
+of another size than Sort's would scale the copied sprite scale per axis by
+target over Sort (`ButtonScale`); at Live 5's relation it is Sort's size, so
+the scale is 1.
+
 **Its look (owner scope, 2026-09-30, § Static reading 5):** after the label,
 the node is given the Sort Tab button's own look: `sprite_index`,
 `image_xscale` and `image_yscale` are read off the Sort node by name at that
@@ -2314,6 +2426,21 @@ of it shows at the box's top-left corner) and the owner reads the box as dark
 rather than Sort's red. `button_look=sort` reads back the member the mod
 wrote, so it cannot see either; the look and the label are still open for
 #131.
+**The label (§ Decision `buttonLabel`, from Live 5):** a trial copy of Sort's
+13 differing members centred the node's label like Sort's, and the numbers
+show the label placed by `drawXOffset`/`drawYOffset` from the node's own x, y.
+The look list is now `sprite_index`, `image_xscale`, `image_yscale`,
+`textFont`, `dropShadow`, `drawXOffset`, `drawYOffset`, `navBboxX`,
+`navBboxY`, `navBboxWidth` and `navBboxHeight`, each read off InventorySort
+by name at that moment: the sprite, font, shadow and label offsets written as
+read, the scale and the navigation box's size times the target over Sort,
+and the navigation box's corner - an absolute GUI position, Sort's own box's
+- moved by the node's x, y less Sort's, so it is the node's own box's. Each
+is read back and the look verdict covers them all (a bool read as 0 or 1).
+`createX` and the four `navi*` flags the trial also wrote are left out
+(§ Decision `buttonLabel`). Whether this set alone centres the label on the
+shipped path is Live procedure 6's `label-centred`; the owner reads Sort's
+look as the backpack's dark InventorySort unless they say otherwise.
 No `UiSetActivationFunc`, and no script hooked for it: a node
 with no activation runs nothing of the game's when clicked (Static reading 3;
 Live 1g's click on one showed only that no armed routine logged a call with it

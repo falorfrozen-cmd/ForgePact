@@ -119,6 +119,15 @@
 // and never the mod off. Compiled against the header before it had them, the
 // first error line was `error C2039: 'StashMoveButtonLook': is not a member
 // of 'ForgePact'`, 2026-09-30.
+//
+// #131, owner of 2026-09-30 ("Use its coordinates"): the node's box is the
+// Mercenary button's, which Live 5 measured beside Sort with the bag open on
+// its own and found not listed while the stash is open, so the target is
+// Sort's box moved and sized by the measured fractions (merc-route:
+// relation); the old Sort rule stays only as the fallback, and the state line
+// names which (button_ref=). Written before the header had it; the first
+// error line was `error C2039: 'SortRuleBox': is not a member of
+// 'ForgePact::StashMoveAllMod'`, 2026-09-30.
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -306,7 +315,7 @@ static StashMoveReport MergedWherePlannedACell();
 // look and size last: owner scope, 2026-09-30).
 static const std::string kIdlePlace =
     " button_place=none button_box=none button_extents=none button_makes=0 button_step=0"
-    " button_look=none button_size=none";
+    " button_look=none button_size=none button_ref=none";
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
     " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none" + kIdlePlace;
@@ -1563,6 +1572,177 @@ static void TargetButtonLookNotTakenIsKeptAndSaidOnce()
     Check("target/button_look_not_taken_is_kept_and_said_once", ok, first);
 }
 
+// ---- #131, owner 2026-09-30: the Mercenary button's box ---------------------
+
+// Live 5 (docs/stash-move-research.md § Live 5 results, 2560x1440 GUI): with
+// the bag open on its own, the backpack's Sort (InventorySort, x, y its
+// top-left) and the game's own Mercenary button beside it, the same size,
+// its right edge 4 left of Sort's; and the node the Sort rule made with the
+// stash open, its right edge 8 left of Sort's.
+static const StashMoveBox kLive5Sort = Box(2290.0, 1262.0, 2482.0, 1328.0);
+static const double kLive5SortX = 2290.0, kLive5SortY = 1262.0;
+static const StashMoveBox kLive5Merc = Box(2094.0, 1262.0, 2286.0, 1328.0);
+static const StashMoveBox kLive5Node = Box(2090.0, 1262.0, 2282.0, 1328.0);
+
+static bool SameSides(const StashMoveBox& a, const StashMoveBox& b, double tol)
+{
+    return Near(a.left, b.left, tol) && Near(a.top, b.top, tol) && Near(a.right, b.right, tol) && Near(a.bottom, b.bottom, tol);
+}
+
+static void BaselineSortGapBoxIsNotTheMercenaryBox()
+{
+    // The rule the node was made to until now (Sort-sized, right edge 8 left
+    // of Sort, centred on it) gives the box Live 5's node read, and the old
+    // check calls it on target; the Mercenary box is 4 further right, more
+    // than kButtonTolerance, so the owner's place is not that box.
+    const StashMoveBox rule = StashMoveAllMod::SortRuleBox(kLive5Sort, kGap);
+    bool ok = SameSides(rule, kLive5Node, 0.05) && StashMoveAllMod::ButtonOnTarget(kLive5Sort, kLive5Node, kGap)
+        && StashMoveAllMod::OnTarget(rule, kLive5Node);
+    double dx = 0, dy = 0;
+    ok = ok && StashMoveAllMod::TargetOffset(kLive5Merc, kLive5Node, dx, dy) && Near(dx, -4.0, 0.05) && Near(dy, 0.0, 0.05)
+        && !StashMoveAllMod::OnTarget(kLive5Merc, kLive5Node) && !StashMoveAllMod::OnTarget(kLive5Merc, rule);
+    // Both are Sort's size: the difference is the place, not the size.
+    ok = ok && StashMoveAllMod::TargetSized(kLive5Sort, kLive5Merc) && StashMoveAllMod::TargetSized(kLive5Merc, kLive5Node);
+    // Positive control: the Mercenary box is on its own target.
+    ok = ok && StashMoveAllMod::OnTarget(kLive5Merc, kLive5Merc);
+    Check("baseline/sort_gap_box_is_not_the_mercenary_box", ok, StashMoveAllMod::BoxText(rule));
+}
+
+static void TargetButtonSettlesOnTheMercenaryBox()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    using Ref = ForgePact::StashMoveButtonRef;
+    // merc-route: relation. The Mercenary button is not listed while the
+    // stash is open (Live 5), so the target is Sort's box moved and sized by
+    // the fractions Live 5 measured: the Mercenary box, from Sort's alone.
+    StashMoveBox t;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Relation, kLive5Sort, StashMoveBox(), kGap, t) == Ref::Relation
+        && SameSides(t, kLive5Merc, 1e-6);
+    // The fractions follow the GUI scale: Sort at Live 1f/1g's 182.4 wide
+    // gives a box of its width whose right edge is 3.8 left of it.
+    StashMoveBox small;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Relation, kSortBox, StashMoveBox(), kGap, small) == Ref::Relation
+        && Near(kSortBox.left - small.right, 3.8, 0.05) && StashMoveAllMod::TargetSized(kSortBox, small)
+        && Near(small.top, kSortBox.top, 1e-6);
+    // merc-route: live, had it been measured: the box read wins.
+    StashMoveBox live;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Mercenary, kLive5Sort, kLive5Merc, kGap, live) == Ref::Mercenary
+        && SameSides(live, kLive5Merc, 1e-6);
+    // Made from Sort's own extents (the node wears Sort's sprite), the
+    // origin is the Mercenary box's top-left.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    ok = ok && Has(mod.StateLine(), " button_ref=none");
+    const StashMoveExtents e = mod.ButtonExtentsFor(kLive5Sort, t, kLive5SortX, kLive5SortY);
+    double x = 0, y = 0;
+    ok = ok && Near(e.left, 0.0, 0.05) && Near(e.up, 0.0, 0.05) && Near(e.right, 192.0, 0.05) && Near(e.down, 66.0, 0.05)
+        && StashMoveAllMod::TargetOrigin(t, e, x, y) && Near(x, 2094.0, 0.05) && Near(y, 1262.0, 0.05);
+    // It settles there: on target with one make, said once, the route on
+    // the state line.
+    ok = ok && mod.NoteButtonRef(Ref::Relation).empty();
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double rx = 0, ry = 0;
+    std::string line;
+    ok = ok && mod.ButtonCheck(true, kLive5Sort, t, Ref::Relation, x, y, kLive5Merc, rx, ry, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kLive5Sort, t, Ref::Relation, x, y, kLive5Merc, rx, ry, line) == Check_::Keep
+        && line == "stashmoveall: button - placed in the Mercenary button's place, box 2094.0,1262.0,2286.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on button_box=2094.0,1262.0,2286.0,1328.0 button_extents=0.0,0.0,192.0,66.0"
+                                " button_makes=1 button_step=2 button_look=sort button_size=192.0x66.0 button_ref=relation")
+        && mod.IsEnabled();
+    const std::string placed = line;
+    // Negative control: a node that settles on the old rule's box is off
+    // this target and made again once, at the Mercenary box's top-left.
+    StashMoveAllMod old;
+    old.SetEnabled(true);
+    old.NoteButtonMade(false);
+    old.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && old.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2090.0, 1262.0, kLive5Node, rx, ry, line) == Check_::Keep
+        && old.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2090.0, 1262.0, kLive5Node, rx, ry, line) == Check_::Remake
+        && line.empty() && Near(rx, 2094.0, 0.05) && Near(ry, 1262.0, 0.05) && Has(old.StateLine(), " button_place=remake");
+    old.NoteButtonMade(true);
+    ok = ok && old.ButtonCheck(true, kLive5Sort, t, Ref::Relation, rx, ry, kLive5Merc, x, y, line) == Check_::Keep
+        && old.ButtonCheck(true, kLive5Sort, t, Ref::Relation, rx, ry, kLive5Merc, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed in the Mercenary button's place, box 2094.0,", 0) == 0
+        && Has(old.StateLine(), " button_place=on") && Has(old.StateLine(), " button_makes=2");
+    // Still off after the remake: kept and said once against this target.
+    StashMoveAllMod off;
+    off.SetEnabled(true);
+    off.NoteButtonMade(false);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2090.0, 1262.0, kLive5Node, rx, ry, line);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2090.0, 1262.0, kLive5Node, rx, ry, line);
+    off.NoteButtonMade(true);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Relation, rx, ry, kLive5Node, x, y, line);
+    ok = ok && off.ButtonCheck(true, kLive5Sort, t, Ref::Relation, rx, ry, kLive5Node, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed -4.0,0.0 off the Mercenary button's place; F4 still works"
+        && Has(off.StateLine(), " button_place=off") && off.IsEnabled();
+    // A target not Sort's size (the owner default: the Mercenary box wins):
+    // the scale is Sort's times target over Sort per axis, the extents to
+    // make it with follow, and a Sort-sized node is not its size, said once.
+    const StashMoveBox wide = Box(2000.0, 1262.0, 2288.0, 1328.0);   // 288 wide, 66 high
+    double sx = 0, sy = 0;
+    ok = ok && StashMoveAllMod::ButtonScale(kLive5Sort, wide, sx, sy) && Near(sx, 1.5, 1e-9) && Near(sy, 1.0, 1e-9);
+    StashMoveAllMod scaled;
+    const StashMoveExtents w = scaled.ButtonExtentsFor(kLive5Sort, wide, kLive5SortX, kLive5SortY);
+    ok = ok && Near(w.left, 0.0, 0.05) && Near(w.right, 288.0, 0.05) && Near(w.down, 66.0, 0.05);
+    scaled.SetEnabled(true);
+    scaled.NoteButtonMade(false);
+    scaled.NoteButtonLook(StashMoveButtonLook::Sort);
+    const StashMoveBox sortSized = Box(2096.0, 1262.0, 2288.0, 1328.0);
+    scaled.ButtonCheck(true, kLive5Sort, wide, Ref::Relation, 2096.0, 1262.0, sortSized, rx, ry, line);
+    ok = ok && scaled.ButtonCheck(true, kLive5Sort, wide, Ref::Relation, 2096.0, 1262.0, sortSized, rx, ry, line) == Check_::Keep
+        && Has(line, "stashmoveall: button - its size 192.0x66.0 is not the Mercenary button's 288.0x66.0, so it is kept "
+                     "as it is; F4 still works");
+    // Negative controls: no scale from a box that did not read or has no
+    // size; a Sort box that did not read gives no target.
+    StashMoveBox none;
+    ok = ok && !StashMoveAllMod::ButtonScale(kLive5Sort, StashMoveBox(), sx, sy)
+        && !StashMoveAllMod::ButtonScale(Box(2290.0, 1262.0, 2290.0, 1328.0), wide, sx, sy)
+        && StashMoveAllMod::ButtonTarget(Ref::Relation, StashMoveBox(), kLive5Merc, kGap, none) == Ref::None
+        && !StashMoveAllMod::BoxReads(none);
+    Check("target/button_settles_on_the_mercenary_box", ok, placed);
+}
+
+static void TargetUnreadTargetFallsBackToTheSortRule()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    using Ref = ForgePact::StashMoveButtonRef;
+    // merc-route: live with no Mercenary box read, and the relation from a
+    // Sort box of no width: each falls back to the old rule's box.
+    StashMoveBox t;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Mercenary, kLive5Sort, StashMoveBox(), kGap, t) == Ref::Sort
+        && SameSides(t, kLive5Node, 0.05);
+    StashMoveBox flat;
+    const StashMoveBox noWidth = Box(2290.0, 1262.0, 2290.0, 1328.0);
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Relation, noWidth, StashMoveBox(), kGap, flat) == Ref::Sort
+        && Near(flat.right, 2282.0, 0.05);
+    // Said once a session, the mod on, the state line naming the rule.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const std::string said = mod.NoteButtonRef(Ref::Sort);
+    ok = ok && said == "stashmoveall: button - the Mercenary button's place could not be worked out, so it sits beside "
+                       "Sort by the old rule; F4 still works"
+        && mod.NoteButtonRef(Ref::Sort).empty() && Has(mod.StateLine(), " button_ref=sort") && mod.IsEnabled();
+    // It is then checked against that rule's box, and said placed beside Sort.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Sort, 2090.0, 1262.0, kLive5Node, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive5Sort, t, Ref::Sort, 2090.0, 1262.0, kLive5Node, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_ref=sort");
+    // Negative controls: a route that gave its box says nothing; a Sort box
+    // that did not read gives no target and says nothing (making the node is
+    // refused on its own line).
+    StashMoveAllMod quiet;
+    StashMoveBox none;
+    ok = ok && quiet.NoteButtonRef(Ref::Relation).empty() && quiet.NoteButtonRef(Ref::Mercenary).empty()
+        && StashMoveAllMod::ButtonTarget(Ref::Mercenary, StashMoveBox(), StashMoveBox(), kGap, none) == Ref::None
+        && quiet.NoteButtonRef(Ref::None).empty() && Has(quiet.StateLine(), " button_ref=none");
+    Check("target/unread_target_falls_back_to_the_sort_rule", ok, said);
+}
+
 static void TargetShownTabRoom()
 {
     // The room check reads the shown tab's own cells: a free block of the
@@ -2069,6 +2249,9 @@ int main()
     TargetButtonSizeWithinOneOfSortsIsSortSized();
     TargetButtonOfAnotherSizeIsKeptAndSaidOnce();
     TargetButtonLookNotTakenIsKeptAndSaidOnce();
+    BaselineSortGapBoxIsNotTheMercenaryBox();
+    TargetButtonSettlesOnTheMercenaryBox();
+    TargetUnreadTargetFallsBackToTheSortRule();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

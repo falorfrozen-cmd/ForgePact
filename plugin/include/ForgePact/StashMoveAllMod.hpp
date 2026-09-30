@@ -78,17 +78,24 @@ namespace ForgePact {
 //   the shown tab has no room for (or whose room could not be read) is a skip
 //   that calls nothing, so it stays in the bag and every other stash tab is
 //   left as it was (MayCall);
-// - the in-game button's place: its origin from Sort's bbox and the node's
-//   own extents, measured on it, so its right edge sits 8 GUI units left of
-//   Sort and its vertical centre on Sort's (ButtonOrigin, ButtonOnTarget),
-//   checked on later ensure steps once the node's box has settled, never in
-//   the frame it was made, with one remake when it is off (ButtonExtents,
-//   NoteButtonMade, ButtonCheck), and what the check read on the state line;
+// - the in-game button's place: the Mercenary button's box (the owner,
+//   2026-09-30), which the game shows there with the bag open on its own and
+//   does not list while the stash is open (Live 5), so it is Sort's box moved
+//   and sized by the fractions Live 5 measured; the old rule (Sort-sized, its
+//   right edge 8 GUI units left of Sort, its vertical centre Sort's) only as
+//   the fallback, said once (ButtonTarget, RelationBox, SortRuleBox,
+//   NoteButtonRef); the origin from that box and the node's own extents,
+//   measured on it (TargetOrigin, OnTarget), checked on later ensure steps
+//   once the node's box has settled, never in the frame it was made, with one
+//   remake when it is off (ButtonExtentsFor, NoteButtonMade, ButtonCheck), and
+//   what the check read on the state line, the target's route included;
 // - the button's look and size (owner scope, 2026-09-30): the Sort button's
-//   own, copied from the Sort node by the adapter, so the first node is made
-//   with Sort's extents about Sort's origin; judged on the same settled read
-//   as the place, a node not Sort-sized or whose look did not take kept and
-//   said once each, never remade for it (ButtonSortSized, NoteButtonLook);
+//   own, copied from the Sort node by the adapter (its label's place and font
+//   among them, Live 5), scaled per axis to the target's size, so the first
+//   node is made with Sort's extents about Sort's origin; judged on the same
+//   settled read as the place, a node not the target's size or whose look did
+//   not take kept and said once each, never remade for it (TargetSized,
+//   ButtonScale, NoteButtonLook);
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
 //   when the stash tab on show is still the planned one, the source cell no
 //   longer holds the key, and either the destination holds it (a cell) or the
@@ -136,6 +143,13 @@ enum class StashMoveButtonCheck : int { Keep = 0, Remake };
 // variables that carry its sprite and size read back the same as Sort's,
 // differs when they read and are not, unread when one could not be read.
 enum class StashMoveButtonLook : int { None = 0, Sort, Differs, Unread };
+
+// Which box the node is made to and checked against (the owner, 2026-09-30:
+// the Mercenary button's): none while Sort's box has not read; mercenary, the
+// Mercenary button's own box as read (merc-route: live); relation, Sort's box
+// moved and sized by the fractions Live 5 measured (merc-route: relation);
+// sort, the old rule standing in when neither could be had.
+enum class StashMoveButtonRef : int { None = 0, Mercenary, Relation, Sort };
 
 // The shown stash tab's stacks of one identity, as the adapter read them:
 // each stack's count, in the array's order (on the Socketable tab, the one
@@ -427,46 +441,199 @@ public:
         return e;
     }
 
-    // The origin to give UiCreateNode: the node's bbox right edge `gap` GUI
-    // units left of Sort's bbox left edge, and its vertical centre Sort's.
-    // False when Sort's box or the extents did not read.
-    static bool ButtonOrigin(const StashMoveBox& sort, const StashMoveExtents& node, double gap, double& x, double& y) {
-        if (!BoxReads(sort) || !std::isfinite(gap) || !std::isfinite(node.left) || !std::isfinite(node.up)
-            || !std::isfinite(node.right) || !std::isfinite(node.down))
-            return false;
-        x = sort.left - gap - node.right;
-        y = (sort.top + sort.bottom) / 2 - (node.down - node.up) / 2;
+    // ---- the target: the Mercenary button's box (the owner, 2026-09-30) ----
+    //
+    // With the bag open on its own the game draws its own Mercenary button
+    // (a UI_Button_Open_Mercenary_obj, uiNodeCallstack InventoryMercenary)
+    // where Move all should sit, and the owner asked for its box. Live 5
+    // measured it with the bag alone beside InventorySort, the same size, and
+    // found it not listed while the stash is open, and InventorySort's box the
+    // same in both states - so the target is Sort's box moved and sized by the
+    // measured relation, as fractions of Sort's width and height, which follow
+    // a GUI-scale change where GUI units would not (merc-route: relation,
+    // docs/stash-move-research.md § Decision buttonTarget). A box read off the
+    // Mercenary node itself (merc-route: live) would win, and the old rule is
+    // the fallback when neither can be had.
+    //
+    // Live 5: the Mercenary button's left edge lies 196/192 of Sort's width
+    // left of Sort's left edge, its top level with Sort's, and it is Sort's
+    // width and height - so its right edge is 1/48 of Sort's width short of
+    // Sort's left edge.
+    static constexpr double kMercLeftOfSort = -1.0208333333333333;   // its left edge from Sort's, in Sort widths
+    static constexpr double kMercTopOfSort = 0.0;                    // its top edge from Sort's, in Sort heights
+    static constexpr double kMercWidthOfSort = 1.0;                  // its width, in Sort widths
+    static constexpr double kMercHeightOfSort = 1.0;                 // its height, in Sort heights
+
+    // A box that reads and is not empty: a width and a height above 0.
+    static bool BoxSized(const StashMoveBox& b) {
+        return BoxReads(b) && b.right > b.left && b.bottom > b.top;
+    }
+
+    // The old rule, now the fallback: a box of Sort's size, its right edge
+    // `gap` GUI units left of Sort's left edge, level with Sort. Unread when
+    // Sort's box or the gap did not read.
+    static StashMoveBox SortRuleBox(const StashMoveBox& sort, double gap) {
+        StashMoveBox b;
+        if (!BoxReads(sort) || !std::isfinite(gap)) return b;
+        b.right = sort.left - gap;
+        b.left = b.right - (sort.right - sort.left);
+        b.top = sort.top;
+        b.bottom = sort.bottom;
+        return b;
+    }
+
+    // The Mercenary box from Sort's by Live 5's fractions. Unread when Sort's
+    // box did not read or has no width or height to scale by.
+    static StashMoveBox RelationBox(const StashMoveBox& sort) {
+        StashMoveBox b;
+        if (!BoxSized(sort)) return b;
+        const double w = sort.right - sort.left, h = sort.bottom - sort.top;
+        b.left = sort.left + kMercLeftOfSort * w;
+        b.top = sort.top + kMercTopOfSort * h;
+        b.right = b.left + kMercWidthOfSort * w;
+        b.bottom = b.top + kMercHeightOfSort * h;
+        return b;
+    }
+
+    // The box to make the node to, and which it is. `route` is the one the
+    // adapter was built for: Mercenary takes `mercenary` (the box read off the
+    // Mercenary node) when it reads, Relation takes Sort's box by the
+    // fractions; either one that cannot be had falls back to the old rule
+    // (Sort), and a Sort box that did not read gives none (None, `target`
+    // unread) - the adapter then makes no node.
+    static StashMoveButtonRef ButtonTarget(StashMoveButtonRef route, const StashMoveBox& sort, const StashMoveBox& mercenary,
+                                           double gap, StashMoveBox& target) {
+        target = StashMoveBox();
+        if (!BoxReads(sort)) return StashMoveButtonRef::None;
+        if (route == StashMoveButtonRef::Mercenary && BoxSized(mercenary)) {
+            target = mercenary;
+            return StashMoveButtonRef::Mercenary;
+        }
+        if (route == StashMoveButtonRef::Relation) {
+            const StashMoveBox r = RelationBox(sort);
+            if (BoxReads(r)) {
+                target = r;
+                return StashMoveButtonRef::Relation;
+            }
+        }
+        target = SortRuleBox(sort, gap);
+        return BoxReads(target) ? StashMoveButtonRef::Sort : StashMoveButtonRef::None;
+    }
+
+    // The node takes the target's size (the owner default: the Mercenary box
+    // wins): the scale copied from Sort, times the target's size over Sort's
+    // on each axis. False when either box has no size to divide.
+    static bool ButtonScale(const StashMoveBox& sort, const StashMoveBox& target, double& sx, double& sy) {
+        if (!BoxSized(sort) || !BoxSized(target)) return false;
+        sx = (target.right - target.left) / (sort.right - sort.left);
+        sy = (target.bottom - target.top) / (sort.bottom - sort.top);
         return true;
     }
 
-    // How far a node's box sits from that target: dx its right edge from
-    // Sort's left edge less the gap, dy its vertical centre from Sort's.
-    static bool ButtonOffset(const StashMoveBox& sort, const StashMoveBox& node, double gap, double& dx, double& dy) {
-        if (!BoxReads(sort) || !BoxReads(node) || !std::isfinite(gap)) return false;
-        dx = node.right - (sort.left - gap);
-        dy = (node.top + node.bottom) / 2 - (sort.top + sort.bottom) / 2;
+    // The origin to give UiCreateNode: the node's bbox right edge on the
+    // target's, and its vertical centre the target's. False when the target
+    // or the extents did not read.
+    static bool TargetOrigin(const StashMoveBox& target, const StashMoveExtents& node, double& x, double& y) {
+        if (!BoxReads(target) || !std::isfinite(node.left) || !std::isfinite(node.up)
+            || !std::isfinite(node.right) || !std::isfinite(node.down))
+            return false;
+        x = target.right - node.right;
+        y = (target.top + target.bottom) / 2 - (node.down - node.up) / 2;
+        return true;
+    }
+
+    // How far a node's box sits from the target: dx its right edge from the
+    // target's, dy its vertical centre from the target's.
+    static bool TargetOffset(const StashMoveBox& target, const StashMoveBox& node, double& dx, double& dy) {
+        if (!BoxReads(target) || !BoxReads(node)) return false;
+        dx = node.right - target.right;
+        dy = (node.top + node.bottom) / 2 - (target.top + target.bottom) / 2;
         return true;
     }
 
     // The node's read box is within kButtonTolerance of the target on both
-    // counts. A box that did not read is never on target.
-    static bool ButtonOnTarget(const StashMoveBox& sort, const StashMoveBox& node, double gap) {
+    // counts. A box that did not read is never on target. The place only:
+    // the size is judged apart (TargetSized), so a node of another size is
+    // kept, never remade for it.
+    static bool OnTarget(const StashMoveBox& target, const StashMoveBox& node) {
         double dx = 0, dy = 0;
-        if (!ButtonOffset(sort, node, gap, dx, dy)) return false;
+        if (!TargetOffset(target, node, dx, dy)) return false;
         return std::fabs(dx) <= kButtonTolerance && std::fabs(dy) <= kButtonTolerance;
+    }
+
+    // The node's size is the target's: its width and height each within
+    // kButtonTolerance. A box that did not read, the node's or the target's,
+    // never is.
+    static bool TargetSized(const StashMoveBox& target, const StashMoveBox& node) {
+        if (!BoxReads(target) || !BoxReads(node)) return false;
+        return std::fabs((node.right - node.left) - (target.right - target.left)) <= kButtonTolerance
+            && std::fabs((node.bottom - node.top) - (target.bottom - target.top)) <= kButtonTolerance;
+    }
+
+    // The old rule's origin, offset and check, each the target's with the
+    // old rule's box (SortRuleBox).
+    static bool ButtonOrigin(const StashMoveBox& sort, const StashMoveExtents& node, double gap, double& x, double& y) {
+        return TargetOrigin(SortRuleBox(sort, gap), node, x, y);
+    }
+
+    static bool ButtonOffset(const StashMoveBox& sort, const StashMoveBox& node, double gap, double& dx, double& dy) {
+        return TargetOffset(SortRuleBox(sort, gap), node, dx, dy);
+    }
+
+    static bool ButtonOnTarget(const StashMoveBox& sort, const StashMoveBox& node, double gap) {
+        return OnTarget(SortRuleBox(sort, gap), node);
     }
 
     // A node still off target after its second creation is kept (F4 and the
     // press still work) and said once a session - empty when already said;
     // it never turns the mod off.
     std::string ButtonOffTarget(const StashMoveBox& sort, const StashMoveBox& node, double gap) {
+        return TargetOffLine(SortRuleBox(sort, gap), node, StashMoveButtonRef::Sort);
+    }
+
+    std::string TargetOffLine(const StashMoveBox& target, const StashMoveBox& node, StashMoveButtonRef ref) {
         if (m_ButtonOffSaid) return std::string();
         m_ButtonOffSaid = true;
         double dx = 0, dy = 0;
-        if (!ButtonOffset(sort, node, gap, dx, dy))
-            return "stashmoveall: button - its box did not read after it was made, so its place beside Sort is "
-                   "unchecked; F4 still works";
-        return "stashmoveall: button - placed " + Tenths(dx) + "," + Tenths(dy) + " off beside Sort; F4 still works";
+        if (!TargetOffset(target, node, dx, dy))
+            return "stashmoveall: button - its box did not read after it was made, so its place " + PlaceWords(ref)
+                   + " is unchecked; F4 still works";
+        return "stashmoveall: button - placed " + Tenths(dx) + "," + Tenths(dy) + " off " + OffWords(ref)
+            + "; F4 still works";
+    }
+
+    // Where the lines say the node sits: beside Sort under the old rule, in
+    // the Mercenary button's place otherwise.
+    static std::string PlaceWords(StashMoveButtonRef ref) {
+        return ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
+            ? "in the Mercenary button's place" : "beside Sort";
+    }
+
+    static std::string OffWords(StashMoveButtonRef ref) {
+        return ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
+            ? "the Mercenary button's place" : "beside Sort";
+    }
+
+    static const char* RefWord(StashMoveButtonRef ref) {
+        switch (ref) {
+        case StashMoveButtonRef::Mercenary: return "mercenary";
+        case StashMoveButtonRef::Relation: return "relation";
+        case StashMoveButtonRef::Sort: return "sort";
+        default: return "none";
+        }
+    }
+
+    // The target the adapter worked out for the node it is about to make (or
+    // check), for the state line's button_ref=. The old rule standing in is
+    // said once a session - empty otherwise - and never turns the mod off.
+    std::string NoteButtonRef(StashMoveButtonRef ref) {
+        {
+            std::lock_guard<std::mutex> lock(m_PlaceMutex);
+            m_PlaceRef = ref;
+        }
+        if (ref != StashMoveButtonRef::Sort) return std::string();
+        return SayButtonOff(m_ButtonFallbackSaid, "the Mercenary button's place could not be worked out, so it sits "
+                            "beside Sort by the old rule");
     }
 
     // A check reads this many ensure steps after a make at most; a node whose
@@ -481,25 +648,35 @@ public:
 
     // The extents to make a node with: the ones measured on a settled node
     // this session; before that, Sort's own extents about Sort's origin (its
-    // x, y and bbox, read by name), since the node wears Sort's look (owner
-    // scope, 2026-09-30) and so lands on target at its first creation; and
-    // when Sort's x, y did not read, the provisional box of Sort's size about
-    // its centre.
-    StashMoveExtents ButtonExtents(const StashMoveBox& sort, double sortX = std::nan(""),
-                                   double sortY = std::nan("")) const {
+    // x, y and bbox, read by name), scaled per axis to the target's size
+    // (ButtonScale), since the node wears Sort's look (owner scope,
+    // 2026-09-30) and so lands on target at its first creation; and when
+    // Sort's x, y did not read, the provisional box of the target's size
+    // about its centre.
+    StashMoveExtents ButtonExtentsFor(const StashMoveBox& sort, const StashMoveBox& target, double sortX = std::nan(""),
+                                      double sortY = std::nan("")) const {
         if (m_ButtonExtentsRead) return m_ButtonExtents;
+        double sx = 1, sy = 1;
+        if (!ButtonScale(sort, target, sx, sy)) sx = sy = 1;
         StashMoveExtents own;
-        if (ExtentsOf(sortX, sortY, sort, own)) return own;
-        return ProvisionalExtents(sort);
+        if (ExtentsOf(sortX, sortY, sort, own)) {
+            own.left *= sx; own.right *= sx;
+            own.up *= sy; own.down *= sy;
+            return own;
+        }
+        return ProvisionalExtents(BoxReads(target) ? target : sort);
     }
 
-    // The button's size (owner scope, 2026-09-30): Sort-sized when its box's
-    // width and height are each within kButtonTolerance of Sort's. A box
-    // that did not read, the node's or Sort's, never is.
+    // The same with Sort's own box as the target (the old rule's size).
+    StashMoveExtents ButtonExtents(const StashMoveBox& sort, double sortX = std::nan(""),
+                                   double sortY = std::nan("")) const {
+        return ButtonExtentsFor(sort, sort, sortX, sortY);
+    }
+
+    // The button's size under the old rule (owner scope, 2026-09-30):
+    // Sort-sized when it is the size of Sort's box (TargetSized).
     static bool ButtonSortSized(const StashMoveBox& sort, const StashMoveBox& node) {
-        if (!BoxReads(sort) || !BoxReads(node)) return false;
-        return std::fabs((node.right - node.left) - (sort.right - sort.left)) <= kButtonTolerance
-            && std::fabs((node.bottom - node.top) - (sort.bottom - sort.top)) <= kButtonTolerance;
+        return TargetSized(sort, node);
     }
 
     // The adapter made a node: the first of a Create step (remake false) or
@@ -538,27 +715,40 @@ public:
         m_PlaceLook = look;
     }
 
-    // Each ensure step while the adapter holds a node, with what it read now:
-    // whether the node is visible, Sort's box, the node's x, y and box. Until
-    // the node reads visible and its box (and Sort's) reads the same as on the
-    // step before, nothing is decided. Then its extents are measured and kept
-    // for the session, and the box is judged: on target is said once a
-    // session, positively; off target asks for one remake at the origin those
-    // extents give (Remake, x and y set), and a node still off after it - or
-    // one whose remake was asked and not carried out - is kept and said once.
-    // A box that has not settled after kButtonSettleSteps is said unchecked.
-    // A node kept (on target, or still off) is judged on that same settled
-    // read for its size against Sort's and for the look the adapter last
-    // read: not Sort-sized, or a look not taken, is kept - never remade for
-    // it - and said once a session each, on a line of its own.
-    // `line` is the lines to print, one per cause, empty when none. Never
-    // turns the mod off.
+    // The check below under the old rule alone: the target is
+    // SortRuleBox(sort, gap).
     StashMoveButtonCheck ButtonCheck(bool visible, const StashMoveBox& sort, double nodeX, double nodeY,
                                      const StashMoveBox& box, double gap, double& x, double& y, std::string& line) {
+        return ButtonCheck(visible, sort, SortRuleBox(sort, gap), StashMoveButtonRef::Sort, nodeX, nodeY, box, x, y, line);
+    }
+
+    // Each ensure step while the adapter holds a node, with what it read now:
+    // whether the node is visible, Sort's box, the target worked out from it
+    // this step and which it is (ButtonTarget), the node's x, y and box.
+    // Until the node reads visible and its box (and Sort's) reads the same as
+    // on the step before, nothing is decided. Then its extents are measured
+    // and kept for the session, and the box is judged against the target: on
+    // target is said once a session, positively; off target asks for one
+    // remake at the origin those extents give (Remake, x and y set), and a
+    // node still off after it - or one whose remake was asked and not carried
+    // out - is kept and said once. A box that has not settled after
+    // kButtonSettleSteps is said unchecked. A node kept (on target, or still
+    // off) is judged on that same settled read for its size against the
+    // target's and for the look the adapter last read: not the target's
+    // size, or a look not taken, is kept - never remade for it - and said
+    // once a session each, on a line of its own. `line` is the lines to
+    // print, one per cause, empty when none. Never turns the mod off.
+    StashMoveButtonCheck ButtonCheck(bool visible, const StashMoveBox& sort, const StashMoveBox& target,
+                                     StashMoveButtonRef ref, double nodeX, double nodeY, const StashMoveBox& box,
+                                     double& x, double& y, std::string& line) {
         line.clear();
         if (m_ButtonMakes == 0 || m_ButtonChecked) return StashMoveButtonCheck::Keep;
         ++m_ButtonSteps;
-        const bool reads = visible && BoxReads(box) && BoxReads(sort);
+        {
+            std::lock_guard<std::mutex> lock(m_PlaceMutex);
+            m_PlaceRef = ref;
+        }
+        const bool reads = visible && BoxReads(box) && BoxReads(sort) && BoxReads(target);
         const bool settled = reads && m_ButtonHaveLast && SameBox(box, m_ButtonLast) && SameBox(sort, m_ButtonLastSort);
         m_ButtonHaveLast = reads;
         m_ButtonLast = box;
@@ -568,37 +758,38 @@ public:
             if (m_ButtonSteps < kButtonSettleSteps) return StashMoveButtonCheck::Keep;
             m_ButtonChecked = true;
             line = SayButtonOff(m_ButtonUnsettledSaid, "its box had not settled " + std::to_string(m_ButtonSteps)
-                                + " ensure steps after it was made, so its place beside Sort is unchecked");
+                                + " ensure steps after it was made, so its place " + PlaceWords(ref) + " is unchecked");
             return StashMoveButtonCheck::Keep;
         }
         StashMoveExtents e;
         if (!ExtentsOf(nodeX, nodeY, box, e)) {
             NotePlace("unread", box, nullptr);
             m_ButtonChecked = true;
-            line = SayButtonOff(m_ButtonUnreadSaid, "its x, y did not read, so its place beside Sort is unchecked");
+            line = SayButtonOff(m_ButtonUnreadSaid, "its x, y did not read, so its place " + PlaceWords(ref)
+                                + " is unchecked");
             return StashMoveButtonCheck::Keep;
         }
         m_ButtonExtents = e;
         m_ButtonExtentsRead = true;
-        if (ButtonOnTarget(sort, box, gap)) {
+        if (OnTarget(target, box)) {
             NotePlace("on", box, &e);
             m_ButtonChecked = true;
             if (!m_ButtonPlacedSaid) {
                 m_ButtonPlacedSaid = true;
-                line = "stashmoveall: button - placed beside Sort, box " + BoxText(box);
+                line = "stashmoveall: button - placed " + PlaceWords(ref) + ", box " + BoxText(box);
             }
-            JudgeLook(sort, box, line);
+            JudgeLook(target, ref, box, line);
             return StashMoveButtonCheck::Keep;
         }
-        if (!m_ButtonRemakeAsked && ButtonOrigin(sort, e, gap, x, y)) {
+        if (!m_ButtonRemakeAsked && TargetOrigin(target, e, x, y)) {
             m_ButtonRemakeAsked = true;
             NotePlace("remake", box, &e);
             return StashMoveButtonCheck::Remake;
         }
         NotePlace("off", box, &e);
         m_ButtonChecked = true;
-        line = ButtonOffTarget(sort, box, gap);
-        JudgeLook(sort, box, line);
+        line = TargetOffLine(target, box, ref);
+        JudgeLook(target, ref, box, line);
         return StashMoveButtonCheck::Keep;
     }
 
@@ -681,8 +872,10 @@ public:
     // read (none until read), how many nodes that Create step made, and the
     // ensure step after the make that read them - so a bug report, or a live
     // check comparing menulayout's rows, can tell what the mod itself read.
-    // Last, the node's look as last read (none, sort, differs, unread) and
-    // its size on the settled read (none until then).
+    // Then the node's look as last read (none, sort, differs, unread) and
+    // its size on the settled read (none until then), judged against the
+    // target; last, which target that is (RefWord: none, mercenary,
+    // relation, sort).
     std::string ButtonFields() const {
         std::string place;
         {
@@ -692,7 +885,8 @@ public:
                                                                + Tenths(m_PlaceExtents.right) + "," + Tenths(m_PlaceExtents.down)
                                                            : std::string("none"))
                 + " button_makes=" + std::to_string(m_PlaceMakes) + " button_step=" + std::to_string(m_PlaceStep)
-                + " button_look=" + LookWord(m_PlaceLook) + " button_size=" + SizeText(m_PlaceSize);
+                + " button_look=" + LookWord(m_PlaceLook) + " button_size=" + SizeText(m_PlaceSize)
+                + " button_ref=" + RefWord(m_PlaceRef);
         }
         return std::string(" button=") + (m_ButtonHeld.load() ? "held" : "none")
             + " presses=" + std::to_string(m_Presses.load()) + " in_node=" + std::to_string(m_PressesInNode.load())
@@ -1162,11 +1356,12 @@ private:
     }
 
     // The look and size of a kept node, on the settled read the place was
-    // judged on (owner scope, 2026-09-30): its size against Sort's and the
-    // look the adapter last read. Either one off is kept as it is - a remake
-    // is for the place only - and said once a session on a line of its own,
-    // added to `line`.
-    void JudgeLook(const StashMoveBox& sort, const StashMoveBox& box, std::string& line) {
+    // judged on (owner scope, 2026-09-30): its size against the target's
+    // (the Sort button's under the old rule, the Mercenary button's
+    // otherwise) and the look the adapter last read. Either one off is kept
+    // as it is - a remake is for the place only - and said once a session on
+    // a line of its own, added to `line`.
+    void JudgeLook(const StashMoveBox& target, StashMoveButtonRef ref, const StashMoveBox& box, std::string& line) {
         {
             std::lock_guard<std::mutex> lock(m_PlaceMutex);
             m_PlaceSize = box;
@@ -1176,9 +1371,11 @@ private:
             if (said.empty()) return;
             line += (line.empty() ? "" : "\n") + said;
         };
-        if (!ButtonSortSized(sort, box))
-            add(SayButtonOff(m_ButtonSizeSaid, "its size " + SizeText(box) + " is not the Sort button's "
-                             + SizeText(sort) + ", so it is kept as it is"));
+        const char* whose = ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
+            ? "the Mercenary button's " : "the Sort button's ";
+        if (!TargetSized(target, box))
+            add(SayButtonOff(m_ButtonSizeSaid, "its size " + SizeText(box) + " is not " + whose
+                             + SizeText(target) + ", so it is kept as it is"));
         if (m_ButtonLook == StashMoveButtonLook::Differs)
             add(SayButtonOff(m_ButtonLookSaid, "it did not take the Sort button's look, so it is kept with its own"));
         else if (m_ButtonLook == StashMoveButtonLook::Unread)
@@ -1206,6 +1403,7 @@ private:
     bool              m_ButtonSizeSaid = false;  // the not-Sort-sized line already said this session
     bool              m_ButtonLookSaid = false;  // the look-not-taken line already said this session
     bool              m_ButtonLookUnreadSaid = false; // the look-unread line already said this session
+    bool              m_ButtonFallbackSaid = false; // the old-rule fallback line already said this session
     StashMoveButtonLook m_ButtonLook = StashMoveButtonLook::None; // the node's look as last read
     // The place check (ButtonCheck), on the frame tick's thread.
     int               m_ButtonMakes = 0;         // nodes made by the current Create step, 0 before any
@@ -1227,6 +1425,7 @@ private:
     int               m_PlaceStep = 0;
     StashMoveButtonLook m_PlaceLook = StashMoveButtonLook::None;
     StashMoveBox      m_PlaceSize;               // the settled box its size is read from
+    StashMoveButtonRef m_PlaceRef = StashMoveButtonRef::None; // the target the last node was made or checked to
     std::string       m_OffReason;
 };
 

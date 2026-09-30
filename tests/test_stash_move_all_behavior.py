@@ -348,6 +348,32 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # took says nothing of it.
         self.assertScenario("target/button_look_not_taken_is_kept_and_said_once")
 
+    # ---- #131, owner 2026-09-30: the Mercenary button's box -------------------
+
+    def test_baseline_sort_gap_box_is_not_the_mercenary_box(self):
+        # Live 5: the Sort rule's box, 2090,1262,2282,1328, is the one the
+        # node read and the old check calls on target; the Mercenary box,
+        # 2094,1262,2286,1328, is 4 further right, beyond the tolerance, and
+        # the same size. Positive control: the Mercenary box is on itself.
+        self.assertScenario("baseline/sort_gap_box_is_not_the_mercenary_box")
+
+    def test_target_button_settles_on_the_mercenary_box(self):
+        # merc-route: relation. Sort's box and Live 5's fractions give the
+        # Mercenary box (and follow a GUI-scale change); made from Sort's
+        # extents the node settles on it with one make, button_ref=relation.
+        # Negative controls: a node on the old box is remade once to the
+        # Mercenary box's top-left, and one still off is said once; a target
+        # of another size scales the node and says a Sort-sized one; unread
+        # boxes give no scale and no target.
+        self.assertScenario("target/button_settles_on_the_mercenary_box")
+
+    def test_target_unread_target_falls_back_to_the_sort_rule(self):
+        # No Mercenary box read, or a Sort box the fractions cannot scale:
+        # the old rule's box, said once, button_ref=sort, placed beside Sort.
+        # Negative controls: a route that gave its box says nothing; an
+        # unread Sort box gives no target.
+        self.assertScenario("target/unread_target_falls_back_to_the_sort_rule")
+
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
 

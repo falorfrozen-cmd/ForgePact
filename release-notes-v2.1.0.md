@@ -16,9 +16,10 @@ dropping.
 ## New
 
 - **Move all into the stash** (Mods → Quality of Life, off by default). With the
-  stash open, click the new **Move all** button - it is the same size as the
-  backpack's **Sort** button and sits just left of it, level with it - or
-  press **F4**, and every item on the backpack tab you are looking at
+  stash open, click the new **Move all** button - it sits where the game shows
+  its own **Mercenary** button when you open the backpack on its own, just left
+  of the backpack's **Sort** button, and looks like that **Sort Tab** button -
+  or press **F4**, and every item on the backpack tab you are looking at
   moves into the stash tab you are looking at, one item at a time, by the
   game's own move for that item - the same one a Ctrl + click makes - so each
   item lands where a hand move would have put it.

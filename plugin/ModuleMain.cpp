@@ -37647,9 +37647,12 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   name, with self = other = the UI_Stash_obj window on show (buttonOwner:
 //   the stash's own close destroys it, Live 1g), placed from the Sort node's
 //   row (found by its uiNodeCallstack InventorySort, never by its text, which
-//   reads Sort Tab: sortActivation) - its right edge 8 GUI units left of
-//   Sort's box and its vertical centre on Sort's, from the extents measured on
-//   the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
+//   reads Sort Tab: sortActivation) - on the Mercenary button's box, which the
+//   game shows there with the bag open on its own and does not list while the
+//   stash is open (Live 5), so the core works it out from Sort's box by the
+//   fractions Live 5 measured (merc-route: relation; the old rule, its right
+//   edge 8 GUI units left of Sort's, only as the fallback), from the extents
+//   measured on the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
 //   and its activation LEFT UNDEFINED - no UiSetActivationFunc, no script
 //   hooked for it. A node with no activation runs nothing of the game's when
 //   clicked (the static reading of the node's own click event; Live 1g's
@@ -37665,9 +37668,11 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   already dropped it from the window's list); on `stashmoveall 0`, a loss,
 //   and whenever the core says the node should not exist.
 // - its look (owner scope, 2026-09-30): the Sort button's own, copied onto
-//   the node from the Sort node's variables that carry its sprite and size,
-//   read by name at that moment - never a sprite named or sized here - and
-//   read back; the core judges the look and the size on the settled read.
+//   the node from the Sort node's variables that carry its sprite and size
+//   and its label's place, font and shadow (Live 5: with those copied the
+//   label is drawn centred like Sort's), read by name at that moment - never
+//   a sprite, font or offset named or sized here - and read back; the core
+//   judges the look and the size on the settled read.
 // The writes this block makes are the `text` and those look variables, on
 // the node the mod made only. A node that cannot be made is reported once
 // (`stashmoveall: button - ...`) and the mod stays on: F4 and the verbs work
@@ -37680,7 +37685,12 @@ static constexpr TalentAllocScript kSmaUiRemoveNode{ HeroSiege::Scripts::gml_Scr
 static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";
 static constexpr const char* kSmaButtonText = "Move all";
 static constexpr const char* kSmaSortCallstack = "InventorySort";   // sortActivation (Live 1f and 1g)
-static constexpr double kSmaButtonGap = 8.0;                         // GUI units between the node and Sort
+static constexpr double kSmaButtonGap = 8.0;                         // the old rule's GUI units between the node and Sort
+// merc-route: relation (docs/stash-move-research.md § Decision buttonTarget):
+// the Mercenary node is not listed while the stash is open (Live 5
+// merc-stash-listed), so none is read and the core takes Sort's box by the
+// measured fractions.
+static constexpr ForgePact::StashMoveButtonRef kSmaButtonRoute = ForgePact::StashMoveButtonRef::Relation;
 static constexpr double kSmaMbLeft = 1.0;                            // mb_left
 
 static RValue g_SmaButton;               // the node the mod made, while it holds one
@@ -37788,44 +37798,100 @@ static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, doub
 }
 
 // Sort's look, the variables the game gives the Sort node its sprite and
-// size by (docs/stash-move-research.md § Static reading 5): read off the Sort
-// node by name each time, so a game patch that restyles Sort restyles the
-// button too.
-static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale" };
+// size by (docs/stash-move-research.md § Static reading 5), and those that
+// place its label and give it its font and shadow, measured in Live 5
+// (§ Decision buttonLabel: with them copied the node's label is drawn centred
+// like Sort's): read off the Sort node by name each time, so a game patch
+// that restyles Sort restyles the button too.
+static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", "textFont", "dropShadow",
+                                                "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth",
+                                                "navBboxHeight" };
+
+// How each of those is written, entry for entry: as read; scaled by the
+// target's size over Sort's on one axis (the sprite's scale, and the size of
+// the box the game keeps beside it); or moved by the node's offset from
+// Sort's x, y on one axis - the two that hold an absolute GUI position, Sort's
+// own box's corner (Live 5), so the node's is its own box's.
+enum class SmaLookWrite { AsRead, ScaleX, ScaleY, ShiftX, ShiftY };
+static constexpr SmaLookWrite kSmaLookWrites[] = { SmaLookWrite::AsRead, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::ShiftX, SmaLookWrite::ShiftY,
+                                                   SmaLookWrite::ScaleX, SmaLookWrite::ScaleY };
+static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / sizeof(kSmaLookWrites[0]),
+              "every look variable has its write");
+
+// What the writes need: the target's size over Sort's on each axis (the
+// core's ButtonScale) and the node's x, y less Sort's.
+struct SmaLookFrame {
+    double sx = 1, sy = 1;
+    double dx = std::numeric_limits<double>::quiet_NaN(), dy = std::numeric_limits<double>::quiet_NaN();
+};
+
+// A look variable as a number: a bool as 0 or 1 (dropShadow), an asset
+// reference by its index, a number as read; false for any other kind.
+static bool SmaLookNumber(const RValue& v, double& out)
+{
+    if (v.m_Kind == VALUE_BOOL) { out = v.ToBoolean() ? 1.0 : 0.0; return true; }
+    return ApNumber(v, out);
+}
 
 // The node's look against Sort's: with `copy`, each of Sort's look variables
-// is first written onto the mod's own node as read (after the label, so a
-// look that does not take still leaves a working button); then each is read
-// back off both. Sort when all read the same, Differs when one does not,
-// Unread when one could not be read. Nothing else is written or called.
-static ForgePact::StashMoveButtonLook SmaButtonLook(const RValue& sort, bool copy)
+// is first written onto the mod's own node as `kSmaLookWrites` says (after
+// the label, so a look that does not take still leaves a working button);
+// then each is read back off the node and compared with what Sort's gives.
+// Sort when all read the same, Differs when one does not, Unread when one
+// could not be read. Nothing else is written or called.
+static ForgePact::StashMoveButtonLook SmaButtonLook(const RValue& sort, bool copy, const SmaLookFrame& frame)
 {
     bool differs = false;
-    for (const char* var : kSmaLookVars) {
+    for (size_t i = 0; i < sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]); ++i) {
+        const char* var = kSmaLookVars[i];
         double want = 0, got = 0;
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
-            want = v.ToDouble();
+            if (!SmaLookNumber(v, want)) return ForgePact::StashMoveButtonLook::Unread;
+            switch (kSmaLookWrites[i]) {
+            case SmaLookWrite::ScaleX: want *= frame.sx; break;
+            case SmaLookWrite::ScaleY: want *= frame.sy; break;
+            case SmaLookWrite::ShiftX: want += frame.dx; break;
+            case SmaLookWrite::ShiftY: want += frame.dy; break;
+            default: break;
+            }
             if (!std::isfinite(want)) return ForgePact::StashMoveButtonLook::Unread;
-            if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var), v });
-            got = MenuLayoutRead(g_SmaButton, var);
+            if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
+                                                                     kSmaLookWrites[i] == SmaLookWrite::AsRead ? v : RValue(want) });
+            if (!SmaLookNumber(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(var) }), got))
+                return ForgePact::StashMoveButtonLook::Unread;
         } catch (...) { return ForgePact::StashMoveButtonLook::Unread; }
-        if (!std::isfinite(got)) return ForgePact::StashMoveButtonLook::Unread;
         if (std::fabs(got - want) > 1e-6) differs = true;
     }
     return differs ? ForgePact::StashMoveButtonLook::Differs : ForgePact::StashMoveButtonLook::Sort;
 }
 
-// Make the node beside Sort; a refusal is reported once by the core's line.
-// Its right edge sits kSmaButtonGap GUI units left of Sort's bbox and its
-// vertical centre on Sort's (the core's ButtonOrigin, ForgePact #131:
-// UiCreateNode's x, y are the node's origin, which for the mod's node is its
-// bbox centre, not its top-left as for Sort). The extents are the ones the
-// core measured on a settled node this session, else Sort's own about Sort's
-// x, y, since the node is given Sort's look (the centred box of Sort's size
-// when those did not read). The place is not checked here: a box read in the
-// frame the node is made is not known to be its settled box, so
-// SmaButtonCheck does it on later steps.
+// The frame for a node at x, y: the scale the target asks for (1 when it
+// has no size to divide) and its offset from Sort's x, y, read by name now.
+static SmaLookFrame SmaButtonLookFrame(const RValue& sort, const ForgePact::StashMoveBox& sortBox,
+                                       const ForgePact::StashMoveBox& target, double x, double y)
+{
+    SmaLookFrame f;
+    if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;
+    f.dx = x - MenuLayoutRead(sort, "x");
+    f.dy = y - MenuLayoutRead(sort, "y");
+    return f;
+}
+
+// Make the node on its target; a refusal is reported once by the core's
+// line. The target is the Mercenary button's box, worked out by the core
+// from Sort's bbox (ButtonTarget; the old rule's box when it cannot be, said
+// once), and the node's right edge and vertical centre are put on the
+// target's (the core's TargetOrigin, ForgePact #131: UiCreateNode's x, y are
+// the node's origin, which follows the sprite it wears). The extents are the
+// ones the core measured on a settled node this session, else Sort's own
+// about Sort's x, y, scaled to the target's size, since the node is given
+// Sort's look (the centred box of the target's size when those did not
+// read). The place is not checked here: a box read in the frame the node is
+// made is not known to be its settled box, so SmaButtonCheck does it on
+// later steps.
 static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
 {
     auto& mod = ForgePact::StashMoveAllMod::Instance();
@@ -37838,38 +37904,51 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
         refuse("the Sort button's bbox did not read; nothing was called");
         return;
     }
+    ForgePact::StashMoveBox target;
+    const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
+        ForgePact::StashMoveBox(), kSmaButtonGap, target);
+    const std::string fallback = mod.NoteButtonRef(ref);
+    if (!fallback.empty()) Out(fallback);
     double x = 0, y = 0;
-    const ForgePact::StashMoveExtents extents = mod.ButtonExtents(sortBox, MenuLayoutRead(sort, "x"), MenuLayoutRead(sort, "y"));
-    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, extents, kSmaButtonGap, x, y)) {
+    const ForgePact::StashMoveExtents extents = mod.ButtonExtentsFor(sortBox, target, MenuLayoutRead(sort, "x"),
+                                                                     MenuLayoutRead(sort, "y"));
+    if (!ForgePact::StashMoveAllMod::TargetOrigin(target, extents, x, y)) {
         refuse("the Sort button's bbox did not give an origin; nothing was called");
         return;
     }
     std::string why;
     if (!SmaButtonMake(stash, window, x, y, why)) { refuse(why); return; }
     mod.NoteButtonMade(false);
-    mod.NoteButtonLook(SmaButtonLook(sort, true));
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sort, sortBox, target, x, y)));
 }
 
 // The place check, each ensure step the node is held and wanted (the core's
 // ButtonCheck): what the node reads now - visible, its x, y and bbox - and
-// Sort's bbox. The core decides once the box has settled; an off-target node
-// is taken away with UiRemoveNode and made again, once, at the origin its
-// measured extents give - at most two UiCreateNode calls per Create step. One
-// still off after that is kept and said once; it never turns the mod off.
-// While the node is checked its look is read again each step, so the core
-// judges the look on the settled read, not the frame it was written in.
+// Sort's bbox, with the target the core works out from it this step. The
+// core decides once the box has settled; an off-target node is taken away
+// with UiRemoveNode and made again, once, at the origin its measured extents
+// give - at most two UiCreateNode calls per Create step. One still off after
+// that is kept and said once; it never turns the mod off. While the node is
+// checked its look is read again each step, so the core judges the look on
+// the settled read, not the frame it was written in.
 static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue& sort)
 {
     if (!g_SmaButtonHeld) return;
     auto& mod = ForgePact::StashMoveAllMod::Instance();
-    if (mod.ButtonLookWanted()) mod.NoteButtonLook(SmaButtonLook(sort, false));
+    const ForgePact::StashMoveBox sortBox = SmaBox(sort);
+    ForgePact::StashMoveBox target;
+    const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
+        ForgePact::StashMoveBox(), kSmaButtonGap, target);
+    const double nodeX = MenuLayoutRead(g_SmaButton, "x"), nodeY = MenuLayoutRead(g_SmaButton, "y");
+    if (mod.ButtonLookWanted())
+        mod.NoteButtonLook(SmaButtonLook(sort, false, SmaButtonLookFrame(sort, sortBox, target, nodeX, nodeY)));
     bool visible = false;
     try { visible = g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue("visible") }).ToBoolean(); }
     catch (...) { visible = false; }
     double x = 0, y = 0;
     std::string line;
-    const ForgePact::StashMoveButtonCheck step = mod.ButtonCheck(visible, SmaBox(sort),
-        MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), SmaBox(g_SmaButton), kSmaButtonGap, x, y, line);
+    const ForgePact::StashMoveButtonCheck step = mod.ButtonCheck(visible, sortBox, target, ref,
+        nodeX, nodeY, SmaBox(g_SmaButton), x, y, line);
     if (!line.empty()) Out(line);
     if (step != ForgePact::StashMoveButtonCheck::Remake) return;
     SmaButtonRemove();
@@ -37881,7 +37960,7 @@ static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue&
         return;
     }
     mod.NoteButtonMade(true);
-    mod.NoteButtonLook(SmaButtonLook(sort, true));
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sort, sortBox, target, x, y)));
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the
