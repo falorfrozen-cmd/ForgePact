@@ -1898,21 +1898,36 @@ activation **undefined**, and the call-stack name `ForgePactMoveAll`; then the
 node's own `text` is set to `Move all` and read back, the one write the button
 makes, on the instance the mod made (a node whose label does not read back is
 taken away again). **Its place (ForgePact #131):** x and y are the node's
-origin, which for `UI_Button_Small_obj` is its bbox centre while the Sort
-node's is its top-left (§ Static reading 4). The first release passed Sort's x
+origin, which for the mod's node (`UI_Button_Small_obj` drawn with
+`Menu_Button_Chat_spr`) is its bbox centre while the Sort node's (the same
+object, drawn with `Inventory_Tab_Button_Solid_spr`) is its top-left, so the
+origin follows the sprite, not the object (§ Static reading 4). The first release passed Sort's x
 less Sort's width less 8, and Sort's y, as if the new node's origin were its
 top-left, so the button sat centred on the point meant for its top-left corner.
 The core's `ButtonOrigin` now gives the origin at which the node's bbox right
 edge is 8 GUI units left of Sort's bbox left edge and its vertical centre is
 Sort's, from Sort's bbox and the node's own extents about its origin (left,
-up, right, down), read by name from the node after it is made and labelled and
-kept for the session. The session's first node is made at a provisional origin
-(a box of Sort's own size about its origin); when a node's read bbox is not
-within 1 GUI unit of the target (`ButtonOnTarget`) it is removed with
-`UiRemoveNode` and made again at the origin its measured extents give, in the
-same ensure step, so a step makes at most two. One still off after that is
-kept and said once, `stashmoveall: button - placed <dx>,<dy> off beside Sort;
-F4 still works`, and never turns the mod off. With the measured extents
+up, right, down), read by name from the node and kept for the session. The
+session's first node is made at a provisional origin (a box of Sort's own size
+about its origin). The place is not checked in the frame the node is made: a
+box read then is not known to be the settled one (Live 1f: the node read
+`visible=0` in that frame and 1 a frame later), and a GUI scale applied after
+`UiCreateNode` returns would leave a stale box that could look on target (the
+review of #131 round 0). So on each later ensure step the core's `ButtonCheck`
+is handed the node's `visible`, x, y and bbox and Sort's bbox, and decides
+only once the node is visible and both boxes read the same on two steps in a
+row; then it measures the extents and, when the box is not within 1 GUI unit
+of the target (`ButtonOnTarget`), the node is removed with `UiRemoveNode` and
+made again once at the origin those extents give, and checked the same way -
+at most two `UiCreateNode` calls per Create step. Every node made is checked,
+so each stash open is. On target is said once a session, `stashmoveall:
+button - placed beside Sort, box <l,t,r,b>`; one still off is kept and said
+once, `stashmoveall: button - placed <dx>,<dy> off beside Sort; F4 still
+works`; a box not settled six ensure steps after the make is said unchecked
+once; none turns the mod off. The bare `stashmoveall` state line carries what
+the check read (`button_place=`, `button_box=`, `button_extents=`,
+`button_makes=`, `button_step=`), so `button-placed`'s `menulayout` rows can be
+compared with the mod's own reading. With the measured extents
 (96.9, 22.8, 98.8, 22.8) and the Live 1g Sort box that is the origin 2196.7,
 1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at a 2560x1440 GUI.
 No `UiSetActivationFunc`, and no script hooked for it: a node

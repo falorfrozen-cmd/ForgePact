@@ -426,28 +426,61 @@ class StashMoveAllContractTests(unittest.TestCase):
         # read from the node itself after it is made and labelled (kept for
         # the session), never a formula built on Sort's top-left or a
         # constant; an off-target node is taken away by UiRemoveNode and made
-        # again once, so a step makes at most two; one still off is kept and
-        # said once, and the mod stays on.
+        # again once, so a Create step makes at most two; one still off is
+        # kept and said once, and the mod stays on.
+        header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
         create = self.body("static void SmaButtonCreate(")
         self.assertNotIn("sx - sw - kSmaButtonGap", create)
-        self.assertEqual(create.count("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, "), 2)
         self.assertIn("const ForgePact::StashMoveBox sortBox = SmaBox(sort);", create)
-        self.assertIn('ExtentsOf(MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), box, e)', create)
-        self.assertIn("ForgePact::StashMoveAllMod::ButtonOnTarget(sortBox, box, kSmaButtonGap)", create)
-        self.assertIn(": ForgePact::StashMoveAllMod::ProvisionalExtents(sortBox);", create)
-        # One UiCreateNode site, reached at most twice: the first make, and one
-        # more only after UiRemoveNode took the first away.
+        self.assertIn("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, mod.ButtonExtents(sortBox), kSmaButtonGap, x, y)",
+                      create)
+        self.assertLess(create.index("SmaButtonMake(stash, window, x, y, why)"), create.index("mod.NoteButtonMade(false);"))
+        extents = function_body(header, "StashMoveExtents ButtonExtents(")
+        self.assertIn("return m_ButtonExtentsRead ? m_ButtonExtents : ProvisionalExtents(sort);", extents)
+        # Review of round 0 (instrument blindness): the place is never judged
+        # in the frame the node is made - Create reads no box of the node -
+        # but by SmaButtonCheck on later ensure steps, from what the node
+        # reads then (visible, x, y, bbox), and only once its box has read
+        # the same on two steps with the node visible.
+        for word in ("SmaBox(g_SmaButton)", "ButtonOnTarget", "ButtonCheck", "ExtentsOf"):
+            self.assertNotIn(word, create, word)
+        check = self.body("static void SmaButtonCheck(")
+        self.assertTrue(check.lstrip("{ \n").startswith("if (!g_SmaButtonHeld) return;"))
+        self.assertIn('"variable_instance_get", { g_SmaButton, RValue("visible") }', check)
+        self.assertIn('mod.ButtonCheck(visible, SmaBox(sort),\n        MenuLayoutRead(g_SmaButton, "x"), '
+                      'MenuLayoutRead(g_SmaButton, "y"), SmaBox(g_SmaButton), kSmaButtonGap, x, y, line);', check)
+        self.assertIn("default: SmaButtonCheck(stash, window, sort); break;", self.body("static void SmaButtonEnsure("))
+        judge = function_body(header, "StashMoveButtonCheck ButtonCheck(")
+        self.assertIn("if (m_ButtonMakes == 0 || m_ButtonChecked) return StashMoveButtonCheck::Keep;", judge)
+        self.assertIn("const bool reads = visible && BoxReads(box) && BoxReads(sort);", judge)
+        self.assertIn("const bool settled = reads && m_ButtonHaveLast && SameBox(box, m_ButtonLast) "
+                      "&& SameBox(sort, m_ButtonLastSort);", judge)
+        self.assertLess(judge.index("if (!settled) {"), judge.index("ExtentsOf(nodeX, nodeY, box, e)"))
+        self.assertLess(judge.index("ExtentsOf(nodeX, nodeY, box, e)"), judge.index("ButtonOnTarget(sort, box, gap)"))
+        self.assertIn("static constexpr int kButtonSettleSteps = 6;", self.header)
+        # One UiCreateNode site, reached at most twice per Create step: the
+        # first make, and one more only after the core asked for it once and
+        # UiRemoveNode took the first away.
         self.assertEqual(self.button_block().count("SmaCall(kSmaUiCreateNode"), 1)
-        self.assertEqual(len(re.findall(r"\bmake\(x, y, why\)", create)), 2)
-        second = create[create.index("SmaButtonRemove();\n        if (!g_SmaButtonHeld) {"):]
-        self.assertIn("make(x, y, why)", second)
-        self.assertLess(create.index("if (measure(box)) return;"), create.index("SmaButtonRemove();\n        if (!g_SmaButtonHeld)"))
-        # Still off: said once by the core, the mod left on.
-        self.assertIn("const std::string line = mod.ButtonOffTarget(sortBox, box, kSmaButtonGap);", create)
+        self.assertEqual(self.button_block().count("SmaButtonMake(stash, window, x, y, why)"), 2)
+        self.assertIn("if (!m_ButtonRemakeAsked && ButtonOrigin(sort, e, gap, x, y)) {", judge)
+        self.assertLess(judge.index("if (!m_ButtonRemakeAsked"), judge.index("m_ButtonRemakeAsked = true;"))
+        made = function_body(header, "void NoteButtonMade(bool remake)")
+        self.assertIn("if (!remake) m_ButtonRemakeAsked = false;", made)
+        remake = check[check.index("if (step != ForgePact::StashMoveButtonCheck::Remake) return;"):]
+        order = [remake.index(t) for t in ("SmaButtonRemove();", "if (g_SmaButtonHeld) return;",
+                                           "SmaButtonMake(stash, window, x, y, why)", "mod.NoteButtonMade(true);")]
+        self.assertEqual(order, sorted(order))
+        # Still off: said once by the core, the mod left on; placed on target
+        # is said once too, and the state line carries what the check read.
+        self.assertIn("line = ButtonOffTarget(sort, box, gap);", judge)
         self.assertIn('" off beside Sort; F4 still works"', self.header)
-        off = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "std::string ButtonOffTarget(")
-        self.assertNotIn("TurnOffForSession", off)
-        self.assertNotIn("SetEnabled", off)
+        self.assertIn('"stashmoveall: button - placed beside Sort, box "', self.header)
+        for field in ('" button_place="', '" button_box="', '" button_extents="', '" button_makes="', '" button_step="'):
+            self.assertIn(field, self.header, field)
+        for body in (function_body(header, "std::string ButtonOffTarget("), judge):
+            self.assertNotIn("TurnOffForSession", body)
+            self.assertNotIn("SetEnabled", body)
         # No x or y is written to the node: only its text.
         self.assertEqual(self.button_block().count("variable_instance_set"), 1)
         origin = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static bool ButtonOrigin(")
@@ -486,13 +519,14 @@ class StashMoveAllContractTests(unittest.TestCase):
         # A Sort that never shows is said once, not silence.
         self.assertIn('"stashmoveall: button - not shown: no visible Sort button (uiNodeCallstack "', ensure)
         self.assertIn("if (s_NoSort >= 3 && !s_NoSortSaid && mod.IsEnabled()) {", ensure)
-        create = self.body("static void SmaButtonCreate(")
+        create = self.body("static bool SmaButtonMake(")
         self.assertIn("SmaCall(kSmaUiCreateNode, stash, stash,", create)
         self.assertIn("object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);", create)
         self.assertIn('static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";', block)
         self.assertIn('static constexpr const char* kSmaButtonText = "Move all";', block)
         # A refusal is the core's once-only line; the mod stays on.
-        self.assertIn("mod.ButtonRefused(why)", create)
+        self.assertIn("mod.ButtonRefused(why)", self.body("static void SmaButtonCreate("))
+        self.assertIn("mod.ButtonRefused(why)", self.body("static void SmaButtonCheck("))
         self.assertNotIn("TurnOffForSession", block)
         self.assertNotIn("SetEnabled", block)
         # The only write: the label of the node the mod made, read back.
@@ -535,7 +569,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertNotIn("gml_Script_UiSetActivationFunc", release)
         self.assertNotIn("kSmaProbeBind", release)
         # UiCreateNode's fourth argument, the activation, is undefined.
-        create = self.body("static void SmaButtonCreate(")
+        create = self.body("static bool SmaButtonMake(")
         self.assertRegex(create, r"SmaCall\(kSmaUiCreateNode, stash, stash,\s*\{ RValue\(x\), "
                                  r"RValue\(y\), object, RValue\(\), RValue\(std::string\(kSmaButtonCallstack\)\) \}, node\);")
         # Positive control: the research build's probe still carries the bind.
@@ -585,7 +619,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         # No press is counted before mouse_check_button_pressed says one was.
         self.assertLess(poll.index('CallBuiltin("mouse_check_button_pressed"'), poll.index("NoteButtonMiss("))
         # The node held or not, as the adapter holds it.
-        self.assertIn("mod.NoteButtonHeld(true);", self.body("static void SmaButtonCreate("))
+        self.assertIn("mod.NoteButtonHeld(true);", self.body("static bool SmaButtonMake("))
         self.assertIn("NoteButtonHeld(false);", self.body("static void SmaButtonForget("))
         # The core's side: each counter, and the state line carrying them
         # after the key, the state word still first for the panel.

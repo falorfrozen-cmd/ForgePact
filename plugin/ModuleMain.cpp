@@ -37743,23 +37743,53 @@ static ForgePact::StashMoveBox SmaBox(const RValue& inst)
     return b;
 }
 
-// The node's extents about its origin, measured on the first node of the
-// session and kept (ForgePact #131): UiCreateNode's x, y are the node's
-// origin, which for UI_Button_Small_obj is its bbox centre, not its top-left
-// as for Sort (Live 1f and 1g), so the origin that puts it beside Sort is
-// worked out from them.
-static ForgePact::StashMoveExtents g_SmaButtonExtents;
-static bool g_SmaButtonExtentsRead = false;
+// Make the node at x, y under the stash window, labelled; false with the
+// reason when it could not be. UiCreateNode(x, y, object, activation,
+// callstack name): the activation undefined, so a click on the node runs
+// nothing of the game's. Then the label: the one write, on the mod's own
+// node, read back. Without it the node would be a blank button, so it is
+// taken away again.
+static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, double y, std::string& why)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    double objIdx = -1;
+    RValue object;
+    try { object = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj))) }); }
+    catch (...) {}
+    if (!ApNumber(object, objIdx) || objIdx < 0) { why = "asset_get_index found no UI_Button_Small_obj; nothing was called"; return false; }
+    RValue node;
+    const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
+        { RValue(x), RValue(y), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
+    if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
+        why = c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c);
+        return false;
+    }
+    g_SmaButton = node;
+    g_SmaButtonOwner = window;
+    g_SmaButtonHeld = true;
+    mod.NoteButtonHeld(true);
+    bool labelled = false;
+    try {
+        g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
+        const RValue text = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("text") });
+        labelled = text.m_Kind == VALUE_STRING && text.ToString() == kSmaButtonText;
+    } catch (...) { labelled = false; }
+    if (!labelled) {
+        SmaButtonRemove();
+        why = "its label could not be set, so it was taken away again";
+        return false;
+    }
+    return true;
+}
 
 // Make the node beside Sort; a refusal is reported once by the core's line.
 // Its right edge sits kSmaButtonGap GUI units left of Sort's bbox and its
-// vertical centre on Sort's (the core's ButtonOrigin). The node's extents are
-// read from the node itself after it is made and labelled; until they have
-// been read once this session it is made at a provisional origin, and a node
-// that is not within one GUI unit of its place is taken away with UiRemoveNode
-// and made again at the corrected origin, in this same step - at most two
-// UiCreateNode calls. One still off after that is kept and said once; it
-// never turns the mod off.
+// vertical centre on Sort's (the core's ButtonOrigin, ForgePact #131:
+// UiCreateNode's x, y are the node's origin, which for the mod's node is its
+// bbox centre, not its top-left as for Sort). The extents are the ones the
+// core measured on a settled node this session, else provisional ones. The
+// place is not checked here: a box read in the frame the node is made is not
+// known to be its settled box, so SmaButtonCheck does it on later steps.
 static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
 {
     auto& mod = ForgePact::StashMoveAllMod::Instance();
@@ -37772,74 +37802,44 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
         refuse("the Sort button's bbox did not read; nothing was called");
         return;
     }
-    double objIdx = -1;
-    RValue object;
-    try { object = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj))) }); }
-    catch (...) {}
-    if (!ApNumber(object, objIdx) || objIdx < 0) { refuse("asset_get_index found no UI_Button_Small_obj; nothing was called"); return; }
-    // UiCreateNode(x, y, object, activation, callstack name): the activation
-    // undefined, so a click on the node runs nothing of the game's. Then the
-    // label: the one write, on the mod's own node, read back. Without it the
-    // node would be a blank button, so it is taken away again.
-    auto make = [&](double x, double y, std::string& why) -> bool {
-        RValue node;
-        const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
-            { RValue(x), RValue(y), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
-        if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
-            why = c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c);
-            return false;
-        }
-        g_SmaButton = node;
-        g_SmaButtonOwner = window;
-        g_SmaButtonHeld = true;
-        mod.NoteButtonHeld(true);
-        bool labelled = false;
-        try {
-            g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
-            const RValue text = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("text") });
-            labelled = text.m_Kind == VALUE_STRING && text.ToString() == kSmaButtonText;
-        } catch (...) { labelled = false; }
-        if (!labelled) {
-            SmaButtonRemove();
-            why = "its label could not be set, so it was taken away again";
-            return false;
-        }
-        return true;
-    };
-    // Where the node was made, its extents from it (kept for the session),
-    // and whether it is on target.
-    auto measure = [&](ForgePact::StashMoveBox& box) -> bool {
-        box = SmaBox(g_SmaButton);
-        ForgePact::StashMoveExtents e;
-        if (ForgePact::StashMoveAllMod::ExtentsOf(MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), box, e)) {
-            g_SmaButtonExtents = e;
-            g_SmaButtonExtentsRead = true;
-        }
-        return ForgePact::StashMoveAllMod::ButtonOnTarget(sortBox, box, kSmaButtonGap);
-    };
     double x = 0, y = 0;
-    const ForgePact::StashMoveExtents first = g_SmaButtonExtentsRead ? g_SmaButtonExtents
-                                                                     : ForgePact::StashMoveAllMod::ProvisionalExtents(sortBox);
-    std::string why;
-    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, first, kSmaButtonGap, x, y)) {
+    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, mod.ButtonExtents(sortBox), kSmaButtonGap, x, y)) {
         refuse("the Sort button's bbox did not give an origin; nothing was called");
         return;
     }
-    if (!make(x, y, why)) { refuse(why); return; }
-    ForgePact::StashMoveBox box;
-    if (measure(box)) return;
-    // Off target: made again once, at the origin its own extents give, if
-    // they read and UiRemoveNode took the first away.
-    if (g_SmaButtonExtentsRead
-        && ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, g_SmaButtonExtents, kSmaButtonGap, x, y)) {
-        SmaButtonRemove();
-        if (!g_SmaButtonHeld) {
-            if (!make(x, y, why)) { refuse(why); return; }
-            if (measure(box)) return;
-        }
-    }
-    const std::string line = mod.ButtonOffTarget(sortBox, box, kSmaButtonGap);
+    std::string why;
+    if (!SmaButtonMake(stash, window, x, y, why)) { refuse(why); return; }
+    mod.NoteButtonMade(false);
+}
+
+// The place check, each ensure step the node is held and wanted (the core's
+// ButtonCheck): what the node reads now - visible, its x, y and bbox - and
+// Sort's bbox. The core decides once the box has settled; an off-target node
+// is taken away with UiRemoveNode and made again, once, at the origin its
+// measured extents give - at most two UiCreateNode calls per Create step. One
+// still off after that is kept and said once; it never turns the mod off.
+static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue& sort)
+{
+    if (!g_SmaButtonHeld) return;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    bool visible = false;
+    try { visible = g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue("visible") }).ToBoolean(); }
+    catch (...) { visible = false; }
+    double x = 0, y = 0;
+    std::string line;
+    const ForgePact::StashMoveButtonCheck step = mod.ButtonCheck(visible, SmaBox(sort),
+        MenuLayoutRead(g_SmaButton, "x"), MenuLayoutRead(g_SmaButton, "y"), SmaBox(g_SmaButton), kSmaButtonGap, x, y, line);
     if (!line.empty()) Out(line);
+    if (step != ForgePact::StashMoveButtonCheck::Remake) return;
+    SmaButtonRemove();
+    if (g_SmaButtonHeld) return;   // UiRemoveNode left it: kept, and the core says it off next step
+    std::string why;
+    if (!SmaButtonMake(stash, window, x, y, why)) {
+        const std::string refused = mod.ButtonRefused(why);
+        if (!refused.empty()) Out(refused);
+        return;
+    }
+    mod.NoteButtonMade(true);
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the
@@ -37872,7 +37872,7 @@ static void SmaButtonEnsure()
     switch (mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)) {
     case ForgePact::StashMoveButtonStep::Create: SmaButtonCreate(stash, window, sort); break;
     case ForgePact::StashMoveButtonStep::Remove: SmaButtonRemove(); break;
-    default: break;
+    default: SmaButtonCheck(stash, window, sort); break;
     }
 }
 

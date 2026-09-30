@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -79,7 +80,10 @@ namespace ForgePact {
 //   left as it was (MayCall);
 // - the in-game button's place: its origin from Sort's bbox and the node's
 //   own extents, measured on it, so its right edge sits 8 GUI units left of
-//   Sort and its vertical centre on Sort's (ButtonOrigin, ButtonOnTarget);
+//   Sort and its vertical centre on Sort's (ButtonOrigin, ButtonOnTarget),
+//   checked on later ensure steps once the node's box has settled, never in
+//   the frame it was made, with one remake when it is off (ButtonExtents,
+//   NoteButtonMade, ButtonCheck), and what the check read on the state line;
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
 //   when the stash tab on show is still the planned one, the source cell no
 //   longer holds the key, and either the destination holds it (a cell) or the
@@ -117,6 +121,10 @@ enum class StashMoveOutcome : int { Moved = 1, Skipped, Unconfirmed };
 
 // What the frame tick does with the in-game button's node this frame.
 enum class StashMoveButtonStep : int { Keep = 0, Create, Remove };
+
+// What the ensure step does with a node it holds, from the place check
+// (ButtonCheck): nothing, or take it away and make it again at a new origin.
+enum class StashMoveButtonCheck : int { Keep = 0, Remake };
 
 // The shown stash tab's stacks of one identity, as the adapter read them:
 // each stack's count, in the array's order (on the Socketable tab, the one
@@ -359,14 +367,25 @@ public:
 
     // ---- the button's place (ForgePact #131) --------------------------------
     //
-    // UiCreateNode's x, y are the new node's origin, and for UI_Button_Small_obj
-    // that origin is its bbox centre, while the Sort node's is its bbox top-left
-    // (measured, Live 1f and 1g: the same numbers both times). The first
-    // release placed the node as if its origin were its top-left, so the box
-    // sat centred on the point meant for its top-left corner (the owner's
-    // report of 2026-09-30). The origin is now worked out from Sort's bbox and
-    // the node's own extents, measured on the node after it is made, so a
-    // sprite or GUI-scale change in a game patch still places it right.
+    // UiCreateNode's x, y are the new node's origin. For the mod's node (a
+    // UI_Button_Small_obj drawn with Menu_Button_Chat_spr) that origin is its
+    // bbox centre, while the Sort node's (the same object, drawn with
+    // Inventory_Tab_Button_Solid_spr) is its bbox top-left - so the origin
+    // follows the sprite, not the object (measured, Live 1f and 1g: the same
+    // numbers both times). The first release placed the node as if its origin
+    // were its top-left, so the box sat centred on the point meant for its
+    // top-left corner (the owner's report of 2026-09-30). The origin is now
+    // worked out from Sort's bbox and the node's own extents, measured on the
+    // node itself, so a sprite or GUI-scale change in a game patch still
+    // places it right.
+    //
+    // Where it is checked (the review of #131 round 0): not in the frame the
+    // node is made, whose box is not known to be the settled one (Live 1f: the
+    // node read visible=0 in the reply and 1 a frame later), but on later
+    // ensure steps, once the node reads visible and its box reads the same on
+    // two steps in a row (ButtonCheck). Every node made is checked that way,
+    // so a later stash open is checked again, and the state line carries what
+    // the check read, for comparison with menulayout's rows.
 
     // Within this many GUI units of the target, the node is on target.
     static constexpr double kButtonTolerance = 1.0;
@@ -439,6 +458,101 @@ public:
         return "stashmoveall: button - placed " + Tenths(dx) + "," + Tenths(dy) + " off beside Sort; F4 still works";
     }
 
+    // A check reads this many ensure steps after a make at most; a node whose
+    // box has not settled by then is said unchecked and left as it is.
+    static constexpr int kButtonSettleSteps = 6;
+
+    // Two reads of one box are the same box: every side within a twentieth.
+    static bool SameBox(const StashMoveBox& a, const StashMoveBox& b) {
+        return BoxReads(a) && BoxReads(b) && std::fabs(a.left - b.left) <= 0.05 && std::fabs(a.top - b.top) <= 0.05
+            && std::fabs(a.right - b.right) <= 0.05 && std::fabs(a.bottom - b.bottom) <= 0.05;
+    }
+
+    // The extents to make a node with: the ones measured on a settled node
+    // this session, else the provisional ones about Sort's size.
+    StashMoveExtents ButtonExtents(const StashMoveBox& sort) const {
+        return m_ButtonExtentsRead ? m_ButtonExtents : ProvisionalExtents(sort);
+    }
+
+    // The adapter made a node: the first of a Create step (remake false) or
+    // the one ButtonCheck asked for (remake true). The check starts over on
+    // the new node; at most one remake is asked per Create step.
+    void NoteButtonMade(bool remake) {
+        m_ButtonMakes = remake ? m_ButtonMakes + 1 : 1;
+        if (!remake) m_ButtonRemakeAsked = false;
+        m_ButtonChecked = false;
+        m_ButtonSteps = 0;
+        m_ButtonHaveLast = false;
+        std::lock_guard<std::mutex> lock(m_PlaceMutex);
+        m_PlaceWord = "pending";
+        m_PlaceBox = StashMoveBox();
+        m_PlaceMakes = m_ButtonMakes;
+        m_PlaceStep = 0;
+    }
+
+    // Each ensure step while the adapter holds a node, with what it read now:
+    // whether the node is visible, Sort's box, the node's x, y and box. Until
+    // the node reads visible and its box (and Sort's) reads the same as on the
+    // step before, nothing is decided. Then its extents are measured and kept
+    // for the session, and the box is judged: on target is said once a
+    // session, positively; off target asks for one remake at the origin those
+    // extents give (Remake, x and y set), and a node still off after it - or
+    // one whose remake was asked and not carried out - is kept and said once.
+    // A box that has not settled after kButtonSettleSteps is said unchecked.
+    // `line` is the line to print, empty when none. Never turns the mod off.
+    StashMoveButtonCheck ButtonCheck(bool visible, const StashMoveBox& sort, double nodeX, double nodeY,
+                                     const StashMoveBox& box, double gap, double& x, double& y, std::string& line) {
+        line.clear();
+        if (m_ButtonMakes == 0 || m_ButtonChecked) return StashMoveButtonCheck::Keep;
+        ++m_ButtonSteps;
+        const bool reads = visible && BoxReads(box) && BoxReads(sort);
+        const bool settled = reads && m_ButtonHaveLast && SameBox(box, m_ButtonLast) && SameBox(sort, m_ButtonLastSort);
+        m_ButtonHaveLast = reads;
+        m_ButtonLast = box;
+        m_ButtonLastSort = sort;
+        if (!settled) {
+            NotePlace(m_ButtonSteps < kButtonSettleSteps ? "pending" : "unsettled", box, nullptr);
+            if (m_ButtonSteps < kButtonSettleSteps) return StashMoveButtonCheck::Keep;
+            m_ButtonChecked = true;
+            line = SayButtonOff("its box had not settled " + std::to_string(m_ButtonSteps)
+                                + " ensure steps after it was made, so its place beside Sort is unchecked");
+            return StashMoveButtonCheck::Keep;
+        }
+        StashMoveExtents e;
+        if (!ExtentsOf(nodeX, nodeY, box, e)) {
+            NotePlace("unread", box, nullptr);
+            m_ButtonChecked = true;
+            line = SayButtonOff("its x, y did not read, so its place beside Sort is unchecked");
+            return StashMoveButtonCheck::Keep;
+        }
+        m_ButtonExtents = e;
+        m_ButtonExtentsRead = true;
+        if (ButtonOnTarget(sort, box, gap)) {
+            NotePlace("on", box, &e);
+            m_ButtonChecked = true;
+            if (!m_ButtonPlacedSaid) {
+                m_ButtonPlacedSaid = true;
+                line = "stashmoveall: button - placed beside Sort, box " + BoxText(box);
+            }
+            return StashMoveButtonCheck::Keep;
+        }
+        if (!m_ButtonRemakeAsked && ButtonOrigin(sort, e, gap, x, y)) {
+            m_ButtonRemakeAsked = true;
+            NotePlace("remake", box, &e);
+            return StashMoveButtonCheck::Remake;
+        }
+        NotePlace("off", box, &e);
+        m_ButtonChecked = true;
+        line = ButtonOffTarget(sort, box, gap);
+        return StashMoveButtonCheck::Keep;
+    }
+
+    // A box as l,t,r,b to a tenth, or none when it did not read.
+    static std::string BoxText(const StashMoveBox& b) {
+        if (!BoxReads(b)) return "none";
+        return Tenths(b.left) + "," + Tenths(b.top) + "," + Tenths(b.right) + "," + Tenths(b.bottom);
+    }
+
     // A number to a tenth, for the lines.
     static std::string Tenths(double v) {
         const long long t = std::llround(std::fabs(v) * 10);
@@ -491,13 +605,27 @@ public:
     // runs they started or why they did not. A click that moved nothing then
     // reads as poll-blind (presses=0 with button=held), a bbox miss (outside
     // or unread above 0, in_node not risen), a poll that threw (errors) or a
-    // guard drop (dropped, with last_drop).
+    // guard drop (dropped, with last_drop). Then the place check of the last
+    // node made (ButtonCheck): its verdict (none before any node, pending,
+    // remake, on, off, unsettled, unread), the node's last box and extents it
+    // read (none until read), how many nodes that Create step made, and the
+    // ensure step after the make that read them - so a bug report, or a live
+    // check comparing menulayout's rows, can tell what the mod itself read.
     std::string ButtonFields() const {
+        std::string place;
+        {
+            std::lock_guard<std::mutex> lock(m_PlaceMutex);
+            place = std::string(" button_place=") + m_PlaceWord + " button_box=" + BoxText(m_PlaceBox)
+                + " button_extents=" + (m_PlaceExtentsRead ? Tenths(m_PlaceExtents.left) + "," + Tenths(m_PlaceExtents.up) + ","
+                                                               + Tenths(m_PlaceExtents.right) + "," + Tenths(m_PlaceExtents.down)
+                                                           : std::string("none"))
+                + " button_makes=" + std::to_string(m_PlaceMakes) + " button_step=" + std::to_string(m_PlaceStep);
+        }
         return std::string(" button=") + (m_ButtonHeld.load() ? "held" : "none")
             + " presses=" + std::to_string(m_Presses.load()) + " in_node=" + std::to_string(m_PressesInNode.load())
             + " outside=" + std::to_string(m_PressesOutside.load()) + " unread=" + std::to_string(m_PressesUnread.load())
             + " errors=" + std::to_string(m_PollErrors.load()) + " taken=" + std::to_string(m_PressesTaken.load())
-            + " dropped=" + std::to_string(m_PressesDropped.load()) + " last_drop=" + m_LastDrop.load();
+            + " dropped=" + std::to_string(m_PressesDropped.load()) + " last_drop=" + m_LastDrop.load() + place;
     }
 
     static StashMoveTab TabOf(int tab) {
@@ -941,6 +1069,24 @@ public:
     std::string OffForSessionLine() const { return LossLine("stashmoveall", m_OffReason); }
 
 private:
+    // The place check's verdict and what it read, for the state line.
+    void NotePlace(const char* word, const StashMoveBox& box, const StashMoveExtents* e) {
+        std::lock_guard<std::mutex> lock(m_PlaceMutex);
+        m_PlaceWord = word;
+        m_PlaceBox = box;
+        if (e) { m_PlaceExtents = *e; m_PlaceExtentsRead = true; }
+        m_PlaceMakes = m_ButtonMakes;
+        m_PlaceStep = m_ButtonSteps;
+    }
+
+    // A place that could not be checked, said once a session with the
+    // off-target line; F4 and the press still work.
+    std::string SayButtonOff(const std::string& why) {
+        if (m_ButtonOffSaid) return std::string();
+        m_ButtonOffSaid = true;
+        return "stashmoveall: button - " + why + "; F4 still works";
+    }
+
     std::atomic<bool> m_Enabled{false};
     std::atomic<bool> m_OffThisSession{false};
     std::atomic<bool> m_ButtonPressed{false};
@@ -956,6 +1102,25 @@ private:
     bool              m_KeyWasDown = false;
     bool              m_ButtonRefused = false;   // a refusal already reported, while the stash stays open
     bool              m_ButtonOffSaid = false;   // the off-target line already said this session
+    bool              m_ButtonPlacedSaid = false; // the placed line already said this session
+    // The place check (ButtonCheck), on the frame tick's thread.
+    int               m_ButtonMakes = 0;         // nodes made by the current Create step, 0 before any
+    int               m_ButtonSteps = 0;         // ensure steps checked since the last make
+    bool              m_ButtonRemakeAsked = false;
+    bool              m_ButtonChecked = false;   // this node's place decided
+    bool              m_ButtonHaveLast = false;  // the step before read a visible node and both boxes
+    StashMoveBox      m_ButtonLast;
+    StashMoveBox      m_ButtonLastSort;
+    StashMoveExtents  m_ButtonExtents;           // measured on a settled node, kept for the session
+    bool              m_ButtonExtentsRead = false;
+    // What the state line prints of it, read on whichever thread prints it.
+    mutable std::mutex m_PlaceMutex;
+    const char*       m_PlaceWord = "none";
+    StashMoveBox      m_PlaceBox;
+    StashMoveExtents  m_PlaceExtents;
+    bool              m_PlaceExtentsRead = false;
+    int               m_PlaceMakes = 0;
+    int               m_PlaceStep = 0;
     std::string       m_OffReason;
 };
 

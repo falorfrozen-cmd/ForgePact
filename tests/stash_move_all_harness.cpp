@@ -101,12 +101,21 @@
 // its top-left: Live 1f and 1g). Written before the header had them; the
 // first error line was `error C2039: 'StashMoveStacks': is not a member of
 // 'ForgePact'` (on its using-declaration), 2026-09-30.
+//
+// #131 round 1 (the review's instrument-blindness finding: the button's place
+// was checked on a box read in the frame the node was made, which is not
+// known to be its settled box). The check moved to later ensure steps, on a
+// box that reads the same twice with the node visible, and the state line
+// carries what it read. Written before the header had it; the first error
+// line was `error C2039: 'StashMoveButtonCheck': is not a member of
+// 'ForgePact'`, 2026-09-30.
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -282,9 +291,12 @@ static std::string Joined(const std::vector<std::string>& lines)
 static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMaterial, bool wholeStackMerge);
 static StashMoveReport MergedWherePlannedACell();
 
+// The place check's fields of the state line before any node was made.
+static const std::string kIdlePlace =
+    " button_place=none button_box=none button_extents=none button_makes=0 button_step=0";
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
-    " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none";
+    " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none" + kIdlePlace;
 
 // ---- baseline: off is vanilla ----------------------------------------------
 
@@ -1239,6 +1251,115 @@ static void TargetOldButtonOriginPutItsCornerInsideTheTargetBox()
     Check("target/old_button_origin_put_its_corner_inside_the_target_box", ok, "");
 }
 
+static bool Has(const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; }
+
+static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
+{
+    // Review of #131 round 0 (instrument blindness): a box read in the frame
+    // UiCreateNode returned is not known to be the node's settled box (Live
+    // 1f: visible=0 in the reply, 1 a frame later), so the place is checked
+    // on later ensure steps only, once the node reads visible and its box
+    // reads the same on two steps in a row. Here the box changes between the
+    // creation and the first settled read: an early read that happens to sit
+    // on target is never taken as the answer.
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    bool ok = Has(mod.StateLine(), " button_place=none button_box=none button_extents=none button_makes=0 button_step=0");
+    // The first make of a session: at the provisional origin.
+    double px = 0, py = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, mod.ButtonExtents(kSortBox), kGap, px, py)
+        && Near(px, 2303.5 - 8 - 91.2, 0.05) && Near(py, 1230.25, 0.05);
+    mod.NoteButtonMade(false);
+    ok = ok && Has(mod.StateLine(), " button_place=pending") && Has(mod.StateLine(), " button_makes=1");
+    double tx = 0, ty = 0;
+    StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, tx, ty);
+    const StashMoveBox onTarget = Box(tx - e.left, ty - e.up, tx + e.right, ty + e.down);
+    const StashMoveBox settled = Box(px - e.left, py - e.up, px + e.right, py + e.down);   // 7.6 right of its place
+    double x = 0, y = 0;
+    std::string line;
+    // Not visible yet; then visible once with the early box; then the box
+    // changes: none of these is a settled read, so nothing is decided.
+    ok = ok && mod.ButtonCheck(false, kSortBox, px, py, onTarget, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, px, py, onTarget, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=pending");
+    // The same box twice: settled, off target, so it is made again at the
+    // origin its own measured extents give.
+    ok = ok && mod.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake && line.empty()
+        && Near(x, 2196.7, 0.05) && Near(y, 1230.25, 0.05)
+        && Has(mod.StateLine(), " button_place=remake") && Has(mod.StateLine(), " button_extents=96.9,22.8,98.8,22.8")
+        && Has(mod.StateLine(), " button_step=4");
+    mod.NoteButtonMade(true);
+    const StashMoveBox good = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    ok = ok && mod.ButtonCheck(false, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty();
+    // Settled on target: said once, positively, with the box it read.
+    ok = ok && mod.ButtonCheck(true, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed beside Sort, box 2099.8,", 0) == 0
+        && Has(mod.StateLine(), " button_place=on button_box=2099.8,") && Has(mod.StateLine(), " button_makes=2 button_step=3");
+    const std::string placed = line;
+    // Checked: later steps read nothing more and say nothing.
+    ok = ok && mod.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=on");
+    // The next stash open makes it straight at the measured extents, and
+    // checks that node again; the placed line is not said twice.
+    double nx = 0, ny = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, mod.ButtonExtents(kSortBox), kGap, nx, ny)
+        && Near(nx, 2196.7, 0.05) && Near(ny, 1230.25, 0.05);
+    mod.NoteButtonMade(false);
+    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none")
+        && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=on button_box=2099.8,");
+
+    // Negative control: a box that never settles is never judged nor made
+    // again; after kButtonSettleSteps it is said unchecked, once.
+    StashMoveAllMod drift;
+    drift.SetEnabled(true);
+    drift.NoteButtonMade(false);
+    bool remade = false;
+    int said = 0;
+    std::string unsettled;
+    for (int i = 0; i < StashMoveAllMod::kButtonSettleSteps + 3; ++i) {
+        const StashMoveBox moving = Box(settled.left + i, settled.top, settled.right + i, settled.bottom);
+        remade = remade || drift.ButtonCheck(true, kSortBox, px, py, moving, kGap, x, y, line) == Check_::Remake;
+        if (!line.empty()) { ++said; unsettled = line; }
+    }
+    ok = ok && !remade && said == 1 && Has(unsettled, "had not settled") && Has(unsettled, "; F4 still works")
+        && Has(drift.StateLine(), " button_place=unsettled") && drift.IsEnabled();
+    // Negative control: no third make. Still off after the remake, the node
+    // is kept and said once, and the mod stays on.
+    StashMoveAllMod off;
+    off.SetEnabled(true);
+    off.NoteButtonMade(false);
+    ok = ok && off.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && off.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake;
+    off.NoteButtonMade(true);
+    ok = ok && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed -83.6,", 0) == 0 && Has(line, " off beside Sort; F4 still works")
+        && Has(off.StateLine(), " button_place=off") && off.IsEnabled()
+        && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty();
+    // Negative control: a remake UiRemoveNode could not carry out (the node
+    // still held, no second make) is not asked for again: said off instead.
+    StashMoveAllMod kept;
+    kept.SetEnabled(true);
+    kept.NoteButtonMade(false);
+    kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line);
+    ok = ok && kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake
+        && kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && Has(line, " off beside Sort; F4 still works") && Has(kept.StateLine(), " button_place=off");
+    // Negative control: no node made, nothing to check.
+    StashMoveAllMod none;
+    none.SetEnabled(true);
+    ok = ok && none.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty()
+        && none.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty();
+    Check("target/button_is_checked_on_its_settled_box_not_the_creation_frame", ok, placed + " | " + unsettled);
+}
+
 static void TargetShownTabRoom()
 {
     // The room check reads the shown tab's own cells: a free block of the
@@ -1629,12 +1750,12 @@ static void TargetButtonCountersNameWhereAPressWent()
     const double l = 520, t = 600, r = 600, b = 632;
     StashMoveAllMod mod;
     const std::string off0 = "stashmoveall: state=off key=F4 button=none presses=0 in_node=0 outside=0 unread=0 errors=0"
-                             " taken=0 dropped=0 last_drop=none";
+                             " taken=0 dropped=0 last_drop=none" + kIdlePlace;
     bool ok = mod.StateLine() == off0;
     mod.SetEnabled(true);
     mod.NoteButtonHeld(true);
     const std::string blind = "stashmoveall: state=on key=F4 button=held presses=0 in_node=0 outside=0 unread=0 errors=0"
-                              " taken=0 dropped=0 last_drop=none";
+                              " taken=0 dropped=0 last_drop=none" + kIdlePlace;
     ok = ok && mod.StateLine() == blind;
     // The misses: outside the box, a box that did not read, a box inside
     // out, a mouse point that did not read; and a poll that threw.
@@ -1656,7 +1777,7 @@ static void TargetButtonCountersNameWhereAPressWent()
     const bool nothing = mod.TakeButtonPress(true, true, false);
     ok = ok && !fg && !stash && !held && taken && !nothing;
     const std::string after = "stashmoveall: state=on key=F4 button=held presses=8 in_node=4 outside=1 unread=3 errors=1"
-                              " taken=1 dropped=3 last_drop=modifier";
+                              " taken=1 dropped=3 last_drop=modifier" + kIdlePlace;
     ok = ok && mod.StateLine() == after;
     // A press recorded, then the switch off before the tick took it: dropped
     // as off. The node gone: button=none, the counts kept for the session.
@@ -1665,7 +1786,7 @@ static void TargetButtonCountersNameWhereAPressWent()
     const bool whileOff = mod.TakeButtonPress(true, true, false);
     mod.NoteButtonHeld(false);
     const std::string offAfter = "stashmoveall: state=off key=F4 button=none presses=9 in_node=5 outside=1 unread=3 errors=1"
-                                 " taken=1 dropped=4 last_drop=off";
+                                 " taken=1 dropped=4 last_drop=off" + kIdlePlace;
     ok = ok && !whileOff && mod.StateLine() == offAfter;
     // Negative control: PressReads is true for a readable point and box
     // whether the point is inside or not.
@@ -1692,7 +1813,7 @@ static void TargetOffForThisSessionStateLineKeepsTheButtonFields()
     ok = ok && taken && loss.outcome == StashMoveOutcome::Unconfirmed && !mod.Record(t, loss) && mod.OffThisSession();
     mod.NoteButtonHeld(false);
     const std::string want = "stashmoveall: state=off-for-this-session button=none presses=1 in_node=1 outside=0"
-                             " unread=0 errors=0 taken=1 dropped=0 last_drop=none reason=" + mod.OffReason();
+                             " unread=0 errors=0 taken=1 dropped=0 last_drop=none" + kIdlePlace + " reason=" + mod.OffReason();
     ok = ok && !mod.OffReason().empty() && mod.StateLine() == want;
     // The state word stays first, for the panel.
     ok = ok && mod.StateLine().rfind("stashmoveall: state=off-for-this-session ", 0) == 0;
@@ -1739,6 +1860,7 @@ int main()
     BaselineButtonSmallOriginIsItsCentreAndSortOriginItsTopLeft();
     TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt();
     TargetOldButtonOriginPutItsCornerInsideTheTargetBox();
+    TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

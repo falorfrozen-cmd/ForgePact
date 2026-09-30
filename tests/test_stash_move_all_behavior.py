@@ -295,6 +295,16 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # the target box. Negative control: its top-left does not.
         self.assertScenario("target/old_button_origin_put_its_corner_inside_the_target_box")
 
+    def test_target_button_is_checked_on_its_settled_box_not_the_creation_frame(self):
+        # Review of round 0: the place is checked on later ensure steps, once
+        # the node reads visible and its box reads the same twice; a box that
+        # changes after the creation frame is judged by its settled read. The
+        # placed line is said once, and the state line carries the box and
+        # extents read. Negative controls: a box that never settles is said
+        # unchecked and never remade; no third make; a remake UiRemoveNode
+        # could not carry out is not asked again; no node, nothing checked.
+        self.assertScenario("target/button_is_checked_on_its_settled_box_not_the_creation_frame")
+
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
 

@@ -656,10 +656,14 @@ itself.
   `off (this session)` beside the switch.
 - **The button** is there only while the switch is on and the stash is open
   with the backpack's Sort button showing. It sits just left of **Sort**,
-  level with it, its right edge a small gap from Sort's left edge; if the
-  game ever draws it somewhere else, the log says so once
-  (`stashmoveall: button - placed ... off beside Sort`) and the button and F4
-  still work. Turning the switch off takes it
+  level with it, its right edge a small gap from Sort's left edge. A moment
+  after it appears the mod checks where the game drew it and moves it once
+  if needed; the log says where it ended up, once a session
+  (`stashmoveall: button - placed beside Sort, box ...`, or
+  `stashmoveall: button - placed ... off beside Sort` if the game draws it
+  somewhere else, when the button and F4 still work), and the bare
+  `stashmoveall` line carries the box it read (`button_place=`,
+  `button_box=`). Turning the switch off takes it
   away at once, and closing the stash closes it with the window. Turned on
   while the stash is already open, the button may only appear after you
   click a stash tab; F4 does not need the button. A click on
