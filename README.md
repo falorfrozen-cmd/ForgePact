@@ -49,7 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
-| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button left of the backpack's Sort button, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
+| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button, the size and look of the backpack's Sort button and just left of it, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
@@ -610,7 +610,8 @@ its `## Ship design` describes this mod and what has not been observed live.
 Mods tab → Quality of Life → **Move all into the stash**. Off by default.
 
 With the stash open, click the **Move all** button - it sits left of the
-backpack's **Sort** button while the switch is on - or press **F4**, and every
+backpack's **Sort** button, in Sort's own look and size, while the switch is
+on - or press **F4**, and every
 item on the backpack tab you are looking at moves into the stash tab you are
 looking at, one item at a time,
 top-left first, row by row. Each item goes by the game's own move for it -
@@ -655,15 +656,19 @@ itself.
   the game is restarted (`off for this session`); the panel then shows
   `off (this session)` beside the switch.
 - **The button** is there only while the switch is on and the stash is open
-  with the backpack's Sort button showing. It sits just left of **Sort**,
-  level with it, its right edge a small gap from Sort's left edge. A moment
-  after it appears the mod checks where the game drew it and moves it once
-  if needed; the log says where it ended up, once a session
-  (`stashmoveall: button - placed beside Sort, box ...`, or
-  `stashmoveall: button - placed ... off beside Sort` if the game draws it
-  somewhere else, when the button and F4 still work), and the bare
-  `stashmoveall` line carries the box it read (`button_place=`,
-  `button_box=`). Turning the switch off takes it
+  with the backpack's Sort button showing. It has the **Sort Tab** button's
+  own look and size - the mod copies them from the Sort button itself - and
+  sits in the gap just left of **Sort**, level with it, its right edge a
+  small gap from Sort's left edge. A moment after it appears the mod checks
+  where and how the game drew it and moves it once if needed; the log says
+  where it ended up, once a session (`stashmoveall: button - placed beside
+  Sort, box ...`, or `stashmoveall: button - placed ... off beside Sort` if
+  the game draws it somewhere else), and says so once on a line of its own if
+  it does not have Sort's size or look (`stashmoveall: button - its size ...
+  is not the Sort button's ...`, `... it did not take the Sort button's
+  look ...`); the button and F4 still work either way. The bare
+  `stashmoveall` line carries what it read (`button_place=`, `button_box=`,
+  `button_look=`, `button_size=`). Turning the switch off takes it
   away at once, and closing the stash closes it with the window. Turned on
   while the stash is already open, the button may only appear after you
   click a stash tab; F4 does not need the button. A click on

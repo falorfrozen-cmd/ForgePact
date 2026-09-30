@@ -37664,9 +37664,14 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   else instance_destroy on the mod's own node (the window's close has
 //   already dropped it from the window's list); on `stashmoveall 0`, a loss,
 //   and whenever the core says the node should not exist.
-// The one write this block makes is the `text` of the node the mod made. A
-// node that cannot be made is reported once (`stashmoveall: button - ...`)
-// and the mod stays on: F4 and the verbs work without it.
+// - its look (owner scope, 2026-09-30): the Sort button's own, copied onto
+//   the node from the Sort node's variables that carry its sprite and size,
+//   read by name at that moment - never a sprite named or sized here - and
+//   read back; the core judges the look and the size on the settled read.
+// The writes this block makes are the `text` and those look variables, on
+// the node the mod made only. A node that cannot be made is reported once
+// (`stashmoveall: button - ...`) and the mod stays on: F4 and the verbs work
+// without it.
 
 static constexpr TalentAllocScript kSmaUiCreateNode{ HeroSiege::Scripts::gml_Script_UiCreateNode,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiCreateNode) };
@@ -37782,14 +37787,45 @@ static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, doub
     return true;
 }
 
+// Sort's look, the variables the game gives the Sort node its sprite and
+// size by (docs/stash-move-research.md § Static reading 5): read off the Sort
+// node by name each time, so a game patch that restyles Sort restyles the
+// button too.
+static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale" };
+
+// The node's look against Sort's: with `copy`, each of Sort's look variables
+// is first written onto the mod's own node as read (after the label, so a
+// look that does not take still leaves a working button); then each is read
+// back off both. Sort when all read the same, Differs when one does not,
+// Unread when one could not be read. Nothing else is written or called.
+static ForgePact::StashMoveButtonLook SmaButtonLook(const RValue& sort, bool copy)
+{
+    bool differs = false;
+    for (const char* var : kSmaLookVars) {
+        double want = 0, got = 0;
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
+            want = v.ToDouble();
+            if (!std::isfinite(want)) return ForgePact::StashMoveButtonLook::Unread;
+            if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var), v });
+            got = MenuLayoutRead(g_SmaButton, var);
+        } catch (...) { return ForgePact::StashMoveButtonLook::Unread; }
+        if (!std::isfinite(got)) return ForgePact::StashMoveButtonLook::Unread;
+        if (std::fabs(got - want) > 1e-6) differs = true;
+    }
+    return differs ? ForgePact::StashMoveButtonLook::Differs : ForgePact::StashMoveButtonLook::Sort;
+}
+
 // Make the node beside Sort; a refusal is reported once by the core's line.
 // Its right edge sits kSmaButtonGap GUI units left of Sort's bbox and its
 // vertical centre on Sort's (the core's ButtonOrigin, ForgePact #131:
 // UiCreateNode's x, y are the node's origin, which for the mod's node is its
 // bbox centre, not its top-left as for Sort). The extents are the ones the
-// core measured on a settled node this session, else provisional ones. The
-// place is not checked here: a box read in the frame the node is made is not
-// known to be its settled box, so SmaButtonCheck does it on later steps.
+// core measured on a settled node this session, else Sort's own about Sort's
+// x, y, since the node is given Sort's look (the centred box of Sort's size
+// when those did not read). The place is not checked here: a box read in the
+// frame the node is made is not known to be its settled box, so
+// SmaButtonCheck does it on later steps.
 static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
 {
     auto& mod = ForgePact::StashMoveAllMod::Instance();
@@ -37803,13 +37839,15 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
         return;
     }
     double x = 0, y = 0;
-    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, mod.ButtonExtents(sortBox), kSmaButtonGap, x, y)) {
+    const ForgePact::StashMoveExtents extents = mod.ButtonExtents(sortBox, MenuLayoutRead(sort, "x"), MenuLayoutRead(sort, "y"));
+    if (!ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, extents, kSmaButtonGap, x, y)) {
         refuse("the Sort button's bbox did not give an origin; nothing was called");
         return;
     }
     std::string why;
     if (!SmaButtonMake(stash, window, x, y, why)) { refuse(why); return; }
     mod.NoteButtonMade(false);
+    mod.NoteButtonLook(SmaButtonLook(sort, true));
 }
 
 // The place check, each ensure step the node is held and wanted (the core's
@@ -37818,10 +37856,13 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
 // is taken away with UiRemoveNode and made again, once, at the origin its
 // measured extents give - at most two UiCreateNode calls per Create step. One
 // still off after that is kept and said once; it never turns the mod off.
+// While the node is checked its look is read again each step, so the core
+// judges the look on the settled read, not the frame it was written in.
 static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue& sort)
 {
     if (!g_SmaButtonHeld) return;
     auto& mod = ForgePact::StashMoveAllMod::Instance();
+    if (mod.ButtonLookWanted()) mod.NoteButtonLook(SmaButtonLook(sort, false));
     bool visible = false;
     try { visible = g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue("visible") }).ToBoolean(); }
     catch (...) { visible = false; }
@@ -37840,6 +37881,7 @@ static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue&
         return;
     }
     mod.NoteButtonMade(true);
+    mod.NoteButtonLook(SmaButtonLook(sort, true));
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the

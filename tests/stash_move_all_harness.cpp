@@ -109,6 +109,16 @@
 // carries what it read. Written before the header had it; the first error
 // line was `error C2039: 'StashMoveButtonCheck': is not a member of
 // 'ForgePact'`, 2026-09-30.
+//
+// #131, owner scope of 2026-09-30 ("Button should be the size and look of
+// sort tab button"): Live 1 placed the node right but at 206x48 beside Sort's
+// 192x66. The node now wears Sort's look, copied from the Sort node by the
+// adapter, so the first node is made with Sort's own extents about Sort's
+// origin; its size is judged against Sort's on the settled read, and a size
+// or a look that is not Sort's is kept and said once each, never a remake
+// and never the mod off. Compiled against the header before it had them, the
+// first error line was `error C2039: 'StashMoveButtonLook': is not a member
+// of 'ForgePact'`, 2026-09-30.
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -126,6 +136,7 @@ using ForgePact::StashMoveBox;
 using ForgePact::StashMoveExtents;
 using ForgePact::StashMoveAllMod;
 using ForgePact::StashMoveButtonStep;
+using ForgePact::StashMoveButtonLook;
 using ForgePact::StashMoveCell;
 using ForgePact::StashMoveItem;
 using ForgePact::StashMoveOutcome;
@@ -291,9 +302,11 @@ static std::string Joined(const std::vector<std::string>& lines)
 static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMaterial, bool wholeStackMerge);
 static StashMoveReport MergedWherePlannedACell();
 
-// The place check's fields of the state line before any node was made.
+// The place check's fields of the state line before any node was made (the
+// look and size last: owner scope, 2026-09-30).
 static const std::string kIdlePlace =
-    " button_place=none button_box=none button_extents=none button_makes=0 button_step=0";
+    " button_place=none button_box=none button_extents=none button_makes=0 button_step=0"
+    " button_look=none button_size=none";
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
     " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none" + kIdlePlace;
@@ -1373,6 +1386,183 @@ static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
     Check("target/button_is_checked_on_its_settled_box_not_the_creation_frame", ok, placed + " | " + unsettled);
 }
 
+// ---- #131, owner scope 2026-09-30: the button takes Sort's look and size ---
+
+// Live 1 of this workorder (the capture's button-placed row, 2560x1440 GUI):
+// Sort's x, y (its top-left) and bbox, 192x66, and the node the #131 origin
+// made, wearing its own sprite, 206x48.
+static const StashMoveBox kLive1Sort = Box(2290.0, 1262.0, 2482.0, 1328.0);
+static const double kLive1SortX = 2290.0, kLive1SortY = 1262.0;
+static const StashMoveBox kLive1Node = Box(2076.0, 1271.0, 2282.0, 1319.0);
+static const double kLive1NodeX = 2178.0, kLive1NodeY = 1295.0;
+
+static void BaselineLive1NodeOfAnotherSizeSatBesideSort()
+{
+    // What Live 1 measured: the place was right (right edge 8 left of Sort,
+    // the centres level) and the size was not Sort's: 14 wider, 18 lower.
+    bool ok = StashMoveAllMod::ButtonOnTarget(kLive1Sort, kLive1Node, kGap)
+        && Near((kLive1Node.right - kLive1Node.left) - (kLive1Sort.right - kLive1Sort.left), 14.0, 0.05)
+        && Near((kLive1Sort.bottom - kLive1Sort.top) - (kLive1Node.bottom - kLive1Node.top), 18.0, 0.05)
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Node);
+    // Sort's origin is its top-left, the node's within one unit of its centre.
+    ok = ok && Near(kLive1SortX, kLive1Sort.left, 0.05) && Near(kLive1SortY, kLive1Sort.top, 0.05)
+        && Near(kLive1NodeX, (kLive1Node.left + kLive1Node.right) / 2, 1.0)
+        && Near(kLive1NodeY, (kLive1Node.top + kLive1Node.bottom) / 2, 1.0);
+    // Positive control: Sort's own box is Sort-sized.
+    ok = ok && StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Sort);
+    Check("baseline/live1_node_of_another_size_sat_beside_sort", ok, "");
+}
+
+static void TargetFirstNodeMadeWithSortsOwnExtentsLandsOnTarget()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // Before any node is measured, the extents are Sort's own about its
+    // origin (its x, y and bbox, read by name): 0, 0, 192, 66, so the origin
+    // is 2090, 1262 - Sort's left less 8 less its width, Sort's top.
+    const StashMoveExtents e = mod.ButtonExtents(kLive1Sort, kLive1SortX, kLive1SortY);
+    double x = 0, y = 0;
+    bool ok = Near(e.left, 0.0, 0.05) && Near(e.up, 0.0, 0.05) && Near(e.right, 192.0, 0.05) && Near(e.down, 66.0, 0.05)
+        && StashMoveAllMod::ButtonOrigin(kLive1Sort, e, kGap, x, y) && Near(x, 2090.0, 0.05) && Near(y, 1262.0, 0.05);
+    // Made there wearing Sort's look, it settles at 2090,1262,2282,1328: on
+    // target and Sort-sized with one make, said once on one line.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=sort button_size=none");
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    double rx = 0, ry = 0;
+    std::string line;
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, x, y, wearing, kGap, rx, ry, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kLive1Sort, x, y, wearing, kGap, rx, ry, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on button_box=2090.0,1262.0,2282.0,1328.0 button_extents=0.0,0.0,192.0,66.0"
+                                " button_makes=1 button_step=2 button_look=sort button_size=192.0x66.0")
+        && mod.IsEnabled();
+    // After a measurement the node's own extents are used, whatever Sort's
+    // x, y read: a node of another size still lands right.
+    StashMoveAllMod other;
+    other.SetEnabled(true);
+    other.NoteButtonMade(false);
+    other.NoteButtonLook(StashMoveButtonLook::Differs);
+    other.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, rx, ry, line);
+    other.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, rx, ry, line);
+    const StashMoveExtents m = other.ButtonExtents(kLive1Sort, kLive1SortX, kLive1SortY);
+    double mx = 0, my = 0;
+    ok = ok && Near(m.left, 102.0, 0.05) && Near(m.up, 24.0, 0.05) && Near(m.right, 104.0, 0.05) && Near(m.down, 24.0, 0.05)
+        && StashMoveAllMod::ButtonOrigin(kLive1Sort, m, kGap, mx, my) && Near(mx, 2178.0, 0.05) && Near(my, 1295.0, 0.05);
+    // Negative control: Sort's x, y unread - the provisional box of Sort's
+    // size about its centre stays the fallback.
+    StashMoveAllMod fresh;
+    const StashMoveExtents p = fresh.ButtonExtents(kLive1Sort, std::nan(""), kLive1SortY);
+    ok = ok && Near(p.left, 96.0, 0.05) && Near(p.right, 96.0, 0.05) && Near(p.up, 33.0, 0.05) && Near(p.down, 33.0, 0.05);
+    Check("target/first_node_made_with_sorts_own_extents_lands_on_target", ok, line);
+}
+
+static void TargetButtonSizeWithinOneOfSortsIsSortSized()
+{
+    // Within kButtonTolerance on width and height is Sort-sized.
+    bool ok = StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2089.6, 1262.2, 2282.0, 1327.8))   // 192.4x65.6
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Node)                              // 206x48
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2088.5, 1262.0, 2282.0, 1328.0))     // 193.5 wide
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2090.0, 1262.0, 2282.0, 1329.5));    // 67.5 high
+    // Negative controls: a box that did not read never is, the node's or Sort's.
+    ok = ok && !StashMoveAllMod::ButtonSortSized(kLive1Sort, StashMoveBox())
+        && !StashMoveAllMod::ButtonSortSized(StashMoveBox(), kLive1Sort)
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2090.0, std::nan(""), 2282.0, 1328.0));
+    Check("target/button_size_within_one_of_sorts_is_sort_sized", ok, "");
+}
+
+static void TargetButtonOfAnotherSizeIsKeptAndSaidOnce()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    // Settles at Live 1's box: on target, so kept - never a remake for its
+    // size - and the size said once, on a line of its own after the placed one.
+    const std::string size = "stashmoveall: button - its size 206.0x48.0 is not the Sort button's 192.0x66.0, "
+                             "so it is kept as it is; F4 still works";
+    bool ok = mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2076.0,1271.0,2282.0,1319.0\n" + size
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_makes=1")
+        && Has(mod.StateLine(), " button_look=sort button_size=206.0x48.0") && mod.IsEnabled();
+    const std::string first = line;
+    // A second node of that size (the next stash open) is silent.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=sort button_size=none")
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && line.empty() && Has(mod.StateLine(), " button_size=206.0x48.0") && mod.IsEnabled();
+    // Negative control: a Sort-sized node on target says no size line.
+    StashMoveAllMod sized;
+    sized.SetEnabled(true);
+    sized.NoteButtonMade(false);
+    sized.NoteButtonLook(StashMoveButtonLook::Sort);
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    sized.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    sized.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && !Has(line, "its size") && !Has(line, "\n");
+    Check("target/button_of_another_size_is_kept_and_said_once", ok, first);
+}
+
+static void TargetButtonLookNotTakenIsKeptAndSaidOnce()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    // The look read back as Sort's when it was written, then not on the
+    // later ensure steps (the UI layer putting its own back, say): the look
+    // judged is the one on the settled read.
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    bool ok = mod.ButtonLookWanted();
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep;
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    const std::string look = "stashmoveall: button - it did not take the Sort button's look, so it is kept with its "
+                             "own; F4 still works";
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0\n" + look
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_look=differs button_size=192.0x66.0")
+        && mod.IsEnabled() && !mod.ButtonLookWanted();
+    const std::string first = line;
+    // Decided: a later read changes nothing.
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=differs");
+    // A second node whose look did not take is silent.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line.empty() && Has(mod.StateLine(), " button_look=differs") && mod.IsEnabled();
+    // A look that could not be read is said once on its own line, apart
+    // from the not-taken one, which does not hide it.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Unread);
+    mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - its look beside Sort could not be read, so it is unchecked; F4 still works"
+        && Has(mod.StateLine(), " button_look=unread") && mod.IsEnabled();
+    // Negative control: a look that took says no look line.
+    StashMoveAllMod took;
+    took.SetEnabled(true);
+    took.NoteButtonMade(false);
+    took.NoteButtonLook(StashMoveButtonLook::Sort);
+    took.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    took.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && !Has(line, "look") && Has(took.StateLine(), " button_look=sort");
+    Check("target/button_look_not_taken_is_kept_and_said_once", ok, first);
+}
+
 static void TargetShownTabRoom()
 {
     // The room check reads the shown tab's own cells: a free block of the
@@ -1874,6 +2064,11 @@ int main()
     TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt();
     TargetOldButtonOriginPutItsCornerInsideTheTargetBox();
     TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame();
+    BaselineLive1NodeOfAnotherSizeSatBesideSort();
+    TargetFirstNodeMadeWithSortsOwnExtentsLandsOnTarget();
+    TargetButtonSizeWithinOneOfSortsIsSortSized();
+    TargetButtonOfAnotherSizeIsKeptAndSaidOnce();
+    TargetButtonLookNotTakenIsKeptAndSaidOnce();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

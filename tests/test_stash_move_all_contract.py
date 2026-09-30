@@ -18,6 +18,10 @@ extents measured on the node itself, with at most two UiCreateNode calls per
 creation step; the cell route's StashAddToStack passes a stackable's whole
 count and a true answer there is confirmed as a merge by the sum; and the stack
 route's room is a stack with room for the whole count, not any stack.
+Owner scope of 2026-09-30: the button takes the Sort Tab button's look, its
+sprite and scale read off the Sort node by name and copied onto the mod's own
+node, never a sprite constant, and its size is judged against Sort's on the
+settled box, kept and said once when off.
 """
 import re
 import sys
@@ -432,11 +436,18 @@ class StashMoveAllContractTests(unittest.TestCase):
         create = self.body("static void SmaButtonCreate(")
         self.assertNotIn("sx - sw - kSmaButtonGap", create)
         self.assertIn("const ForgePact::StashMoveBox sortBox = SmaBox(sort);", create)
-        self.assertIn("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, mod.ButtonExtents(sortBox), kSmaButtonGap, x, y)",
-                      create)
+        self.assertIn('const ForgePact::StashMoveExtents extents = mod.ButtonExtents(sortBox, MenuLayoutRead(sort, "x"), '
+                      'MenuLayoutRead(sort, "y"));', create)
+        self.assertIn("ForgePact::StashMoveAllMod::ButtonOrigin(sortBox, extents, kSmaButtonGap, x, y)", create)
         self.assertLess(create.index("SmaButtonMake(stash, window, x, y, why)"), create.index("mod.NoteButtonMade(false);"))
+        # The extents: measured on a settled node this session; before that
+        # Sort's own about its x, y (the node wears Sort's look, owner scope
+        # 2026-09-30); the centred box of Sort's size when those did not read.
         extents = function_body(header, "StashMoveExtents ButtonExtents(")
-        self.assertIn("return m_ButtonExtentsRead ? m_ButtonExtents : ProvisionalExtents(sort);", extents)
+        order = [extents.index(t) for t in ("if (m_ButtonExtentsRead) return m_ButtonExtents;",
+                                            "if (ExtentsOf(sortX, sortY, sort, own)) return own;",
+                                            "return ProvisionalExtents(sort);")]
+        self.assertEqual(order, sorted(order))
         # Review of round 0 (instrument blindness): the place is never judged
         # in the frame the node is made - Create reads no box of the node -
         # but by SmaButtonCheck on later ensure steps, from what the node
@@ -481,13 +492,92 @@ class StashMoveAllContractTests(unittest.TestCase):
         for body in (function_body(header, "std::string ButtonOffTarget("), judge):
             self.assertNotIn("TurnOffForSession", body)
             self.assertNotIn("SetEnabled", body)
-        # No x or y is written to the node: only its text.
-        self.assertEqual(self.button_block().count("variable_instance_set"), 1)
+        # No x or y is written to the node: only its text and Sort's look.
+        self.assertEqual(self.button_block().count("variable_instance_set"), 2)
+        for var in ('"x"', '"y"'):
+            self.assertNotIn(var, self.body("static ForgePact::StashMoveButtonLook SmaButtonLook("), var)
         origin = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"), "static bool ButtonOrigin(")
         self.assertIn("x = sort.left - gap - node.right;", origin)
         self.assertIn("y = (sort.top + sort.bottom) / 2 - (node.down - node.up) / 2;", origin)
         self.assertIn("static constexpr double kSmaButtonGap = 8.0;", self.button_block())
         self.assertIn("static constexpr double kButtonTolerance = 1.0;", self.header)
+
+    def test_button_takes_sorts_look_read_from_sort_by_name(self):
+        # Owner scope, 2026-09-30: the button has the Sort Tab button's look
+        # and size. The variables that carry a node's sprite and size are read
+        # off the Sort node by name each time and written onto the mod's own
+        # node as read - never a sprite named, looked up or sized here, never
+        # a routine called for it - then read back off both, and the core is
+        # told whether the look took. A look that did not take keeps the node.
+        block = self.button_block()
+        self.assertIn('static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale" };',
+                      block)
+        look = self.body("static ForgePact::StashMoveButtonLook SmaButtonLook(")
+        self.assertIn("for (const char* var : kSmaLookVars) {", look)
+        self.assertIn('const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });', look)
+        self.assertIn('if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var), v });', look)
+        self.assertIn("got = MenuLayoutRead(g_SmaButton, var);", look)
+        order = [look.index(t) for t in ('"variable_instance_get", { sort,', "if (!std::isfinite(want))",
+                                         "if (copy)", "got = MenuLayoutRead(g_SmaButton, var);")]
+        self.assertEqual(order, sorted(order))
+        for word in ("ForgePact::StashMoveButtonLook::Unread", "ForgePact::StashMoveButtonLook::Differs",
+                     "ForgePact::StashMoveButtonLook::Sort"):
+            self.assertIn(word, look, word)
+        for word in ("SmaCall(", "SmaButtonRemove", "asset_get_index", "_spr", "sprite_get_", "UiSetNodeScale",
+                     "UI_Layout_Apply_Sprite", "TurnOffForSession", "SetEnabled"):
+            self.assertNotIn(word, look, word)
+        # No sprite constant anywhere in the block; the one asset looked up is
+        # the node's object.
+        self.assertNotIn("_spr", block)
+        self.assertNotIn("sprite_get_", block)
+        self.assertEqual(block.count('"asset_get_index"'), 1)
+        # Copied once per node made, after the label and after the core was
+        # told of the make; re-read, not re-written, each step the node is
+        # checked, before the check.
+        create = self.body("static void SmaButtonCreate(")
+        order = [create.index(t) for t in ("SmaButtonMake(stash, window, x, y, why)", "mod.NoteButtonMade(false);",
+                                           "mod.NoteButtonLook(SmaButtonLook(sort, true));")]
+        self.assertEqual(order, sorted(order))
+        check = self.body("static void SmaButtonCheck(")
+        self.assertLess(check.index("if (mod.ButtonLookWanted()) mod.NoteButtonLook(SmaButtonLook(sort, false));"),
+                        check.index("mod.ButtonCheck("))
+        self.assertLess(check.index("mod.NoteButtonMade(true);"), check.index("mod.NoteButtonLook(SmaButtonLook(sort, true));"))
+        self.assertEqual(block.count("SmaButtonLook(sort, true)"), 2)
+        make = self.body("static bool SmaButtonMake(")
+        self.assertNotIn("SmaButtonLook", make)
+        # The core keeps the look judged: a read after the node was decided
+        # changes nothing.
+        noted = function_body(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"),
+                              "void NoteButtonLook(StashMoveButtonLook look)")
+        self.assertIn("if (m_ButtonMakes == 0 || m_ButtonChecked) return;", noted)
+
+    def test_button_size_is_judged_against_sorts_on_the_settled_box(self):
+        # The size rule: width and height each within kButtonTolerance of
+        # Sort's, an unread box never. Judged with the look on the settled
+        # read the place was judged on, for a node kept (on target, or still
+        # off) and never for one about to be remade; either off is kept,
+        # never a remake for it, said once a session each on its own line,
+        # and the mod stays on.
+        header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        sized = strip_comments(function_body(header, "static bool ButtonSortSized("))
+        self.assertIn("if (!BoxReads(sort) || !BoxReads(node)) return false;", sized)
+        self.assertEqual(sized.count("<= kButtonTolerance"), 2)
+        judge = strip_comments(function_body(header, "StashMoveButtonCheck ButtonCheck("))
+        self.assertEqual(judge.count("JudgeLook(sort, box, line);"), 2)
+        self.assertLess(judge.index("if (!settled) {"), judge.index("JudgeLook(sort, box, line);"))
+        self.assertLess(judge.index('NotePlace("on", box, &e);'), judge.index("JudgeLook(sort, box, line);"))
+        remake = judge[judge.index("if (!m_ButtonRemakeAsked"):judge.index("return StashMoveButtonCheck::Remake;")]
+        self.assertNotIn("JudgeLook", remake)
+        self.assertLess(judge.index("line = ButtonOffTarget(sort, box, gap);"), judge.rindex("JudgeLook(sort, box, line);"))
+        look = strip_comments(function_body(header, "void JudgeLook("))
+        self.assertIn("if (!ButtonSortSized(sort, box))", look)
+        for flag in ("m_ButtonSizeSaid", "m_ButtonLookSaid", "m_ButtonLookUnreadSaid"):
+            self.assertIn(f"SayButtonOff({flag},", look, flag)
+        self.assertIn('line += (line.empty() ? "" : "\\n") + said;', look)
+        for word in ("TurnOffForSession", "SetEnabled", "Remake", "m_ButtonRemakeAsked"):
+            self.assertNotIn(word, look, word)
+        for field in ('" button_look="', '" button_size="'):
+            self.assertIn(field, self.header, field)
 
     def button_block(self):
         start, end = self.plugin.index(BUTTON_BLOCK[0]), self.plugin.index(BUTTON_BLOCK[1])
@@ -529,9 +619,13 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("mod.ButtonRefused(why)", self.body("static void SmaButtonCheck("))
         self.assertNotIn("TurnOffForSession", block)
         self.assertNotIn("SetEnabled", block)
-        # The only write: the label of the node the mod made, read back.
-        self.assertEqual(block.count("variable_instance_set"), 1)
+        # The writes: the label of the node the mod made, read back, and
+        # Sort's look on that same node (test_button_takes_sorts_look_read_
+        # from_sort_by_name).
+        self.assertEqual(block.count("variable_instance_set"), 2)
         self.assertIn('"variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) }', create)
+        self.assertIn('"variable_instance_set", { g_SmaButton, RValue(var), v }',
+                      self.body("static ForgePact::StashMoveButtonLook SmaButtonLook("))
         # Removal: UiRemoveNode with the owner window as self while it is
         # listed, instance_destroy on the mod's own node only when it is not.
         remove = self.body("static void SmaButtonRemove(")

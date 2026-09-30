@@ -607,6 +607,71 @@ Labels as in § Static reading 3: (R) read locally, in our words; (M) measured.
   larger stack); and splitting an item across two stacks (not what the game's
   own Ctrl + click does).
 
+### Static reading 5: the Sort button's look
+
+ForgePact #131, owner scope of 2026-09-30: "Button should be the size and look
+of sort tab button. Space is just enough for it", after Live 3 placed the node
+right but at 206x48 beside Sort's 192x66 (§ Live 3 results, `button-placed`).
+The question was which of a node's variables carry its sprite and size, and
+whether a write on the mod's own node can give it Sort's look without calling
+a routine beyond `UiCreateNode` and `UiRemoveNode`. Read locally on
+2026-09-30: `UiSetNodeScale`, `UI_Layout_Apply_Sprite`, `UI_Node_HasSprite`,
+`GetProfileButtonSprite`, and again `InventoryInitGrids`, `UiCreateNode` and
+the closures of `UI_Inventory_Parent_obj`'s Create event. Labels as in
+§ Static reading 3.
+
+- (M) **The sprite is set after the node is made.** Live 1f and 1g read the
+  Sort node's `sprite_index`, by name, as `Inventory_Tab_Button_Solid_spr`,
+  while the node the mod made - the same object, `UI_Button_Small_obj` - reads
+  and draws the object's own `Menu_Button_Chat_spr`. `UiCreateNode` takes the
+  x, y, the object, the activation and the call-stack name, and no sprite, so
+  whatever gives Sort its sprite runs after the create.
+- (R) **Where Sort is made is still not read.** `UiCreateNode` is called
+  directly only from `InventoryInitGrids` (the bag's sub-tab buttons); every
+  other caller reaches it through the script table, and the code that makes
+  the Sort node is among neither the named scripts nor the named closures of
+  this build.
+- (R) **How the game gives a node its look.** Right after making each sub-tab
+  button, `InventoryInitGrids` writes one member on it - the same member
+  `UI_Node_HasSprite` checks for and `UI_Layout_Apply_Sprite` reads as the
+  node's sprite. A node's size is two scale members: `UiSetNodeScale(node, sx,
+  sy)` sets each to its argument times a global factor (the GUI scale: the
+  same pair of globals `UiResizeInventoryNodes` and the craft and split-stack
+  windows read) and then calls a method the node carries; a closure of
+  `UI_Inventory_Parent_obj`'s Create event writes the same two members, times
+  the same factors, directly. `UI_Layout_Apply_Sprite` fits a node to a size
+  from its sprite's dimensions, through `UiSetNodeScale` and `UiMoveNode`. So
+  the look is plain variable writes on the node: nothing the mod would have
+  to call.
+- **Not read: the members' names.** This build reads every variable through a
+  slot number the runner hands out at start-up, and the slot table the
+  toolkit extracts does not cover these ones. That the sprite member is
+  `sprite_index` and the two scale members `image_xscale` and `image_yscale`
+  is inference, from what they do and from the measured `sprite_index` read
+  above. Nor is it read whether the UI layer puts a node's own look back on a
+  later step (`UI_Parent_obj`'s Step is large and unread, and so is the
+  method `UiSetNodeScale` calls). The mod therefore reads the look again each
+  ensure step until the node is judged, and Live procedure 4 measures it
+  (`button-look`, `button-state`).
+- (M, from the numbers) **One GUI scale for both nodes.** Live 1f and 1g read
+  Sort at 182.4x62.7 and the node at 195.7x45.6, Live 3 at 192x66 and 206x48;
+  both ratios are 1.0526. Copying Sort's scale is then either nothing (the two
+  already carry the same) or what makes the sizes equal; the size rule on the
+  settled box decides, not the write.
+- (R) **Where it lands.** Wearing Sort's sprite, the node's origin is that
+  sprite's, its top-left, so its extents are Sort's own (left 0, up 0, right
+  192, down 66 at Live 3's GUI) and `ButtonOrigin` gives x = 2290 - 8 - 192 =
+  2090, y = 1262: the box 2090, 1262, 2282, 1328, on target at the first
+  creation. Its `menulayout` `gui=` is then its top-left, not its centre.
+- **Rejected:** a different object whose own sprite might be the tab look (its
+  click is unmeasured, while an unbound `UI_Button_Small_obj`'s click ran
+  nothing, Live 1g, and Sort itself is one); Sort's sprite looked up by its
+  asset name (a patch that renames or restyles Sort would leave it silently
+  wrong, while Sort's own is right by construction); calling `UiSetNodeScale`
+  or `UI_Layout_Apply_Sprite` (a routine call beyond the two measured ones,
+  ending in a method call on the node whose body is unread); stretching the
+  chat sprite to Sort's box by scale alone (Sort's size, not its look).
+
 ## Instrument
 
 The instrument is `craftprobe` (research build only; the toolkit guide's
@@ -1411,6 +1476,34 @@ page by the button, a Materials merge, a single socketable) and the outliers
 that take another path (a full Materials stack, a partial beside a full one, a
 socketable stack, a kind the tab lacks).
 
+### Live procedure 4
+
+The button's look and size (owner scope, 2026-09-30; § Static reading 5), on
+the build that copies Sort's look. The procedure is Live procedure 2 of the
+same workorder's context file; this is its summary. It runs the **research
+build**, because it reads each node's sprite with `stashmoveall probe sort
+id:<n>`, which the player build compiles out. Save slot 14, the mod off at
+launch, the saves backed up first and restored at the end; no save checks, the
+move path being unchanged since Live procedure 3. Positive controls first: the
+lease's DLL hash (`dll-hash`), the state line, whose first line now carries
+`button_look=none` (`marker`), and a by-name tab switch (`control`). Then:
+with the mod off, no `ForgePactMoveAll` row beside Sort's
+(`off-baseline-button`); on, after a tab switch and about 2 s, exactly one,
+its bbox right edge within 1 GUI unit of Sort's left less 8, its vertical
+centre within 1 of Sort's, and its width and height each within 1 of Sort's
+(`button-placed`, expected about 2090, 1262, 2282, 1328 at Live 3's GUI); the
+bare state line reading `button_place=on`, `button_look=sort`, a
+`button_box=` within 0.1 of the `menulayout` box and a `button_size=` within 1
+of Sort's (`button-state`); a click at the centre of its box - not at its
+`gui=`, now its top-left - starting one run (`button-press`); `probe sort` on
+Sort's id (the positive control, `Inventory_Tab_Button_Solid_spr` in Live 1f
+and 1g) and on the node's reading the same sprite, not `Menu_Button_Chat_spr`
+(`button-look`); then the close (`close-survives`) and a reopen whose node,
+made from the extents measured on the first, is placed the same way with
+`button_place=on button_look=sort` (`reopen-placed`). The cases are the
+session's first node (made from Sort's own extents), a later open's node (made
+from measured extents) and one press; no material or socketable case.
+
 ## Results
 
 ### Live 1 results
@@ -1971,9 +2064,9 @@ it, `UiCreateNode` is called by name with self and other the stash window and
 five arguments: x and y (the node's origin, below), the object
 `UI_Button_Small_obj` by `asset_get_index`, the
 activation **undefined**, and the call-stack name `ForgePactMoveAll`; then the
-node's own `text` is set to `Move all` and read back, the one write the button
-makes, on the instance the mod made (a node whose label does not read back is
-taken away again). **Its place (ForgePact #131):** x and y are the node's
+node's own `text` is set to `Move all` and read back, on the instance the mod
+made (a node whose label does not read back is taken away again); with Sort's
+look (below) the button's only writes, both on that instance. **Its place (ForgePact #131):** x and y are the node's
 origin, which for the mod's node (`UI_Button_Small_obj` drawn with
 `Menu_Button_Chat_spr`) is its bbox centre while the Sort node's (the same
 object, drawn with `Inventory_Tab_Button_Solid_spr`) is its top-left, so the
@@ -1984,8 +2077,9 @@ The core's `ButtonOrigin` now gives the origin at which the node's bbox right
 edge is 8 GUI units left of Sort's bbox left edge and its vertical centre is
 Sort's, from Sort's bbox and the node's own extents about its origin (left,
 up, right, down), read by name from the node and kept for the session. The
-session's first node is made at a provisional origin (a box of Sort's own size
-about its origin). The place is not checked in the frame the node is made: a
+session's first node is made with Sort's own extents about Sort's x, y (the
+node wears Sort's look, below; a box of Sort's own size about its centre when
+Sort's x, y do not read). The place is not checked in the frame the node is made: a
 box read then is not known to be the settled one (Live 1f: the node read
 `visible=0` in that frame and 1 a frame later), and a GUI scale applied after
 `UiCreateNode` returns would leave a stale box that could look on target (the
@@ -2000,13 +2094,37 @@ so each stash open is. On target is said once a session, `stashmoveall:
 button - placed beside Sort, box <l,t,r,b>`; one still off is kept and said
 once, `stashmoveall: button - placed <dx>,<dy> off beside Sort; F4 still
 works`; a box not settled six ensure steps after the make is said unchecked
-once. Each of those lines has its own said-once flag, so an early unchecked
-line never hides a later node that settles off target; none turns the mod off. The bare `stashmoveall` state line carries what
-the check read (`button_place=`, `button_box=`, `button_extents=`,
-`button_makes=`, `button_step=`), so `button-placed`'s `menulayout` rows can be
-compared with the mod's own reading. With the measured extents
-(96.9, 22.8, 98.8, 22.8) and the Live 1g Sort box that is the origin 2196.7,
-1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at a 2560x1440 GUI.
+once, and a node whose x, y did not read is said unchecked once. Each of those
+lines has its own said-once flag, so an early unchecked line never hides a
+later node that settles off target; none turns the mod off. The bare
+`stashmoveall` state line carries what the check read (`button_place=`,
+`button_box=`, `button_extents=`, `button_makes=`, `button_step=`,
+`button_look=`, `button_size=`), so `button-placed`'s `menulayout` rows can be
+compared with the mod's own reading. With the measured extents of the node
+in its own sprite (96.9, 22.8, 98.8, 22.8) and the Live 1g Sort box that is
+the origin 2196.7, 1230.25 and the bbox 2099.8, 1207.45, 2295.5, 1253.05 at a
+2560x1440 GUI.
+
+**Its look (owner scope, 2026-09-30, § Static reading 5):** after the label,
+the node is given the Sort Tab button's own look: `sprite_index`,
+`image_xscale` and `image_yscale` are read off the Sort node by name at that
+moment, written onto the mod's own node as read, and read back off both - no
+sprite named, looked up or sized by the mod, no routine called for it. The
+core is told whether the look took (`sort`), did not (`differs`) or could not
+be read (`unread`), and the node's look is read again each ensure step until
+the node is judged, so the look judged is the one on the settled read. Wearing
+Sort's sprite the node's origin is its top-left like Sort's, so the first node
+of a session is made with Sort's own extents and lands on target at once (at
+Live 3's GUI the box 2090, 1262, 2282, 1328). On the settled read that judged
+its place, a kept node is judged for its size too: Sort-sized when its width
+and height are each within 1 GUI unit of Sort's (`ButtonSortSized`). A node
+not Sort-sized is kept and said once a session, `stashmoveall: button - its
+size <w>x<h> is not the Sort button's <w>x<h>, so it is kept as it is; F4
+still works`; a look that did not take is kept and said once, `stashmoveall:
+button - it did not take the Sort button's look, so it is kept with its own;
+F4 still works`, and one that could not be read likewise on its own line.
+Neither is a remake, and neither turns the mod off: a node in its own look
+still works, and its place still follows its own measured extents.
 No `UiSetActivationFunc`, and no script hooked for it: a node
 with no activation runs nothing of the game's when clicked (Static reading 3;
 Live 1g's click on one showed only that no armed routine logged a call with it

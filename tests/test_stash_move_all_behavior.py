@@ -52,6 +52,14 @@ true answer on the cell route is decided as a merge by the sum. The button's
 origin comes from Sort's box and the node's own extents: its right edge 8 GUI
 units left of Sort, centred on it (UI_Button_Small_obj's origin is its bbox
 centre, the Sort node's its top-left, Live 1f and 1g).
+
+#131, owner scope of 2026-09-30: the button takes the Sort Tab button's own
+look and size. The first node of a session is made with Sort's extents about
+Sort's origin, so a node wearing Sort's look lands on target at once; its size
+is judged against Sort's on the same settled read as its place, and a size or
+a look that is not Sort's is kept and said once each, never remade for it and
+never turning the mod off (baseline: Live 1's node sat right at 206x48 beside
+Sort's 192x66).
 """
 import os
 import shutil
@@ -304,6 +312,41 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # unchecked and never remade; no third make; a remake UiRemoveNode
         # could not carry out is not asked again; no node, nothing checked.
         self.assertScenario("target/button_is_checked_on_its_settled_box_not_the_creation_frame")
+
+    # ---- #131, owner scope 2026-09-30: the button takes Sort's look and size
+
+    def test_baseline_live1_node_of_another_size_sat_beside_sort(self):
+        # Live 1: the node on target (right edge 8 left of Sort, centres
+        # level) at 206x48 beside Sort's 192x66, so not Sort-sized. Positive
+        # control: Sort's own box is.
+        self.assertScenario("baseline/live1_node_of_another_size_sat_beside_sort")
+
+    def test_target_first_node_made_with_sorts_own_extents_lands_on_target(self):
+        # Before a measurement the extents are Sort's own about its origin
+        # (0, 0, 192, 66; origin 2090, 1262); a node wearing Sort's look
+        # settles on target and Sort-sized with one make, button_look=sort.
+        # After a measurement the node's own extents are used. Negative
+        # control: Sort's x, y unread falls back to the centred box.
+        self.assertScenario("target/first_node_made_with_sorts_own_extents_lands_on_target")
+
+    def test_target_button_size_within_one_of_sorts_is_sort_sized(self):
+        # 192.4x65.6 beside 192x66 is Sort-sized; 206x48, 1.5 wider or 1.5
+        # higher is not. Negative controls: an unread box never is.
+        self.assertScenario("target/button_size_within_one_of_sorts_is_sort_sized")
+
+    def test_target_button_of_another_size_is_kept_and_said_once(self):
+        # Live 1's 206x48 box is kept, never remade for its size, said once
+        # on its own line, button_size=206.0x48.0, the mod on; a second node
+        # is silent. Negative control: a Sort-sized node says nothing of it.
+        self.assertScenario("target/button_of_another_size_is_kept_and_said_once")
+
+    def test_target_button_look_not_taken_is_kept_and_said_once(self):
+        # The look judged on the settled read, not the frame it was written:
+        # one that read Sort's when written and differs later is differs;
+        # kept, said once on its own line, button_look=differs, the mod on;
+        # an unread look is said once apart. Negative control: a look that
+        # took says nothing of it.
+        self.assertScenario("target/button_look_not_taken_is_kept_and_said_once")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")
