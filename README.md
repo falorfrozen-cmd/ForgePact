@@ -49,7 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
-| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button, the size of the backpack's Sort button and just left of it, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
+| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move all** button, with the size and look of the backpack's Sort button and just left of it, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
@@ -611,7 +611,8 @@ Mods tab → Quality of Life → **Move all into the stash**. Off by default.
 
 With the stash open, click the **Move all** button - it sits where the game
 shows its own **Mercenary** button when the backpack is open on its own, just
-left of the backpack's **Sort** button, while the switch is on - or press
+left of the backpack's **Sort** button, and looks like the backpack's **Sort
+Tab** button, while the switch is on - or press
 **F4**, and every
 item on the backpack tab you are looking at moves into the stash tab you are
 looking at, one item at a time,
@@ -662,17 +663,18 @@ itself.
   stash (that button is not there while the stash is open), just left of
   **Sort** and level with it - worked out from the Sort button's own place and
   size each time, so it is expected to follow the game's interface scale
-  (measured at one scale only). The mod copies onto it, from the Sort button
-  itself each time, the Sort button's sprite and scale and the 13 settings
-  whose copy in a research session drew the label centred like the Sort
-  button's (Live 5); each is written as the Sort button has it, whatever kind
-  of value it is, and read back.
-  **Not finished yet** (ForgePact
-  #131): in the last check in play its **Move all** label was drawn at the
-  box's top-left corner, not inside it (only a clipped end of it showed); a
-  click on it works all the same (`docs/stash-move-research.md` § Live 4
-  results; the label fix, from the measurements in § Live 5 results, is
-  waiting for its check in play). A
+  (measured at one scale only). It looks like the backpack's **Sort Tab**
+  button, dark and framed, with its **Move all** label centred inside it: the
+  mod copies onto it, from the Sort button itself each time, the Sort button's
+  sprite and scale and the 13 settings whose copy in a research session drew
+  the label centred like the Sort button's (Live 5). Each is written as the
+  Sort button has it - a number, a true/false, a text or an asset - and read
+  back; one that reads as anything else is not written and counts as not
+  read, and the log names the first setting that did not read back the same.
+  Checked in play (ForgePact #131, `docs/stash-move-research.md` § Live 6
+  results): the button on the Mercenary button's box, all 16 copied settings
+  reading back as the Sort button's, and the label centred like Sort's, on the
+  first opening and again after the stash was closed and reopened. A
   moment after it appears the mod checks
   where and how the game drew it and moves it once if needed; the log says
   where it ended up, once a session (`stashmoveall: button - placed in the
