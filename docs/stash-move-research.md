@@ -1960,6 +1960,63 @@ These ran otherwise than the procedure first said:
 | saved-bag-lacks-keys | the same keys in the bag's saved file | as above | `inventory_order_13.hss` holds only the 20 skipped keys, under `inventory_socket_tab` | pass |
 | no-duplicate | every placed key under exactly one container | as above | each placed key under exactly one container; U2, both U_ORB copies and U_GEM (merged away) in no file | pass |
 
+### Live 4 results
+
+Live 4 ran on 2026-09-30 on the **research build** (§ Live procedure 4),
+`plugin_build/BloodPactPlugin_rel.dll` SHA-256
+`6a50a2f56b1461b2081210ed7480b749c99f16048053e9e8cc5de889abc4e1cc`, slot 14,
+fully automatic (the character picked by name at once; capture
+`.claude/workorders/forgepact-68-move-all-fix-live-2.md` on the owner's
+machine). **All 10 checks the procedure names passed on their numbers**, and
+`tools/live_checks.py` reads the same 10 verdicts from the capture's
+`## Checks` block. The game never ended, and the saves were restored afterwards
+and inspected clean.
+
+**What the numbers cannot see failed.** The ten checks read the node's box,
+its size, its `sprite_index` as a name and the mod's own state line; the
+screenshot taken at step 3 (`20260930T162809916688Z_live2-button-placed.png`,
+the owner's machine) is the only look at what the game draws, and the
+procedure left it out of the verdict. It shows:
+
+- **The label is not in the box.** The box at the node's bbox is drawn
+  empty. Only a clipped end of the `Move all` text shows, at about the box's
+  top-left corner (the screenshot is 2560x1440, the same as the GUI here, so
+  its pixels line up with the GUI numbers within a few units), overlapping
+  the frame above it and cut off on the left by the bag sub-tab icon cell
+  beside it, in a heavier type than Sort Tab's label. The node's x, y are
+  2090, 1262, that top-left, since wearing Sort's sprite moved its origin
+  there. That the game draws a `UI_Button_Small_obj` node's `text` centred on
+  the node's x, y, which was the box's centre under the object's own sprite
+  and is its corner under Sort's, fits what was seen and is **not
+  established**: neither the draw that places the label nor how the Sort node
+  gets its label centred is read.
+- **The box does not read as Sort's to the owner.** The operator's note and
+  the owner describe the node as a dark, empty box, not the red look they know
+  Sort by. In the same screenshot the backpack's own **Sort Tab** button
+  (`InventorySort`, the node the look is copied from) is drawn as the same
+  dark framed box, while the red **Sort Tab** at the top of the stash window is
+  the stash's own button (`StashSort`). Whether the owner's red look is that
+  button, a hover or pressed state, or something the copy misses is **not
+  established**; the box is not recorded as looking like Sort's.
+
+`button_look=sort` and `probe sort`'s `sprite=` both read back the member the
+mod itself wrote, so they show the write held on the node, not what the game
+draws with it.
+
+| Check | What it reads | Supplied | Result | Verdict |
+|---|---|---|---|---|
+| dll-hash | the lease's DLL hash against the build | - | lease `dll_sha256` 6a50a2f5..., equal to the build's, `dll_status hashed` | pass |
+| marker | the first line of bare `stashmoveall` | - | `state=off key=F4 button=none`, every counter 0, `button_look=none button_size=none` | pass |
+| control | a stash tab switch by name | `hs_stash_tab("shared1")` | `stashtab: before=0 after=1 handler=UiAStashTabClick` | pass |
+| off-baseline-button | the stash's small buttons with the switch off | `menulayout UI_Button_Small_obj` | five rows, Sort's (`InventorySort`, id 262105) `gui=2290.0,1262.0` bbox 2290.0,1262.0,2482.0,1328.0 (192x66), sprite `Inventory_Tab_Button_Solid_spr`, none `ForgePactMoveAll` | pass |
+| button-placed | the button's row against Sort's | `stashmoveall 1`, then Shared 1 and Personal clicked, about 2 s | one `ForgePactMoveAll` row (id 262287), `text=Move all`, `visible=1`, `gui=2090.0,1262.0`, bbox 2090.0,1262.0,2282.0,1328.0 (192x66): right edge 2282 is Sort's left less 8, both vertical centres 1295, width and height Sort's; the mod's own line `placed beside Sort, box 2090.0,1262.0,2282.0,1328.0`, printed on the enable itself | pass |
+| button-state | the bare state line | `stashmoveall` | `button_place=on button_box=2090.0,1262.0,2282.0,1328.0 button_extents=0.0,0.0,192.0,66.0 button_makes=1 button_look=sort button_size=192.0x66.0`: the first node made with Sort's own extents landed on target with no remake | pass |
+| button-press | a scripted click at the box's centre | 2 items on bag page 0 (setup Ctrl + clicks from the Personal tab), a left click at GUI 2186,1295 | `moved 2 of 2 from bag tab 0 to stash tab 0; skipped 0`, each `-> cell`; `in_node` 0 to 1, `taken` 0 to 1, `outside=2` (the setup clicks) | pass |
+| button-look | each node's sprite by name | `stashmoveall probe sort id:262105`, then `id:262287` | Sort `sprite=Inventory_Tab_Button_Solid_spr` (the positive control, as in Live 1f and 1g); the node `sprite=Inventory_Tab_Button_Solid_spr`, not `Menu_Button_Chat_spr` | pass |
+| close-survives | the game after the stash close | `hs_stash_close` | `hs_status` running (pid 60628), the window gone on a screenshot; the tool itself answered `not confirmed` (the hs-drive gap Live 3 saw) | pass |
+| reopen-placed | the reopened stash's button | `hs_stash_open`, Shared 1 then Personal, about 2.5 s | Sort id 263002 bbox 2290.0,1262.0,2482.0,1328.0; one `ForgePactMoveAll` row, id 263037, bbox 2090.0,1262.0,2282.0,1328.0; `button_place=on button_look=sort button_makes=1` | pass |
+| button-drawn (not a procedure check) | what the game draws for the node | the step 3 screenshot, and the reopen's | the box drawn at the node's bbox with no label inside it; a clipped end of `Move all` at about its top-left corner, under the frame above and behind the bag sub-tab icon beside it; the box read by the owner as dark and empty, not Sort's red look (the backpack's Sort Tab beside it is drawn the same dark way in that frame) | fail (visual, screenshot) |
+
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
@@ -2005,7 +2062,9 @@ name); `socketRoute`'s `merge:` part is rewritten from Live 1f. Live 3
 (ForgePact #131) set the last three, from that session alone:
 `stackCapRule` (from `material-overflow` and `material-partial`),
 `socketWholeStackMerge` (from `socket-whole`) and `buttonPlacement` (from
-`button-placed`, with the boxes it read).
+`button-placed`, with the boxes it read). Live 4 (ForgePact #131, owner scope)
+set `buttonLook`, from `button-placed`, `button-state` and `button-look` and
+from the screenshot the checks do not read.
 
 gridMoveRoute: byname (Live 1d byname-personal, byname-personal-clear, byname-shared, byname-shared-owner, saved-stash-has-keys, saved-bag-lacks-keys, all pass). personal: GridAddItem on the shown tab's array (the stash grid's nodeGrid, personal tab on show), self = other = the bag grid, a2 0, a3 undefined, after ValidateItem (self = other = the bag grid) and StashAddToStack (the same self, other and array, 0, 13, the item, 1, 0, answering false for a non-stackable) and followed by ValidateItem with self the stash grid and other the bag grid; shared: the same on shared tab 1's array with StashAddToStack's 9, 2. GridAddItem answers a struct with the tab, x, y and success; success=true places the item at x, y on the array it was handed and nowhere else (Live 1c's hand moves logged exactly this sequence)
 stackMoveRoute: byname (Live 1c byname-merge, replaying hand-merge): StashAddToStack, self = other = the bag grid (its Materials sub-tab on show), Controller_obj.stashMaterialTab, 9, 2, the item, 1, 0, answered true and the tab's sum for that base id rose by exactly one unit; then the source clear. It answers false when no stack of the same identity is on the tab (Live 1, Live 1c hand-material); a new identity then goes, by hand, through GridAddItem on the Materials tab's array and the owner step 0 to 9 (Live 1c hand-material; not replayed by name)
@@ -2024,6 +2083,7 @@ socketMergeRoute: byname (orb and gem; every identity with a node on the tab mer
 stackCapRule: measured 999 on the Materials tab (Live 3 material-overflow and material-partial, pass): with the sixth argument 0, a stack takes a unit only while its count plus the unit's stays at or below 999. A unit of 125 beside its kind's one stack of 875 (1000 together) was placed as a new stack of 125 in a free cell, the 875 left unchanged; a unit of 129 then passed over the 875 (1004 together) and merged into the stack of 125, which read 254; no stack read above 999 and neither run skipped anything. The same session's two bag materials beside full stacks of 999 each started a new stack too (material-new's setup). The mod's per-stack route (§ Ship design) therefore matches the game's merge on the Materials tab. Not measured: the cap of 999999 with flag 8 (the Socketable tab's stacks read far below 999, so it stays § Static reading 4's reading), a merge that lands exactly on 999, and which of two stacks with room takes the unit (the reading says the first in array order)
 socketWholeStackMerge: on (Live 3 socket-whole and socket-single, pass): through the shipped adapter on the research build, a copy of 3 of the orb (base id 118) merged into its kind's one StashSocketGrid node, `-> stack`, and the node's o rose by exactly 3 (92 to 95) on a clean re-run with only kinds the tab lacks left in the bag; the first run read +8 (84 to 92) because other orbs of that kind in the bag merged in the same run (inferred; the bag was not read before the press). A single gem (base id 8) raised its node by exactly 1. No merged unit's key reached a saved file. The flag stays on as #131 shipped it; a kind with no node still stays in the bag (socket-new-stays, 20 skipped)
 buttonPlacement: beside Sort, at ButtonOrigin's origin (Live 3 button-placed and button-press, pass): Sort's bbox read 2290.0,1262.0,2482.0,1328.0 and the Move all node's 2076.0,1271.0,2282.0,1319.0 (its x, y 2178.0, 1295.0, within one GUI unit of its bbox centre): its right edge exactly 8 left of Sort's left edge and both vertical centres at 1295, the mod's own `placed beside Sort` line naming the same box. The absolute box the procedure expected from Live 1f and 1g's numbers did not apply at this session's GUI scale (Sort 192 wide against 182.4, the node 206 against 195.7); the relation held, which is why the extents are read from the node rather than fixed. A click at the node's centre started one run (`in_node=1 taken=1`; `presses=4` counts the setup's three Ctrl + clicks, inferred). Not observed: a node first made off target and remade, and the off-target line
+buttonLook: size and sprite taken, drawn look not Sort's (Live 4 button-placed, button-state and button-look pass on their numbers; the step 3 screenshot fails): with `sprite_index`, `image_xscale` and `image_yscale` copied from the Sort node, the session's first node, made with Sort's own extents at x, y 2090, 1262, read the bbox 2090.0,1262.0,2282.0,1328.0 (192x66) beside Sort's 2290.0,1262.0,2482.0,1328.0 (192x66), right edge exactly 8 left of Sort's, centres both at 1295, with one make; `menulayout` and `probe sort` read the node's sprite as `Inventory_Tab_Button_Solid_spr`, the same as Sort's, and the state line `button_look=sort button_size=192.0x66.0`; the reopen's node, made from the measured extents 0,0,192,66, read the same box. So the copied sprite and scale persisted on the node through two ensure steps, a tab switch and a reopen, and its bbox followed them. That is not the look: those reads are of the member the mod wrote. In the screenshot the node's box is drawn empty, its `Move all` label is not inside it (a clipped end of the text shows at about the box's top-left corner, under the frame above it), and the owner reads the box as dark rather than Sort's red look (the backpack's Sort Tab in the same frame is drawn the same dark way; the red Sort Tab there is the stash's own `StashSort`). Not a pass for what the player sees. Not established: where the game draws a node's `text` (centred on its x, y is the inference, since that point moved from the box's centre to its corner with the sprite), how the Sort node gets its label centred, and what the owner's red look is. The button still works (the click moved 2 of 2)
 
 ## Ship design
 
@@ -2125,6 +2185,13 @@ button - it did not take the Sort button's look, so it is kept with its own;
 F4 still works`, and one that could not be read likewise on its own line.
 Neither is a remake, and neither turns the mod off: a node in its own look
 still works, and its place still follows its own measured extents.
+**What Live 4 showed (§ Live 4 results, § Decision `buttonLook`):** the copy
+held and the box is Sort's size and place, but the drawn button is not yet
+Sort's look: its `Move all` label is not drawn inside the box (a clipped end
+of it shows at the box's top-left corner) and the owner reads the box as dark
+rather than Sort's red. `button_look=sort` reads back the member the mod
+wrote, so it cannot see either; the look and the label are still open for
+#131.
 No `UiSetActivationFunc`, and no script hooked for it: a node
 with no activation runs nothing of the game's when clicked (Static reading 3;
 Live 1g's click on one showed only that no armed routine logged a call with it
