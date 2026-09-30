@@ -934,6 +934,117 @@ class StashMoveAllContractTests(unittest.TestCase):
         # Positive control: the research copy keeps them.
         self.assertIn("SmaProbeTick();", self.plugin)
 
+    # ---- #131's label instrument: dump, diff, lookcopy (research build) ------
+
+    def probe_block(self):
+        start = self.plugin.index("// ---- stashmoveall probe: the in-game button's instrument")
+        end = self.plugin.index("// ---- end stashmoveall probe")
+        return self.plugin[start:end]
+
+    def test_stash_probe_dump_diff_and_lookcopy_are_research_only(self):
+        # Live procedure 5 (docs/stash-move-research.md): the static reading
+        # could not name the member that places a node's label, so the
+        # research build dumps two nodes by name, diffs them, and tries the
+        # copy on the mod's own node. None of it is a player command.
+        block = self.probe_block()
+        start = self.plugin.index("// ---- stashmoveall probe: the in-game button's instrument")
+        self.assertIn("#ifndef FORGEPACT_RELEASE", self.plugin[start - 40:start])
+        dispatch = self.body("static bool SmaProbeCommand(")
+        for sub, handler in (('"dump"', "SmaProbeDumpCommand(tok)"), ('"diff"', "SmaProbeDiffCommand(tok)"),
+                             ('"lookcopy"', "SmaProbeLookCopyCommand(tok)")):
+            self.assertIn(f"sub == {sub}", dispatch, sub)
+            self.assertIn(handler, dispatch, handler)
+        # `probe help`, and any word it does not know, fall to the usage line.
+        self.assertRegex(dispatch, r'else if \(sub == "lookcopy"\) SmaProbeLookCopyCommand\(tok\);\s*'
+                                   r'else usage\(\);\s*return true;\s*$')
+        # The usage line (`probe help`, and any word it does not know) names
+        # every subcommand, so a build that has them says so (the marker).
+        usage = function_body(self.plugin, "static bool SmaProbeCommand(")
+        for word in ("sort [id:<n>]", "create [", "remove", "show", "copy <template key on map 9> <count>",
+                     "dump <label> id:<n>", "diff <a> <b>", "lookcopy id:<src> missing|changed", "help"):
+            self.assertIn(word, usage, word)
+        # Read by name, the instance checked with instance_exists before any read.
+        cap = self.body("static bool SmaProbeDumpCapture(")
+        self.assertLess(cap.index("SmaProbeExists(inst)"), cap.index('"variable_instance_get"'))
+        self.assertLess(cap.index("SmaProbeExists(inst)"), cap.index('"variable_instance_get_names"'))
+        for builtin in ("id", "object_index", "visible", "sprite_index", "image_index", "image_speed",
+                        "image_blend", "image_alpha", "image_xscale", "image_yscale", "image_angle", "depth",
+                        "x", "y", "bbox_left", "bbox_top", "bbox_right", "bbox_bottom"):
+            self.assertIn(f'"{builtin}"', block[block.index("kSmaProbeDumpBuiltins[] = {"):], builtin)
+        self.assertIn('"sprite_get_name"', cap)
+        self.assertIn("kSmaProbeDumpKeep", self.body("static SmaProbeDump& SmaProbeStoreDump("))
+        diff = self.body("static void SmaProbeDiffCommand(")
+        for mark in ('"~ "', '"+ "', '"- "', '"changed="', '" added="', '" removed="'):
+            self.assertIn(mark, diff, mark)
+        # Reads only: dump and diff write nothing and call no routine.
+        for name in ("static bool SmaProbeDumpCapture(", "static void SmaProbeDumpCommand(",
+                     "static void SmaProbeDiffCommand("):
+            body = self.body(name)
+            for word in WRITES + ("SmaCall(", "CallBuiltinEx("):
+                self.assertNotIn(word, body, (name, word))
+        # restartprobe's own dump is untouched: its capture and diff are not
+        # called from here, and its lines still name restartprobe.
+        for word in ("RpDumpCapture(", "RpDumpDiff(", "RpStoreDump("):
+            self.assertNotIn(word, strip_comments(block), word)
+        self.assertIn('Out("restartprobe dump diff " + da.kind', function_body(self.plugin, "static void RpDumpDiff("))
+        # Nothing reaches the player build, the player command set or the frame path.
+        release = strip_comments(self.shipped)
+        for word in ("SmaProbeDumpCommand", "SmaProbeDiffCommand", "SmaProbeLookCopyCommand", "SmaProbeDumpCapture",
+                     "kSmaProbeLookCopyNever", '"lookcopy"', "probe dump", "probe diff", "lookcopy"):
+            self.assertNotIn(word, release, word)
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        commands = run[run.index("kPlayerCommands = {"):]
+        commands = commands[:commands.index("};")]
+        for word in ('"probe', '"dump', '"diff', '"lookcopy'):
+            self.assertNotIn(word, commands, word)
+        frame = function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)")
+        for word in ("SmaProbeDump", "SmaProbeLookCopy", "SmaProbeDiff", "lookcopy"):
+            self.assertNotIn(word, frame, word)
+        # Positive control: the research copy carries them.
+        self.assertIn("static void SmaProbeLookCopyCommand(", self.plugin)
+
+    def test_stash_probe_lookcopy_writes_only_the_mods_own_node(self):
+        look = self.body("static void SmaProbeLookCopyCommand(")
+        # Refused, with nothing written, when the mod holds no node: the one
+        # write goes to the node SmaButtonIsOurs accepts, checked first.
+        self.assertEqual(look.count('"variable_instance_set"'), 1)
+        self.assertIn('CallBuiltin("variable_instance_set", { g_SmaButton, RValue(name), v });', look)
+        self.assertLess(look.index("SmaButtonIsOurs(g_SmaButton)"), look.index('"variable_instance_set"'))
+        self.assertIn("refused - the mod holds no Move all node", look)
+        # The source is checked with instance_exists before any read of it.
+        self.assertLess(look.index("SmaProbeExists(src)"), look.index("SmaProbeDumpCapture(src"))
+        # Never the members that say what the node is, where it is and what it does.
+        never = self.probe_block()
+        never = never[never.index("kSmaProbeLookCopyNever[] = {"):]
+        never = never[:never.index("};")]
+        for name in ("id", "object_index", "x", "y", "xstart", "ystart", "xprevious", "yprevious",
+                     "bbox_left", "bbox_top", "bbox_right", "bbox_bottom", "uiNodeCallstack",
+                     "activationFunc", "activationArgs", "text", "visible", "enabled"):
+            self.assertIn(f'"{name}"', never, name)
+        self.assertLess(look.index("SmaProbeLookCopyExcluded(name)"), look.index('"variable_instance_set"'))
+        # Only a number, bool, string or asset is written: the kind is read off
+        # the value itself, a handle is an asset only when the runtime names
+        # an asset type, and a reference, struct, array, method or undefined
+        # never is.
+        self.assertLess(look.index("SmaProbeWritable(kind)"), look.index('"variable_instance_set"'))
+        writable = self.body("static bool SmaProbeWritable(")
+        self.assertEqual(set(re.findall(r"SmaProbeKind::(\w+)", writable)), {"Number", "Bool", "String", "Asset"})
+        kind = self.body("static SmaProbeKind SmaProbeKindOf(")
+        for word in ('"is_method"', '"is_struct"', "VALUE_ARRAY", "VALUE_UNDEFINED", "VALUE_REF",
+                     "SmaProbeKind::Reference", "SmaProbeKind::Method", "SmaProbeKind::Struct",
+                     "SmaProbeKind::Array", "SmaProbeKind::Undefined", "kSmaProbeAssetTypes"):
+            self.assertIn(word, kind, word)
+        # Each write is read back off the node and printed beside what was written.
+        self.assertLess(look.index('"variable_instance_set"'),
+                        look.index('CallBuiltin("variable_instance_get", { g_SmaButton, RValue(name) })'))
+        self.assertIn('"  wrote " + name + "=" + want + " read back " + got', look)
+        # No routine, no hook, no other instance written.
+        for word in ("SmaCall(", "CallBuiltinEx(", "HookOneScript", "instance_create", "instance_destroy",
+                     "variable_struct_set", "variable_global_set"):
+            self.assertNotIn(word, look, word)
+        self.assertIn('"missing"', look)
+        self.assertIn('"changed"', look)
+
 
 if __name__ == "__main__":
     unittest.main()

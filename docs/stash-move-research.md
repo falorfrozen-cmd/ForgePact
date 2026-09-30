@@ -672,6 +672,54 @@ the closures of `UI_Inventory_Parent_obj`'s Create event. Labels as in
   ending in a method call on the node whose body is unread); stretching the
   chat sprite to Sort's box by scale alone (Sort's size, not its look).
 
+### Static reading 6: the label and the Mercenary button
+
+ForgePact #131, after Live 4 (§ Live 4 results). Live 4's node took Sort's
+sprite and size, but its `Move all` label was drawn at the box's top-left
+corner and clipped. The owner then asked, on the same screenshot, for the
+button to take the place of the game's own **Mercenary** button, which the
+game draws in that spot when the bag is open without the stash: "Use its
+coordinates because what you did right now is still a little misaligned".
+Two questions follow: which of a node's members places its label, and what
+the Mercenary button is and whether it can be read while the stash is open.
+Read locally on 2026-09-30 with the named Ghidra project: the Create closure
+of `UI_Button_Open_Mercenary_obj`, five Create closures of `UI_Parent_obj`,
+two of `UI_Node_Parent_obj`, `UiLabel` and `UiAOpenMercenaryInventory`.
+Labels as in § Static reading 3; R is a static reading.
+
+- (R) **The member reads could not be named.** This build reads every member
+  through a slot number the runner hands out at start-up. The slot table the
+  toolkit extracts resolved none of the member slots these routines use, and
+  their builtin calls go through unnamed pointers. The object events
+  themselves (each object's Create and Draw) are not named functions in the
+  project. So which member places a node's label, and which draw path the
+  Sort node takes to centre its own, is **not established**, and it is not
+  readable with this tooling in a reasonable time.
+- (R, names only) **What the SDK does name.** `UI_Button_Open_Mercenary_obj`
+  is object 5004, and `gml_Script_UiAOpenMercenaryInventory` and
+  `gml_Script_UiAOpenInventory` exist by name (`hs-game-sdk`'s `objects.hpp`
+  and `scripts.hpp`).
+- **Not established: the Mercenary button.** That the button the owner saw
+  is a `UI_Button_Open_Mercenary_obj` is not established. It may be a
+  `UI_Button_Small_obj` with its own call-stack name. Also not established:
+  whether it is listed while the stash is open (the owner saw it with the bag
+  alone), and whether the bag's `InventorySort` is listed with the bag alone.
+- (M, Live 4) **What the screenshot does show.** The Sort node's own label
+  is drawn centred in its box. The node's is not, while it carries Sort's
+  sprite and scale and reads them back. So whatever centres Sort's label is
+  either a member Sort carries and the node lacks or holds differently, or
+  something outside the node's members. Only a live comparison of the two
+  nodes' members, and a live trial of copying them, can tell these apart.
+
+**Why the fix waits on a session.** Nothing above names the member to copy
+or the box to copy from, and guessing either would repeat Live 4: a copy that
+reads back and passes every numeric check while the drawn button stays wrong.
+So the research build gains an instrument first (`stashmoveall probe dump`,
+`diff` and `lookcopy`, described in § Live procedure 5), and a screenshot check,
+`tools/button_label_check.py` in the toolkit hub, measures where a label is
+drawn. Live procedure 5 measures both nodes and the Mercenary button and
+tries the copy live. The fix is written from that measurement.
+
 ## Instrument
 
 The instrument is `craftprobe` (research build only; the toolkit guide's
@@ -1503,6 +1551,66 @@ made from the extents measured on the first, is placed the same way with
 `button_place=on button_look=sort` (`reopen-placed`). The cases are the
 session's first node (made from Sort's own extents), a later open's node (made
 from measured extents) and one press; no material or socketable case.
+
+### Live procedure 5
+
+The label and the Mercenary button (§ Static reading 6), measured before any
+fix. The procedure is Live procedure 1 of the workorder
+`.claude/workorders/forgepact-68-move-all-fix2-context.md` (kept on the
+owner's machine with the plan); this is its summary. It runs the **research
+build**, because its dumps, diffs and trial writes are research commands the
+player build compiles out:
+
+- `stashmoveall probe dump <label> id:<n>` reads one instance by name, after
+  `instance_exists`: a fixed builtin list (`id`, `object_index`, `visible`,
+  `sprite_index` with its sprite's name, `image_index`, `image_speed`,
+  `image_blend`, `image_alpha`, `image_xscale`, `image_yscale`,
+  `image_angle`, `depth`, `x`, `y` and the four `bbox_*`) and every instance
+  variable `variable_instance_get_names` returns. Each value is printed with
+  its kind (`real`, `int32`, `int64`, `bool`, `string`, `asset`,
+  `reference`, `struct`, `array`, `method`, `undefined`), and the dump is kept
+  under the label, eight at most, the oldest evicted.
+- `stashmoveall probe diff <a> <b>` prints `~` for a member both dumps hold
+  with different values, `+` or `-` for one only one side holds, and a count
+  line.
+- `stashmoveall probe lookcopy id:<src> missing|changed` writes onto the
+  mod's own node only, and is refused with nothing written while the mod holds
+  none. `missing` writes each member the source has and the node lacks;
+  `changed` each member both have whose values differ. Only a number, bool,
+  string or asset is written: a reference, struct, array, method or undefined
+  never is. Nor are the members that say what the node is, where it is or
+  what it does (`id`, `object_index`, `x`, `y`, `xstart`, `ystart`,
+  `xprevious`, `yprevious`, the `bbox_*`, `uiNodeCallstack`, `activationFunc`,
+  `activationArgs`, `text`, `visible`, `enabled`). Each write prints `wrote
+  <name>=<value> read back <value>`, then a count line.
+- `stashmoveall probe help` prints the usage line naming every subcommand.
+
+Save slot 14, the mod off at launch, the saves backed up first and restored
+at the end. Every screenshot is `hs_screenshot` `target="game"`,
+`method="grab_window"`, whose pixels are the client area the GUI maps onto.
+Positive controls first: the lease's DLL hash (`dll-hash`), `probe help`
+naming `dump`, `diff` and `lookcopy` (`marker`), and a by-name tab switch
+(`control`). Then, with the bag open on its own: an `InventorySort` row that
+is visible (`bag-alone-open`) and the Mercenary button's row, its object,
+id, box, sprite, call-stack name and text, left of Sort and overlapping it
+vertically (`merc-bag-read`). Dumps of both, where the Sort dump reading
+`uiNodeCallstack=InventorySort`, `text=Sort Tab` and some instance variables
+is the instrument's control (`dump-control`), and `tools/button_label_check.py`
+run on the Mercenary box against Sort's (`merc-label`). With the stash open:
+whether the Mercenary node is still listed and where (`merc-stash-listed`),
+and whether `InventorySort`'s box is the same as with the bag alone
+(`sort-same-both`). Then the mod's node (`node-made`), the label check
+against Sort on its screenshot, whose reference line must read `centred`
+(`label-tool-control`) and whose box line reproduces Live 4's defect
+(`label-baseline`), and dumps and diffs of the node, both Sorts and the
+Mercenary button (`dump-diff`). Then the trial: `lookcopy` from Sort with
+`missing`, and with `changed` only if the first did not centre the label, each
+judged by the label check (`label-trial-missing`, `label-trial-changed`); a
+click on the node still counted as one press (`trial-press`); and the close
+(`close-survives`), with whether Sort and the Mercenary row are still listed
+right after it (`bag-after-close`). The cases are the backpack's Sort, the
+stash's Sort, the Mercenary button (with the bag alone, and with the stash if
+listed) and the mod's node, in two trial tiers.
 
 ## Results
 

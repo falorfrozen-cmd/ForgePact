@@ -37970,6 +37970,13 @@ static bool SmaButtonPoll()
 //   probe copy <key> <count>    giveitem's loader order with the template read
 //                               from map 9, so a stash socketable is copied into
 //                               the bag with no person
+//   probe dump <label> id:<n>   (#131, Live 5) one instance's members by name,
+//                               kept under the label
+//   probe diff <a> <b>          two kept dumps compared
+//   probe lookcopy id:<src> missing|changed
+//                               a source node's members written onto the mod's
+//                               own Move all node and read back
+//   probe help                  the usage line
 // Route A's counter (detour_presses) is counted by the craftprobe detour of the
 // bound script's row when its self is the node, and row_calls_self_node by the
 // same detour for the watched row, bound or not (SmaProbeSawCall, with the
@@ -38375,6 +38382,325 @@ static void SmaProbeCopyCommand(const std::vector<std::string>& tok)
             + std::to_string(inCells) + " for " + made + ", items " + std::to_string(before) + " -> " + std::to_string(after));
 }
 
+// ---- probe dump, diff, lookcopy: the label's members (ForgePact #131, Live 5)
+//
+// docs/stash-move-research.md, § Static reading 6 and § Live procedure 5. The
+// static reading named no member that places a node's label, so these measure
+// it: `dump <label> id:<n>` keeps one instance's members, read by name, under a
+// label; `diff <a> <b>` compares two dumps; `lookcopy id:<src> missing|changed`
+// writes a source node's members onto the mod's own Move all node and reads
+// each back, so one session both finds the members and tries the copy. Their
+// own store and printer rather than restartprobe's RpDumpCapture/RpDumpDiff:
+// those read a shorter builtin list, print an asset handle by its raw kind, and
+// their output is pinned (tests/test_restart_anytime_contract.py).
+
+static constexpr size_t kSmaProbeDumpKeep = 8;         // dumps kept, oldest evicted
+static constexpr size_t kSmaProbeDumpMaxNames = 512;   // instance variables read per dump
+static constexpr size_t kSmaProbeDumpLines = 300;      // member lines diff and lookcopy print
+static constexpr size_t kSmaProbeValueCap = 120;       // characters of a printed value
+
+static const char* const kSmaProbeDumpBuiltins[] = {
+    "id", "object_index", "visible", "sprite_index", "image_index", "image_speed", "image_blend", "image_alpha",
+    "image_xscale", "image_yscale", "image_angle", "depth", "x", "y", "bbox_left", "bbox_top", "bbox_right",
+    "bbox_bottom",
+};
+// What lookcopy never writes: what the node is, where it is and what it does.
+static const char* const kSmaProbeLookCopyNever[] = {
+    "id", "object_index", "x", "y", "xstart", "ystart", "xprevious", "yprevious",
+    "bbox_left", "bbox_top", "bbox_right", "bbox_bottom",
+    "uiNodeCallstack", "activationFunc", "activationArgs", "text", "visible", "enabled",
+};
+// A handle's type words that name an asset (a handle prints "ref <type> <name
+// or number>", measured: `ref room Main_Menu_rm`, `ref ds_map 1049`, `ref
+// instance 263555`). An instance, a data structure or any other type is a
+// reference, and lookcopy never writes one.
+static const char* const kSmaProbeAssetTypes[] = {
+    "sprite", "sound", "font", "path", "script", "shader", "timeline", "object", "room", "sequence",
+    "animcurve", "tileset",
+};
+
+enum class SmaProbeKind { Number, Bool, String, Asset, Reference, Struct, Array, Method, Undefined, Other };
+
+struct SmaProbeDump {
+    std::string label;
+    long long id = -1;
+    std::string object;
+    size_t names = 0;          // instance variables read, after the builtins
+    bool truncated = false;
+    std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
+};
+static std::vector<SmaProbeDump> g_SmaProbeDumps;   // oldest first; game thread only
+
+// What a value is, read off the value itself: a number, bool or string by its
+// kind; a method or struct by the runtime's own is_method and is_struct; a
+// handle an asset only when its printed type names one.
+static SmaProbeKind SmaProbeKindOf(const RValue& v)
+{
+    try {
+        switch (v.m_Kind) {
+        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: return SmaProbeKind::Number;
+        case VALUE_BOOL:      return SmaProbeKind::Bool;
+        case VALUE_STRING:    return SmaProbeKind::String;
+        case VALUE_ARRAY:     return SmaProbeKind::Array;
+        case VALUE_UNDEFINED: case VALUE_NULL: return SmaProbeKind::Undefined;
+        case VALUE_OBJECT:
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return SmaProbeKind::Method;
+            if (g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()) return SmaProbeKind::Struct;
+            return SmaProbeKind::Other;
+        case VALUE_REF: {
+            std::istringstream in(v.ToString());
+            std::string ref, type;
+            in >> ref >> type;
+            if (ref != "ref") return SmaProbeKind::Other;
+            for (const char* asset : kSmaProbeAssetTypes) if (type == asset) return SmaProbeKind::Asset;
+            return SmaProbeKind::Reference;
+        }
+        default: return SmaProbeKind::Other;
+        }
+    } catch (...) { return SmaProbeKind::Other; }
+}
+
+static const char* SmaProbeKindName(SmaProbeKind k)
+{
+    switch (k) {
+    case SmaProbeKind::Number:    return "number";
+    case SmaProbeKind::Bool:      return "bool";
+    case SmaProbeKind::String:    return "string";
+    case SmaProbeKind::Asset:     return "asset";
+    case SmaProbeKind::Reference: return "reference";
+    case SmaProbeKind::Struct:    return "struct";
+    case SmaProbeKind::Array:     return "array";
+    case SmaProbeKind::Method:    return "method";
+    case SmaProbeKind::Undefined: return "undefined";
+    default:                      return "other";
+    }
+}
+
+// Only these kinds are ever written by lookcopy.
+static bool SmaProbeWritable(SmaProbeKind k)
+{
+    return k == SmaProbeKind::Number || k == SmaProbeKind::Bool || k == SmaProbeKind::String
+        || k == SmaProbeKind::Asset;
+}
+
+// A value as `<value> (<kind>)`: a number to ten digits (with int32/int64 kept
+// apart from real), a string as it reads on one line, a handle as it prints.
+static std::string SmaProbeValue(const RValue& v)
+{
+    const SmaProbeKind k = SmaProbeKindOf(v);
+    std::string text, kind = SmaProbeKindName(k);
+    try {
+        switch (k) {
+        case SmaProbeKind::Number: {
+            char buf[64];
+            sprintf_s(buf, "%.10g", v.ToDouble());
+            text = buf;
+            kind = v.m_Kind == VALUE_REAL ? "real" : v.m_Kind == VALUE_INT32 ? "int32" : "int64";
+            break;
+        }
+        case SmaProbeKind::Bool:   text = v.ToBoolean() ? "true" : "false"; break;
+        case SmaProbeKind::String: text = MenuLayoutOneLine(v.ToString()); break;
+        case SmaProbeKind::Asset: case SmaProbeKind::Reference: text = MenuLayoutOneLine(v.ToString()); break;
+        case SmaProbeKind::Array:
+            text = "array[" + MenuLayoutInteger(g_Yytk->CallBuiltin("array_length", { v }).ToDouble()) + "]";
+            break;
+        case SmaProbeKind::Undefined: text = "undefined"; break;
+        default: text = "<" + kind + ">"; break;
+        }
+    } catch (...) { text = "<unreadable>"; }
+    if (text.size() > kSmaProbeValueCap) text = text.substr(0, kSmaProbeValueCap) + "...";
+    return text + " (" + kind + ")";
+}
+
+static bool SmaProbeLookCopyExcluded(const std::string& name)
+{
+    for (const char* never : kSmaProbeLookCopyNever) if (name == never) return true;
+    return false;
+}
+
+static SmaProbeDump* SmaProbeFindDump(const std::string& label)
+{
+    for (SmaProbeDump& d : g_SmaProbeDumps) if (d.label == label) return &d;
+    return nullptr;
+}
+
+static SmaProbeDump& SmaProbeStoreDump(const std::string& label)
+{
+    for (auto it = g_SmaProbeDumps.begin(); it != g_SmaProbeDumps.end(); ++it) {
+        if (it->label == label) { g_SmaProbeDumps.erase(it); break; }
+    }
+    if (g_SmaProbeDumps.size() >= kSmaProbeDumpKeep) {
+        Out(std::string(kSmaProbeTag) + "dump - evicted the oldest dump '" + g_SmaProbeDumps.front().label
+            + "' (keeps " + std::to_string(kSmaProbeDumpKeep) + ")");
+        g_SmaProbeDumps.erase(g_SmaProbeDumps.begin());
+    }
+    g_SmaProbeDumps.push_back(SmaProbeDump());
+    g_SmaProbeDumps.back().label = label;
+    return g_SmaProbeDumps.back();
+}
+
+// One instance's members, read by name: the fixed builtin list (sprite_index
+// with its sprite's name) and every instance variable the runtime names. False,
+// with nothing read, when the instance is not listed.
+static bool SmaProbeDumpCapture(const RValue& inst, SmaProbeDump& d, std::string& why)
+{
+    d.values.clear();
+    d.names = 0;
+    d.truncated = false;
+    if (!SmaProbeExists(inst)) { why = "not an instance (instance_exists answered false)"; return false; }
+    d.id = SmaProbeId(inst);
+    for (const char* b : kSmaProbeDumpBuiltins) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(b) });
+            std::string text = SmaProbeValue(v);
+            if (std::strcmp(b, "sprite_index") == 0 && SmaProbeKindOf(v) == SmaProbeKind::Number && v.ToDouble() >= 0)
+                text += " name=" + MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { v }).ToString());
+            if (std::strcmp(b, "object_index") == 0)
+                d.object = MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { v }).ToString());
+            d.values.emplace_back(b, text);
+        } catch (...) { d.values.emplace_back(b, "<unreadable>"); }
+    }
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+        d.truncated = n > kSmaProbeDumpMaxNames;
+        for (size_t i = 0; i < n && i < kSmaProbeDumpMaxNames; ++i) {
+            std::string name = "?";
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                name = nm.ToString();
+                d.values.emplace_back(name, SmaProbeValue(g_Yytk->CallBuiltin("variable_instance_get", { inst, nm })));
+            } catch (...) { d.values.emplace_back(name, "<unreadable>"); }
+            ++d.names;
+        }
+    } catch (...) { why = "variable_instance_get_names threw"; }
+    return true;
+}
+
+// `probe dump <label> id:<n>`: capture, keep and print.
+static void SmaProbeDumpCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "dump ";
+    long long id = -1;
+    if (tok.size() != 4 || Lower(tok[3]).rfind("id:", 0) != 0) {
+        Out(tag + "refused - usage: stashmoveall probe dump <label> id:<n>; nothing read");
+        return;
+    }
+    try { id = std::stoll(tok[3].substr(3)); }
+    catch (...) { Out(tag + "refused - id:<n> needs a whole number; nothing read"); return; }
+    SmaProbeDump probe;
+    std::string why;
+    if (!SmaProbeDumpCapture(RValue((double)id), probe, why)) {
+        Out(tag + tok[2] + ": id " + std::to_string(id) + " " + why + "; nothing kept");
+        return;
+    }
+    SmaProbeDump& d = SmaProbeStoreDump(tok[2]);
+    const std::string label = d.label;
+    d = probe;
+    d.label = label;
+    Out(tag + d.label + ": id=" + std::to_string(d.id) + " object=" + (d.object.empty() ? std::string("?") : d.object)
+        + " names=" + std::to_string(d.names)
+        + (d.truncated ? " (truncated at " + std::to_string(kSmaProbeDumpMaxNames) + ")" : "")
+        + (why.empty() ? "" : " error=" + why));
+    for (const auto& kv : d.values) Out("  " + kv.first + "=" + kv.second);
+}
+
+// `probe diff <a> <b>`: `~` a member both have whose values differ, `+` one only
+// b has, `-` one only a has, then the count line.
+static void SmaProbeDiffCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "diff ";
+    if (tok.size() != 4) { Out(tag + "refused - usage: stashmoveall probe diff <a> <b>"); return; }
+    const SmaProbeDump* da = SmaProbeFindDump(tok[2]);
+    const SmaProbeDump* db = SmaProbeFindDump(tok[3]);
+    if (!da || !db) { Out(tag + "refused - no dump labelled '" + (da ? tok[3] : tok[2]) + "' is kept"); return; }
+    const std::map<std::string, std::string> ma(da->values.begin(), da->values.end());
+    const std::map<std::string, std::string> mb(db->values.begin(), db->values.end());
+    size_t changed = 0, added = 0, removed = 0, printed = 0;
+    Out(tag + da->label + " (id " + std::to_string(da->id) + ") -> " + db->label + " (id " + std::to_string(db->id) + "):");
+    for (const auto& kv : mb) {
+        const auto it = ma.find(kv.first);
+        if (it == ma.end()) {
+            ++added;
+            if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "+ " + kv.first + "=" + kv.second);
+        } else if (it->second != kv.second) {
+            ++changed;
+            if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "~ " + kv.first + ": " + it->second + " -> " + kv.second);
+        }
+    }
+    for (const auto& kv : ma) {
+        if (mb.count(kv.first)) continue;
+        ++removed;
+        if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "- " + kv.first + " (was " + kv.second + ")");
+    }
+    Out(tag + da->label + " " + db->label + ": " + "changed=" + std::to_string(changed) + " added=" + std::to_string(added)
+        + " removed=" + std::to_string(removed)
+        + (printed > kSmaProbeDumpLines ? " (first " + std::to_string(kSmaProbeDumpLines) + " lines shown)" : ""));
+}
+
+// `probe lookcopy id:<src> missing|changed`: onto the mod's own Move all node
+// only (refused, nothing written, while the mod holds none), each member of the
+// source that the node lacks (`missing`) or that both have with different
+// values (`changed`), when its value is a number, bool, string or asset and it
+// is not one of kSmaProbeLookCopyNever. Each write is read back off the node and
+// printed beside what was written; the count line closes it.
+static void SmaProbeLookCopyCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "lookcopy ";
+    const std::string tier = tok.size() >= 4 ? Lower(tok[3]) : std::string();
+    if (tok.size() != 4 || Lower(tok[2]).rfind("id:", 0) != 0 || (tier != "missing" && tier != "changed")) {
+        Out(tag + "refused - usage: stashmoveall probe lookcopy id:<src> missing|changed; nothing written");
+        return;
+    }
+    long long id = -1;
+    try { id = std::stoll(tok[2].substr(3)); }
+    catch (...) { Out(tag + "refused - id:<src> needs a whole number; nothing written"); return; }
+    if (!g_SmaButtonHeld || !SmaButtonIsOurs(g_SmaButton)) {
+        Out(tag + "refused - the mod holds no Move all node (`stashmoveall 1` with the stash open); nothing written");
+        return;
+    }
+    const RValue src((double)id);
+    if (!SmaProbeExists(src)) { Out(tag + "refused - id " + std::to_string(id) + " is not an instance; nothing written"); return; }
+    const long long nodeId = SmaProbeId(g_SmaButton);
+    if (id == nodeId) { Out(tag + "refused - the source is the node itself; nothing written"); return; }
+    SmaProbeDump s, n;
+    std::string why;
+    if (!SmaProbeDumpCapture(src, s, why) || !SmaProbeDumpCapture(g_SmaButton, n, why)) {
+        Out(tag + "refused - a capture failed (" + why + "); nothing written");
+        return;
+    }
+    const std::map<std::string, std::string> node(n.values.begin(), n.values.end());
+    size_t wrote = 0, held = 0, excluded = 0, refusedKind = 0, failed = 0, printed = 0;
+    auto say = [&](const std::string& line) { if (printed++ < kSmaProbeDumpLines) Out(line); };
+    Out(tag + tier + " from id=" + std::to_string(id) + " onto the mod's node id=" + std::to_string(nodeId) + ":");
+    for (const auto& kv : s.values) {
+        const std::string& name = kv.first;
+        const auto it = node.find(name);
+        if (tier == "missing" ? it != node.end() : (it == node.end() || it->second == kv.second)) continue;
+        if (SmaProbeLookCopyExcluded(name)) { ++excluded; continue; }
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { src, RValue(name) });
+            const SmaProbeKind kind = SmaProbeKindOf(v);
+            if (!SmaProbeWritable(kind)) {
+                ++refusedKind;
+                say("  skip " + name + "=" + SmaProbeValue(v) + " - a " + SmaProbeKindName(kind) + " is never written");
+                continue;
+            }
+            if (!SmaButtonIsOurs(g_SmaButton)) { say("  stopped - the node is gone"); break; }
+            const std::string want = SmaProbeValue(v);
+            g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(name), v });
+            const std::string got = SmaProbeValue(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(name) }));
+            ++wrote;
+            if (got == want) ++held;
+            say("  wrote " + name + "=" + want + " read back " + got);
+        } catch (...) { ++failed; say("  failed " + name + " - a read or the write threw"); }
+    }
+    Out(tag + tier + ": wrote=" + std::to_string(wrote) + " held=" + std::to_string(held)
+        + " not_held=" + std::to_string(wrote - held) + " refused_kind=" + std::to_string(refusedKind)
+        + " excluded=" + std::to_string(excluded) + " failed=" + std::to_string(failed)
+        + (printed > kSmaProbeDumpLines ? " (first " + std::to_string(kSmaProbeDumpLines) + " lines shown)" : ""));
+}
+
 static bool SmaProbeCommand(const std::string& rest)
 {
     std::istringstream in(rest);
@@ -38382,13 +38708,21 @@ static bool SmaProbeCommand(const std::string& rest)
     for (std::string t; in >> t;) tok.push_back(t);
     if (tok.empty() || Lower(tok[0]) != "probe") return false;
     const std::string sub = tok.size() >= 2 ? Lower(tok[1]) : std::string();
+    // `probe help`, and any word it does not know, print the usage line.
+    auto usage = []() {
+        Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
+            "copy <template key on map 9> <count> | dump <label> id:<n> | diff <a> <b> | lookcopy id:<src> missing|changed | help "
+            "(research build; docs/stash-move-research.md, Live procedures 1f and 5)");
+    };
     if (sub == "sort") SmaProbeSortCommand(tok);
     else if (sub == "create") SmaProbeCreateCommand(tok);
     else if (sub == "remove") SmaProbeRemoveCommand();
     else if (sub == "show") SmaProbeShowCommand();
     else if (sub == "copy") SmaProbeCopyCommand(tok);
-    else Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
-             "copy <template key on map 9> <count> (research build; docs/stash-move-research.md, Live procedure 1f)");
+    else if (sub == "dump") SmaProbeDumpCommand(tok);
+    else if (sub == "diff") SmaProbeDiffCommand(tok);
+    else if (sub == "lookcopy") SmaProbeLookCopyCommand(tok);
+    else usage();   // `help`, or a word it does not know
     return true;
 }
 
