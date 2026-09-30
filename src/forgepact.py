@@ -176,10 +176,16 @@ STATS = [
 
 # Nihai sonuca yuzde ekleyen hassas ayarlar.  Panel yuzdeyi saklar; plugine
 # 1 + yuzde/100 carpani gider (+25% -> 1.25, +100% -> 2.0).
+# "add" rows are added to the game's own total instead (`statadd`): Faster
+# Cast Rate and Skill Haste in points, All Skills in whole skill levels.
+# Skill Haste stops at 200: the game counts at most 200 in total (measured,
+# ForgePact#114 Live 1), so a larger bonus would change nothing.
 PERCENT_STATS = [
     ("damage", "Total Damage", 1000, 5, "multiply"),
     ("attackspeed", "Attack Speed", 500, 5, "multiply"),
     ("castrate", "Faster Cast Rate", 500, 5, "add"),
+    ("skillhaste", "Skill Haste", 200, 5, "add"),
+    ("allskills", "All Skills", 100, 1, "add"),
     ("lifereplenish", "Life Replenish", 1000, 5, "multiply"),
     ("manareplenish", "Mana Replenish", 1000, 5, "multiply"),
     ("defense", "Defense", 1000, 5, "multiply"),
@@ -188,6 +194,8 @@ PERCENT_STATS = [
     ("spellcritdamage", "Spell Critical Strike Damage", 1000, 5, "multiply"),
     ("spellcritchance", "Spell Critical Strike Chance", 500, 5, "multiply"),
 ]
+# A skill level has no fraction, so a typed All Skills value is kept whole.
+WHOLE_PERCENT_STATS = frozenset({"allskills"})
 
 # Rare item quality.  These do not add drops - they change how good a drop is
 # allowed to be.  Third field is the slider ceiling.
@@ -2213,6 +2221,8 @@ class H(BaseHTTPRequestHandler):
                 elif sec == "percent_stats":
                     ceiling = next((mx for k, _l, mx, _st, _mode in PERCENT_STATS if k == key), 1000)
                     value = round(max(0.0, min(float(ceiling), float(val))), 2)
+                    if key in WHOLE_PERCENT_STATS:
+                        value = float(round(value))
                     cfg.setdefault("percent_stats", {})[key] = int(value) if value.is_integer() else value
                 elif sec == "drops":
                     if key not in {k for k, *_ in DROPS}:

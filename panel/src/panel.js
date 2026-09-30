@@ -172,7 +172,9 @@ function applyPluginModState(pm){
   }
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
-export function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
+// All Skills adds whole skill levels, not a percentage.
+const LEVEL_PERCENT_STATS=new Set(['allskills']);
+export function sliderText(sec,v,key){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+(LEVEL_PERCENT_STATS.has(key)?'':'%'):'x'+v)}
 // A slider's on/off switch (Monster Density's #den_on, for every other
 // slider): off keeps the value in the range and the saved config, and the
 // value box reads "off" the way density's does, while the backend sends the
@@ -205,7 +207,7 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}"${n?` aria-describedby="${noteId}"`:''}>
-    <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
+    <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val,key)}</span></div>${n}`;
 }
 function satRow(polarity,id,name,desc,enabled){
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -276,6 +278,8 @@ function percentStatNote(key,v){
   if(v<=0) return '';
   if(key==='damage') return `adds ${v}% to the final hit after the game finishes its own calculation (+100% doubles it)`;
   if(key==='castrate') return `adds ${v} Faster Cast Rate points to the current value`;
+  if(key==='skillhaste') return `adds ${v} Skill Haste points to the current value, so cooldowns recover faster (the game counts at most 200 in total: cooldowns at half their time)`;
+  if(key==='allskills') return `adds ${v} to All Skills: every skill with at least one point goes up ${v} level${v===1?'':'s'}`;
   if(key==='critchance'||key==='spellcritchance') return `increases the current Critical Strike Chance by ${v}% (the game's own cap still applies)`;
   return `adds ${v}% to the final value`;
 }
@@ -429,7 +433,7 @@ async function boot(){
     const v=(c.percent_stats&&c.percent_stats[k])||0;
     return row('percent_stats',k,l,v,'',mx,percentStatNote(k,v),step);
   }).join('');
-  document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate']);
+  document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate','skillhaste','allskills']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
   paintSwitches(c);
@@ -502,7 +506,7 @@ function bind(){
     const noteEl=r.parentElement.parentElement.querySelector(`.note[data-note="${r.dataset.key}"]`);
     const tipOf=(k)=>{const e=(ST.keys||[]).find(x=>x[0]===k);return e?e[2]:undefined;};
     const swId=r.dataset.sec+'.'+r.dataset.key;
-    r.oninput=()=>{const v=sliderVal(r),off=switchedOff(swId);valEl.textContent=off?'off':sliderText(r.dataset.sec,v);valEl.className='val '+(off||sliderOff(r.dataset.sec,v)?'off':'');
+    r.oninput=()=>{const v=sliderVal(r),off=switchedOff(swId);valEl.textContent=off?'off':sliderText(r.dataset.sec,v,r.dataset.key);valEl.className='val '+(off||sliderOff(r.dataset.sec,v)?'off':'');
       if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);
       if(noteEl&&r.dataset.sec==='stats')noteEl.textContent=statNote(r.dataset.key,v);
       if(noteEl&&r.dataset.sec==='percent_stats')noteEl.textContent=percentStatNote(r.dataset.key,v);
@@ -510,7 +514,7 @@ function bind(){
     r.onchange=async()=>{
       const v=sliderVal(r);
       const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:r.dataset.sec,key:r.dataset.key,value:v})});
-      toast((r.dataset.key)+' = '+sliderText(r.dataset.sec,v)+' - '+(res.ok||res.err));
+      toast((r.dataset.key)+' = '+sliderText(r.dataset.sec,v,r.dataset.key)+' - '+(res.ok||res.err));
     };
     typable(r,valEl);
   });

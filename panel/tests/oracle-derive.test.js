@@ -4,13 +4,14 @@
 // contract's: three switch clicks per switched slider, one Turn off per mod
 // the list can show, one theme step per THEMES entry, after the one step that
 // opens Setup, where the theme is, then the key supplement's slider (Prime
-// Evil Parts), entered on the Loot tab, and last the boolean mods no recording
-// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life.
+// Evil Parts), entered on the Loot tab, then the boolean mods no recording
+// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, and last the
+// switched sliders no recording has (NATIVE_SLIDERS), entered on Modifiers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { NATIVE_BOOLEANS, derive, derivedFromPath, quickDisable, serialise, switchIdOf } from './oracle-derive.mjs';
+import { NATIVE_BOOLEANS, NATIVE_SLIDERS, derive, derivedFromPath, quickDisable, serialise, switchIdOf, tableRange } from './oracle-derive.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
 
@@ -26,6 +27,10 @@ const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 // The native booleans' steps close the file: the Mods tab and its Quality of
 // Life sub-tab once, then on, off, on and Turn off for each.
 const NATIVE_STEPS = 2 + 4 * NATIVE_BOOLEANS.length;
+// Then the native sliders': the Modifiers tab once, then a slider's eight steps each.
+const NATIVE_SLIDER_STEPS = 1 + 8 * NATIVE_SLIDERS.length;
+// Everything after the key supplement's slider.
+const TAIL = NATIVE_STEPS + NATIVE_SLIDER_STEPS;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -89,15 +94,15 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 123 switch clicks, 61 Turn off buttons, one theme step per theme', () => {
+test('the counts: 129 switch clicks, 63 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
   const theme = steps.filter((s) => s.control === '#theme');
-  assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length));
-  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + BOOLEAN_MODS.length + 2);
-  assert.equal(switches.length, 123);
-  assert.equal(quick.length, 61);
+  assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
+  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2);
+  assert.equal(switches.length, 129);
+  assert.equal(quick.length, 63);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -136,21 +141,21 @@ test('the theme steps come after one tab:setup step, and only the key supplement
   assert.ok(!('expect' in steps[first - 1]), 'the Setup step carries an expectation');
   assert.equal(steps.filter((s) => s.control === 'tab:setup').length, 1);
   assert.deepEqual(steps.slice(first, first + THEMES.length).map((s) => s.control), THEMES.map(() => '#theme'));
-  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length - NATIVE_STEPS);
+  assert.equal(first, steps.length - THEMES.length - 1 - 8 * KEY_SLIDERS.length - TAIL);
   assert.ok(!DERIVED.controls.includes('tab:setup'), 'a navigation step is not a control');
-  // Without the key supplement, only the native booleans' steps follow the
-  // theme, and everything before them is the same as with it.
+  // Without the key supplement, only the native booleans' and sliders' steps
+  // follow the theme, and everything before them is the same as with it.
   const bare = derive(LEGACY, 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json');
-  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length - NATIVE_STEPS);
+  assert.equal(bare.steps.findIndex((s) => s.control === '#theme'), bare.steps.length - THEMES.length - TAIL);
   assert.ok(!('keySupplementFrom' in bare));
-  const head = bare.steps.length - NATIVE_STEPS;
+  const head = bare.steps.length - TAIL;
   assert.deepEqual(bare.steps.slice(0, head), DERIVED.steps.slice(0, head));
 });
 
 test('the key supplement\'s slider gets the eight slider steps, entered on the Loot tab after the theme', () => {
   assert.deepEqual(KEY_SLIDERS, ['input[type=range][data-sec="keys"][data-key="primeevil"]']);
   const steps = DERIVED.steps;
-  const at = steps.length - 9 - NATIVE_STEPS;
+  const at = steps.length - 9 - TAIL;
   // The theme left Setup open, so the Loot tab is entered again first.
   assert.equal(steps[at - 1].control, '#theme');
   assert.deepEqual(steps[at], { step: at, control: 'tab:loot', action: 'click' });
@@ -168,9 +173,10 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, then the native booleans', () => {
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, then each native slider and its switch', () => {
   assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil',
-    ...NATIVE_BOOLEANS.map((n) => '#' + n.key)]);
+    ...NATIVE_BOOLEANS.map((n) => '#' + n.key),
+    ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`])]);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
@@ -188,7 +194,7 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   assert.equal(nav.findLast((c) => c.startsWith('tab:')), 'tab:mods');
   assert.equal(nav.at(-1), 'subtab:qol');
   const steps = DERIVED.steps;
-  const at = steps.length - NATIVE_STEPS;
+  const at = steps.length - TAIL;
   // Every earlier step (the key supplement's last one included) comes first,
   // so none of their indexes moved.
   assert.equal(steps[at - 1].control, KEY_SLIDERS[0]);
@@ -229,4 +235,42 @@ test('each control runs on the tab the legacy walk first reached it on', () => {
     assert.equal(tab, want[0], s.control);
     if (want[1]) assert.equal(sub, want[1], s.control);
   }
+});
+
+test('a native slider\'s contract is literal: each end posts its value and sends its line, its switch sends the ends', () => {
+  assert.deepEqual(NATIVE_SLIDERS.map((n) => `${n.section}.${n.key}`), ['percent_stats.skillhaste', 'percent_stats.allskills']);
+  for (const n of NATIVE_SLIDERS) {
+    const range = tableRange(n.section, n.key);
+    assert.ok(!LEGACY.controls.includes(range) && !SUPPLEMENT.controls.includes(range) && !KEY_SUPPLEMENT.controls.includes(range),
+      `${n.key}: a recording lists it: derive it from there instead`);
+  }
+  // Their neighbour Faster Cast Rate is where the legacy walk reached the
+  // percent rows: the Modifiers tab, no sub-tab.
+  const neighbour = LEGACY.steps.findIndex((s) => s.control === tableRange('percent_stats', 'castrate'));
+  const nav = LEGACY.steps.slice(0, neighbour).filter((s) => /^(tab|subtab):/.test(s.control)).map((s) => s.control);
+  assert.equal(nav.at(-1), 'tab:modifiers');
+  const steps = DERIVED.steps;
+  const at = steps.length - NATIVE_SLIDER_STEPS;
+  // The native booleans' last Turn off comes first, so none of their indexes moved.
+  assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
+  assert.deepEqual(steps[at], { step: at, control: 'tab:modifiers', action: 'click' });
+  NATIVE_SLIDERS.forEach(({ section, key, min, max, atMin, atMax }, i) => {
+    const first = at + 1 + 8 * i;
+    const range = tableRange(section, key);
+    const sw = `#sw_${section}_${key}`;
+    const post = (value) => [{ url: '/api/set', body: { section, key, value } }];
+    const switched = (value) => [{ url: '/api/set', body: { section: 'switches', key: `${section}.${key}`, value } }];
+    assert.deepEqual(steps.slice(first, first + 8).map((s) => [s.control, s.action]), [
+      [range, 'max'], [range, 'min'], [range, 'max'], [sw, 'click'], [sw, 'click'],
+      [quickDisable(`sw_${section}_${key}`), 'click'], [sw, 'click'], [range, 'min'],
+    ]);
+    assert.deepEqual(steps[first].expect, { posts: { is: post(max) }, cmds: { is: [atMax] } });
+    assert.deepEqual(steps[first + 1].expect, { posts: { is: post(min) }, cmds: { is: [atMin] } });
+    assert.deepEqual(steps[first + 2].expect, { posts: { same: first }, cmds: { same: first } });
+    assert.deepEqual(steps[first + 3].expect, { posts: { is: switched(false) }, cmds: { same: first + 1 } });
+    assert.deepEqual(steps[first + 4].expect, { posts: { is: switched(true) }, cmds: { same: first + 2 } });
+    assert.deepEqual(steps[first + 5].expect, { posts: { same: first + 3 }, cmds: { same: first + 3 } });
+    assert.deepEqual(steps[first + 6].expect, { posts: { is: switched(true) }, cmds: { same: first + 4 } });
+    assert.deepEqual(steps[first + 7].expect, { posts: { same: first + 1 }, cmds: { same: first + 1 } });
+  });
 });
