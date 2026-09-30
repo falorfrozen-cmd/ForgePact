@@ -1569,10 +1569,20 @@ player build compiles out:
   variable `variable_instance_get_names` returns. Each value is printed with
   its kind (`real`, `int32`, `int64`, `bool`, `string`, `asset`,
   `reference`, `struct`, `array`, `method`, `undefined`), and the dump is kept
-  under the label, eight at most, the oldest evicted.
+  under the label, eight at most, the oldest evicted. A struct prints its
+  name count (`struct{<n>}`), an array its length and a method the script it
+  wraps, and a struct or array variable's contents follow it as entries of
+  their own, two levels down: `<member>.<name>` for a struct's variable,
+  `<member>[<i>]` for an array's element, 64 per level and 2048 per dump. The
+  header's `nested=` counts those entries and `nested_cut=` what the caps left
+  unread. An instance handle inside is printed, never followed. Printed as one
+  token, a struct or array member whose contents differ between two nodes
+  would diff as equal, so a label place held inside one would read as "no
+  member places it" (the review of this instrument before Live 5).
 - `stashmoveall probe diff <a> <b>` prints `~` for a member both dumps hold
   with different values, `+` or `-` for one only one side holds, and a count
-  line.
+  line. An expanded entry is compared like any member, so a struct member
+  whose contents differ shows as `~ <member>.<name>`.
 - `stashmoveall probe lookcopy id:<src> missing|changed` writes onto the
   mod's own node only, and is refused with nothing written while the mod holds
   none. `missing` writes each member the source has and the node lacks;
@@ -1582,7 +1592,11 @@ player build compiles out:
   what it does (`id`, `object_index`, `x`, `y`, `xstart`, `ystart`,
   `xprevious`, `yprevious`, the `bbox_*`, `uiNodeCallstack`, `activationFunc`,
   `activationArgs`, `text`, `visible`, `enabled`). Each write prints `wrote
-  <name>=<value> read back <value>`, then a count line.
+  <name>=<value> read back <value>`, then a count line. An expanded entry the
+  tier selects, inside a struct or array member the node also has, is never
+  written: it gets a `skip <member>.<name>=... - inside a struct or array
+  member, never written` line, so the capture names it, and the count line's
+  `nested=` counts them.
 - `stashmoveall probe help` prints the usage line naming every subcommand.
 
 Save slot 14, the mod off at launch, the saves backed up first and restored

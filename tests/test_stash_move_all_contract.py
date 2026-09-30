@@ -978,7 +978,8 @@ class StashMoveAllContractTests(unittest.TestCase):
             self.assertIn(mark, diff, mark)
         # Reads only: dump and diff write nothing and call no routine.
         for name in ("static bool SmaProbeDumpCapture(", "static void SmaProbeDumpCommand(",
-                     "static void SmaProbeDiffCommand("):
+                     "static void SmaProbeDiffCommand(", "static void SmaProbeExpand(",
+                     "static std::string SmaProbeValue("):
             body = self.body(name)
             for word in WRITES + ("SmaCall(", "CallBuiltinEx("):
                 self.assertNotIn(word, body, (name, word))
@@ -1021,7 +1022,10 @@ class StashMoveAllContractTests(unittest.TestCase):
                      "bbox_left", "bbox_top", "bbox_right", "bbox_bottom", "uiNodeCallstack",
                      "activationFunc", "activationArgs", "text", "visible", "enabled"):
             self.assertIn(f'"{name}"', never, name)
-        self.assertLess(look.index("SmaProbeLookCopyExcluded(name)"), look.index('"variable_instance_set"'))
+        # Judged by the top-level member an entry sits in, so an entry inside
+        # an excluded array (activationArgs) is excluded too.
+        self.assertIn('const std::string top = cut == std::string::npos ? name : name.substr(0, cut);', look)
+        self.assertLess(look.index("SmaProbeLookCopyExcluded(top)"), look.index('"variable_instance_set"'))
         # Only a number, bool, string or asset is written: the kind is read off
         # the value itself, a handle is an asset only when the runtime names
         # an asset type, and a reference, struct, array, method or undefined
@@ -1044,6 +1048,51 @@ class StashMoveAllContractTests(unittest.TestCase):
             self.assertNotIn(word, look, word)
         self.assertIn('"missing"', look)
         self.assertIn('"changed"', look)
+
+    def test_stash_probe_dump_expands_struct_and_array_members(self):
+        # The round-0 review of this instrument: a struct member printed as
+        # `<struct>` and an array as `array[<len>]` alone, so two nodes whose
+        # struct or array members held different values diffed as equal and
+        # lookcopy's `changed` tier dropped them without a line. A label place
+        # held inside one would then have read as "no member places it".
+        cap = self.body("static bool SmaProbeDumpCapture(")
+        # Each instance variable's value is expanded right after its own entry.
+        self.assertRegex(cap, r'd\.values\.emplace_back\(name, SmaProbeValue\(v\)\);\s*SmaProbeExpand\(name, v, 0, d\);')
+        expand = self.body("static void SmaProbeExpand(")
+        # A struct's contents by name, an array's by index, each as its own
+        # `<path>.<name>` / `<path>[<i>]` entry, so diff compares them one by one.
+        for word in ('"variable_struct_get_names"', '"variable_struct_get"', '"array_get"', '"array_length"',
+                     'sub = path + "." + nm.ToString();', '"[" + std::to_string(i) + "]"',
+                     "d.values.emplace_back(sub, SmaProbeValue(child));", "SmaProbeExpand(sub, child, depth + 1, d);"):
+            self.assertIn(word, expand, word)
+        # Bounded: a depth limit (a struct can hold itself), per-level and
+        # per-dump caps, and what the caps leave unread is counted and printed.
+        for word in ("if (depth >= kSmaProbeNestDepth) return;", "kSmaProbeNestNames", "kSmaProbeNestEntries",
+                     "d.nestedCut += n - i;"):
+            self.assertIn(word, expand, word)
+        self.assertRegex(self.probe_block(), r"kSmaProbeNestDepth = 2;")
+        dump = self.body("static void SmaProbeDumpCommand(")
+        self.assertIn('" nested=" + std::to_string(d.nested)', dump)
+        self.assertIn('" nested_cut="', dump)
+        # An instance handle inside is printed, never followed: only a struct
+        # or an array is expanded.
+        self.assertIn("if (k != SmaProbeKind::Struct && k != SmaProbeKind::Array) return;", expand)
+        # The struct's own line carries its name count and a method its script,
+        # not one opaque token for every struct or method.
+        value = self.body("static std::string SmaProbeValue(")
+        self.assertRegex(value, r'case SmaProbeKind::Struct:\s*text = "struct\{"')
+        self.assertIn('case SmaProbeKind::Method: text = "method" + CiTryResolveMethod(v);', value)
+        # lookcopy names every expanded entry its tier selects with a `skip`
+        # line and never writes one: the branch returns before the write.
+        look = self.body("static void SmaProbeLookCopyCommand(")
+        branch = look[look.index("if (cut != std::string::npos) {"):]
+        branch = branch[:branch.index("continue;\n        }") + len("continue;")]
+        self.assertIn("inside a struct or array member, never written", branch)
+        self.assertNotIn("variable_instance_set", branch)
+        self.assertLess(look.index("if (cut != std::string::npos) {"), look.index('"variable_instance_set"'))
+        self.assertIn('" nested=" + std::to_string(nested)', look)
+        # Negative control: a top-level member still reaches the kind check.
+        self.assertLess(look.index("if (cut != std::string::npos) {"), look.index("SmaProbeWritable(kind)"))
 
 
 if __name__ == "__main__":

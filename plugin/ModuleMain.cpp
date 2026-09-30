@@ -38398,6 +38398,9 @@ static constexpr size_t kSmaProbeDumpKeep = 8;         // dumps kept, oldest evi
 static constexpr size_t kSmaProbeDumpMaxNames = 512;   // instance variables read per dump
 static constexpr size_t kSmaProbeDumpLines = 300;      // member lines diff and lookcopy print
 static constexpr size_t kSmaProbeValueCap = 120;       // characters of a printed value
+static constexpr int kSmaProbeNestDepth = 2;           // levels of a struct or array member expanded
+static constexpr size_t kSmaProbeNestNames = 64;       // names or elements read per struct or array
+static constexpr size_t kSmaProbeNestEntries = 2048;   // expanded entries kept per dump
 
 static const char* const kSmaProbeDumpBuiltins[] = {
     "id", "object_index", "visible", "sprite_index", "image_index", "image_speed", "image_blend", "image_alpha",
@@ -38427,6 +38430,8 @@ struct SmaProbeDump {
     std::string object;
     size_t names = 0;          // instance variables read, after the builtins
     bool truncated = false;
+    size_t nested = 0;         // entries read inside struct and array members
+    size_t nestedCut = 0;      // names or elements left unread by the caps
     std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
 };
 static std::vector<SmaProbeDump> g_SmaProbeDumps;   // oldest first; game thread only
@@ -38484,7 +38489,9 @@ static bool SmaProbeWritable(SmaProbeKind k)
 }
 
 // A value as `<value> (<kind>)`: a number to ten digits (with int32/int64 kept
-// apart from real), a string as it reads on one line, a handle as it prints.
+// apart from real), a string as it reads on one line, a handle as it prints, a
+// struct by its name count and an array by its length (their contents are
+// entries of their own, SmaProbeExpand), a method by the script it wraps.
 static std::string SmaProbeValue(const RValue& v)
 {
     const SmaProbeKind k = SmaProbeKindOf(v);
@@ -38504,6 +38511,11 @@ static std::string SmaProbeValue(const RValue& v)
         case SmaProbeKind::Array:
             text = "array[" + MenuLayoutInteger(g_Yytk->CallBuiltin("array_length", { v }).ToDouble()) + "]";
             break;
+        case SmaProbeKind::Struct:
+            text = "struct{" + MenuLayoutInteger(g_Yytk->CallBuiltin("array_length",
+                { g_Yytk->CallBuiltin("variable_struct_get_names", { v }) }).ToDouble()) + "}";
+            break;
+        case SmaProbeKind::Method: text = "method" + CiTryResolveMethod(v); break;   // described, never called
         case SmaProbeKind::Undefined: text = "undefined"; break;
         default: text = "<" + kind + ">"; break;
         }
@@ -38539,14 +38551,55 @@ static SmaProbeDump& SmaProbeStoreDump(const std::string& label)
     return g_SmaProbeDumps.back();
 }
 
+// A struct or array member's contents as entries of their own: `<path>.<name>`
+// for a struct's variable (variable_struct_get_names, variable_struct_get),
+// `<path>[<i>]` for an array's element (array_get), kSmaProbeNestDepth levels
+// down, each level's first kSmaProbeNestNames, kSmaProbeNestEntries per dump;
+// what the caps leave unread is counted in nestedCut. Printed as one token, a
+// struct or array member whose contents differ between two nodes diffed as
+// equal and lookcopy never named it (the round-0 review of this instrument), so
+// a label place held inside one would have read as "no member places it".
+// Reads only; an instance handle inside is printed, never followed.
+static void SmaProbeExpand(const std::string& path, const RValue& v, int depth, SmaProbeDump& d)
+{
+    if (depth >= kSmaProbeNestDepth) return;
+    const SmaProbeKind k = SmaProbeKindOf(v);
+    if (k != SmaProbeKind::Struct && k != SmaProbeKind::Array) return;
+    const bool isStruct = k == SmaProbeKind::Struct;
+    try {
+        const RValue names = isStruct ? g_Yytk->CallBuiltin("variable_struct_get_names", { v }) : RValue();
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { isStruct ? names : v }).ToDouble());
+        for (size_t i = 0; i < n; ++i) {
+            if (i >= kSmaProbeNestNames || d.nested >= kSmaProbeNestEntries) { d.nestedCut += n - i; return; }
+            std::string sub = path + (isStruct ? ".?" : "[" + std::to_string(i) + "]");
+            ++d.nested;
+            try {
+                RValue child;
+                if (isStruct) {
+                    const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                    sub = path + "." + nm.ToString();
+                    child = g_Yytk->CallBuiltin("variable_struct_get", { v, nm });
+                } else {
+                    child = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                }
+                d.values.emplace_back(sub, SmaProbeValue(child));
+                SmaProbeExpand(sub, child, depth + 1, d);
+            } catch (...) { d.values.emplace_back(sub, "<unreadable>"); }
+        }
+    } catch (...) { d.values.emplace_back(path + (isStruct ? ".*" : "[*]"), "<unreadable>"); ++d.nested; }
+}
+
 // One instance's members, read by name: the fixed builtin list (sprite_index
-// with its sprite's name) and every instance variable the runtime names. False,
-// with nothing read, when the instance is not listed.
+// with its sprite's name) and every instance variable the runtime names, a
+// struct or array variable's contents after it (SmaProbeExpand). False, with
+// nothing read, when the instance is not listed.
 static bool SmaProbeDumpCapture(const RValue& inst, SmaProbeDump& d, std::string& why)
 {
     d.values.clear();
     d.names = 0;
     d.truncated = false;
+    d.nested = 0;
+    d.nestedCut = 0;
     if (!SmaProbeExists(inst)) { why = "not an instance (instance_exists answered false)"; return false; }
     d.id = SmaProbeId(inst);
     for (const char* b : kSmaProbeDumpBuiltins) {
@@ -38569,7 +38622,9 @@ static bool SmaProbeDumpCapture(const RValue& inst, SmaProbeDump& d, std::string
             try {
                 const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
                 name = nm.ToString();
-                d.values.emplace_back(name, SmaProbeValue(g_Yytk->CallBuiltin("variable_instance_get", { inst, nm })));
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+                d.values.emplace_back(name, SmaProbeValue(v));
+                SmaProbeExpand(name, v, 0, d);
             } catch (...) { d.values.emplace_back(name, "<unreadable>"); }
             ++d.names;
         }
@@ -38601,6 +38656,8 @@ static void SmaProbeDumpCommand(const std::vector<std::string>& tok)
     Out(tag + d.label + ": id=" + std::to_string(d.id) + " object=" + (d.object.empty() ? std::string("?") : d.object)
         + " names=" + std::to_string(d.names)
         + (d.truncated ? " (truncated at " + std::to_string(kSmaProbeDumpMaxNames) + ")" : "")
+        + " nested=" + std::to_string(d.nested)
+        + (d.nestedCut ? " nested_cut=" + std::to_string(d.nestedCut) : "")
         + (why.empty() ? "" : " error=" + why));
     for (const auto& kv : d.values) Out("  " + kv.first + "=" + kv.second);
 }
@@ -38643,7 +38700,9 @@ static void SmaProbeDiffCommand(const std::vector<std::string>& tok)
 // source that the node lacks (`missing`) or that both have with different
 // values (`changed`), when its value is a number, bool, string or asset and it
 // is not one of kSmaProbeLookCopyNever. Each write is read back off the node and
-// printed beside what was written; the count line closes it.
+// printed beside what was written; an entry inside a struct or array member
+// that the tier selects gets a `skip` line naming it, so the capture shows it
+// even though it is never written; the count line closes it.
 static void SmaProbeLookCopyCommand(const std::vector<std::string>& tok)
 {
     const std::string tag = std::string(kSmaProbeTag) + "lookcopy ";
@@ -38670,14 +38729,25 @@ static void SmaProbeLookCopyCommand(const std::vector<std::string>& tok)
         return;
     }
     const std::map<std::string, std::string> node(n.values.begin(), n.values.end());
-    size_t wrote = 0, held = 0, excluded = 0, refusedKind = 0, failed = 0, printed = 0;
+    size_t wrote = 0, held = 0, excluded = 0, refusedKind = 0, nested = 0, failed = 0, printed = 0;
     auto say = [&](const std::string& line) { if (printed++ < kSmaProbeDumpLines) Out(line); };
     Out(tag + tier + " from id=" + std::to_string(id) + " onto the mod's node id=" + std::to_string(nodeId) + ":");
     for (const auto& kv : s.values) {
         const std::string& name = kv.first;
         const auto it = node.find(name);
         if (tier == "missing" ? it != node.end() : (it == node.end() || it->second == kv.second)) continue;
-        if (SmaProbeLookCopyExcluded(name)) { ++excluded; continue; }
+        // An entry inside a struct or array member (SmaProbeExpand) is judged by
+        // the member it sits in, and is only ever named, never written.
+        const size_t cut = name.find_first_of(".[");
+        const std::string top = cut == std::string::npos ? name : name.substr(0, cut);
+        if (SmaProbeLookCopyExcluded(top)) { ++excluded; continue; }
+        if (cut != std::string::npos) {
+            if (!node.count(top)) continue;   // the member's own line already says the node lacks it
+            ++nested;
+            say("  skip " + name + "=" + kv.second + " (node " + (it == node.end() ? std::string("lacks it") : it->second)
+                + ") - inside a struct or array member, never written");
+            continue;
+        }
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { src, RValue(name) });
             const SmaProbeKind kind = SmaProbeKindOf(v);
@@ -38697,6 +38767,7 @@ static void SmaProbeLookCopyCommand(const std::vector<std::string>& tok)
     }
     Out(tag + tier + ": wrote=" + std::to_string(wrote) + " held=" + std::to_string(held)
         + " not_held=" + std::to_string(wrote - held) + " refused_kind=" + std::to_string(refusedKind)
+        + " nested=" + std::to_string(nested)
         + " excluded=" + std::to_string(excluded) + " failed=" + std::to_string(failed)
         + (printed > kSmaProbeDumpLines ? " (first " + std::to_string(kSmaProbeDumpLines) + " lines shown)" : ""));
 }
