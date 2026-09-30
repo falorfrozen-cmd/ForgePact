@@ -60,6 +60,12 @@ is judged against Sort's on the same settled read as its place, and a size or
 a look that is not Sort's is kept and said once each, never remade for it and
 never turning the mod off (baseline: Live 1's node sat right at 206x48 beside
 Sort's 192x66).
+
+#131, the review of fix2's round 2: the look copy runs whole. Every one of
+Live 5's 16 members is written and read back whatever its kind - a number, a
+bool, a string, an asset reference compared by its index - and one that
+cannot be read costs only its own entry; the verdict comes after the whole
+list, with the count that read the same and the first member that did not.
 """
 import os
 import shutil
@@ -373,6 +379,38 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # Negative controls: a route that gave its box says nothing; an
         # unread Sort box gives no target.
         self.assertScenario("target/unread_target_falls_back_to_the_sort_rule")
+
+    # ---- #131, fix2's round 2: the look copy never stops on a member's kind ---
+
+    def test_baseline_look_all_numeric_members_copied_and_read_sort(self):
+        # The kinds fix2's copy accepted (numbers, bools, asset references):
+        # all 16 of Live 5's members written, 16/16 the same, sort, the
+        # scales alone scaled. Negative control: button_look_same=none
+        # before any node.
+        self.assertScenario("baseline/look_all_numeric_members_copied_and_read_sort")
+
+    def test_target_look_string_member_is_copied_and_compared_as_text(self):
+        # textFont read as a string is written as read, every member after
+        # it too, and compared by its text; a scale that reads as a string is
+        # not written and compares unread, the rest still written.
+        self.assertScenario("target/look_string_member_is_copied_and_compared_as_text")
+
+    def test_target_look_asset_member_compares_by_its_index(self):
+        # A reference, or a number, of the same index is the same. Negative
+        # controls: another index differs, an index that did not read is
+        # unread, a string differs.
+        self.assertScenario("target/look_asset_member_compares_by_its_index")
+
+    def test_target_look_unread_member_is_named_after_the_whole_copy(self):
+        # An undefined drawXOffset mid-list: the other 15 written, unread only
+        # at the end, the line naming it, button_look_same=15/16. Negative
+        # control: nothing listed is never sort.
+        self.assertScenario("target/look_unread_member_is_named_after_the_whole_copy")
+
+    def test_target_look_differing_string_reads_differs(self):
+        # Negative control for the wider kinds: a string that reads back
+        # different is differs, never sort, and the line names it.
+        self.assertScenario("target/look_differing_string_reads_differs")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")

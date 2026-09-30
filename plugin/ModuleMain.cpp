@@ -37798,85 +37798,139 @@ static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, doub
 }
 
 // Sort's look, the variables the game gives the Sort node its sprite and
-// size by (docs/stash-move-research.md § Static reading 5), and those that
-// place its label and give it its font and shadow, measured in Live 5
-// (§ Decision buttonLabel: with them copied the node's label is drawn centred
-// like Sort's): read off the Sort node by name each time, so a game patch
-// that restyles Sort restyles the button too.
+// size by (docs/stash-move-research.md § Static reading 5), then the 13
+// members Live 5's trial copy wrote when the node's label was drawn centred
+// like Sort's (§ Decision buttonLabel): its font, shadow, label offsets, the
+// box the game keeps beside the sprite and the navigation flags. Read off the
+// Sort node by name each time, so a game patch that restyles Sort restyles
+// the button too.
 static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", "textFont", "dropShadow",
-                                                "drawXOffset", "drawYOffset", "navBboxX", "navBboxY", "navBboxWidth",
-                                                "navBboxHeight" };
+                                                "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY",
+                                                "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev",
+                                                "naviRight", "naviRightPrev" };
 
-// How each of those is written, entry for entry: as read; scaled by the
-// target's size over Sort's on one axis (the sprite's scale, and the size of
-// the box the game keeps beside it); or moved by the node's offset from
-// Sort's x, y on one axis - the two that hold an absolute GUI position, Sort's
-// own box's corner (Live 5), so the node's is its own box's.
-enum class SmaLookWrite { AsRead, ScaleX, ScaleY, ShiftX, ShiftY };
+// How each of those is written, entry for entry: as read, as Live 5 wrote
+// them (navBboxX and createX held Sort's own position there and the label
+// still centred in the node's box), or the sprite's scale by the target's
+// size over Sort's on one axis, as Live 4 measured.
+using SmaLookWrite = ForgePact::StashMoveLookWrite;
 static constexpr SmaLookWrite kSmaLookWrites[] = { SmaLookWrite::AsRead, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
                                                    SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::ShiftX, SmaLookWrite::ShiftY,
-                                                   SmaLookWrite::ScaleX, SmaLookWrite::ScaleY };
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead };
 static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / sizeof(kSmaLookWrites[0]),
               "every look variable has its write");
 
 // What the writes need: the target's size over Sort's on each axis (the
-// core's ButtonScale) and the node's x, y less Sort's.
+// core's ButtonScale).
 struct SmaLookFrame {
     double sx = 1, sy = 1;
-    double dx = std::numeric_limits<double>::quiet_NaN(), dy = std::numeric_limits<double>::quiet_NaN();
 };
 
-// A look variable as a number: a bool as 0 or 1 (dropShadow), an asset
-// reference by its index, a number as read; false for any other kind.
-static bool SmaLookNumber(const RValue& v, double& out)
+// A handle's type words that name an asset (a handle prints "ref <type> <name
+// or number>", measured: `ref room Main_Menu_rm`, `ref ds_map 1049`, `ref
+// instance 263555`). An instance, a data structure or any other type is a
+// reference: the look copy and the probe's lookcopy never write one.
+static const char* const kSmaProbeAssetTypes[] = {
+    "sprite", "sound", "font", "path", "script", "shader", "timeline", "object", "room", "sequence",
+    "animcurve", "tileset",
+};
+
+enum class SmaProbeKind { Number, Bool, String, Asset, Reference, Struct, Array, Method, Undefined, Other };
+
+// What a value is, read off the value itself: a number, bool or string by its
+// kind; a method or struct by the runtime's own is_method and is_struct; a
+// handle an asset only when its printed type names one. Shared by the look
+// copy and the research probe (dump, diff, lookcopy).
+static SmaProbeKind SmaProbeKindOf(const RValue& v)
 {
-    if (v.m_Kind == VALUE_BOOL) { out = v.ToBoolean() ? 1.0 : 0.0; return true; }
-    return ApNumber(v, out);
+    try {
+        switch (v.m_Kind) {
+        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: return SmaProbeKind::Number;
+        case VALUE_BOOL:      return SmaProbeKind::Bool;
+        case VALUE_STRING:    return SmaProbeKind::String;
+        case VALUE_ARRAY:     return SmaProbeKind::Array;
+        case VALUE_UNDEFINED: case VALUE_NULL: return SmaProbeKind::Undefined;
+        case VALUE_OBJECT:
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return SmaProbeKind::Method;
+            if (g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()) return SmaProbeKind::Struct;
+            return SmaProbeKind::Other;
+        case VALUE_REF: {
+            std::istringstream in(v.ToString());
+            std::string ref, type;
+            in >> ref >> type;
+            if (ref != "ref") return SmaProbeKind::Other;
+            for (const char* asset : kSmaProbeAssetTypes) if (type == asset) return SmaProbeKind::Asset;
+            return SmaProbeKind::Reference;
+        }
+        default: return SmaProbeKind::Other;
+        }
+    } catch (...) { return SmaProbeKind::Other; }
 }
 
-// The node's look against Sort's: with `copy`, each of Sort's look variables
-// is first written onto the mod's own node as `kSmaLookWrites` says (after
-// the label, so a look that does not take still leaves a working button);
-// then each is read back off the node and compared with what Sort's gives.
-// Sort when all read the same, Differs when one does not, Unread when one
-// could not be read. Nothing else is written or called.
-static ForgePact::StashMoveButtonLook SmaButtonLook(const RValue& sort, bool copy, const SmaLookFrame& frame)
+// A look member's value in the core's plain terms, by the probe's kinds: a
+// number as read, a bool as 0 or 1, a string by its text, an asset by its
+// index (and its printed name); undefined, and any other kind, as that.
+static ForgePact::StashMoveLookValue SmaLookValue(const RValue& v)
 {
-    bool differs = false;
+    using Kind = ForgePact::StashMoveLookKind;
+    ForgePact::StashMoveLookValue out;
+    try {
+        switch (SmaProbeKindOf(v)) {
+        case SmaProbeKind::Number: out.kind = Kind::Number; out.number = v.ToDouble(); break;
+        case SmaProbeKind::Bool:   out.kind = Kind::Bool; out.number = v.ToBoolean() ? 1.0 : 0.0; break;
+        case SmaProbeKind::String: out.kind = Kind::String; out.text = v.ToString(); break;
+        case SmaProbeKind::Asset:
+            out.kind = Kind::Asset;
+            out.text = v.ToString();
+            if (!ApNumber(v, out.number)) out.number = std::numeric_limits<double>::quiet_NaN();
+            break;
+        case SmaProbeKind::Undefined: out.kind = Kind::Undefined; break;
+        default: out.kind = Kind::Other; break;
+        }
+    } catch (...) { out = ForgePact::StashMoveLookValue(); }
+    return out;
+}
+
+// The node's look against Sort's (fix2's round 2: a member's kind never
+// decides whether the copy runs). Every entry of kSmaLookVars is read off the
+// Sort node by name; with `copy`, it is written onto the mod's own node as
+// the core's LookStep says - the value as read whatever its kind, or a scale
+// written scaled - after the label, so a look that does not take still
+// leaves a working button; then it is read back off the node and the core
+// compares it by kind. A member that cannot be read, written or compared, or
+// that throws, costs its own entry in the tally and the loop goes on to the
+// next: the verdict is the core's, once the whole list has been through.
+// Nothing else is written or called.
+static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy, const SmaLookFrame& frame)
+{
+    ForgePact::StashMoveLookTally tally;
     for (size_t i = 0; i < sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]); ++i) {
         const char* var = kSmaLookVars[i];
-        double want = 0, got = 0;
+        ForgePact::StashMoveLookSame same = ForgePact::StashMoveLookSame::Unread;
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
-            if (!SmaLookNumber(v, want)) return ForgePact::StashMoveButtonLook::Unread;
-            switch (kSmaLookWrites[i]) {
-            case SmaLookWrite::ScaleX: want *= frame.sx; break;
-            case SmaLookWrite::ScaleY: want *= frame.sy; break;
-            case SmaLookWrite::ShiftX: want += frame.dx; break;
-            case SmaLookWrite::ShiftY: want += frame.dy; break;
-            default: break;
-            }
-            if (!std::isfinite(want)) return ForgePact::StashMoveButtonLook::Unread;
-            if (copy) g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
-                                                                     kSmaLookWrites[i] == SmaLookWrite::AsRead ? v : RValue(want) });
-            if (!SmaLookNumber(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(var) }), got))
-                return ForgePact::StashMoveButtonLook::Unread;
-        } catch (...) { return ForgePact::StashMoveButtonLook::Unread; }
-        if (std::fabs(got - want) > 1e-6) differs = true;
+            const ForgePact::StashMoveLookStep step = ForgePact::StashMoveAllMod::LookStep(SmaLookValue(v),
+                kSmaLookWrites[i], frame.sx, frame.sy);
+            if (copy && step.put != ForgePact::StashMoveLookPut::Nothing)
+                g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
+                    step.put == ForgePact::StashMoveLookPut::AsRead ? v : RValue(step.want.number) });
+            same = ForgePact::StashMoveAllMod::LookCompare(step.want,
+                SmaLookValue(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(var) })));
+        } catch (...) { same = ForgePact::StashMoveLookSame::Unread; }
+        tally.Note(var, same);
     }
-    return differs ? ForgePact::StashMoveButtonLook::Differs : ForgePact::StashMoveButtonLook::Sort;
+    return tally;
 }
 
-// The frame for a node at x, y: the scale the target asks for (1 when it
-// has no size to divide) and its offset from Sort's x, y, read by name now.
-static SmaLookFrame SmaButtonLookFrame(const RValue& sort, const ForgePact::StashMoveBox& sortBox,
-                                       const ForgePact::StashMoveBox& target, double x, double y)
+// The frame for a node made to `target`: the scale the target asks for (1
+// when it has no size to divide).
+static SmaLookFrame SmaButtonLookFrame(const ForgePact::StashMoveBox& sortBox, const ForgePact::StashMoveBox& target)
 {
     SmaLookFrame f;
     if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;
-    f.dx = x - MenuLayoutRead(sort, "x");
-    f.dy = y - MenuLayoutRead(sort, "y");
     return f;
 }
 
@@ -37919,7 +37973,7 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
     std::string why;
     if (!SmaButtonMake(stash, window, x, y, why)) { refuse(why); return; }
     mod.NoteButtonMade(false);
-    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sort, sortBox, target, x, y)));
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sortBox, target)));
 }
 
 // The place check, each ensure step the node is held and wanted (the core's
@@ -37939,9 +37993,13 @@ static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue&
     ForgePact::StashMoveBox target;
     const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
         ForgePact::StashMoveBox(), kSmaButtonGap, target);
+    // The old rule standing in is said when it first happens, on whichever
+    // step that is, not only at the make.
+    const std::string fallback = mod.NoteButtonRef(ref);
+    if (!fallback.empty()) Out(fallback);
     const double nodeX = MenuLayoutRead(g_SmaButton, "x"), nodeY = MenuLayoutRead(g_SmaButton, "y");
     if (mod.ButtonLookWanted())
-        mod.NoteButtonLook(SmaButtonLook(sort, false, SmaButtonLookFrame(sort, sortBox, target, nodeX, nodeY)));
+        mod.NoteButtonLook(SmaButtonLook(sort, false, SmaButtonLookFrame(sortBox, target)));
     bool visible = false;
     try { visible = g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue("visible") }).ToBoolean(); }
     catch (...) { visible = false; }
@@ -37960,7 +38018,7 @@ static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue&
         return;
     }
     mod.NoteButtonMade(true);
-    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sort, sortBox, target, x, y)));
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sortBox, target)));
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the
@@ -38492,17 +38550,6 @@ static const char* const kSmaProbeLookCopyNever[] = {
     "bbox_left", "bbox_top", "bbox_right", "bbox_bottom",
     "uiNodeCallstack", "activationFunc", "activationArgs", "text", "visible", "enabled",
 };
-// A handle's type words that name an asset (a handle prints "ref <type> <name
-// or number>", measured: `ref room Main_Menu_rm`, `ref ds_map 1049`, `ref
-// instance 263555`). An instance, a data structure or any other type is a
-// reference, and lookcopy never writes one.
-static const char* const kSmaProbeAssetTypes[] = {
-    "sprite", "sound", "font", "path", "script", "shader", "timeline", "object", "room", "sequence",
-    "animcurve", "tileset",
-};
-
-enum class SmaProbeKind { Number, Bool, String, Asset, Reference, Struct, Array, Method, Undefined, Other };
-
 struct SmaProbeDump {
     std::string label;
     long long id = -1;
@@ -38514,35 +38561,6 @@ struct SmaProbeDump {
     std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
 };
 static std::vector<SmaProbeDump> g_SmaProbeDumps;   // oldest first; game thread only
-
-// What a value is, read off the value itself: a number, bool or string by its
-// kind; a method or struct by the runtime's own is_method and is_struct; a
-// handle an asset only when its printed type names one.
-static SmaProbeKind SmaProbeKindOf(const RValue& v)
-{
-    try {
-        switch (v.m_Kind) {
-        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: return SmaProbeKind::Number;
-        case VALUE_BOOL:      return SmaProbeKind::Bool;
-        case VALUE_STRING:    return SmaProbeKind::String;
-        case VALUE_ARRAY:     return SmaProbeKind::Array;
-        case VALUE_UNDEFINED: case VALUE_NULL: return SmaProbeKind::Undefined;
-        case VALUE_OBJECT:
-            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return SmaProbeKind::Method;
-            if (g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()) return SmaProbeKind::Struct;
-            return SmaProbeKind::Other;
-        case VALUE_REF: {
-            std::istringstream in(v.ToString());
-            std::string ref, type;
-            in >> ref >> type;
-            if (ref != "ref") return SmaProbeKind::Other;
-            for (const char* asset : kSmaProbeAssetTypes) if (type == asset) return SmaProbeKind::Asset;
-            return SmaProbeKind::Reference;
-        }
-        default: return SmaProbeKind::Other;
-        }
-    } catch (...) { return SmaProbeKind::Other; }
-}
 
 static const char* SmaProbeKindName(SmaProbeKind k)
 {

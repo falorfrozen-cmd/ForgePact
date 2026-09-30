@@ -128,12 +128,24 @@
 // names which (button_ref=). Written before the header had it; the first
 // error line was `error C2039: 'SortRuleBox': is not a member of
 // 'ForgePact::StashMoveAllMod'`, 2026-09-30.
+//
+// #131, the review of fix2's round 2: the adapter's look copy returned from
+// inside its loop on the first member of a kind it did not accept (a
+// `textFont` read as a string, possibly), so the label offsets after it were
+// never written. The per-member decisions (LookStep, LookCompare) and the
+// verdict (StashMoveLookTally) moved into the core, over every kind the
+// runtime returns for these members, and the copy is Live 5's 13 members as
+// read. The scenarios drive them through a stand-in of the adapter's loop.
+// Compiled against the header before it had them, the first error line was
+// `error C2039: 'StashMoveLookKind': is not a member of 'ForgePact'`,
+// 2026-09-30.
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -312,10 +324,11 @@ static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMateria
 static StashMoveReport MergedWherePlannedACell();
 
 // The place check's fields of the state line before any node was made (the
-// look and size last: owner scope, 2026-09-30).
+// look and size: owner scope, 2026-09-30; the look's members that read the
+// same last: the review of fix2's round 2).
 static const std::string kIdlePlace =
     " button_place=none button_box=none button_extents=none button_makes=0 button_step=0"
-    " button_look=none button_size=none button_ref=none";
+    " button_look=none button_size=none button_ref=none button_look_same=none";
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
     " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none" + kIdlePlace;
@@ -2210,6 +2223,307 @@ static void TargetOffForThisSessionStateLineKeepsTheButtonFields()
     Check("target/off_for_this_session_state_line_keeps_the_button_fields", ok, mod.StateLine());
 }
 
+// ---- #131, fix2's round 2: the look copy never stops on a member's kind -----
+
+using ForgePact::StashMoveLookKind;
+using ForgePact::StashMoveLookPut;
+using ForgePact::StashMoveLookSame;
+using ForgePact::StashMoveLookStep;
+using ForgePact::StashMoveLookTally;
+using ForgePact::StashMoveLookValue;
+using ForgePact::StashMoveLookWrite;
+
+// A member's value as the adapter hands it to the core, one per kind the
+// runtime returns for these members (a number, a bool, a string, an asset
+// reference, undefined).
+static StashMoveLookValue LookNumber(double v)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Number;
+    r.number = v;
+    return r;
+}
+
+static StashMoveLookValue LookBool(bool b)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Bool;
+    r.number = b ? 1.0 : 0.0;
+    return r;
+}
+
+static StashMoveLookValue LookString(const std::string& s)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::String;
+    r.text = s;
+    return r;
+}
+
+static StashMoveLookValue LookAsset(double index, const std::string& printed)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Asset;
+    r.number = index;
+    r.text = printed;
+    return r;
+}
+
+static StashMoveLookValue LookUndefined()
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Undefined;
+    return r;
+}
+
+struct LookMember {
+    std::string        name;
+    StashMoveLookWrite how;
+    StashMoveLookValue sort;   // what it reads off InventorySort
+};
+
+// The adapter's 16 members (kSmaLookVars/kSmaLookWrites) with what Live 5
+// read off InventorySort (docs/stash-move-research.md § Decision
+// buttonLabel): the 13 as read, the two scales scaled. The sprite's index is
+// a fixture (Live 4 read the name, not the index); `textFont` is handed in,
+// since whether it reads as a string or a font reference is not established.
+static std::vector<LookMember> Live5Look(const StashMoveLookValue& textFont)
+{
+    const StashMoveLookWrite as = StashMoveLookWrite::AsRead;
+    return {
+        {"sprite_index", as, LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr")},
+        {"image_xscale", StashMoveLookWrite::ScaleX, LookNumber(1.0)},
+        {"image_yscale", StashMoveLookWrite::ScaleY, LookNumber(1.0)},
+        {"textFont", as, textFont},
+        {"dropShadow", as, LookBool(false)},
+        {"createX", as, LookNumber(2290)},
+        {"drawXOffset", as, LookNumber(48)},
+        {"drawYOffset", as, LookNumber(9)},
+        {"navBboxX", as, LookNumber(2290)},
+        {"navBboxY", as, LookNumber(1262)},
+        {"navBboxWidth", as, LookNumber(192)},
+        {"navBboxHeight", as, LookNumber(66)},
+        {"naviDown", as, LookBool(false)},
+        {"naviDownPrev", as, LookBool(false)},
+        {"naviRight", as, LookBool(false)},
+        {"naviRightPrev", as, LookBool(false)},
+    };
+}
+
+// The mod's node as the copy leaves it: each member as it reads, and the
+// members written, in order. Before the copy it holds the node's own (Live
+// 5: `textFont` __newfont6, `drawXOffset` 0, ...); a member the copy does not
+// write keeps its own.
+struct FakeLookNode {
+    std::map<std::string, StashMoveLookValue> members;
+    std::vector<std::string>                  written;
+};
+
+// A stand-in for the adapter's loop (SmaButtonLook in ModuleMain.cpp, which
+// cannot be compiled here: it calls the runtime), the same shape: every
+// member is read off Sort, the core's LookStep says what to write, the write
+// is made, the member is read back (or as `back` says, the game putting its
+// own back, say) and the core's LookCompare goes into the tally. The verdict
+// is the tally's, after the whole list.
+static StashMoveLookTally CopyLook(const std::vector<LookMember>& list, FakeLookNode& node, double sx, double sy,
+                                   const std::map<std::string, StashMoveLookValue>& back = {})
+{
+    StashMoveLookTally t;
+    for (const LookMember& m : list) {
+        const StashMoveLookStep step = StashMoveAllMod::LookStep(m.sort, m.how, sx, sy);
+        if (step.put == StashMoveLookPut::AsRead) node.members[m.name] = m.sort;
+        else if (step.put == StashMoveLookPut::Number) node.members[m.name] = LookNumber(step.want.number);
+        if (step.put != StashMoveLookPut::Nothing) node.written.push_back(m.name);
+        const auto b = back.find(m.name);
+        const auto own = node.members.find(m.name);
+        const StashMoveLookValue got = b != back.end() ? b->second
+            : own != node.members.end() ? own->second : LookUndefined();
+        t.Note(m.name, StashMoveAllMod::LookCompare(step.want, got));
+    }
+    return t;
+}
+
+// The node before the copy: Live 5's own values beside Sort's.
+static FakeLookNode Live5Node()
+{
+    FakeLookNode n;
+    n.members = {
+        {"sprite_index", LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr")},
+        {"image_xscale", LookNumber(1.0)}, {"image_yscale", LookNumber(1.0)},
+        {"textFont", LookString("__newfont6")}, {"dropShadow", LookBool(true)}, {"createX", LookNumber(2090)},
+        {"drawXOffset", LookNumber(0)}, {"drawYOffset", LookNumber(-7)}, {"navBboxX", LookNumber(1988)},
+        {"navBboxY", LookNumber(1238)}, {"navBboxWidth", LookNumber(206)}, {"navBboxHeight", LookNumber(48)},
+        {"naviDown", LookBool(true)}, {"naviDownPrev", LookBool(true)}, {"naviRight", LookBool(true)},
+        {"naviRightPrev", LookBool(true)},
+    };
+    return n;
+}
+
+static std::string Written(const FakeLookNode& n)
+{
+    std::string s;
+    for (const std::string& w : n.written) s += (s.empty() ? "" : ",") + w;
+    return s;
+}
+
+static const std::string kAllSixteen = "sprite_index,image_xscale,image_yscale,textFont,dropShadow,createX,drawXOffset,"
+                                       "drawYOffset,navBboxX,navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,"
+                                       "naviRight,naviRightPrev";
+
+// Settle a node on the Mercenary box with `look` noted, and return the check's lines.
+static std::string SettleWithLook(StashMoveAllMod& mod, const StashMoveLookTally& look)
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    StashMoveBox t;
+    StashMoveAllMod::ButtonTarget(Ref::Relation, kLive5Sort, StashMoveBox(), kGap, t);
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(look);
+    double x = 0, y = 0;
+    std::string line;
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2094.0, 1262.0, kLive5Merc, x, y, line);
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Relation, 2094.0, 1262.0, kLive5Merc, x, y, line);
+    return line;
+}
+
+static void BaselineLookAllNumericMembersCopiedAndReadSort()
+{
+    // The kinds fix2's copy accepted (numbers, bools, asset references):
+    // `textFont` as a font reference. Every member is written, 16 of 16
+    // read back the same, and the verdict is sort, as it was.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), node, 1.0, 1.0);
+    bool ok = Written(node) == kAllSixteen && t.listed == 16 && t.equal == 16 && t.first.empty()
+        && t.Verdict() == StashMoveButtonLook::Sort
+        && node.members["drawXOffset"].number == 48 && node.members["navBboxX"].number == 2290
+        && node.members["createX"].number == 2290 && node.members["dropShadow"].number == 0;
+    // The scales alone are scaled: to a target 1.5 wide, image_xscale is
+    // written 1.5; everything else as read, navBboxWidth included.
+    FakeLookNode wide = Live5Node();
+    const StashMoveLookTally w = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), wide, 1.5, 1.0);
+    ok = ok && w.Verdict() == StashMoveButtonLook::Sort && Near(wide.members["image_xscale"].number, 1.5, 1e-12)
+        && Near(wide.members["image_yscale"].number, 1.0, 1e-12) && wide.members["navBboxWidth"].number == 192;
+    // The state line says it, and no look line is said.
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(mod.StateLine(), " button_look=sort") && Has(mod.StateLine(), " button_look_same=16/16")
+        && !Has(line, "look");
+    // Negative control: before any node the field reads none.
+    StashMoveAllMod idle;
+    ok = ok && Has(idle.StateLine(), " button_look_same=none");
+    Check("baseline/look_all_numeric_members_copied_and_read_sort", ok, Written(node) + " | " + mod.StateLine());
+}
+
+static void TargetLookStringMemberIsCopiedAndComparedAsText()
+{
+    // `textFont` reads as a string (the probe printed a bare __newfont2).
+    // fix2's copy stopped there, before the label offsets; now it is written
+    // as read, every member after it is written too, and it compares by text.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookString("__newfont2")), node, 1.0, 1.0);
+    bool ok = Written(node) == kAllSixteen && node.members["textFont"].kind == StashMoveLookKind::String
+        && node.members["textFont"].text == "__newfont2" && node.members["drawYOffset"].number == 9
+        && node.members["naviRightPrev"].number == 0 && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort;
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(LookString("__newfont2"), StashMoveLookWrite::AsRead, 1, 1);
+    ok = ok && step.put == StashMoveLookPut::AsRead
+        && StashMoveAllMod::LookCompare(step.want, LookString("__newfont2")) == StashMoveLookSame::Same;
+    // A scaled member that reads as anything but a number is not written
+    // and compares unread; the members after it are still written.
+    std::vector<LookMember> list = Live5Look(LookString("__newfont2"));
+    list[1].sort = LookString("1");
+    FakeLookNode odd = Live5Node();
+    const StashMoveLookTally o = CopyLook(list, odd, 1.0, 1.0);
+    ok = ok && StashMoveAllMod::LookStep(LookString("1"), StashMoveLookWrite::ScaleX, 1, 1).put == StashMoveLookPut::Nothing
+        && Written(odd) == "sprite_index,image_yscale,textFont,dropShadow,createX,drawXOffset,drawYOffset,navBboxX,"
+                           "navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
+        && o.equal == 15 && o.first == "image_xscale" && o.Verdict() == StashMoveButtonLook::Unread;
+    Check("target/look_string_member_is_copied_and_compared_as_text", ok, Written(node));
+}
+
+static void TargetLookAssetMemberComparesByItsIndex()
+{
+    // An asset reference compares by its index: read back as the same
+    // reference, or as a plain number of that index, it is the same; the
+    // name it prints plays no part.
+    const StashMoveLookValue sprite = LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr");
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(sprite, StashMoveLookWrite::AsRead, 1, 1);
+    bool ok = step.put == StashMoveLookPut::AsRead
+        && StashMoveAllMod::LookCompare(step.want, sprite) == StashMoveLookSame::Same
+        && StashMoveAllMod::LookCompare(step.want, LookNumber(1502)) == StashMoveLookSame::Same
+        && StashMoveAllMod::LookCompare(step.want, LookAsset(1502, "ref sprite 1502")) == StashMoveLookSame::Same;
+    // Negative controls: another index differs, even with the same name
+    // printed; an index that did not read is unread; a string differs.
+    ok = ok && StashMoveAllMod::LookCompare(step.want, LookAsset(1503, sprite.text)) == StashMoveLookSame::Differs
+        && StashMoveAllMod::LookCompare(step.want, LookAsset(std::nan(""), sprite.text)) == StashMoveLookSame::Unread
+        && StashMoveAllMod::LookCompare(step.want, LookString(sprite.text)) == StashMoveLookSame::Differs;
+    // In the copy: the sprite read back as its index is still sort.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), node, 1.0, 1.0,
+                                          {{"sprite_index", LookNumber(1502)}, {"textFont", LookNumber(7)}});
+    ok = ok && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort;
+    Check("target/look_asset_member_compares_by_its_index", ok, "");
+}
+
+static void TargetLookUnreadMemberIsNamedAfterTheWholeCopy()
+{
+    // `drawXOffset` reads undefined off Sort (a member missing on some
+    // build): it is not written, every other member is, and the verdict is
+    // unread only once the whole list has been through, naming it.
+    std::vector<LookMember> list = Live5Look(LookString("__newfont2"));
+    list[6].sort = LookUndefined();
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(list, node, 1.0, 1.0);
+    bool ok = Written(node) == "sprite_index,image_xscale,image_yscale,textFont,dropShadow,createX,drawYOffset,navBboxX,"
+                               "navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
+        && node.members["drawXOffset"].number == 0   // the node's own, untouched
+        && t.listed == 16 && t.equal == 15 && t.first == "drawXOffset" && t.firstWas == StashMoveLookSame::Unread
+        && t.Verdict() == StashMoveButtonLook::Unread;
+    // A member whose read or write threw is noted unread by the adapter's
+    // catch, and the members after it still count.
+    StashMoveLookTally thrown;
+    thrown.Note("sprite_index", StashMoveLookSame::Same);
+    thrown.Note("textFont", StashMoveLookSame::Unread);
+    thrown.Note("drawXOffset", StashMoveLookSame::Same);
+    ok = ok && thrown.listed == 3 && thrown.equal == 2 && thrown.first == "textFont"
+        && thrown.Verdict() == StashMoveButtonLook::Unread;
+    // Said once, naming the member, and the state line counts the rest.
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(line, "stashmoveall: button - its look beside Sort could not be read (drawXOffset did not read; "
+                         "15/16 members the same), so it is unchecked; F4 still works")
+        && Has(mod.StateLine(), " button_look=unread") && Has(mod.StateLine(), " button_look_same=15/16") && mod.IsEnabled();
+    // Negative control: nothing listed is never sort.
+    ok = ok && StashMoveLookTally().Verdict() == StashMoveButtonLook::Unread;
+    Check("target/look_unread_member_is_named_after_the_whole_copy", ok, Written(node) + " | " + line);
+}
+
+static void TargetLookDifferingStringReadsDiffers()
+{
+    // Negative control for the wider kinds: a string that reads back other
+    // than it was written (the node's own __newfont6, the game putting it
+    // back, say) differs, never sort - accepting strings is not accepting
+    // anything.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookString("__newfont2")), node, 1.0, 1.0,
+                                          {{"textFont", LookString("__newfont6")}});
+    bool ok = Written(node) == kAllSixteen && t.equal == 15 && t.first == "textFont"
+        && t.firstWas == StashMoveLookSame::Differs && t.Verdict() == StashMoveButtonLook::Differs;
+    // A string against a number, and a differing string beside an unread
+    // member: still differs.
+    ok = ok && StashMoveAllMod::LookCompare(LookString("48"), LookNumber(48)) == StashMoveLookSame::Differs
+        && StashMoveAllMod::LookCompare(LookString("__newfont2"), LookString("__newfont2 ")) == StashMoveLookSame::Differs;
+    StashMoveLookTally both;
+    both.Note("textFont", StashMoveLookSame::Differs);
+    both.Note("drawXOffset", StashMoveLookSame::Unread);
+    ok = ok && both.Verdict() == StashMoveButtonLook::Differs;
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(line, "stashmoveall: button - it did not take the Sort button's look (textFont differs; 15/16 members "
+                         "the same), so it is kept with its own; F4 still works")
+        && Has(mod.StateLine(), " button_look=differs") && Has(mod.StateLine(), " button_look_same=15/16");
+    Check("target/look_differing_string_reads_differs", ok, line);
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -2252,6 +2566,11 @@ int main()
     BaselineSortGapBoxIsNotTheMercenaryBox();
     TargetButtonSettlesOnTheMercenaryBox();
     TargetUnreadTargetFallsBackToTheSortRule();
+    BaselineLookAllNumericMembersCopiedAndReadSort();
+    TargetLookStringMemberIsCopiedAndComparedAsText();
+    TargetLookAssetMemberComparesByItsIndex();
+    TargetLookUnreadMemberIsNamedAfterTheWholeCopy();
+    TargetLookDifferingStringReadsDiffers();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

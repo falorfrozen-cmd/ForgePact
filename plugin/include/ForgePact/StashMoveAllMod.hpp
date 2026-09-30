@@ -91,10 +91,13 @@ namespace ForgePact {
 //   what the check read on the state line, the target's route included;
 // - the button's look and size (owner scope, 2026-09-30): the Sort button's
 //   own, copied from the Sort node by the adapter (its label's place and font
-//   among them, Live 5), scaled per axis to the target's size, so the first
-//   node is made with Sort's extents about Sort's origin; judged on the same
-//   settled read as the place, a node not the target's size or whose look did
-//   not take kept and said once each, never remade for it (TargetSized,
+//   among them, Live 5), its sprite's scale per axis to the target's size, so
+//   the first node is made with Sort's extents about Sort's origin; each
+//   member written and read back whatever its kind, one that cannot be costing
+//   only its own verdict, never the members after it (LookStep, LookCompare,
+//   StashMoveLookTally); judged on the same settled read as the place, a node
+//   not the target's size or whose look did not take kept and said once each,
+//   naming the first member off, never remade for it (TargetSized,
 //   ButtonScale, NoteButtonLook);
 // - the outcome of each item from the adapter's re-reads (Decide): moved only
 //   when the stash tab on show is still the planned one, the source cell no
@@ -140,8 +143,9 @@ enum class StashMoveButtonCheck : int { Keep = 0, Remake };
 
 // The node's look as the adapter read it after giving it the Sort button's
 // own (owner scope, 2026-09-30): none before a node is made, sort when the
-// variables that carry its sprite and size read back the same as Sort's,
-// differs when they read and are not, unread when one could not be read.
+// members that carry its sprite, size and label read back the same as
+// Sort's, differs when one read and is not, unread when none differs and one
+// could not be read or compared (StashMoveLookTally).
 enum class StashMoveButtonLook : int { None = 0, Sort, Differs, Unread };
 
 // Which box the node is made to and checked against (the owner, 2026-09-30:
@@ -150,6 +154,71 @@ enum class StashMoveButtonLook : int { None = 0, Sort, Differs, Unread };
 // moved and sized by the fractions Live 5 measured (merc-route: relation);
 // sort, the old rule standing in when neither could be had.
 enum class StashMoveButtonRef : int { None = 0, Mercenary, Relation, Sort };
+
+// One look member's value as the adapter read it, in plain terms (#131, the
+// review of fix2's round 2: a member's kind never stops the copy). Its kind,
+// classified the way the research probe classifies a value: a number, a
+// bool, a string, an asset reference (a handle whose type names an asset),
+// undefined, or any other kind (a reference, struct, array or method);
+// unread when the read itself threw. What it compares by: a number or bool
+// by `number` (a bool 0 or 1), an asset by its index in `number`, a string
+// by `text`.
+enum class StashMoveLookKind : int { Unread = 0, Number, Bool, String, Asset, Undefined, Other };
+
+struct StashMoveLookValue {
+    StashMoveLookKind kind = StashMoveLookKind::Unread;
+    double            number = std::nan("");
+    std::string       text;
+};
+
+// How a look member is written onto the node: as read, or scaled on one
+// axis by the target's size over Sort's (the sprite's scale, Live 4).
+enum class StashMoveLookWrite : int { AsRead = 0, ScaleX, ScaleY };
+
+// What the adapter writes for one member (LookStep): nothing, the value as
+// it read it off Sort, or a number.
+enum class StashMoveLookPut : int { Nothing = 0, AsRead, Number };
+
+// One member read back off the node against what it should read: the same,
+// differs, or unread (not read, or of a kind that cannot be compared).
+enum class StashMoveLookSame : int { Same = 0, Differs, Unread };
+
+// The look step for one member: what to write and what the node should read
+// back as (unread when nothing is written).
+struct StashMoveLookStep {
+    StashMoveLookPut   put = StashMoveLookPut::Nothing;
+    StashMoveLookValue want;
+};
+
+// The look copy over the whole list, member by member (Note), and its
+// verdict once every member has been written and read back (Verdict): sort
+// when every one compared the same, differs when one differs, unread when
+// none differs and one could not be read or compared. It carries the count
+// that compared the same and the first member that did not, with how.
+struct StashMoveLookTally {
+    int               listed = 0;
+    int               equal = 0;
+    bool              differs = false;
+    bool              unread = false;
+    std::string       first;                      // the first member not the same; empty when every one was
+    StashMoveLookSame firstWas = StashMoveLookSame::Same;
+    StashMoveButtonLook look = StashMoveButtonLook::None;   // a verdict handed in whole, with no members
+
+    void Note(const std::string& name, StashMoveLookSame same) {
+        ++listed;
+        if (same == StashMoveLookSame::Same) { ++equal; return; }
+        if (same == StashMoveLookSame::Differs) differs = true;
+        else unread = true;
+        if (first.empty()) { first = name; firstWas = same; }
+    }
+
+    StashMoveButtonLook Verdict() const {
+        if (listed == 0) return look == StashMoveButtonLook::None ? StashMoveButtonLook::Unread : look;
+        if (differs) return StashMoveButtonLook::Differs;
+        if (unread) return StashMoveButtonLook::Unread;
+        return StashMoveButtonLook::Sort;
+    }
+};
 
 // The shown stash tab's stacks of one identity, as the adapter read them:
 // each stack's count, in the array's order (on the Socketable tab, the one
@@ -689,6 +758,7 @@ public:
         m_ButtonSteps = 0;
         m_ButtonHaveLast = false;
         m_ButtonLook = StashMoveButtonLook::None;
+        m_ButtonLookRead = StashMoveLookTally();
         std::lock_guard<std::mutex> lock(m_PlaceMutex);
         m_PlaceWord = "pending";
         m_PlaceBox = StashMoveBox();
@@ -697,6 +767,7 @@ public:
         m_PlaceMakes = m_ButtonMakes;
         m_PlaceStep = 0;
         m_PlaceLook = StashMoveButtonLook::None;
+        m_PlaceLookEqual = m_PlaceLookListed = 0;
         m_PlaceSize = StashMoveBox();   // nor its size
     }
 
@@ -707,12 +778,78 @@ public:
     // What the adapter read of the node's look: after it gave the node
     // Sort's, and again each ensure step while the node is checked, so the
     // look judged is the one on the settled read, not only the frame it was
-    // written in (whether the UI layer puts its own back is not read).
-    void NoteButtonLook(StashMoveButtonLook look) {
+    // written in (whether the UI layer puts its own back is not read). The
+    // tally carries the members that read the same and the first that did
+    // not, for the state line's button_look_same= and the look lines.
+    void NoteButtonLook(const StashMoveLookTally& read) {
         if (m_ButtonMakes == 0 || m_ButtonChecked) return;
-        m_ButtonLook = look;
+        m_ButtonLook = read.Verdict();
+        m_ButtonLookRead = read;
         std::lock_guard<std::mutex> lock(m_PlaceMutex);
-        m_PlaceLook = look;
+        m_PlaceLook = m_ButtonLook;
+        m_PlaceLookEqual = read.equal;
+        m_PlaceLookListed = read.listed;
+    }
+
+    // A verdict with no members behind it (no count to print).
+    void NoteButtonLook(StashMoveButtonLook look) {
+        StashMoveLookTally t;
+        t.look = look;
+        NoteButtonLook(t);
+    }
+
+    // The kinds the look copy writes and compares: those the research
+    // probe's lookcopy writes (a number, bool, string or asset). Undefined,
+    // a reference, struct, array or method is never written, nor unread.
+    static bool LookWritable(StashMoveLookKind k) {
+        return k == StashMoveLookKind::Number || k == StashMoveLookKind::Bool || k == StashMoveLookKind::String
+            || k == StashMoveLookKind::Asset;
+    }
+
+    // The look step for one member read off Sort (fix2's round 2: a
+    // member's kind never decides whether the copy runs): one of the
+    // writable kinds is written as read, whatever that kind; a scaled
+    // member is written scaled by `sx` or `sy` only when it read as a
+    // number, and is otherwise not written, so it compares unread. What the
+    // node should read back as is the value written.
+    static StashMoveLookStep LookStep(const StashMoveLookValue& read, StashMoveLookWrite how, double sx, double sy) {
+        StashMoveLookStep step;
+        if (!LookWritable(read.kind)) return step;
+        if (how == StashMoveLookWrite::AsRead) {
+            step.put = StashMoveLookPut::AsRead;
+            step.want = read;
+            return step;
+        }
+        if (read.kind != StashMoveLookKind::Number) return step;
+        const double v = read.number * (how == StashMoveLookWrite::ScaleX ? sx : sy);
+        if (!std::isfinite(v)) return step;
+        step.put = StashMoveLookPut::Number;
+        step.want.kind = StashMoveLookKind::Number;
+        step.want.number = v;
+        return step;
+    }
+
+    // A member read back off the node against what it should read, by kind:
+    // strings by their text; numbers, bools and asset references by their
+    // value (an asset by its index), so a bool or asset that reads back as a
+    // number still compares; a string against any other kind differs. A
+    // value not read, or of a kind never written, is unread.
+    static StashMoveLookSame LookCompare(const StashMoveLookValue& want, const StashMoveLookValue& got) {
+        if (!LookWritable(want.kind) || !LookWritable(got.kind)) return StashMoveLookSame::Unread;
+        const bool wantText = want.kind == StashMoveLookKind::String, gotText = got.kind == StashMoveLookKind::String;
+        if (wantText || gotText)
+            return wantText && gotText && want.text == got.text ? StashMoveLookSame::Same : StashMoveLookSame::Differs;
+        if (!std::isfinite(want.number) || !std::isfinite(got.number)) return StashMoveLookSame::Unread;
+        return std::fabs(got.number - want.number) <= kLookTolerance ? StashMoveLookSame::Same : StashMoveLookSame::Differs;
+    }
+
+    static constexpr double kLookTolerance = 1e-6;
+
+    // The state line's button_look_same=: the members that read the same
+    // over those listed, none before a look with members was read.
+    static std::string LookSameText(int equal, int listed) {
+        if (listed <= 0) return "none";
+        return std::to_string(equal) + "/" + std::to_string(listed);
     }
 
     // The check below under the old rule alone: the target is
@@ -874,8 +1011,9 @@ public:
     // check comparing menulayout's rows, can tell what the mod itself read.
     // Then the node's look as last read (none, sort, differs, unread) and
     // its size on the settled read (none until then), judged against the
-    // target; last, which target that is (RefWord: none, mercenary,
-    // relation, sort).
+    // target; which target that is (RefWord: none, mercenary, relation,
+    // sort); last, how many of the look's members read the same over those
+    // listed, on that same read (none before one with members).
     std::string ButtonFields() const {
         std::string place;
         {
@@ -886,7 +1024,8 @@ public:
                                                            : std::string("none"))
                 + " button_makes=" + std::to_string(m_PlaceMakes) + " button_step=" + std::to_string(m_PlaceStep)
                 + " button_look=" + LookWord(m_PlaceLook) + " button_size=" + SizeText(m_PlaceSize)
-                + " button_ref=" + RefWord(m_PlaceRef);
+                + " button_ref=" + RefWord(m_PlaceRef)
+                + " button_look_same=" + LookSameText(m_PlaceLookEqual, m_PlaceLookListed);
         }
         return std::string(" button=") + (m_ButtonHeld.load() ? "held" : "none")
             + " presses=" + std::to_string(m_Presses.load()) + " in_node=" + std::to_string(m_PressesInNode.load())
@@ -1366,6 +1505,8 @@ private:
             std::lock_guard<std::mutex> lock(m_PlaceMutex);
             m_PlaceSize = box;
             m_PlaceLook = m_ButtonLook;
+            m_PlaceLookEqual = m_ButtonLookRead.equal;
+            m_PlaceLookListed = m_ButtonLookRead.listed;
         }
         auto add = [&line](const std::string& said) {
             if (said.empty()) return;
@@ -1376,10 +1517,18 @@ private:
         if (!TargetSized(target, box))
             add(SayButtonOff(m_ButtonSizeSaid, "its size " + SizeText(box) + " is not " + whose
                              + SizeText(target) + ", so it is kept as it is"));
+        // The member that did not read the same, first in the list, and how
+        // many did (fix2's round 2: a look off names its cause).
+        const StashMoveLookTally& r = m_ButtonLookRead;
+        const std::string which = r.first.empty() ? std::string()
+            : " (" + r.first + (r.firstWas == StashMoveLookSame::Differs ? " differs" : " did not read") + "; "
+                + LookSameText(r.equal, r.listed) + " members the same)";
         if (m_ButtonLook == StashMoveButtonLook::Differs)
-            add(SayButtonOff(m_ButtonLookSaid, "it did not take the Sort button's look, so it is kept with its own"));
+            add(SayButtonOff(m_ButtonLookSaid, "it did not take the Sort button's look" + which
+                             + ", so it is kept with its own"));
         else if (m_ButtonLook == StashMoveButtonLook::Unread)
-            add(SayButtonOff(m_ButtonLookUnreadSaid, "its look beside Sort could not be read, so it is unchecked"));
+            add(SayButtonOff(m_ButtonLookUnreadSaid, "its look beside Sort could not be read" + which
+                             + ", so it is unchecked"));
     }
 
     std::atomic<bool> m_Enabled{false};
@@ -1405,6 +1554,7 @@ private:
     bool              m_ButtonLookUnreadSaid = false; // the look-unread line already said this session
     bool              m_ButtonFallbackSaid = false; // the old-rule fallback line already said this session
     StashMoveButtonLook m_ButtonLook = StashMoveButtonLook::None; // the node's look as last read
+    StashMoveLookTally m_ButtonLookRead;          // the members behind it
     // The place check (ButtonCheck), on the frame tick's thread.
     int               m_ButtonMakes = 0;         // nodes made by the current Create step, 0 before any
     int               m_ButtonSteps = 0;         // ensure steps checked since the last make
@@ -1424,7 +1574,9 @@ private:
     int               m_PlaceMakes = 0;
     int               m_PlaceStep = 0;
     StashMoveButtonLook m_PlaceLook = StashMoveButtonLook::None;
-    StashMoveBox      m_PlaceSize;               // the settled box its size is read from
+    int               m_PlaceLookEqual = 0;      // its members that read the same
+    int               m_PlaceLookListed = 0;     // of those listed, 0 before a read with members
+    StashMoveBox      m_PlaceSize;              // the settled box its size is read from
     StashMoveButtonRef m_PlaceRef = StashMoveButtonRef::None; // the target the last node was made or checked to
     std::string       m_OffReason;
 };

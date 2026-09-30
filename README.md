@@ -611,8 +611,8 @@ Mods tab → Quality of Life → **Move all into the stash**. Off by default.
 
 With the stash open, click the **Move all** button - it sits where the game
 shows its own **Mercenary** button when the backpack is open on its own, just
-left of the backpack's **Sort** button, and looks like the backpack's **Sort
-Tab** button, while the switch is on - or press **F4**, and every
+left of the backpack's **Sort** button, while the switch is on - or press
+**F4**, and every
 item on the backpack tab you are looking at moves into the stash tab you are
 looking at, one item at a time,
 top-left first, row by row. Each item goes by the game's own move for it -
@@ -661,28 +661,38 @@ itself.
   draws its own **Mercenary** button when you open the backpack without the
   stash (that button is not there while the stash is open), just left of
   **Sort** and level with it - worked out from the Sort button's own place and
-  size each time, so it follows the game's interface scale. It takes the
-  **Sort Tab** button's look: the mod copies the Sort button's sprite, scale,
-  label font and label position from the Sort button itself.
+  size each time, so it is expected to follow the game's interface scale
+  (measured at one scale only). The mod copies onto it, from the Sort button
+  itself each time, the Sort button's sprite and scale and the 13 settings
+  whose copy in a research session drew the label centred like the Sort
+  button's (Live 5); each is written as the Sort button has it, whatever kind
+  of value it is, and read back.
   **Not finished yet** (ForgePact
-  #131): in play its **Move all** label is not drawn inside the box (only a
-  clipped end of it shows at the box's top-left corner), and the box does not
-  yet look like the Sort button; a click on it works all the same
-  (`docs/stash-move-research.md` § Live 4 results; the label fix, from the
-  measurements in § Live 5 results, is waiting for its check in play). A
+  #131): in the last check in play its **Move all** label was drawn at the
+  box's top-left corner, not inside it (only a clipped end of it showed); a
+  click on it works all the same (`docs/stash-move-research.md` § Live 4
+  results; the label fix, from the measurements in § Live 5 results, is
+  waiting for its check in play). A
   moment after it appears the mod checks
   where and how the game drew it and moves it once if needed; the log says
   where it ended up, once a session (`stashmoveall: button - placed in the
   Mercenary button's place, box ...`, or `stashmoveall: button - placed ...
   off the Mercenary button's place` if the game draws it somewhere else), and
   says so once on a line of its own if it does not have that button's size or
-  Sort's look (`stashmoveall: button - its size ... is not the Mercenary
-  button's ...`, `... it did not take the Sort button's look ...`); if that
-  place cannot be worked out it sits beside Sort as before and the log says so
-  once (`... sits beside Sort by the old rule`). The button and F4 still work
+  if a copied setting did not read back as the Sort button's, naming the first
+  that did not (`stashmoveall: button - its size ... is not the Mercenary
+  button's ...`, `... it did not take the Sort button's look (textFont differs;
+  15/16 members the same) ...`); if that place cannot be worked out it sits
+  beside Sort as before and the log says so once, when it first happens
+  (`... sits beside Sort by the old rule`). The button and F4 still work
   either way. The bare `stashmoveall` line carries what it read
   (`button_place=`, `button_box=`, `button_look=`, `button_size=`,
-  `button_ref=`). Turning the switch off takes it
+  `button_ref=`, `button_look_same=`): `button_ref=relation` means the box was
+  worked out from the Sort button's box by the relation measured in Live 5,
+  not read off a Mercenary button (the game does not list one while the stash
+  is open), and `button_look_same=16/16` counts the copied settings that read
+  back as the Sort button's (`none` before the button is made). Turning the
+  switch off takes it
   away at once, and closing the stash closes it with the window. Turned on
   while the stash is already open, the button may only appear after you
   click a stash tab; F4 does not need the button. A click on
