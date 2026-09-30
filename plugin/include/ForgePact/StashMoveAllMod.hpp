@@ -486,6 +486,8 @@ public:
         std::lock_guard<std::mutex> lock(m_PlaceMutex);
         m_PlaceWord = "pending";
         m_PlaceBox = StashMoveBox();
+        m_PlaceExtents = StashMoveExtents();
+        m_PlaceExtentsRead = false;   // never the last node's extents shown as this one's
         m_PlaceMakes = m_ButtonMakes;
         m_PlaceStep = 0;
     }
@@ -514,7 +516,7 @@ public:
             NotePlace(m_ButtonSteps < kButtonSettleSteps ? "pending" : "unsettled", box, nullptr);
             if (m_ButtonSteps < kButtonSettleSteps) return StashMoveButtonCheck::Keep;
             m_ButtonChecked = true;
-            line = SayButtonOff("its box had not settled " + std::to_string(m_ButtonSteps)
+            line = SayButtonOff(m_ButtonUnsettledSaid, "its box had not settled " + std::to_string(m_ButtonSteps)
                                 + " ensure steps after it was made, so its place beside Sort is unchecked");
             return StashMoveButtonCheck::Keep;
         }
@@ -522,7 +524,7 @@ public:
         if (!ExtentsOf(nodeX, nodeY, box, e)) {
             NotePlace("unread", box, nullptr);
             m_ButtonChecked = true;
-            line = SayButtonOff("its x, y did not read, so its place beside Sort is unchecked");
+            line = SayButtonOff(m_ButtonUnreadSaid, "its x, y did not read, so its place beside Sort is unchecked");
             return StashMoveButtonCheck::Keep;
         }
         m_ButtonExtents = e;
@@ -1079,11 +1081,12 @@ private:
         m_PlaceStep = m_ButtonSteps;
     }
 
-    // A place that could not be checked, said once a session with the
-    // off-target line; F4 and the press still work.
-    std::string SayButtonOff(const std::string& why) {
-        if (m_ButtonOffSaid) return std::string();
-        m_ButtonOffSaid = true;
+    // A place that could not be checked, said once a session per cause, each
+    // with its own flag, so an early one never hides a later off-target line
+    // (the review of #131 round 1); F4 and the press still work.
+    static std::string SayButtonOff(bool& said, const std::string& why) {
+        if (said) return std::string();
+        said = true;
         return "stashmoveall: button - " + why + "; F4 still works";
     }
 
@@ -1102,6 +1105,8 @@ private:
     bool              m_KeyWasDown = false;
     bool              m_ButtonRefused = false;   // a refusal already reported, while the stash stays open
     bool              m_ButtonOffSaid = false;   // the off-target line already said this session
+    bool              m_ButtonUnsettledSaid = false; // the not-settled line already said this session
+    bool              m_ButtonUnreadSaid = false; // the x, y-unread line already said this session
     bool              m_ButtonPlacedSaid = false; // the placed line already said this session
     // The place check (ButtonCheck), on the frame tick's thread.
     int               m_ButtonMakes = 0;         // nodes made by the current Create step, 0 before any

@@ -1924,7 +1924,8 @@ so each stash open is. On target is said once a session, `stashmoveall:
 button - placed beside Sort, box <l,t,r,b>`; one still off is kept and said
 once, `stashmoveall: button - placed <dx>,<dy> off beside Sort; F4 still
 works`; a box not settled six ensure steps after the make is said unchecked
-once; none turns the mod off. The bare `stashmoveall` state line carries what
+once. Each of those lines has its own said-once flag, so an early unchecked
+line never hides a later node that settles off target; none turns the mod off. The bare `stashmoveall` state line carries what
 the check read (`button_place=`, `button_box=`, `button_extents=`,
 `button_makes=`, `button_step=`), so `button-placed`'s `menulayout` rows can be
 compared with the mod's own reading. With the measured extents

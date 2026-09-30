@@ -1293,6 +1293,9 @@ static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
         && Has(mod.StateLine(), " button_place=remake") && Has(mod.StateLine(), " button_extents=96.9,22.8,98.8,22.8")
         && Has(mod.StateLine(), " button_step=4");
     mod.NoteButtonMade(true);
+    // The new node's check starts from nothing: the last node's extents are
+    // not shown as this one's (the review of #131 round 1).
+    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none button_extents=none button_makes=2");
     const StashMoveBox good = Box(x - e.left, y - e.up, x + e.right, y + e.down);
     ok = ok && mod.ButtonCheck(false, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty()
         && mod.ButtonCheck(true, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty();
@@ -1310,7 +1313,7 @@ static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
     ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, mod.ButtonExtents(kSortBox), kGap, nx, ny)
         && Near(nx, 2196.7, 0.05) && Near(ny, 1230.25, 0.05);
     mod.NoteButtonMade(false);
-    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none")
+    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none button_extents=none")
         && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep
         && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep && line.empty()
         && Has(mod.StateLine(), " button_place=on button_box=2099.8,");
@@ -1330,6 +1333,16 @@ static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
     }
     ok = ok && !remade && said == 1 && Has(unsettled, "had not settled") && Has(unsettled, "; F4 still works")
         && Has(drift.StateLine(), " button_place=unsettled") && drift.IsEnabled();
+    // A later node of that session which settles off target still says so:
+    // each cause is said once on its own, so an early unsettled line does not
+    // hide a real misplacement (the review of #131 round 1).
+    drift.NoteButtonMade(false);
+    ok = ok && drift.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && drift.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake;
+    drift.NoteButtonMade(true);
+    ok = ok && drift.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && drift.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep
+        && Has(line, " off beside Sort; F4 still works") && Has(drift.StateLine(), " button_place=off");
     // Negative control: no third make. Still off after the remake, the node
     // is kept and said once, and the mod stays on.
     StashMoveAllMod off;
