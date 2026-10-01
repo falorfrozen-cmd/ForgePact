@@ -1015,8 +1015,10 @@ gear and buffs still count underneath.
   and 265 with +120, as the half-percent rule says; 238 with +160, and still 238
   with +200 and +300, because 240 and 340 count as 200.
 - **Measured** (the same Samurai, 28 All Skills from gear, For Honor with one
-  point): its buff was +137.8% attack damage and +72.5% movement speed at level
-  29, and +228% and +120% with **All Skills +19**, at level 48.
+  point; the game describes it as more attack damage and movement speed): its
+  buff's two values were 137.8 and 72.5 at level 29, and 228 and 120 with
+  **All Skills +19**, at level 48. Both grow with the level, so the +19 reached
+  the skill.
 - **Two things to know.** Stat Forge's boosts of the same names work on the
   same game functions, so run one or the other, never both at once. And
   levels far above what gear can give (the game's own items reach about +70)
