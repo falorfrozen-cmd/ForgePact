@@ -35,7 +35,7 @@ none of these diagnostic hooks or the recorder. See
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
-| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
+| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect, and moves on from an item it cannot collect. Pick-up items only; activate/break/talk objectives are left alone |
@@ -993,6 +993,39 @@ copy's appear when it is made, still far outside the screen.
 
 How it works and the measurements:
 [`docs/population-performance-analysis.md`](docs/population-performance-analysis.md#8-rolling-density-copies-2026-09-28).
+
+## Skill Haste and All Skills
+
+Modifiers → Offense → **Skill Haste** and **All Skills**, beside Faster Cast
+Rate (plugin command `statadd skillhaste <points>`, `statadd allskills <levels>`,
+and `statadd list` for all three). Both are off by default. Like Faster Cast
+Rate, each **adds** to your own total after the game has worked it out, so your
+gear and buffs still count underneath.
+
+- **Skill Haste** adds Skill Haste points, the stat your gear shows as "Skill
+  Haste Increased by N%". The game runs every skill cooldown down faster by half
+  a percent per point: 100 points make a cooldown take 2/3 of its time. The
+  game counts **at most 200** in total, where a cooldown takes half its time,
+  so the slider stops at 200.
+- **All Skills** adds levels to every skill you have put at least one point in,
+  like "+N to All Skills" on an item, in whole levels up to 100. A skill with no
+  points stays locked.
+- **Measured** (a Samurai with 40 Skill Haste from gear, Blade Barrier's 8 s
+  cooldown, counted in frames): 392 frames with nothing added; 280 with +100
+  and 265 with +120, as the half-percent rule says; 238 with +160, and still 238
+  with +200 and +300, because 240 and 340 count as 200.
+- **Measured** (the same Samurai, 28 All Skills from gear, For Honor with one
+  point; the game describes it as more attack damage and movement speed): its
+  buff's two values were 137.8 and 72.5 at level 29, and 228 and 120 with
+  **All Skills +19**, at level 48. Both grow with the level, so the +19 reached
+  the skill.
+- **Two things to know.** Stat Forge's boosts of the same names work on the
+  same game functions, so run one or the other, never both at once. And
+  levels far above what gear can give (the game's own items reach about +70)
+  have not been played through.
+
+The first time the game reads a boosted value, the log says so, for example
+`statadd StatSpellHaste: first boosted call 40 -> 140`.
 
 ## 🔧 How to use
 

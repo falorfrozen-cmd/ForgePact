@@ -19283,6 +19283,8 @@ static void NAddrAll()
         "StatLifeReplenish", "StatManaReplenish", "StatDefense", "StatCritDamage",
         "StatCritRate", "StatSpellCritDamage", "StatSpellCritRate",
         "EnemyCalculateExperience",
+        // ForgePact::StatsManager's `statadd` table (StatFasterCastRate is above).
+        "StatSpellHaste", "StatAllSkills",
     };
 
     std::ofstream f(IPC_DIR + "\\script_addresses.csv", std::ios::trunc);
@@ -35419,11 +35421,38 @@ static void TgProbeSpurnCommand(const std::string& rest)
     }
 }
 
+// `tgprobe cast <talentId>` (#114 live check): the game's own cast, made the
+// way one key press makes it (measured in the toggle research: TalentUse with
+// self Player_obj and the arguments (player ref, talent id, 1, false, true)).
+// A live check can then start a cooldown or read a talent's level without the
+// keyboard.
+static void TgProbeCast(const std::string& rest)
+{
+    std::string tail;
+    const std::string tok = FirstToken(rest, tail);
+    int id = -1;
+    try { id = std::stoi(tok); } catch (...) {}
+    if (id < 0) { Out("tgprobe cast: usage -> tgprobe cast <talentId>"); return; }
+    RValue player;
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) { Out("tgprobe cast: no local player (" + how + ")"); return; }
+    CInstance* self = HhResolveInstance(player);
+    if (!self) { Out("tgprobe cast: the player instance did not resolve"); return; }
+    try {
+        RValue r;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(r, HeroSiege::Scripts::gml_Script_TalentUse.data(), self, self,
+            { player, RValue((double)id), RValue(1.0), RValue(false), RValue(true) });
+        Out("tgprobe cast " + std::to_string(id) + ": frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+            + " st=" + std::to_string((int)st) + " ret=" + Describe(r));
+    } catch (...) { Out("tgprobe cast: EXCEPTION"); }
+}
+
 static void TgProbeCommand(const std::string& rest)
 {
     std::string subRest;
     const std::string sub = Lower(FirstToken(rest, subRest));
     if (sub == "hook") { TgProbeHook(subRest); return; }
+    if (sub == "cast") { TgProbeCast(subRest); return; }
     if (sub == "show") { TgProbeShow(); return; }
     if (sub == "reset") { TgProbeReset(); return; }
     if (sub == "verbose") {
@@ -35460,7 +35489,7 @@ static void TgProbeCommand(const std::string& rest)
     if (sub == "sweep") { TgProbeSweepCommand(subRest); return; }
     // Buff-carried skills: global.playerBuff[1][0] (issue #55 follow-up, session 12).
     if (sub == "buffwatch") { TgProbeBuffWatchCommand(subRest); return; }
-    Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
+    Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities | cast <talentId>"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"

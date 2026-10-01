@@ -69,6 +69,8 @@
   "damage": 0,
   "attackspeed": 0,
   "castrate": 0,
+  "skillhaste": 0,
+  "allskills": 0,
   "lifereplenish": 0,
   "manareplenish": 0,
   "defense": 0,

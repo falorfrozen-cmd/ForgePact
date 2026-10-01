@@ -149,8 +149,9 @@ class SliderSwitchTests(unittest.TestCase):
                     + [f"keys.{k}" for k, *_ in forgepact.KEYS]
                     + ["rarity_rare", "rarity_ancient", "angelic_items", "enemy_speed"])
         self.assertEqual(list(ids), expected)
-        self.assertEqual(len(ids), 41)
-        self.assertEqual(len(set(ids)), 41)
+        # 41 before #114 added Skill Haste and All Skills to percent_stats.
+        self.assertEqual(len(ids), 43)
+        self.assertEqual(len(set(ids)), 43)
         for excluded in ("density", "density_on", "enemy_speed_ct"):
             self.assertNotIn(excluded, ids)
 

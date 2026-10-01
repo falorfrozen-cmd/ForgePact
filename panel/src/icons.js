@@ -165,8 +165,8 @@ export const CONTROL_ICONS = {
   'keys': zip(['dungeon', 'angelic', 'chaos', 'bifrost', 'relic', 'rune', 'stone', 'bossgem', 'orb', 'scrollofra', 'dimshard', 'battlefrag', 'colosfrag', 'primeevil', 'ruby'],
               ['dungeon-key', 'angelic-key', 'crystal-key', 'bifrost-key', 'relic', 'rune', 'gem', 'boss-gem', 'orb', 'scroll', 'shard', 'battle-fragment', 'colosseum-fragment', 'prime-evil-part', 'ruby-key']),
   'stats': { 'exp': 'experience', 'magicfind': 'magic-find', 'movespeed': 'boots' },
-  'percent_stats': zip(['damage', 'attackspeed', 'castrate', 'lifereplenish', 'manareplenish', 'defense', 'critdamage', 'critchance', 'spellcritdamage', 'spellcritchance'],
-                       ['damage', 'attack-speed', 'cast-speed', 'life', 'mana', 'defense', 'critical-damage', 'critical-chance', 'spell-damage', 'spell-chance']),
+  'percent_stats': zip(['damage', 'attackspeed', 'castrate', 'skillhaste', 'allskills', 'lifereplenish', 'manareplenish', 'defense', 'critdamage', 'critchance', 'spellcritdamage', 'spellcritchance'],
+                       ['damage', 'attack-speed', 'cast-speed', 'clock', 'skills', 'life', 'mana', 'defense', 'critical-damage', 'critical-chance', 'spell-damage', 'spell-chance']),
 };
 export const STATIC_ICONS = {
   'den': 'density', 'enemyspeed': 'boots', 'enemyspeed_ct': 'chaos-tower',
