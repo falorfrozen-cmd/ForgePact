@@ -1479,9 +1479,11 @@ nothing of it is quoted here.
   Everything after the read - the filters, the die, `CreateDefaultParams`,
   the placement - is as Session 3's static reading says.
 - **The layout (static reading).** `Controller_obj.lootListUnique` is an
-  array of six `ds_list` ids; the Angelic roll draws from
-  `lootListUnique[5]`; each entry of that list is an array of three numbers,
-  type, sub and b. Session 3's minimum length of 100, and its expectation that
+  array of length 6 (measured, Live 1) whose element 5 the Angelic roll uses
+  as a `ds_list` (static reading; a ds container reads as `ref ds_list` on
+  this runner, `docs/RUNTIME_DATA_MODELS.md` §5.4); what elements 0-4 hold is
+  not established. Each entry of `lootListUnique[5]` is an array of three
+  numbers, type, sub and b. Session 3's minimum length of 100, and its expectation that
   the list holds every unique, are withdrawn.
 - **Not established.** What the six elements are keyed by, and what `[0]` to
   `[4]` hold. The size of `[5]`: the validated pool read 47 candidates and 11
@@ -1503,10 +1505,13 @@ nothing of it is quoted here.
   push.
 - **The proven routes the plugin reuses (source reading).** Reading a
   variable off the first `Controller_obj` instance by name, as Session 3's
-  scan already does (measured in Live 1: `names=221`). Asking `ds_exists`
-  with the list type, 2, before a number is read as a list, then reading it
-  with `ds_list_size` and `ds_list_find_value`: the route the pet loot
-  collector already takes on a pet's `lootList`. Building an entry with
+  scan already does (measured in Live 1: `names=221`). Gating a value on
+  `ds_exists` with the list type, 2, and never on its kind, then handing the
+  `ds_list_*` builtins the value as it was read: the route the pet loot
+  collector already takes on a pet's `lootList` (it takes `ToDouble` only to
+  refuse a non-finite or negative handle, asks `ds_exists` with the `RValue`
+  it read, because a live ds handle can arrive as a reference, and passes
+  that same `RValue` to `ds_list_clear`). Building an entry with
   `array_create` and `array_set`, as Session 3's push does. New on a list the
   game owns are `ds_list_add` and `ds_list_delete`; their first live use is
   Live 2 (`reach`, `off-removes`, `list-restored`).
@@ -1518,9 +1523,14 @@ research.
 
 1. **Resolution.** The plugin reads `Controller_obj.<name>` as before, then
    requires, in order: an array whose `array_length` exceeds the index; the
-   element at the index (read with `array_get`) a number that `ds_exists`
+   element at the index (read with `array_get`) a value that `ds_exists`
    confirms is a live `ds_list` (type 2, as the plugin's other list checks
-   spell it); a `ds_list_size` of at least `kSigListMinSize`, 10 (the old
+   spell it). No kind is required first: a ds container reads as
+   `ref ds_list` on this runner (`VALUE_REF`, `docs/RUNTIME_DATA_MODELS.md`
+   §5.4), so a number-only gate such as `SigNumber` would refuse the real
+   list. The element is passed to `ds_exists` and to every `ds_list_*` call
+   as it was read, ref or real, and two ids are compared by handle value
+   (`ToDouble`), never by kind. Then a `ds_list_size` of at least `kSigListMinSize`, 10 (the old
    minimum length of 100, `kSigListMinLength`, is gone); and every entry, read
    with `ds_list_find_value`, an array of exactly three numbers. One helper
    serves the shape check, the tail check and the scan. The player build's
@@ -1528,7 +1538,8 @@ research.
    build keeps it in a variable the `at` lever sets. A stand-in's n counts its
    whole triple over the sub-list only. Each refusal is one reason naming the
    step: `Controller_obj.<name> is not an array`,
-   `has <L> elements, none at [<i>]`, `[<i>] is not a ds_list`,
+   `has <L> elements, none at [<i>]`, `[<i>] is not a ds_list (kind=<k>)`
+   (naming the kind it read, so a refusal of a live ref is visible as one),
    `[<i>] has <s> entries, fewer than <min>` and
    `[<i>] entry <k> is not three numbers`.
 2. **Push and remove.** Per copy the entry is built as before and appended
@@ -1541,7 +1552,8 @@ research.
    the index and the size before.
 3. **Held read-back.** A fresh `variable_instance_get` of the outer variable,
    then `array_get` at the index; the push counts as visible only when that
-   element is the same id and the tail holds. A different id, a non-list or a
+   element is the same id (equal handle values by `ToDouble`, whatever kind
+   either read arrived as) and the tail holds. A different id, a non-list or a
    short tail is a miss (`anomalies=`, and `heldMiss=` in the research build):
    the entries come off the id they were pushed onto, under delta 2's tail
    rule, and the roll carries nothing.
@@ -1570,7 +1582,9 @@ research.
 
    `[<i>] kind=<kind> ds_list=yes:<size>|no triples=<count>/<size> first=[t,s,b][..][..] standins=Headhunter:Liquor Holster(n=<n>),Tyrant's Crown:<name>(n=<n>)`
 
-   where `triples` counts the entries that are three-number arrays, `first`
+   where `ds_list=` uses delta 1's kind-free gate (`ds_exists` on the element
+   as read) and `kind=` prints the element's kind beside it, `triples` counts
+   the entries that are three-number arrays, `first`
    shows up to three entries (an entry that is not a triple prints its kind,
    as `entry<k>=<kind>`), and n counts the stand-in's whole triple in that
    element. A `ds_list` is read up to 2000 entries. The last line is
