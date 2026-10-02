@@ -25,6 +25,10 @@
 #include <ForgePact/Version.hpp>
 #include <ForgePact/AdaptivePopulationBudget.hpp>
 #include <ForgePact/DeferredDensityCopies.hpp>
+// The incident monitor's per-mod scopes (issue #76) sit in hook bodies from
+// here on, DropManager.hpp's included; its adapter is beside the frame
+// profiler's, before RunCommand.
+#include <ForgePact/IncidentMonitor.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -54,6 +58,9 @@
 
 using namespace Aurie;
 using namespace YYTK;
+using ForgePact::Incident::IncidentScope;
+using ForgePact::Incident::IncidentSampledScope;
+using IncidentMod = ForgePact::Incident::Mod;
 
 static YYTKInterface* g_Yytk = nullptr;
 
@@ -207,6 +214,16 @@ static void Out(const std::string& s)
         if (c == '%') printable += '%';
     }
     g_Yytk->PrintInfo("[BP] %s", printable.c_str());
+}
+
+// Out() for a thread other than the game's: it does NOT go through Out(),
+// which also calls into the YYTK interface, and that is not ours to touch
+// from a second thread. The incident monitor's thread writes with it in both
+// builds; the research build's stall watchdog did first.
+static void OutRaw(const std::string& s)
+{
+    std::ofstream f(OutPath(), std::ios::app);
+    f << s << "\n";
 }
 
 // out.txt is append-only and nothing ever trimmed it - one player's copy
@@ -1387,6 +1404,7 @@ static bool QueueDensityCopies(const DensityPlacementKey& key,bool layer,CInstan
 }
 
 static void DensityCopiesTick(){
+    IncidentScope incidentScope(IncidentMod::density);
     if(!g_DensityCopies.Pending()){g_DensityDue=0;return;}
     if(!g_Yytk || !ObserveDensityRoom())return;
     if(!ForgePact::MapRevealManager::Instance().HasReadableMap())return;
@@ -1511,6 +1529,7 @@ static void KuyrukIsle()
 static int CallerObjectIndex(CInstance* S);   // defined with the enemy-born guard below
 static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args, int objIdx, bool katman)
 {
+    IncidentSampledScope incidentScope(IncidentMod::density);   // one call in 16 timed
 #ifndef FORGEPACT_RELEASE
     if (objIdx >= 0 && g_LogCreates) g_CreateCounts[objIdx]++;
     PullNearApply(objIdx, Args, argc);
@@ -4843,6 +4862,7 @@ static bool GemsInstallDropHook()
 static constexpr double kGemBuildBudgetMenu = 0.004, kGemBuildBudgetPlay = 0.001;
 static void GemsTick(uint32_t frame)
 {
+    IncidentScope incidentScope(IncidentMod::gems);
     if (!g_Gems.mythic && !g_Gems.maxRoll) return;
     GemTablesLoad();
     if (frame % 600 == 0) GemTablesSave();
@@ -7479,6 +7499,7 @@ static void HhDrawHeadLabels()
 static PFUNC_YYGMLScript g_Orig_DrawHudBuffs = nullptr;
 static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    IncidentScope incidentScope(IncidentMod::hudlabels);
     PERF_SCOPE(g_PerfHud);
 #ifndef FORGEPACT_RELEASE
     TgProbeNoteDrawHudBuffs(S, O, argc, A);
@@ -17313,6 +17334,7 @@ static int g_mult_DropRelic = 1;
 // nothing back. The two Satanic kill relic routines never pass through
 // DropRelic either. The filter is Hook_GetRelicQuest below.
 static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    IncidentScope incidentScope(IncidentMod::drops);
     if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? g_Orig_DropRelic(S,O,R,argc,A) : R;
     BP_DIAG_INCREMENT(g_cnt_DropRelic);
 
@@ -24041,6 +24063,7 @@ static void ApMovePass(const ForgePact::AutoProspectDecision& d, const RValue& n
 // Decide in the same frame, so the invoke's checks see the grid the pass left.
 static void AutoProspectTick()
 {
+    IncidentScope incidentScope(IncidentMod::autoprospect);
     ForgePact::AutoProspectMod& mod = ForgePact::AutoProspectMod::Instance();
     RValue window, node, button, args, handlerIndex;
     CInstance* windowInst = nullptr;
@@ -37673,6 +37696,7 @@ static bool SmaModifierHeld()
 // so a key held while turning it on starts nothing.
 static void StashMoveAllTick()
 {
+    IncidentScope incidentScope(IncidentMod::stashmoveall);
     static bool s_WasOn = false;
     static unsigned s_Frame = 0;
     auto& mod = ForgePact::StashMoveAllMod::Instance();
@@ -41565,6 +41589,9 @@ static void FarSleepTick()
 {
     auto& fs = ForgePact::FarSleep::Instance();
     if (!fs.Enabled() && !fs.Draining()) return;
+    // After the off test, which test_far_sleep_contract.py keeps first: off
+    // costs nothing, the incident monitor's clock reads included.
+    IncidentScope incidentScope(IncidentMod::farsleep);
     // Solid props stay awake as far out as ForgePact keeps monsters hunting.
     // Asked once a second: HuntPolicy() looks at what the player wears.
     if ((g_RuntimeFrame % 60) == 0) fs.SetHuntRadius(HuntPolicy() != 0 ? g_BeWakeRadius : 0.0);
@@ -42070,6 +42097,470 @@ static void FrameProfilerTick()
         for (const auto& l : lines) Out(l);
 }
 
+// ===== Incident monitor (issue #76) =====
+// Crash, freeze and FPS-drop detection with a per-mod impact report. The
+// detection and the report text are ForgePact::Incident's
+// (plugin/include/ForgePact/IncidentMonitor.hpp); this adapter has two halves
+// with one rule between them:
+//
+//   * The frame thread (IncidentFrameTick, IncidentCommand) takes the frame
+//     boundary every frame and, once a second after setup, the room key and
+//     the context the frame profiler already reads by name (FrameProfContext:
+//     no new built-in is called here).
+//   * The monitor thread (between the two "incident monitor thread" markers)
+//     wakes every 250 ms, reads only ForgePact's own counters and writes
+//     files: out.txt through OutRaw, report bundles under bp_ipc\reports\.
+//     It never calls into the game's runtime or YYToolkit, and never Out(),
+//     which prints through YYToolkit.
+//
+// Nothing here suspends a thread or calls through an address. A crash runs no
+// code of ours, so it is found at the next load: the previous session's part
+// of out.txt lacks the line ForgePact::Incident::g_ShutdownMarker writes on a
+// normal exit. The panel adds what it saw (bp_ipc\exit.json) and is the one
+// that shows a toast; without a live panel, a freeze or crash gets a
+// MessageBoxW from here instead. PERF never does.
+
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "version.lib")
+#pragma comment(lib, "advapi32.lib")
+
+// FrameCallback's second statement: the frame boundary, then once a second
+// what the monitor needs from the game, stored in atomics.
+static void IncidentFrameTick()
+{
+    namespace inc = ForgePact::Incident;
+    const int64_t now = inc::Qpc();
+    inc::g_Accounting.OnFrame(now);
+    if (!g_Setup) return;   // start-up's long frames are the game loading
+    static int64_t nextContext = 0;
+    if (now < nextContext) return;
+    nextContext = now + inc::QpcFrequency();
+    auto& monitor = inc::Monitor::Instance();
+    monitor.Arm();
+    monitor.ObserveRoom(CurrentRoomKey(), now);
+    ForgePact::FrameProfiler::Context context;
+    if (FrameProfContext(context)) monitor.StoreContext(context.room, context.instances, context.monsters);
+}
+
+// `incident stat`, on the frame thread: the monitor's last published counters.
+static void IncidentCommand(const std::string& rest)
+{
+    const std::string sub = Lower(TrimCopy(rest));
+    if (!sub.empty() && sub != "stat" && sub != "status") { Out("usage: incident stat"); return; }
+    for (const auto& line : ForgePact::Incident::StatLines(ForgePact::Incident::Monitor::Instance().Snapshot()))
+        Out(line);
+}
+
+// ---- incident monitor thread: Win32 and files only ----
+
+static std::string IncidentReadFile(const std::string& path, bool* found = nullptr)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (found) *found = static_cast<bool>(f);
+    if (!f) return {};
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+static std::string IncidentEnv(const char* name)
+{
+    char buf[MAX_PATH * 2] = {};
+    const DWORD n = GetEnvironmentVariableA(name, buf, static_cast<DWORD>(sizeof(buf)));
+    return (n && n < sizeof(buf)) ? std::string(buf, n) : std::string();
+}
+
+static std::string IncidentExePath()
+{
+    char buf[MAX_PATH] = {};
+    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    return std::string(buf, n);
+}
+
+static std::string IncidentExeDir()
+{
+    const std::string p = IncidentExePath();
+    const size_t s = p.find_last_of("\\/");
+    return s == std::string::npos ? std::string(".") : p.substr(0, s);
+}
+
+// "1.2.3.4" from a file's version resource, or empty.
+static std::string IncidentFileVersion(const std::string& path)
+{
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeA(path.c_str(), &ignored);
+    if (!size) return {};
+    std::vector<char> data(size);
+    if (!GetFileVersionInfoA(path.c_str(), 0, size, data.data())) return {};
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT length = 0;
+    if (!VerQueryValueA(data.data(), "\\", reinterpret_cast<void**>(&info), &length) || !info
+        || length < sizeof(VS_FIXEDFILEINFO)) return {};
+    char b[64];
+    sprintf_s(b, "%u.%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
+              HIWORD(info->dwFileVersionLS), LOWORD(info->dwFileVersionLS));
+    return b;
+}
+
+// SHA-256 through BCryptHash; the bcrypt.lib pragma above keeps build.bat's
+// link line as it is.
+static std::string IncidentSha256(const std::string& path)
+{
+    bool found = false;
+    const std::string bytes = IncidentReadFile(path, &found);
+    if (!found) return {};
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+    unsigned char digest[32] = {};
+    const NTSTATUS status = BCryptHash(alg, nullptr, 0,
+        reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())), static_cast<ULONG>(bytes.size()),
+        digest, static_cast<ULONG>(sizeof(digest)));
+    BCryptCloseAlgorithmProvider(alg, 0);
+    if (status < 0) return {};
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    for (const unsigned char c : digest) { out += hex[c >> 4]; out += hex[c & 15]; }
+    return out;
+}
+
+// AurieCore.dll beside the exe and every file in mods\aurie\: what the
+// player's install actually loads.
+static std::vector<ForgePact::Incident::ModFile> IncidentModFiles()
+{
+    std::vector<ForgePact::Incident::ModFile> files;
+    const std::string exeDir = IncidentExeDir();
+    std::vector<std::string> paths{ exeDir + "\\AurieCore.dll" };
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(exeDir + "\\mods\\aurie", ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file(ec)) paths.push_back(exeDir + "\\mods\\aurie\\" + it->path().filename().string());
+    for (const auto& p : paths) {
+        std::error_code sizeError;
+        const uintmax_t size = std::filesystem::file_size(p, sizeError);
+        if (sizeError) continue;
+        ForgePact::Incident::ModFile m;
+        m.name = p.substr(exeDir.size() + 1);
+        m.size = static_cast<unsigned long long>(size);
+        m.version = IncidentFileVersion(p);
+        m.sha256 = IncidentSha256(p);
+        files.push_back(std::move(m));
+    }
+    return files;
+}
+
+static std::string IncidentRegString(const char* key, const char* value)
+{
+    char buf[512] = {};
+    DWORD size = sizeof(buf);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, key, value, RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS) return {};
+    return buf;
+}
+
+static ForgePact::Incident::SystemFacts IncidentSystemFacts()
+{
+    ForgePact::Incident::SystemFacts s;
+    // RtlGetVersion, by name from ntdll: GetVersionEx answers what the
+    // manifest allows, not what is installed.
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    if (const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll")) {
+        if (const auto getVersion = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"))) {
+            OSVERSIONINFOW v{};
+            v.dwOSVersionInfoSize = sizeof(v);
+            if (getVersion(&v) == 0) {
+                char b[64];
+                sprintf_s(b, "%lu.%lu build %lu", v.dwMajorVersion, v.dwMinorVersion, v.dwBuildNumber);
+                s.windows = b;
+            }
+        }
+    }
+    s.cpu = IncidentRegString("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", "ProcessorNameString");
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    s.cores = si.dwNumberOfProcessors;
+    for (int i = 0; i < 8; ++i) {
+        char key[160];
+        sprintf_s(key, "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\%04d", i);
+        const std::string name = IncidentRegString(key, "DriverDesc");
+        if (!name.empty()) s.gpus.emplace_back(name, IncidentRegString(key, "DriverVersion"));
+    }
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    if (GlobalMemoryStatusEx(&ms)) {
+        s.ramTotalMb = ms.ullTotalPhys / (1024ull * 1024ull);
+        s.ramFreeMb = ms.ullAvailPhys / (1024ull * 1024ull);
+    }
+    return s;
+}
+
+// The panel's bp_ipc\panel.json ({"version", "pid"}): its version when it
+// wrote one, and whether that panel is still running.
+static bool IncidentPanelLive(std::string* version)
+{
+    bool found = false;
+    const std::string json = IncidentReadFile(IPC_DIR + "\\panel.json", &found);
+    if (!found) return false;
+    if (version) ForgePact::Incident::JsonStringField(json, "version", *version);
+    double pid = 0.0;
+    if (!ForgePact::Incident::JsonNumberField(json, "pid", pid) || pid < 1.0) return false;
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!process) return false;
+    DWORD code = 0;
+    const bool live = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+    CloseHandle(process);
+    return live;
+}
+
+static DWORD WINAPI IncidentNotifyThread(LPVOID text)
+{
+    auto* message = static_cast<std::wstring*>(text);
+    MessageBoxW(nullptr, message->c_str(), L"ForgePact", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+    delete message;
+    return 0;
+}
+
+// A freeze or a crash, when no panel is running to show its toast. On a
+// thread of its own, so the box waiting for a click never stops the monitor.
+static void IncidentNotify(const std::string& what, const std::string& dir)
+{
+    if (IncidentPanelLive(nullptr)) return;
+    const std::string text = what + "\n\nForgePact saved a report you can attach to a bug report:\n"
+                             + IPC_DIR + "\\" + dir + "\n\nNothing is uploaded.";
+    const int n = MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, nullptr, 0);
+    if (n <= 0) return;
+    auto* message = new std::wstring(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, message->data(), n);
+    message->resize(static_cast<size_t>(n - 1));
+    const HANDLE thread = CreateThread(nullptr, 0, &IncidentNotifyThread, message, 0, nullptr);
+    if (thread) CloseHandle(thread);
+    else delete message;
+}
+
+// Writes one bundle, bp_ipc\reports\<utc>_<kind>\, and keeps the newest
+// kKeepReports. Built under a dot-name and renamed whole, so whoever watches
+// reports\ (the panel) never sees a half-written one. Every file goes through
+// the profile scrub. Returns "reports\<name>", or empty when it failed.
+static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts)
+{
+    namespace inc = ForgePact::Incident;
+    namespace stdfs = std::filesystem;
+    SYSTEMTIME t{};
+    GetSystemTime(&t);
+    const std::string name = inc::BundleDirName(t, facts.kind);
+    facts.utc = inc::UtcText(t);
+    facts.pluginVersion = FORGEPACT_VERSION;
+    IncidentPanelLive(&facts.panelVersion);
+    facts.gameVersion = IncidentFileVersion(IncidentExePath());
+    const stdfs::path reports = stdfs::path(IPC_DIR) / "reports";
+    const stdfs::path pending = reports / (".pending-" + name);
+    std::error_code ec;
+    stdfs::remove_all(pending, ec);
+    stdfs::create_directories(pending, ec);
+    if (ec) return {};
+    const std::string profile = IncidentEnv("USERPROFILE");
+    auto put = [&](const char* file, const std::string& text) {
+        std::ofstream f(pending / file, std::ios::binary | std::ios::trunc);
+        f << inc::ScrubProfile(text, profile);
+    };
+    put("report.json", inc::ReportJson(facts));
+    put("out-tail.txt", inc::TailLines(IncidentReadFile(OutPath()), inc::kTailLines));
+    put("out-prev-tail.txt", inc::TailLines(IncidentReadFile(IPC_DIR + "\\out.prev.txt"), inc::kTailLines));
+    bool found = false;
+    const std::string settings = IncidentReadFile(IncidentEnv("LOCALAPPDATA") + "\\Hero_Siege\\forgepact.json", &found);
+    if (found) put("forgepact.json", settings);
+    const std::string modstate = IncidentReadFile(IPC_DIR + "\\modstate.json", &found);
+    if (found) put("modstate.json", modstate);
+    put("mods.txt", inc::ModsText(IncidentModFiles()));
+    put("system.txt", inc::SystemText(IncidentSystemFacts()));
+    stdfs::rename(pending, reports / name, ec);
+    if (ec) {
+        stdfs::remove_all(pending, ec);
+        return {};
+    }
+    std::vector<std::string> names;
+    for (stdfs::directory_iterator it(reports, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_directory(ec)) names.push_back(it->path().filename().string());
+    for (const auto& old : inc::ReportsToRemove(names, inc::kKeepReports)) stdfs::remove_all(reports / old, ec);
+    return "reports\\" + name;
+}
+
+static void IncidentOnEpisode(const ForgePact::Incident::Episode& e, double nowMs)
+{
+    namespace inc = ForgePact::Incident;
+    auto& monitor = inc::Monitor::Instance();
+    const std::string room = monitor.Room();
+    OutRaw(e.kind == inc::Kind::freeze ? inc::FreezeLine(e) : inc::PerfLine(e, room));
+    if (!monitor.bundles.Allow(e.kind, nowMs)) {
+        OutRaw(monitor.bundles.Written() >= inc::kMaxBundles
+            ? "incident: no report for this one - " + std::to_string(inc::kMaxBundles) + " were written this session"
+            : std::string("incident: no report for this one - one FPS-drop report per 5 minutes"));
+        return;
+    }
+    inc::ReportFacts facts;
+    facts.kind = e.kind;
+    facts.episode = e;
+    facts.room = room;
+    facts.monsters = monitor.Monsters();
+    facts.instances = monitor.Instances();
+    facts.lastMinute = monitor.minute.Rows(nowMs);
+    facts.episodes = monitor.detector.Episodes();
+    facts.suppressed = monitor.detector.Suppressed();
+    const std::string dir = IncidentWriteBundle(std::move(facts));
+    if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
+    monitor.bundles.Wrote(e.kind, nowMs);
+    monitor.lastReport = dir;
+    OutRaw(inc::ReportWrittenLine(dir));
+    if (e.kind == inc::Kind::freeze)
+        IncidentNotify("Hero Siege stopped drawing frames for " + inc::Fixed(e.seconds, 0) + " seconds.", dir);
+}
+
+// D9: did the previous session end cleanly? Once, kCrashCheckDelayMs after
+// load, so the panel has had time to write exit.json for it.
+static void IncidentCrashCheck()
+{
+    namespace inc = ForgePact::Incident;
+    const std::string session = [] {
+        std::string s;
+        return inc::PreviousSession(IncidentReadFile(OutPath()), IncidentReadFile(IPC_DIR + "\\out.prev.txt"), s)
+            ? s : std::string();
+    }();
+    if (session.empty()) { OutRaw("incident: no previous session to check"); return; }
+    if (!inc::SessionRanMonitor(session)) {
+        OutRaw("incident: the previous session ran without the incident monitor - not checked");
+        return;
+    }
+    const std::string exitPath = IPC_DIR + "\\exit.json";
+    bool haveExit = false;
+    const std::string exitJson = IncidentReadFile(exitPath, &haveExit);
+    std::string exitCode, module;
+    inc::JsonStringField(exitJson, "exit_code", exitCode);
+    inc::JsonStringField(exitJson, "faulting_module", module);
+    if (inc::SessionEndedCleanly(session)) {
+        // A crash during exit can come after our marker (an exit-time abort in
+        // another DLL); the panel saw the exit code, so say so, once.
+        OutRaw(haveExit ? "incident: the previous session shut down cleanly; the panel recorded exit "
+                              + (exitCode.empty() ? std::string("unknown") : exitCode) + " after it"
+                        : std::string("incident: the previous session shut down cleanly"));
+        if (haveExit) DeleteFileA(exitPath.c_str());
+        return;
+    }
+    OutRaw(inc::CrashLine(exitCode, module));
+    auto& monitor = inc::Monitor::Instance();
+    if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) return;
+    inc::ReportFacts facts;
+    facts.kind = inc::Kind::crash;
+    facts.episode.kind = inc::Kind::crash;
+    facts.exitJson = exitJson;
+    facts.previousBanner = inc::FirstLine(session);
+    const std::string dir = IncidentWriteBundle(std::move(facts));
+    if (haveExit) DeleteFileA(exitPath.c_str());
+    if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
+    monitor.bundles.Wrote(inc::Kind::crash, 0.0);
+    monitor.lastReport = dir;
+    OutRaw(inc::ReportWrittenLine(dir));
+    IncidentNotify("Hero Siege did not close normally last time.", dir);
+}
+
+// The game's main window: visible, not owned, not a console.
+static HWND IncidentGameWindow(HWND cached)
+{
+    if (cached && IsWindow(cached)) return cached;
+    struct Find { DWORD pid; HWND found; } find{ GetCurrentProcessId(), nullptr };
+    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+        auto* f = reinterpret_cast<Find*>(p);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(w, &pid);
+        if (pid != f->pid || GetWindow(w, GW_OWNER) || !IsWindowVisible(w)) return TRUE;
+        char cls[64] = {};
+        GetClassNameA(w, cls, sizeof(cls));
+        if (std::strcmp(cls, "ConsoleWindowClass") == 0) return TRUE;
+        f->found = w;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&find));
+    return find.found;
+}
+
+static bool IncidentGameInFront()
+{
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    return pid == GetCurrentProcessId();
+}
+
+static void IncidentMonitorRun() noexcept
+{
+    namespace inc = ForgePact::Incident;
+    try {
+        auto& monitor = inc::Monitor::Instance();
+        OutRaw(std::string(inc::kMonitorRunningLine) + " | v" FORGEPACT_VERSION " | hitch "
+               + inc::Fixed(inc::kHitchMs, 0) + " ms, slowdown " + inc::Fixed(inc::kSustainedMult, 1) + "x for "
+               + inc::Fixed(inc::kSustainedMs / 1000.0, 0) + " s, freeze " + inc::Fixed(inc::kFreezeMs / 1000.0, 0)
+               + " s | reports in bp_ipc\\reports");
+        const double startMs = inc::QpcToMs(inc::Qpc());
+        bool crashChecked = false;
+        HWND window = nullptr;
+        std::vector<inc::FrameSample> fresh;
+        for (;;) {
+            Sleep(inc::kWakeMs);
+            try {
+                fresh.clear();
+                inc::g_Accounting.CopySince(monitor.cursor, fresh, monitor.lost);
+                monitor.detector.Feed(fresh.data(), fresh.size());
+                for (const auto& f : fresh) monitor.minute.Feed(f);
+                const double nowMs = inc::QpcToMs(inc::Qpc());
+                window = IncidentGameWindow(window);
+                inc::Inputs in;
+                in.nowMs = nowMs;
+                const int64_t last = inc::g_Accounting.LastFrameQpc();
+                in.lastFrameMs = last ? inc::QpcToMs(last) : -1.0;
+                in.armed = monitor.Armed();
+                in.focused = IncidentGameInFront();
+                in.minimized = window && IsIconic(window);
+                in.windowAlive = window && IsWindowVisible(window);
+                in.roomChangeMs = monitor.RoomChangeMs();
+                in.inHook = inc::g_Accounting.InHook();
+                for (int i = 0; i < 4; ++i) {
+                    const inc::Episode e = monitor.detector.Analyze(in);
+                    if (e.kind == inc::Kind::none) break;
+                    IncidentOnEpisode(e, nowMs);
+                }
+                double endedMs = 0.0;
+                if (monitor.detector.TakeFreezeEnded(endedMs)) OutRaw(inc::FreezeEndedLine(endedMs));
+                if (!crashChecked && nowMs - startMs >= inc::kCrashCheckDelayMs) {
+                    crashChecked = true;
+                    IncidentCrashCheck();
+                }
+                inc::StatFacts stat;
+                stat.frames = monitor.detector.Frames();
+                stat.lost = monitor.lost;
+                stat.baselineMs = monitor.detector.BaselineMs();
+                stat.worstMs = monitor.detector.WorstMs();
+                stat.grace = monitor.detector.GraceActive(nowMs);
+                stat.focused = in.focused;
+                stat.armed = in.armed;
+                stat.inHook = in.inHook;
+                stat.episodes = monitor.detector.Episodes();
+                stat.suppressed = monitor.detector.Suppressed();
+                stat.quiet = monitor.detector.Quiet();
+                stat.bundles = monitor.bundles.Written();
+                stat.lastMinute = monitor.minute.Rows(nowMs);
+                stat.lastReport = monitor.lastReport;
+                monitor.Publish(std::move(stat));
+            } catch (...) {}
+        }
+    } catch (...) {}
+}
+
+// ---- end of the incident monitor thread ----
+
+// ModuleInitialize, after the frame callback registered: arms the
+// clean-shutdown marker and starts the monitor thread.
+static void IncidentMonitorStart()
+{
+    ForgePact::Incident::g_ShutdownMarker.Arm(OutPath().c_str());
+    if (!ForgePact::Incident::Monitor::Instance().Start(&IncidentMonitorRun))
+        Out("incident: the monitor thread could not be started - no crash, freeze or FPS-drop reports this session");
+}
+
+// ===== end of the incident monitor (issue #76) =====
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -42089,7 +42580,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll"
+        "stashmoveall", "stashmove", "densityroll", "incident"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -42173,6 +42664,9 @@ static void RunCommand(const std::string& line)
     // Its own verb, not `perf`: the research build's `perf` reports the
     // plugin's own hook timings.
     if (lc == "frameprof") { FrameProfCommand(rest); return; }
+    // Incident monitor (issue #76): `incident stat` reads its counters and
+    // changes nothing, so the player build accepts it; the same early return.
+    if (lc == "incident") { IncidentCommand(rest); return; }
     // Far sleep: the Mods tab's switch, the same standalone early return.
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
@@ -43170,13 +43664,8 @@ static std::atomic<uint64_t> g_LastFrameTickMs{ 0 };
 static HANDLE g_FrameThread = nullptr;
 static std::atomic<bool> g_WatchdogRun{ false };
 
-// Deliberately does NOT go through Out(): that also calls into the YYTK
-// interface, which is not ours to touch from a second thread.
-static void OutRaw(const std::string& s)
-{
-    std::ofstream f(OutPath(), std::ios::app);
-    f << s << "\n";
-}
+// OutRaw, which this watchdog writes with, is defined beside Out(): the
+// incident monitor's thread uses it in both builds.
 
 static std::string ModuleAndRvaOf(uintptr_t addr)
 {
@@ -43336,6 +43825,10 @@ void FrameCallback(FWFrame& FrameContext)
     // First, so a capture's frame boundary is taken before any of ForgePact's
     // own per-frame work.
     FrameProfilerTick();
+    // Second: the incident monitor's frame boundary, then this body's own
+    // time, as the `frame` row of its per-mod table.
+    IncidentFrameTick();
+    IncidentScope incidentFrame(IncidentMod::frame);
 #ifdef FORGEPACT_POPULATION_PROFILE
     PopulationProfileTick();
 #endif
@@ -43365,7 +43858,7 @@ void FrameCallback(FWFrame& FrameContext)
 #endif
     if (g_Setup) GemsTick(fc);   // Gems of Incarnation: the tables, a little each frame
     FlushModState(fc);
-    if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
+    if (g_Setup) { FP_POP_SCOPE(MinerTick); IncidentScope incidentScope(IncidentMod::miner); ForgePact::MinerHelmet::Tick(); }
 #ifndef FORGEPACT_RELEASE
     if (g_Setup) ForgePact::MiningOre::DigTick();   // `miningrolls dig`'s release
 #endif
@@ -43605,6 +44098,7 @@ void FrameCallback(FWFrame& FrameContext)
     {
         FP_POP_SCOPE(MapTick);
         ForgePact::ProtectedPool::Runtime::Maintain(g_RuntimeFrame);
+        IncidentScope incidentScope(IncidentMod::mapreveal);   // the reveal and the pack markers
         ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);
         // Pack markers follow reveal + `reveal packs`. The minimap hook goes in
         // once, after setup, on the same once-a-second cadence as the other
@@ -43666,6 +44160,7 @@ void FrameCallback(FWFrame& FrameContext)
     // and is a multiple of 30, hence always a multiple of 6 as well.
     if (((fc++) % 30) == 0 && g_Setup) {
         PERF_SCOPE(g_PerfPoll);
+        IncidentScope incidentScope(IncidentMod::ipc);
         try { ForgePact::IpcServer::Instance().PollCommands(); } catch (...) {}
     }
 }
@@ -43749,6 +44244,9 @@ EXPORTED AurieStatus ModuleInitialize(
     } else {
         g_Yytk->PrintInfo("[BloodPact] BloodPact plugin " FORGEPACT_VERSION " successfully loaded into YYToolkit.");
         g_Yytk->Print(CM_LIGHTGREEN, "[BloodPact] ready - watching bp_ipc\\cmd.txt");
+        // After the frame callback, which feeds it. Both builds: a diagnostic
+        // that reads only ForgePact's own counters (issue #76).
+        IncidentMonitorStart();
 #ifndef FORGEPACT_RELEASE
         StartStallWatchdog();
 #endif

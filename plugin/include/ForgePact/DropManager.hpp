@@ -1,7 +1,19 @@
 #pragma once
 
 #include "Common.hpp"
+#include "IncidentMonitor.hpp"
 #include <hs_game_sdk/reward_scope.hpp>
+
+// The incident monitor's per-mod scope (issue #76): every drop hook's time is
+// counted as `drops`, one line at the top of each body. tests/
+// drop_gold_harness.cpp splices this header without its #include lines, and
+// so without IncidentMonitor.hpp: there the scope compiles to nothing. The
+// plugin always has the real one.
+#ifdef FORGEPACT_INCIDENT_MONITOR_HPP
+#define FP_DROP_INCIDENT_SCOPE() ::ForgePact::Incident::IncidentScope incidentScope(::ForgePact::Incident::Mod::drops)
+#else
+#define FP_DROP_INCIDENT_SCOPE() ((void)0)
+#endif
 
 namespace ForgePact {
 
@@ -158,6 +170,7 @@ private:
     volatile long m_Cnt_##NAME{ 0 }; \
     int m_Mult_##NAME{ 1 }; \
     static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        FP_DROP_INCIDENT_SCOPE(); \
         BP_ANGELIC_PROBE_SCOPE(#NAME, S, argc, A); \
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Cnt_##NAME); \
@@ -249,6 +262,7 @@ private:
     }
 
     static RValue& Hook_DropGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+        FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropGold);
         const int mult = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold;
@@ -303,6 +317,7 @@ private:
     volatile long m_Cnt_DropMonsterGold{ 0 };
     int m_Mult_DropMonsterGold{ 1 };
     static RValue& Hook_DropMonsterGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+        FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropMonsterGold);
         // Once, whatever the multiplier: its one coin is scaled in DropGold.
@@ -320,6 +335,7 @@ private:
     volatile long m_Cnt_DropKeys{ 0 };
     int m_Mult_DropKeys{ 1 };
     static RValue& Hook_DropKeys(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+        FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropKeys);
         for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropKeys; i < n; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }

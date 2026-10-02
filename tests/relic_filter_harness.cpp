@@ -135,6 +135,11 @@ inline bool Active() { return world.rewardScopeActive; }
 #define BP_DIAG_INCREMENT(counter) ((void)0)
 #define BP_LOGDROP(name, res, argc, argv) ((void)0)
 
+// The incident monitor's per-mod timer (ForgePact #76, IncidentMonitor.hpp)
+// opens Hook_DropRelic. It only measures, so a no-op stands in for it here.
+enum class IncidentMod { drops };
+struct IncidentScope { explicit IncidentScope(IncidentMod) noexcept {} };
+
 using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
 
 // The game's own GetRelicQuest: true for the quest relics 141..155 only.

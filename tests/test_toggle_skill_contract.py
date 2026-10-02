@@ -841,6 +841,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Mining Ore Extra Rolls (ForgePact #36; test_mining_ore_behavior.py
             # and test_mining_ore_panel.py).
             "miningrolls",
+            # The incident monitor's `incident stat` (ForgePact #76;
+            # test_incident_monitor_contract.py).
+            "incident",
         }
         self.assertEqual(entries, expected)
 
@@ -2476,6 +2479,7 @@ SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 # The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
 # on the line straight after the countdown's; it is removed the same way.
 MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
 
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
@@ -2484,8 +2488,14 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     one new statement - the countdown's own call, on its own line right after
     `ToggleIndicatorDraw();` - so the pin is narrowed the same way the table
     above narrows the other five: remove exactly that one line and assert
-    what is left is still byte-identical to the round base."""
+    what is left is still byte-identical to the round base.
+
+    NARROWED again for ForgePact #76: the incident monitor's per-mod timer
+    (`IncidentScope`, test_incident_monitor_contract.py) is the body's first
+    statement. Exactly that one line is stripped, once, before the compare."""
     lines = new_body.split("\n")
+    testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
+    lines.remove(INCIDENT_HUD_SCOPE_LINE)
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
@@ -2972,15 +2982,17 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `stashmoveall` and `stashmove` are Move all into the stash's
         # (ForgePact #68, test_stash_move_all_contract.py) and
         # `densityroll` rolling density copies'
-        # (test_rolling_density_contract.py), and `miningrolls` is Mining Ore
-        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py).
+        # (test_rolling_density_contract.py), `miningrolls` is Mining Ore
+        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py), and
+        # `incident` is the incident monitor's `incident stat` (ForgePact #76,
+        # test_incident_monitor_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll"})
+                                        "densityroll", "incident"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

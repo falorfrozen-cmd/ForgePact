@@ -95,6 +95,10 @@ EXPECTED_PLAYER_COMMANDS = {
     # Mining Ore Extra Rolls, the Loot tab's second mining row (ForgePact
     # #36; test_mining_ore_behavior.py and test_mining_ore_panel.py pin it).
     "miningrolls",
+    # The incident monitor's `incident stat` (ForgePact #76): reads the
+    # plugin's own counters, changes nothing in the game
+    # (test_incident_monitor_contract.py pins it).
+    "incident",
 }
 
 
