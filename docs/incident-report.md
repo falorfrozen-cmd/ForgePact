@@ -2,8 +2,9 @@
 
 Status (2026-10-02): **built for 2.2.0 and verified against a stand-in frame
 thread** (`tests/incident_monitor_harness.cpp`, `tests/incident_shutdown_probe.cpp`)
-and by contract tests; **not yet run in the game** (see "Live results",
-pending Live 1). The player-facing description is the README's
+and by contract tests, and **run in the game in Live 1** (see "Live
+results": crash and freeze notices and a freeze at a zone load were not
+observed live). The player-facing description is the README's
 [Incident reports](../README.md#incident-reports-crash-freeze-and-fps-drop-reports)
 section.
 
@@ -140,9 +141,10 @@ that fails to write is counted, and the `incident: report written` line says
   the guide already records. `tests/incident_shutdown_probe.cpp` proves the
   destructor's halves (`ExitProcess` leaves the marker, `TerminateProcess`
   does not) and the harness's `marker-once` proves two writes leave one line.
-  UNVERIFIED until Live 1: that the game's close reaches kernelbase's
-  `ExitProcess` export (a static reading: the runner leaves through
-  `exit()`, and the C runtime's import resolves to kernelbase).
+  Live 1 observed that the game's close reaches kernelbase's `ExitProcess`
+  export (the marker carried no `(detach)`), which a static reading had
+  predicted: the runner leaves through `exit()`, and the C runtime's import
+  resolves to kernelbase.
 - **Two tag channels: the installer tags every hook, named scopes time the
   mods** (owner decision, 2026-10-02: "Tag in the installer"). Round 0 set the
   in-hook tag only from scopes placed by hand in eleven mod bodies, while the
@@ -252,11 +254,11 @@ that fails to write is counted, and the `incident: report written` line says
 - **A crash report cannot say what was running.** It is written at the next
   load, so its `inHook` and `inMod` are `"unknown"`, and its room and counts
   are empty.
-- **An exit-time abort, in both directions. Neither is observed live yet.**
-  Another DLL's exit-time abort (Known Limitations item 25 in the guide: the
-  tracker producer, `0xC0000409`) can fall on either side of our marker.
-  After the marker, which the `ExitProcess` route makes the likely order, the
-  session reads as clean: the panel records the non-zero exit with
+- **An exit-time abort, in both directions. Only the first is observed
+  live.** Another DLL's exit-time abort (Known Limitations item 25 in the
+  guide: the tracker producer, `0xC0000409`) can fall on either side of our
+  marker. After the marker, which the `ExitProcess` route makes the likely
+  order and Live 1 observed, the session reads as clean: the panel records the non-zero exit with
   `after_clean_shutdown: true`, the next load logs that the previous session
   shut down cleanly and that the panel recorded the exit after it, and no
   report folder or toast follows. Before any marker: if the game's close did
@@ -264,8 +266,9 @@ that fails to write is counted, and the `incident: report written` line says
   destructors aborted before ours ran, no marker would be written and every
   exit would read as a crash, so a tracker user would get a crash report,
   and without the panel a message box, at every launch. The `ExitProcess`
-  route is there to prevent exactly that; Live 1 records which route fires
-  and the exit code with the producer present.
+  route is there to prevent exactly that; this order is not observed live
+  (in Live 1 the `ExitProcess` route fired and the producer's abort came
+  after the marker).
 - **A freeze is reported only when it ends, or at `kFreezeHoldMs`.** A gap of
   3 s or more that ends with a room change within 1.5 s of frames resuming is
   taken as a load and never reported, so a real freeze that happens to end in
@@ -309,8 +312,71 @@ that fails to write is counted, and the `incident: report written` line says
 
 ## Live results
 
-Pending Live 1: the session installs the 2.2.0 shipping DLL, checks that a
-normal session writes no report and ends with the clean-shutdown line, that a
-heavy scene produces a PERF report whose per-mod table is filled, and that the
-panel's toast appears. Results will be recorded here as observed or not
-observed live, with the numbers.
+Live 1, 2026-10-02 (capture: the workorder's
+`forgepact-76-incident-report-live-1.md`, kept with the hub's local workorder
+files). The 2.2.0 shipping DLL (SHA-256 `0c208d37...b61b9`) ran in the game
+with the tracker producer (`HSOfflineTrackerProducer.dll`) installed beside
+it, and the panel running. The panel was the build from before the FPS-drop
+toast was removed. Ten of the thirteen checks passed; the other three are
+recorded below as the owner accepted them.
+
+- **Installed and answering.** The log showed `HOOK INSTALLED on
+  kernelbase.dll!ExitProcess (incident: clean-shutdown marker)` and the
+  monitor's running line, and `ping` answered `pong (YYTK 4.0.1)`. The
+  first `incident stat` line read `incident: frames 3503 | baseline 6.9 ms |
+  worst 2798.9 ms (not judged) | worst judged 52.0 ms | slow judged frames 0
+  | ...| in-hook none | in-mod none`. Observed live.
+- **The installer tag.** With the usual mods on: `hooks tagged 31, untagged
+  0`. With density on, the population detours are installed and counted as
+  untagged: `25, untagged 5` before the dense play and `27, untagged 9` after
+  it, within the ten native pool detours this doc expects. Observed live.
+- **A normal session writes nothing.** About two minutes in town and one
+  zone: frames 36764, worst 2798.9 ms (not judged, inside a room change's
+  grace), worst judged 185.0 ms, slow judged frames 0, episodes 0, 11
+  ignored near a room change or unfocused, reports written 0, and no
+  `reports\` folder. Observed live.
+- **The clean-shutdown marker comes from the `ExitProcess` route.** An
+  ordinary close (a window close, not a forced kill) left `==== clean
+  shutdown ====` as the last line of `out.txt`, without `(detach)`: the
+  game's close reaches kernelbase's `ExitProcess` export under Aurie, and the
+  exit hook wrote the marker before any DLL detached. Observed live.
+- **The tracker producer's exit-time abort falls after the marker.** With
+  the producer present the game exited `0xC0000409`. The panel's exit watch
+  counted it (`exitsSeen 1`, `lastCode 0xC0000409`), wrote `exit.json` with
+  `after_clean_shutdown: true` (`event_probe` queried, 20 records seen, no
+  faulting module), and sent no toast (`sent 0, failed 0`). At the next
+  load the plugin logged `incident: the previous session shut down cleanly;
+  the panel recorded exit 0xC0000409 after it`, with no `CRASH` line and no
+  crash folder. Observed live. The other order, an abort before any marker,
+  was not observed live.
+- **A heavy scene produces a PERF report, and its bundle is complete.**
+  With density 5 and map reveal on, the log carried three episodes: `PERF
+  hitch 508 ms frame | baseline 6.9 ms | room Town_01_rm | top ipc 495.0
+  ms/frame`, then two `PERF sustained` episodes in the two dense zones (6.9x
+  and 2.6x for 2 s, top `mapreveal` at 0.1 ms/frame). One report was
+  written, `reports\20261002-172932_perf`, for the town hitch; the two
+  dense-zone episodes were held back by the gap between bundles (`episodes
+  3, held back 3 | reports written 1`; worst judged 1594.9 ms, slow judged
+  frames 4). The folder held `report.json`, `out-tail.txt`,
+  `out-prev-tail.txt`, `forgepact.json`, `modstate.json`, `mods.txt` and
+  `system.txt`, and the Windows user name appeared in none of their lines.
+  Observed live.
+- **Density attribution in the per-mod table: not observed live.** The one
+  report was the town hitch, which came right after the panel's batch of
+  settings commands, with the plugin's command handling (`ipc`) taking the
+  time: its `modsEpisode` rows start with
+  `frame` (495.161 ms) and `ipc` (495.036 ms), with `density` last at 0.000.
+  The dense-zone episodes that would have shown density's cost wrote no
+  bundle. The owner accepted this as not observed live.
+- **A freeze at a zone load: not observed live.** No load blocked frames for
+  3 s, so there was no `a load, not reported` line and no `FREEZE` line, and
+  the deferred freeze verdict went unexercised. Its behaviour rests on the
+  harness's `freeze-load-room-change` and `freeze-never-ends` scenarios.
+- **The FPS-drop toast reached Windows but not the player.** The panel
+  counted one toast sent and none failed (`lastError` null). Windows
+  delivered it to its notification center but held it there while the game
+  ran fullscreen, so the owner did not see it in the game. The owner then
+  decided that an FPS drop's report is saved without a notification (see
+  "Decisions"), so 2.2.0 shows no notice for an FPS drop, and a crash's or
+  a freeze's toast, which this session did not produce, was not observed
+  live either.
