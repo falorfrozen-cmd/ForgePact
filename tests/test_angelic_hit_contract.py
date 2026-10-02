@@ -141,8 +141,22 @@ class AngelicHitSourceContractTests(unittest.TestCase):
     def test_sigdrop_status_carries_the_live_procedure_tokens(self):
         status = body(self.code, "static void SigDropStatus()")
         for token in ("gameRolls=", "gameHits=", "shareRolls=", "sigFromGame=", "crown=", "belt=",
-                      "gate=tyrant:", ",headhunter:", "force ", " | rolls=", " drops=", " fails="):
+                      "gate=tyrant:", ",headhunter:", "force ", " | rolls=", " drops=", " fails=",
+                      '" cdpCalls="', '" detect="'):
             self.assertIn(token, status)
+
+    def test_both_status_lines_carry_the_detection_route(self):
+        # The live procedure reads detect= and cdpCalls= before it trusts gameHits=0: an
+        # unreachable hook must not read as a roll that never hit.
+        for signature in ("static void SigDropStatus()", "static void AngelicHitStatus()"):
+            with self.subTest(status=signature):
+                status = body(self.code, signature)
+                self.assertRegex(status, r'" cdpCalls=" \+ std::to_string\(g_SigCdpCalls\) \+ " detect=" \+ g_SigDetectRoute\);\s*\}$')
+        hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
+        self.assertLess(hook.index("InterlockedIncrement(&g_SigCdpCalls)"), hook.index("g_SigRollDepth"),
+                        "cdpCalls counts every call that reaches the hook, before the roll check")
+        self.assertIn('static const char* g_SigDetectRoute = "off";', self.shipped_code)
+        self.assertIn("g_SigDetectRoute = cdpRoute;", body(self.code, "static void InstallSignatureAngelicHooks("))
 
     def test_one_angelic_hit_line_per_hit(self):
         hit = body(self.code, "static void SignatureDropOnAngelicHit(")

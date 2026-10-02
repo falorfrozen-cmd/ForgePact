@@ -30,6 +30,8 @@ PRODUCTION = (
     'static RValue& Hook_CreateDefaultParams(',
     'static RValue& HookAngelicChance(',
     'static void InstallSignatureAngelicHooks(',
+    'static void SigDropStatus(',
+    'static void AngelicHitStatus(',
 )
 
 
@@ -136,6 +138,7 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'spawn_at_roll_position_with_monster_self', 'hit_in_extra_roll_counts',
             'switch_off_after_on_passes_through', 'original_throw_lowers_roll_flag',
             'install_is_idempotent', 'detection_not_detoured_never_arms',
+            'status_reports_detect_route',
         ))
 
 

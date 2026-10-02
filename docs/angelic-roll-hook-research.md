@@ -579,8 +579,10 @@ Instrument` describes). So the detection is not trusted on its own word:
   inside `DropItem`), so after a few kills a working detour shows
   `cdpCalls` above zero whether or not any roll hit.
 - The hook's install route is kept from `HookOneScript`'s own result and
-  printed as `detect=detoured`, `detect=TABLE-ONLY` or `detect=off` (not
-  installed), on `sigdrop status` and on `angelicprobe hit status`.
+  printed as `detect=detoured`, `detect=TABLE-ONLY`, `detect=not found` (the
+  name did not resolve) or `detect=off` (not installed). Both `sigdrop
+  status` and `angelicprobe hit status` end with the pair, in this order:
+  `cdpCalls=<n> detect=<route>`.
 - In the player build, a switch turning on whose `CreateDefaultParams` hook
   did not get its detour does not arm the gate: the install logs one refusal
   line naming `CreateDefaultParams` and the route it got, `detect=` reports
@@ -625,12 +627,13 @@ after the first kill batch, read before any `gameHits=0` is recorded.
   the research build was made. Pass: the session measures this build. Fail:
   another build is installed, and nothing after it counts.
 - **`marker`** - `angelicprobe hit status` names every lever off and the
-  detection not installed (`detect=off`, `cdpCalls=0`). Pass: the research
-  build, from a clean start. Fail (a player build answers `command
+  detection not installed, its line ending `cdpCalls=0 detect=off`. Pass:
+  the research build, from a clean start. Fail (a player build answers `command
   unavailable in player build`): the session ends there.
-- **`control`** - `sigdrop status` answers with the force off, `detect=off`,
-  and every new counter (`gameRolls=`, `gameHits=`, `cdpCalls=`,
-  `shareRolls=`, `sigFromGame=`) at zero. Pass: the command channel is alive
+- **`control`** - `sigdrop status` answers with the force off, its line
+  ending `cdpCalls=0 detect=off`, and every new counter (`gameRolls=`,
+  `gameHits=`, `cdpCalls=`, `shareRolls=`, `sigFromGame=`) at zero. Pass:
+  the command channel is alive
   and the counters start clean. Fail: no counter read later in the session
   can be trusted.
 - **`force-hit`** (research) - with both switches off and the chance lever
@@ -639,15 +642,19 @@ after the first kill batch, read before any `gameHits=0` is recorded.
   show `detect=detoured` and `cdpCalls` above zero: the detection's own
   positive control, on the route that counts hits. Pass: a lever makes the
   game's own roll hit, and the detection sees it - the first hit of the
-  game's roll seen live in this research. Instrument-blind: `detect=` reads
-  `TABLE-ONLY` or `off` after a lever was set, or `cdpCalls` is still zero
-  after the batch; the detection could not have counted a hit, so
-  `gameHits=0` measures the hook, not the levers or the game. The session
-  records the `detect=` and `cdpCalls=` replies, does not try the rate
-  lever, and the two checks that need a hit (`on-headhunter-only`,
-  `on-both`) do not run; the result is a detection defect to fix before the
-  next session, not a finding about the roll. Not-observed (only with
-  `detect=detoured` and `cdpCalls` above zero): neither lever produced a
+  game's roll seen live in this research. Instrument-blind, either way:
+  `detect=` reads `TABLE-ONLY`, `not found` or `off` after a lever was set,
+  or `cdpCalls=` is still zero after the batch, so the detection could not
+  have counted a hit; or `gameRolls=` is below 10 after that first batch of
+  ten kills, so the roll hook was not reached or the gate was not taken and
+  the levers never acted on a roll. Either way `gameHits=0` measures the
+  hooks, not the levers or the game. The session records the `gameRolls=`,
+  `detect=` and `cdpCalls=` replies and the `raredrop angelic 2` reply as
+  printed, does not try the rate lever, and the two checks that need a hit
+  (`on-headhunter-only`, `on-both`) do not run; the result is a defect to
+  fix before the next session, not a finding about the roll. Not-observed
+  (only with `detect=detoured`, `cdpCalls=` above zero and `gameRolls=` at
+  10 or more): neither lever produced a
   hit; the detection is shown to see the game's calls, so this is a
   statement about the levers, both levers' replies are recorded, the hit
   path rests on the harness and the static reading alone, and the two checks

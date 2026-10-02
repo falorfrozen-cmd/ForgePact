@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <iostream>
 #include <map>
@@ -175,6 +176,18 @@ static thread_local int g_SigRollDepth = 0;
 static thread_local bool g_SigHitSeen = false;
 static double g_SigLastSub = -1.0, g_SigLastB = -1.0;
 static bool g_SigDetectNative = false;
+// The detection's own positive control: every CreateDefaultParams call that reaches the hook,
+// and the route its install got ("off" before any install).
+static volatile long g_SigCdpCalls = 0;
+static const char* g_SigDetectRoute = "off";
+// `sigdrop status` (both builds) reads the forced-drop counters too.
+static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
+static int g_SigDropForce = -1;
+// `angelicprobe hit status` (research build) reads its levers; the harness holds them off.
+struct AngelicHitBase {};
+static std::vector<AngelicHitBase> g_AngHitBases;
+static double g_AngHitChance = -1.0, g_AngHitRate = -1.0, g_AngHitSharePct = -1.0;
+static std::string AngelicHitNumber(double v) { char b[48]; std::snprintf(b, sizeof b, "%g", v); return b; }
 
 // PRODUCTION_FUNCTIONS
 
@@ -193,6 +206,7 @@ static void reset() {
     g_SigFromGame = 0; g_SigFromGameCrown = 0; g_SigFromGameBelt = 0;
     g_Orig_CreateDefaultParams = nullptr; g_SigRollDepth = 0; g_SigHitSeen = false;
     g_SigLastSub = -1.0; g_SigLastB = -1.0;
+    g_SigCdpCalls = 0; g_SigDetectRoute = "off";
 }
 static void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
@@ -218,6 +232,28 @@ static int countWhich(int which) {
     int n = 0;
     for (const auto& s : spawns) if (s.which == which) ++n;
     return n;
+}
+// Both status lines (`sigdrop status`, `angelicprobe hit status`) end with the detection's own
+// positive control, ` cdpCalls=<n> detect=<route>`, which the live procedure reads before
+// `gameHits=`. Absent from a source without either status line or without the tokens.
+static void requireStatusTail(const std::string& tail, const std::string& when) {
+    auto lastLine = [](const char* prefix) {
+        for (auto it = outLines.rbegin(); it != outLines.rend(); ++it) if (it->rfind(prefix, 0) == 0) return *it;
+        return std::string();
+    };
+    auto endsWith = [&](const std::string& line) {
+        return line.size() >= tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0;
+    };
+#if defined(HAS_SIGDROPSTATUS) && defined(HAS_ANGELICHITSTATUS)
+    SigDropStatus();
+    const std::string sig = lastLine("sigdrop:");
+    require(endsWith(sig), when + ": `sigdrop status` does not end with `" + tail + "`: " + sig);
+    AngelicHitStatus();
+    const std::string hit = lastLine("angelicprobe hit:");
+    require(endsWith(hit), when + ": `angelicprobe hit status` does not end with `" + tail + "`: " + hit);
+#else
+    require(false, when + ": a status line carrying the detection route is missing");
+#endif
 }
 
 int main(int argc, char** argv) {
@@ -417,6 +453,39 @@ int main(int argc, char** argv) {
 #ifdef HAS_SIGNATURESWITCHON
             require(!SignatureSwitchOn(1), "an unresolved roll hook armed the gate");
 #endif
+        } else if (test == "status_reports_detect_route") {
+            // The live procedure reads `detect=` and `cdpCalls=` before it trusts `gameHits=0`:
+            // cdpCalls counts every CreateDefaultParams call that reaches the hook, a roll in
+            // progress or not, so an ordinary drop proves the hook is reachable.
+            RValue sub(1.0), b(15.0), c(1.0), params;
+            RValue* args[] = { &sub, &b, &c };
+            // Off: nothing installed yet, and a call lands on the game's own function.
+            cdpEntry(&monster, nullptr, params, 3, args);
+            requireStatusTail(" cdpCalls=0 detect=off", "before any install");
+            // Detoured: the non-roll call (DropItem building an ordinary drop) reaches the hook
+            // and counts, without counting as a hit; a hit in the roll counts as well.
+            reset();
+            g_OrigAngChance = nullptr;
+            installDetection();
+            cdpEntry(&monster, nullptr, params, 3, args);
+            require(gameCdpCalls == 1 && g_SigGameHits == 0, "a non-roll CreateDefaultParams call did not pass through, or counted as a hit");
+            requireStatusTail(" cdpCalls=1 detect=detoured", "detoured, one non-roll call");
+            roll(monster, { true });
+            requireStatusTail(" cdpCalls=2 detect=detoured", "detoured, then one roll hit");
+            // TABLE-ONLY: the direct calls bypass the hook, so cdpCalls stays 0 while the game's
+            // own function runs - the instrument-blind reading the live procedure stops on.
+            reset();
+            tableOnlyHook = "CreateDefaultParams";
+            installDetection();
+            cdpEntry(&monster, nullptr, params, 3, args);
+            roll(monster, { true });
+            require(gameCdpCalls == 2, "the game's own CreateDefaultParams did not run");
+            requireStatusTail(" cdpCalls=0 detect=TABLE-ONLY", "table-only");
+            // The runtime cannot resolve CreateDefaultParams by name.
+            reset();
+            missingHook = "CreateDefaultParams";
+            installDetection();
+            requireStatusTail(" cdpCalls=0 detect=not found", "not resolved");
         } else return 2;
         std::cout << "PASS " << test << '\n';
         return 0;

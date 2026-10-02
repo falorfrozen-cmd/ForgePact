@@ -446,6 +446,11 @@ static void InstallSignatureAngelicHooks();
 // one route the roll's direct calls reach. The signature gate (SignatureSwitchOn) reads it, so a
 // switch never reports these drops on while the detection cannot see a hit.
 static bool g_SigDetectNative = false;
+// The route InstallSignatureAngelicHooks got for CreateDefaultParams: "detoured", "TABLE-ONLY" or
+// "not found", and "off" before any install. Both status lines print it as `detect=`, beside
+// `cdpCalls=` (g_SigCdpCalls), so a live session can tell an unreachable hook from a roll that
+// never hit.
+static const char* g_SigDetectRoute = "off";
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -10867,6 +10872,12 @@ static volatile long g_SigFromGame = 0, g_SigFromGameCrown = 0, g_SigFromGameBel
 // clears the hit-seen flag before each original call; Hook_CreateDefaultParams sets the flag.
 // Thread-local like the research depths: the game calls both on its own thread.
 static PFUNC_YYGMLScript g_Orig_CreateDefaultParams = nullptr;
+// Every CreateDefaultParams call that reaches Hook_CreateDefaultParams, a roll in progress or not:
+// the detection's own positive control.  Ordinary drops build their params through the same
+// function (measured in session 1: 14 and 49 calls inside DropItem), so a few kills move it
+// whenever the hook is reachable; 0 after kills means the roll's direct call cannot reach the
+// hook either, and gameHits=0 then says nothing about the roll.
+static volatile long g_SigCdpCalls = 0;
 static thread_local int g_SigRollDepth = 0;
 static thread_local bool g_SigHitSeen = false;
 static double g_SigLastSub = -1.0, g_SigLastB = -1.0;   // the hit's picked sub/b, for the log line only
@@ -11137,7 +11148,8 @@ static void SigDropStatus()
         + " | game roll: gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
         + " shareRolls=" + std::to_string(g_SigShareRolls) + " sigFromGame=" + std::to_string(g_SigFromGame)
         + " crown=" + std::to_string(g_SigFromGameCrown) + " belt=" + std::to_string(g_SigFromGameBelt)
-        + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off"));
+        + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off")
+        + " cdpCalls=" + std::to_string(g_SigCdpCalls) + " detect=" + g_SigDetectRoute);
 }
 // One game Angelic hit (#74), called from HookAngelicChance after the game's own roll returned,
 // so the game's Angelic/Unholy item is already placed: with k switches on, roll one pool entry's
@@ -11175,6 +11187,7 @@ static void SignatureDropOnAngelicHit(CInstance* S, double x, double y)
 // through; marks a hit only while HookAngelicChance holds the roll-in-progress depth.
 static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    InterlockedIncrement(&g_SigCdpCalls);   // before the roll check: every call that reaches the hook
     if (g_SigRollDepth > 0) {
         g_SigHitSeen = true;
         try {
@@ -20098,6 +20111,7 @@ static void InstallSignatureAngelicHooks()
         rollRoute = savedRoute(g_OrigAngChance);
     }
     const std::string detoured = "detoured";
+    g_SigDetectRoute = cdpRoute;
     g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute;
     Out(std::string("signature drops: game-roll detection ") + (g_SigDetectNative ? "ON" : "NOT installed")
         + " (CreateDefaultParams " + cdpRoute + ", DropItemAngelicChance " + rollRoute + ")"
@@ -20137,7 +20151,8 @@ static void AngelicHitStatus()
         + " | share " + (g_AngHitSharePct >= 0.0 ? AngelicHitNumber(g_AngHitSharePct) + " pct" : std::string("default"))
         + " | detection " + (g_SigDetectNative ? "installed" : (cdp && roll ? "not installed (not both detoured)" : "not installed"))
         + " (CreateDefaultParams " + (cdp ? "hooked" : "not hooked") + ", DropItemAngelicChance " + (roll ? "hooked" : "not hooked") + ")"
-        + " | gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits));
+        + " | gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
+        + " cdpCalls=" + std::to_string(g_SigCdpCalls) + " detect=" + g_SigDetectRoute);
 }
 
 // Puts every remembered droprate.base back; returns how many were restored.
