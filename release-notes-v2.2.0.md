@@ -57,19 +57,27 @@ to a bug report.
   significant FPS drop (a single frame that takes over a quarter of a second,
   or play running two and a half times slower than usual for a couple of
   seconds), ForgePact notices and saves a report folder under
-  `bp_ipc\reports\` in the game's `bin` folder. Each report says whether
-  ForgePact's own code was running when it happened, which of its mods were
-  on or busy, how much of each frame ForgePact's mods took, and which room you
-  were in, together with your ForgePact settings, the list of installed mod
-  files and your Windows, processor, graphics card and memory. Your Windows
-  user name is replaced in every path. Nothing is uploaded: the report stays
+  `bp_ipc\reports\` in the game's `bin` folder. A freeze report names the
+  ForgePact hook and the ForgePact mod the game was inside when it stopped;
+  an FPS-drop report shows how much of each frame each ForgePact mod took and
+  which mods were on; both say which room you were in. A few of ForgePact's
+  low-level hooks cannot be named this way, so a report that says `none`
+  does not clear ForgePact: it means only that none of the hooks it can name
+  was running. A crash report cannot say what was running, because the crash
+  is found after the game has closed. A zone or character load that stops
+  the game for a few seconds is not reported as a freeze. Every report also
+  holds your ForgePact settings, the list of installed mod files and your
+  Windows, processor, graphics card and memory. Your Windows user name is
+  replaced in every path. Nothing is uploaded: the report stays
   on your PC until you attach it to a bug report yourself. While the panel is
   open, a Windows notification tells you a report was saved, and a crash is
   noticed as soon as the game closes. A crash's report folder is saved the
   next time the game starts with ForgePact, and holds what Windows recorded
   about the crash when the panel was open to read it. Without the panel, a
   freeze or a crash shows a message box instead, the crash one the next time
-  the game starts. FPS drops
+  the game starts. If another mod file fails while the game is closing,
+  after ForgePact has already shut down cleanly, ForgePact notes it in its
+  log and on the card instead of reporting a crash. FPS drops
   are not reported in the first few seconds after a zone change, while the
   game window is in the background, or more than once every 30 seconds. The
   new **Incident reports** card on the Setup tab lists the latest reports,
