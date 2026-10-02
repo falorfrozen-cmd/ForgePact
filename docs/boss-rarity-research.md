@@ -8,11 +8,11 @@ Monster Rarity sliders and Tyrant's Crown already raise ordinary monsters: by
 writing `enemyRarity` at the entry of the game's own `EnemyRaritySettings`,
 before the game builds the monster from it.
 
-Status: **written, not yet run in a live game.** What a forced rarity does to a
-boss beyond its `enemyRarity` (its health, damage, XP, drop rank and drops,
-affixes and look) is what Live procedure 1 below is for. Until it has run,
-nothing in this file, the panel, the README or the release notes says the
-raise changes any of those.
+Status: **Live procedure 1 has run (2026-10-02 rerun, `boss-rarity: hp-only`).**
+A Karp King raised to Ancient was built with ×5.65 its rank-1 health, more
+than an ordinary monster's rank-4 ×4.23. Its damage, XP, drop rank, drops
+and look were not observed, so nothing in this file, the panel, the README or
+the release notes says the raise changes any of those.
 
 ## Static reading
 
@@ -31,8 +31,9 @@ decompiler output stays on the reader's machine.
   from `Enemy_Parent_obj` through `Enemy_Child_Boss_obj`, so they pass the same
   alarm; a player report against 1.4.1 (an Anubis whose health rose about
   ninefold with both rarity sliders at 20 %) is why the sliders have skipped
-  bosses since 1.4.3. That a boss passes through this hook has not yet been
-  traced by us; Live procedure 1's first raised boss is that trace.
+  bosses since 1.4.3. That a boss passes through this hook was not traced by
+  us when this was read; Live procedure 1's control traced it on 2026-10-02
+  (a Karp King `ENTRY`/`EXIT` pair at rank 1).
 - **Which objects are bosses.** `hs-game-sdk` lists 41 descendants of
   `Enemy_Child_Boss_obj` (1407), for example `Karp_King_obj` 2368, `Damien_obj`
   1115, `Uber_Damien_obj` 4945, `Uber_Anubis_obj` 4938 and `Uber_Luna_obj`
@@ -152,25 +153,182 @@ research DLL `a3efc8e8...bef29`.
   detached from that console since #58; the research build kept it until this
   session. It now detaches too (the module guide's #58 entry).
 
-The rerun uses the detached-console research build, a low-level zone
-confirmed by screenshot before any spawn, and a liveness check after every
-spawn and kill, with the runner's own error counter read before and after
-each spawn. The procedure is in the workorder; the rerun's capture, each
-check's verdict and the route it sets are recorded here when it has run.
+The rerun used the detached-console research build, a zone confirmed by
+screenshot before any spawn, and a liveness check after every spawn and kill,
+with the runner's own error counter read before and after each spawn.
+
+**2026-10-02, the rerun.** Capture
+`.claude/workorders/forgepact-issue-44-uber-bosses-live-1.md` (hub, local; its
+`# RERUN` block), research DLL
+`f85bc1d557ef9b9880f7a8d2931fbe85771dfad16400b7db8a4d48b1be0289cf`, the
+detached-console build. Character slot 14 (Sorak); lease held 18:09:25Z to
+18:35:05Z; saves restored clean afterwards. `tools/live_checks.py` over the
+plan's 26 checks: 19 pass, 0 fail, 5 not-observed, 2 not-run.
+
+Route tokens the driver set from it: **`boss-rarity: hp-only`** and
+**`boss-drops: not-observed`**.
+
+The lines below are quoted from the capture with two fields left out, because
+the repository's decompiled-output check reads the runner's word for an
+unset value followed by a name as a decompiler declaration: every `rarity`
+and `bossprobe` line printed `forceRarity` unset (the runner's `undefined`)
+at entry and at exit, raised or not, and every `rarity ... EXIT` line printed
+the script's return value, also `undefined`, after its `->`. Both are
+dropped from each quote; nothing else is changed.
+
+Where, and under what error rate:
+
+- `zone-check` **pass**: the banner read "Outskirts of Inoya" / "Nightmare" /
+  "Zone Level 170" (modifier line "Flooded Plains"), with no "Safe Zone" and
+  no "Town of". Nightmare was the lowest difficulty the character offered.
+- `yyerror-baseline` **pass**: `YYToolkit.log`'s summary read `total=1` at
+  18:21:01Z and still `total=1` at 18:21:48Z, growth 0 over 47 s, and the zone
+  load left no `STALL ended` line.
+- `yyerror-delta` **pass**: +0 to +3 per spawn, `total` 1 -> 12 over about
+  13 minutes and 8 spawns. `yyerror-storm` **pass**: no spawn above 300, the
+  largest +3.
+- The log's two full reports: #1, the vanilla `Unable to find any instance for
+  object index '257102'`; #2, new, `REAL argument incorrect type undefined`,
+  raised in the ancient Karp King's spawn window with `BloodPactPlugin` frames
+  on its stack, so a ForgePact call handed the runner `undefined` where it
+  wanted a number. One report, not a flood; this session did not trace it.
+- `no-crash` **pass**: `pong` after every spawn, every kill and the final ping.
+
+The instrument checks, and what each proves about the instrument:
+
+- `dll-hash` **pass**: the lease's `dll_sha256` is the dispatched
+  `f85bc1d5...289cf`. `marker` **pass**:
+  `bossrarity: off raised=0 (rare 0, ancient 0) seen=0 enemyBorn=0 notRank1=0 writeFailed=0 hook=ok`,
+  so the build carries the command and the shared hook is in.
+- `control` **pass**:
+  `rarity #127 ENTRY self=Karp_King_obj#299102 argc=1 a0=int64:302 enemyRarity=int64:1 affixList=0[] enemyAffix[58] set=- myHealthBar=real:-4.000000`,
+  its matching `EXIT` at `enemyRarity=int64:1`, then `pong (YYTK 4.0.1)`. A
+  boss does pass through `EnemyRaritySettings`, and with the control off the
+  game left it at rank 1.
+- `baseline-karp` **pass**: the probe's control line proved its getter
+  (`getter=PC_GetVariableGMLWrapper (agrees with GPV)`), and the boss read
+  `enemyRarity=int64:1` and `enemy_hp=real:178801.000000->real:44625000.000000`.
+- `baseline-drop-trace` **not-observed** (lines: none). It was to show that
+  `droptrace` sees a boss's own `DropItem` at rank 1, the anchor every
+  later drop rank is compared with. With `droptrace 20` armed, the rank-1
+  Karp King's death printed no `droptrace:` line and added no line to
+  `itemdrops.jsonl`. The trace was blind on a boss in this session, so
+  `ancient-drop-rank` could not run.
+- `drop-rank-control` **pass**: a `Skeleton_Mage_Fire_obj` the sliders raised
+  (`rarity #323 EXIT -> enemyRarity=real:4.000000 ...`) died with
+  `droptrace: DropItem self=Skeleton_Mage_Fire_obj#312258 argc=12 a0=real:4.000000 a1=int64:0 a2=real:2800.000000 a3=real:4264.000000 a4=real:1.000000 a5=real:500.000000 a6=kind=15 str=ref ds_list 1243 a7=kind=15 str=ref ds_list 1244`.
+  The trace does see a raised rank on an ordinary monster; the blindness
+  above is the boss's, not the trace's in general.
+- `visual-source-control` **not-observed**: `oset Karp_King_obj enemyRarity 4`
+  read back `now real:4.000000`, but the boss's body was off screen in both
+  shots (spawned 1200 px from the hero) and the HUD boss bar drew the name
+  the same way before and after. Whether the ancient name style is built by
+  the setup or drawn each frame from `enemyRarity` is unknown, so no
+  screenshot of this session counts as something the game built.
+- `game-built-raise` **pass**, decided by `ancient-hp` alone (below).
+
+What the hook wrote (readbacks of our own write; none of them decides the
+route):
+
+- `ancient-karp-raised` **pass**:
+  `rarity #197 ENTRY self=Karp_King_obj#304071 argc=1 a0=int64:302 enemyRarity=int64:1 affixList=0[] enemyAffix[58] set=- myHealthBar=real:-4.000000`,
+  then
+  `rarity #197 EXIT  -> enemyRarity=real:4.000000 affixList=3[real:17.000000, real:25.000000, real:16.000000] enemyAffix[58] set=16,17,25 myHealthBar=real:-4.000000`,
+  and `bossrarity: ancient raised=1 (rare 0, ancient 1) seen=1 enemyBorn=0 notRank1=0 writeFailed=0 hook=ok`.
+- `rare-karp-raised` **pass**:
+  `rarity #230 EXIT  -> enemyRarity=real:3.000000 affixList=2[real:13.000000, real:6.000000] enemyAffix[58] set=6,13 myHealthBar=real:-4.000000`.
+- `ancient-damien-raised` **pass** (`rarity #259`, `Damien_obj#308339`),
+  `ancient-uber-damien-raised` **pass** (`rarity #284`,
+  `Uber_Damien_obj#309455`) and `ancient-uber-anubis-raised` **pass**
+  (`rarity #289`, `Uber_Anubis_obj#309794`): each entered at
+  `enemyRarity=int64:1` and its `EXIT` read `enemyRarity=real:4.000000` with
+  three affixes. The hook wrote the rank, and it was still there after the
+  game's own setup ran.
+- `ancient-affixes` **pass**: the ancient Karp King's `EXIT` carried three
+  affixes (17, 25, 16). That is our own top-up read back; the HUD drawing
+  their names ("Multishot, Treasure Gobbler, Pyromaniac") counts for nothing.
+- `sliders-leave-bosses` **pass**: with the control off and `rarity 0 100`,
+  `rarity #290 EXIT -> enemyRarity=int64:1 ...` on
+  `Karp_King_obj#310083`, and the sliders' `bosses left alone` went 0 -> 1.
+
+What the game built:
+
+- `ancient-hp` **pass**. The game built a higher `enemy_hp` from the rank the
+  hook wrote: rank 1 read 44,625,000 on both baseline spawns (gap 0), the
+  ancient Karp King 252,242,812, ×5.65 (5.6525), past both of the check's
+  thresholds (at least 1.5 times the base, and a rise larger than the gap).
+  The ordinary monsters' rank-4 health median is ×4.23 (`docs/RUNTIME_DATA_MODELS.md`
+  § 13.7), so this boss rose 1.34 times as far: on health a raised boss does
+  not follow the ordinary rank table (`monster_rank_model`'s
+  `boss_hp_follows_rank_table` is `False`). One boss, one kill, one zone.
+  The three other ancient bosses read `Damien_obj` 159,906,250,
+  `Uber_Damien_obj` 1,306,210,937 and `Uber_Anubis_obj` 4,451,343,750, with
+  no rank-1 spawn of the same boss to compare.
+- `ancient-damage` **not-observed**: the only damage-named variable,
+  `damage`, printed as `->?` (an unproven key) in every read, 217 at rank 1
+  and 716 at rank 4. A `->?` value is not evidence.
+- `ancient-xp` **not-observed**: `killExperience` (4950 -> 37129) and
+  `experience` (2152 -> 16143) printed as `->?` too; `experienceColor` read
+  as a plain number but is a colour, and did not change.
+- `ancient-drop-rank` **not-run** (instrument blind: no boss `DropItem` line
+  at the rank-1 death, and none at the ancient death either). The rare Karp
+  King's traced death did print one line,
+  `droptrace: DropItem self=Karp_King_obj#306374 argc=12 a0=real:3.000000 a1=int64:2 a2=real:2800.000000 a3=real:4344.000000 a4=real:1.000000 a5=real:0.000000 a6=kind=15 str=ref ds_list 1243 a7=kind=15 str=ref ds_list 1244`:
+  a first argument of 3, which without the rank-1 anchor is a number, not a
+  verdict.
+- `ancient-drops` **not-observed**: one kill at each rank, both with
+  `droptrace` armed, added 0 lines to `itemdrops.jsonl` (0 -> 0). The
+  untraced rank-1 kill added 20 and the traced rare kill 20, so the zeros
+  are not a count of a boss's drops. Why those two deaths dropped nothing is
+  not established in this session.
+- `ancient-visual` **not-run** (no control: `visual-source-control` was not
+  observed). The HUD bar's name style was the same in every shot.
+- `DropBossGems`, `DropBossRunes` and `DropBossParts`: not measured (not
+  instrumented).
+
+The `bossprobe` boss line before the raise (b1, whole):
+
+```
+bossprobe #0 Karp_King_obj#299102 enemyRarity=int64:1 affixList=0[] enemyAffix[58] set=- myHealthBar=real:-4.000000 | dropTable=kind=15 str=ref ds_list 1243 dSatanicDropMult=real:178781.000000->?real:0.215000 dSlots=real:178778.000000->?real:10.000000 m_EnemyDamageParent=object/struct currentHpPercentage=real:178807.000000->?real:1.000000 enemy_hp=real:178801.000000->real:44625000.000000 damage=real:178800.000000->?real:217.000000 damage_type=int64:4->?real:0.000000 damageActive=bool:true damageDealer=real:178806.000000->?real:-4.000000 damageTaken=real:178804.000000->?real:0.000000 damageTakenTimer=real:178805.000000->?real:-1.000000 dCommonChance=real:178779.000000->?real:58.000000 dCommonDropMult=real:178780.000000->?real:70.000000 myHealthBar=real:-4.000000->not-key killExperience=real:178783.000000->?real:4950.000000 etherEbKeyChance=real:178794.000000->?real:0.000000 etherSrKeyChance=real:178793.000000->?real:0.000000 experience=real:178799.000000->?real:2152.000000 experienceColor=real:16711890.000000->not-key experienceTxt=string:"" hitRegListDamage=kind=15 str=ref ds_list 1246 trapDamageTimer=real:0.000000->?real:0.000000 max_hp=real:178802.000000->?real:44625000.000000 drawHealthbar=bool:true maxHpUnscaled=real:178803.000000->?real:44625000.000000
+bossprobe: 1 boss(es) among 127 enemies
+```
+
+and after it (the ancient Karp King, as the capture records it; the `...`
+are the capture's own elisions, the whole line is in that session's
+`out.txt`):
+
+```
+bossprobe #0 Karp_King_obj#304071 enemyRarity=real:4.000000 affixList=3[real:17.000000, real:25.000000, real:16.000000] enemyAffix[58] set=16,17,25 myHealthBar=real:-4.000000 | dropTable=kind=15 str=ref ds_list 1243 dSatanicDropMult=...->?real:0.215000 dSlots=...->?real:14.000000 ... currentHpPercentage=...->?real:1.000000 enemy_hp=real:178801.000000->real:252242812.000000 damage=real:178800.000000->?real:716.000000 ... killExperience=real:178783.000000->?real:37129.000000 ... experience=real:178799.000000->?real:16143.000000 experienceColor=real:16711890.000000->not-key ... max_hp=...->?real:252242812.000000 ... maxHpUnscaled=...->?real:252242812.000000
+```
+
+**What `boss-rarity: hp-only` means for this feature.** The one game-built
+check that passed is `ancient-hp`, at ×5.65; `ancient-visual` did not run.
+None of the damage, XP or drop rank checks passed, so the issue's own
+condition (that a rarity changes a boss's drops and damage, not only its
+health) is not met by this session. The owner's decision for this token
+("Ship, measured wording only", 2026-10-02) keeps the feature going; the
+panel, README and release-notes wording is `live2-record`'s, and may name
+the health change only. Live procedure 1b, on the research build with the
+plugin's runner error fixed, is the next attempt at damage, XP, the look
+and the drops.
 
 ## Not verified
 
 Each of these is "not observed", not "does not happen":
 
-- **What the raise does to a boss.** Health, damage, XP, drop rank, drops,
-  affixes and look of a boss built at rarity 3 or 4: none observed yet.
+- **What the raise does to a boss beyond its health.** Damage, XP, drop rank,
+  drops and look of a boss built at rarity 3 or 4: not observed in Live
+  procedure 1 (its record above says why for each). The health is the one
+  game-built change on record, on one Karp King.
 - **That bosses arrive at rarity 1.** The control raises a boss only when the
   game rolled it at exactly 1. A boss the game already made champion, rare or
   ancient keeps its rarity and is counted as `notRank1`; how often a boss
   arrives above 1 on its own is not known.
-- **That a write took effect.** `raised` counts a write of `enemyRarity` that
-  did not throw; nothing reads the value back, and the affix top-up's result is
-  not checked.
+- **That a write took effect, in the player build.** `raised` counts a write
+  of `enemyRarity` that did not throw; the plugin reads nothing back, and the
+  affix top-up's result is not checked. In Live procedure 1 the research
+  build's `raritytrace` did read both back at the hook's exit on five raised
+  bosses; the player build has no such readback.
 - **Whether the hook fired at all.** `seen` counts only bosses judged while the
   mode is on, so `seen=0 hook=ok` does not tell "no boss came through" from
   "the hook never ran".
@@ -181,7 +339,8 @@ Each of these is "not observed", not "does not happen":
 - **The affix counts.** A raised boss gets the sliders' own top-up, up to 2
   affixes at Rare and 3 at Ancient, from the same pool. Those are the floors the
   sliders already use (their code notes the game's own rares carry 1-2 and
-  ancients 2-4), not counts measured on bosses.
+  ancients 2-4). Live procedure 1 read back 2 at Rare and 3 at Ancient on the
+  raised bosses, which is the top-up itself, not a count the game chose.
 - **Tyrant's Crown with the Bosses control.** The crown's block runs after the
   boss raise in the same hook and reads the rarity the raise wrote, so while the
   crown is on a boss raised to Rare can also get the crown's one extra affix (a
