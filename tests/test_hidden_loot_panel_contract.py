@@ -256,7 +256,10 @@ class HiddenLootPanelRowTests(unittest.TestCase):
         row = qol_row("mod_hidden_loot_key")
         self.assertTrue(row.startswith('<div class="row" id="mod_hidden_loot_key_row">'), row)
         self.assertEqual(row_text(row)[0], "Show hidden loot while held")
-        self.assertIn('<select class="style-select" id="mod_hidden_loot_key">', row)
+        # The select carries its row's label as its accessible name: the
+        # visible label is a <span>, not a <label for>, so nothing else names it.
+        self.assertIn('<select class="style-select" id="mod_hidden_loot_key" '
+                      'aria-label="Show hidden loot while held">', row)
         # Its options come from the one key module.
         self.assertIn("import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../hidden-loot-keys.js';", mods)
         self.assertIn("selected={code === HIDDEN_LOOT_KEY_DEFAULT}", row)

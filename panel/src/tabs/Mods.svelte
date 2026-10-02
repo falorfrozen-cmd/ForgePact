@@ -94,13 +94,13 @@
     </div>
     <div class="row" id="mod_hidden_loot_key_row">
         <span class="lbl" style="width:auto;flex:1">Show hidden loot while held<br><span class="feature-description">While you hold this key or mouse button with the game in front, the items your filter hides are shown. None turns the key off.</span></span>
-        <select class="style-select" id="mod_hidden_loot_key">
+        <select class="style-select" id="mod_hidden_loot_key" aria-label="Show hidden loot while held">
             {#each HIDDEN_LOOT_KEYS as [code, name] (code)}<option value={code} selected={code === HIDDEN_LOOT_KEY_DEFAULT}>{name}</option>{/each}
         </select>
     </div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
-        <select class="style-select" id="mod_skill_timer_style">
+        <select class="style-select" id="mod_skill_timer_style" aria-label="Timed skill countdown">
             <option value="off">Off</option>
             <option value="arc">Arc</option>
             <option value="bar">Bar</option>

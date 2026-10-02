@@ -1245,9 +1245,12 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # still the one select with these styles.
         self.assertEqual(PANEL_PAGE.count("<select"), 3)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
-        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key">'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
+                                          'aria-label="Show hidden loot while held">'), 1)
+        # Named by its row's label, since the visible label is a <span>.
         m = re.search(
-            r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
+            r'<select class="style-select" id="mod_skill_timer_style" '
+            r'aria-label="Timed skill countdown">(.*?)</select>',
             PANEL_PAGE, re.S)
         self.assertIsNotNone(m)
         values = re.findall(r'<option value="(\w+)">', m.group(1))
