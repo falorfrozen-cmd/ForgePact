@@ -94,8 +94,10 @@ class TestRelicFilterContract(unittest.TestCase):
         self.assertIn("RelicFilterMod::Instance().SetEnabled(", self.plugin_code)
 
     def test_plugin_implements_relic_filtering(self):
-        self.assertIn("Hook_DropRelic", self.plugin_code)
-        self.assertIn("GetPlayerMaxedRelics", self.plugin_code)
+        # #125: the lever is GetRelicQuest, the pick's own draw-again check.
+        self.assertIn("static RValue& Hook_GetRelicQuest(", self.plugin_code)
+        self.assertIn("MaxedForFrame(", self.plugin_code)
+        self.assertIn("GetPlayerMaxedRelics", self.relic_filter_header)
 
     def test_player_resolution_converts_numeric_ids_to_instances(self):
         # Superseded upstream (origin v1.3.16, the Headhunter dispatch fix):
@@ -140,9 +142,9 @@ class TestRelicFilterContract(unittest.TestCase):
         # Migrated into ForgePact::RelicFilterMod (2026-09 class split): the
         # pending flag is now m_Pending, exposed via IsPending()/ClearPending().
         self.assertIn("m_Pending", self.relic_filter_header)
-        armed = self.plugin_code.split('if (lc == "relicfilter")', 1)[1][:800]
-        self.assertNotIn("HookOneScript(\"DropRelic\"", armed)
-        self.assertIn("RelicFilterMod::Instance().SetEnabled(enable, g_Orig_DropRelic != nullptr);", armed)
+        armed = body(self.plugin_code, 'if (lc == "relicfilter")')
+        self.assertNotIn("HookOneScript(", armed)
+        self.assertIn("RelicFilterMod::Instance().SetEnabled(enable, g_Orig_GetRelicQuest != nullptr);", armed)
         # ...and the frame callback installs it once a player resolves.
         self.assertIn(
             "if (ForgePact::RelicFilterMod::Instance().IsPending() && g_Setup",
@@ -334,7 +336,7 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         self.assertIn('"none"', report)
         # The set it counts is the one GetPlayerMaxedRelics just filled, not a
         # cached or separately computed one.
-        scan = re.search(r"const bool scanRan = rf\.GetPlayerMaxedRelics\((\w+), &\w+\);", report)
+        scan = re.search(r"const bool scanRan = rf\.GetPlayerMaxedRelics\((\w+), &\w+, &\w+\);", report)
         self.assertIsNotNone(scan, report)
         self.assertIn(f"std::vector<int> ids({scan.group(1)}.begin(), {scan.group(1)}.end());", report)
         self.assertIn("std::sort(ids.begin(), ids.end());", report)
@@ -362,6 +364,7 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         code = strip_comments(self.plugin_code)
         self.assertEqual(len(re.findall(r"(?<!void )RelicFilterReportArmScan\(\);", code)), 1)
         self.assertNotIn("RelicFilterReportArmScan", body(self.plugin_code, "static RValue& Hook_DropRelic("))
+        self.assertNotIn("RelicFilterReportArmScan", body(self.plugin_code, "static RValue& Hook_GetRelicQuest("))
 
     def test_arming_makes_the_report_due_and_disarming_cancels_it(self):
         enable = body(self.header, "void SetEnabled(bool enabled, bool alreadyHooked)")
@@ -372,6 +375,7 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         player = strip_comments(strip_research_blocks(self.plugin_code))
         self.assertIn('"relicfilter: scan found "', player)
         self.assertIn('"relicfilter: equipped slots "', player)
+        self.assertIn('"relicfilter: relic tab "', player)
         self.assertIn("RelicFilterReportArmScan();", body(player, "void FrameCallback(FWFrame& FrameContext)"))
 
     # The SDK's equipped-slot read (hs_game_sdk/player.hpp) fills an
@@ -383,7 +387,7 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         declared = re.search(r"HeroSiege::Player::EquippedSlotScanReport (\w+);", report)
         self.assertIsNotNone(declared, report)
         name = declared.group(1)
-        self.assertRegex(report, rf"const bool scanRan = rf\.GetPlayerMaxedRelics\(\w+, &{name}\);")
+        self.assertRegex(report, rf"const bool scanRan = rf\.GetPlayerMaxedRelics\(\w+, &{name}, &\w+\);")
         line = f'Out("relicfilter: equipped slots " + HeroSiege::Player::FormatEquippedSlotScanReport({name}));'
         self.assertIn(line, report)
         # Right after the `scan found` line, and never for a scan that did not run.
@@ -391,15 +395,88 @@ class TestRelicFilterArmScanLine(unittest.TestCase):
         self.assertLess(report.index("if (!scanRan)"), report.index(line))
         self.assertEqual(report.count("relicfilter: equipped slots"), 1)
 
+    # #125: the relic tab (Controller_obj.inventoryData[key].inventoryRelicGrid)
+    # gets its own SDK report, on the line after the equipped slots'.
+
+    def test_the_arm_scan_asks_for_the_relic_tab_report(self):
+        report = strip_comments(self.report)
+        declared = re.search(r"HeroSiege::Player::RelicTabScanReport (\w+);", report)
+        self.assertIsNotNone(declared, report)
+        name = declared.group(1)
+        self.assertRegex(report, rf"const bool scanRan = rf\.GetPlayerMaxedRelics\(\w+, &\w+, &{name}\);")
+        line = f'Out("relicfilter: relic tab " + HeroSiege::Player::FormatRelicTabScanReport({name}));'
+        self.assertIn(line, report)
+        self.assertLess(report.index('"relicfilter: equipped slots "'), report.index(line))
+        self.assertLess(report.index("if (!scanRan)"), report.index(line))
+        self.assertEqual(report.count("relicfilter: relic tab"), 1)
+
     def test_the_filter_forwards_the_report_to_the_sdk_scan(self):
         header = strip_comments(self.header)
         get = body(header, "bool GetPlayerMaxedRelics(")
         signature = header[header.index("bool GetPlayerMaxedRelics("):header.index("{", header.index("bool GetPlayerMaxedRelics("))]
         self.assertIn("HeroSiege::Player::EquippedSlotScanReport* equippedReport = nullptr", signature)
-        self.assertIn("HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player, equippedReport)", get)
+        self.assertIn("HeroSiege::Player::RelicTabScanReport* tabReport = nullptr", signature)
+        self.assertIn("HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player, equippedReport, tabReport)", get)
         # The roll itself asks for no report: its scan runs at every relic roll.
-        hook = strip_comments(body(self.plugin_code, "static RValue& Hook_DropRelic("))
-        self.assertNotIn("EquippedSlotScanReport", hook)
+        for hook_name in ("static RValue& Hook_DropRelic(", "static RValue& Hook_GetRelicQuest("):
+            hook = strip_comments(body(self.plugin_code, hook_name))
+            self.assertNotIn("EquippedSlotScanReport", hook)
+            self.assertNotIn("RelicTabScanReport", hook)
+        cached = strip_comments(body(header, "const std::unordered_set<int>& MaxedForFrame("))
+        self.assertIn("GetPlayerMaxedRelics(m_CacheSet)", cached)
+
+
+class TestRelicFilterLever(unittest.TestCase):
+    """#125: the filter answers GetRelicQuest, the relic pick's own draw-again check.
+
+    ForgePact 2.0.1 wrote each maxed relic's `droprate.base` around DropRelic
+    and logged "holding back", but no relic pick reads that field (hub
+    docs/models/relic-pick-spec.md). `test_relic_filter_behavior.py` runs the
+    lever; this pins its shape in the source.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin_code = PLUGIN_SRC.read_text(encoding="utf-8")
+        cls.header = (FORGEPACT_INCLUDE_DIR / "RelicFilterMod.hpp").read_text(encoding="utf-8")
+        cls.hook = strip_comments(body(cls.plugin_code, "static RValue& Hook_GetRelicQuest("))
+        cls.drop = strip_comments(body(cls.plugin_code, "static RValue& Hook_DropRelic("))
+        cls.frame = strip_comments(body(cls.plugin_code, "void FrameCallback(FWFrame& FrameContext)"))
+
+    def test_nothing_writes_the_drop_table_any_more(self):
+        for code in (self.hook, self.drop):
+            self.assertNotIn("droprate", code)
+            self.assertNotIn("variable_struct_set", code)
+            self.assertNotIn("1e18", code)
+
+    def test_the_game_answers_first_and_the_decision_is_the_pure_one(self):
+        self.assertLess(self.hook.index("g_Orig_GetRelicQuest(S, O, R, argc, A)"), self.hook.index("QuestAnswer("))
+        self.assertIn("HeroSiege::RewardScope::Active()", self.hook)
+        self.assertIn("rf.MaxedForFrame(g_RuntimeFrame, scanRan)", self.hook)
+        self.assertIn("ForgePact::RelicFilterMod::AnyRelicLeft(", self.hook)
+        self.assertIn("rf.IsQuestCached(", self.hook)
+        self.assertIn("res = RValue(true);", self.hook)
+
+    def test_the_install_needs_the_native_detour(self):
+        self.assertIn('HookOneScript("GetRelicQuest", "bp_grelicq", (PVOID)Hook_GetRelicQuest, &g_Orig_GetRelicQuest, &native);',
+                      self.frame)
+        self.assertIn("g_GetRelicQuestNative = native;", self.frame)
+        self.assertNotIn('HookOneScript("DropRelic"', self.frame)
+        state = strip_comments(body(self.plugin_code, "static std::string RelicFilterHookState("))
+        self.assertIn("table-only", state)
+        self.assertIn("if (!g_GetRelicQuestNative)", state)
+
+    def test_status_ships_and_the_research_instrument_does_not(self):
+        player = strip_comments(strip_research_blocks(self.plugin_code))
+        branch = body(player, 'if (lc == "relicfilter")')
+        self.assertIn("RelicFilterStatus();", branch)
+        self.assertNotIn("RelicFilterTestMaxed", branch)
+        self.assertNotIn("static void RelicFilterTestMaxed(", player)
+        # Live 1 (2026-09-30) found a ground census of Loot_Ground_obj blind to
+        # relics placed by a direct DropRelic call, so no such instrument ships
+        # in either build; the relic a drop built is read from CreateItemNew's
+        # research log instead.
+        self.assertNotIn("RelicFilterGround", self.plugin_code)
 
 
 class TestLiveOneResearchInstruments(unittest.TestCase):

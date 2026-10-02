@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 #include <deque>
+#include <limits>
 enum {VALUE_REAL,VALUE_INT32,VALUE_INT64,VALUE_REF,VALUE_STRING,VALUE_OBJECT,VALUE_UNDEFINED};
 struct CInstance;
 struct RValue{
@@ -26,6 +27,7 @@ struct RValue{
 struct CInstance{int id;RValue ToRValue(){return RValue(this);}};
 static CInstance global{-1},parent{10},player{20};
 static bool parentAlive=true,mapReady=true,capacity=true,playerPresent=true;
+static double playerX=0,playerY=0;
 static int64_t room=1;static uint64_t g_RuntimeFrame=0,clockValue=0;
 static uint64_t fakeClock(){return clockValue;}
 static bool AurieSuccess(int status){return status==0;}
@@ -35,7 +37,8 @@ struct FakeYY{
         std::vector<RValue> a(args);
         if(std::string(name)=="variable_instance_get"){
             if(a[1].s=="id")return RValue(static_cast<double>(a[0].ptr->id));
-            if(a[1].s=="x" || a[1].s=="y")return RValue(0.0);
+            if(a[1].s=="x")return RValue(a[0].ptr==&player?playerX:0.0);
+            if(a[1].s=="y")return RValue(a[0].ptr==&player?playerY:0.0);
         }
         throw std::runtime_error("unexpected builtin");
     }
@@ -112,5 +115,22 @@ int main(){
     dm.Mult=4;g_SpecialCreateDepth=1;prior=createdX.size();create(1100);g_SpecialCreateDepth=0;
     check(createdX.size()==prior+1 && DeferredDensityPending()==0);
     std::cout<<"production: unknown init struct preserves native call, density off, special child exempt PASS\n";
+
+    // Rolling copies: with a reach, a far spawner's copies wait - not made and
+    // not the budget's backlog - and are made once the player comes near.
+    ResetDeferredDensity(true);g_DensityReachNow=3000;
+    prior=createdX.size();create(10000);check(createdX.size()==prior+1);
+    for(int i=0;i<10;++i)frame();
+    check(createdX.size()==prior+1 && g_DensityCopies.Pending()==3 && DeferredDensityPending()==0);
+    create(1300);for(int i=0;i<30;++i)frame();   // a new placement near the player
+    check(createdX.size()==prior+2+3 && g_DensityCopies.Pending()==3 && DeferredDensityPending()==0);
+    playerX=9000;frame();check(DeferredDensityPending()<=3);
+    for(int i=0;i<30;++i)frame();
+    check(createdX.size()==prior+2+6 && g_DensityCopies.Pending()==0 && DeferredDensityPending()==0);
+    // Off again: every copy at once, as before.
+    g_DensityReachNow=std::numeric_limits<double>::infinity();playerX=0;
+    prior=createdX.size();create(20000);for(int i=0;i<30 && DeferredDensityPending();++i)frame();
+    check(createdX.size()==prior+4);
+    std::cout<<"production: rolling copies wait out of reach and follow the player PASS\n";
     std::cout<<"RESULT OK\n";
 }

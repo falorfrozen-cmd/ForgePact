@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 16);
+  assert.equal(BOOLEAN_MODS.length, 18);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -54,6 +54,18 @@ test('far scenery sleep is an entry while on, and off by default', () => {
   assert.deepEqual(enabledControls(cfg({ mod_far_sleep: true })), ['mod_far_sleep']);
 });
 
+test('move all into the stash is an entry while on, and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_stash_move_all'));
+  assert.equal(DEFAULTS.mod_stash_move_all, false);
+  assert.deepEqual(enabledControls(cfg({ mod_stash_move_all: true })), ['mod_stash_move_all']);
+});
+
+test('extra packs as you approach is an entry while on, and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('density_rolling'));
+  assert.equal(DEFAULTS.density_rolling, false);
+  assert.deepEqual(enabledControls(cfg({ density_rolling: true })), ['density_rolling']);
+});
+
 test('the skill timer is an entry for any style but off', () => {
   for (const style of ['arc', 'bar', 'number', 'fade']) {
     assert.deepEqual(enabledControls(cfg({ mod_skill_timer_style: style })), ['mod_skill_timer_style'], style);
@@ -67,9 +79,9 @@ test('density is an entry only while switched on above x1, through den_on', () =
   assert.deepEqual(enabledControls(cfg({ density_on: true, density: 1 })), [], 'x1 is the default');
 });
 
-test('the switch ids: 38 table rows plus four top-level sliders, never density', () => {
+test('the switch ids: 40 table rows plus four top-level sliders, never density', () => {
   const ids = sliderSwitchIds(cfg());
-  assert.equal(ids.length, 42);
+  assert.equal(ids.length, 44);
   assert.deepEqual(ids.slice(-4), TOP_LEVEL_SWITCHES);
   assert.ok(ids.includes('stats.exp') && ids.includes('percent_stats.damage') && ids.includes('keys.ruby'));
   assert.ok(!ids.some((id) => id.includes('density') || id === 'enemy_speed_ct'));

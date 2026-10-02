@@ -7,7 +7,7 @@
 namespace ForgePact {
 
 // Live character/combat stat modifiers ("stat <name> <mult>", "statadd <name>
-// <bonus>", "stat list").
+// <bonus>", "stat list", "statadd list").
 //
 // Blood Pact's Magic Find / Attack Speed / Cast Rate / Experience gain /
 // Movement Speed values do not sit in a store - the player has no such
@@ -15,8 +15,8 @@ namespace ForgePact {
 // runtime's pSt array holds handles, not values. Each stat has its own
 // Stat<Name> script instead, and the game re-reads it every time it needs the
 // value. So this scales the RETURNED value, not a stored one - one hook site
-// affects every caller. A multiplier of 1.0 (or additive 0.0 for
-// FasterCastRate) leaves the hook a pure pass-through: vanilla behavior is
+// affects every caller. A multiplier of 1.0 (or an additive 0.0 for the
+// `statadd` stats) leaves the hook a pure pass-through: vanilla behavior is
 // exactly preserved when a stat is off.
 //
 // Each hook keeps its own plain double rather than a name-keyed map: these
@@ -97,33 +97,58 @@ public:
         Out(b);
     }
 
-    // "statadd <name> <bonus>" - only StatFasterCastRate today (see StatEkle's
-    // comment on the class: FCR's vanilla base is 0, so it must be added to,
-    // not multiplied).
+    // "statadd list" or "statadd <name> <bonus>" (#114). Each entry ADDS its
+    // bonus to element 0 of what its Stat* script returns, after the game's
+    // own calculation, so gear and buffs keep stacking underneath:
+    //   castrate    StatFasterCastRate  Faster Cast Rate points; the vanilla
+    //                                   base is 0, so a multiplier could
+    //                                   never raise it
+    //   skillhaste  StatSpellHaste      Skill Haste points: cooldowns recover
+    //                                   faster (hub docs/models/skill-stat-spec.md)
+    //   allskills   StatAllSkills       levels on every skill that has at
+    //                                   least one point; whole levels, at
+    //                                   most kAllSkillsMax
+    // The game's code calls these scripts directly, so only the native detour
+    // can add anything: a TABLE-ONLY install is refused instead of being
+    // armed and inert. The first boosted call after arming prints "native ->
+    // boosted" once, which a player build needs to show the hook fired: its
+    // call counters compile away.
     void HandleStatAddCommand(const std::string& rest) {
         std::string ad, deger; ad = FirstToken(rest, deger);
         while (!ad.empty() && std::isspace((unsigned char)ad.back())) ad.pop_back();
         while (!deger.empty() && std::isspace((unsigned char)deger.back())) deger.pop_back();
-        std::string ara = Lower(ad);
-        if (ara != "castrate" && ara != "statfastercastrate" && ara != "fastercastrate") {
-            Out("statadd: unknown '" + ad + "' (castrate)");
+        const std::string ara = Lower(ad);
+        if (ara.empty() || ara == "list") {
+            for (int i = 0; i < kAddCount; ++i) Out(AddStatusLine(AddTable()[i]));
             return;
         }
+        const AddEntry* e = FindAdd(ara);
+        if (!e) { Out("statadd: unknown '" + ad + "' (castrate, skillhaste, allskills, list)"); return; }
         double ek = 0.0;
-        try { ek = std::stod(deger); } catch (...) { Out("statadd: bonus sayi olmali"); return; }
-        if (ek < 0.0) ek = 0.0;
-        if (ek == 0.0 && !m_OrigAdd_StatFasterCastRate) {
-            m_Add_StatFasterCastRate = 0.0;
-            Out("statadd StatFasterCastRate -> +0.00 (native, no hook)");
+        try { ek = std::stod(deger); } catch (...) { Out("statadd: the bonus must be a number"); return; }
+        ek = ClampAddBonus(*e, ek);
+        if (ek == 0.0) {
+            // Off: an installed hook stays a pass-through, whatever its route.
+            *e->bonus = 0.0;
+            *e->first = kFirstIdle;
+            Out(std::string("statadd ") + e->script + (*e->orig ? " -> +0" : " -> +0 (native, no hook)"));
             return;
         }
-        if (!m_OrigAdd_StatFasterCastRate) {
-            HookOneScript("StatFasterCastRate", "fp_sta_fcr", (void*)HookAdd_StatFasterCastRate, &m_OrigAdd_StatFasterCastRate);
-            if (!m_OrigAdd_StatFasterCastRate) { Out("statadd: StatFasterCastRate kancasi kurulamadi"); return; }
+        if (!*e->orig) {
+            bool native = false;
+            HookOneScript(e->script, e->hookId, e->hook, e->orig, &native);
+            *e->route = !*e->orig ? kRouteFailed : (native ? kRouteNative : kRouteTableOnly);
         }
-        m_Add_StatFasterCastRate = ek;
-        char b[128];
-        sprintf_s(b, "statadd StatFasterCastRate -> +%.2f", ek);
+        if (*e->route != kRouteNative) {
+            *e->bonus = 0.0;
+            Out(std::string("statadd: ") + e->script + " hook is " + RouteName(*e->route)
+                + " - the game calls it directly, so the bonus could never apply; not armed");
+            return;
+        }
+        *e->bonus = ek;
+        *e->first = kFirstPending;
+        char b[160];
+        sprintf_s(b, "statadd %s -> +%g", e->script, ek);
         Out(b);
     }
 
@@ -147,18 +172,52 @@ private:
 
     // Faster Cast Rate'in vanilya tabani 0'dir. Sifiri carpmak her zaman sifir
     // verdigi icin bu statta yuzde puani EKLEMEK gerekir (+50 -> FCR 0'dan 50'ye).
-    static RValue Add(RValue& deger, double ek) {
-        if (deger.m_Kind != VALUE_ARRAY)
-            return RValue(deger.ToDouble() + ek);
+    // `nativeOut`, when given, receives element 0 as the game built it.
+    static RValue Add(RValue& deger, double ek, double* nativeOut = nullptr) {
+        if (deger.m_Kind != VALUE_ARRAY) {
+            const double native = deger.ToDouble();
+            if (nativeOut) *nativeOut = native;
+            return RValue(native + ek);
+        }
         int n = (int)g_Yytk->CallBuiltin("array_length", { deger }).ToDouble();
         if (n <= 0) return deger;
         RValue kopya = g_Yytk->CallBuiltin("array_create", { RValue((double)n) });
         for (int i = 0; i < n; i++) {
             RValue e = g_Yytk->CallBuiltin("array_get", { deger, RValue((double)i) });
-            if (i == 0) e = RValue(e.ToDouble() + ek);
+            if (i == 0) {
+                const double native = e.ToDouble();
+                if (nativeOut) *nativeOut = native;
+                e = RValue(native + ek);
+            }
             g_Yytk->CallBuiltin("array_set", { kopya, RValue((double)i), e });
         }
         return kopya;
+    }
+
+    // One additive entry's hook route and first-call state (#114).
+    enum AddRoute : int { kRouteNone = 0, kRouteNative, kRouteTableOnly, kRouteFailed };
+    enum AddFirst : int { kFirstIdle = 0, kFirstPending, kFirstShown };
+    static const char* RouteName(int route) {
+        switch (route) {
+            case kRouteNative: return "native";
+            case kRouteTableOnly: return "TABLE-ONLY";
+            case kRouteFailed: return "FAILED";
+            default: return "none";
+        }
+    }
+
+    // Adds `bonus` to the result the hook is about to return and, on the
+    // first boosted call after arming, prints what the game built and what
+    // it now returns - once, so a hot stat path logs nothing further.
+    static void AddAndReport(RValue& r, double bonus, int& first, double& firstNative, const char* script) {
+        double native = 0.0;
+        r = Add(r, bonus, &native);
+        if (first != kFirstPending) return;
+        first = kFirstShown;
+        firstNative = native;
+        char b[192];
+        sprintf_s(b, "statadd %s: first boosted call %g -> %g", script, native, native + bonus);
+        Out(b);
     }
 
 #define FP_STAT_HOOK(NAME) \
@@ -199,16 +258,33 @@ private:
     FP_STAT_HOOK(EnemyCalculateExperience)
 #undef FP_STAT_HOOK
 
-    PFUNC_YYGMLScript m_OrigAdd_StatFasterCastRate{ nullptr };
-    volatile long m_CallsAdd_StatFasterCastRate{ 0 };
-    double m_Add_StatFasterCastRate{ 0.0 };
-    static RValue& HookAdd_StatFasterCastRate(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
-        auto& mgr = Instance();
-        BP_DIAG_INCREMENT(mgr.m_CallsAdd_StatFasterCastRate);
-        RValue& _r = mgr.m_OrigAdd_StatFasterCastRate ? mgr.m_OrigAdd_StatFasterCastRate(S, O, R, argc, A) : R;
-        if (mgr.m_Add_StatFasterCastRate != 0.0) { try { _r = Add(_r, mgr.m_Add_StatFasterCastRate); } catch (...) {} }
-        return _r;
+    // Additive hooks (`statadd`): a bonus of 0 leaves the hook a pure
+    // pass-through, so vanilla behaviour is exactly preserved when it is off.
+#define FP_STAT_ADD_HOOK(NAME) \
+    PFUNC_YYGMLScript m_OrigAdd_##NAME{ nullptr }; \
+    volatile long m_CallsAdd_##NAME{ 0 }; \
+    double m_Add_##NAME{ 0.0 }; \
+    int m_RouteAdd_##NAME{ kRouteNone }; \
+    int m_FirstAdd_##NAME{ kFirstIdle }; \
+    double m_FirstNativeAdd_##NAME{ 0.0 }; \
+    static RValue& HookAdd_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        auto& mgr = Instance(); \
+        BP_DIAG_INCREMENT(mgr.m_CallsAdd_##NAME); \
+        RValue& _r = mgr.m_OrigAdd_##NAME ? mgr.m_OrigAdd_##NAME(S, O, R, argc, A) : R; \
+        if (mgr.m_Add_##NAME != 0.0) { try { AddAndReport(_r, mgr.m_Add_##NAME, mgr.m_FirstAdd_##NAME, mgr.m_FirstNativeAdd_##NAME, #NAME); } catch (...) {} } \
+        return _r; \
     }
+
+    FP_STAT_ADD_HOOK(StatFasterCastRate)
+    // Skill Haste: element 0 is the total the character screen shows. The
+    // game's cooldown recovery reads it through ReturnSpecificStat (stat id
+    // 103), its only caller.
+    FP_STAT_ADD_HOOK(StatSpellHaste)
+    // All Skills: element 0 is the "+N to All Skills" total. ReturnTalentLevel
+    // adds it (through ReturnSpecificStat, stat id 2) only to a skill with at
+    // least one point, so a bonus never unlocks a skill.
+    FP_STAT_ADD_HOOK(StatAllSkills)
+#undef FP_STAT_ADD_HOOK
 
     struct Entry { const char* name; const char* hookId; void* hook; PFUNC_YYGMLScript* orig; volatile long* calls; double* mult; const char* alias; };
 
@@ -239,6 +315,64 @@ private:
             { "EnemyCalculateExperience", "fp_st_xpc", (void*)Hook_EnemyCalculateExperience, &m_Orig_EnemyCalculateExperience, &m_Calls_EnemyCalculateExperience, &m_Mult_EnemyCalculateExperience, "exp" },
         };
         return table;
+    }
+
+    // `statadd` entries. `cap` 0 means the panel's slider ceiling is the only
+    // limit; `whole` rounds to whole points (a skill level has no fraction).
+    // Talent levels above the game's own gear range are not established live,
+    // so All Skills stops at the ceiling Stat Forge shipped.
+    static constexpr double kAllSkillsMax = 100.0;
+    struct AddEntry {
+        const char* alias; const char* script; const char* hookId; void* hook;
+        PFUNC_YYGMLScript* orig; volatile long* calls; double* bonus; int* route; int* first; double* firstNative;
+        double cap; bool whole;
+    };
+    static constexpr int kAddCount = 3;
+    const AddEntry* AddTable() {
+        static const AddEntry table[kAddCount] = {
+            { "castrate",   "StatFasterCastRate", "fp_sta_fcr", (void*)HookAdd_StatFasterCastRate, &m_OrigAdd_StatFasterCastRate, &m_CallsAdd_StatFasterCastRate,
+              &m_Add_StatFasterCastRate, &m_RouteAdd_StatFasterCastRate, &m_FirstAdd_StatFasterCastRate, &m_FirstNativeAdd_StatFasterCastRate, 0.0, false },
+            { "skillhaste", "StatSpellHaste",     "fp_sta_sh",  (void*)HookAdd_StatSpellHaste,     &m_OrigAdd_StatSpellHaste,     &m_CallsAdd_StatSpellHaste,
+              &m_Add_StatSpellHaste,     &m_RouteAdd_StatSpellHaste,     &m_FirstAdd_StatSpellHaste,     &m_FirstNativeAdd_StatSpellHaste,     0.0, false },
+            { "allskills",  "StatAllSkills",      "fp_sta_as",  (void*)HookAdd_StatAllSkills,      &m_OrigAdd_StatAllSkills,      &m_CallsAdd_StatAllSkills,
+              &m_Add_StatAllSkills,      &m_RouteAdd_StatAllSkills,      &m_FirstAdd_StatAllSkills,      &m_FirstNativeAdd_StatAllSkills,      kAllSkillsMax, true },
+        };
+        return table;
+    }
+
+    // An entry by its panel key, its script name, or the script name without
+    // "Stat" ("castrate", "statfastercastrate", "fastercastrate").
+    const AddEntry* FindAdd(const std::string& lowered) {
+        const AddEntry* table = AddTable();
+        for (int i = 0; i < kAddCount; ++i) {
+            const std::string script = Lower(table[i].script);
+            if (lowered == table[i].alias || lowered == script || lowered == script.substr(4)) return &table[i];
+        }
+        return nullptr;
+    }
+
+    static double ClampAddBonus(const AddEntry& e, double v) {
+        if (!std::isfinite(v) || v < 0.0) v = 0.0;
+        if (e.whole) v = std::floor(v + 0.5);
+        if (e.cap > 0.0 && v > e.cap) v = e.cap;
+        return v;
+    }
+
+    static std::string AddStatusLine(const AddEntry& e) {
+        std::string first = "-";
+        if (*e.first == kFirstPending) first = "waiting";
+        else if (*e.first == kFirstShown) {
+            char f[96];
+            sprintf_s(f, "%g->%g", *e.firstNative, *e.firstNative + *e.bonus);
+            first = f;
+        }
+        char b[224];
+        sprintf_s(b, "  %-10s (%-18s) +%-6g hook=%-10s first=%s", e.alias, e.script, *e.bonus, RouteName(*e.route), first.c_str());
+        std::string line = b;
+#ifndef FORGEPACT_RELEASE
+        line += " calls=" + std::to_string(*e.calls);
+#endif
+        return line;
     }
 };
 

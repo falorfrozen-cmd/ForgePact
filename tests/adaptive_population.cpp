@@ -1,6 +1,7 @@
 #include <ForgePact/AdaptivePopulationBudget.hpp>
 #include <ForgePact/DeferredDensityCopies.hpp>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 static uint64_t nowUs=0;
 static uint64_t clockUs(){return nowUs;}
@@ -61,4 +62,25 @@ int main(){
     q.Schedule(9,{0,0},1);auto retry=q.TakeNearest(0,0,0);q.Retry(*retry,10);
     check(!q.TakeNearest(0,0,9) && q.TakeNearest(0,0,10));
     std::cout<<"density: nearby first, exact 4x, no reentry growth, transition resume PASS\n";
+
+    // Rolling copies: a reach leaves the jobs beyond it waiting - not taken,
+    // not dropped - and makes them due as the player comes near.
+    ForgePact::DeferredDensityCopies<int,Recipe> r;
+    r.Schedule(1,{1000,0},2);r.Schedule(2,{5000,0},2);r.Schedule(3,{9000,0},1);
+    check(r.Pending()==5 && r.DueWithin(0,0,3000)==2 && r.DueWithin(0,0,1e300)==5);
+    const double inf=std::numeric_limits<double>::infinity();
+    check(r.DueWithin(0,0,inf)==5);
+    auto near1=r.TakeNearest(0,0,UINT64_MAX,3000);check(near1 && near1->key==1);r.Complete(*near1);
+    auto near2=r.TakeNearest(0,0,UINT64_MAX,3000);check(near2 && near2->key==1);r.Complete(*near2);
+    check(!r.TakeNearest(0,0,UINT64_MAX,3000) && r.Pending()==3);          // key 2 and 3 wait out of reach
+    check(r.DueWithin(4000,0,3000)==2);
+    auto walked=r.TakeNearest(4000,0,UINT64_MAX,3000);check(walked && walked->key==2);r.Complete(*walked);
+    auto walked2=r.TakeNearest(4000,0,UINT64_MAX,3000);check(walked2 && walked2->key==2);r.Complete(*walked2);
+    check(!r.TakeNearest(4000,0,UINT64_MAX,3000) && r.Pending()==1);
+    auto rest=r.TakeNearest(4000,0);check(rest && rest->key==3);               // no reach: everything, nearest first
+    // A retried job keeps its turn and its reach.
+    ForgePact::DeferredDensityCopies<int,Recipe> w;
+    w.Schedule(7,{100,0},1);auto retried=w.TakeNearest(0,0,0,3000);w.Retry(*retried,50);
+    check(w.DueWithin(0,0,3000)==1 && !w.TakeNearest(0,0,49,3000) && w.TakeNearest(0,0,50,3000));
+    std::cout<<"density: rolling reach waits out of reach, due within reach PASS\n";
 }

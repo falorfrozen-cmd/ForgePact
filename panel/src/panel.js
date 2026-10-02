@@ -15,6 +15,7 @@ import { setupModsColumns } from './mods-columns.js';
 import { pollDelayMs, pollNextChangeAt } from './poll-policy.js';
 import { switchControlId, switchOn } from './enabled-mods.js';
 import { renderEnabledMods } from './lib/enabled-mods-list.js';
+import { pluginBuildNotice } from './lib/plugin-build.js';
 import { applyTheme } from './theme.js';
 
 let tmr=null;
@@ -84,6 +85,22 @@ function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el
 function setClass(el,v){if(el&&el.className!==v)el.className=v}
 function setTitle(el,v){if(el&&el.title!==v)el.title=v}
 function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
+// Move all into the stash turns itself off for the rest of a session after a
+// move it could not confirm; the plugin's last `stashmoveall: state=` line
+// says so (`stash_move_all_session`), and the value beside the switch shows
+// it while the game runs (review of #68). The switch keeps the preference.
+// Without a loss it leaves the value as the switch painted it.
+function applyStashMoveAllSession(){
+  const v=document.getElementById('msmaval');
+  if(!v||!ST)return;
+  if(ST.gameRunning&&ST.stash_move_all_session==='off-after-loss'){
+    setText(v,'off (this session)');setClass(v,'val off');
+    setTitle(v,'Move all turned itself off for this game session after a move it could not confirm; it works again after restarting the game.');
+    return;
+  }
+  if(v.textContent==='off (this session)'){const on=!!ST.cfg?.mod_stash_move_all;setText(v,on?'on':'off');setClass(v,'val '+(on?'':'off'))}
+  setTitle(v,'');
+}
 function applyPluginModState(pm){
   const packMarkerStatus=document.getElementById('packMarkerStatus'), packMarkers=pm?.packMarkers;
   if(packMarkerStatus){
@@ -180,7 +197,9 @@ function paintRollsNote(pm){
   setText(note,status);
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
-export function sliderText(sec,v){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+'%':'x'+v)}
+// All Skills adds whole skill levels, not a percentage.
+const LEVEL_PERCENT_STATS=new Set(['allskills']);
+export function sliderText(sec,v,key){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+(LEVEL_PERCENT_STATS.has(key)?'':'%'):'x'+v)}
 // A slider's on/off switch (Monster Density's #den_on, for every other
 // slider): off keeps the value in the range and the saved config, and the
 // value box reads "off" the way density's does, while the backend sends the
@@ -213,7 +232,7 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}"${n?` aria-describedby="${noteId}"`:''}>
-    <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val)}</span></div>${n}`;
+    <span class="val ${off?'off':''}" style="width:64px" title="Click to type a value">${sliderText(sec,val,key)}</span></div>${n}`;
 }
 function satRow(polarity,id,name,desc,enabled){
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -284,6 +303,8 @@ function percentStatNote(key,v){
   if(v<=0) return '';
   if(key==='damage') return `adds ${v}% to the final hit after the game finishes its own calculation (+100% doubles it)`;
   if(key==='castrate') return `adds ${v} Faster Cast Rate points to the current value`;
+  if(key==='skillhaste') return `adds ${v} Skill Haste points to the current value, so cooldowns recover faster (the game counts at most 200 in total: cooldowns at half their time)`;
+  if(key==='allskills') return `adds ${v} to All Skills: every skill with at least one point goes up ${v} level${v===1?'':'s'}`;
   if(key==='critchance'||key==='spellcritchance') return `increases the current Critical Strike Chance by ${v}% (the game's own cap still applies)`;
   return `adds ${v}% to the final value`;
 }
@@ -396,10 +417,18 @@ async function boot(){
     document.getElementById('mod_craft_mats').checked=mcm;
     document.getElementById('mcmval').textContent=mcm?'on':'off';
     document.getElementById('mcmval').className='val '+(mcm?'':'off');
+    const msma=!!c.mod_stash_move_all;
+    document.getElementById('mod_stash_move_all').checked=msma;
+    document.getElementById('msmaval').textContent=msma?'on':'off';
+    document.getElementById('msmaval').className='val '+(msma?'':'off');
     const mfs=!!c.mod_far_sleep;
     document.getElementById('mod_far_sleep').checked=mfs;
     document.getElementById('mfsval').textContent=mfs?'on':'off';
     document.getElementById('mfsval').className='val '+(mfs?'':'off');
+    const drl=!!c.density_rolling;
+    document.getElementById('density_rolling').checked=drl;
+    document.getElementById('drlval').textContent=drl?'on':'off';
+    document.getElementById('drlval').className='val '+(drl?'':'off');
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
       const on=!!c[key];
       document.getElementById(id).checked=on;
@@ -432,7 +461,7 @@ async function boot(){
     const v=(c.percent_stats&&c.percent_stats[k])||0;
     return row('percent_stats',k,l,v,'',mx,percentStatNote(k,v),step);
   }).join('');
-  document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate']);
+  document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate','skillhaste','allskills']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
   paintSwitches(c);
@@ -461,18 +490,21 @@ function status(){
   const g=document.getElementById('chipGame'), a=document.getElementById('chipApply');
   const ch=ST.chain||{};
   const ok=ch.patched&&ch.aurieCore&&ch.yytk&&ch.plugin;
-  setText(g,ST.gameRunning?(ok?'Game open':'Game open · plugin missing'):'Game offline');
+  // An installed plugin can still be an older ForgePact's: updating ForgePact
+  // never replaces the copy in the game (issue #123, lib/plugin-build.js).
+  const stale=ok?pluginBuildNotice(ST.pluginBuild):null;
+  setText(g,ST.gameRunning?(ok?(stale?'Game open · '+stale.chip:'Game open'):'Game open · plugin missing'):'Game offline');
   setTitle(g,ST.gameRunning?'This detects the game process. The plugin must be installed and loaded to apply modifiers.':'Settings are saved locally. Auto-apply sends them on game launch when enabled.');
-  setClass(g,'chip '+(ST.gameRunning?(ok?'on':'warn'):'off'));
+  setClass(g,'chip '+(ST.gameRunning?(ok&&!stale?'on':'warn'):'off'));
   setText(a,ST.lastApplied?('commands sent: '+ST.lastApplied+(ST.queued?' (queued)':'')):'No settings sent this session');
   setClass(a,'chip '+(ST.lastApplied?'warn':'off'));
   const warning=document.getElementById('pluginWarning');
-  setHidden(warning,!!ok);
-  setText(document.getElementById('pluginWarningText'),ch.exeExists?
+  setHidden(warning,!!ok&&!stale);
+  setText(document.getElementById('pluginWarningText'),stale?stale.warning:ch.exeExists?
     'Plugin not installed. Your settings are saved, but modifiers cannot apply. Close the game, then install the plugin in Setup.':
     'Choose your Hero_Siege.exe in Setup, then install the plugin to use modifiers.');
   const cn=document.getElementById('chainnote');
-  if(ok){setText(cn,'');}
+  if(ok&&!stale){setText(cn,'');}
   else{
     const miss=[];
     if(!ch.patched)miss.push('exe not patched');
@@ -481,8 +513,10 @@ function status(){
     if(!ch.plugin)miss.push('mod plugin');
     // The button's name is a mono run with no quotes (finish review F5), in one
     // span so #chainnote's flex row keeps it inline. Written only when the
-    // words change, as setText() does, so an idle poll mutates nothing.
-    const lead='mod chain incomplete: '+miss.join(', ')+' - click ';
+    // words change, as setText() does, so an idle poll mutates nothing. A
+    // stale plugin's words carry only digits and dots from the backend
+    // (plugin_build_state's version pattern), so they are safe in the markup.
+    const lead=(stale?stale.chain:'mod chain incomplete: '+miss.join(', '))+' - click ';
     if(cn.textContent!==lead+'Install Mod Plugin (game must be closed)')cn.innerHTML=`<span>${lead}<span class="chain-command">Install Mod Plugin</span> (game must be closed)</span>`;
     cn.style.color='var(--color-warn)';
   }
@@ -500,7 +534,7 @@ function bind(){
     const noteEl=r.parentElement.parentElement.querySelector(`.note[data-note="${r.dataset.key}"]`);
     const tipOf=(k)=>{const e=(ST.keys||[]).find(x=>x[0]===k);return e?e[2]:undefined;};
     const swId=r.dataset.sec+'.'+r.dataset.key;
-    r.oninput=()=>{const v=sliderVal(r),off=switchedOff(swId);valEl.textContent=off?'off':sliderText(r.dataset.sec,v);valEl.className='val '+(off||sliderOff(r.dataset.sec,v)?'off':'');
+    r.oninput=()=>{const v=sliderVal(r),off=switchedOff(swId);valEl.textContent=off?'off':sliderText(r.dataset.sec,v,r.dataset.key);valEl.className='val '+(off||sliderOff(r.dataset.sec,v)?'off':'');
       if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);
       if(noteEl&&r.dataset.sec==='stats')noteEl.textContent=statNote(r.dataset.key,v);
       if(noteEl&&r.dataset.sec==='percent_stats')noteEl.textContent=percentStatNote(r.dataset.key,v);
@@ -509,7 +543,7 @@ function bind(){
     r.onchange=async()=>{
       const v=sliderVal(r);
       const res=await j('/api/set',{method:'POST',body:JSON.stringify({section:r.dataset.sec,key:r.dataset.key,value:v})});
-      toast((r.dataset.key)+' = '+sliderText(r.dataset.sec,v)+' - '+(res.ok||res.err));
+      toast((r.dataset.key)+' = '+sliderText(r.dataset.sec,v,r.dataset.key)+' - '+(res.ok||res.err));
     };
     typable(r,valEl);
   });
@@ -644,10 +678,21 @@ function bind(){
         const v=document.getElementById('mcmval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Craft from the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    document.getElementById('mod_stash_move_all').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_stash_move_all',value:e.target.checked})});
+        const v=document.getElementById('msmaval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        applyStashMoveAllSession();
+        toast('Move all into the stash '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
     document.getElementById('mod_far_sleep').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_far_sleep',value:e.target.checked})});
         const v=document.getElementById('mfsval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Far scenery sleep '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('density_rolling').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'density_rolling',value:e.target.checked})});
+        const v=document.getElementById('drlval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Extra packs as you approach '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
@@ -782,6 +827,7 @@ function bind(){
     const res=await j('/api/installmod',{method:'POST',body:'{}'});
     btn.disabled=false; btn.textContent='Install Mod Plugin';
     if(res.chain)ST.chain=res.chain;
+    if(res.pluginBuild)ST.pluginBuild=res.pluginBuild;
     toast(res.ok||res.err); status();
   };
   document.getElementById('removeplugin').onclick=async()=>{
@@ -790,6 +836,7 @@ function bind(){
     const res=await j('/api/removeplugin',{method:'POST',body:'{}'});
     btn.disabled=false; btn.textContent='Remove Plugin';
     if(res.chain)ST.chain=res.chain;
+    if(res.pluginBuild)ST.pluginBuild=res.pluginBuild;
     toast(res.ok||res.err); status();
   };
   document.getElementById('exesave').onclick=async()=>{
@@ -958,10 +1005,10 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',mod_craft_mats:'mod_craft_mats',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',mcmval:'mod_craft_mats',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
@@ -970,6 +1017,7 @@ export function refreshSavedControls(){
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   applyPluginModState(ST.pluginMods);
+  applyStashMoveAllSession();
   document.getElementById('theme').value=applyTheme(c.theme);
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
@@ -1156,7 +1204,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;status();applyPluginModState(s.pluginMods);document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

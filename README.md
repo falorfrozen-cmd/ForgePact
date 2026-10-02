@@ -36,21 +36,23 @@ none of these diagnostic hooks or the recorder. See
 | **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Mining XP, character XP and quest progress still count once per node. Works together with the Mining Ore Multiplier (each set is multiplied) and with a worn Miner's Helmet (each set gets its 4×). Not yet confirmed in a live game ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
-| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage |
+| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect, and moves on from an item it cannot collect. Pick-up items only; activate/break/talk objectives are left alone |
-| **Pet Moves On From Loot It Cannot Pick Up** | Off by default. With a lot of loot on the ground the game's own pet can stay on one item, hopping around it without taking it (#94). With this on, the pet moves on from loot it cannot pick up: an item it has stayed on for about 1.5 s is left alone for about 10 s and the pet goes for the rest. That hold is for items on the ground: a coin (gold) the pet gives up is only turned away from, not held back, so the pet may try it again sooner. It picks nothing up itself and does not change what the pet collects. Not yet confirmed in a live game |
+| **Pet Moves On From Loot It Cannot Pick Up** | Off by default. With a lot of loot on the ground the game's own pet can stay on one item, hopping around it without taking it (#94). With this on, the pet moves on from loot it cannot pick up: an item it has stayed on for about 1.5 s is left alone for about 10 s and the pet goes for the rest. That hold is for items on the ground: a coin (gold) the pet gives up is only turned away from, not held back, so the pet may try it again sooner. A target that is not loot at all - an old item id the game reused for something else on the map - is given up the moment it is seen instead. It picks nothing up itself and does not change what the pet collects. Not yet confirmed in a live game |
 | **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
+| **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
+| **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
-| **Remove Owned Relics** | Relics already at maximum level (10 out of 10) in your equipped slots, backpack or inventory stop dropping again, so a relic drop is one you can still use |
+| **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 
@@ -427,17 +429,30 @@ and live findings are in
 
 ## Remove owned relics from drop pool
 
-Mods tab → Quality of Life. While it is on, a relic that is already at 10/10 in your
-equipped slots, backpack or inventory is withheld when the game rolls a relic drop,
-so what lands is one you can still level.
+Mods tab → Quality of Life. While it is on, a relic you already own at 10/10 no longer
+drops. That covers relics worn in a relic slot and relics kept in the backpack's relic
+tab. When the game picks one for a relic drop, it picks again, so another relic drops
+in its place.
 
-It is not a forced reroll of the loot table: the maxed relics are excluded for the
-duration of that one roll and their normal drop rates are restored immediately
-afterwards, so every other relic keeps the odds the game gives it. Turning the
-toggle off restores vanilla behaviour for the session.
+Whether a relic drops at all is untouched. Every relic you can still level keeps the
+same odds as without the mod: the game picks among them exactly as it always does,
+only without the ones you have maxed. If every relic that can drop is already at
+10/10, the filter stands down, since there is nothing left to drop instead. Turning
+the toggle off restores vanilla behaviour for the session.
 
-The panel sends `relicfilter 1`, which only **arms** the mod — the `DropRelic` hook
-goes in later, once a player instance exists. Installing it during character
+**How it works.**
+- Every relic the game drops comes from a draw the game repeats while the relic it
+  drew is a quest relic (`GetRelicQuest`). That includes ordinary kills and both
+  Satanic zone kill rewards. ForgePact answers "quest relic" for your 10/10 relics as
+  well, so the game's own draw skips them.
+- Before 2.1.0 the filter changed each maxed relic's drop rate instead, and the relic
+  pick never reads that value. Its log said `holding back`, and the relic still
+  dropped (#125).
+- Now and then the game drops a copy of one of your equipped relics, to help you level
+  it. It never copies one that is already at 10/10.
+
+The panel sends `relicfilter 1`, which only **arms** the mod. The `GetRelicQuest` hook
+goes in later, once a player instance exists. Installing a hook during character
 selection stalled the runner for about a minute (measured 2026-09-09), so the plugin
 defers it to its frame callback. That is why the mod applies a moment after you are
 in-game rather than at launch.
@@ -446,51 +461,38 @@ The plugin reports what it is doing in `<game>\bin\bp_ipc\out.txt`:
 
 ```
 relicfilter -> ON (armed, applies once you are in-game)
-relicfilter: hook installed -> ON
-relicfilter: holding back 3 of 5 maxed relic(s) on this roll
+relicfilter: hook installed -> ON (GetRelicQuest, native detour)
+relicfilter: scan found 1 maxed relics (ids 140)
+relicfilter: equipped slots mplr=1 slots=18 ... relics=12:140@10 ... stopped=none
+relicfilter: relic tab key=1 profile=0 online=no grid=156 cells=156 nodes=14 strings=14 ... maxed=none stopped=none
+relicfilter: skipped maxed relic 140, the game picks again (1 since armed)
 ```
 
-`out.txt` no longer keeps every session forever: once it passes 2 MB, the plugin
-rotates it to `out.prev.txt` the next time the game starts (never mid-session),
-replacing any older `out.prev.txt`, so old logs no longer pile up and the
-previous log is never lost. The log still grows during a session, so one long
-session can make either file larger than 2 MB. **If
-you're attaching a log to a bug report, attach both `out.txt` and
-`out.prev.txt`** — the session you actually want may be the one that was just
-rotated into the `.prev` file (e.g. the game crashed and you relaunched before
-sending the report).
-
-The first two lines only mean the mod is *armed and hooked* — until 1.3.19 they were
-all there was, and they printed just as happily while it held nothing back.
-
-The third line is the one that reports what actually happened, and it says which of
-these five states you are in. Only the first is the mod working:
+`out.txt` no longer keeps every session forever. Once it passes 2 MB, the plugin
+rotates it to `out.prev.txt` the next time the game starts (never mid-session) and
+replaces any older `out.prev.txt`. Old logs no longer pile up, and the previous log is
+never lost. The log still grows during a session, so one long session can make either
+file larger than 2 MB. **If you're attaching a log to a bug report, attach both
+`out.txt` and `out.prev.txt`.** The session you actually want may be the one that was
+just rotated into the `.prev` file, for example when the game crashed and you
+relaunched before sending the report.
 
 | Line | What it means |
 | --- | --- |
-| `holding back N of M maxed relic(s) on this roll` | Working. `M` maxed relics were found, `N` of them were withheld from this roll |
-| `scanned, no maxed relics to hold back` | Working, nothing to do — you own no relics at 10/10 yet |
-| `no player resolved yet, nothing scanned` | The scan did not run. Normal for a moment after the hook installs; persistent means it cannot find your character |
-| `all 156 relics maxed, filter stands down (nothing left to drop instead)` | Every relic is maxed, so there is nothing better to drop and the filter deliberately does nothing |
-| `found N maxed relic(s) but held back none (repository lookup failed)` | The scan worked, the drop table entry could not be read — usually an index that moved in a game update |
-| `found N maxed relic(s) but held back none (drop table write failed)` | Both worked, the change to the drop rate did not land |
+| `hook installed -> ON (GetRelicQuest, native detour)` | The hook is in and can act |
+| `hook installed -> FAILED (...)` | The filter cannot act on this game build. The reason is in the brackets |
+| `scan found N maxed relics (ids ...)` | Printed once when the filter arms: the relics it will skip. The two lines after it say what the equipped slots and the relic tab held, and `stopped=none` means each was read in full |
+| `scan did not run (no player yet)` | No character was found when the filter armed |
+| `skipped maxed relic N, the game picks again (K since armed)` | Working: the game drew relic N and drew again. The first 20 are listed one by one, then every 100th |
+| `every droppable relic is maxed, filter stands down (nothing left to drop instead)` | Every relic that can drop is at 10/10, so the filter lets the game's pick through |
 
-A working roll that could not hold back everything it found says so too, rather than
-rounding up: `holding back 2 of 5 maxed relic(s) on this roll (1 write(s) failed)`.
+`relicfilter status` prints the hook's state and how many maxed relics were skipped
+since the filter was armed. A session with relic drops and no `skipped` line can mean
+you own no relic at 10/10, or that none of your maxed relics came up. The arm lines
+and `relicfilter status` tell those apart.
 
-It is printed once per change of state, so a normal session stays quiet after the
-first line. **No line at all means the filter is not running.**
-
-The count is what the plugin *confirmed it changed* — each suppression is written
-through a status-returning call and then read back — not what the scan found and not
-what it attempted. Those are three different numbers, and the first two versions of
-this line reported the wrong one: the original printed the scan's input before the
-guards and writes had run at all, and its replacement counted the rollback list, which
-grows before each write and therefore still counted writes that threw or silently did
-nothing (both reported in review of PR #4). The rollback list is deliberately kept
-separate and still covers every *attempt*, because a write whose outcome is unknown
-must still be restored. `tests/test_relic_filter_behavior.py` runs the real hook
-against every case in this table.
+`tests/test_relic_filter_behavior.py` runs the real hook through the game's own draw
+against every line in this table.
 
 ### Known limitation — The Abyss
 `Spawn_Abyss_obj` is **not** supported. It is the only mechanic in its family that
@@ -619,6 +621,127 @@ How the game counts, consumes and saves was measured over several research
 rounds, in
 [`docs/crafting-materials-research.md`](docs/crafting-materials-research.md);
 its `## Ship design` describes this mod and what has not been observed live.
+
+## Move all into the stash
+
+Mods tab → Quality of Life → **Move all into the stash**. Off by default.
+
+With the stash open, click the **Move All** button - it sits in the
+backpack's **Sort** button's row, just left of it, under the last-but-one
+**Extra** tab above it, as **Sort Tab** sits under the last, and looks like
+the backpack's **Sort Tab** button, while the switch is on - or press
+**F4**, and every
+item on the backpack tab you are looking at moves into the stash tab you are
+looking at, one item at a time,
+top-left first, row by row. Each item goes by the game's own move for it -
+the same routines a Ctrl + left click runs, called in the same order - so it
+lands exactly as a hand move would have put it, and the stash is saved when
+you close it, as after a hand move. ForgePact writes nothing into the stash
+itself.
+
+- **When the tab fills up**, the first items that fit move and the rest stay
+  in your backpack. They never spill onto another stash tab or page: an item
+  is only ever handed to the tab on show, and only after that tab has been
+  read to have room for it. The log names each item that stayed and why
+  (`no room on the shown tab`).
+- **Which tabs.** Any Personal or Shared stash page, from the backpack page
+  on show. The **Materials** tab, from a backpack page or from the
+  backpack's Materials view. Anything the tab does not take (the Materials
+  tab takes only materials) stays in your backpack.
+- **Stacks.** A stack in the stash holds up to 999, and the Materials tab
+  (like a stash page) can hold several stacks of one kind. A stackable item -
+  a material, a key - joins a stack of its kind that still has room for its
+  whole count, the way the game's own Ctrl + left click does; when every
+  stack of its kind is too full to take it, or the tab has none, it starts a
+  new stack in a free cell of the same tab. It is never split between two
+  stacks, and with no free cell it stays in your backpack (`no room on the
+  shown tab`).
+- **The Socketable tab**, from the backpack's Socket view only. That tab
+  holds one stack per kind: a socketable whose kind is already on the tab
+  joins that stack, whatever its count, and one whose stack is full stays in
+  your backpack (`its stack on the shown tab is full`) - the tab never gets a
+  second stack of a kind. A kind the tab does not have yet stays in your
+  backpack (`a new kind stays in the bag`), because which empty slot of the
+  tab takes which kind has not been worked out. The game itself refuses
+  jewels and Gems of Incarnation on that tab, and they stay too.
+- **Not supported yet:** the Unique tab, and the backpack's Key, Tarot and
+  Relic views. The button and F4 there move nothing, and the log says
+  `refused`. A stackable item whose stack on a Shared page cannot be
+  identified stays in your backpack too.
+- **Refused, not guessed.** If a move cannot be confirmed afterwards - the
+  item not where the game said it put it, or still in your backpack as well,
+  or the stash tab on show changed - the run stops, ForgePact takes the item
+  back out of the stash tab when it can, and the mod turns itself off until
+  the game is restarted (`off for this session`); the panel then shows
+  `off (this session)` beside the switch.
+- **The button** is there only while the switch is on and the stash is open
+  with the backpack's Sort button showing. It sits in the Sort button's row,
+  just left of **Sort**: its left and right edges are those of the
+  last-but-one **Extra** tab of the backpack's tab row above it, as **Sort
+  Tab**'s are the last one's, and its top and bottom are the Sort button's.
+  Its width follows that tab. The mod reads that tab's place from the game
+  each time the button is made or checked; if the tab cannot be read, the
+  button takes the same column worked out from the Sort button's own place
+  and size, by how the tab row sits above Sort (measured at one interface
+  scale only). It looks like the backpack's **Sort Tab**
+  button, drawn with that button's own sprite and scale and with its **Move All** label centred inside it: the
+  mod copies onto it, from the Sort button itself each time, the Sort button's
+  sprite and scale and the 13 settings whose copy in a research session drew
+  the label centred like the Sort button's (Live 5). Each is written as the
+  Sort button has it - a number, a true/false, a text or an asset - and read
+  back; one that reads as anything else is not written and counts as not
+  read, and the log names the first setting that did not read back the same.
+  Checked in play (ForgePact #131, `docs/stash-move-research.md` § Live 6
+  results): all 16 copied settings reading back as the Sort button's, and the
+  label centred like Sort's, on the first opening and again after the stash
+  was closed and reopened. Its place under the **Extra** tab was checked in
+  play too (`docs/stash-move-research.md` § Live 7 results): on the first
+  opening and again after a close and reopen, its left and right edges
+  equalled that tab's and its top and bottom the Sort button's, with
+  `button_ref=tab`, at one interface scale only (2560x1440); the fallback from
+  the Sort button's own box (`button_ref=grid`) was not seen in play. A
+  moment after it appears the mod checks
+  where and how the game drew it and moves it once if needed; the log says
+  where it ended up, once a session (`stashmoveall: button - placed in the
+  column of the Extra tab above it, box ...`, or `stashmoveall: button -
+  placed ... off the column of the Extra tab above it` if the game draws it
+  somewhere else), and
+  says so once on a line of its own if it does not have that column's size or
+  if a copied setting did not read back as the Sort button's, naming the first
+  that did not (`stashmoveall: button - its size ... is not the Extra tab
+  column's ...`, `... it did not take the Sort button's look (textFont differs;
+  15/16 members the same) ...`). If the tab cannot be read the log says so
+  once (`... the Extra tab above it did not read, so its column is worked out
+  from the Sort button's box`), and if no place can be worked out at all it
+  sits beside Sort as before and the log says so once, when it first happens
+  (`... sits beside Sort by the old rule`). The button and F4 still work
+  either way. The bare `stashmoveall` line carries what it read
+  (`button_place=`, `button_box=`, `button_look=`, `button_size=`,
+  `button_ref=`, `button_tab=`, `button_look_same=`): `button_ref=tab` means
+  the box was taken from the Extra tab read from the game, and `button_tab=`
+  gives that tab's box (left, top, right, bottom); `button_ref=grid` means the
+  tab could not be read and the column was worked out from the Sort button's
+  box, with `button_tab=none`; `button_ref=sort` is the old place beside Sort.
+  `button_look_same=16/16` counts the copied settings that read
+  back as the Sort button's (`none` before the button is made). Turning the
+  switch off takes it
+  away at once, and closing the stash closes it with the window. Turned on
+  while the stash is already open, the button may only appear after you
+  click a stash tab; F4 does not need the button. A click on
+  it does exactly what F4 does, once per click. If the button cannot be
+  shown, the log says so once (`stashmoveall: button - ...`) and F4 keeps
+  working.
+- The button and F4 do something only while the switch is on, the game is
+  the window in front and the stash is open, and never with Alt, Ctrl or
+  Shift held - so Alt + F4 still only closes the game.
+- Each press writes one line per item and a summary to the log, for example
+  `stashmoveall: moved 5 of 7 from bag tab 0 to stash tab 1; skipped 2`.
+  Tools can run the same move with the `stashmoveall run` command, or move
+  one item with `stashmove <fingerprint>`.
+
+How the game's own move was measured, over six research sessions, is in
+[`docs/stash-move-research.md`](docs/stash-move-research.md); its
+`## Ship design` describes this mod and what has not been observed in play.
 
 ## Gems of Incarnation
 
@@ -834,9 +957,11 @@ more) was done.
   established as working.
 
 There is no command that opens the stash by name (a by-name open ended the
-game once in the research, so the tool uses the interact key) and none that
-moves an item between the bag and the stash. How each was measured, and
-what it does not cover, is in
+game once in the research, so the tool uses the interact key). Moving items
+from the bag into the stash is [Move all into the stash](#move-all-into-the-stash)'s
+`stashmoveall run` and `stashmove <fingerprint>`, which need that mod
+switched on; nothing moves an item the other way. How each was measured,
+and what it does not cover, is in
 [`docs/stash-bag-layout-research.md`](docs/stash-bag-layout-research.md).
 
 ## Frame profiler (where the game's frame time goes)
@@ -902,6 +1027,81 @@ density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
 Measurements, the rules and what is not known yet:
 [`docs/far-sleep-research.md`](docs/far-sleep-research.md).
 
+## Extra packs as you approach (lighter frames at high density)
+
+Mods → Quality of Life → **Extra packs as you approach** (plugin command
+`densityroll 1|0`, `densityroll <px>` for a reach between 1,500 and 20,000 px,
+`densityroll stat` for its state). Off by default, and it only matters with
+Monster Density above 1x.
+
+Monster Density works by copying every spawner in a zone: at 5x each one gets
+four copies. Without this switch all of them are made within the first seconds
+in the zone, and each one then keeps a timer in the game that asks, over and
+over, whether a player has come near - about 1,500 spawners in Act_01_01 at 5x.
+With it on, a copy is made only when a player comes within about 3,000 px of
+where it belongs; until then it waits in ForgePact's own list and costs the
+game nothing. A spawner releases its pack when a player comes within 1,050 px,
+so each copy is in place well before its pack could appear. The idle monsters
+that stand in a zone before you arrive come with their spawner too, so a
+copy's appear when it is made, still far outside the screen.
+
+- **Measured.** Act_01_01 at 5x, a fresh game, the same spot: with the switch
+  on, 120 of 1,260 copies had been made and the rest were waiting; the zone
+  held 430 spawners and 460 monsters instead of 1,570 and 939. Within 1,500 px
+  of the player the counts were identical (34 spawners, 184 monsters). The
+  game's timer pass fell from 8.7% to 2.1% of the frame, and all of the game's
+  own work per frame from 84.0% to 69.7% of a 60 fps frame.
+- **Moving.** Three teleports of about 4,500 px each, onto ground where
+  nothing had been made yet: every copy within reach (200 to 300 each time)
+  was there at the first check, 3 to 4 seconds later. Switching the mod off
+  there, which makes every copy still waiting, did not change the number of
+  spawners within 1,500 px of the player.
+- **When it steps aside.** With Reveal full map's **Really spawn every pack on
+  arrival (heavy)**, every copy is made at once as before, because that pass
+  needs all of them. While the Beacon or Tyrant's Crown has monsters hunting
+  you, the reach grows to their wake radius plus 500 px (4,500 px by default;
+  the whole zone for a whole-map hunt), so the hunt finds what it would find
+  without the switch. A zone you come back to gets its spawners back from the
+  game's own zone memory, copies included, exactly as without the switch.
+- **Pack markers.** A copy made on approach is not marked as a new pack on the
+  map.
+
+How it works and the measurements:
+[`docs/population-performance-analysis.md`](docs/population-performance-analysis.md#8-rolling-density-copies-2026-09-28).
+
+## Skill Haste and All Skills
+
+Modifiers → Offense → **Skill Haste** and **All Skills**, beside Faster Cast
+Rate (plugin command `statadd skillhaste <points>`, `statadd allskills <levels>`,
+and `statadd list` for all three). Both are off by default. Like Faster Cast
+Rate, each **adds** to your own total after the game has worked it out, so your
+gear and buffs still count underneath.
+
+- **Skill Haste** adds Skill Haste points, the stat your gear shows as "Skill
+  Haste Increased by N%". The game runs every skill cooldown down faster by half
+  a percent per point: 100 points make a cooldown take 2/3 of its time. The
+  game counts **at most 200** in total, where a cooldown takes half its time,
+  so the slider stops at 200.
+- **All Skills** adds levels to every skill you have put at least one point in,
+  like "+N to All Skills" on an item, in whole levels up to 100. A skill with no
+  points stays locked.
+- **Measured** (a Samurai with 40 Skill Haste from gear, Blade Barrier's 8 s
+  cooldown, counted in frames): 392 frames with nothing added; 280 with +100
+  and 265 with +120, as the half-percent rule says; 238 with +160, and still 238
+  with +200 and +300, because 240 and 340 count as 200.
+- **Measured** (the same Samurai, 28 All Skills from gear, For Honor with one
+  point; the game describes it as more attack damage and movement speed): its
+  buff's two values were 137.8 and 72.5 at level 29, and 228 and 120 with
+  **All Skills +19**, at level 48. Both grow with the level, so the +19 reached
+  the skill.
+- **Two things to know.** Stat Forge's boosts of the same names work on the
+  same game functions, so run one or the other, never both at once. And
+  levels far above what gear can give (the game's own items reach about +70)
+  have not been played through.
+
+The first time the game reads a boosted value, the log says so, for example
+`statadd StatSpellHaste: first boosted call 40 -> 140`.
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs
@@ -937,6 +1137,16 @@ confirmation that every gameplay modifier has applied.
 After a Hero Siege update, press **Install Mod Plugin** again before launching. Steam replaces
 the patched game exe during updates; ForgePact safely keeps the previous backup and prepares the
 new game build.
+
+After a **ForgePact** update, the plugin in your game is still the old one until it is replaced.
+ForgePact compares it with the plugin it ships, by reading the file, never by loading it. When
+the game's plugin is older, Setup, the status bar and the warning icon say so and point at
+**Install Mod Plugin**. **Launch Modded Game** replaces an older plugin itself before the game
+starts: only with the game closed, only the plugin file, and only when YYToolkit and AurieCore in
+the game are already the ones this ForgePact ships. Otherwise it launches as before and asks you to
+press **Install Mod Plugin**. Run from source, ForgePact only warns, since a plugin in the game
+may be your own build. Starting the game from Steam skips the launch step, so press
+**Install Mod Plugin** once after updating.
 
 All gameplay modifiers are **Off by default** for a new player. No manual hook,
 command file or DLL copying is required; the two buttons above handle installation

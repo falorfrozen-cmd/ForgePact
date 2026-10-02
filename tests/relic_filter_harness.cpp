@@ -1,21 +1,31 @@
-// Behavioral regression harness for the relic drop pool filter's diagnostic.
+// Behavioral regression harness for the relic drop pool filter (#125, #93).
 //
 // The Python runner injects the REAL ForgePact::RelicFilterMod class and the
-// REAL Hook_DropRelic body below. Only the game API is replaced; no game
-// process, character, installed DLL or release asset is touched.
+// REAL Hook_GetRelicQuest, Hook_DropRelic, RelicFilterHookState,
+// RelicFilterStatus and RelicFilterReportArmScan bodies below. Only the game
+// API is replaced. No game process, character, installed DLL or release asset
+// is touched.
 //
-// Why this exists rather than more source-string assertions: origin's review
-// of PR #4 showed the log line could report the scan's INPUT count before the
-// guards and writes that decide whether anything is held back had run, so it
-// announced a working filter on paths where nothing was applied. Only a test
-// that runs the hook end to end and compares what was logged against what was
-// actually written to the repository can tell those apart.
+// The game's relic pick is played by GameDraw below, as the hub's
+// docs/models/relic-pick-spec.md reads it:
+// - every routine that places a relic draws an id and draws again while
+//   GetRelicQuest answers true;
+// - GetRelicQuest is true only for the quest relics 141..155.
+// A scenario scripts the draws. The relic that drops is the first one the
+// hook answers false for, so each scenario shows what actually dropped, and
+// never only what the filter said.
 //
-// It also runs the REAL RelicFilterReportArmScan (#93): the one line the
-// filter logs when it arms, naming what the scan found, so a live session can
-// check the scan without waiting for a relic roll in a Satanic zone.
+// Why a harness rather than source-string assertions:
+// - ForgePact 2.0.1's filter logged "holding back 1 of 1" while the relic it
+//   named kept dropping (#125). Its lever, a `droprate.base` write, is read by
+//   no relic pick.
+// - Origin's review of PR #4 had already shown that a log line can claim an
+//   effect that did not happen.
+// Only running the hook through the game's own loop tells those apart.
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -29,208 +39,160 @@
 // ---- minimal game-API stand-ins ------------------------------------------
 enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_BOOL };
 
-struct FakeStruct;
 struct RValue {
     int m_Kind = VALUE_UNDEFINED;
     double number = 0;
     std::string text;
-    FakeStruct* m_Object = nullptr;
     RValue() = default;
     RValue(double n) : m_Kind(VALUE_REAL), number(n) {}
     RValue(int n) : m_Kind(VALUE_REAL), number(n) {}
+    explicit RValue(bool b) : m_Kind(VALUE_BOOL), number(b ? 1.0 : 0.0) {}
     RValue(const char* s) : m_Kind(VALUE_STRING), text(s) {}
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
-    explicit RValue(FakeStruct* p) : m_Kind(VALUE_OBJECT), m_Object(p) {}
     double ToDouble() const { return number; }
-    bool ToBoolean() const { return number != 0; }
+    bool ToBoolean() const { return m_Kind != VALUE_UNDEFINED && number != 0; }
     std::string ToString() const { return text; }
 };
-struct FakeStruct { std::map<std::string, RValue> fields; };
 struct CInstance { int id = 0; };
+
+struct FakeRunner {};
+static FakeRunner g_Runner;
+static FakeRunner* g_Yytk = &g_Runner;
 
 // ---- the controlled world -------------------------------------------------
 struct World {
     std::unordered_set<int> maxed;      // what the SDK scan returns
     bool playerResolves = true;         // HhResolveLocalPlayer
-    bool repoLookupWorks = true;        // RepoStruct / RepoIndexValid
     bool scanThrows = false;
-    // The two ways a repository WRITE fails after a successful lookup, both
-    // reported 2026-09-15. A throw is swallowed by the hook's own catch; an
-    // unset return is CallBuiltin's documented failure signal and writes
-    // nothing while looking like an ordinary call.
-    bool setThrows = false;
-    bool setFailsSilently = false;
-    int failWriteForRelic = -1;         // silent write failure for ONE relic only
-
-    long baseSuppressions = 0;          // droprate.base <- 1e18
-    long baseRestores = 0;              // droprate.base <- original
-    long origCalls = 0;                 // the game's own DropRelic
     bool rewardScopeActive = false;     // inside AFK FARM's reward delivery
-    // What the equipped-slot read reports when a caller asks for it (#93):
-    // the stage it stopped at (nullptr = read every slot) and the relics it
-    // identified; and how many scans asked for a report at all.
+    long scans = 0;                     // SDK scans actually made
+    long reportRequests = 0;            // scans that asked for a report
+    long questCalls = 0;                // the game's own GetRelicQuest ran
+    long dropCalls = 0;                 // the game's own DropRelic ran
+    // What the equipped-slot and relic-tab reads report when asked (#93, #125).
     const char* equippedStopped = nullptr;
     int equippedRelics = 0;
-    long reportRequests = 0;
+    const char* tabStopped = nullptr;
+    int tabRelics = 0;
     std::vector<std::string> log;
 };
 static World world;
 
-static std::vector<std::unique_ptr<FakeStruct>> g_arena;
-static std::unordered_map<int, FakeStruct*> g_repo;   // relic id -> repo struct
-
-static FakeStruct* newStruct() {
-    g_arena.push_back(std::make_unique<FakeStruct>());
-    return g_arena.back().get();
-}
-
-// A repo entry is { droprate: { base: <n> } }, the shape the hook walks.
-static FakeStruct* makeRepoEntry(double base, int relicId) {
-    FakeStruct* dr = newStruct();
-    dr->fields["base"] = RValue(base);
-    dr->fields["__relicid"] = RValue(relicId);   // harness tag, so a write can fail per relic
-    FakeStruct* item = newStruct();
-    item->fields["droprate"] = RValue(dr);
-    return item;
-}
-
-struct FakeRunner {
-    RValue CallBuiltin(const char* name, std::vector<RValue> args) {
-        const std::string fn = name;
-        if (fn == "variable_struct_get") {
-            if (args.empty() || !args[0].m_Object) return RValue();
-            auto it = args[0].m_Object->fields.find(args[1].ToString());
-            return it == args[0].m_Object->fields.end() ? RValue() : it->second;
-        }
-        if (fn == "variable_struct_set") {
-            if (args.empty() || !args[0].m_Object) return RValue();
-            const std::string key = args[1].ToString();
-            const bool suppressing = key == "base" && args[2].ToDouble() >= 1e17;
-            if (suppressing && world.setThrows) throw std::runtime_error("struct set failed");
-            int writingFor = -1;
-            auto tag = args[0].m_Object->fields.find("__relicid");
-            if (tag != args[0].m_Object->fields.end()) writingFor = static_cast<int>(tag->second.ToDouble());
-            if (suppressing && (world.setFailsSilently || writingFor == world.failWriteForRelic))
-                return RValue();  // unset, writes nothing
-            if (key == "base") {
-                if (suppressing) ++world.baseSuppressions;
-                else ++world.baseRestores;
-            }
-            args[0].m_Object->fields[key] = args[2];
-            return RValue();
-        }
-        if (fn == "variable_struct_exists") {
-            if (args.empty() || !args[0].m_Object) return RValue(0.0);
-            return RValue(args[0].m_Object->fields.count(args[1].ToString()) ? 1.0 : 0.0);
-        }
-        return RValue();
-    }
-
-    // The status-returning variant. `setFailsSilently` deliberately reports
-    // SUCCESS while writing nothing, so the only thing that can catch it is
-    // reading the value back - which is the point of the case.
-    int CallBuiltinEx(RValue& result, const char* name, CInstance*, CInstance*, std::vector<RValue> args) {
-        result = CallBuiltin(name, args);
-        return 0;
-    }
-
-    void GetGlobalInstance(CInstance** out) {
-        static CInstance instance;
-        if (out) *out = &instance;
-    }
-};
-using AurieStatus = int;
-static bool AurieSuccess(AurieStatus status) { return status == 0; }
-static FakeRunner g_Runner;
-static FakeRunner* g_Yytk = &g_Runner;
-
 static void Out(const std::string& s) { world.log.push_back(s); }
 
-// ---- the pieces of ModuleMain.cpp the hook leans on ----------------------
-static constexpr int kSeason10RelicRepoCount = 156;
-static bool RepoIndexValid(int category, int index) {
-    return category == 16 && index >= 0 && index < kSeason10RelicRepoCount;
-}
-static bool RepoStruct(int category, int index, RValue& out) {
-    if (!world.repoLookupWorks || !RepoIndexValid(category, index)) return false;
-    auto it = g_repo.find(index);
-    if (it == g_repo.end()) return false;
-    out = RValue(it->second);
-    return true;
-}
+static uint64_t g_RuntimeFrame = 1;
 
 static bool HhResolveLocalPlayer(RValue& out) {
     if (!world.playerResolves) return false;
-    out = RValue(newStruct());
+    out = RValue(1.0);
     out.m_Kind = VALUE_REF;          // what this runner really hands back
     return true;
 }
 
 namespace HeroSiege { namespace Player {
-// Stand-in for hs_game_sdk/player.hpp's EquippedSlotScanReport, reduced to the
-// two fields a scenario drives: the stage that ended the equipped-slot read
-// (nullptr when every slot was read, "not-run" when the scan never reached
-// it) and the relics it identified. The real report and its formatter are
-// tested in the hub (tests/cpp/test_sdk_player_hooks.cpp); this one only has
-// to show which report the arm line prints.
+// Stand-ins for hs_game_sdk/player.hpp's two reports, reduced to what a
+// scenario drives. The real reports and their formatters are tested in the
+// hub (tests/cpp/test_sdk_player_hooks.cpp). These only show which report
+// each arm line prints.
 struct EquippedSlotScanReport {
+    const char* stopped = "not-run";
+    int relicInstances = 0;
+};
+struct RelicTabScanReport {
     const char* stopped = "not-run";
     int relicInstances = 0;
 };
 inline std::string FormatEquippedSlotScanReport(const EquippedSlotScanReport& r) {
     return "relic=" + std::to_string(r.relicInstances) + " stopped=" + (r.stopped ? r.stopped : "none");
 }
-inline std::unordered_set<int> GetMaxedRelicIds(FakeRunner*, const RValue&, EquippedSlotScanReport* report = nullptr) {
-    if (report) ++world.reportRequests;
+inline std::string FormatRelicTabScanReport(const RelicTabScanReport& r) {
+    return "relic=" + std::to_string(r.relicInstances) + " stopped=" + (r.stopped ? r.stopped : "none");
+}
+inline std::unordered_set<int> GetMaxedRelicIds(FakeRunner*, const RValue&,
+                                                EquippedSlotScanReport* equipped = nullptr,
+                                                RelicTabScanReport* tab = nullptr) {
+    ++world.scans;
+    if (equipped || tab) ++world.reportRequests;
     if (world.scanThrows) throw std::runtime_error("read failed");
-    if (report) {
-        report->stopped = world.equippedStopped;
-        report->relicInstances = world.equippedRelics;
+    if (equipped) {
+        equipped->stopped = world.equippedStopped;
+        equipped->relicInstances = world.equippedRelics;
+    }
+    if (tab) {
+        tab->stopped = world.tabStopped;
+        tab->relicInstances = world.tabRelics;
     }
     return world.maxed;
 }
 }}
 
-// The one hs_game_sdk/reward_scope.hpp query the hook makes: during AFK FARM's
-// own reward delivery the relic filter steps aside and the game's drop runs.
+// The one hs_game_sdk/reward_scope.hpp query the hooks make: during AFK FARM's
+// own reward delivery the game's drop runs untouched.
 namespace HeroSiege { namespace RewardScope {
 inline bool Active() { return world.rewardScopeActive; }
 }}
 
 #define BP_DIAG_INCREMENT(counter) ((void)0)
 #define BP_LOGDROP(name, res, argc, argv) ((void)0)
+
+using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
+
+// The game's own GetRelicQuest: true for the quest relics 141..155 only.
+static RValue& FakeGetRelicQuest(CInstance*, CInstance*, RValue& result, int argc, RValue** args) {
+    ++world.questCalls;
+    const int id = (argc >= 1 && args && args[0]) ? static_cast<int>(args[0]->ToDouble()) : -1;
+    result = RValue(id >= 141 && id <= 155);
+    return result;
+}
+static RValue& FakeDropRelic(CInstance*, CInstance*, RValue& result, int, RValue**) {
+    ++world.dropCalls;
+    result = RValue(true);
+    return result;
+}
+
+static PFUNC_YYGMLScript g_Orig_DropRelic = &FakeDropRelic;
 static volatile long g_cnt_DropRelic = 0;
 static int g_mult_DropRelic = 1;
 
-using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
-static RValue& FakeOriginal(CInstance*, CInstance*, RValue& result, int, RValue**) {
-    ++world.origCalls;
-    return result;
-}
-static PFUNC_YYGMLScript g_Orig_DropRelic = &FakeOriginal;
-
 // PRODUCTION_RELICFILTER
 
+// PRODUCTION_STATICS
+
 // PRODUCTION_FUNCTIONS
+
+// ---- the game's relic pick ------------------------------------------------
+// The draws a scenario scripts as the pick's `irandom(155)` results, in order.
+// The relic that drops is the first one GetRelicQuest answers false for. -1
+// means every scripted draw was answered true.
+static int GameDraw(const std::vector<int>& draws) {
+    for (int id : draws) {
+        RValue result;
+        RValue arg(static_cast<double>(id));
+        RValue* args[1] = { &arg };
+        if (!Hook_GetRelicQuest(nullptr, nullptr, result, 1, args).ToBoolean()) return id;
+    }
+    return -1;
+}
 
 // ---- scenarios ------------------------------------------------------------
 static void reset() {
     world = World();
-    g_arena.clear();
-    g_repo.clear();
-    for (int i = 0; i < kSeason10RelicRepoCount; ++i) g_repo[i] = makeRepoEntry(1000.0 + i, i);
+    g_Orig_GetRelicQuest = &FakeGetRelicQuest;
+    g_GetRelicQuestNative = true;
+    g_mult_DropRelic = 1;
+    ++g_RuntimeFrame;                    // every scenario starts on a new frame
+    ForgePact::RelicFilterMod::Instance().SetTestMaxed({});
+    ForgePact::RelicFilterMod::Instance().SetEnabled(false, true);
+    world.log.clear();
 }
 
-static void runHook() {
-    RValue result;
-    Hook_DropRelic(nullptr, nullptr, result, 0, nullptr);
-}
-
-static void report(const char* label) {
+static void report(const char* label, int dropped) {
     std::cout << "SCENARIO " << label
-              << " suppressed=" << world.baseSuppressions
-              << " restored=" << world.baseRestores
-              << " origcalls=" << world.origCalls
+              << " dropped=" << dropped
+              << " skips=" << ForgePact::RelicFilterMod::Instance().Skips()
+              << " scans=" << world.scans
+              << " questcalls=" << world.questCalls
+              << " dropcalls=" << world.dropCalls
               << " reports=" << world.reportRequests << "\n";
     for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
 }
@@ -244,120 +206,206 @@ static void runArmReport(const char* label) {
     std::cout << "SCENARIO " << label
               << " due_before=" << (dueBefore ? 1 : 0)
               << " due_after=" << (dueAfter ? 1 : 0)
-              << " origcalls=" << world.origCalls
+              << " questcalls=" << world.questCalls
               << " reports=" << world.reportRequests << "\n";
     for (const std::string& line : world.log) std::cout << "LOG " << label << " :: " << line << "\n";
 }
 
-int main() {
-    // The report line dedupes on its own text, so each scenario runs in a
-    // fresh process-level state only for the world; the static in the hook
-    // persists. Every scenario therefore emits a DIFFERENT line, which is
-    // also the property we want: identical repeats stay quiet.
-
-    // 1. Positive control: one maxed relic, everything available.
-    reset();
-    world.maxed = { 42 };
+static void arm() {
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, true);
-    runHook();
-    report("positive_control");
+    world.log.clear();
+}
 
-    // 2. Every relic maxed: the bypass deliberately applies nothing.
-    reset();
-    for (int i = 0; i < kSeason10RelicRepoCount; ++i) world.maxed.insert(i);
-    runHook();
-    report("all_maxed");
+int main() {
+    auto& rf = ForgePact::RelicFilterMod::Instance();
 
-    // 3. Repository lookup fails: scan found one, nothing can be written.
+    // 1. Baseline: the filter is off, so the maxed relic drops as the game picked it.
     reset();
-    world.maxed = { 42 };
-    world.repoLookupWorks = false;
-    runHook();
-    report("repo_lookup_fails");
+    world.maxed = { 140 };
+    report("baseline_off", GameDraw({ 140, 5 }));
 
-    // 4. No player instance yet: the scan never ran at all.
+    // 2. Positive control: relic 140 is maxed; the game draws again and 5 drops.
     reset();
-    world.maxed = { 42 };
-    world.playerResolves = false;
-    runHook();
-    report("no_player");
+    world.maxed = { 140 };
+    arm();
+    report("positive_control", GameDraw({ 140, 5 }));
 
-    // 5. Scan ran and the player simply owns no maxed relics.
+    // 3. A quest relic is the game's own reroll: nothing is counted as a skip.
     reset();
-    runHook();
-    report("scanned_none_maxed");
+    world.maxed = { 140 };
+    arm();
+    report("quest_is_the_games", GameDraw({ 150, 3 }));
 
-    // 6. The lookup succeeds and the suppression write THROWS. The hook's own
-    //    catch swallows it, so nothing but a confirmed read-back can tell.
+    // 4. A relic the player has not maxed drops untouched.
     reset();
-    world.maxed = { 42 };
-    world.setThrows = true;
-    runHook();
-    report("write_throws");
+    world.maxed = { 140 };
+    arm();
+    report("not_maxed", GameDraw({ 9 }));
 
-    // 7. The write reports success and changes nothing - CallBuiltin's
-    //    documented unset-on-failure shape. A status check alone passes here.
+    // 5. Every droppable relic maxed: nothing is left to drop instead, so the
+    //    filter stands down rather than leave the game's loop without an end.
     reset();
-    // Two relics, so this scenario's line differs from case 6's: the report
-    // dedupes on its own text, which is correct in a session and means the
-    // harness must not run two scenarios that would word themselves alike.
-    world.maxed = { 7, 8 };
-    world.setFailsSilently = true;
-    runHook();
-    report("write_fails_silently");
+    for (int id = 0; id <= 140; ++id) world.maxed.insert(id);
+    arm();
+    const int first = GameDraw({ 140 });
+    const int second = GameDraw({ 7 });
+    report("all_maxed", first == 140 && second == 7 ? 140 : -2);
 
-    // 8. Two maxed relics, one write lands and one does not: the count must be
-    //    the confirmed one, and the shortfall must be named.
+    // 6. One relic left: every draw that is not it goes again.
     reset();
-    world.maxed = { 11, 12 };
-    world.failWriteForRelic = 12;
-    runHook();
-    report("partial_write");
+    for (int id = 0; id <= 140; ++id) if (id != 77) world.maxed.insert(id);
+    arm();
+    report("one_left", GameDraw({ 3, 140, 12, 77 }));
 
-    // 9. Inside AFK FARM's reward scope: the game's own drop runs untouched,
-    //    even with the filter on and a maxed relic to hold back.
+    // 7. Inside AFK FARM's reward scope: the game's answer, untouched.
     reset();
-    world.maxed = { 42 };
+    world.maxed = { 140 };
+    arm();
     world.rewardScopeActive = true;
-    runHook();
-    report("reward_scope_passthrough");
+    report("reward_scope", GameDraw({ 140, 5 }));
 
-    // 10. Arm-time line: `relicfilter 1` arms the filter, and the report names
-    //     the count and the ids from the scan's own set.
+    // 8. No player yet: the scan did not run, so nothing is held back.
     reset();
-    ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
+    world.maxed = { 140 };
+    world.playerResolves = false;
+    arm();
+    report("no_player", GameDraw({ 140, 5 }));
+
+    // 9. The scan throws: it did not run.
+    reset();
+    world.maxed = { 140 };
+    world.scanThrows = true;
+    arm();
+    report("scan_throws", GameDraw({ 140, 5 }));
+
+    // 10. One scan per frame, however many draws the frame's rolls make.
+    reset();
+    world.maxed = { 140, 7 };
+    arm();
+    const int sameFrame = GameDraw({ 140, 7, 140, 9 });
+    report("frame_cache_one_frame", sameFrame);
+    ++g_RuntimeFrame;
+    report("frame_cache_next_frame", GameDraw({ 140, 4 }));
+
+    // 11. The skip log thins out: 20 lines one by one, then every 100th.
+    reset();
+    world.maxed = { 140 };
+    arm();
+    for (int roll = 0; roll < 100; ++roll) GameDraw({ 140, 5 });
+    report("log_thinning", 5);
+
+    // 12. Research: `relicfilter testmaxed` ids join the scan's set.
+    reset();
+    arm();
+    rf.SetTestMaxed({ 7 });
+    report("testmaxed_joins", GameDraw({ 7, 3 }));
+
+    // 13. ...but only when the scan itself ran (no player: no filtering).
+    reset();
+    world.playerResolves = false;
+    arm();
+    rf.SetTestMaxed({ 7 });
+    report("testmaxed_needs_a_scan", GameDraw({ 7, 3 }));
+
+    // 14. Status: native hook, one skip.
+    reset();
+    world.maxed = { 140 };
+    arm();
+    GameDraw({ 140, 5 });
+    world.log.clear();
+    RelicFilterStatus();
+    report("status_on", 5);
+
+    // 15. Status: a table-only install is the failure it is.
+    reset();
+    arm();
+    g_GetRelicQuestNative = false;
+    RelicFilterStatus();
+    report("status_table_only", -1);
+
+    // 16. Status: off.
+    reset();
+    RelicFilterStatus();
+    report("status_off", -1);
+
+    // 17. Arming again starts a fresh count.
+    reset();
+    world.maxed = { 140 };
+    arm();
+    GameDraw({ 140, 5 });
+    GameDraw({ 140, 6 });
+    const long before = rf.Skips();
+    arm();
+    std::cout << "SCENARIO rearm_resets before=" << before << " after=" << rf.Skips() << "\n";
+
+    // 18. DropRelic is `dropmult relic`'s hook only: one game call per call at
+    //     x1, three at x3, and one inside AFK FARM's reward scope.
+    reset();
+    world.maxed = { 140 };
+    arm();
+    {
+        RValue result;
+        Hook_DropRelic(nullptr, nullptr, result, 0, nullptr);
+    }
+    report("drop_x1", -1);
+    reset();
+    g_mult_DropRelic = 3;
+    {
+        RValue result;
+        Hook_DropRelic(nullptr, nullptr, result, 0, nullptr);
+    }
+    report("drop_x3", -1);
+    reset();
+    g_mult_DropRelic = 3;
+    world.rewardScopeActive = true;
+    {
+        RValue result;
+        Hook_DropRelic(nullptr, nullptr, result, 0, nullptr);
+    }
+    report("drop_reward_scope", -1);
+
+    // ---- #93/#125: the lines the filter logs when it arms ------------------
+
+    // 19. Arm-time line: the count and the ids from the scan's own set, then
+    //     the equipped-slot and relic-tab reports.
+    reset();
     world.maxed = { 42, 7 };
     world.equippedRelics = 2;
+    world.tabRelics = 14;
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    world.log.clear();
     runArmReport("arm_scan_two");
 
-    // 11. Ids are listed in numeric order, not text order (9 before 124).
+    // 20. Ids are listed in numeric order, not text order (9 before 124).
     reset();
     world.maxed = { 135, 9, 124 };
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    world.log.clear();
     runArmReport("arm_scan_sorted");
 
-    // 12. The scan ran and found nothing: an empty set is named as such.
+    // 21. The scan ran and found nothing: an empty set is named as such.
     reset();
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    world.log.clear();
     runArmReport("arm_scan_empty");
 
-    // 13. No player: the scan did not run, which must not read as "0 maxed".
+    // 22. No player: the scan did not run, which must not read as "0 maxed".
     reset();
     world.maxed = { 42 };
     world.playerResolves = false;
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    world.log.clear();
     runArmReport("arm_scan_no_player");
 
-    // 14. Armed and then switched off before the report: nothing is due.
+    // 23. Armed and then switched off before the report: nothing is due.
     reset();
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
     ForgePact::RelicFilterMod::Instance().SetEnabled(false, false);
     std::cout << "SCENARIO arm_then_off due="
               << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
 
-    // 15. Re-armed while the DropRelic hook is already in (`dropmult relic`
-    //     installed it): the install is not pending, the report still is.
+    // 24. Re-armed while the GetRelicQuest hook is already in: the install is
+    //     not pending, the report still is.
     reset();
     world.maxed = { 42 };
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, true);
@@ -365,20 +413,22 @@ int main() {
               << (ForgePact::RelicFilterMod::Instance().IsPending() ? 1 : 0)
               << " due=" << (ForgePact::RelicFilterMod::Instance().IsArmScanDue() ? 1 : 0) << "\n";
 
-    // 16. The equipped-slot read stopped at the owner lookup: the scan ran
-    //     and found nothing, and the line after it names the stage, so this
-    //     zero reads differently from a player with nothing maxed (12).
+    // 25. The equipped-slot read stopped at the owner lookup, and so did the
+    //     relic tab's: each line names its stage beside the zero.
     reset();
     world.equippedStopped = "owner";
+    world.tabStopped = "controller";
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
-    runArmReport("arm_scan_stopped_owner");
+    world.log.clear();
+    runArmReport("arm_scan_stopped");
 
-    // 17. The scan threw before the slots were read: it did not run, and no
-    //     equipped-slot line claims a stage for a read that never happened.
+    // 26. The scan threw before any place was read: it did not run, and no
+    //     report line claims a stage for a read that never happened.
     reset();
     world.maxed = { 42 };
     world.scanThrows = true;
     ForgePact::RelicFilterMod::Instance().SetEnabled(true, false);
+    world.log.clear();
     runArmReport("arm_scan_throws");
 
     std::cout << "HARNESS DONE\n";

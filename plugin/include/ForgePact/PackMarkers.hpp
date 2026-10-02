@@ -160,6 +160,17 @@ public:
         ++m_Spawned;
     }
 
+    // A density copy made on its own, as the player walks (rolling density
+    // copies): count it into its family's peak, so the growth poll does not
+    // re-list the whole zone for every copy. The periodic re-listing gives it
+    // its marker (it sits beside its original, in the same cluster).
+    void NoteCopy(int objectIndex) {
+        if (!Enabled()) return;
+        for (int k = 0; k < KindCount; ++k)
+            if (m_ObjResolved[k] && m_ObjIdx[k] == objectIndex) { ++m_FamilyPeak[k]; ++m_CopiesNoted; return; }
+    }
+    uint64_t CopiesNoted() const { return m_CopiesNoted; }
+
     // From the minimap hook, after the game's own enemy layer drew: the
     // arguments are the ones DrawMinimapDynamic received for the monster
     // family, so the marker lands exactly where the game would put a dot.
@@ -472,6 +483,7 @@ private:
     uint64_t m_Zone{ 0 }, m_LastEnumerate{ 0 };
     long m_FamilyPeak[KindCount] = { 0, 0, 0, 0, 0, 0, 0 };
     size_t m_Cursor{ 0 };
+    uint64_t m_CopiesNoted{ 0 };
     uint64_t m_Spawned{ 0 }, m_Enumerations{ 0 }, m_Draws{ 0 }, m_IconDraws{ 0 }, m_BadgeDraws{ 0 }, m_DrawErrors{ 0 }, m_Removed{ 0 };
     int m_ObjIdx[KindCount] = { -1, -1, -1, -1, -1, -1, -1 };
     bool m_ObjResolved[KindCount] = { false, false, false, false, false, false, false };

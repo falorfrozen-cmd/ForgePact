@@ -22,7 +22,7 @@ class AdaptivePopulationTests(unittest.TestCase):
         self.compile_and_run('density-adapter',harness,'RESULT OK')
 
     def test_production_budget_and_density_lifecycle(self):
-        self.compile_and_run('test',(ROOT/'tests/adaptive_population.cpp').read_text(encoding='utf-8'),'transition resume PASS')
+        self.compile_and_run('test',(ROOT/'tests/adaptive_population.cpp').read_text(encoding='utf-8'),'due within reach PASS')
 
     def compile_and_run(self,name,code,expected):
         if os.name!='nt':self.skipTest('MSVC harness runs on Windows')
