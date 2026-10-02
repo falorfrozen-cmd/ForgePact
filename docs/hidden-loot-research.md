@@ -351,9 +351,14 @@ object that `instance_exists` answers false (an item struct, if the reading
 holds), an `id` that does not read as a number, a read that throws, a kind no
 instance has. A read that throws means a C++ exception from the plugin's call
 wrapper, caught there and counted in `errors`; that is all `errors` can see. A
-runner error inside `instance_exists` itself goes through the game's own error
-path instead and never reaches `errors`, so Live 3 reads it through `ping`
-and a screenshot. Those two builtins are all the class calls inside the call: no
+runner error inside `instance_exists` itself goes through the runner's
+`YYError` instead, and this runner catches such an error and carries on, as a
+rule with no dialog and no stop, so neither `errors`, `ping` nor a screenshot
+can see it. The one place it shows is YYToolkit's own log, `YYToolkit.log`
+(not the plugin's `out.txt`, which `hs_ipc_tail` returns): a `[hs] YYError
+report #` for each new message and the `[hs] YYError summary: total=` count
+(the hub's `third_party/yytoolkit` patch 0005 writes both).
+Live 3 reads that log for it. Those two builtins are all the class calls inside the call: no
 `object_index` or verdict read, no deactivation and no write. The kind decides
 how a value is kept, never whether it is looked at. The stat line counts what
 happened, after `errors=`: `by-arg0=`, `by-arg1=` and `by-self=` (which slot
@@ -382,8 +387,9 @@ the three handles that is a live instance whose `object_index` is
 struct answers false without an error on this runtime is **not established**:
 the harness assumes it, and Live 3's `struct-safe` reads it from the
 argument-1 fields only (`obj-a1` > 0 with every one of them in
-`not-instance-a1`, beside a non-zero `reduced-self` and a `ping` with no error
-dialog; never the sums; see [Not established](#not-established)). It then reads the verdict
+`not-instance-a1`, beside a non-zero `reduced-self` and no new runner error
+naming `instance_exists` in `YYToolkit.log`; never the sums; see
+[Not established](#not-established)). It then reads the verdict
 there, after `variable_instance_exists`, and deactivates the item only if the
 verdict reads hidden. It does not deactivate inside the call: the rest of the
 entry point, and whoever called `LootGroundCreateFromItem` with its return
@@ -573,12 +579,25 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   these hold: `obj-a1` > 0; `not-instance-a1` equals `obj-a1` (so
   `reduced-a1`, `no-id-a1` and `threw-a1` are 0); `errors=0`; the positive
   control `reduced-self` > 0 in the same line (`instance_exists` ran and
-  answered true on this instrument); and `ping` answering with no error
-  dialog on screen, since a runner error inside `instance_exists` would not
-  reach `errors`, which counts only C++ exceptions. `obj-a1=0`, or
-  `reduced-self=0`, is not observed; any other outcome is a finding (for
-  example `reduced-a1` > 0: `instance_exists` accepted the struct), never a
-  pass. The `reduced=` and `dropped=` sums never decide it, because `self`
+  answered true on this instrument); and no runner error from the struct.
+  That last condition cannot come from `errors`, which counts only C++
+  exceptions, nor from `ping` or a screenshot: this runner catches a
+  `YYError` and carries on, as a rule with no dialog, so a struct that makes
+  `instance_exists` raise one and answer falsy would leave every field above
+  passing. It is read from YYToolkit's own log, `YYToolkit.log`, before
+  step 3 and again after step 4, once a `[hs] YYError summary: total=` line
+  written at least 30 s after step 4 is there (the summary is written at
+  most once per 30 s, and only when a counter moved): it holds when no new
+  `[hs] YYError report #` names `instance_exists` and `total=` did not rise
+  by anything near `obj-a1`. Its positive control is in the same log and the
+  same session: the `[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS`
+  line, or a report or summary for one of the game's known recurring errors
+  ("Unable to find any instance for object index"). If that log cannot be
+  read, or the control is missing, `struct-safe` is not observed (runner-error
+  instrument unavailable), never a pass. `obj-a1=0`, or `reduced-self=0`, is
+  not observed too; any other outcome is a finding (for example a non-zero
+  `reduced-a1`: `instance_exists` accepted the struct, or a report naming
+  `instance_exists`), never a pass. The `reduced=` and `dropped=` sums never decide it, because `self`
   fills them alone.
 - **The guard in front of the filter call** inside `LootGroundInit` was not
   read; `skipLootFilter` is a candidate, not a finding.
