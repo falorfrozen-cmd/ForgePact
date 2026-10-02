@@ -21998,20 +21998,26 @@ static void SpawnByName(const std::string& name)
 // gate (the restriction lives in its callers); it reads the drop x/y from argv[0]/argv[1]
 // and spawns via LootGroundCreate. So we call the original trampoline with the player's
 // coords as args and the player instance as self.
+// The player is resolved the way the relic tick resolves it (HhResolveLocalPlayer,
+// then HhResolveInstance for the CInstance*). The old instance_find ->
+// GetInstanceObject path printed "cannot resolve player CInstance" on every call
+// in #124's Live 1 (session 1) while `petrelic census` saw the player; this
+// runner hands instance_find back a VALUE_REF, the suspected (not measured) cause.
 static void ForceRelicDrop(int n)
 {
     if (n < 1) n = 1;
     if (n > 200) n = 200;
     if (!g_Orig_DropRelic) { Out("forcerelic: DropRelic not hooked yet"); return; }
     try {
-        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
-        RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
-        if (id.ToDouble() < 0) { Out("forcerelic: no Player_obj instance (be in a level)"); return; }
-        RValue px = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") });
-        RValue py = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("y") });
-        CInstance* self = nullptr;
-        g_Yytk->GetInstanceObject((int32_t)id.ToDouble(), self);
-        if (!self) { Out("forcerelic: cannot resolve player CInstance"); return; }
+        RValue player;
+        std::string how;
+        if (!HhResolveLocalPlayer(player, &how)) {
+            Out("forcerelic: no local player (how=" + how + "; be in a level)"); return;
+        }
+        CInstance* self = HhResolveInstance(player);
+        if (!self) { Out("forcerelic: local player (" + how + ") resolves to no CInstance"); return; }
+        RValue px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") });
+        RValue py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") });
         for (int i = 0; i < n; i++) {
             RValue ax = px; RValue ay = py;
             RValue* argv[2] = { &ax, &ay };
@@ -22021,7 +22027,7 @@ static void ForceRelicDrop(int n)
         char b[128];
         sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
         Out(b);
-    } catch (...) { Out("forcerelic EXCEPTION"); }
+    } catch (...) { Out("forcerelic: EXCEPTION"); }
 }
 
 // ===== Relic gate: KALDIRILDI ===============================================

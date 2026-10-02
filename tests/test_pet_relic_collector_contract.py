@@ -65,6 +65,43 @@ def destroy_only_after_true_return(collect):
     return bool(destroys) and all(close < d < last_catch for d in destroys)
 
 
+def forcerelic_resolves_like_the_tick(body):
+    """`ForceRelicDrop` finds the player through HhResolveLocalPlayer and its
+    `self` through HhResolveInstance, as the relic tick does, with no raw
+    instance_find/GetInstanceObject path or kind gate of its own (Live 1,
+    session 1: that path printed `cannot resolve player CInstance` on every
+    call while `petrelic census` saw the player), and still drops through the
+    original DropRelic with its success line."""
+    local = body.find("HhResolveLocalPlayer(")
+    instance = body.find("HhResolveInstance(")
+    return (0 <= local < instance
+            and not any(raw in body for raw in ("GetInstanceObject", "instance_find", "m_Kind"))
+            and "g_Orig_DropRelic(" in body
+            and "relic call(s) at player" in body
+            and "cannot resolve player CInstance" not in body)
+
+
+def refusal_after(body, guard):
+    """The first Out(...) statement after `guard`, up to its semicolon."""
+    out = body.index("Out(", body.index(guard))
+    return body[out: body.index(";", out)]
+
+
+# Live 1 (session 1)'s ForceRelicDrop shape, which the predicate must reject.
+FORCERELIC_INSTANCE_FIND_SHAPE = """
+    if (!g_Orig_DropRelic) { Out("forcerelic: DropRelic not hooked yet"); return; }
+    try {
+        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
+        CInstance* self = nullptr;
+        g_Yytk->GetInstanceObject((int32_t)id.ToDouble(), self);
+        if (!self) { Out("forcerelic: cannot resolve player CInstance"); return; }
+        for (int i = 0; i < n; i++) { try { g_Orig_DropRelic(self, self, tmp, 2, argv); } catch (...) {} }
+        sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
+    } catch (...) { Out("forcerelic EXCEPTION"); }
+"""
+
+
 class TestPetRelicCollectorContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -280,6 +317,36 @@ class TestPetRelicCollectorContract(unittest.TestCase):
         self.assertIn("StatLine(g_PetRelicSelector.HeldBack()", stats)
         branch = self.shipped.split('lc == "petrelic"', 1)[1][:1200]
         self.assertIn("if (!enable) PetRelicCollectorStats();", branch)
+
+    # ---- forcerelic finds the player the way the relic tick does ----------
+
+    def test_forcerelic_resolves_the_player_like_the_relic_tick(self):
+        body = function_body(self.plugin, "static void ForceRelicDrop(int n)")
+        self.assertTrue(forcerelic_resolves_like_the_tick(body))
+        self.assertIn("HhResolveLocalPlayer(player, &how)", body)
+        self.assertIn("HhResolveInstance(player)", body)
+        self.assertIn("g_Orig_DropRelic(self, self, tmp, 2, argv)", body)
+        # Negative control: Live 1's instance_find -> GetInstanceObject shape fails.
+        self.assertFalse(forcerelic_resolves_like_the_tick(strip_comments(FORCERELIC_INSTANCE_FIND_SHAPE)))
+
+    def test_forcerelic_refusals_name_their_stage(self):
+        body = function_body(self.plugin, "static void ForceRelicDrop(int n)")
+        lines = re.findall(r'Out\(\s*(?:std::string\(\s*)?"([^"]*)"', body)
+        self.assertGreaterEqual(len(lines), 4, lines)
+        for line in lines:
+            self.assertTrue(line.startswith("forcerelic: "), line)
+        no_player = refusal_after(body, "if (!HhResolveLocalPlayer(player, &how))")
+        no_instance = refusal_after(body, "if (!self)")
+        self.assertIn("forcerelic: ", no_player)
+        self.assertIn("forcerelic: ", no_instance)
+        self.assertNotEqual(no_player, no_instance)
+        self.assertIn("how", no_player)
+        self.assertLess(body.index("HhResolveLocalPlayer(player, &how)"), body.index("if (!self)"))
+
+    def test_forcerelic_stays_a_research_command(self):
+        start = self.plugin.index("kPlayerCommands = {")
+        self.assertNotIn('"forcerelic"', self.plugin[start: self.plugin.index("};", start)])
+        self.assertIn('"forcerelic"', self.plugin)   # positive control: the command still exists
 
 
 if __name__ == "__main__":
