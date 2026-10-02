@@ -173,7 +173,8 @@ function applyPluginModState(pm){
   }
 }
 // The drops rows with their own plugin command and a ceiling of 10: the Mining
-// Ore Multiplier and its Extra Rolls child (src/forgepact.py's
+// Ore Multiplier and Mining Ore Extra Rolls, a separate option beside it; the
+// two work independently and multiply when both are on (src/forgepact.py's
 // MINING_DROP_COMMANDS). Every other drops row goes to 100.
 const MINING_DROPS=['mining_ore','mining_ore_rolls'];
 // Mining Ore Extra Rolls' note, from the row itself: the range's value and its
@@ -188,7 +189,7 @@ function paintRollsNote(pm){
   const rolls=switchedOff('drops.mining_ore_rolls')?1:Math.max(1,Math.round(Number(range.value)||1)), mining=pm?.miningOre;
   let status='';
   if(rolls>1&&!ST?.gameRunning){
-    status='Each mining node you finish pays out '+rolls+' times: '+rolls+' sets of ore and '+rolls+' chances at the rare finds your mining stats allow. Character and guild XP still count once; mining XP is not measured.';
+    status='Each mining node you finish pays out '+rolls+' times.';
   }else if(rolls>1){
     if(mining?.rollsUnavailable)status='Plugin could not enable extra rolls; each node pays out once.';
     else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
@@ -445,7 +446,8 @@ async function boot(){
     const v=(c.keys&&c.keys[k])||1;
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
   }).join('');
-  // The two mining rows (the multiplier and its Extra Rolls child) go to 10
+  // The two mining rows (the multiplier and Extra Rolls, separate options that
+  // work independently) go to 10
   // and keep an empty note: applyPluginModState() writes the plugin's live
   // mining status into it while the game runs. row() writes it (an empty
   // note), so it gets its id and the range's aria-describedby too.

@@ -82,7 +82,8 @@ reward unchanged if it cannot validate the reward parameters. Checked in play on
 2026-09-23: at x10 a 6-ore reward dropped 60. A worn [Miner's Helmet](#miners-helmet)
 replaces it with 4×. See [research and test scope](docs/mining-ore-research.md).
 
-**Mining Ore Extra Rolls** sits under the multiplier on the Loot tab and sends the
+**Mining Ore Extra Rolls** is a separate option beside Mining Ore Multiplier on the
+Loot tab; the two work independently and multiply when both are on. It sends the
 plugin command `miningrolls N` (a whole number from 1 to 10; the plugin refuses
 anything above 10). Where the multiplier changes how much ore one stack holds, extra
 rolls make the game run its own dig completion again for the node you just finished,

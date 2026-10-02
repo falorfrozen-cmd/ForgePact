@@ -137,9 +137,10 @@ KEYS = [
 DROPS = [
     ("gold", "Gold", ""),
     ("mining_ore", "Mining Ore Multiplier", ""),
-    # A child of the multiplier (issue #36): the game's own dig completion runs
-    # this many times per node, independent of the multiplier and multiplying
-    # with it. The plugin caps it at 10 too (MiningOreMod.hpp's kMaxRolls).
+    # A separate option beside Mining Ore Multiplier (issue #36): the game's own
+    # dig completion runs this many times per node. The two work independently
+    # and multiply when both are on. The plugin caps it at 10 too
+    # (MiningOreMod.hpp's kMaxRolls).
     ("mining_ore_rolls", "Mining Ore Extra Rolls", ""),
 ]
 

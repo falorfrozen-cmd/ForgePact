@@ -42162,7 +42162,8 @@ static void RunCommand(const std::string& line)
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
-    // Mining Ore Extra Rolls: the multiplier's child row, same adapter.
+    // Mining Ore Extra Rolls: a separate option beside the multiplier (the two
+    // work independently and multiply when both are on), same adapter.
     if (lc == "miningrolls") { ForgePact::MiningOre::RollsCommand(rest); return; }
     if (lc == "gemmythic" || lc == "gemmaxroll" || lc == "gemfilter" || lc == "gems") { GemsCommand(lc, rest); return; }
     if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
