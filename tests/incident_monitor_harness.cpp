@@ -68,6 +68,9 @@ struct Sim {
     int ended = 0;
     double endedMs = 0.0;
     bool endedLoad = false;
+    bool endedMenu = false;
+    // The room the frame thread last sampled is a menu room (D17).
+    bool menu = false;
 
     Sim() { in.armed = true; in.focused = true; in.windowAlive = true; }
 
@@ -82,6 +85,7 @@ struct Sim {
         if (roomSeenAt >= 0.0 && nextWake >= roomSeenAt) in.roomChangeMs = roomChange;
         in.nowMs = nextWake;
         in.lastFrameMs = lastFed;
+        in.inMenu = menu;
         for (int i = 0; i < 16; ++i) {
             const inc::Episode e = detector.Analyze(in);
             if (e.kind == inc::Kind::none) break;
@@ -89,10 +93,12 @@ struct Sim {
         }
         double ms = 0.0;
         bool load = false;
-        if (detector.TakeFreezeEnded(ms, load)) {
+        bool inMenu = false;
+        if (detector.TakeFreezeEnded(ms, load, inMenu)) {
             ++ended;
             endedMs = ms;
             endedLoad = load;
+            endedMenu = inMenu;
         }
         nextWake += inc::kWakeMs;
     }
@@ -321,6 +327,59 @@ void FreezeNeverEnds()
                     && sim.episodes.size() == 1 && sim.ended == 1 && !sim.endedLoad && sim.endedMs >= 16000.0;
     Report("freeze-never-ends", ok, sim.Describe() + " | reported after " + Num(seconds) + " s | "
            + inc::FreezeEndedLine(sim.endedMs, sim.endedLoad));
+}
+
+// D17: the save loads on the character screen's slot click and the next
+// screen is the same room, so no room change explains the gap (Live 2's
+// FREEZE in Chose_rm). A gap that begins in a menu room is a load.
+void FreezeMenuRoom()
+{
+    Sim sim;
+    sim.menu = true;
+    sim.Frames(5.0, 16.7);
+    sim.Stall(3500.0);
+    const size_t during = sim.episodes.size();
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    const std::string line = inc::FreezeEndedLine(sim.endedMs, sim.endedLoad, sim.endedMenu);
+    bool ok = during == 0 && sim.episodes.empty() && sim.detector.Quiet() == 1 && sim.ended == 1 && sim.endedLoad
+              && sim.endedMenu && line.find("in a menu room: a load, not reported") != std::string::npos;
+    // Control: the same run outside a menu room is one freeze, as freeze-4s-no-hook.
+    Sim world;
+    world.Frames(5.0, 16.7);
+    world.Stall(3500.0);
+    world.Frames(3.0, 16.7);
+    world.Settle();
+    ok = ok && world.episodes.size() == 1 && world.Count(inc::Kind::freeze) == 1 && world.ended == 1 && !world.endedLoad
+         && !world.endedMenu;
+    Report("freeze-menu-room", ok, sim.Describe() + " | " + line + " | outside a menu room: " + world.Describe());
+}
+
+// D17 on the other path: a gap in a menu room that outlasts kFreezeHoldMs is
+// not reported while it lasts, nor once frames come back.
+void FreezeMenuRoomNeverEnds()
+{
+    Sim sim;
+    sim.menu = true;
+    sim.Frames(5.0, 16.7);
+    sim.Stall(16000.0);
+    const size_t during = sim.episodes.size();
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    const std::string line = inc::FreezeEndedLine(sim.endedMs, sim.endedLoad, sim.endedMenu);
+    bool ok = during == 0 && sim.episodes.empty() && sim.detector.Quiet() == 1 && sim.ended == 1 && sim.endedMenu
+              && sim.endedMs >= 16000.0 && line.find("in a menu room: a load, not reported") != std::string::npos;
+    // Control: outside a menu room it is reported at kFreezeHoldMs, as freeze-never-ends.
+    Sim world;
+    world.Frames(5.0, 16.7);
+    world.Stall(16000.0);
+    const int held = world.Count(inc::Kind::freeze);
+    const double seconds = held == 1 ? world.episodes[0].seconds : 0.0;
+    world.Frames(3.0, 16.7);
+    world.Settle();
+    ok = ok && held == 1 && seconds >= inc::kFreezeHoldMs / 1000.0 && world.episodes.size() == 1 && !world.endedMenu;
+    Report("freeze-menu-room-never-ends", ok, sim.Describe() + " | " + line + " | outside a menu room: " + world.Describe()
+           + " reported after " + Num(seconds) + " s");
 }
 
 void Unfocused()
@@ -672,6 +731,7 @@ void StatLinePrefix()
     s.worstJudgedMs = 300.0;
     s.slowJudged = 1;
     s.window = true;
+    s.menu = true;
     s.armed = true;
     s.inHook = "harness_hook";
     s.inMod = inc::Mod::density;
@@ -681,9 +741,11 @@ void StatLinePrefix()
     const std::vector<std::string> lines = inc::StatLines(s);
     bool ok = lines.size() == 4 && lines[0].rfind("incident: frames ", 0) == 0;
     if (ok) {
-        for (const char* part : { " | baseline ", " | worst judged ", " | slow judged frames ", " | window ", " | in-hook " })
+        for (const char* part : { " | baseline ", " | worst judged ", " | slow judged frames ", " | window ", " | menu ",
+                                  " | in-hook " })
             ok = ok && lines[0].find(part) != std::string::npos;
-        ok = ok && lines[0].find("| window yes") != std::string::npos && lines[0].find("(not judged)") != std::string::npos
+        ok = ok && lines[0].find("| window yes | menu yes | in-hook ") != std::string::npos
+             && lines[0].find("(not judged)") != std::string::npos
              && lines[2].rfind("incident: hooks tagged 42, untagged 10 | report write errors 0", 0) == 0;
     }
     // Not running: one line that says so.
@@ -949,6 +1011,8 @@ int main(int argc, char** argv)
     FreezeNoHook();
     FreezeLoadRoomChange();
     FreezeNeverEnds();
+    FreezeMenuRoom();
+    FreezeMenuRoomNeverEnds();
     Unfocused();
     RateLimit();
     PerModAccounting();

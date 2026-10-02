@@ -19168,6 +19168,45 @@ static void LoadStartup()
     if (uygulanan) Out("LoadStartup: " + std::to_string(uygulanan) + " erken ayar uygulandi");
 }
 
+// D18 (issue #76): what the one-time setup's installers cost. The setup block
+// in FrameCallback starts the laps, InstallHook marks one after each installer
+// of its normal path, and the block prints the three slowest in its
+// `incident: setup` line. Frame thread only. A lap outside the setup (a later
+// InstallHook call) records nothing.
+struct SetupLapTime {
+    const char* name;
+    double ms;
+};
+static std::vector<SetupLapTime> g_SetupLaps;
+static int64_t g_SetupLapQpc = 0;
+
+static void SetupLapStart()
+{
+    g_SetupLaps.clear();
+    g_SetupLapQpc = ForgePact::Incident::Qpc();
+}
+
+static void SetupLap(const char* name)
+{
+    if (!g_SetupLapQpc) return;
+    const int64_t now = ForgePact::Incident::Qpc();
+    g_SetupLaps.push_back({ name, ForgePact::Incident::QpcToMs(now - g_SetupLapQpc) });
+    g_SetupLapQpc = now;
+}
+
+// "InstallItemInspectHooks 812.4 ms, ..." for the `n` slowest laps; ends the laps.
+static std::string SetupSlowest(size_t n)
+{
+    std::vector<SetupLapTime> laps = g_SetupLaps;
+    std::sort(laps.begin(), laps.end(), [](const SetupLapTime& a, const SetupLapTime& b) { return a.ms > b.ms; });
+    std::string out;
+    for (size_t i = 0; i < laps.size() && i < n; ++i)
+        out += std::string(i ? ", " : "") + laps[i].name + " " + ForgePact::Incident::Fixed(laps[i].ms, 1) + " ms";
+    g_SetupLaps.clear();
+    g_SetupLapQpc = 0;
+    return out.empty() ? std::string("no installer timed") : out;
+}
+
 static void InstallHook()
 {
     if (g_HookInstalled) {
@@ -19185,7 +19224,7 @@ static void InstallHook()
     // InstallDropMultHooks below in the research build, `dropmult` or
     // `angelicwatch` later in either build. FindAngelicGate scans this
     // record. Reads two table entries; patches nothing.
-    CaptureAngelicScriptCode();
+    CaptureAngelicScriptCode(); SetupLap("CaptureAngelicScriptCode");
 
     // Load the editor-authored sidecar before choosing the release hook set.
     // This remains inert when the user has not forged any custom items.
@@ -19193,13 +19232,14 @@ static void InstallHook()
     // nothing to load, but a release build that skipped this outright would
     // silently drop custom-item stats/names/tooltips and Headhunter/Tyrant's
     // Crown/Beacon auto-arm for players who used the Item Editor.
-    LoadCustomForgeEntries();
+    LoadCustomForgeEntries(); SetupLap("LoadCustomForgeEntries");
+    // One lap for the two: test_item_truth_contract.py pins them as adjacent lines.
     InstallCustomForgeItemHooks();
-    InstallItemTruth();
-    HeadhunterAutoArm();
-    TyrantAutoArm();
-    BeaconAutoArm();
-    if (g_AngelicDropOneIn > 0.0) InstallHeadhunterHook();   // kill hook carries the angelic drops (Headhunter/Tyrant's Crown included, #63)
+    InstallItemTruth(); SetupLap("InstallCustomForgeItemHooks+InstallItemTruth");
+    HeadhunterAutoArm(); SetupLap("HeadhunterAutoArm");
+    TyrantAutoArm(); SetupLap("TyrantAutoArm");
+    BeaconAutoArm(); SetupLap("BeaconAutoArm");
+    if (g_AngelicDropOneIn > 0.0) { InstallHeadhunterHook(); SetupLap("InstallHeadhunterHook"); }   // kill hook carries the angelic drops (Headhunter/Tyrant's Crown included, #63)
 
 #ifdef FORGEPACT_RELEASE
     // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
@@ -19209,7 +19249,7 @@ static void InstallHook()
     return;
 #else
     // Development builds install the complete research surface eagerly.
-    InstallCreateHooks();
+    InstallCreateHooks(); SetupLap("InstallCreateHooks");
     // Find the Angelic gate now, before the next line hands DropItem's
     // script-table entry to DropManager's Hook_DropItem. Since #69 the finder
     // scans the code CaptureAngelicScriptCode recorded at the top of
@@ -19217,9 +19257,9 @@ static void InstallHook()
     // it here keeps the probe's startup log line. The finder caches what it
     // found and patches nothing; OpenAngelicGate reuses it.
     // (docs/angelic-roll-hook-research.md, "Instrument".)
-    FindAngelicGate();
-    InstallDropMultHooks();
-    InstallNecroBalanceHooks();
+    FindAngelicGate(); SetupLap("FindAngelicGate");
+    InstallDropMultHooks(); SetupLap("InstallDropMultHooks");
+    InstallNecroBalanceHooks(); SetupLap("InstallNecroBalanceHooks");
 
     PVOID p = nullptr;
     AurieStatus st = g_Yytk->GetNamedRoutinePointer("gml_Script_GetBloodPactInfo", &p);
@@ -19237,20 +19277,21 @@ static void InstallHook()
     char buf[160];
     sprintf_s(buf, "HOOK INSTALLED on GetBloodPactInfo src=%p tramp=%p", src, tramp);
     Out(buf);
-    InstallSlotHook();
-    InstallLoginHook();
-    InstallIsMyPlayerHook();
-    InstallBuffHooks();
-    InstallEnemyHooks();
-    InstallChaosTowerHooks();
+    SetupLap("GetBloodPactInfo detour");
+    InstallSlotHook(); SetupLap("InstallSlotHook");
+    InstallLoginHook(); SetupLap("InstallLoginHook");
+    InstallIsMyPlayerHook(); SetupLap("InstallIsMyPlayerHook");
+    InstallBuffHooks(); SetupLap("InstallBuffHooks");
+    InstallEnemyHooks(); SetupLap("InstallEnemyHooks");
+    InstallChaosTowerHooks(); SetupLap("InstallChaosTowerHooks");
     // The mining pair first: InstallItemInspectHooks table-hooks
     // LootGroundCreate, after which the table entry is this module's code and
     // the mining adapter's own install would come up table-only (the Mining
     // Ore mod unavailable in the research build). Installed first, the mining
     // detours hold the native route and the inspect hook chains to them. They
     // are pass-through while every mining lever is off.
-    ForgePact::MiningOre::Install();
-    InstallItemInspectHooks();
+    ForgePact::MiningOre::Install(); SetupLap("ForgePact::MiningOre::Install");
+    InstallItemInspectHooks(); SetupLap("InstallItemInspectHooks");
 #endif
 }
 
@@ -42631,6 +42672,33 @@ static void FrameProfilerTick()
 #pragma comment(lib, "version.lib")
 #pragma comment(lib, "advapi32.lib")
 
+// D17: a gap that begins in one of these rooms is a load, never a freeze. The
+// save loads on the character screen's slot click and the screen after it is
+// the same room, so no room change explains that gap (Live 2's FREEZE in
+// Chose_rm). Each name is spelled from the SDK's enum, so a room the SDK
+// lacks fails the compile; the string is the identifier after the prefix,
+// which is what room_get_name answers.
+#define FP_INCIDENT_MENU_ROOM(room) \
+    (static_cast<void>(room), #room + (sizeof("HeroSiege::Rooms::GameRoom::") - 1))
+static const char* const kIncidentMenuRooms[] = {
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Init_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Game_Start_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Login_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Login_Valhalla_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Main_Menu_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Main_Menu_Valhalla_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Char_Select_rm),
+    FP_INCIDENT_MENU_ROOM(HeroSiege::Rooms::GameRoom::Chose_rm),
+};
+#undef FP_INCIDENT_MENU_ROOM
+
+static bool IncidentIsMenuRoom(const std::string& room)
+{
+    for (const char* name : kIncidentMenuRooms)
+        if (room == name) return true;
+    return false;
+}
+
 // FrameCallback's second statement: the frame boundary, then once a second
 // what the monitor needs from the game, stored in atomics.
 static void IncidentFrameTick()
@@ -42646,7 +42714,8 @@ static void IncidentFrameTick()
     monitor.Arm();
     monitor.ObserveRoom(CurrentRoomKey(), now);
     ForgePact::FrameProfiler::Context context;
-    if (FrameProfContext(context)) monitor.StoreContext(context.room, context.instances, context.monsters);
+    if (FrameProfContext(context))
+        monitor.StoreContext(context.room, context.instances, context.monsters, IncidentIsMenuRoom(context.room));
 }
 
 // `incident stat`, on the frame thread: the monitor's last published counters.
@@ -43006,6 +43075,7 @@ static void IncidentMonitorRun() noexcept
                 in.minimized = window && IsIconic(window);
                 in.windowAlive = window && IsWindowVisible(window);
                 in.roomChangeMs = monitor.RoomChangeMs();
+                in.inMenu = monitor.InMenu();
                 in.inHookId = inc::g_Accounting.InHookId();
                 const inc::InModState where = inc::g_Accounting.InModNow();
                 in.inMod = where.mod;
@@ -43017,7 +43087,9 @@ static void IncidentMonitorRun() noexcept
                 }
                 double endedMs = 0.0;
                 bool endedLoad = false;
-                if (monitor.detector.TakeFreezeEnded(endedMs, endedLoad)) OutRaw(inc::FreezeEndedLine(endedMs, endedLoad));
+                bool endedMenu = false;
+                if (monitor.detector.TakeFreezeEnded(endedMs, endedLoad, endedMenu))
+                    OutRaw(inc::FreezeEndedLine(endedMs, endedLoad, endedMenu));
                 if (!crashChecked && nowMs - startMs >= inc::kCrashCheckDelayMs) {
                     crashChecked = true;
                     IncidentCrashCheck();
@@ -43034,6 +43106,7 @@ static void IncidentMonitorRun() noexcept
                 stat.focused = in.focused;
                 stat.armed = in.armed;
                 stat.window = window != nullptr;   // without it, no freeze is detected
+                stat.menu = in.inMenu;
                 stat.inHook = in.inHookId ? in.inHookId : "";
                 stat.inMod = in.inMod;
                 stat.inGameOriginal = in.inGameOriginal;
@@ -44388,10 +44461,20 @@ void FrameCallback(FWFrame& FrameContext)
     // Character selection still runs menu/controller code after the runner is
     // alive. Delay ForgePact setup until that transition has settled; release
     // commands are not consumed before this point.
+    // D18 (issue #76): the setup is its own `setup` row, never the `frame`
+    // row's, and prints what it cost, so a report's out-tail says what the
+    // row was and which installers took the time.
     if (!g_Setup && fc > 300) {
+        IncidentScope incidentSetup(IncidentMod::setup);
+        const int64_t setupStart = ForgePact::Incident::Qpc();
+        int64_t configEnd = setupStart;
+        int64_t hooksEnd = setupStart;
         g_Setup = true;
         Trace("1-setup-start");
-        try { LoadConfig(); Trace("2-loadconfig-ok"); InstallHook(); Trace("3-installhook-ok"); }
+        try {
+            LoadConfig(); configEnd = ForgePact::Incident::Qpc(); Trace("2-loadconfig-ok");
+            SetupLapStart(); InstallHook(); hooksEnd = ForgePact::Incident::Qpc(); Trace("3-installhook-ok");
+        }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
 #ifdef FORGEPACT_POPULATION_PROFILE
         ForgePact::PopulationProfile::InstallScriptTimings();
@@ -44402,6 +44485,11 @@ void FrameCallback(FWFrame& FrameContext)
         try { SetRelicGate(true); } catch (...) {}   // relic gate ALWAYS ON (every kill drops a relic; only generates in Satanic Zones)
 #endif
         Trace("5-setup-done");
+        namespace inc = ForgePact::Incident;
+        const int64_t setupEnd = ForgePact::Incident::Qpc();
+        Out("incident: setup " + inc::Fixed(inc::QpcToMs(setupEnd - setupStart), 1) + " ms at frame " + std::to_string(fc)
+            + ": config " + inc::Fixed(inc::QpcToMs(configEnd - setupStart), 1) + " ms, hooks "
+            + inc::Fixed(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0, 1) + " ms (" + SetupSlowest(3) + ")");
     }
 
     // Orb pickup: the player position the globe step hooks pull toward, read

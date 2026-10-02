@@ -100,6 +100,31 @@ def scoped_bodies(code, scope, header):
     return bodies
 
 
+def brace_block(code, start_text):
+    """The text inside the braces that open after the one `start_text`."""
+    start = code.index(start_text)
+    brace = code.index("{", start)
+    depth = 0
+    for index in range(brace, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[brace + 1:index]
+    raise AssertionError("unbalanced braces after " + start_text)
+
+
+# The one-time setup block in FrameCallback (test_relic_filter_contract.py
+# pins the text).
+SETUP_BLOCK = "if (!g_Setup && fc > 300)"
+SETUP_SCOPE = "IncidentScope incidentSetup(IncidentMod::setup);"
+# D17: the menu rooms, by the SDK's enum names (ctx "The menu-room list").
+MENU_ROOMS = ("Init_rm", "Game_Start_rm", "Login_rm", "Login_Valhalla_rm", "Main_Menu_rm",
+              "Main_Menu_Valhalla_rm", "Char_Select_rm", "Chose_rm")
+SDK_ROOMS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "rooms.hpp"
+
+
 def unguarded_original_calls(body):
     """Each game-original call in `body` that no guard's parentheses enclose."""
     code = strip_comments(body)
@@ -263,6 +288,11 @@ class IncidentMonitorContractTests(unittest.TestCase):
         self.assertIn("IncidentScope incidentScope(IncidentMod::miner); ForgePact::MinerHelmet::Tick();", frame)
         self.assertLess(frame.index("IncidentScope incidentScope(IncidentMod::ipc);"),
                         frame.index("ForgePact::IpcServer::Instance().PollCommands();"))
+        # D18: the one-time setup is its own row, opened first in its block,
+        # so its seconds are never the `frame` row's.
+        setup = brace_block(frame, SETUP_BLOCK)
+        self.assertEqual(code_lines(setup)[0], SETUP_SCOPE)
+        self.assertLess(setup.index(SETUP_SCOPE), setup.index("LoadConfig();"))
         # The dropmult bodies in DropManager.hpp: the macro's and the three
         # written out, each starting with the scope.
         self.assertIn("static RValue& Hook_##NAME(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \\\n"
@@ -334,14 +364,17 @@ class IncidentMonitorContractTests(unittest.TestCase):
         first = re.search(r'lines\.push_back\("([^"]*)"', body[after:])
         self.assertIsNotNone(first)
         self.assertTrue(first.group(1).startswith("incident: frames "), first.group(1))
-        for part in (" | baseline ", " | worst judged ", " | slow judged frames ", " | window ", " | in-hook ",
-                     "incident: hooks tagged ", "report write errors "):
+        for part in (" | baseline ", " | worst judged ", " | slow judged frames ", " | window ", " | menu ",
+                     " | in-hook ", "incident: hooks tagged ", "report write errors "):
             self.assertIn(part, body, part)
+        # D17: `menu yes|no` right after `window yes|no` (Live 3's menu-flag).
+        self.assertLess(body.index(" | window "), body.index(" | menu "))
+        self.assertLess(body.index(" | menu "), body.index(" | in-hook "))
         # The thread's own start line, which the crash check reads, stays.
         self.assertIn('inline constexpr char kMonitorRunningLine[] = "incident: monitor running";', self.header)
         run = strip_comments(function_body(self.plugin, "static void IncidentMonitorRun() noexcept"))
         self.assertIn("OutRaw(std::string(inc::kMonitorRunningLine)", run)
-        for fed in ("in.inHookId = inc::g_Accounting.InHookId();", "stat.window =", "stat.hooksTagged =",
+        for fed in ("in.inHookId = inc::g_Accounting.InHookId();", "stat.window =", "stat.menu =", "stat.hooksTagged =",
                     "stat.hooksUntagged =", "stat.writeErrors ="):
             self.assertIn(fed, run, fed)
 
@@ -443,6 +476,87 @@ class IncidentMonitorContractTests(unittest.TestCase):
         # and the bundle still asks the panel for its version.
         self.assertEqual(len(re.findall(r"= IncidentWriteBundle\(std::move\(facts\), failed\);", self.plugin)), 2)
         self.assertIn("IncidentPanelLive(&facts.panelVersion);", self.plugin)
+
+    # ---- replan 5 (Live 2): the menu-room load, D17, and the setup row, D18
+
+    def test_the_menu_rooms_come_from_the_sdk(self):
+        # D17: the adapter's table, each room spelled from the SDK's enum
+        # through the one macro, so a name the SDK lacks fails the compile.
+        region = strip_comments(self.region(REGION_START, REGION_END))
+        self.assertEqual(len(re.findall(r"#define FP_INCIDENT_MENU_ROOM\(\w+\)", region)), 1)
+        start = region.index("kIncidentMenuRooms[] = {")
+        table = region[region.index("{", start) + 1:region.index("};", start)]
+        names = []
+        for entry in (e.strip() for e in table.split(",")):
+            if not entry:
+                continue
+            found = re.fullmatch(r"FP_INCIDENT_MENU_ROOM\(HeroSiege::Rooms::GameRoom::(\w+)\)", entry)
+            self.assertIsNotNone(found, entry)
+            names.append(found.group(1))
+        self.assertEqual(sorted(names), sorted(MENU_ROOMS))
+        self.assertEqual(len(names), len(MENU_ROOMS))
+        # Positive control: the SDK's enum has each name the table spells.
+        if SDK_ROOMS.is_file():
+            rooms = SDK_ROOMS.read_text(encoding="utf-8")
+            for name in MENU_ROOMS:
+                self.assertRegex(rooms, rf"\b{name} = \d+,", name)
+        # The predicate reads the table; the tick passes its answer with the
+        # context, and the monitor thread hands the stored flag to the detector.
+        is_menu = strip_comments(function_body(self.plugin, "static bool IncidentIsMenuRoom(const std::string& room)"))
+        self.assertIn("kIncidentMenuRooms", is_menu)
+        tick = strip_comments(function_body(self.plugin, "static void IncidentFrameTick()"))
+        self.assertRegex(tick, r"StoreContext\([^;]*IncidentIsMenuRoom\(context\.room\)")
+        self.assertEqual(self.plugin.count("StoreContext("), 1)
+        run = strip_comments(function_body(self.plugin, "static void IncidentMonitorRun() noexcept"))
+        self.assertIn("in.inMenu = monitor.InMenu();", run)
+        self.assertIn("TakeFreezeEnded(endedMs, endedLoad, endedMenu)", run)
+        self.assertIn("FreezeEndedLine(endedMs, endedLoad, endedMenu)", run)
+        # The header takes the flag and never the names.
+        self.assertNotIn("hs_game_sdk", self.header)
+        self.assertNotIn("HeroSiege::", strip_comments(self.header))
+        self.assertIn("bool inMenu = false;", self.header)
+
+    def test_the_setup_block_carries_its_scope_and_prints_its_time(self):
+        # D18: the one-time setup is its own row, `setup`, after `ipc`.
+        self.assertIn('"stashmoveall", "ipc", "setup",', self.header)
+        self.assertRegex(self.header, r"ipc,[^\n]*\n\s*setup,[^\n]*\n\s*Count")
+        self.assertEqual(self.plugin.count(SETUP_BLOCK), 1)
+        frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
+        setup = brace_block(frame, SETUP_BLOCK)
+        self.assertEqual(self.plugin.count(SETUP_SCOPE), 1)
+        self.assertIn(SETUP_SCOPE, setup)
+        # One line, printed once from the block through Out, after the setup.
+        self.assertEqual(self.plugin.count('"incident: setup '), 1)
+        printed = re.search(r'\bOut\("incident: setup "', setup)
+        self.assertIsNotNone(printed)
+        self.assertLess(setup.index("InstallHook();"), printed.start())
+        for part in ('" ms at frame "', '": config "', '" ms, hooks "', "SetupSlowest("):
+            self.assertIn(part, setup, part)
+        # Its clock is the monitor's (test_qpc_lives_only_in_the_incident_region).
+        self.assertGreaterEqual(setup.count("ForgePact::Incident::Qpc()"), 3)
+        self.assertNotIn("QueryPerformanceCounter", setup)
+        self.assertIn("SetupLapStart();", setup)
+        # InstallHook times each installer of its normal path, both builds'.
+        install = strip_comments(function_body(self.plugin, "static void InstallHook()"))
+        player = strip_comments(function_body(strip_research_blocks(self.plugin), "static void InstallHook()"))
+        for call, lap in (("CaptureAngelicScriptCode();", "CaptureAngelicScriptCode"),
+                          ("LoadCustomForgeEntries();", "LoadCustomForgeEntries"),
+                          # test_item_truth_contract.py pins these two as adjacent lines.
+                          ("InstallItemTruth();", "InstallCustomForgeItemHooks+InstallItemTruth"),
+                          ("HeadhunterAutoArm();", "HeadhunterAutoArm"),
+                          ("TyrantAutoArm();", "TyrantAutoArm"),
+                          ("BeaconAutoArm();", "BeaconAutoArm"),
+                          ("InstallHeadhunterHook();", "InstallHeadhunterHook")):
+            self.assertIn(f'{call} SetupLap("{lap}");', player, call)
+        for call in ("InstallCreateHooks", "FindAngelicGate", "InstallDropMultHooks", "InstallNecroBalanceHooks",
+                     "InstallSlotHook", "InstallLoginHook", "InstallIsMyPlayerHook", "InstallBuffHooks",
+                     "InstallEnemyHooks", "InstallChaosTowerHooks", "ForgePact::MiningOre::Install",
+                     "InstallItemInspectHooks"):
+            self.assertIn(f'{call}(); SetupLap("{call}");', install, call)
+        self.assertIn('SetupLap("GetBloodPactInfo detour");', install)
+        # A lap outside the setup records nothing (a later `InstallHook` call).
+        lap = strip_comments(function_body(self.plugin, "static void SetupLap(const char* name)"))
+        self.assertIn("if (!g_SetupLapQpc) return;", lap)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@ produce nothing (the baseline); a single 400 ms frame, a 3 s stretch at 2.5x
 the usual frame time and 4 s without a frame must each produce exactly one
 episode of the right kind (the targets). A freeze is judged once frames come
 back: a gap the first frames after it explain with a room change is a load and
-produces nothing, and a gap that never ends is reported at 15 s. The per-mod
+produces nothing, a gap that begins in a menu room is a load however long it
+lasts (D17), and any other gap that never ends is reported at 15 s. The per-mod
 accounting and the installer's tag thunks run for real against the clock, and
 the username scrub and the next-load crash check are pure functions over text.
 The accounting charges a mod only for ForgePact's own code (the owner,
@@ -45,6 +46,8 @@ EXPECTED = (
     "freeze-4s-no-hook",
     "freeze-load-room-change",
     "freeze-never-ends",
+    "freeze-menu-room",
+    "freeze-menu-room-never-ends",
     "unfocused-suppressed",
     "rate-limit-30s",
     "per-mod-accounting",
@@ -156,6 +159,18 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         self.assertIn("after a room change: a load, not reported", self.scenario("freeze-load-room-change"))
         self.assertIn("1 episode(s) [freeze", self.scenario("freeze-never-ends"))
 
+    # D17 (replan 5): Live 2's FREEZE was the save loading after the slot
+    # click in Chose_rm, where no room change follows. Target: a gap that
+    # begins in a menu room is a load on both paths, at its end and past
+    # kFreezeHoldMs. Each scenario's control runs the same gap outside a
+    # menu room and gets its one freeze.
+    def test_target_a_gap_that_begins_in_a_menu_room_is_a_load(self):
+        for name in ("freeze-menu-room", "freeze-menu-room-never-ends"):
+            detail = self.scenario(name)
+            self.assertTrue(detail.startswith("0 episode(s)"), detail)
+            self.assertIn("in a menu room: a load, not reported", detail)
+            self.assertIn("outside a menu room: 1 episode(s) [freeze", detail)
+
     def test_an_unfocused_game_and_a_second_hitch_are_held_back(self):
         self.scenario("unfocused-suppressed")
         self.scenario("rate-limit-30s")
@@ -192,7 +207,9 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
     def test_the_stat_line_says_what_was_judged(self):
         self.assertIn("overall worst 400.0 ms judged no | worst judged 300.0 ms | slow judged frames 1",
                       self.scenario("worst-judged-vs-overall"))
-        self.assertTrue(self.scenario("stat-line-prefix").startswith("incident: frames "))
+        detail = self.scenario("stat-line-prefix")
+        self.assertTrue(detail.startswith("incident: frames "))
+        self.assertIn("| window yes | menu yes | in-hook ", detail)
 
     def test_the_username_never_reaches_a_report(self):
         self.scenario("scrub-username")

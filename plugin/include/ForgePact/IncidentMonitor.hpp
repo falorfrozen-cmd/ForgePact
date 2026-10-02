@@ -119,6 +119,7 @@ enum class Mod : uint8_t {
     miner,
     stashmoveall,
     ipc,           // PollCommands: reading and running the panel's commands
+    setup,         // the one-time setup at start-up: LoadConfig and InstallHook (D18)
     Count
 };
 inline constexpr size_t kModCount = static_cast<size_t>(Mod::Count);
@@ -127,7 +128,7 @@ inline const char* ModName(Mod m) noexcept
 {
     static const char* const names[kModCount] = {
         "none", "frame", "density", "mapreveal", "drops", "autoprospect",
-        "hudlabels", "farsleep", "gems", "miner", "stashmoveall", "ipc",
+        "hudlabels", "farsleep", "gems", "miner", "stashmoveall", "ipc", "setup",
     };
     const size_t i = static_cast<size_t>(m);
     return i < kModCount ? names[i] : "none";
@@ -640,6 +641,7 @@ struct Inputs {
     bool minimized = false;
     bool windowAlive = true;      // the game's window exists and is shown
     double roomChangeMs = -1.0;   // the newest room change the frame thread saw; below zero for none
+    bool inMenu = false;          // the room the frame thread last sampled is a menu room (D17)
     const char* inHookId = nullptr;   // Accounting::InHookId(): a literal or a slot's buffer
     Mod inMod = Mod::none;            // Accounting::InModNow(), both halves
     bool inGameOriginal = false;
@@ -726,7 +728,9 @@ public:
         // when it crosses kFreezeMs, and judged when it ends: a zone load
         // blocks the frame thread too, and the room change that explains it
         // is only seen with the frames after it (D13). A gap that has not
-        // ended by kFreezeHoldMs is reported then.
+        // ended by kFreezeHoldMs is reported then. A gap that began in a menu
+        // room is a load on both paths (D17): the save loads on the character
+        // screen's slot click, and the screen after it is the same room.
         if (in.lastFrameMs >= 0.0) {
             if (m_InFreeze && in.lastFrameMs > m_FreezeFromMs) {
                 m_InFreeze = false;
@@ -734,8 +738,14 @@ public:
                 m_FreezeEndMs = m_FreezeFromMs + gap;
                 m_Freeze.worstMs = gap;
                 m_Freeze.seconds = gap / 1000.0;
-                if (m_FreezeReported) EndFreeze(gap, false);
-                else m_FreezeVerdictDue = true;
+                if (m_FreezeInMenu) {
+                    ++m_Quiet;
+                    EndFreeze(gap, true, true);
+                } else if (m_FreezeReported) {
+                    EndFreeze(gap, false);
+                } else {
+                    m_FreezeVerdictDue = true;
+                }
             }
             if (m_FreezeVerdictDue && in.nowMs - m_FreezeEndMs >= kRoomLeadMs) {
                 m_FreezeVerdictDue = false;
@@ -759,6 +769,7 @@ public:
             if (!m_InFreeze && !m_FreezeVerdictDue && in.nowMs - since >= kFreezeMs && !in.minimized && in.windowAlive) {
                 m_InFreeze = true;
                 m_FreezeReported = false;
+                m_FreezeInMenu = in.inMenu;
                 m_FreezeFromMs = in.lastFrameMs;
                 m_FreezeStarts.push_back(in.lastFrameMs);
                 if (m_FreezeStarts.size() > 8) m_FreezeStarts.pop_front();
@@ -769,7 +780,7 @@ public:
                 m_Freeze.inGameOriginal = in.inGameOriginal;
                 m_Freeze.baselineMs = BaselineBefore(m_History.size(), 1);
             }
-            if (m_InFreeze && !m_FreezeReported && in.nowMs - m_FreezeFromMs >= kFreezeHoldMs) {
+            if (m_InFreeze && !m_FreezeReported && !m_FreezeInMenu && in.nowMs - m_FreezeFromMs >= kFreezeHoldMs) {
                 m_FreezeReported = true;
                 if (Allowed(in.nowMs, true)) {
                     Episode e = m_Freeze;
@@ -850,13 +861,15 @@ public:
     }
 
     // The end of a freeze, once it is judged: how long the frame thread was
-    // gone, and whether a room change made it a load.
-    bool TakeFreezeEnded(double& ms, bool& load) noexcept
+    // gone, whether it was a load, and whether that was because it began in a
+    // menu room (D17) rather than a room change (D13).
+    bool TakeFreezeEnded(double& ms, bool& load, bool& inMenu) noexcept
     {
         if (!m_FreezeEnded) return false;
         m_FreezeEnded = false;
         ms = m_FreezeEndedMs;
         load = m_FreezeEndedLoad;
+        inMenu = m_FreezeEndedMenu;
         return true;
     }
 
@@ -928,11 +941,12 @@ private:
         return lastFrameMs - m_FreezeFromMs;
     }
 
-    void EndFreeze(double gapMs, bool load) noexcept
+    void EndFreeze(double gapMs, bool load, bool inMenu = false) noexcept
     {
         m_FreezeEnded = true;
         m_FreezeEndedMs = gapMs;
         m_FreezeEndedLoad = load;
+        m_FreezeEndedMenu = inMenu;
     }
 
     void NoteWorst(double frameMs, bool judged) noexcept
@@ -996,6 +1010,7 @@ private:
     double m_LastMinimizedMs = -1.0;
     bool m_InFreeze = false;            // a gap past kFreezeMs, still open
     bool m_FreezeReported = false;      // ...already reported at kFreezeHoldMs
+    bool m_FreezeInMenu = false;        // ...began in a menu room: a load, never reported (D17)
     bool m_FreezeVerdictDue = false;    // ended; waiting kRoomLeadMs for a room change
     double m_FreezeFromMs = 0.0;
     double m_FreezeEndMs = 0.0;
@@ -1003,6 +1018,7 @@ private:
     bool m_FreezeEnded = false;
     double m_FreezeEndedMs = 0.0;
     bool m_FreezeEndedLoad = false;
+    bool m_FreezeEndedMenu = false;
     bool m_SustainedActive = false;
     double m_LastEpisodeMs = -1.0;
     unsigned m_Episodes = 0;
@@ -1344,10 +1360,11 @@ inline std::string FreezeLine(const Episode& e)
            + " | in-mod " + InModText(e.inMod, e.inGameOriginal);
 }
 
-inline std::string FreezeEndedLine(double ms, bool load)
+inline std::string FreezeEndedLine(double ms, bool load, bool inMenu = false)
 {
     return "FREEZE ended - the next frame came after " + Fixed(ms / 1000.0, 1) + " s"
-           + (load ? std::string(", after a room change: a load, not reported") : std::string());
+           + (inMenu ? std::string(", in a menu room: a load, not reported")
+                     : load ? std::string(", after a room change: a load, not reported") : std::string());
 }
 
 inline std::string CrashLine(const std::string& exitCode, const std::string& module)
@@ -1488,6 +1505,7 @@ struct StatFacts {
     bool focused = true;
     bool armed = false;
     bool window = false;           // the game's window was found: without it, no freeze is detected
+    bool menu = false;             // the room is a menu room: a gap there is a load (D17)
     std::string inHook;            // empty: none
     Mod inMod = Mod::none;
     bool inGameOriginal = false;   // inside a game original the mod's hook wraps
@@ -1516,7 +1534,7 @@ inline std::vector<std::string> StatLines(const StatFacts& s)
                     + " ms | slow judged frames " + std::to_string(s.slowJudged)
                     + " | watching " + (s.armed ? "yes" : "not yet (start-up)") + " | grace " + (s.grace ? "yes" : "no")
                     + " | focus " + (s.focused ? "yes" : "no") + " | window " + (s.window ? "yes" : "no")
-                    + " | in-hook " + (s.inHook.empty() ? std::string("none") : s.inHook) + " | in-mod "
+                    + " | menu " + (s.menu ? "yes" : "no") + " | in-hook " + (s.inHook.empty() ? std::string("none") : s.inHook) + " | in-mod "
                     + InModText(s.inMod, s.inGameOriginal));
     lines.push_back("incident: episodes " + std::to_string(s.episodes) + ", held back " + std::to_string(s.suppressed)
                     + ", ignored near a room change or unfocused " + std::to_string(s.quiet)
@@ -1570,8 +1588,11 @@ public:
         m_RoomChangeQpc.store(nowQpc, std::memory_order_release);
     }
 
-    void StoreContext(const std::string& room, long long instances, long long monsters) noexcept
+    // `inMenu`: the adapter's answer for this room (D17); the header never
+    // knows the names.
+    void StoreContext(const std::string& room, long long instances, long long monsters, bool inMenu) noexcept
     {
+        m_InMenu.store(inMenu, std::memory_order_relaxed);
         const uint32_t seq = m_RoomSeq.load(std::memory_order_relaxed);
         m_RoomSeq.store(seq + 1, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);
@@ -1592,6 +1613,7 @@ public:
     }
     long long Instances() const noexcept { return m_Instances.load(std::memory_order_relaxed); }
     long long Monsters() const noexcept { return m_Monsters.load(std::memory_order_relaxed); }
+    bool InMenu() const noexcept { return m_InMenu.load(std::memory_order_relaxed); }
 
     // The frame thread rewrites the name once a second; a copy taken while it
     // does is retried, and given up on (empty) rather than read torn.
@@ -1645,6 +1667,7 @@ private:
     std::atomic<char> m_RoomName[kRoomChars]{};
     std::atomic<long long> m_Instances{ -1 };
     std::atomic<long long> m_Monsters{ -1 };
+    std::atomic<bool> m_InMenu{ false };
     mutable std::mutex m_StatLock;
     StatFacts m_Stat;
 };
