@@ -80,7 +80,8 @@ when it drops frames badly, the report is saved too, without a notification.
   after ForgePact has already shut down cleanly, ForgePact notes it in its
   log and on the card instead of reporting a crash. FPS drops
   are not reported in the first few seconds after a zone change, while the
-  game window is in the background, or more than once every 30 seconds. The
+  game window is in the background, and at most one FPS-drop report folder
+  is saved every five minutes, ten a session. The
   new **Incident reports** card on the Setup tab lists the latest reports,
   shows how the game last closed and opens the reports folder. An FPS drop's
   report is saved without a notification of any kind and is listed on the
