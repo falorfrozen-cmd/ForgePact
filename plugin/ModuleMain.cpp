@@ -9446,6 +9446,19 @@ static int64_t g_PetRelicFrame = 0;
 // frame before which an incomplete read is not retried.
 static bool    g_PetRelicMaxedComplete = false;
 static int64_t g_PetRelicMaxedRetryFrame = 0;
+// Ground relics whose pickup returned true without a raise and destroy both
+// confirmed (no raise seen, the after-read stopped early, the destroy did not
+// take, or a throw after the true return). The selector's hold lapses after
+// kPetQuestHoldFrames (about 10 s); this does not: the Idle walk leaves these
+// ids out for as long as the instance exists, because a raise the read missed
+// would be raised again by a second pickup. An id is pruned once
+// `instance_exists` says it is gone. `never-retried=` counts the ids added.
+static std::unordered_set<double> g_PetRelicNeverRetry;
+static std::atomic<long> g_PetRelicNeverRetried{ 0 };
+static void PetRelicNeverRetry(double id)
+{
+    if (g_PetRelicNeverRetry.insert(id).second) g_PetRelicNeverRetried.fetch_add(1);
+}
 
 static void PetRelicEndTravel(ForgePact::PetQuestOutcome outcome)
 {
@@ -9559,11 +9572,15 @@ static void PetRelicRemained(const std::string& why)
 // failed at arrival;
 // Refused when the call could not be made, threw, the game answered false,
 // or the owned levels could not be read whole before the call. Only a true
-// return followed by a seen raise ever destroys anything.
+// return followed by a seen raise ever destroys anything. A true return that
+// does not end in Collected also puts the id in g_PetRelicNeverRetry.
 static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
 {
     using ForgePact::PetQuestOutcome;
     auto& mod = ForgePact::PetRelicCollectorMod::Instance();
+    // PetTravelStep hands the target over as its instance id.
+    const double targetId = inst.ToDouble();
+    bool returnedTrue = false;
     try {
         // Eligibility, re-read now and never cached from selection: the
         // instance is a relic with an id, the id is not maxed, and the item is
@@ -9641,6 +9658,7 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
             PetRelicRefuse("returned false", PetRelicSupplied(script, item, pet, args));
             return PetQuestOutcome::Refused;
         }
+        returnedTrue = true;
         // A pickup can take the owned copy to 10/10: read the maxed set again
         // before the next pick.
         mod.Maxed().MarkStale();
@@ -9648,14 +9666,16 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
         // also answers true and raises nothing). The pickup counts only when
         // the owned level is exactly one higher, or the id was not owned and
         // now is at level 1 (relics drop at level 1), read whole again.
-        // Otherwise nothing is destroyed, and the relic is held back rather
-        // than retried: a raise the read missed would be raised again by a
+        // Otherwise nothing is destroyed, and the relic is never picked again
+        // while it exists (g_PetRelicNeverRetry, not only the selector's
+        // timed hold): a raise the read missed would be raised again by a
         // second pickup.
         std::unordered_map<int, int> after;
         if (!PetRelicReadOwned(player, after, stopped)) {
             const std::string why = "after-scan-incomplete(" + stopped + ")";
             mod.NothingRaised(PetRelicReason(why));
             PetRelicRemained(why);
+            PetRelicNeverRetry(targetId);
             return PetQuestOutcome::NoEffect;
         }
         const auto ownedAfter = after.find(read.relicId);
@@ -9667,6 +9687,7 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
                                     + (nowOwned ? std::to_string(levelAfter) : "none") + ")";
             mod.NothingRaised(PetRelicReason(why));
             PetRelicRemained(why);
+            PetRelicNeverRetry(targetId);
             return PetQuestOutcome::NoEffect;
         }
         mod.collected.fetch_add(1);
@@ -9679,12 +9700,15 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
             if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
                 mod.destroyFailed.fetch_add(1);
                 PetRelicRemained("destroy-failed");
+                PetRelicNeverRetry(targetId);
                 return PetQuestOutcome::NoEffect;
             }
         }
         return PetQuestOutcome::Collected;
     } catch (...) {
         PetRelicRefuse("call threw");
+        // After a true return the raise may have happened: never again.
+        if (returnedTrue) PetRelicNeverRetry(targetId);
         return PetQuestOutcome::Refused;
     }
 }
@@ -9783,6 +9807,15 @@ static void PetRelicCollectorTick()
         petY = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
     } catch (...) { return; }
 
+    // A never-retry id leaves the set once its instance is gone; a read that
+    // throws keeps it, so the exclusion fails closed.
+    for (auto it = g_PetRelicNeverRetry.begin(); it != g_PetRelicNeverRetry.end();) {
+        bool gone = false;
+        try { gone = !g_Yytk->CallBuiltin("instance_exists", { RValue(*it) }).ToBoolean(); } catch (...) {}
+        if (gone) it = g_PetRelicNeverRetry.erase(it);
+        else ++it;
+    }
+
     const int start = g_PetRelicSelector.NextStart(total, kBudget);
     const int walk = (std::min)(total, kBudget);
     std::vector<ForgePact::PetRelicCandidate> relics;
@@ -9791,6 +9824,11 @@ static void PetRelicCollectorTick()
         try {
             RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
             if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            // A true return already went to this relic without a confirmed
+            // raise and destroy: never a candidate again while it exists.
+            if (!g_PetRelicNeverRetry.empty()
+                && g_PetRelicNeverRetry.count(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble()))
+                continue;
             const double ix = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
             const double iy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
             if (ix < vx || ix > vx + vw || iy < vy || iy > vy + vh) continue;
@@ -9823,7 +9861,8 @@ static void PetRelicCollectorTick()
 static void PetRelicCollectorStats()
 {
     Out(ForgePact::PetRelicCollectorMod::Instance().StatLine(g_PetRelicSelector.HeldBack(),
-                                                             g_PetRelicPhase == PetRelicPhase::Travel));
+                                                             g_PetRelicPhase == PetRelicPhase::Travel)
+        + " never-retried=" + std::to_string(g_PetRelicNeverRetried.load()));
 }
 
 #ifndef FORGEPACT_RELEASE
