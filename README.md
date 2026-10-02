@@ -267,10 +267,15 @@ the same item type, and drops at that unique's rate: Headhunter through **Liquor
 Tyrant's Crown through the rarest Angelic helmet the plugin finds in the game's pool (**Lucifer's
 Crown** or **Mask of the Celestial**, whichever has the lower drop rate; the switch-on line in the
 log names the one chosen). So the item is exactly as rare as its stand-in, and the stand-in keeps
-its own share. When a hit falls to the added entry, the game itself builds the signature item and
-places it where the monster died: one item per hit, in place of what that roll would otherwise
-have dropped. The plugin's Custom Forge hook recognises it the same way it recognises one from
-`sigdrop`.
+its own share. A hit can fall to the added entry only when the game's roll landed on the stand-in
+itself: ForgePact reads which unique the roll looked up for that hit, and only when that is the
+stand-in - its item type included, so another unique that happens to share its other numbers
+never counts - does the hit go to the signature item, with the added entry's share (one in two
+when the game's own list holds the stand-in once). A hit ForgePact cannot identify stays the
+game's own drop. When a hit does fall to the added entry, the game itself builds the signature
+item and places it where the monster died: one item per hit, in place of what that roll would
+otherwise have dropped. The plugin's Custom Forge hook recognises it the same way it recognises
+one from `sigdrop`.
 
 ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
 both switches off (the default), no entry is added, neither item drops, forged or not, and the
@@ -282,9 +287,12 @@ Unholy Drops** slider never drops them: its pool is the real uniques only.
 forces every kill to drop the named item (or turns that off); it does not change the normal drop
 rate. `sigdrop status` also reports the game's Angelic roll: `gameRolls=` and `gameHits=` (the
 game's own rolls and hits), `injected=` (entries added, over all rolls), `ourHits=` (hits that
-fell to a signature item), `built=`, `crown=` and `belt=` (the signature items the game built),
-`list=` (the game's list by name and length; `none` before the first look, `missing` when it was
-not found), `gate=`
+fell to a signature item), `untyped=` (hits ForgePact could not identify, which stayed the game's
+own), `built=`, `crown=` and `belt=` (the signature items the game built), `anomalies=` (rolls
+where the added entry did not show in the list, so that roll carried nothing extra, or where the
+list had changed by the time the plugin came to take its entry out, so it left the list as it
+found it), `list=` (the game's list by name and length; `none` before the first look, `missing`
+when it was not found), `gate=`
 (which switch is on), and `cdpCalls=` / `detect=` (whether the plugin can see the game's hits).
 
 ### Tier (Custom Forge)
