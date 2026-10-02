@@ -96,12 +96,13 @@ class EnabledModsPanelTests(unittest.TestCase):
     def test_api_set_call_sites_are_the_old_ones_plus_switch_and_theme(self):
         # The old ones: the legacy page's 25, plus the 2 main's legacy page
         # added for Gems of Incarnation (its switches' handler and the filter's
-        # save) before it was ported here, plus 4 no legacy page had: the Pet
+        # save) before it was ported here, plus 6 no legacy page had: the Pet
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
-        # switch, Move all into the stash's switch and Extra packs as you
-        # approach's switch (all four the derived oracle's native booleans).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4)
+        # switch, Move all into the stash's switch, Extra packs as you
+        # approach's switch, and Sleep loot your filter hides' switch and show
+        # key (forgepact-issue-95-mod; all six in the derived oracle).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 6)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 6)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
@@ -234,6 +235,25 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertEqual(forgepact.build_cmds(cases["defaults"]), [])
         self.assertEqual([c for c in forgepact.build_cmds(cases["both_on"]) if c.startswith("gem")],
                          ["gemmythic 1", "gemmaxroll 1"])
+
+    def test_hidden_loot_is_an_entry_only_while_on_and_its_key_never_is(self):
+        # Sleep loot your filter hides is a boolean mod, off by default; its
+        # show key rides on its entry, as the gem filter rides on Mythic's.
+        # The list and the backend agree: an entry exactly when a command goes.
+        import forgepact  # noqa: E402
+        base = {k: v for k, v in forgepact.DEFAULTS.items() if k != "game_exe"}
+        cases = {
+            "defaults": base,
+            "key_only": {**base, "mod_hidden_loot_key": 17},
+            "on": {**base, "mod_hidden_loot": True},
+        }
+        driver = (f"const cases={json.dumps(cases)};"
+                  "console.log(JSON.stringify(Object.fromEntries(Object.entries(cases)"
+                  ".map(([k,c])=>[k,enabledControls(c)]))));")
+        result = run_node(js_for_node(panel_file("enabled-mods.js")), driver)
+        self.assertEqual(result, {"defaults": [], "key_only": [], "on": ["mod_hidden_loot"]})
+        sent = {name: [c for c in forgepact.build_cmds(cfg) if c.startswith("hiddenloot")] for name, cfg in cases.items()}
+        self.assertEqual(sent, {"defaults": [], "key_only": [], "on": ["hiddenloot key 164", "hiddenloot 1"]})
 
 
 if __name__ == "__main__":

@@ -5,14 +5,19 @@
 // the list can show, one theme step per THEMES entry, after the one step that
 // opens Setup, where the theme is, then the key supplement's slider (Prime
 // Evil Parts), entered on the Loot tab, then the boolean mods no recording
-// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, and last the
-// switched sliders no recording has (NATIVE_SLIDERS), entered on Modifiers,
-// and the Loot tab's after them.
+// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, then the show
+// key's select of Sleep loot your filter hides, and last the switched sliders
+// no recording has (NATIVE_SLIDERS), entered on Modifiers, and the Loot tab's
+// after them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { NATIVE_BOOLEANS, NATIVE_SLIDERS, derive, derivedFromPath, quickDisable, serialise, switchIdOf, tableRange } from './oracle-derive.mjs';
+import {
+  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, NATIVE_SLIDERS, derive, derivedFromPath, quickDisable, serialise,
+  switchIdOf, tableRange,
+} from './oracle-derive.mjs';
+import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../src/hidden-loot-keys.js';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
 
@@ -28,12 +33,14 @@ const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 // The native booleans' steps close the file: the Mods tab and its Quality of
 // Life sub-tab once, then on, off, on and Turn off for each.
 const NATIVE_STEPS = 2 + 4 * NATIVE_BOOLEANS.length;
+// Then the show key's select: its switch on, one select per code, its switch off.
+const KEY_STEPS = 2 + HIDDEN_LOOT_KEY_CODES.length;
 // Then the native sliders': one tab step each time the tab changes (Modifiers,
 // then Loot), then a slider's eight steps each.
 const NATIVE_SLIDER_TABS = NATIVE_SLIDERS.filter((n, i) => i === 0 || n.tab !== NATIVE_SLIDERS[i - 1].tab).length;
 const NATIVE_SLIDER_STEPS = NATIVE_SLIDER_TABS + 8 * NATIVE_SLIDERS.length;
 // Everything after the key supplement's slider.
-const TAIL = NATIVE_STEPS + NATIVE_SLIDER_STEPS;
+const TAIL = NATIVE_STEPS + KEY_STEPS + NATIVE_SLIDER_STEPS;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -97,7 +104,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 65 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -105,7 +112,7 @@ test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 64);
+  assert.equal(quick.length, 65);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -114,7 +121,9 @@ test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per the
   }
   for (const s of switches) assert.ok('is' in s.expect.posts && 'same' in s.expect.cmds, s.control);
   for (const s of quick) assert.ok('same' in s.expect.posts && 'same' in s.expect.cmds, s.control);
-  assert.equal(steps.filter((s) => NATIVE_BOOLEANS.some((n) => s.control === '#' + n.key)).length, 3 * NATIVE_BOOLEANS.length);
+  // Three clicks each, and two more on the show key's switch around its select.
+  assert.equal(steps.filter((s) => NATIVE_BOOLEANS.some((n) => s.control === '#' + n.key)).length, 3 * NATIVE_BOOLEANS.length + 2);
+  assert.equal(steps.filter((s) => s.control === '#mod_hidden_loot_key').length, HIDDEN_LOOT_KEY_CODES.length);
   assert.ok(LEGACY.steps.length + steps.length >= 600);
 });
 
@@ -176,14 +185,19 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, then each native slider and its switch', () => {
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, the show key, then each native slider and its switch', () => {
   assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil',
-    ...NATIVE_BOOLEANS.map((n) => '#' + n.key),
+    ...NATIVE_BOOLEANS.map((n) => '#' + n.key), '#mod_hidden_loot_key',
     ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`])]);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling']);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
+    ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot']);
+  // Only Sleep loot your filter hides restates a child when it turns on: its
+  // show key, at the default a fresh sandbox holds.
+  assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
+    [['mod_hidden_loot', `hiddenloot key ${HIDDEN_LOOT_KEY_DEFAULT}`]]);
   for (const n of NATIVE_BOOLEANS) {
     assert.ok(BOOLEAN_MODS.includes(n.key), `${n.key}: the Enabled mods list shows it, so it has a Turn off button`);
     const cb = '#' + n.key;
@@ -207,18 +221,45 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
   // All of them sit on the Quality of Life sub-tab, so it is entered once and
   // each boolean's four steps follow in turn.
-  NATIVE_BOOLEANS.forEach(({ key, verb }, i) => {
+  NATIVE_BOOLEANS.forEach(({ key, verb, restate }, i) => {
     const first = at + 2 + 4 * i;
     const cb = '#' + key;
     assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action]),
       [[cb, 'click'], [cb, 'click'], [cb, 'click'], [quickDisable(key), 'click']]);
     const on = steps[first];
     const off = steps[first + 1];
-    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] }, cmds: { is: [`${verb} 1`] } });
+    assert.deepEqual(on.expect, { posts: { is: [{ url: '/api/set', body: { key, value: true } }] },
+      cmds: { is: [...(restate ? [restate] : []), `${verb} 1`] } });
     assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
     assert.deepEqual(steps[first + 2].expect, { posts: { same: on.step }, cmds: { same: on.step } });
     assert.deepEqual(steps[first + 3].expect, { posts: { same: off.step }, cmds: { same: off.step } });
   });
+});
+
+test('the show key\'s select follows the native booleans: its switch on, Ctrl, None, Left Alt, its switch off', () => {
+  // Codes the key list offers, the last one the saved default.
+  const offered = HIDDEN_LOOT_KEYS.map(([code]) => code);
+  assert.deepEqual(HIDDEN_LOOT_KEY_CODES, [17, 0, 164]);
+  for (const code of HIDDEN_LOOT_KEY_CODES) assert.ok(offered.includes(code), code);
+  assert.equal(HIDDEN_LOOT_KEY_CODES.at(-1), HIDDEN_LOOT_KEY_DEFAULT);
+  const steps = DERIVED.steps;
+  // The native sliders come after it, on the Modifiers tab.
+  const at = steps.length - NATIVE_SLIDER_STEPS - KEY_STEPS;
+  const parent = '#' + HIDDEN_LOOT_KEY_PARENT;
+  const nativeAt = steps.length - TAIL + 2 + 4 * NATIVE_BOOLEANS.findIndex((n) => n.key === HIDDEN_LOOT_KEY_PARENT);
+  const [on, off] = [nativeAt, nativeAt + 1];
+  assert.equal(steps[on].control, parent);
+  // The switch's own steps left it off, and the select is disabled while it is.
+  assert.equal(steps[at - 1].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  assert.deepEqual(steps[at], { step: at, control: parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
+  HIDDEN_LOOT_KEY_CODES.forEach((code, i) => {
+    assert.deepEqual(steps[at + 1 + i], {
+      step: at + 1 + i, control: '#mod_hidden_loot_key', action: 'select', value: String(code),
+      expect: { posts: { is: [{ url: '/api/set', body: { key: 'mod_hidden_loot_key', value: code } }] }, cmds: { is: [`hiddenloot key ${code}`] } },
+    });
+  });
+  const last = at + KEY_STEPS - 1;
+  assert.deepEqual(steps[last], { step: last, control: parent, action: 'click', expect: { posts: { same: off }, cmds: { same: off } } });
 });
 
 test('each control runs on the tab the legacy walk first reached it on', () => {
@@ -257,8 +298,9 @@ test('a native slider\'s contract is literal and last: each end posts its value 
   const neighbour = LEGACY.steps.findIndex((s) => s.control === tableRange('percent_stats', 'castrate'));
   const nav = LEGACY.steps.slice(0, neighbour).filter((s) => /^(tab|subtab):/.test(s.control)).map((s) => s.control);
   assert.equal(nav.at(-1), 'tab:modifiers');
-  // The native booleans' last Turn off comes first, so none of their indexes moved.
-  assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
+  // The native booleans' steps and the show key's select (closed by its
+  // switch's off click) come first, so none of their indexes moved.
+  assert.equal(steps[at - 1].control, '#' + HIDDEN_LOOT_KEY_PARENT);
   // Each slider's eight steps follow in list order, after one tab step
   // whenever the tab changes (Modifiers, then Loot for Mining Ore Extra Rolls).
   let first = at;
