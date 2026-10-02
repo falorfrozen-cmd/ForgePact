@@ -58,7 +58,8 @@
   "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
   "#sw_percent_stats_allskills",
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
-  "#sw_drops_mining_ore_rolls"
+  "#sw_drops_mining_ore_rolls",
+  "#openreports"
  ],
  "steps": [
   {
@@ -5721,6 +5722,29 @@
     },
     "cmds": {
      "same": 457
+    }
+   }
+  },
+  {
+   "step": 464,
+   "control": "tab:setup",
+   "action": "click"
+  },
+  {
+   "step": 465,
+   "control": "#openreports",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/openreports",
+       "body": {}
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
     }
    }
   }

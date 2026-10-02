@@ -186,7 +186,7 @@ export const SECTION_ICONS = {
 export const ACTION_ICONS = {
   'exebrowse': 'folder', 'exesave': 'save', 'installmod': 'install',
   'removeplugin': 'remove', 'launchgame': 'play', 'applyall': 'auto-apply',
-  'satRestore': 'restore',
+  'satRestore': 'restore', 'openreports': 'folder',
 };
 export const SATANIC_ICONS = {
   'buff': numbered(['chest', 'chest', 'rune', 'gold', 'rare', 'angelic', 'boots', 'attack-speed', 'cast-speed', 'damage', 'spell-damage', 'relic', 'goblin', 'magic-find', 'magic-find', 'magic-find', 'experience', 'experience', 'experience', 'recovery', 'density', 'critical-damage', 'ancient', 'ancient', 'ancient']),

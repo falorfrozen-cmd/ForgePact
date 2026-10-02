@@ -505,6 +505,7 @@ async function boot(){
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
+  paintIncidents(ST.incidents);
   bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
   document.dispatchEvent?.(new Event('forgepact:ready'));
   document.getElementById('saveIndicator').textContent='Settings loaded';
@@ -515,6 +516,35 @@ function paintVersion(){
   // bug report needs to say which one it is looking at.
   const el=document.getElementById('panelver');
   if(el&&ST&&ST.version)el.textContent=' \u00b7 v'+ST.version;
+}
+// Incident reports (issue #76): the Setup tab's list of the reports the plugin
+// saved and the game's last exit with an error, from /api/state's `incidents`.
+// Repainted only when the answer changed, so an idle poll writes nothing; the
+// server's strings only ever reach textContent.
+const INCIDENT_KINDS={perf:'FPS drop',freeze:'Freeze',crash:'Crash'};
+const incidentTime=(utc)=>String(utc||'').replace('T',' ').replace(/Z$/,' UTC');
+let incidentsPainted=null;
+function paintIncidents(inc){
+  const list=document.getElementById('incidentList');
+  const key=JSON.stringify(inc||null);
+  if(!list||key===incidentsPainted)return;
+  incidentsPainted=key;
+  const reports=inc?.reports||[];
+  list.replaceChildren(...(reports.length?reports.map(r=>{
+    const li=document.createElement('li'),kind=document.createElement('span');
+    kind.className='incident-kind';kind.textContent=INCIDENT_KINDS[r.kind]||r.kind;
+    li.append(kind,' '+incidentTime(r.utc)+' \u00b7 '+r.dir);
+    return li;
+  }):[Object.assign(document.createElement('li'),{className:'incident-empty',textContent:'No reports saved yet.'})]));
+  // after_clean_shutdown: ForgePact had already shut down cleanly when the
+  // code was set, so a mod file aborted during the game's exit (Known
+  // Limitations item 25); that is noted, not reported as a crash.
+  const last=inc?.lastExit;
+  setText(document.getElementById('incidentLastExit'),last?'Last game exit: '+last.exit_code+
+    (last.faulting_module?' in '+last.faulting_module+(last.faulting_offset?' at offset 0x'+last.faulting_offset:''):'')+
+    (last.exit_utc?' ('+incidentTime(last.exit_utc)+')':'')+
+    (last.after_clean_shutdown?' - after ForgePact\'s clean shutdown: the game had closed, then a mod file aborted during exit. Not a crash; ForgePact notes it the next time the game starts'
+      :' - a crash report is saved the next time the game starts'):'');
 }
 let launcherBusy=false;
 function renderLaunchStatus(){
@@ -869,6 +899,12 @@ function bind(){
     applyTheme(e.target.value);
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'theme',value:e.target.value})});
     e.target.value=applyTheme((res.cfg||ST.cfg).theme);
+    toast(res.ok||res.err);
+  };
+  // Incident reports (issue #76): the card has one control, the folder. An FPS
+  // drop is recorded without a notice, so there is no switch for one.
+  document.getElementById('openreports').onclick=async()=>{
+    const res=await j('/api/openreports',{method:'POST',body:'{}'});
     toast(res.ok||res.err);
   };
   document.getElementById('applyall').onclick=async()=>{
@@ -1270,7 +1306,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;ST.incidents=s.incidents;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();paintIncidents(s.incidents);document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

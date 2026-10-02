@@ -1,0 +1,10 @@
+{
+ "exit_code": "0xC0000005",
+ "exit_utc": "2026-10-02T12:00:00Z",
+ "faulting_module": "KERNELBASE.dll",
+ "faulting_offset": "00000000000c483a",
+ "exception_code": "c0000005",
+ "event_record_id": "71576",
+ "event_probe": {"queried": true, "records_seen": 1},
+ "after_clean_shutdown": false
+}

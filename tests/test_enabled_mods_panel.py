@@ -101,7 +101,10 @@ class EnabledModsPanelTests(unittest.TestCase):
         # switch, Move all into the stash's switch, Extra packs as you
         # approach's switch, Pet collects relics' switch (#124), and Sleep
         # loot your filter hides' switch and show key (forgepact-issue-95-mod;
-        # all seven in the derived oracle).
+        # all seven in the derived oracle). Issue #76 adds none: its Setup
+        # switch for FPS-drop notices went before it shipped (an FPS drop is
+        # recorded without a notice, the owner, 2026-10-02), and Open reports
+        # folder posts to its own route.
         self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7)
         self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)

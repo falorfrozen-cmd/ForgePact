@@ -273,9 +273,23 @@ jobs:
           if not defined CL_BANNER set CL_BANNER=unknown
           echo banner=%CL_BANNER%>>"%GITHUB_OUTPUT%"
 
+      # The plugin's symbols (issue #76): an incident report names a crash by
+      # module and offset, and only this tag's PDB maps an offset inside
+      # BloodPactPlugin.dll to one of our functions. build.bat's cl line is
+      # the compile contract that the compile-line check above holds every
+      # tag to, so the options come from the environment instead: cl prepends
+      # CL's and link appends _LINK_'s. /DEBUG would turn /OPT:REF and
+      # /OPT:ICF off, so both are named; /PDBALTPATH keeps the runner's
+      # build path out of the shipped DLL. tests/test_release_pdb_symbols.py
+      # compiles a probe under exactly these values: the compiler's code is
+      # byte-identical to a plain build's and every function keeps its
+      # address; only .rdata's layout moves (the debug directory grows).
       - name: Compile the plugin (release)
         shell: cmd
         working-directory: ForgePact
+        env:
+          CL: /Zi
+          _LINK_: /DEBUG:FULL /OPT:REF /OPT:ICF /PDBALTPATH:BloodPactPlugin.pdb
         run: plugin_build\build.bat release
 
       - name: Package the panel (build_release.py)
@@ -319,6 +333,18 @@ jobs:
           path: |
             ${{ runner.temp }}/out/*
           retention-days: 7
+          if-no-files-found: error
+
+      # The compile step's PDB, kept for a maintainer mapping a crash offset
+      # from an incident report to a function. It never enters the zip, which
+      # takes the DLL alone, and the upload job never fetches it. Kept on dry
+      # runs too, and for 90 days: a crash report arrives after the release.
+      - name: Keep the plugin's PDB as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forgepact-plugin-pdb-${{ steps.tag.outputs.tag }}
+          path: ForgePact/plugin_build/BloodPactPlugin_ship.pdb
+          retention-days: 90
           if-no-files-found: error
 
       - name: Summary

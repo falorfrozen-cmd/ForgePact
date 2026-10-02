@@ -535,7 +535,10 @@ class ReleaseHookContractTests(unittest.TestCase):
         # A diagnostic, not a feature: a thread waking twice a second that
         # suspends the game's frame thread during a stall, plus a per-frame
         # heartbeat. The freeze it was built to name was concluded not to be
-        # ForgePact, and a player gains nothing from paying for it.
+        # ForgePact, and a player gains nothing from paying for it. The player
+        # build's own thread is the incident monitor (issue #76), which reads
+        # only ForgePact's counters, suspends nothing and uses none of these
+        # names; test_incident_monitor_contract.py pins it.
         release = strip_comments(strip_research_blocks(self.plugin))
         for name in ("StallWatchdogLoop", "StartStallWatchdog", "g_LastFrameTickMs",
                      "g_FrameThread", "SuspendThread", "GetThreadContext"):
@@ -556,7 +559,10 @@ class ReleaseHookContractTests(unittest.TestCase):
         player = strip_research_blocks(self.plugin)
         self.assertNotIn("GetMembers(", player)
         self.assertNotIn("ObjIdxProbe", player)
-        self.assertNotIn("QueryPerformanceCounter", player)
+        # The probe's QueryPerformanceCounter timings stay out too, but the
+        # player build now reads that clock in the incident monitor (issue
+        # #76), so "outside the incident region" is checked in
+        # test_incident_monitor_contract.py::test_qpc_lives_only_in_the_incident_region.
 
     def test_the_player_build_still_reads_object_index_through_the_builtin(self):
         hook = function_body(strip_research_blocks(self.plugin),
