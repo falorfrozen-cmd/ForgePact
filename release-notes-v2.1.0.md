@@ -94,6 +94,12 @@ to your own totals the way Faster Cast Rate does.
     usual odds.
   - If every relic that can drop is already at 10/10, the switch stands down.
   - `relicfilter status` in the log shows how many maxed relics it has skipped.
+- **The pet no longer chases something that is not loot.** After a zone change
+  its target could end up being an old item's number reused by something else
+  on the map, and the pet would run at that spot and grind there while you
+  walked on. A target that is not an item or a coin is now dropped the moment
+  it is seen, and the pet goes back to collecting. The switch itself is still
+  off by default.
 
 ## How to update
 
