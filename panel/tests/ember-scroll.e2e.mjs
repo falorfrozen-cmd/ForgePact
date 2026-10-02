@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
+import { PNG } from 'pngjs';
 import { startSandbox, openPanel, openTab, parseArgs, waitBooted, waitSaved } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 
@@ -100,16 +101,42 @@ try {
   await openTab(page, 'loot');
   const bar = await wrap.evaluate(el => {
     const r = el.getBoundingClientRect(), gutter = el.offsetWidth - el.clientWidth;
-    const track = el.clientHeight - gutter * 2;
-    const thumb = Math.max(20, track * el.clientHeight / el.scrollHeight);
-    return { x: r.right - gutter / 2, y: r.top + gutter + thumb / 2, end: r.bottom - gutter - 4, gutter };
+    return { x: r.right - gutter / 2, top: r.top, bottom: r.bottom, end: r.bottom - gutter - 4, gutter };
   });
   assert.ok(bar.gutter >= 12, `No visible scrollbar track: ${bar.gutter}px`);
-  await page.mouse.move(bar.x, bar.y);
+  // Press the thumb where Edge drew it. Edge's compositor decides what a
+  // scrollbar press hit from the last frame it finished, not from the DOM.
+  // On a slow CI runner that frame could still be Help's, scrolled to its end
+  // with the thumb low, so the press landed on the track and nothing scrolled
+  // (PR run 36822369185). Taking a screenshot makes Edge finish a frame of the
+  // page as it is now. The pixels also replace the old estimate, which put the
+  // thumb one gutter width (15 px) below the top; Edge draws it 18 px down.
+  async function drawnThumb() {
+    const clip = { x: bar.x - bar.gutter / 2, y: bar.top, width: bar.gutter, height: bar.bottom - bar.top };
+    const png = PNG.sync.read(await page.screenshot({ clip }));
+    const scale = png.height / clip.height, at = y => (y * png.width + (png.width >> 1)) * 4;
+    const rgb = y => [...png.data.subarray(at(y), at(y) + 3)];
+    // The track is the centre column's commonest colour, the thumb its
+    // longest run of anything else: each arrow glyph is a few pixels.
+    const counts = new Map();
+    for (let y = 0; y < png.height; y++) { const key = rgb(y).join(); counts.set(key, (counts.get(key) || 0) + 1); }
+    const track = [...counts].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
+    let run = null;
+    for (let y = 0, start = -1; y <= png.height; y++) {
+      const on = y < png.height && rgb(y).reduce((d, c, i) => d + Math.abs(c - track[i]), 0) > 60;
+      if (on && start < 0) start = y;
+      if (!on && start >= 0) { if (!run || y - start > run[1] - run[0]) run = [start, y]; start = -1; }
+    }
+    return run && { top: bar.top + run[0] / scale, bottom: bar.top + run[1] / scale, middle: bar.top + (run[0] + run[1]) / 2 / scale };
+  }
+  const thumb = await drawnThumb();
+  assert.ok(thumb && thumb.top - bar.top <= bar.gutter * 2, `Loot did not open with its scrollbar thumb at the top: ${JSON.stringify({ bar, thumb })}`);
+  await page.mouse.move(bar.x, thumb.middle);
   await page.mouse.down();
   await page.mouse.move(bar.x, bar.end, { steps: 12 });
   await page.mouse.up();
-  await page.waitForFunction(() => { const el = document.getElementById('wrap'); return el.scrollTop + el.clientHeight >= el.scrollHeight - 3; });
+  await page.waitForFunction(() => { const el = document.getElementById('wrap'); return el.scrollTop + el.clientHeight >= el.scrollHeight - 3; }, null, { timeout: 10000 })
+    .catch(async error => { throw new Error(`thumb drag stopped short: ${JSON.stringify({ before: thumb, after: await drawnThumb(), ...(await state()) })}; ${error.message}`); });
   checks.push('Visible native scrollbar can be dragged to the last Loot settings');
 
   await openTab(page, 'loot');
