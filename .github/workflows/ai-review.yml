@@ -433,12 +433,14 @@ jobs:
           # and cut its review short. They read no more than `Read` already
           # can, and shell redirection stays refused.
           #
-          # `--model` pins the model that follows the command. The command
-          # takes no effort or level argument, and on its default model it
-          # replaced the whole multi-agent review with a single pass of its
-          # own on hub #365 and ForgePact #141. The subagents' models are the
-          # command's own choice (haiku, sonnet and opus by step).
-          claude_args: '--model claude-opus-5-5 --allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sed -n:*)"'
+          # `--model opus` picks the model family that follows the command, by
+          # alias, so each run gets the latest Opus without a version to bump.
+          # The command takes no effort or level argument, and on the default
+          # model (claude-sonnet-5-5) it replaced the whole multi-agent review
+          # with a single pass of its own on hub #365 and ForgePact #141. The
+          # subagents' models are the command's own choice (haiku, sonnet and
+          # opus by step); only the orchestrating model is set here.
+          claude_args: '--model opus --allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sed -n:*)"'
 
       # The action succeeds whenever the model exits cleanly, which includes
       # a run that reviewed nothing -- hub #56 (tools denied) and hub #59 (the
