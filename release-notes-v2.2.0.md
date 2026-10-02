@@ -14,8 +14,10 @@ give.
   a dig can roll on top of the ore. Those bonus finds still depend on your own
   character's stats, so a character that never gets them from a normal dig
   will not get them this way either; the extra rolls then only give more ore.
-  Mining experience, character and guild experience, quest progress and the
-  floating experience text still count once per node. It works together with
+  Character and guild experience still count once per node. Mining experience,
+  quest progress and the floating experience text are meant to count once per
+  node too, but a test dig never showed the game handing them out the way the
+  plugin holds them back, so that part is not confirmed yet. It works together with
   Mining Ore Multiplier: at 3 rolls with the multiplier at 5, you get three sets
   of ore, each five times as large. A worn Miner's Helmet gives each set its 4x
   in place of the multiplier. It is off by default (1 is the game's normal
