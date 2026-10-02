@@ -19,13 +19,17 @@ give.
   not: the plugin tries to hold them back on the extra rolls, but in a test dig
   the game never handed them out at the point where the plugin holds them back.
   Until a dig shows otherwise, they may come once per roll: ten times at 10
-  rolls. It works together with
+  rolls (the 2026-10-02 check could not tell, because its character's mining
+  level was already at the cap). It works together with
   Mining Ore Multiplier: at 3 rolls with the multiplier at 5, you get three sets
   of ore, each five times as large. A worn Miner's Helmet gives each set its 4x
   in place of the multiplier. It is off by default (1 is the game's normal
   dig): move the slider to use it. If the plugin cannot set it up on your game,
   the slider stays at 1 and says so in the log, and Mining Ore Multiplier keeps
-  working. Not yet confirmed in a live game.
+  working. Checked in play on 2026-10-02 with this release's plugin, through
+  the panel: at 3 rolls a Copper Vein dropped three stacks of ore (14 ore in
+  all), and with the slider back at 1 the next Copper Vein dropped one stack
+  (3 ore). How much ore is in each stack still varies from dig to dig.
 
 ## How to update
 

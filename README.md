@@ -33,7 +33,7 @@ none of these diagnostic hooks or the recorder. See
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
-| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character XP still counts once per node; mining XP and quest progress are meant to as well, but that part is not confirmed yet. Works together with the Mining Ore Multiplier (each set is multiplied) and with a worn Miner's Helmet (each set gets its 4×). Not yet confirmed in a live game ([details](docs/mining-ore-research.md)) |
+| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP, quest progress and the floating XP text are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. Works together with the Mining Ore Multiplier (each set is multiplied) and with a worn Miner's Helmet (each set gets its 4×). Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
@@ -91,13 +91,18 @@ bonus finds again. Nothing is forced: a bonus find still needs your character's 
 find stats, and an extra roll that pays nothing ends the loop for that node.
 Character and guild XP happen once per node (measured); mining XP, quest progress and
 the floating XP text are meant to as well, but a test dig never showed the game paying
-them through the calls the plugin holds back, so that is not confirmed yet. The
-two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
+them through the calls the plugin holds back, so that is not confirmed: until a dig
+shows otherwise they may come once per roll, ten times at 10 rolls. (The 2026-10-02
+check could not read mining XP, because its character's mining level was at the
+cap.) The two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
 node pays three sets of stacks, each 5×; a worn Miner's Helmet gives each set its 4×
 in place of the multiplier. At 1 it installs nothing, and the multiplier on its own
 keeps working exactly as before. If the plugin cannot attach what the extra rolls
 need, the rolls stay at 1 with one `miningrolls: unavailable` line in the log while
-the multiplier keeps working. Not yet confirmed in a live game; see
+the multiplier keeps working. Checked in play on 2026-10-02 with the release plugin,
+set from the panel's Loot tab: at 3 rolls (multiplier at 1) a Copper Vein dropped
+three stacks of ore, 14 ore in all, and back at 1 the next Copper Vein dropped one
+stack of 3; how much each stack holds still varies from dig to dig. See
 [research and test scope](docs/mining-ore-research.md).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
