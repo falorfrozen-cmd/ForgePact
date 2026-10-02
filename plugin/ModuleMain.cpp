@@ -9402,12 +9402,20 @@ static void PetQuestCollectorStats()
 // by name, through CallGameScriptEx, like `sigdrop`'s LootGroundCreateFromItem
 // call. Neither PickupLoot nor PickupRelic destroys the ground item; every
 // caller the reading found destroys it itself after a true return, so the
-// plugin does the same, and only then.
+// plugin does the same - but a true return alone is not a pickup: PickupRelic
+// also returns true for a relic-tab copy already at 10/10, raising nothing.
+// So the collect reads the owned level before and after the call and
+// destroys the relic only when that level rose.
 //
 // A relic the player already owns at 10/10 is never a candidate: the maxed
-// set (HeroSiege::Player::GetMaxedRelicIds, never RelicFilterMod's own scan,
-// which answers nothing while the relic filter is off) drops it before the
-// selector sees it, and the collect re-checks it.
+// set (the owned levels from HeroSiege::Player::GetOwnedRelicLevels, never
+// RelicFilterMod's own scan, which answers nothing while the relic filter is
+// off) drops it before the selector sees it, and the collect reads the owned
+// level again. Every one of those reads passes both of the SDK's scan
+// reports and counts only when both scans ran to the end: a walk that stops
+// early returns a smaller, plausible set, not a failure, and the relic-tab
+// 10/10 id it leaves out is exactly the one a pickup would consume for
+// nothing.
 static int g_LootGroundObjIdx = -1;
 static bool g_PetRelicAssetsResolved = false;
 
@@ -9434,6 +9442,10 @@ static int    g_PetRelicCooldown = 0;
 // the quest collector's rule, not its state.
 static ForgePact::PetQuestSelector g_PetRelicSelector;
 static int64_t g_PetRelicFrame = 0;
+// Whether the maxed cache holds a set read with both scans complete, and the
+// frame before which an incomplete read is not retried.
+static bool    g_PetRelicMaxedComplete = false;
+static int64_t g_PetRelicMaxedRetryFrame = 0;
 
 static void PetRelicEndTravel(ForgePact::PetQuestOutcome outcome)
 {
@@ -9502,11 +9514,51 @@ static void PetRelicRefuse(const char* why, const std::string& supplied = std::s
         Out(std::string("petrelic: collect refused (") + why + ")" + supplied + ". Nothing was destroyed.");
 }
 
+// A reason for PetRelicCollectorMod::Refuse, which keeps the pointer: built
+// strings are kept here, once each, so the pointer outlives the call. The
+// set stays small (one entry per scan and stage that ever stopped).
+static const char* PetRelicReason(const std::string& why)
+{
+    static std::set<std::string> s_Reasons;
+    return s_Reasons.insert(why).first->c_str();
+}
+
+// The owned relic levels (relic id -> the owned copy's level), read through
+// hs-game-sdk with both scan reports. True only when the equipped-slot scan
+// and the relic-tab scan both report `stopped == nullptr`; otherwise
+// `stopped` names the first one that stopped and its stage, as
+// "<equipped|tab>:<stage>", and `levels` must not be used: a walk that stops
+// early returns fewer relics, not an error.
+static bool PetRelicReadOwned(const RValue& player, std::unordered_map<int, int>& levels, std::string& stopped)
+{
+    HeroSiege::Player::EquippedSlotScanReport equipped;
+    HeroSiege::Player::RelicTabScanReport tab;
+    try { levels = HeroSiege::Player::GetOwnedRelicLevels(g_Yytk, player, &equipped, &tab); }
+    catch (...) { stopped = "scan:exception"; return false; }
+    if (equipped.stopped) { stopped = std::string("equipped:") + equipped.stopped; return false; }
+    if (tab.stopped) { stopped = std::string("tab:") + tab.stopped; return false; }
+    return true;
+}
+
+// A true return after which the relic is still on the ground: no raise was
+// seen, or the plugin's destroy did not take. Counted in
+// `dispatched-but-item-remained=` (noEffect, counted by the caller); the
+// first few also log one line naming which, since the stat line has one
+// counter for both.
+static volatile long g_PetRelicRemainedLines = 0;
+static void PetRelicRemained(const std::string& why)
+{
+    if (InterlockedIncrement(&g_PetRelicRemainedLines) <= 8)
+        Out("petrelic: pickup returned true, relic left on the ground (" + why + "); held back.");
+}
+
 // Returns how the collect went, for the selector: Collected when the pickup
-// returned true and the relic is gone; NoEffect when it returned true and the
-// relic was still there after the plugin's destroy; Gate when eligibility
-// failed at arrival; Refused when the call could not be made, threw, or the
-// game answered false. Only a true return ever destroys anything.
+// returned true, the owned level rose and the relic is gone; NoEffect when
+// it returned true but no raise was seen (nothing destroyed), or the
+// plugin's destroy left it there; Gate when eligibility failed at arrival;
+// Refused when the call could not be made, threw, the game answered false,
+// or the owned levels could not be read whole before the call. Only a true
+// return followed by a seen raise ever destroys anything.
 static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
 {
     using ForgePact::PetQuestOutcome;
@@ -9514,7 +9566,9 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
     try {
         // Eligibility, re-read now and never cached from selection: the
         // instance is a relic with an id, the id is not maxed, and the item is
-        // active. (The travel already checked that it exists.)
+        // active. (The travel already checked that it exists.) The cached
+        // set is a cheap first look; the owned level read just before the
+        // call below is what decides.
         HeroSiege::Player::GroundRelicRead read;
         if (!HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read)) {
             mod.skippedNotRelic.fetch_add(1);
@@ -9539,6 +9593,29 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
         const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemInstance") });
         if (itemStruct.m_Kind != VALUE_OBJECT) { PetRelicRefuse("no itemInstance"); return PetQuestOutcome::Refused; }
 
+        // The owned level of this relic, read fresh and whole. An incomplete
+        // read could be missing exactly the relic-tab 10/10 copy whose pickup
+        // returns true and raises nothing, so it refuses the collect.
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) { PetRelicRefuse("no player"); return PetQuestOutcome::Refused; }
+        std::unordered_map<int, int> before;
+        std::string stopped;
+        if (!PetRelicReadOwned(player, before, stopped)) {
+            PetRelicRefuse(PetRelicReason("maxed-scan-incomplete(" + stopped + ")"));
+            return PetQuestOutcome::Refused;
+        }
+        const auto ownedBefore = before.find(read.relicId);
+        const bool wasOwned = ownedBefore != before.end();
+        const int levelBefore = wasOwned ? ownedBefore->second : 0;
+        // `relicfilter testmaxed` (research build) counts here too, so Live 1
+        // can prove the skip at arrival as well as at the pick.
+        if (levelBefore >= HeroSiege::Player::kMaxedRelicLevel
+            || ForgePact::RelicFilterMod::Instance().TestMaxed().count(read.relicId)) {
+            mod.skippedMaxed.fetch_add(1);
+            mod.Maxed().MarkStale();   // the cached set missed it
+            return PetQuestOutcome::Gate;
+        }
+
         // Route A, what ships: the companion's own PickupLoot shape.
         const char* script = "gml_Script_PickupLoot";
         std::vector<RValue> args{ mplr, itemStruct, RValue(true), RValue(true), PetRelicPlayerDropArg(inst) };
@@ -9561,10 +9638,32 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
             PetRelicRefuse("returned false", PetRelicSupplied(script, item, pet, args));
             return PetQuestOutcome::Refused;
         }
-        mod.collected.fetch_add(1);
         // A pickup can take the owned copy to 10/10: read the maxed set again
         // before the next pick.
         mod.Maxed().MarkStale();
+        // A true return is not a pickup by itself (a relic-tab copy at 10/10
+        // also answers true and raises nothing). The pickup counts only when
+        // the owned level is exactly one higher, or the id is newly owned,
+        // read whole again. Otherwise nothing is destroyed, and the relic is
+        // held back rather than retried: a raise the read missed would be
+        // raised again by a second pickup.
+        std::unordered_map<int, int> after;
+        if (!PetRelicReadOwned(player, after, stopped)) {
+            mod.noEffect.fetch_add(1);
+            PetRelicRemained("after-scan-incomplete(" + stopped + ")");
+            return PetQuestOutcome::NoEffect;
+        }
+        const auto ownedAfter = after.find(read.relicId);
+        const bool nowOwned = ownedAfter != after.end();
+        const int levelAfter = nowOwned ? ownedAfter->second : 0;
+        const bool raised = wasOwned ? (nowOwned && levelAfter == levelBefore + 1) : nowOwned;
+        if (!raised) {
+            mod.noEffect.fetch_add(1);
+            PetRelicRemained("no-raise(" + std::string(wasOwned ? std::to_string(levelBefore) : "none") + "->"
+                             + (nowOwned ? std::to_string(levelAfter) : "none") + ")");
+            return PetQuestOutcome::NoEffect;
+        }
+        mod.collected.fetch_add(1);
         // PickupLoot does not destroy the ground item; its callers do, after a
         // true return. So the relic is expected to still be here, and the
         // plugin destroys it - unless something else already removed it.
@@ -9573,6 +9672,7 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
             mod.destroyedByPlugin.fetch_add(1);
             if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
                 mod.noEffect.fetch_add(1);
+                PetRelicRemained("destroy-failed");
                 return PetQuestOutcome::NoEffect;
             }
         }
@@ -9626,19 +9726,29 @@ static void PetRelicCollectorTick()
     // Through hs-game-sdk on the local player, never through RelicFilterMod's
     // scan (empty while the relic filter is off; the two switches are
     // independent). Without a player the tick cannot tell a maxed relic from
-    // a collectable one, so it picks nothing.
-    if (mod.Maxed().Due(g_PetRelicFrame)) {
+    // a collectable one, so it picks nothing. A read that did not run both
+    // scans to the end is not stored: the last complete set stays, the next
+    // try waits kPetRelicMaxedRefreshTicks, and with no complete set yet the
+    // tick picks nothing and says why in `refused=`.
+    if (mod.Maxed().Due(g_PetRelicFrame) && g_PetRelicFrame >= g_PetRelicMaxedRetryFrame) {
         RValue player;
         if (!HhResolveLocalPlayer(player)) { mod.Refuse("no player"); return; }
-        std::unordered_set<int> ids;
-        try { ids = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player); }
-        catch (...) { mod.Refuse("no player"); return; }
-        // `relicfilter testmaxed <ids>` (research build) marks relics maxed
-        // without a real 10/10 copy, so Live 1 can prove the skip; empty
-        // otherwise, in both builds.
-        for (int id : ForgePact::RelicFilterMod::Instance().TestMaxed()) ids.insert(id);
-        mod.Maxed().Store(std::move(ids), g_PetRelicFrame);
+        std::unordered_map<int, int> owned;
+        std::string stopped;
+        if (PetRelicReadOwned(player, owned, stopped)) {
+            std::unordered_set<int> ids = HeroSiege::Player::MaxedRelicIdsOf(owned);
+            // `relicfilter testmaxed <ids>` (research build) marks relics maxed
+            // without a real 10/10 copy, so Live 1 can prove the skip; empty
+            // otherwise, in both builds.
+            for (int id : ForgePact::RelicFilterMod::Instance().TestMaxed()) ids.insert(id);
+            mod.Maxed().Store(std::move(ids), g_PetRelicFrame);
+            g_PetRelicMaxedComplete = true;
+        } else {
+            g_PetRelicMaxedRetryFrame = g_PetRelicFrame + ForgePact::kPetRelicMaxedRefreshTicks;
+            if (!g_PetRelicMaxedComplete) mod.Refuse(PetRelicReason("maxed-scan-incomplete(" + stopped + ")"));
+        }
     }
+    if (!g_PetRelicMaxedComplete) return;
 
     double vx = 0, vy = 0, vw = 0, vh = 0;
     try {
