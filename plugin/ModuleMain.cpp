@@ -60,6 +60,8 @@ using namespace Aurie;
 using namespace YYTK;
 using ForgePact::Incident::IncidentScope;
 using ForgePact::Incident::IncidentSampledScope;
+using ForgePact::Incident::IncidentHookTag;
+using ForgePact::Incident::TaggedThunks;
 using IncidentMod = ForgePact::Incident::Mod;
 
 static YYTKInterface* g_Yytk = nullptr;
@@ -199,9 +201,16 @@ static std::string OutPath() { return IPC_DIR + "\\out.txt"; }
 // console copy is cut well short of the buffer.
 static constexpr size_t kOutPrintLimit = 1800;
 
+// Out() on the game thread and OutRaw() on the incident monitor's thread both
+// append to out.txt, each through a stream of its own: unguarded, one line
+// can land in the middle of the other, and the next load's crash check reads
+// session banners out of this file. The clean-shutdown marker never takes it.
+static std::mutex g_OutFileLock;
+
 static void Out(const std::string& s)
 {
     {
+        std::lock_guard<std::mutex> lock(g_OutFileLock);
         std::ofstream f(OutPath(), std::ios::app);
         f << s << "\n";
     }
@@ -222,6 +231,7 @@ static void Out(const std::string& s)
 // builds; the research build's stall watchdog did first.
 static void OutRaw(const std::string& s)
 {
+    std::lock_guard<std::mutex> lock(g_OutFileLock);
     std::ofstream f(OutPath(), std::ios::app);
     f << s << "\n";
 }
@@ -1980,13 +1990,17 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
     if (g_OrigICL) { DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true); populationBirth.Completed(); }
 }
 
+// The detour goes to a TaggedThunks thunk, not to `dest` itself: it marks the
+// hook's id as the one the frame thread is in (ForgePact #76's freeze report)
+// and calls `dest`. See HookOneScript below.
 static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* origOut)
 {
     PVOID p = nullptr;
     AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
     if (!AurieSuccess(st) || !p) { Out(std::string("hookbuiltin ") + name + ": not found st=" + std::to_string((int)st)); return false; }
+    const TRoutine tagged = TaggedThunks<TRoutine>::Tagged(id && *id ? id : name, reinterpret_cast<TRoutine>(dest));
     PVOID tramp = nullptr;
-    AurieStatus hs = MmCreateHook(g_ArSelfModule, id, p, dest, &tramp);
+    AurieStatus hs = MmCreateHook(g_ArSelfModule, id, p, reinterpret_cast<PVOID>(tagged), &tramp);
     if (!AurieSuccess(hs)) { Out(std::string("hookbuiltin ") + name + ": failed st=" + std::to_string((int)hs)); return false; }
     *origOut = reinterpret_cast<TRoutine>(tramp);
     Out(std::string("HOOK INSTALLED on builtin ") + name);
@@ -2136,6 +2150,12 @@ static bool HookOneScriptTable(const char* shortName, const char* id, PVOID dest
 // detour in. A caller whose feature means nothing on the table route alone
 // (auto-prospect: compiled GML calls m_MoveItemToGrid directly) reads it and
 // turns itself off instead of shipping armed and inert.
+//
+// Both routes get the same TaggedThunks thunk instead of `dest` (ForgePact
+// #76, D8): it marks the hook's id as the one the frame thread is in, so a
+// freeze report can name the hook, and calls `dest` with the same arguments.
+// The thunk is only a different destination; the body still receives the
+// trampoline, and the same `dest` installed again gets the same thunk.
 static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut,
                           bool* nativeOut)
 {
@@ -2147,6 +2167,8 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
     CScript* sc = reinterpret_cast<CScript*>(p);
     if (!sc || !sc->m_Functions) { Out(std::string("hook ") + shortName + ": null functions"); return false; }
 
+    const PFUNC_YYGMLScript tagged = TaggedThunks<PFUNC_YYGMLScript>::Tagged(id && *id ? id : shortName,
+                                                                            reinterpret_cast<PFUNC_YYGMLScript>(dest));
     PFUNC_YYGMLScript tableEntry = sc->m_Functions->m_ScriptFunction;
     const bool firstInstall = (origOut && !*origOut);
     if (firstInstall) {
@@ -2160,7 +2182,7 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
             why = "table entry is not code inside Hero_Siege.exe";
         } else {
             PVOID tramp = nullptr;
-            AurieStatus ns = MmCreateHook(g_ArSelfModule, id, (PVOID)tableEntry, dest, &tramp);
+            AurieStatus ns = MmCreateHook(g_ArSelfModule, id, (PVOID)tableEntry, reinterpret_cast<PVOID>(tagged), &tramp);
             if (AurieSuccess(ns) && tramp) {
                 *origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
                 native = true;
@@ -2175,7 +2197,7 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
                 + ") - direct compiled-GML calls will bypass this hook");
         }
     }
-    sc->m_Functions->m_ScriptFunction = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+    sc->m_Functions->m_ScriptFunction = tagged;
     Out(std::string("HOOK INSTALLED on ") + shortName);
     return true;
 }
@@ -18999,8 +19021,10 @@ static void InstallSlotHook()
     PVOID src = nullptr;
     try { src = (PVOID)sc->m_Functions->m_ScriptFunction; } catch (...) {}
     if (!src) { Out("InstallSlotHook: null src"); return; }
+    // Detoured to the incident monitor's tag thunk, like HookOneScript's hooks.
+    const PFUNC_YYGMLScript tagged = TaggedThunks<PFUNC_YYGMLScript>::Tagged("bp_getslot", HookGetSlotBloodPact);
     PVOID tramp = nullptr;
-    AurieStatus hs = MmCreateHook(g_ArSelfModule, "bp_getslot", src, (PVOID)HookGetSlotBloodPact, &tramp);
+    AurieStatus hs = MmCreateHook(g_ArSelfModule, "bp_getslot", src, reinterpret_cast<PVOID>(tagged), &tramp);
     if (!AurieSuccess(hs)) { Out("InstallSlotHook: MmCreateHook failed st=" + std::to_string((int)hs)); return; }
     g_OrigGetSlot = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
     Out("HOOK INSTALLED on GetSlotBloodPact");
@@ -19653,6 +19677,7 @@ static std::mutex g_ProbeLock;
 
 static double __cdecl HookProtGet(double key)
 {
+    IncidentHookTag incidentHookTag("fp_acgetvar");   // no thunk fits this native signature
     FP_POP_SCOPE(PoolGet);
     double v = ForgePact::ProtectedPool::Runtime::active.load(std::memory_order_acquire)
         ? ForgePact::ProtectedPool::Runtime::Get(key)
@@ -19700,6 +19725,7 @@ static bool EnsureProtGetHook()
         return false;
     }
     g_OrigProtGet = reinterpret_cast<AcGetVariableFn>(tramp);
+    ForgePact::Incident::g_Accounting.CountTagged();   // HookProtGet tags itself
     Out("HOOK INSTALLED on ac_dll_gm!GetVariable (native store)");
     return true;
 }
@@ -19716,8 +19742,12 @@ static bool PreparePopulationCapacity()
                 *original = reinterpret_cast<void*>(g_OrigProtGet);
                 return true;
             }
+            // Ten native signatures and no thunk for them: these detours go
+            // in untagged, and `incident stat` counts them as such.
             const std::string id = std::string("fp_population_") + name;
-            return AurieSuccess(MmCreateHook(g_ArSelfModule, id.c_str(), target, replacement, original));
+            const bool installed = AurieSuccess(MmCreateHook(g_ArSelfModule, id.c_str(), target, replacement, original));
+            if (installed) ForgePact::Incident::g_Accounting.CountUntagged();
+            return installed;
         }, [](const std::string& line) { Out(line); });
 }
 
@@ -42371,6 +42401,55 @@ static void EvCountCommand(const std::string& rest)
 #endif
 
 
+// ===== Incident monitor: the clean-shutdown marker's ExitProcess writer (issue #76) =====
+// D14: the marker's first writer, kept here rather than in the incident
+// monitor's region below, which (with the frame profiler's) installs no hook.
+// The tracker's producer DLL (Known Limitations, the 0xC0000409 exit) can
+// abort the game's exit from its own detach, and detach runs in reverse load
+// order, so this DLL's static destructor - the marker's second writer - may
+// never get its turn. Every normal exit passes through ExitProcess first, on
+// the exiting thread with every DLL still loaded; a crash (WER,
+// TerminateProcess, a fast fail) never calls it. So a detour on ExitProcess,
+// resolved by name from kernelbase.dll (kernel32.dll's export, if not),
+// writes the marker and goes on. The body takes no lock and writes through
+// Win32 only (ShutdownMarker::Write).
+using IncidentExitProcessFn = void(WINAPI*)(UINT);
+static IncidentExitProcessFn g_IncidentOrigExitProcess = nullptr;
+
+static void WINAPI IncidentHookExitProcess(UINT code)
+{
+    ForgePact::Incident::g_ShutdownMarker.Write(ForgePact::Incident::ShutdownRoute::exitProcess);
+    g_IncidentOrigExitProcess(code);
+}
+
+static void IncidentInstallExitHook()
+{
+    if (g_IncidentOrigExitProcess) return;
+    const char* from = "kernelbase.dll";
+    HMODULE module = GetModuleHandleW(L"kernelbase.dll");
+    FARPROC target = module ? GetProcAddress(module, "ExitProcess") : nullptr;
+    if (!target) {
+        from = "kernel32.dll";
+        module = GetModuleHandleW(L"kernel32.dll");
+        target = module ? GetProcAddress(module, "ExitProcess") : nullptr;
+    }
+    if (!target) {
+        Out("incident: ExitProcess not found - the clean-shutdown line comes from the DLL's detach only");
+        return;
+    }
+    PVOID tramp = nullptr;
+    const AurieStatus st = MmCreateHook(g_ArSelfModule, "fp_exit_marker", reinterpret_cast<PVOID>(target),
+                                        reinterpret_cast<PVOID>(&IncidentHookExitProcess), &tramp);
+    if (!AurieSuccess(st) || !tramp) {
+        Out("incident: hook on ExitProcess failed st=" + std::to_string((int)st)
+            + " - the clean-shutdown line comes from the DLL's detach only");
+        return;
+    }
+    g_IncidentOrigExitProcess = reinterpret_cast<IncidentExitProcessFn>(tramp);
+    Out(std::string("HOOK INSTALLED on ") + from + "!ExitProcess (incident: clean-shutdown marker)");
+}
+
+
 // ===== Frame profiler (`frameprof`) =====
 // Where the game's frame thread spends its time, sampled from another thread
 // by ForgePact::FrameProfiler (plugin/include/ForgePact/FrameProfiler.hpp).
@@ -42538,12 +42617,14 @@ static void FrameProfilerTick()
 //     It never calls into the game's runtime or YYToolkit, and never Out(),
 //     which prints through YYToolkit.
 //
-// Nothing here suspends a thread or calls through an address. A crash runs no
-// code of ours, so it is found at the next load: the previous session's part
-// of out.txt lacks the line ForgePact::Incident::g_ShutdownMarker writes on a
-// normal exit. The panel adds what it saw (bp_ipc\exit.json) and is the one
-// that shows a toast; without a live panel, a freeze or crash gets a
-// MessageBoxW from here instead. PERF never does.
+// Nothing here suspends a thread or calls through an address it did not
+// resolve by name. A crash runs no code of ours, so it is found at the next
+// load: the previous session's part of out.txt lacks the line
+// ForgePact::Incident::g_ShutdownMarker writes on a normal exit (from the
+// ExitProcess hook below, or else its own destructor). The panel adds what it
+// saw (bp_ipc\exit.json) and is the one that shows a toast; without a live
+// panel, a freeze or crash gets a MessageBoxW from here instead. PERF never
+// does.
 
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
@@ -42761,8 +42842,10 @@ static void IncidentNotify(const std::string& what, const std::string& dir)
 // Writes one bundle, bp_ipc\reports\<utc>_<kind>\, and keeps the newest
 // kKeepReports. Built under a dot-name and renamed whole, so whoever watches
 // reports\ (the panel) never sees a half-written one. Every file goes through
-// the profile scrub. Returns "reports\<name>", or empty when it failed.
-static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts)
+// the profile scrub. Returns "reports\<name>", or empty when it failed;
+// `failedFiles` counts the files in it that could not be written, which also
+// go into `incident stat`'s write-error count.
+static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts, unsigned& failedFiles)
 {
     namespace inc = ForgePact::Incident;
     namespace stdfs = std::filesystem;
@@ -42780,9 +42863,15 @@ static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts)
     stdfs::create_directories(pending, ec);
     if (ec) return {};
     const std::string profile = IncidentEnv("USERPROFILE");
+    failedFiles = 0;
     auto put = [&](const char* file, const std::string& text) {
         std::ofstream f(pending / file, std::ios::binary | std::ios::trunc);
         f << inc::ScrubProfile(text, profile);
+        f.flush();
+        if (!f) {
+            ++failedFiles;
+            ++inc::Monitor::Instance().writeErrors;
+        }
     };
     put("report.json", inc::ReportJson(facts));
     put("out-tail.txt", inc::TailLines(IncidentReadFile(OutPath()), inc::kTailLines));
@@ -42827,11 +42916,12 @@ static void IncidentOnEpisode(const ForgePact::Incident::Episode& e, double nowM
     facts.lastMinute = monitor.minute.Rows(nowMs);
     facts.episodes = monitor.detector.Episodes();
     facts.suppressed = monitor.detector.Suppressed();
-    const std::string dir = IncidentWriteBundle(std::move(facts));
+    unsigned failed = 0;
+    const std::string dir = IncidentWriteBundle(std::move(facts), failed);
     if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
     monitor.bundles.Wrote(e.kind, nowMs);
     monitor.lastReport = dir;
-    OutRaw(inc::ReportWrittenLine(dir));
+    OutRaw(inc::ReportWrittenLine(dir, failed));
     if (e.kind == inc::Kind::freeze)
         IncidentNotify("Hero Siege stopped drawing frames for " + inc::Fixed(e.seconds, 0) + " seconds.", dir);
 }
@@ -42871,15 +42961,18 @@ static void IncidentCrashCheck()
     if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) return;
     inc::ReportFacts facts;
     facts.kind = inc::Kind::crash;
+    // Found at the next load, so where the frame thread was is unknowable:
+    // ReportJson writes "unknown" for a crash's inHook and inMod.
     facts.episode.kind = inc::Kind::crash;
     facts.exitJson = exitJson;
     facts.previousBanner = inc::FirstLine(session);
-    const std::string dir = IncidentWriteBundle(std::move(facts));
+    unsigned failed = 0;
+    const std::string dir = IncidentWriteBundle(std::move(facts), failed);
     if (haveExit) DeleteFileA(exitPath.c_str());
     if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
     monitor.bundles.Wrote(inc::Kind::crash, 0.0);
     monitor.lastReport = dir;
-    OutRaw(inc::ReportWrittenLine(dir));
+    OutRaw(inc::ReportWrittenLine(dir, failed));
     IncidentNotify("Hero Siege did not close normally last time.", dir);
 }
 
@@ -42940,14 +43033,16 @@ static void IncidentMonitorRun() noexcept
                 in.minimized = window && IsIconic(window);
                 in.windowAlive = window && IsWindowVisible(window);
                 in.roomChangeMs = monitor.RoomChangeMs();
-                in.inHook = inc::g_Accounting.InHook();
+                in.inHookId = inc::g_Accounting.InHookId();
+                in.inMod = inc::g_Accounting.InMod();
                 for (int i = 0; i < 4; ++i) {
                     const inc::Episode e = monitor.detector.Analyze(in);
                     if (e.kind == inc::Kind::none) break;
                     IncidentOnEpisode(e, nowMs);
                 }
                 double endedMs = 0.0;
-                if (monitor.detector.TakeFreezeEnded(endedMs)) OutRaw(inc::FreezeEndedLine(endedMs));
+                bool endedLoad = false;
+                if (monitor.detector.TakeFreezeEnded(endedMs, endedLoad)) OutRaw(inc::FreezeEndedLine(endedMs, endedLoad));
                 if (!crashChecked && nowMs - startMs >= inc::kCrashCheckDelayMs) {
                     crashChecked = true;
                     IncidentCrashCheck();
@@ -42957,14 +43052,22 @@ static void IncidentMonitorRun() noexcept
                 stat.lost = monitor.lost;
                 stat.baselineMs = monitor.detector.BaselineMs();
                 stat.worstMs = monitor.detector.WorstMs();
+                stat.worstJudged = monitor.detector.WorstWasJudged();
+                stat.worstJudgedMs = monitor.detector.WorstJudgedMs();
+                stat.slowJudged = monitor.detector.SlowJudgedFrames();
                 stat.grace = monitor.detector.GraceActive(nowMs);
                 stat.focused = in.focused;
                 stat.armed = in.armed;
-                stat.inHook = in.inHook;
+                stat.window = window != nullptr;   // without it, no freeze is detected
+                stat.inHook = in.inHookId ? in.inHookId : "";
+                stat.inMod = in.inMod;
                 stat.episodes = monitor.detector.Episodes();
                 stat.suppressed = monitor.detector.Suppressed();
                 stat.quiet = monitor.detector.Quiet();
                 stat.bundles = monitor.bundles.Written();
+                stat.hooksTagged = inc::g_Accounting.HooksTagged();
+                stat.hooksUntagged = inc::g_Accounting.HooksUntagged();
+                stat.writeErrors = monitor.writeErrors;
                 stat.lastMinute = monitor.minute.Rows(nowMs);
                 stat.lastReport = monitor.lastReport;
                 monitor.Publish(std::move(stat));
@@ -42976,10 +43079,12 @@ static void IncidentMonitorRun() noexcept
 // ---- end of the incident monitor thread ----
 
 // ModuleInitialize, after the frame callback registered: arms the
-// clean-shutdown marker and starts the monitor thread.
+// clean-shutdown marker, puts its ExitProcess writer in (above the frame
+// profiler, IncidentInstallExitHook) and starts the monitor thread.
 static void IncidentMonitorStart()
 {
     ForgePact::Incident::g_ShutdownMarker.Arm(OutPath().c_str());
+    IncidentInstallExitHook();
     if (!ForgePact::Incident::Monitor::Instance().Start(&IncidentMonitorRun))
         Out("incident: the monitor thread could not be started - no crash, freeze or FPS-drop reports this session");
 }

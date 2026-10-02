@@ -12,19 +12,23 @@
 //   * The game's frame thread only takes QueryPerformanceCounter readings and
 //     does single-writer atomic stores: IncidentScope around each mod's hook
 //     body or tick adds its time to that mod's per-frame counter and marks it
-//     as the code the frame thread is in; OnFrame, once a frame, moves the
+//     as the mod the frame thread is in; OnFrame, once a frame, moves the
 //     counters into a ring of the last kRingFrames frames.
+//   * Separately, the hook installers hand the game a TaggedThunks thunk
+//     instead of each hook body: it stores the hook's id as the hook the
+//     frame thread is in, calls the body and puts the previous id back. No
+//     clock reading, no count: just which hook.
 //   * A monitor thread (ModuleMain.cpp's adapter, an ExitSafeThread on the
 //     heap-held Monitor below) wakes every kWakeMs, copies the new frames out
 //     of the ring and hands them to the Detector, which decides hitch,
 //     sustained slowdown, freeze or nothing from the frames and a few plain
-//     inputs (the time, focus, the last room change, the in-hook tag). The
+//     inputs (the time, focus, the last room change, the two tags). The
 //     monitor thread never touches the game's runtime: it reads only these
 //     counters and writes files.
 //   * A crash runs no code of ours, so it is found afterwards: at the next
-//     load, the previous session's part of out.txt either ends with the line
-//     g_ShutdownMarker's destructor writes during a normal ExitProcess, or it
-//     does not.
+//     load, the previous session's part of out.txt either has the line
+//     g_ShutdownMarker writes during a normal exit (from the adapter's
+//     ExitProcess hook, or else its own destructor), or it does not.
 //
 // Game-independent: Win32 and the standard library only, no runtime
 // interface. tests/incident_monitor_harness.cpp drives the same classes on a
@@ -60,6 +64,7 @@ inline constexpr double kHitchMs = 250.0;          // one frame this long is a h
 inline constexpr double kSustainedMult = 2.5;      // frames this many times the baseline...
 inline constexpr double kSustainedMs = 2000.0;     // ...for this long are a sustained slowdown
 inline constexpr double kFreezeMs = 3000.0;        // no frame for this long is a freeze
+inline constexpr double kFreezeHoldMs = 15000.0;   // ...reported at its end, or once it lasts this long
 inline constexpr double kRoomGraceMs = 5000.0;     // no PERF verdict this long after a room change
 inline constexpr size_t kRingFrames = 600;         // frames the ring keeps; also the baseline's length
 inline constexpr double kEpisodeGapMs = 30000.0;   // at most one PERF episode this often
@@ -83,9 +88,17 @@ inline constexpr size_t kTailLines = 500;          // out-tail.txt's length
 // The next-load crash check waits this long, so the panel can write exit.json
 // for the session that just ended (it polls the game every 5 s).
 inline constexpr double kCrashCheckDelayMs = 10000.0;
+// Hooks one TaggedThunks instantiation can tag; more are installed untagged
+// and counted.
+inline constexpr size_t kHookSlots = 128;
+inline constexpr size_t kHookIdChars = 48;
 
 inline constexpr char kSessionBanner[] = "==== BloodPact plugin loaded ====";
+// The clean-shutdown marker names the route that wrote it: the ExitProcess
+// hook, or the static destructor at DLL_PROCESS_DETACH. Either is a clean end.
 inline constexpr char kCleanShutdownLine[] = "==== clean shutdown ====";
+inline constexpr char kCleanShutdownDetachLine[] = "==== clean shutdown (detach) ====";
+inline constexpr char kCleanShutdownPrefix[] = "==== clean shutdown";
 inline constexpr char kMonitorRunningLine[] = "incident: monitor running";
 
 // ---- the mods a report names -------------------------------------------------
@@ -165,14 +178,32 @@ public:
         a.store(a.load(std::memory_order_relaxed) + ticks, std::memory_order_relaxed);
     }
 
+    // Channel 2: the mod, set by the named scopes.
     Mod Enter(Mod m) noexcept
     {
-        const Mod previous = m_InHook.load(std::memory_order_relaxed);
-        m_InHook.store(m, std::memory_order_relaxed);
+        const Mod previous = m_InMod.load(std::memory_order_relaxed);
+        m_InMod.store(m, std::memory_order_relaxed);
         return previous;
     }
 
-    void Leave(Mod previous) noexcept { m_InHook.store(previous, std::memory_order_relaxed); }
+    void Leave(Mod previous) noexcept { m_InMod.store(previous, std::memory_order_relaxed); }
+
+    // Channel 1: the hook, set by the installer's thunks. The id is a slot's
+    // own buffer or a string literal, never a temporary, so the monitor
+    // thread can read it whenever it likes.
+    const char* EnterHook(const char* id) noexcept
+    {
+        const char* previous = m_InHookId.load(std::memory_order_relaxed);
+        m_InHookId.store(id, std::memory_order_relaxed);
+        return previous;
+    }
+
+    void LeaveHook(const char* previous) noexcept { m_InHookId.store(previous, std::memory_order_relaxed); }
+
+    // How many hooks the installers tagged, and how many went in without a
+    // tag (a full thunk table, or a detour no thunk fits). Any thread.
+    void CountTagged() noexcept { m_HooksTagged.fetch_add(1, std::memory_order_relaxed); }
+    void CountUntagged() noexcept { m_HooksUntagged.fetch_add(1, std::memory_order_relaxed); }
 
     // True for one call in kSampleEvery of this mod's sampled scopes.
     bool TakeSample(Mod m) noexcept
@@ -205,7 +236,10 @@ public:
     }
 
     // ---- any thread.
-    Mod InHook() const noexcept { return m_InHook.load(std::memory_order_relaxed); }
+    Mod InMod() const noexcept { return m_InMod.load(std::memory_order_relaxed); }
+    const char* InHookId() const noexcept { return m_InHookId.load(std::memory_order_relaxed); }   // nullptr: none
+    unsigned HooksTagged() const noexcept { return m_HooksTagged.load(std::memory_order_relaxed); }
+    unsigned HooksUntagged() const noexcept { return m_HooksUntagged.load(std::memory_order_relaxed); }
     int64_t LastFrameQpc() const noexcept { return m_LastFrameQpc.load(std::memory_order_acquire); }
     uint64_t Frames() const noexcept { return m_Written.load(std::memory_order_acquire); }
 
@@ -252,7 +286,10 @@ private:
 
     std::atomic<int64_t> m_Mod[kModCount]{};
     std::atomic<uint32_t> m_Calls[kModCount]{};
-    std::atomic<Mod> m_InHook{ Mod::none };
+    std::atomic<Mod> m_InMod{ Mod::none };
+    std::atomic<const char*> m_InHookId{ nullptr };
+    std::atomic<unsigned> m_HooksTagged{ 0 };
+    std::atomic<unsigned> m_HooksUntagged{ 0 };
     std::atomic<int64_t> m_LastFrameQpc{ 0 };
     std::atomic<uint64_t> m_Written{ 0 };
     Slot m_Ring[kRingFrames]{};
@@ -285,8 +322,8 @@ private:
 };
 
 // The same for a body called far more often than once a frame (DoMultiCreate):
-// one call in kSampleEvery is timed and counted kSampleEvery times. The in-hook
-// tag is set on every call.
+// one call in kSampleEvery is timed and counted kSampleEvery times. The mod
+// is set on every call.
 class IncidentSampledScope {
 public:
     explicit IncidentSampledScope(Mod m) noexcept
@@ -304,6 +341,106 @@ private:
     Mod m_Mod;
     Mod m_Previous;
     int64_t m_Start;
+};
+
+// ---- the in-hook id: which hook the frame thread is in ----------------------
+
+// The RAII form, for a hook body no installer's thunk sees (a detour with a
+// native signature of its own). `id` must outlive the process: a literal.
+class IncidentHookTag {
+public:
+    explicit IncidentHookTag(const char* id) noexcept : m_Previous(g_Accounting.EnterHook(id)) {}
+    ~IncidentHookTag() { g_Accounting.LeaveHook(m_Previous); }
+    IncidentHookTag(const IncidentHookTag&) = delete;
+    IncidentHookTag& operator=(const IncidentHookTag&) = delete;
+
+private:
+    const char* m_Previous;
+};
+
+// What a hook installer hands the game instead of the hook body: a thunk that
+// sets the in-hook id, calls the body with the same arguments and puts the
+// previous id back. One instantiation per function-pointer type (x64 has one
+// calling convention), kHookSlots thunks each; slot I's thunk is Thunk<I>,
+// reached through a table built at compile time.
+//
+// Tagged(id, dest) gives `dest` a slot and returns that slot's thunk. The same
+// `dest` again gets the same slot back (a hook installed from two call sites,
+// or installed again, stays one thunk). The id is copied into the slot, since
+// callers' ids live in tables and arrays of their own. When the table is full
+// it returns `dest` itself and counts the hook as untagged. The thunk takes no
+// clock reading and counts nothing: it wraps hooks the game calls thousands
+// of times a frame.
+template <typename Fn>
+class TaggedThunks;
+
+template <typename R, typename... A>
+class TaggedThunks<R (*)(A...)> {
+public:
+    using Fn = R (*)(A...);
+
+    static Fn Tagged(const char* id, Fn dest) noexcept
+    {
+        if (!dest) return dest;
+        Lock lock;
+        const size_t used = s_Used.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < used; ++i)
+            if (s_Slots[i].dest.load(std::memory_order_relaxed) == dest) return ThunkAt(i);
+        if (used >= kHookSlots) {
+            s_Untagged.fetch_add(1, std::memory_order_relaxed);
+            g_Accounting.CountUntagged();
+            return dest;
+        }
+        Slot& slot = s_Slots[used];
+        size_t n = 0;
+        for (const char* c = id ? id : "unnamed"; *c && n + 1 < kHookIdChars; ++c) slot.id[n++] = *c;
+        slot.id[n] = '\0';
+        slot.dest.store(dest, std::memory_order_release);
+        s_Used.store(used + 1, std::memory_order_release);
+        g_Accounting.CountTagged();
+        return ThunkAt(used);
+    }
+
+    static size_t Tagged() noexcept { return s_Used.load(std::memory_order_acquire); }
+    static size_t Untagged() noexcept { return s_Untagged.load(std::memory_order_relaxed); }
+
+private:
+    struct Slot {
+        std::atomic<Fn> dest{ nullptr };
+        char id[kHookIdChars] = {};
+    };
+
+    // Installs run on the game thread at load and from commands; a spin lock
+    // keeps two of them from taking one slot, with nothing to destroy at exit.
+    struct Lock {
+        Lock() noexcept { while (s_Lock.test_and_set(std::memory_order_acquire)) Sleep(0); }
+        ~Lock() { s_Lock.clear(std::memory_order_release); }
+    };
+
+    template <size_t I>
+    static R Thunk(A... a)
+    {
+        Slot& slot = s_Slots[I];
+        const IncidentHookTag tag(slot.id);
+        return slot.dest.load(std::memory_order_acquire)(static_cast<A>(a)...);
+    }
+
+    template <size_t... I>
+    static constexpr std::array<Fn, sizeof...(I)> MakeThunks(std::index_sequence<I...>) noexcept
+    {
+        return { { &Thunk<I>... } };
+    }
+
+    static Fn ThunkAt(size_t i) noexcept
+    {
+        static constexpr std::array<Fn, kHookSlots> thunks = MakeThunks(std::make_index_sequence<kHookSlots>{});
+        return thunks[i];
+    }
+
+    static inline Slot s_Slots[kHookSlots]{};
+    static inline std::atomic<size_t> s_Used{ 0 };
+    static inline std::atomic<size_t> s_Untagged{ 0 };
+    static inline std::atomic_flag s_Lock = ATOMIC_FLAG_INIT;
 };
 
 // ---- episodes ------------------------------------------------------------------
@@ -341,12 +478,15 @@ struct ModCost {
 
 struct Episode {
     Kind kind = Kind::none;
-    double atMs = 0.0;        // the frame's end (PERF) or the moment it was seen (freeze)
+    double atMs = 0.0;        // the frame's end (PERF) or the moment it was judged (freeze)
     double worstMs = 0.0;     // the slowest frame; for a freeze, the time without one
     double baselineMs = 0.0;  // median frame before it
     double duringMs = 0.0;    // median frame during it
     double seconds = 0.0;     // how long it lasted when it was reported
-    Mod inHook = Mod::none;   // freeze: the innermost ForgePact code the frame thread was in
+    // Freeze: where the frame thread was when the gap crossed kFreezeMs - the
+    // innermost tagged hook (empty: none) and the innermost timed mod.
+    std::string inHook;
+    Mod inMod = Mod::none;
     std::vector<ModCost> cost;  // per mod over the episode's frames, costliest first
 };
 
@@ -359,7 +499,8 @@ struct Inputs {
     bool minimized = false;
     bool windowAlive = true;      // the game's window exists and is shown
     double roomChangeMs = -1.0;   // the newest room change the frame thread saw; below zero for none
-    Mod inHook = Mod::none;
+    const char* inHookId = nullptr;   // Accounting::InHookId(): a literal or a slot's buffer
+    Mod inMod = Mod::none;
 };
 
 namespace detail {
@@ -420,7 +561,6 @@ public:
         for (size_t i = 0; i < n; ++i) {
             m_History.push_back(frames[i]);
             ++m_Frames;
-            if (frames[i].frameMs > m_WorstMs) m_WorstMs = frames[i].frameMs;
         }
         while (m_History.size() > kHistoryFrames) {
             m_History.pop_front();
@@ -432,36 +572,67 @@ public:
     {
         Note(in);
         if (!in.armed) {
-            // Start-up's slow frames are the game loading, not a verdict.
-            m_Judged = m_History.size();
+            // Start-up's slow frames are the game loading, not a verdict;
+            // they still count toward the overall worst frame, as not judged.
+            for (; m_Judged < m_History.size(); ++m_Judged) NoteWorst(m_History[m_Judged].frameMs, false);
             m_InFreeze = false;
+            m_FreezeVerdictDue = false;
             return {};
         }
 
-        // Freeze: no frame for kFreezeMs, judged now, while it lasts.
+        // Freeze: no frame for kFreezeMs. The gap is marked, with both tags,
+        // when it crosses kFreezeMs, and judged when it ends: a zone load
+        // blocks the frame thread too, and the room change that explains it
+        // is only seen with the frames after it (D13). A gap that has not
+        // ended by kFreezeHoldMs is reported then.
         if (in.lastFrameMs >= 0.0) {
             if (m_InFreeze && in.lastFrameMs > m_FreezeFromMs) {
                 m_InFreeze = false;
-                m_FreezeEnded = true;
-                m_FreezeEndedMs = in.lastFrameMs - m_FreezeFromMs;
+                const double gap = FreezeGap(in.lastFrameMs);
+                m_FreezeEndMs = m_FreezeFromMs + gap;
+                m_Freeze.worstMs = gap;
+                m_Freeze.seconds = gap / 1000.0;
+                if (m_FreezeReported) EndFreeze(gap, false);
+                else m_FreezeVerdictDue = true;
             }
-            const double gap = in.nowMs - in.lastFrameMs;
+            if (m_FreezeVerdictDue && in.nowMs - m_FreezeEndMs >= kRoomLeadMs) {
+                m_FreezeVerdictDue = false;
+                if (RoomChangedBetween(m_FreezeFromMs, m_FreezeEndMs + kRoomLeadMs)) {
+                    ++m_Quiet;
+                    EndFreeze(m_Freeze.worstMs, true);
+                } else {
+                    EndFreeze(m_Freeze.worstMs, false);
+                    if (Allowed(in.nowMs, true)) {
+                        Episode e = m_Freeze;
+                        e.atMs = in.nowMs;
+                        Counted(in.nowMs);
+                        return e;
+                    }
+                    ++m_Suppressed;
+                }
+            }
             // A minimized game may stop drawing; the wait counts from the
             // later of its last frame and the last wake that saw it minimized.
             const double since = in.lastFrameMs > m_LastMinimizedMs ? in.lastFrameMs : m_LastMinimizedMs;
-            if (!m_InFreeze && in.nowMs - since >= kFreezeMs && !in.minimized && in.windowAlive) {
+            if (!m_InFreeze && !m_FreezeVerdictDue && in.nowMs - since >= kFreezeMs && !in.minimized && in.windowAlive) {
                 m_InFreeze = true;
+                m_FreezeReported = false;
                 m_FreezeFromMs = in.lastFrameMs;
                 m_FreezeStarts.push_back(in.lastFrameMs);
                 if (m_FreezeStarts.size() > 8) m_FreezeStarts.pop_front();
+                m_Freeze = Episode{};
+                m_Freeze.kind = Kind::freeze;
+                m_Freeze.inHook = in.inHookId ? in.inHookId : "";
+                m_Freeze.inMod = in.inMod;
+                m_Freeze.baselineMs = BaselineBefore(m_History.size(), 1);
+            }
+            if (m_InFreeze && !m_FreezeReported && in.nowMs - m_FreezeFromMs >= kFreezeHoldMs) {
+                m_FreezeReported = true;
                 if (Allowed(in.nowMs, true)) {
-                    Episode e;
-                    e.kind = Kind::freeze;
+                    Episode e = m_Freeze;
                     e.atMs = in.nowMs;
-                    e.worstMs = gap;
-                    e.seconds = gap / 1000.0;
-                    e.inHook = in.inHook;
-                    e.baselineMs = BaselineBefore(m_History.size(), 1);
+                    e.worstMs = in.nowMs - m_FreezeFromMs;
+                    e.seconds = e.worstMs / 1000.0;
                     Counted(in.nowMs);
                     return e;
                 }
@@ -469,13 +640,19 @@ public:
             }
         }
 
-        // Hitches: each frame once, kJudgeDelayMs after it ended.
+        // Hitches: each frame once, kJudgeDelayMs after it ended. A frame is
+        // judged when it is neither a freeze's nor quiet (near a room change
+        // or unfocused); the worst frames are kept both ways (D16).
         const double horizon = in.nowMs - kJudgeDelayMs;
         while (m_Judged < m_History.size() && m_History[m_Judged].endMs <= horizon) {
             const size_t i = m_Judged++;
             const FrameSample& f = m_History[i];
-            if (f.frameMs < kHitchMs || IsFreezeFrame(f)) continue;
-            if (IsQuiet(f)) { ++m_Quiet; continue; }
+            const bool freezeFrame = IsFreezeFrame(f);
+            const bool quiet = !freezeFrame && IsQuiet(f);
+            NoteWorst(f.frameMs, !freezeFrame && !quiet);
+            if (f.frameMs < kHitchMs || freezeFrame) continue;
+            if (quiet) { ++m_Quiet; continue; }
+            ++m_SlowJudged;
             if (!Allowed(f.endMs, false)) { ++m_Suppressed; continue; }
             Episode e;
             e.kind = Kind::hitch;
@@ -529,18 +706,22 @@ public:
         return e;
     }
 
-    // The end of a reported (or held back) freeze, once: how long the frame
-    // thread was gone.
-    bool TakeFreezeEnded(double& ms) noexcept
+    // The end of a freeze, once it is judged: how long the frame thread was
+    // gone, and whether a room change made it a load.
+    bool TakeFreezeEnded(double& ms, bool& load) noexcept
     {
         if (!m_FreezeEnded) return false;
         m_FreezeEnded = false;
         ms = m_FreezeEndedMs;
+        load = m_FreezeEndedLoad;
         return true;
     }
 
     uint64_t Frames() const noexcept { return m_Frames; }
-    double WorstMs() const noexcept { return m_WorstMs; }
+    double WorstMs() const noexcept { return m_WorstMs; }                  // every frame looked at
+    bool WorstWasJudged() const noexcept { return m_WorstJudged; }
+    double WorstJudgedMs() const noexcept { return m_WorstJudgedMs; }      // armed, not quiet, not a freeze's
+    unsigned SlowJudgedFrames() const noexcept { return m_SlowJudged; }    // judged frames of kHitchMs or more
     unsigned Episodes() const noexcept { return m_Episodes; }
     unsigned Suppressed() const noexcept { return m_Suppressed; }  // held back by the rate limits
     unsigned Quiet() const noexcept { return m_Quiet; }            // slow, but near a room change or unfocused
@@ -582,6 +763,43 @@ private:
     }
 
     bool IsQuiet(const FrameSample& f) const noexcept { return InGrace(f) || Unfocused(f); }
+
+    // A room change the frame thread saw after `fromMs` and by `toMs`.
+    bool RoomChangedBetween(double fromMs, double toMs) const noexcept
+    {
+        for (const double r : m_RoomChanges)
+            if (r > fromMs && r <= toMs) return true;
+        return false;
+    }
+
+    // How long the open freeze lasted: the duration of the frame that ended
+    // it, or, if that frame is not in the history, up to the newest frame.
+    double FreezeGap(double lastFrameMs) const noexcept
+    {
+        for (size_t i = m_History.size(); i > 0;) {
+            const FrameSample& f = m_History[--i];
+            const double start = f.endMs - f.frameMs;
+            if (f.endMs > m_FreezeFromMs && start <= m_FreezeFromMs + 1.0 && start >= m_FreezeFromMs - 1.0) return f.frameMs;
+            if (f.endMs <= m_FreezeFromMs) break;
+        }
+        return lastFrameMs - m_FreezeFromMs;
+    }
+
+    void EndFreeze(double gapMs, bool load) noexcept
+    {
+        m_FreezeEnded = true;
+        m_FreezeEndedMs = gapMs;
+        m_FreezeEndedLoad = load;
+    }
+
+    void NoteWorst(double frameMs, bool judged) noexcept
+    {
+        if (frameMs > m_WorstMs) {
+            m_WorstMs = frameMs;
+            m_WorstJudged = judged;
+        }
+        if (judged && frameMs > m_WorstJudgedMs) m_WorstJudgedMs = frameMs;
+    }
 
     // The frame that ended a freeze already has its report.
     bool IsFreezeFrame(const FrameSample& f) const noexcept
@@ -626,14 +844,22 @@ private:
     size_t m_Judged = 0;
     uint64_t m_Frames = 0;
     double m_WorstMs = 0.0;
+    bool m_WorstJudged = false;
+    double m_WorstJudgedMs = 0.0;
+    unsigned m_SlowJudged = 0;
     std::deque<double> m_Unfocused;
     std::deque<double> m_RoomChanges;
     std::deque<double> m_FreezeStarts;
     double m_LastMinimizedMs = -1.0;
-    bool m_InFreeze = false;
+    bool m_InFreeze = false;            // a gap past kFreezeMs, still open
+    bool m_FreezeReported = false;      // ...already reported at kFreezeHoldMs
+    bool m_FreezeVerdictDue = false;    // ended; waiting kRoomLeadMs for a room change
     double m_FreezeFromMs = 0.0;
+    double m_FreezeEndMs = 0.0;
+    Episode m_Freeze;                   // the open freeze, tags captured when it was marked
     bool m_FreezeEnded = false;
     double m_FreezeEndedMs = 0.0;
+    bool m_FreezeEndedLoad = false;
     bool m_SustainedActive = false;
     double m_LastEpisodeMs = -1.0;
     unsigned m_Episodes = 0;
@@ -881,9 +1107,13 @@ inline bool PreviousSession(const std::string& outText, const std::string& prevT
     return false;
 }
 
+// Either marker route, at the start of a line: a chat line quoting the marker
+// is not one.
 inline bool SessionEndedCleanly(const std::string& session)
 {
-    return session.find(kCleanShutdownLine) != std::string::npos;
+    for (size_t at = session.find(kCleanShutdownPrefix); at != std::string::npos; at = session.find(kCleanShutdownPrefix, at + 1))
+        if (at == 0 || session[at - 1] == '\n') return true;
+    return false;
 }
 
 // Only a session that ran the monitor can be judged: one from an older plugin
@@ -962,14 +1192,18 @@ inline std::string PerfLine(const Episode& e, const std::string& room)
            + where + " | top " + TopMod(e.cost);
 }
 
+// Names both tags as they were when the gap crossed kFreezeMs: by the time
+// frames resume, the frame thread has left whatever it was inside.
 inline std::string FreezeLine(const Episode& e)
 {
-    return "FREEZE " + Fixed(e.seconds, 0) + " s without a frame | in-hook " + ModName(e.inHook);
+    return "FREEZE " + Fixed(e.seconds, 0) + " s without a frame | in-hook " + (e.inHook.empty() ? std::string("none") : e.inHook)
+           + " | in-mod " + ModName(e.inMod);
 }
 
-inline std::string FreezeEndedLine(double ms)
+inline std::string FreezeEndedLine(double ms, bool load)
 {
-    return "FREEZE ended - the next frame came after " + Fixed(ms / 1000.0, 1) + " s";
+    return "FREEZE ended - the next frame came after " + Fixed(ms / 1000.0, 1) + " s"
+           + (load ? std::string(", after a room change: a load, not reported") : std::string());
 }
 
 inline std::string CrashLine(const std::string& exitCode, const std::string& module)
@@ -979,7 +1213,11 @@ inline std::string CrashLine(const std::string& exitCode, const std::string& mod
            + (module.empty() ? std::string("unknown") : module);
 }
 
-inline std::string ReportWrittenLine(const std::string& dir) { return "incident: report written " + dir; }
+inline std::string ReportWrittenLine(const std::string& dir, unsigned failedFiles)
+{
+    return "incident: report written " + dir
+           + (failedFiles ? " (" + std::to_string(failedFiles) + (failedFiles == 1 ? " file" : " files") + " failed)" : std::string());
+}
 
 // ---- report.json ---------------------------------------------------------------
 
@@ -1016,6 +1254,16 @@ inline std::string ReportJson(const ReportFacts& f)
     auto text = [](const std::string& s) { return s.empty() ? std::string("null") : JsonString(s); };
     auto count = [](long long v) { return v < 0 ? std::string("null") : std::to_string(v); };
     const Episode& e = f.episode;
+    // The tags: a freeze's as they were captured; a crash's are unknowable at
+    // the next load; a PERF episode has none (its per-mod tables answer that).
+    const Kind kind = e.kind == Kind::none ? f.kind : e.kind;
+    std::string inHook = "null", inMod = "null";
+    if (kind == Kind::freeze) {
+        inHook = JsonString(e.inHook.empty() ? std::string("none") : e.inHook);
+        inMod = JsonString(ModName(e.inMod));
+    } else if (kind == Kind::crash) {
+        inHook = inMod = JsonString("unknown");
+    }
     std::string exitObject = "null";
     {
         size_t a = f.exitJson.find_first_not_of(" \t\r\n");
@@ -1026,14 +1274,14 @@ inline std::string ReportJson(const ReportFacts& f)
     std::string j = "{\n";
     j += "  \"schema\": \"forgepact-incident/1\",\n";
     j += "  \"kind\": " + JsonString(BundleKindName(f.kind)) + ",\n";
-    j += "  \"episode\": " + JsonString(KindName(e.kind == Kind::none ? f.kind : e.kind)) + ",\n";
+    j += "  \"episode\": " + JsonString(KindName(kind)) + ",\n";
     j += "  \"utc\": " + text(f.utc) + ",\n";
     j += "  \"pluginVersion\": " + text(f.pluginVersion) + ",\n";
     j += "  \"panelVersion\": " + text(f.panelVersion) + ",\n";
     j += "  \"gameVersion\": " + text(f.gameVersion) + ",\n";
     j += "  \"frames\": {\"medianBeforeMs\": " + Fixed(e.baselineMs, 2) + ", \"medianDuringMs\": " + Fixed(e.duringMs, 2)
          + ", \"worstMs\": " + Fixed(e.worstMs, 2) + ", \"seconds\": " + Fixed(e.seconds, 2)
-         + ", \"inHook\": " + JsonString(ModName(e.inHook)) + ", \"room\": " + text(f.room)
+         + ", \"inHook\": " + inHook + ", \"inMod\": " + inMod + ", \"room\": " + text(f.room)
          + ", \"monsters\": " + count(f.monsters) + ", \"instances\": " + count(f.instances) + "},\n";
     j += "  \"modsLastMinute\": " + CostJson(f.lastMinute) + ",\n";
     j += "  \"modsEpisode\": " + CostJson(e.cost) + ",\n";
@@ -1088,19 +1336,28 @@ struct StatFacts {
     uint64_t frames = 0;
     uint64_t lost = 0;
     double baselineMs = 0.0;
-    double worstMs = 0.0;
+    double worstMs = 0.0;          // every frame looked at...
+    bool worstJudged = false;      // ...and whether that one was judged
+    double worstJudgedMs = 0.0;    // armed, not quiet, not a freeze's
+    unsigned slowJudged = 0;       // judged frames of kHitchMs or more
     bool grace = false;
     bool focused = true;
     bool armed = false;
-    Mod inHook = Mod::none;
+    bool window = false;           // the game's window was found: without it, no freeze is detected
+    std::string inHook;            // empty: none
+    Mod inMod = Mod::none;
     unsigned episodes = 0;
     unsigned suppressed = 0;
     unsigned quiet = 0;
     unsigned bundles = 0;
+    unsigned hooksTagged = 0;
+    unsigned hooksUntagged = 0;
+    unsigned writeErrors = 0;      // report files that could not be written
     std::vector<ModCost> lastMinute;
     std::string lastReport;
 };
 
+// The first line, `incident: frames ...`, is what a live session looks for.
 inline std::vector<std::string> StatLines(const StatFacts& s)
 {
     std::vector<std::string> lines;
@@ -1108,14 +1365,19 @@ inline std::vector<std::string> StatLines(const StatFacts& s)
         lines.push_back("incident: monitor not running - no frame is being watched");
         return lines;
     }
-    lines.push_back("incident: monitor running | frames " + std::to_string(s.frames) + (s.lost ? " (" + std::to_string(s.lost) + " missed)" : std::string())
+    lines.push_back("incident: frames " + std::to_string(s.frames) + (s.lost ? " (" + std::to_string(s.lost) + " missed)" : std::string())
                     + " | baseline " + Fixed(s.baselineMs, 1) + " ms | worst " + Fixed(s.worstMs, 1) + " ms"
+                    + (s.worstJudged ? " (judged)" : " (not judged)") + " | worst judged " + Fixed(s.worstJudgedMs, 1)
+                    + " ms | slow judged frames " + std::to_string(s.slowJudged)
                     + " | watching " + (s.armed ? "yes" : "not yet (start-up)") + " | grace " + (s.grace ? "yes" : "no")
-                    + " | focus " + (s.focused ? "yes" : "no") + " | in-hook " + ModName(s.inHook));
+                    + " | focus " + (s.focused ? "yes" : "no") + " | window " + (s.window ? "yes" : "no")
+                    + " | in-hook " + (s.inHook.empty() ? std::string("none") : s.inHook) + " | in-mod " + ModName(s.inMod));
     lines.push_back("incident: episodes " + std::to_string(s.episodes) + ", held back " + std::to_string(s.suppressed)
                     + ", ignored near a room change or unfocused " + std::to_string(s.quiet)
                     + " | reports written " + std::to_string(s.bundles)
                     + (s.lastReport.empty() ? std::string() : " | last " + s.lastReport));
+    lines.push_back("incident: hooks tagged " + std::to_string(s.hooksTagged) + ", untagged " + std::to_string(s.hooksUntagged)
+                    + " | report write errors " + std::to_string(s.writeErrors));
     if (s.lastMinute.empty()) {
         lines.push_back("incident: per mod over the last minute: no frames yet");
     } else {
@@ -1221,6 +1483,7 @@ public:
     BundleLimiter bundles;
     uint64_t cursor = 0;
     uint64_t lost = 0;
+    unsigned writeErrors = 0;
     std::string lastReport;
 
 private:
@@ -1242,18 +1505,28 @@ private:
 
 // ---- the clean-shutdown marker -------------------------------------------------
 
-// Aurie runs no module code at process exit and this module has no DllMain,
-// so the one piece of ForgePact that runs on a normal ExitProcess is this
-// DLL's static destructors, at DLL_PROCESS_DETACH. A crash (Windows Error
-// Reporting, TerminateProcess) runs none of them. So this object's destructor
-// appends kCleanShutdownLine to out.txt, and the next load reads its absence
-// as a crash.
+// A crash (Windows Error Reporting, TerminateProcess, a fast fail) runs no
+// code of ours; a normal exit runs two pieces of it, and either writes this
+// marker to out.txt, so the next load reads its absence as a crash:
 //
-// The destructor uses CreateFileA, WriteFile and CloseHandle only: by then the
-// C runtime and the loader are tearing down, and a stream, an allocation or a
-// library load there is the class of exit crash (0xC0000409) the guide's
-// Known Limitations describe. The path is copied into a fixed buffer when the
-// marker is armed, at load.
+//   * ShutdownRoute::exitProcess - the adapter's by-name detour on
+//     ExitProcess (ModuleMain.cpp, IncidentInstallExitHook). It runs on the
+//     exiting thread with every DLL still loaded, before any module's
+//     teardown, so another DLL aborting during its own detach (Known
+//     Limitations, the 0xC0000409 exit) comes after the marker.
+//   * ShutdownRoute::detach - this object's destructor, at
+//     DLL_PROCESS_DETACH: Aurie runs no module code at exit and this module
+//     has no DllMain, so the static destructors are the one other place.
+//
+// Write is once-only, so the line appears once and names the route that got
+// there first. It uses CreateFileA, WriteFile and CloseHandle only: the
+// process is ending, and at detach the C runtime and the loader are tearing
+// down, where a stream, an allocation or a library load is that same class of
+// exit crash. It takes no lock: a thread ExitProcess already ended may have
+// held one. The path is copied into a fixed buffer when the marker is armed,
+// at load.
+enum class ShutdownRoute : uint8_t { exitProcess, detach };
+
 class ShutdownMarker {
 public:
     ShutdownMarker() = default;
@@ -1271,21 +1544,36 @@ public:
 
     bool Armed() const noexcept { return m_Armed.load(std::memory_order_acquire); }
 
-    ~ShutdownMarker()
+    // True when this call wrote the line.
+    bool Write(ShutdownRoute route) noexcept
     {
-        if (!m_Armed.load(std::memory_order_acquire)) return;
+        if (!m_Armed.load(std::memory_order_acquire)) return false;
+        if (m_Written.exchange(true, std::memory_order_acq_rel)) return false;
         const HANDLE file = CreateFileA(m_Path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE) return;
+        if (file == INVALID_HANDLE_VALUE) {
+            m_Written.store(false, std::memory_order_release);   // the other route may still manage it
+            return false;
+        }
         DWORD written = 0;
-        WriteFile(file, kCleanShutdownLine, static_cast<DWORD>(sizeof(kCleanShutdownLine) - 1), &written, nullptr);
+        if (route == ShutdownRoute::detach)
+            WriteFile(file, kCleanShutdownDetachLine, static_cast<DWORD>(sizeof(kCleanShutdownDetachLine) - 1), &written, nullptr);
+        else
+            WriteFile(file, kCleanShutdownLine, static_cast<DWORD>(sizeof(kCleanShutdownLine) - 1), &written, nullptr);
         WriteFile(file, "\r\n", 2, &written, nullptr);
         CloseHandle(file);
+        return true;
+    }
+
+    ~ShutdownMarker()
+    {
+        Write(ShutdownRoute::detach);
     }
 
 private:
     char m_Path[MAX_PATH] = {};
     std::atomic<bool> m_Armed{ false };
+    std::atomic<bool> m_Written{ false };
 };
 
 inline ShutdownMarker g_ShutdownMarker;

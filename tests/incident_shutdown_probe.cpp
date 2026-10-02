@@ -10,7 +10,10 @@
 //
 //   ExitProcess       -> Windows ends the other threads and runs this DLL's
 //                        static destructors at DLL_PROCESS_DETACH, so the
-//                        marker line is appended to the file;
+//                        marker's second route appends its line,
+//                        "==== clean shutdown (detach) ====" (the plugin's
+//                        first route, its ExitProcess hook, needs Aurie and
+//                        is not here);
 //   TerminateProcess  -> no destructor runs, as after a crash, so there is
 //                        no marker.
 //

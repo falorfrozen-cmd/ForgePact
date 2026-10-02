@@ -3,12 +3,16 @@
 // Compiles plugin/include/ForgePact/IncidentMonitor.hpp whole and drives it
 // the way ModuleMain.cpp's adapter does: frames arrive on a clock, the monitor
 // wakes every kWakeMs, and each wake hands the Detector what it can see (the
-// newest frame's time, focus, the last room change, the in-hook tag). Here the
+// newest frame's time, focus, the last room change, the two tags). Here the
 // clock is simulated, so ten seconds of 60 fps take no time; the per-mod
-// accounting and the clean-shutdown marker run for real.
+// accounting, the installer's tag thunks and the clean-shutdown marker run for
+// real.
 //
-// Usage:  incident_monitor_harness.exe <incident_shutdown_probe.dll> <work dir>
+// Usage:  incident_monitor_harness.exe <incident_shutdown_probe.dll> <work dir> <fixture dir>
 //         incident_monitor_harness.exe --child <exit|terminate> <probe.dll> <marker path>
+//
+// <fixture dir> is tests/fixtures/incident: the exit.json and panel.json the
+// panel writes, read here through the same parsers the plugin uses.
 //
 // Each scenario prints one line, `<name> | <pass|fail> | <detail>`, and the
 // process exits 0 only when every scenario passed.
@@ -20,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace inc = ForgePact::Incident;
@@ -42,6 +47,8 @@ std::string Num(double v)
     return b;
 }
 
+std::string HookName(const char* id) { return id ? id : "none"; }
+
 // ---- a monitor on a simulated clock ---------------------------------------
 
 struct Sim {
@@ -57,6 +64,10 @@ struct Sim {
     // to the monitor at `roomSeenAt`, the way the once-a-second sample lands.
     double roomSeenAt = -1.0;
     double roomChange = -1.0;
+    // The freeze ends the monitor logged (FreezeEndedLine).
+    int ended = 0;
+    double endedMs = 0.0;
+    bool endedLoad = false;
 
     Sim() { in.armed = true; in.focused = true; in.windowAlive = true; }
 
@@ -75,6 +86,13 @@ struct Sim {
             const inc::Episode e = detector.Analyze(in);
             if (e.kind == inc::Kind::none) break;
             episodes.push_back(e);
+        }
+        double ms = 0.0;
+        bool load = false;
+        if (detector.TakeFreezeEnded(ms, load)) {
+            ++ended;
+            endedMs = ms;
+            endedLoad = load;
         }
         nextWake += inc::kWakeMs;
     }
@@ -104,6 +122,13 @@ struct Sim {
         while (nextWake <= now) Wake();
     }
 
+    // A room change the frame thread sees with the next frame, as after a load.
+    void RoomChangesWithNextFrame()
+    {
+        roomChange = now + 16.7;
+        roomSeenAt = now + 16.7;
+    }
+
     // Lets the monitor judge everything already fed (frames are judged
     // kJudgeDelayMs after they end) without starving it into a freeze.
     void Settle() { Frames(3.0, 16.7); }
@@ -120,7 +145,8 @@ struct Sim {
         std::string s = std::to_string(episodes.size()) + " episode(s)";
         for (const auto& e : episodes)
             s += std::string(" [") + inc::KindName(e.kind) + " worst " + Num(e.worstMs) + " ms baseline "
-                 + Num(e.baselineMs) + " in-hook " + inc::ModName(e.inHook) + "]";
+                 + Num(e.baselineMs) + " in-hook " + (e.inHook.empty() ? "none" : e.inHook) + " in-mod "
+                 + inc::ModName(e.inMod) + "]";
         s += ", suppressed " + std::to_string(detector.Suppressed()) + ", quiet " + std::to_string(detector.Quiet());
         return s;
     }
@@ -191,46 +217,56 @@ void Sustained()
     Report("sustained-2.5x-3s", ok, sim.Describe() + " | " + line);
 }
 
-// The in-hook tag comes from a real scope on the real accounting: the freeze
-// report must name the innermost ForgePact code the frame thread was in.
+// Both tags come from the real accounting: the hook id from the RAII tag the
+// installer's thunk uses, the mod from a real scope. A freeze is reported
+// once frames are back and no room change explains it, and names both.
 void FreezeInHook()
 {
     Sim sim;
     sim.Frames(5.0, 16.7);
+    size_t during = 0;
     {
         inc::IncidentScope scope(inc::Mod::mapreveal);
-        sim.in.inHook = inc::g_Accounting.InHook();
+        inc::IncidentHookTag tag("harness_hook");
+        sim.in.inMod = inc::g_Accounting.InMod();
+        sim.in.inHookId = inc::g_Accounting.InHookId();
         sim.Stall(4000.0);
+        during = sim.episodes.size();
     }
-    sim.in.inHook = inc::g_Accounting.InHook();
-    const bool restored = sim.in.inHook == inc::Mod::none;
+    sim.in.inMod = inc::g_Accounting.InMod();
+    sim.in.inHookId = inc::g_Accounting.InHookId();
+    const bool restored = sim.in.inMod == inc::Mod::none && sim.in.inHookId == nullptr;
     sim.Frames(3.0, 16.7);
     sim.Settle();
-    double ended = 0.0;
-    const bool sawEnd = sim.detector.TakeFreezeEnded(ended);
-    bool ok = restored && sim.episodes.size() == 1 && sim.Count(inc::Kind::freeze) == 1 && sawEnd && ended >= 4000.0;
+    bool ok = restored && during == 0 && sim.episodes.size() == 1 && sim.Count(inc::Kind::freeze) == 1
+              && sim.ended == 1 && sim.endedMs >= 4000.0 && !sim.endedLoad;
     std::string line;
     if (ok) {
-        line = inc::FreezeLine(sim.episodes[0]);
-        ok = sim.episodes[0].inHook == inc::Mod::mapreveal
-             && line.rfind("FREEZE 3 s without a frame | in-hook mapreveal", 0) == 0;
+        const inc::Episode& e = sim.episodes[0];
+        line = inc::FreezeLine(e);
+        ok = e.inMod == inc::Mod::mapreveal && e.inHook == "harness_hook" && e.seconds >= 4.0
+             && line.rfind("FREEZE 4 s without a frame | in-hook harness_hook | in-mod mapreveal", 0) == 0;
     }
-    Report("freeze-4s-in-hook", ok, sim.Describe() + " | " + line + " | ended after " + Num(ended) + " ms");
+    Report("freeze-4s-in-hook", ok, sim.Describe() + " | " + line + " | reported while frozen " + std::to_string(during)
+           + " | ended after " + Num(sim.endedMs) + " ms");
 }
 
 void FreezeNoHook()
 {
     Sim sim;
     sim.Frames(5.0, 16.7);
-    sim.in.inHook = inc::g_Accounting.InHook();
+    sim.in.inMod = inc::g_Accounting.InMod();
+    sim.in.inHookId = inc::g_Accounting.InHookId();
     sim.Stall(4000.0);
+    const size_t during = sim.episodes.size();
     sim.Frames(3.0, 16.7);
     sim.Settle();
-    bool ok = sim.episodes.size() == 1 && sim.Count(inc::Kind::freeze) == 1;
+    bool ok = during == 0 && sim.episodes.size() == 1 && sim.Count(inc::Kind::freeze) == 1;
     std::string line;
     if (ok) {
         line = inc::FreezeLine(sim.episodes[0]);
-        ok = sim.episodes[0].inHook == inc::Mod::none && line.find("| in-hook none") != std::string::npos;
+        ok = sim.episodes[0].inMod == inc::Mod::none && sim.episodes[0].inHook.empty()
+             && line.find("| in-hook none | in-mod none") != std::string::npos;
     }
     // Negative control: a minimized game that stops drawing is not frozen.
     Sim hidden;
@@ -242,6 +278,49 @@ void FreezeNoHook()
     hidden.Settle();
     ok = ok && hidden.Count(inc::Kind::freeze) == 0;
     Report("freeze-4s-no-hook", ok, sim.Describe() + " | " + line + " | minimized: " + hidden.Describe());
+}
+
+// D13: a zone load blocks the frame thread, and the room change is seen only
+// with the first frame after it. That gap is a load, not a freeze.
+void FreezeLoadRoomChange()
+{
+    Sim sim;
+    sim.Frames(5.0, 16.7);
+    sim.Stall(3500.0);
+    const size_t during = sim.episodes.size();
+    sim.RoomChangesWithNextFrame();
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    const std::string line = inc::FreezeEndedLine(sim.endedMs, sim.endedLoad);
+    bool ok = during == 0 && sim.episodes.empty() && sim.detector.Quiet() == 1 && sim.ended == 1 && sim.endedLoad
+              && line.find("after a room change: a load, not reported") != std::string::npos;
+    // Control: a room change from before the gap began explains nothing.
+    Sim early;
+    early.Frames(5.0, 16.7);
+    early.RoomChangesWithNextFrame();
+    early.Frames(1.0, 16.7);
+    early.Stall(3500.0);
+    early.Frames(3.0, 16.7);
+    early.Settle();
+    ok = ok && early.Count(inc::Kind::freeze) == 1 && !early.endedLoad;
+    Report("freeze-load-room-change", ok, sim.Describe() + " | " + line + " | room change before the gap: " + early.Describe());
+}
+
+// A freeze that does not end is reported once it reaches kFreezeHoldMs, and
+// its end is still logged when frames come back, with no second episode.
+void FreezeNeverEnds()
+{
+    Sim sim;
+    sim.Frames(5.0, 16.7);
+    sim.Stall(16000.0);
+    const int during = sim.Count(inc::Kind::freeze);
+    const double seconds = during == 1 ? sim.episodes[0].seconds : 0.0;
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    const bool ok = during == 1 && seconds >= inc::kFreezeHoldMs / 1000.0 && sim.Count(inc::Kind::freeze) == 1
+                    && sim.episodes.size() == 1 && sim.ended == 1 && !sim.endedLoad && sim.endedMs >= 16000.0;
+    Report("freeze-never-ends", ok, sim.Describe() + " | reported after " + Num(seconds) + " s | "
+           + inc::FreezeEndedLine(sim.endedMs, sim.endedLoad));
 }
 
 void Unfocused()
@@ -320,6 +399,125 @@ void PerModAccounting()
     Report("per-mod-accounting", ok, detail + " | " + line);
 }
 
+// D16: a slow frame inside a room change's grace is the worst frame, but not
+// a judged one; the judged worst and the slow judged count say what the
+// detector actually weighed.
+void WorstJudgedVsOverall()
+{
+    Sim sim;
+    sim.Frames(5.0, 16.7);
+    sim.roomChange = sim.now + 300.0;
+    sim.roomSeenAt = sim.now + 300.0;
+    sim.Frame(400.0);
+    sim.Frames(8.0, 16.7);
+    sim.Frame(300.0);
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    const inc::Detector& d = sim.detector;
+    const bool ok = d.WorstMs() > 399.0 && d.WorstMs() < 401.0 && !d.WorstWasJudged()
+                    && d.WorstJudgedMs() > 299.0 && d.WorstJudgedMs() < 301.0 && d.SlowJudgedFrames() == 1
+                    && sim.Count(inc::Kind::hitch) == 1;
+    Report("worst-judged-vs-overall", ok, "overall worst " + Num(d.WorstMs()) + " ms judged " + (d.WorstWasJudged() ? "yes" : "no")
+           + " | worst judged " + Num(d.WorstJudgedMs()) + " ms | slow judged frames " + std::to_string(d.SlowJudgedFrames())
+           + " | " + sim.Describe());
+}
+
+// ---- the installer's tag thunk (D8, channel 1) ----------------------------
+
+const char* g_SeenHook = "unset";
+inc::Mod g_SeenMod = inc::Mod::Count;
+
+int TripleTarget(int x)
+{
+    g_SeenHook = inc::g_Accounting.InHookId();
+    g_SeenMod = inc::g_Accounting.InMod();
+    return x * 3;
+}
+
+int OtherTarget(int x) { return x + 1; }
+
+template <int N>
+long FillTarget(long x) { return x + N; }
+
+template <size_t... I>
+size_t FillTable(std::index_sequence<I...>)
+{
+    using Thunks = inc::TaggedThunks<long (*)(long)>;
+    size_t own = 0;
+    ((own += Thunks::Tagged("fill", &FillTarget<static_cast<int>(I)>) == &FillTarget<static_cast<int>(I)> ? 1u : 0u), ...);
+    return own;
+}
+
+void HookTagThunk()
+{
+    using Thunks = inc::TaggedThunks<int (*)(int)>;
+    const unsigned taggedBefore = inc::g_Accounting.HooksTagged();
+    const auto thunk = Thunks::Tagged("harness_triple", &TripleTarget);
+    const auto again = Thunks::Tagged("harness_triple_again", &TripleTarget);
+    const auto other = Thunks::Tagged("harness_other", &OtherTarget);
+    bool ok = thunk != &TripleTarget && again == thunk && other != thunk && Thunks::Tagged() == 2 && Thunks::Untagged() == 0
+              && inc::g_Accounting.HooksTagged() == taggedBefore + 2;
+    std::string detail = "slots " + std::to_string(Thunks::Tagged());
+    // Through the thunk: the target's value, the slot's id inside, none after.
+    const int value = thunk(7);
+    const bool inside = g_SeenHook && std::string(g_SeenHook) == "harness_triple";
+    const bool after = inc::g_Accounting.InHookId() == nullptr;
+    ok = ok && value == 21 && inside && after && g_SeenMod == inc::Mod::none && other(1) == 2;
+    detail += " | value " + std::to_string(value) + " | inside " + HookName(g_SeenHook) + " | after "
+              + HookName(inc::g_Accounting.InHookId());
+    // Inside a mod's scope the thunk sets the hook id and leaves the mod alone.
+    {
+        inc::IncidentScope scope(inc::Mod::gems);
+        thunk(1);
+        ok = ok && g_SeenMod == inc::Mod::gems && inc::g_Accounting.InMod() == inc::Mod::gems
+             && g_SeenHook && std::string(g_SeenHook) == "harness_triple";
+    }
+    ok = ok && inc::g_Accounting.InMod() == inc::Mod::none && inc::g_Accounting.InHookId() == nullptr;
+    detail += " | in a gems scope: mod " + std::string(inc::ModName(g_SeenMod));
+    // A full table hands the caller's own pointer back, untagged and counted.
+    using Fill = inc::TaggedThunks<long (*)(long)>;
+    const unsigned untaggedBefore = inc::g_Accounting.HooksUntagged();
+    const size_t own = FillTable(std::make_index_sequence<inc::kHookSlots + 1>{});
+    ok = ok && own == 1 && Fill::Tagged() == inc::kHookSlots && Fill::Untagged() == 1
+         && inc::g_Accounting.HooksUntagged() == untaggedBefore + 1;
+    detail += " | full table: " + std::to_string(Fill::Tagged()) + " tagged, " + std::to_string(Fill::Untagged()) + " untagged";
+    Report("hook-tag-thunk", ok, detail);
+}
+
+// D16: `incident stat`'s first line is the live marker and says what was judged.
+void StatLinePrefix()
+{
+    inc::StatFacts s;
+    s.running = true;
+    s.frames = 1200;
+    s.baselineMs = 16.7;
+    s.worstMs = 400.0;
+    s.worstJudged = false;
+    s.worstJudgedMs = 300.0;
+    s.slowJudged = 1;
+    s.window = true;
+    s.armed = true;
+    s.inHook = "harness_hook";
+    s.inMod = inc::Mod::density;
+    s.hooksTagged = 42;
+    s.hooksUntagged = 10;
+    s.writeErrors = 0;
+    const std::vector<std::string> lines = inc::StatLines(s);
+    bool ok = lines.size() == 4 && lines[0].rfind("incident: frames ", 0) == 0;
+    if (ok) {
+        for (const char* part : { " | baseline ", " | worst judged ", " | slow judged frames ", " | window ", " | in-hook " })
+            ok = ok && lines[0].find(part) != std::string::npos;
+        ok = ok && lines[0].find("| window yes") != std::string::npos && lines[0].find("(not judged)") != std::string::npos
+             && lines[2].rfind("incident: hooks tagged 42, untagged 10 | report write errors 0", 0) == 0;
+    }
+    // Not running: one line that says so.
+    const std::vector<std::string> idle = inc::StatLines(inc::StatFacts{});
+    ok = ok && idle.size() == 1 && idle[0].rfind("incident: monitor not running", 0) == 0;
+    std::string detail;
+    for (const auto& l : lines) detail += (detail.empty() ? "" : " // ") + l;
+    Report("stat-line-prefix", ok, detail);
+}
+
 void ScrubUsername()
 {
     const std::string profile = "C:\\Users\\Jane Doe";
@@ -371,16 +569,18 @@ void ExitCases(const std::string& probe, const std::filesystem::path& work)
     std::error_code ec;
     std::filesystem::create_directories(work, ec);
     {
+        // The probe has no ExitProcess hook, so the marker comes from the
+        // second writer, the DLL's static destructor at detach.
         const auto marker = work / "exit-clean.txt";
         std::filesystem::remove(marker, ec);
         std::filesystem::remove(marker.string() + ".armed", ec);
         const DWORD code = RunChild("exit", probe, marker.string());
         const std::string text = ReadAll(marker);
         const bool armed = std::filesystem::exists(marker.string() + ".armed");
-        const bool ok = code == 0 && armed && text.find(inc::kCleanShutdownLine) != std::string::npos;
+        const bool written = text.find(inc::kCleanShutdownDetachLine) != std::string::npos;
+        const bool ok = code == 0 && armed && written && inc::SessionEndedCleanly(text);
         char b[96];
-        std::snprintf(b, sizeof(b), "exit 0x%lX, armed %s, marker %s", code, armed ? "yes" : "no",
-                      text.find(inc::kCleanShutdownLine) != std::string::npos ? "written" : "missing");
+        std::snprintf(b, sizeof(b), "exit 0x%lX, armed %s, marker %s", code, armed ? "yes" : "no", written ? "written" : "missing");
         Report("exit-clean", ok, b);
     }
     {
@@ -397,6 +597,31 @@ void ExitCases(const std::string& probe, const std::filesystem::path& work)
         std::snprintf(b, sizeof(b), "exit 0x%lX, armed %s, marker %s", code, armed ? "yes" : "no", written ? "written" : "absent");
         Report("exit-terminated", ok, b);
     }
+}
+
+// D14: the exit hook and the destructor both call Write; the first one wins
+// and names its route, the second writes nothing.
+void MarkerOnce(const std::filesystem::path& work)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(work, ec);
+    const auto path = work / "marker-once.txt";
+    std::filesystem::remove(path, ec);
+    bool first = false, second = false, unarmed = true;
+    {
+        inc::ShutdownMarker marker;
+        unarmed = !marker.Write(inc::ShutdownRoute::exitProcess);   // not armed yet: nothing
+        marker.Arm(path.string().c_str());
+        first = marker.Write(inc::ShutdownRoute::exitProcess);
+        second = marker.Write(inc::ShutdownRoute::detach);
+    }   // ...and its destructor, the detach route, writes nothing either
+    const std::string text = ReadAll(path);
+    const bool ok = unarmed && first && !second && text == std::string(inc::kCleanShutdownLine) + "\r\n"
+                    && inc::SessionEndedCleanly(text) && text.find("(detach)") == std::string::npos;
+    // A chat line that quotes the marker mid-line is not one.
+    const bool quoted = !inc::SessionEndedCleanly(std::string("chat: said ") + inc::kCleanShutdownLine + "\r\n");
+    Report("marker-once", ok && quoted, std::string("route exit hook: ") + (first ? "written" : "missing") + ", detach after it: "
+           + (second ? "written again" : "nothing") + ", quoted mid-line " + (quoted ? "ignored" : "matched") + " | " + text.substr(0, text.find('\r')));
 }
 
 int Child(const std::string& how, const std::string& probe, const std::string& marker)
@@ -418,6 +643,7 @@ void CrashCheck()
     const std::string banner = std::string(inc::kSessionBanner) + " v2.2.0\r\n";
     const std::string running = std::string(inc::kMonitorRunningLine) + " | hitch 250 ms\r\n";
     const std::string clean = std::string(inc::kCleanShutdownLine) + "\r\n";
+    const std::string detach = std::string(inc::kCleanShutdownDetachLine) + "\r\n";
     std::string session;
     bool ok = true;
     std::string detail;
@@ -426,8 +652,9 @@ void CrashCheck()
     ok = ok && inc::PreviousSession(banner + running + "line\r\n" + banner + "now\r\n", "", session)
          && inc::SessionRanMonitor(session) && !inc::SessionEndedCleanly(session) && session.find("now") == std::string::npos;
     detail += ok ? "crash seen" : "crash missed";
-    // The same, ended cleanly.
-    const bool cleanOk = inc::PreviousSession(banner + running + clean + banner, "", session) && inc::SessionEndedCleanly(session);
+    // The same, ended cleanly, by either writer.
+    const bool cleanOk = inc::PreviousSession(banner + running + clean + banner, "", session) && inc::SessionEndedCleanly(session)
+                         && inc::PreviousSession(banner + running + detach + banner, "", session) && inc::SessionEndedCleanly(session);
     ok = ok && cleanOk;
     detail += cleanOk ? ", clean seen" : ", clean missed";
     // out.txt rotated at this load: the previous session is out.prev.txt's last.
@@ -463,6 +690,23 @@ void BundleRetention()
     Report("bundle-retention", ok, detail);
 }
 
+// D16: report.json's `exit` object and the panel's liveness come from files
+// the panel writes. The shared fixture is read through the plugin's own
+// parsers, for every key ModuleMain.cpp reads.
+void ExitJsonFixture(const std::filesystem::path& fixtures)
+{
+    const std::string exitJson = ReadAll(fixtures / "exit.json");
+    const std::string panelJson = ReadAll(fixtures / "panel.json");
+    std::string code, module, version;
+    double pid = 0.0;
+    const bool read = inc::JsonStringField(exitJson, "exit_code", code) && inc::JsonStringField(exitJson, "faulting_module", module)
+                      && inc::JsonStringField(panelJson, "version", version) && inc::JsonNumberField(panelJson, "pid", pid);
+    const bool ok = !exitJson.empty() && !panelJson.empty() && read && code == "0xC0000005" && module == "KERNELBASE.dll"
+                    && version == "2.2.0" && pid == 4242.0;
+    Report("exit-json-fixture", ok, "exit_code " + code + ", faulting_module " + module + ", version " + version + ", pid "
+           + Num(pid) + " from " + fixtures.string());
+}
+
 // The report builders' JSON, written out for the Python side to parse.
 void ReportJson(const std::filesystem::path& work)
 {
@@ -490,7 +734,7 @@ void ReportJson(const std::filesystem::path& work)
     freeze.panelVersion = "2.2.0";
     freeze.episode.kind = inc::Kind::freeze;
     freeze.episode.seconds = 3.2;
-    freeze.episode.inHook = inc::Mod::mapreveal;
+    freeze.episode.inMod = inc::Mod::mapreveal;   // set by a scope; no tagged hook
     inc::ReportFacts crash;
     crash.kind = inc::Kind::crash;
     crash.utc = perf.utc;
@@ -517,8 +761,8 @@ void ReportJson(const std::filesystem::path& work)
 int main(int argc, char** argv)
 {
     if (argc == 5 && std::string(argv[1]) == "--child") return Child(argv[2], argv[3], argv[4]);
-    if (argc < 3) {
-        std::printf("usage: incident_monitor_harness <probe.dll> <work dir>\n");
+    if (argc < 4) {
+        std::printf("usage: incident_monitor_harness <probe.dll> <work dir> <fixture dir>\n");
         return 2;
     }
     const std::filesystem::path work = argv[2];
@@ -527,13 +771,20 @@ int main(int argc, char** argv)
     Sustained();
     FreezeInHook();
     FreezeNoHook();
+    FreezeLoadRoomChange();
+    FreezeNeverEnds();
     Unfocused();
     RateLimit();
     PerModAccounting();
+    WorstJudgedVsOverall();
+    HookTagThunk();
+    StatLinePrefix();
     ScrubUsername();
     ExitCases(argv[1], work / "exit");
+    MarkerOnce(work / "marker");
     CrashCheck();
     BundleRetention();
+    ExitJsonFixture(argv[3]);
     ReportJson(work / "json");
     std::printf("RESULT %s\n", g_Failures ? "FAIL" : "OK");
     return g_Failures ? 1 : 0;
