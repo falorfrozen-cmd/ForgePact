@@ -890,7 +890,7 @@ established**. Nothing of this design has been seen live yet.
 - **Where a hit's type can be seen (measured and static reading).** A list
   entry is the whole triple, and b is an index within a type, so a sub and b
   pair alone names no entry: sub 0, b 51 is Liquor Holster under type 8 and
-  can equally be another type's unique. The parameter struct carries only sub
+  also Supreme Elemelon under type 10. The parameter struct carries only sub
   and b, and the type reaches `LootGroundCreate` as a separate argument. The
   roll's own definition reads carry all three: `GetUniqueRepoStruct` takes
   type, sub and b, and **measured** in Session 1 it is called from inside the
@@ -899,64 +899,90 @@ established**. Nothing of this design has been seen live yet.
   follows from the order the roll was read to run in (pick, read the
   definition, skip and pick again on the filters, then roll the die against
   the definition just read, then build the parameters): **static reading,
-  not measured**. The plugin does not rely on it: it never reads the hit's
-  type, and refuses a stand-in whose sub and b would be ambiguous instead
-  (below).
+  not measured**. The plugin types each hit from that read (below), and only
+  when the read's sub and b are the parameters' own; a read that does not
+  agree leaves the hit untyped rather than mistyped. Live procedure 3's
+  `typing` check is the first measurement of that order.
 
 What #74 builds on this reading (the design as the plugin implements it; none
 of it measured yet):
 
 - **Scoped injection.** When a switch is on and the list resolved, the
-  Angelic roll hook pushes one stand-in entry per enabled item onto the
-  game's list before its first call to the original roll and removes them
+  Angelic roll hook pushes each enabled item's stand-in entry onto the game's
+  list before its first call to the original roll and removes the entries
   after the last one, ForgePact's extra rolls included, under a scope guard so
-  a throw removes them too. It remembers the length before the push and
-  removes only when the tail still holds exactly the pushed entries;
-  otherwise it leaves the list as found, logs one line saying the list changed
-  during the roll, and counts an anomaly. Between rolls the list is byte for
-  byte vanilla: nothing is saved with it, the other readers above never see
-  the entries, and switching off needs no cleanup. `injected=` counts the
-  entries pushed. It says nothing about whether the roll's picker can see
-  them: a push into a copy, into another array of the same shape, or onto a
-  `Controller_obj` instance the roll does not read counts exactly the same.
-  Only a change in what the picker draws shows that, and at one entry that
-  change is too small to measure (below, `inject-build`'s reach reading).
-- **The hit's pair, and the stand-ins that are refused.** The plugin never
-  reads the hit's type. While the roll is in progress the `CreateDefaultParams`
-  detour takes the call's own first two arguments, sub and b, and a hit is a
-  candidate of ours when that pair equals the sub and b of a stand-in this roll
-  pushed. A sub and b pair alone names no entry (above), so the ambiguity is
-  settled when the stand-ins are chosen rather than at the hit: a stand-in
-  that shares its sub and b with a validated unique of another type is
-  refused, reported as not validated with `ambiguous: <name> shares its
-  sub/b`, and its item's switch cannot arm. Among the validated uniques a hit
-  on a stand-in's pair can then only be the stand-in. Liquor Holster's 0/51
-  is shared only by the hidden Supreme Elemelon, which the validated pool does
-  not hold; that the game's picker never draws it either is a static reading,
-  not measured. The check runs against the validated pool, so a unique
-  outside it that shared a stand-in's pair would still read as the stand-in.
-- **Attribution, one in n + 1.** The picker cannot tell our entry from the
-  vanilla stand-in, because they are the same triple. A candidate is ours
-  with probability 1 / (n + 1), where n is how many times the vanilla list
-  already holds the stand-in's whole triple, type included (counted when the
-  list resolves, whenever its length changes and whenever the stand-ins
-  change; 1 when the stand-in is listed once). The stand-in keeps exactly one
-  entry's share and our item gets one entry's share, the same as every other
-  entry. When m enabled items share one stand-in, m of its n + m entries are
-  ours and they split them evenly. `ourHits=` counts them. The coin is the
-  plugin's own, so it fires whether or not the pushed entry was ever drawn:
-  on a list the picker never saw, a vanilla Liquor Holster hit still becomes
-  ours one time in two, and `ourHits=`, `built=` and the Headhunter on the
-  ground look the same as on a working injection. `ourHits=` is therefore
-  evidence of the rewrite, never of the injection. Each roll pushes one entry
-  per enabled item, in the research build as in the player build; no lever
-  pushes more (`inject-build` below says what that leaves unmeasured).
+  a throw removes them too. How many copies of its stand-in each enabled item
+  pushes per roll is one number: the constant 1 in the player build, and in
+  the research build whatever the lever `angelicprobe inject copies <k>`
+  (1 to 400, default 1) set. The hook remembers the length before the push
+  and removes only when the tail still holds exactly the pushed entries,
+  every copy, in push order; otherwise it leaves the list as found, logs one
+  line saying the list changed during the roll, and counts an anomaly
+  (`anomalies=`). Between rolls the list is byte for byte vanilla: nothing is
+  saved with it, the other readers above never see the entries, and
+  switching off needs no cleanup. `injected=` counts the entries pushed whose
+  push read back (next bullet). It says nothing about whether the roll's
+  picker draws them: a push onto an array the roll does not read, or onto a
+  `Controller_obj` instance the roll does not read, counts exactly the same.
+  Only a change in what the picker draws shows that (`reach`, below).
+- **The held read-back.** Right after the push the plugin reads the variable
+  again by name off the first `Controller_obj` instance - a fresh read, never
+  the handle it just pushed onto - and checks that its length is the length
+  before plus the number pushed and that its tail holds the pushed triples.
+  It reads only the length and the pushed tail, never the full walk the
+  list's resolution does, so it stays light on every roll. When the fresh
+  read does not show the push (the runtime handed back a copy, or the name
+  now holds another array), the plugin takes the entries off the handle it
+  pushed onto (only while that handle's tail is still ours), logs
+  `inject: push not visible through Controller_obj.<name>` once until a push
+  reads back again, counts it in `anomalies=` (and, research build,
+  `heldMiss=`), and the roll carries nothing: no hit in it is attributed.
+  The read-back catches a copy. It cannot show that the roll reads that
+  variable at all; that is `reach`, measured live.
+- **Typing the hit.** A third hook, on `GetUniqueRepoStruct`, is installed by
+  its SDK name beside the other two, from the same installer. It always calls
+  through and, only while the roll is in progress, records the type, sub and
+  b it was asked for (three numbers; anything else clears the record); the
+  record is cleared before each call to the original roll. At a hit the
+  `CreateDefaultParams` detour takes the call's own sub and b and the latest
+  record. When the record's sub and b equal the call's, the hit is typed: its
+  entry is the record's type with that sub and b, the whole triple.
+  Otherwise the hit is **untyped**: never attributed, never rewritten, left
+  to the game, counted in `untyped=` (both builds), and its `angelic hit:`
+  line says `untyped`. That the roll reads definitions inside the roll is
+  measured (Session 1); that the latest read before the parameters is the
+  picked entry's is the static reading above, **not established** until
+  Live procedure 3's `typing`. In the research build the probe's
+  `unique-repo` row (`angelicprobe on`) and this hook never both detour the
+  script: whichever comes second refuses and says so. The typing hook then
+  reports its route as `held-by-angelicprobe` and the gate stays off; the row
+  reports itself blocked and names the typing hook's counters as the
+  measure.
+- **Attribution on the whole triple, one entry's share.** A typed hit whose
+  type, sub and b equal the stand-in triple of an item this roll pushed is a
+  candidate; a same-pair entry of another type (Supreme Elemelon's, type 10)
+  is no candidate at all. The picker cannot tell our entries from the
+  vanilla stand-in's, because they are the same triple: m enabled items
+  sharing one stand-in with k copies each hold m·k of its n + m·k entries,
+  where n is how many times the vanilla list holds that same whole triple
+  (counted when the list resolves, whenever its length changes and whenever
+  the stand-ins change; 1 when the stand-in is listed once). So a candidate
+  is ours with probability m·k / (n + m·k), shared among the items by their
+  copies: 1 in n + 1, one entry's share, for one item in the player build.
+  The stand-in keeps its own share and our item gets one entry's, the same
+  as every other entry. `ourHits=` counts ours. The coin is the plugin's
+  own, so it fires whether or not a pushed entry was ever drawn: on a list
+  the picker never saw, a vanilla Liquor Holster hit still becomes ours one
+  time in n + 1 (and almost every time under `copies 200`), and `ourHits=`,
+  `built=` and the Headhunter on the ground look the same as on a working
+  injection. `ourHits=` is therefore evidence of the rewrite, never of the
+  injection.
 - **What "Liquor Holster's share" means now.** In Session 2 the share was
   one pool entry of ForgePact's own validated pool, k / (47 + k), rolled on
-  top of the game's hit. Now it is literal: Headhunter is one more entry in
-  the game's own list, carrying Liquor Holster's definition and rate, so it
-  is picked as often as one Liquor Holster entry is, and its hit replaces the
-  item that entry would have dropped.
+  top of the game's hit. Now it is literal: in the player build Headhunter is
+  one more entry in the game's own list, carrying Liquor Holster's
+  definition and rate, so it is picked as often as one Liquor Holster entry
+  is, and its hit replaces the item that entry would have dropped.
 - **The game builds our item.** On our hit the `CreateDefaultParams` detour
   calls the original, then rewrites the returned struct's a, b, c and j to
   the mod item's own values and reads them back. A missing field is a
@@ -964,16 +990,53 @@ of it measured yet):
   placement then builds a Heavy Belt or Great Helm with that seed, the forge
   hook dresses it, and the game places it where the roll said. No
   `SpawnSignatureItem` runs on this path. `built=`, `crown=` and `belt=`
-  count what the game built, and each hit logs one `angelic hit:` line naming
-  the picked sub/b and saying vanilla (with the stand-in and its odds when
-  the pair was a stand-in's) or our item with its stand-in, the one-in-n+1
-  odds and whether the game was seen to build it.
-- **Gate.** As in Session 2: the item's panel switch and the detection, with
-  both `CreateDefaultParams` and `DropItemAngelicChance` detoured (a
-  table-only route cannot be shown to see the roll's calls), plus a
-  validated stand-in and the list resolved (`list=` names it and its length),
-  else the gate stays off and the switch-on logs what is missing. Both switches off: no entry pushed, no rewrite, the
-  roll untouched, and with neither ever on no hook installed. Forging an item
+  count what the game built. Each hit logs one `angelic hit:` line naming the
+  typed entry (`picked <type>/<sub>/<b>`, or `picked untyped <sub>/<b>`) and
+  where it went: untyped and left to the game; vanilla (with the stand-in
+  and the odds, `ours <m·k> in <n + m·k>, not this time`, when the entry was
+  a stand-in's); or our item with its stand-in and the odds, ending
+  `built by the game`, `handed to the game, not seen built during the roll`
+  or `refused`. Whether the game builds our item from a rewritten struct is
+  **not established** until Live procedure 3's `inject-build`.
+- **The research controls, and what each can show.** Three counters exist
+  in the research build only, read off `angelicprobe inject status`:
+  - `standinPicks=` counts hits inside the roll whose `CreateDefaultParams`
+    sub and b equal a validated stand-in's, whether or not anything was
+    pushed and whatever the typing said. It is keyed on the pair on purpose,
+    so the reach reading does not rest on the typing. Its growth over the
+    growth of `gameHits=` with both switches off is the pair's vanilla share
+    p0; the same ratio with Headhunter on under `copies 200` is p1. A push
+    the picker draws moves the stand-in's share from about 0.02 to about 0.8
+    at about 47 entries passing the filter (about 0.4 at 300); a push it
+    cannot see leaves p1 at p0. Read alone it cannot tell the stand-in from
+    another unique sharing its pair, which is why it is read only against
+    its own baseline in the same session.
+  - `heldMiss=` counts pushes the held read-back did not see. Zero means no
+    copy was caught; it does not show reach.
+  - `typeAgree=` and `typeDisagree=`: on a typed hit that was not
+    rewritten, the first item the Custom Forge hook's final pass sees built
+    while the roll is in progress is the game's own pick, so its `itemType`
+    is compared with the type the record gave the hit. The comparison is
+    independent of the record, because it is read off the built item.
+    Rewritten hits are not compared. Each hit line carries `builtType=`
+    either way (source reading: the built-in signature entries make the
+    forge hook install its `CreateItemNew` detour in every session, which
+    `built=` rests on too).
+
+  Each `angelic hit:` line in this build also carries `lootDelta=`
+  (ground-loot instances after the original call minus before) and, for the
+  first three hits of ours, the parameter struct's JSON before and after the
+  rewrite.
+- **Gate.** The item's panel switch, a validated stand-in, the list resolved
+  by name (`list=` names it and its length), and all three hooks,
+  `CreateDefaultParams`, `DropItemAngelicChance` and `GetUniqueRepoStruct`,
+  inline detours: a table-only route cannot be shown to see the roll's
+  direct calls, so a hit would be invisible or untypable. `detect=` reads
+  `detoured` only when all three are; otherwise it names the first that is
+  not (`CreateDefaultParams`'s route alone, the other two as
+  `<script>:<route>`). Else the gate stays off and the switch-on logs what is
+  missing. Both switches off: no entry pushed, no rewrite, the roll
+  untouched, and with neither ever on no hook installed. Forging an item
   turns its mechanic on, never the drop.
 
 Alternatives set aside:
@@ -986,6 +1049,21 @@ Alternatives set aside:
   relabelling to c = 0 for the forge hook; and the constructor's argument list
   is unresolved. It is the only way to remove the one-in-n+1 coin, and it is
   the research route if injection is not observed.
+- **Attributing on the `CreateDefaultParams` pair alone** (the plugin before
+  this design was settled). The pair is a strict part of the entry's
+  identity, n is counted over the whole triple, and Liquor Holster's 0/51 is
+  also Supreme Elemelon's under type 10: a hit on that entry read as the
+  stand-in's would rewrite a struct for the wrong type and build a malformed
+  item.
+- **Refusing a stand-in whose pair another validated unique shares** (the
+  same earlier plugin's `ambiguous:` refusal). It covered ForgePact's own
+  validated pool only, not the game's list, and still left the hit itself
+  untyped. Typing the hit from the roll's own definition read replaces it.
+- **Judging reach from one pushed entry's share.** One entry moves the
+  stand-in's pair from about 1 hit in 47 to about 2 in 48, a difference no
+  session's kill count resolves. `copies 200` moves the stand-in's share from
+  about 0.02 to about 0.8 at 47 passing entries (0.4 at 300), so 20 hits
+  separate a push the picker draws from one it cannot see.
 - **A stand-in no vanilla entry shares**, so every hit on it is ours. Not
   available: the list appears to hold every unique (about one entry in eight
   passes the Angelic/Unholy filter), and a triple outside the repository's
@@ -999,18 +1077,12 @@ Alternatives set aside:
   construction.
 - **Rewriting the picked entry's type.** Not possible: the type comes from the
   list entry, not from the parameter struct.
-- **Typing the hit from the roll's last `GetUniqueRepoStruct` read**, a
-  detour recording the type, sub and b of the definition the roll read last
-  before the hit. Not built: that the last read is the picked entry's rests on
-  the order the roll was read to run in (static reading, not measured), and
-  refusing an ambiguous stand-in makes the type unnecessary for the two items
-  in the table.
 - **Typing the hit at `LootGroundCreate`**, which receives the type and the
   parameter struct together. The player build holds `LootGroundCreate`
   through the deliberately table-only inspection installer, so this needs a
   second, inline route on a function those hooks already own, and which
-  struct field carries sub is not established. It is the research step if a
-  wanted stand-in is ever refused as ambiguous.
+  struct field carries sub is not established. It is the research step if
+  `typing` fails.
 - **Suppressing the game's placement and spawning ours beside it** (the
   fallback as the owner first worded it). No name-resolved way to make
   `LootGroundCreate` place nothing was found: the player build's hook on it is
@@ -1025,182 +1097,213 @@ Alternatives set aside:
 - **Detecting the hit any other way** (counting ground loot around the call,
   hooking `LootGroundCreate` natively, a rate-weighted share): set aside in
   Session 2's planning for reasons that still hold.
+- **`name auto` as the spelling of the scan.** An earlier draft of the
+  procedure spelled it that way, which would have set the list's name to the
+  literal `auto`. The scan is `angelicprobe inject auto`, and the `name`
+  lever refuses the value `auto` with a line naming the right spelling, so a
+  slip can never set that name.
 
 The decision between injection and replacement is mechanical, from Live
-procedure 3's verdicts:
+procedure 3's verdicts, taken in this order:
 
-`inject-build` is the **build** check (does the game build and place our item
-from a rewritten struct), read off the counters and lines the plugin prints,
-and it ends pass, fail or not-observed. Beside it the session records a
-**reach** reading (does the picker draw the entry the plugin pushes), which
-carries no verdict: at one pushed entry per roll the stand-in's pair moves from
-about 1 hit in 47 to about 2 in 48, a difference no session's kill count can
-show, and the plugin has no lever that pushes more.
+1. A session-validity check (`dll-hash`, `marker`, `control`, `force-hit`)
+   not pass: no route. The session is run again on the same build.
+2. `typing` fail or not-observed: **route not-observed**. The hit cannot be
+   typed, so nothing ships attributed. The research step is typing at
+   `LootGroundCreate` (above), and the owner decides it.
+3. `reach` fail or not-observed, after every candidate list `list-scope`
+   printed was tried: **route not-observed**. The roll does not read what the
+   plugin pushes onto; `inject-build` is recorded as not-run (instrument-blind:
+   reach did not pass), never as fail.
+4. `typing` pass, `reach` pass, `inject-build` pass: **route inject**. The
+   design above ships; the replace mode stays research-only. The player
+   build's one-entry share is arithmetic on a reach measured at
+   `copies 200`, and the record says so.
+5. `typing` pass, `reach` pass, `inject-build` fail, `replace-remove` pass:
+   **route replace**. On a hit of ours the game places the stand-in, the
+   plugin removes it and spawns ours.
+6. Anything else (`inject-build` not-observed; `inject-build` fail and
+   `replace-remove` not pass): **route not-observed**. The owner decides;
+   registering a definition in the repository is the research route left.
 
-- Build pass (every hit of ours built exactly one item, the game's own
-  ground-loot count rose by one per hit, the forge hook dressed it, no vanilla
-  item for that hit, no crash): **route inject**. The design above ships; the
-  replace mode stays research-only. What this route does not show is that the
-  picker draws the pushed entry: the plugin's coin and rewrite produce every
-  build counter on a push the picker never saw, so the session record states
-  the injection's reach as **not observed**, and Headhunter's share of one
-  entry as a static reading.
-- Build fail or not-observed, and `replace-remove` (run only then) pass:
-  **route replace**. On a hit of ours the game places the stand-in, the
-  plugin removes it and spawns ours. Replace rests on the same coin, so on a
-  push the picker never sees it still turns one in n + 1 of the stand-in's own
-  hits into ours, about half the share the design intends; the session record
-  says so.
-- Neither passes: **route not-observed**. The owner decides; registering a
-  definition in the repository is the research route left.
+Not-observed never selects the replace route: replace needs `reach` pass and
+`inject-build` fail. Not-observed means the batch reached its cap without the
+hits a verdict needs, or the instrument a check rests on did not pass; it is
+never evidence that injection does not build the item.
 
-Not-observed always means *not powered*: the batch reached its cap without the
-hits a verdict needs. It is never evidence that injection does not build the
-item.
-
-`inject-build` and `replace-remove` are never pass conditions of the session:
-their verdict is the finding. `off-removes` and `list-restored` check
+`typing`, `reach`, `inject-build`, `on-both` and `replace-remove` are never
+pass conditions of the session: their verdict is the finding, and `on-both`
+and `replace-remove` are not run on some routes. `off-removes`,
+`list-restored`, `baseline-off-vanilla` and `sigdrop-still-forces` check
 behaviour that ships, and must pass whichever route is taken.
 
 ### Live procedure 3
 
-Session 3 runs the research build (`plugin_build\BloodPactPlugin_rel.dll`,
-built with the literal `dev`) through the drive tool, with the owner doing the
-killing, on save slot 14 (Sorak), selected on the back end and in town at
-load. The step-by-step procedure (the exact commands, the standing steps and
-the four short kill batches) is `### Live procedure 1` in the workorder's
-context file, `.claude/workorders/forgepact-74-angelic-list-injection-context.md`,
-which stays on the owner's machine; it is this document's third live
-procedure, hence the heading here. Hygiene is Session 2's: a fresh session; no
-`citrace nativetrace`, `raredrop ceiling`, `scount`, `zonegenlog` or
-`angelicwatch`; and no `angelicprobe on`, whose `default-params` row would
-take the `CreateDefaultParams` detour this feature needs. The one people step
-before the kill block is a portal or waypoint to an ordinary zone, so the
-owner can leave once the kills are done.
+Session 3 runs the research build through the drive tool, with the owner
+doing the killing. This section is the whole procedure; Session 3's record
+goes under `### Results`.
+
+- **Build.** `plugin_build\BloodPactPlugin_rel.dll`, built with
+  `plugin_build\build.bat dev` (the literal `dev`; anything else is the
+  player build, which has none of the levers below). Its SHA-256 is recorded
+  when it is built. The owner installs it when asked; until then `dll-hash`
+  fails and nothing else runs.
+- **Character.** Save slot 14 (Sorak), selected on the back end, in town at
+  load.
+- **Standing steps.** Take the drive tool's lease, run its self-check, take
+  an independent copy of the saves and the tool's own backup, launch, select
+  the character. At the end: stop the game normally, inspect the saves,
+  restore the backup, release the lease.
+- **Hygiene.** A fresh session; no `citrace nativetrace`, `raredrop ceiling`,
+  `scount`, `zonegenlog` or `angelicwatch`; and no `angelicprobe on`, whose
+  `default-params` and `unique-repo` rows touch the very hooks under test.
+- **People steps.** One zone change (`list-stable`), then kill batches of ten
+  ordinary monsters with the drops left on the ground. The operator reads the
+  counters between batches and stops a step as soon as its hit count is
+  reached. Counts below are **hits** (growth of `gameHits=`), never kills;
+  with the chance lever about 44 of 47 rolls hit (Session 2).
 
 The research build's levers stay under `angelicprobe`, because the command
 dispatcher's branch count and the `angelicprobe` literal are both pinned by
 `test_angelic_probe_contract.py`:
 
-- `angelicprobe list` (rewritten) finds `Controller_obj` by name, counts its
-  instances, reads the first instance's variable names, and for every variable
-  shaped as an array of three-number arrays prints its name, length, first
-  three entries and how many entries equal each stand-in's triple. The global
-  scope and `Loot_Manager_obj` keep one line each, both expected empty. It
-  ends with one summary line naming the number of candidates and the best one
-  with its length.
-- `angelicprobe inject` takes `name` (a variable, or `auto` for the probe's
-  best candidate), `mode` (`inject`, the default, or `replace`, the fallback)
-  and `status`, which prints the mode, the list's name and length, each item's
-  stand-in with its count n, and the `injected=`, `ourHits=`, `built=`,
-  `removed=` and `anomalies=` counters. It has no lever for the number of
-  entries a roll pushes: one per enabled item, as in the player build.
-- `angelicprobe hit` keeps its chance, rate, off and status levers. Each hit's
-  `angelic hit:` line (`picked <sub>/<b> at <x>,<y> gate=... -> <outcome>`)
-  in this build also carries `lootDelta=` (ground-loot instances after the
-  original call minus before) and, for the first three hits of ours, the
-  parameter struct's JSON before and after the rewrite.
-- `sigdrop status`, in both builds, reports the force, then `gameRolls=`,
-  `gameHits=`, `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`, `list=`
-  (`none` until a switch resolves it, then the name and length, or `missing`
-  after a failed resolution) and `gate=` per item, and ends with
-  `cdpCalls=<n> detect=<route>`.
+- `angelicprobe list` first gives one line each for the two scopes Session 2
+  asked (the global scope and `Loot_Manager_obj`, both expected empty). Then
+  it finds `Controller_obj` by name and prints its instance count and
+  `names=<count>` for the first instance: the positive control on the
+  instance read, where 0 means the read failed, not that no list exists. It
+  prints one `candidate` line per variable shaped as an array of
+  three-number arrays (its name, length, first three entries and each
+  stand-in's n), one `rejected` line per other array with its length and why
+  the shape failed, and the remaining variables counted by kind. The last
+  line is `angelicprobe list: candidates=<k> best=<name>:<len>`. The instance
+  may come back as a reference or as an object, and the numbers as reals or
+  as 32- or 64-bit integers; none of those makes the read empty.
+- `angelicprobe inject` takes `auto` (the scan's best candidate),
+  `name <var>` (a variable by name; the value `auto` is refused, the scan is
+  `angelicprobe inject auto`), `copies <k>` (1 to 400, default 1: how many
+  copies of its stand-in each enabled item pushes per roll), `mode` (`inject`,
+  the default, or `replace`, the fallback) and `status`. Any other word
+  prints the usage line:
 
-Each check is recorded as pass, fail, not-observed or not-run (and
-`force-hit` also as instrument-blind), with the replies quoted in the session
-record:
+  `angelicprobe inject: name <var> | auto | copies <k> | mode inject|replace | status`
 
-- **`dll-hash`** - the installed DLL's SHA-256 equals the research build's,
-  recorded when it was built. Fail: nothing after it counts.
-- **`marker`** - `angelicprobe hit status` names every lever off and ends
-  `detect=off`. A player build answers that the command is unavailable, and
-  the session ends there.
-- **`control`** - `sigdrop status` shows the force off, every counter at
-  zero, `list=none`, both gates off, and ends `cdpCalls=0 detect=off`.
-- **`list-scope`** (research) - `angelicprobe list` finds one
-  `Controller_obj` instance, at least one candidate, and a best candidate of
-  length 100 or more whose shown entries are three numbers each, with n for
-  each stand-in (expected 1). The name and the global and `Loot_Manager_obj`
-  lines are recorded as printed. No candidate is not-observed: every variable
-  name printed is recorded, and the session stops after the baseline, since no
-  injection is possible.
-- **`repo-standin`** (research) - `angelicprobe inject name auto`, then its
-  status, names the list with its length and each item's stand-in with n = 1:
-  Headhunter with Liquor Holster, Tyrant's Crown with the chosen helmet. A
-  stand-in the pool rejected reads not validated, and that item's switch
-  cannot arm. This check shows only that `auto` chose a list of the right
-  shape. Whether it is the list the roll reads is `inject-build`'s reach
-  control, so every candidate `list-scope` printed is kept in the record for
-  that control to fall back on.
-- **`list-stable`** (research) - after the owner takes a portal or waypoint to
-  an ordinary zone, `angelicprobe list` names the same best variable with the
-  same length. A different length is the finding, and both are recorded.
-- **`baseline-off-vanilla`** - with the Angelic gate opened through
-  `raredrop angelic 2` and the chance lever at 1000000000, ten kills. First
-  the detection's own positive control: `detect=detoured` and `cdpCalls`
-  above zero (otherwise `force-hit` is instrument-blind and the checks that
-  need a hit do not run). Then at least ten `gameRolls` and one `gameHits`
-  pass `force-hit`; with both switches off, `injected=0`, `ourHits=0`,
-  `built=0`, the list's length equal to `list-scope`'s and no injection line
-  in the log pass `baseline-off-vanilla`. Only the game's own Angelic and
-  Unholy items lie on the ground.
-- **`inject-build`** (the route's first branch, per the decision rule above) -
-  `headhunter force` turns Headhunter on and logs one line naming the list
-  and Liquor Holster; the gate reads Headhunter on, Tyrant's Crown off. Each
-  roll then pushes one Liquor Holster entry, as the player build does. Ten
-  kills, then the counters are read; with fewer than 3 hits of ours a second
-  batch of ten runs, and that is the cap. With the chance lever every roll
-  hits, and a hit is ours about one roll in 48 (the stand-in's two entries in
-  48, then the coin's one in two). Session 2 measured about 47 rolls per
-  ten-odd kills, so twenty kills give about two hits of ours on average and
-  the cap ends not-observed more often than not; another session is the
-  owner's call. The verdict is read off `sigdrop status` (`gameRolls=`,
-  `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`), `angelicprobe inject
-  status` (`anomalies=`) and the `angelic hit:` lines:
-  - **Pass**: `injected=` grew by exactly the growth of `gameRolls=` since
-    `baseline-off-vanilla` (one push per roll), `ourHits=` at least 3,
-    `built=` equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`,
-    `anomalies=0`, every hit of ours with a line naming `0/51`, ending
-    `built by the game` and carrying `lootDelta=1`, no `sigdrop:` line, and
-    the owner names a Headhunter on the ground.
-  - **Fail**: a crash, `built=` below `ourHits=`, a hit of ours whose line
-    ends `handed to the game, not seen built during the roll` or says it was
-    refused (the struct's JSON is logged with it and recorded), a
-    `lootDelta=` other than 1 on a hit of ours, a hit of ours naming a pair
-    other than `0/51`, or a ground item that is not Headhunter.
-  - **Not-observed**: fewer than 3 hits of ours at the cap, recorded as not
-    powered.
-  - **Reach**, recorded without a verdict. Count the `angelic hit:` lines (H)
-    and, among them, those naming `0/51`, ours and vanilla alike (S). A push
-    the picker draws puts the pair at about 2 hits in 48, and one it cannot see
-    (a copy of the array, another array of the same shape, a `Controller_obj`
-    instance the roll does not read) leaves it at about 1 in 47, whatever
-    `injected=` says; no session's kill count separates the two, so S and H
-    are recorded as printed and the reach as not observed. `injected=`,
-    `ourHits=`, `built=` and a Headhunter on the ground are never reach
-    evidence: the plugin's own coin and rewrite produce all four on a push
-    the picker never saw. Measuring it would need a research lever that pushes
-    many copies of the stand-in per roll (47 copies move the pair to about 48
-    hits in 94, which ten kills can show); no such lever is built.
-- **`on-both`** (not run unless `inject-build` passed): `tyrant force` as
-  well, both on; ten to twenty kills. `built=` grew by the growth of
-  `ourHits=`, `crown=` at least 1 and `belt=` grew, and both items are seen
-  on the ground. A crown of ours is about one roll in 48, so twenty kills
-  may not give one: not-observed at `crown=0` after 20 kills.
-- **`off-removes`** - both switches off; the gate reads both off and the list's
-  length equals `list-scope`'s. Five kills: `injected=` and `ourHits=`
-  unchanged, no mod item, no injection line.
-- **`replace-remove`** (research fallback, run only if `inject-build` failed
-  or was not observed) - replace mode and Headhunter on; ten to twenty kills. Pass: at least 3 hits of ours, every one saying it
-  removed the stand-in and spawned Headhunter, `removed=` equals `ourHits=`,
-  `lootDelta=1` after the swap, another ground item picks up without an
-  error, and `lootcensus` runs. Not-observed: fewer than 3 hits of ours after
-  20 kills. Headhunter off and inject mode again afterwards.
-- **`sigdrop-still-forces`** - `sigdrop crown` and one kill drop a Tyrant's
-  Crown, then `sigdrop off`. The last people step.
-- **`list-restored`** - every lever off and the Angelic gate vanilla again;
-  `angelicprobe list` names the same variable with `list-scope`'s length, and
-  no stand-in triple appears more often than its vanilla n.
+  `status` prints `angelicprobe inject: mode=<m> copies=<k>`, then
+  `list=<name>:<len>` (or `list=none`), each item's stand-in with its n, then
+  `injected=`, `ourHits=`, `untyped=`, `standinPicks=`, `heldMiss=`,
+  `typeAgree=`, `typeDisagree=`, `built=`, `removed=` and `anomalies=`.
+- `angelicprobe hit` keeps its chance, rate, off and status levers; its
+  status line ends `detect=<route>`. Each `angelic hit:` line
+  (`picked <type>/<sub>/<b>` or `picked untyped <sub>/<b>`, then the
+  position, the gate and the outcome) carries `lootDelta=` and `builtType=`
+  in this build, and the struct's JSON for the first three hits of ours.
+- `sigdrop status`, in both builds, on a fresh session reads exactly:
+
+  `sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`
+
+  `list=` is `none` until a switch resolves the list, then its name and
+  length, or `missing` after a failed resolution.
+
+Each check is recorded as pass, fail, not-observed or not-run, with the
+replies quoted in the session record. The research checks are never pass
+conditions of the session (the decision rule above):
+
+1. **`dll-hash`** - the lease's DLL SHA-256 equals the research build's,
+   recorded when it was built. Fail: nothing after it runs.
+2. **`marker`** - `angelicprobe hit status` answers with a line beginning
+   `angelicprobe hit:` and ending `detect=off`. A player build answers that
+   the command is unavailable, and the session ends there.
+3. **`control`** - `sigdrop status` reads exactly the fresh-session line
+   above.
+4. **`list-scope`** (research) - `angelicprobe list`: one `Controller_obj`
+   instance, `names=` above 0, `candidates=` at least 1, and `best=<name>:<len>`
+   with a length of 100 or more, each stand-in's n expected 1. Every
+   `candidate` line and every `rejected` line is recorded as printed.
+   `names=0` is fail (the instance read is broken); `candidates=0` with
+   `names=` above 0 is not-observed, and every variable line is recorded.
+   Either way checks 8 to 10 are not-run.
+5. **`repo-standin`** (research) - `angelicprobe inject auto`, then
+   `angelicprobe inject status`: `copies=1`, `list=` naming the best
+   candidate and its length, and the stand-ins as Headhunter with Liquor
+   Holster (n = 1) and Tyrant's Crown with the chosen helmet (n = 1). A
+   stand-in printed as not validated cannot arm; which one is recorded. This
+   shows only that `auto` chose a list of the right shape; whether the roll
+   reads it is `reach`.
+6. **`list-stable`** (research) - **the owner takes the town portal or a
+   waypoint to any ordinary zone.** `angelicprobe list` again names the same
+   best variable with the same length. A different length is the finding, and
+   both are recorded.
+7. **`force-hit`** (validity), **`baseline-off-vanilla`** and **`typing`**
+   (research), both switches off. `raredrop angelic 2` answers
+   `angelic: gate OPEN`; `angelicprobe hit chance 1000000000` turns the
+   override on, with `detect=detoured`. **The owner kills in batches of
+   ten** until `gameHits=` is at least 20, three batches at most.
+   - `force-hit`: `cdpCalls=` above 0, `detect=detoured` and `gameHits=` at
+     least 20 pass; anything else fails, and checks 8 to 10 are not-run.
+   - `baseline-off-vanilla`: `injected=0`, `ourHits=0`, `built=0`, `list=`
+     with `list-scope`'s length (or `none` or `missing` when `list-scope` did
+     not pass) and no `inject:` line pass. The growth of `standinPicks=` over
+     the growth of `gameHits=` is recorded as the baseline share p0. A
+     screenshot of the ground is taken.
+   - `typing`: `untyped=0`, `typeAgree=` at least 10 and `typeDisagree=0`
+     pass. `untyped=` or `typeDisagree=` above 0 fails, and those hit lines
+     are recorded. Fewer than 10 agreements is not-observed.
+8. **`reach`** (research) and **`inject-build`** (research; the route's
+   input). `angelicprobe inject copies 200`, then `headhunter force`, which
+   answers `headhunter: ON (forced)` and one `signature drops:` line naming
+   the list and Liquor Holster; `sigdrop status` reads
+   `gate=tyrant:off,headhunter:on`. **The owner kills in batches of ten**
+   until `gameHits=` has grown by at least 20 since this check began, two
+   batches at most; only when `reach` is still inconclusive, on to 40 hits,
+   four batches at most.
+   - `reach`, from p1, the growth of `standinPicks=` over the growth of
+     `gameHits=` in this check: `heldMiss=0` and p1 of 0.20 or more pass;
+     `heldMiss=` above 0, or p1 below 0.10, fail; p1 from 0.10 to below 0.20
+     at 40 hits, or fewer than 20 hits at the cap, is not-observed. On a
+     `reach` fail with `heldMiss=0` while `list-scope` printed another
+     candidate, `angelicprobe inject name <next candidate>` and this check
+     runs again, once per remaining candidate, two at most; each is
+     recorded.
+   - `inject-build` runs only when `typing` and `reach` passed; otherwise it
+     is not-run (instrument-blind: whichever of the two did not pass). Pass:
+     `ourHits=` grew by 3 or more, `built=` and `belt=` grew by the same
+     amount, `crown=0`, `anomalies=0`, every hit line of ours ends
+     `built by the game` with `lootDelta=1`, no `refused` line and no
+     `sigdrop:` line, and **the owner hovers one item on the ground and names
+     it**: Headhunter (with a screenshot). Fail: a crash, `built=` growing
+     less than `ourHits=`, a `lootDelta=` other than 1 on a hit of ours, a
+     refusal line (its JSON recorded), or an item that is not Headhunter.
+     Not-observed: fewer than 3 hits of ours at 40 hits (about 32 are
+     expected when `reach` passed).
+9. **`on-both`** (acceptance of the shipped pairing; not-run unless
+   `inject-build` passed). `tyrant force`, copies still 200. **The owner
+   kills in batches of ten** until `crown=` is at least 1, two batches at
+   most. Pass: `crown=` at least 1, `belt=` grew, `built=` grew by the growth
+   of `ourHits=`, and a Tyrant's Crown is seen on the ground (screenshot).
+10. **`replace-remove`** (research fallback; run only when `typing` and
+    `reach` passed and `inject-build` failed, else not-run).
+    `angelicprobe inject mode replace`, `headhunter force`, copies 200.
+    **The owner kills in batches of ten** until `ourHits=` has grown by 3 or
+    more, two batches at most. Pass: every hit line of ours reads
+    `removed stand-in, spawned Headhunter`, `removed=` grew by the growth of
+    `ourHits=`, `lootDelta=1`, the owner picks up one other ground item
+    without an error (screenshots before and after), and `lootcensus`
+    answers. Then `angelicprobe inject mode inject`.
+11. **`off-removes`** (acceptance) - `angelicprobe inject copies 1`,
+    `headhunter off`, `tyrant off`; `sigdrop status` reads
+    `gate=tyrant:off,headhunter:off` and `angelicprobe inject status` shows
+    `list=` with `list-scope`'s length (or `none` when `list-scope` did not
+    pass). **The owner kills five.** `injected=` and `ourHits=` unchanged, no
+    mod item and no `inject:` line pass.
+12. **`sigdrop-still-forces`** (acceptance) - `sigdrop crown`; **the owner
+    kills one**; the log shows `sigdrop: Tyrant's Crown dropped at`; then
+    `sigdrop off`. The last people step.
+13. **`list-restored`** (acceptance) - `angelicprobe hit off`,
+    `raredrop angelic 1`, then `angelicprobe list`: `best=` equal to
+    `list-scope`'s (`none` both times counts) and each stand-in's n equal to
+    `list-scope`'s.
+14. Stop the game normally, then inspect and restore the saves (the standing
+    steps).
 
 ### Results
 
