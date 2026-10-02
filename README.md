@@ -265,8 +265,8 @@ roll is over, so between rolls the list is exactly the game's and nothing else t
 (merchants, shrines, crafting, the other drop routines) ever sees the extra entry. The game's
 picker and the game's die decide. Each added entry stands in through a real Angelic unique of
 the same item type, and drops at that unique's rate: Headhunter through **Liquor Holster**, and
-Tyrant's Crown through the rarest Angelic helmet the plugin finds in the game's pool (**Lucifer's
-Crown** or **Mask of the Celestial**, whichever has the lower drop rate; the switch-on line in the
+Tyrant's Crown through the more common of the Angelic helmets the plugin finds in the game's pool (**Lucifer's
+Crown** or **Mask of the Celestial**, whichever has the lower drop-rate number; the switch-on line in the
 log names the one chosen). So the item is exactly as rare as its stand-in, and the stand-in keeps
 its own share. A hit can fall to the added entry only when the game's roll landed on the stand-in
 itself: ForgePact reads which unique the roll looked up for that hit, and only when that is the
