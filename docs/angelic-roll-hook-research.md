@@ -818,6 +818,9 @@ established**. Nothing of this design has been seen live yet.
   scripts at hand the static search for the name is exhausted. So the name is
   read live: the first `Controller_obj` instance's variable names, filtered by
   shape (an array of at least 100 entries, each an array of three numbers).
+  Live 1 found that shape wrong (the variable it refused has six elements,
+  not a flat run of triples), and `## Session 4: the list layout (issue #74)`
+  has the layout the roll actually reads.
   The player build resolves the list by the name Live procedure 3 measures,
   and refuses (gate off, one log line naming the variable) when that variable
   is missing or not of that shape. Until then the research build finds it by
@@ -1353,4 +1356,359 @@ conditions of the session (the decision rule above):
 
 ### Results
 
-Session 3: not yet run.
+Session 3 ran once, as Live 1, on 2026-10-02 (the drive tool's lease taken
+at 16:36 UTC), on the research dll `f7560e80…d5be71` (SHA-256
+f7560e804472fee6b9c7b61457e1c3b1713ba09a2bd5ec15226ffa5874d5be71, built with
+`build.bat dev`), save slot 14 (Sorak), the kills in Outskirts of Inoya
+(Hell, zone level 243). The drive tool's self-check passed 6 of 6; the saves
+were copied before launch and restored at teardown with nothing left
+changed. Every verdict below was measured in that session; the replies are
+quoted in its capture, which stays with the hub's workorder and is not
+tracked.
+
+- **`dll-hash`: pass.** The lease's DLL hash was the research dll's.
+- **`marker`: pass.** `angelicprobe hit status` answered a line beginning
+  `angelicprobe hit:`, detection not yet installed, ending `detect=off`.
+- **`control`: pass.** `sigdrop status` read exactly the fresh-session line
+  of `### Live procedure 3`.
+- **`list-scope`: not-observed.** The global scope and `Loot_Manager_obj`
+  both answered that they carry no `lootListUnique`, as the static reading
+  expected. One `Controller_obj` instance answered, with `names=221` (222
+  after the zone change), so the instance read worked. Every array variable
+  on it was refused, each with `why=entry 0 is not three numbers`; among them
+  `lootListUnique` with `array_length=6` and `lootListNormal` with
+  `array_length=5`, both refused by the flat shape this session's scan was
+  built for. The scan ended `candidates=0 best=none`. The validated pool read
+  in the same step: 47 candidates, 11 rejected.
+- **`repo-standin`: not-observed.** `angelicprobe inject auto` answered that
+  no `Controller_obj` variable was shaped like the list and changed nothing;
+  the status line read `list=none`, both stand-ins with n = 0.
+- **`list-stable`: not-observed.** After the zone change the scan read
+  `names=222`, the same refused set (`lootListUnique` still 6,
+  `lootListNormal` still 5; only `enemy_pool` changed, from 1 to 4 elements)
+  and `candidates=0`: no best variable to compare.
+- **`force-hit`: pass.** With `raredrop angelic 2` and the chance lever on,
+  one batch of kills gave 57 hits over 59 rolls (`gameRolls=59
+  gameHits=57`), `cdpCalls=70`, `detect=detoured`. The later batches brought
+  it to 85 hits over 92 rolls (`cdpCalls=106`) and 87 over 94.
+- **`baseline-off-vanilla`: pass.** Both switches off: `injected=0`,
+  `ourHits=0`, `built=0`, `list=none` on the inject status line (and
+  `list=missing` on `sigdrop status`, since the resolution had failed), no
+  `inject:` line. `standinPicks=1`, so the baseline share p0 is 1/57: one
+  vanilla hit fell on Liquor Holster's own entry.
+- **`typing`: pass.** Its instrument's positive control first: all 57
+  vanilla hit lines carried a `builtType=` number (none read `builtType=?`)
+  and every one `lootDelta=1`, for example
+  `angelic hit: picked 7/0/57 at 4176,3856 gate=tyrant:off,headhunter:off lootDelta=1 builtType=7 -> vanilla`;
+  the first eight hits built types 3, 7 and 10, each equal to the picked
+  entry's type. Then `untyped=0`, `typeAgree=57`, `typeDisagree=0`, and still
+  no disagreement at 85 and 87 agreements in the later reads.
+- **`reach` and `inject-build`: not-run**, because `list-scope` found no
+  candidate and nothing was ever pushed. **`on-both`: not-run**
+  (`inject-build` did not run). **`replace-remove`: not-run** (`reach` did not
+  run).
+- **`off-removes`: pass, as weak evidence.** Copies back to 1, both switches
+  off, `gate=tyrant:off,headhunter:off`; another batch gave 28 more hits,
+  every hit line ending `-> vanilla`, `injected=` and `ourHits=` still 0, no
+  `inject:` line, and `list=none` as at `list-scope`. Nothing was injected in
+  this session, so the removal path itself was not exercised.
+- **`sigdrop-still-forces`: pass.** `sigdrop crown`, then one kill; the log
+  read `sigdrop: Tyrant's Crown dropped at 3663,2896 kind=15` and
+  `sigdrop: Tyrant's Crown dropped at 3842,2869 kind=15` (`rolls=2
+  drops=2`), and the ground screenshot shows two Tyrant's Crowns.
+- **`list-restored`: pass.** After `angelicprobe hit off` and
+  `raredrop angelic 1` the scan read `best=none` again and both stand-ins
+  n = 0 again, equal to `list-scope`.
+
+**Route: not-observed.** The injection never had a list it would accept:
+the shape check, written for one flat array of 100 or more triples, refused
+the real `lootListUnique`, whose outer length is 6. So the session says
+nothing about whether the roll reads a pushed entry, nor about inject against
+replace. What it did establish: the hit is typed on every vanilla hit (57 of
+57), the chance lever and the three detours work on this build, the forced
+`sigdrop` path is unaffected, and a variable named `lootListUnique` lives on
+`Controller_obj` with six elements, which the static search had not named.
+`## Session 4: the list layout (issue #74)` reads that layout and gives the
+procedure that measures it.
+
+## Session 4: the list layout (issue #74)
+
+Live 1 (Session 3's `### Results`) found on `Controller_obj` a variable
+`lootListUnique` of outer length 6 and refused it, because Session 3 modelled
+the list as one flat array of `[type, sub, b]` triples, 100 or more. On
+2026-10-02 the owner chose to read the list's shape and teach the injection
+it (#74), over keeping the beside design or researching a definition of our
+own. The roll was read again locally in the named Ghidra project; this
+session's static reading is below. `### What the plugin does with it` lists
+the only changes to the design: how the list is resolved, shape-checked,
+pushed onto, read back and cut. Everything else in Session 3 stands - the
+typing, the attribution, the rewrite, the gate and the roll scope.
+`### Live procedure 4` measures the layout before anything is pushed (Live
+2), and `### Results` is where that session's record goes.
+
+### Static reading (2026-10-02, the layout)
+
+Each claim is labelled **static reading** (what the game's code was read to
+do, in our own words), **measured** (with the session) or **not
+established**. The decompiler's output stays on the researcher's machine and
+nothing of it is quoted here.
+
+- **The variable's name (static reading, confirmed by Live 1).** The runtime
+  keeps, beside every variable-slot global and every builtin-pointer global,
+  a pointer to that global's name. A new script, `DerefNear`, reads the
+  memory beside a given global; on the slot the roll loads, the name record
+  reads `lootListUnique`. Live 1 measured a variable of exactly that name on
+  the first `Controller_obj` instance, with outer length 6. Session 3's
+  "not established statically" was a limit of the scripts used then
+  (`FindSlotNames`, `SlotRefs`, `FindPointers`, `FindRvaTable`): they look
+  for stores into a slot and tables pointing at it, not for the name record
+  beside it.
+- **One element, by a constant index (static reading).** The roll's read of
+  `Controller_obj.lootListUnique` passes an array index, the constant 5: it
+  reads the sixth element, `[5]`, and never treats the outer array as a list.
+  The same read helper is handed a "no index" marker for the caller's plain
+  reads of `x` and `y`, which is how the index is told apart from them.
+  `lootListNormal` is not read by this roll.
+- **The element is a `ds_list`, and its entries are the triples (static
+  reading).** On the value it read, the roll calls three builtins, named
+  through the same name records: `ds_list_size` with the element as its one
+  argument, then `ds_list_find_value` with the element and a random index
+  drawn up to that size, then `is_array` on the value it got back. Only when
+  `is_array` holds does it take that value's elements 0, 1 and 2 as the type,
+  sub and b it hands to `GetUniqueRepoStruct`; otherwise it draws again.
+  Everything after the read - the filters, the die, `CreateDefaultParams`,
+  the placement - is as Session 3's static reading says.
+- **The layout (static reading).** `Controller_obj.lootListUnique` is an
+  array of six `ds_list` ids; the Angelic roll draws from
+  `lootListUnique[5]`; each entry of that list is an array of three numbers,
+  type, sub and b. Session 3's minimum length of 100, and its expectation that
+  the list holds every unique, are withdrawn.
+- **Not established.** What the six elements are keyed by, and what `[0]` to
+  `[4]` hold. The size of `[5]`: the validated pool read 47 candidates and 11
+  rejected (58 definitions), which is the order of magnitude to expect, not
+  a prediction. Whether the random index can equal the size, an off-by-one
+  the `is_array` guard would absorb as a re-draw, and which does not matter to
+  the injection. Who builds the six lists, and when. Live 2 measures the
+  first two.
+- **Negative results.** `FindWrites` and `FindPointers`, run on the three
+  builtin-pointer globals (`ds_list_size`, `ds_list_find_value`,
+  `is_array`): 0 hits each. Those names could not have come from a store or a
+  table search, only from the name records. Recorded so nobody runs them
+  again.
+- **What it changes, and why the read-back changes shape.** A `ds_list` id is
+  a handle into the runtime's own store, so Session 3's worry that a fresh
+  read hands back a copy cannot apply to the sub-list itself. The held
+  read-back now checks that a fresh read of the outer array still holds the
+  same id at the index, and that the sub-list's size and tail still hold the
+  push.
+- **The proven routes the plugin reuses (source reading).** Reading a
+  variable off the first `Controller_obj` instance by name, as Session 3's
+  scan already does (measured in Live 1: `names=221`). Asking `ds_exists`
+  with the list type, 2, before a number is read as a list, then reading it
+  with `ds_list_size` and `ds_list_find_value`: the route the pet loot
+  collector already takes on a pet's `lootList`. Building an entry with
+  `array_create` and `array_set`, as Session 3's push does. New on a list the
+  game owns are `ds_list_add` and `ds_list_delete`; their first live use is
+  Live 2 (`reach`, `off-removes`, `list-restored`).
+
+### What the plugin does with it
+
+The deltas, numbered as the plan numbers them. Both builds unless marked
+research.
+
+1. **Resolution.** The plugin reads `Controller_obj.<name>` as before, then
+   requires, in order: an array whose `array_length` exceeds the index; the
+   element at the index (read with `array_get`) a number that `ds_exists`
+   confirms is a live `ds_list` (type 2, as the plugin's other list checks
+   spell it); a `ds_list_size` of at least `kSigListMinSize`, 10 (the old
+   minimum length of 100, `kSigListMinLength`, is gone); and every entry, read
+   with `ds_list_find_value`, an array of exactly three numbers. One helper
+   serves the shape check, the tail check and the scan. The player build's
+   index is `kAngelicListIndex`, 5, from the static reading; the research
+   build keeps it in a variable the `at` lever sets. A stand-in's n counts its
+   whole triple over the sub-list only. Each refusal is one reason naming the
+   step: `Controller_obj.<name> is not an array`,
+   `has <L> elements, none at [<i>]`, `[<i>] is not a ds_list`,
+   `[<i>] has <s> entries, fewer than <min>` and
+   `[<i>] entry <k> is not three numbers`.
+2. **Push and remove.** Per copy the entry is built as before and appended
+   with `ds_list_add`. Removal runs only while the tail check, now over
+   `ds_list_size` and `ds_list_find_value`, says the last pushed entries are
+   exactly ours: `ds_list_delete` at the last index once per pushed entry,
+   after which `ds_list_size` must equal the size before the push. Otherwise
+   the list is left as found, with one line and `anomalies=` (the rule is
+   unchanged). The roll-scoped record keeps the outer variable, the list id,
+   the index and the size before.
+3. **Held read-back.** A fresh `variable_instance_get` of the outer variable,
+   then `array_get` at the index; the push counts as visible only when that
+   element is the same id and the tail holds. A different id, a non-list or a
+   short tail is a miss (`anomalies=`, and `heldMiss=` in the research build):
+   the entries come off the id they were pushed onto, under delta 2's tail
+   rule, and the roll carries nothing.
+4. **The scan, `angelicprobe list` (research).** It keeps the report on the
+   earlier scopes and the per-kind count. A candidate is now a
+   `Controller_obj` array variable whose element at the current index is a
+   live `ds_list` of at least 10 entries, all three-number arrays. Its lines:
+
+   `angelicprobe list: candidate <name> array_length=<L> at=<i> ds_list_size=<s> first=[t,s,b][t,s,b][t,s,b] standins=<as now>`
+
+   `angelicprobe list: rejected <name> array_length=<L> why=<reason of delta 1>`
+
+   `angelicprobe list: candidates=<k> best=<name>[<i>]:<s>`
+
+   Best is `lootListUnique` when it is a candidate, else the candidate with
+   the largest sub-list; `angelicprobe inject auto` takes best.
+5. **The layout dump, `angelicprobe list dump [<var>]` (research, new).**
+   Live 2's positive control on the layout. It reads `Controller_obj.<var>`
+   (`lootListUnique` when no name is given) and prints its shape two levels
+   down, with no injection and no shape rule. The first line is
+
+   `angelicprobe list dump: Controller_obj.<var> kind=<kind> array_length=<L>`
+
+   (or `kind=<kind>, not an array`, and the dump stops). Then one line per
+   element, up to 32:
+
+   `[<i>] kind=<kind> ds_list=yes:<size>|no triples=<count>/<size> first=[t,s,b][..][..] standins=Headhunter:Liquor Holster(n=<n>),Tyrant's Crown:<name>(n=<n>)`
+
+   where `triples` counts the entries that are three-number arrays, `first`
+   shows up to three entries (an entry that is not a triple prints its kind,
+   as `entry<k>=<kind>`), and n counts the stand-in's whole triple in that
+   element. A `ds_list` is read up to 2000 entries. The last line is
+
+   `angelicprobe list dump: <var> elements=<L> ds_lists=<k> triple-lists=<m>`
+
+   and any throw ends the dump with
+   `angelicprobe list dump: EXCEPTION at [<i>]`.
+6. **The `at` lever (research).** `angelicprobe inject at <k>`, 0 to 31, sets
+   the sub-list index, resolves the list again and prints the list line. The
+   usage line is now exactly:
+
+   `angelicprobe inject: name <var> | auto | at <k> | copies <k> | mode inject|replace | status`
+
+   The `name` lever still refuses the value `auto` (the scan is
+   `angelicprobe inject auto`), and `angelicprobe inject status` keeps its
+   tokens: the index rides inside `list=`.
+7. **The `list=` token, and the player build.** On both status lines
+   (`sigdrop status` and `angelicprobe inject status`) `list=` now prints
+   `<name>[<index>]:<size>`, for example `lootListUnique[5]:58`, and `none` or
+   `missing` as before. The player build's `kAngelicListVar` stays empty
+   until Live 2's `reach` proves a name, and `kAngelicListIndex` stays 5
+   unless that session had to move it; with the name empty the gate refuses
+   with `list=missing`. The hit coin, the rewrite, the typing hook, the
+   three-detour gate and every counter are unchanged, and nothing a player
+   sees changes.
+
+### Live procedure 4
+
+Live 2 runs the rebuilt research build through the drive tool, with the
+owner doing the killing. It is `### Live procedure 3` with three changes: the
+layout dump runs first, as the positive control on the layout, and replaces
+`list-scope`; `list=` reads `<name>[<index>]:<size>`; and the `at` lever
+replaces Live 1's "next candidate" fallback. It is a new session on a
+restored save, so every starting value is the state before Live 1. The
+session's capture is `forgepact-74-angelic-list-injection-live-2.md`, kept
+with the hub's workorder and not tracked; its record goes under
+`### Results` below.
+
+- **Build.** `plugin_build\BloodPactPlugin_rel.dll` from
+  `plugin_build\build.bat dev`, with the layout changes above; its SHA-256 is
+  recorded when it is built. The owner installs it when asked; until then
+  `dll-hash` fails and nothing else runs.
+- **Character.** Save slot 14 (Sorak), selected on the back end, in town at
+  load.
+- **Standing steps** and **hygiene**: as `### Live procedure 3`.
+- **People steps.** One zone change (`list-stable`), then kills with the
+  drops left on the ground. Live 1 showed that one batch of ordinary kills in
+  Outskirts of Inoya gives 50 or more hits under the chance lever, so each
+  kill step is one batch, read after it; the operator asks for a second batch
+  only when the step's hit count is not reached. Counts are hits, never
+  kills.
+
+Each check is recorded as pass, fail, not-observed or not-run, with the
+replies quoted in the session record. The research checks are never pass
+conditions of the session.
+
+1. **`dll-hash`** - the lease's DLL SHA-256 equals the research build's.
+   Fail: nothing after it runs.
+2. **`marker`** - `angelicprobe hit status` answers a line beginning
+   `angelicprobe hit:` and ending `detect=off`. A player build answers that
+   the command is unavailable, and the session ends there.
+3. **`control`** - `sigdrop status` reads exactly Session 3's fresh-session
+   line (`list=none`, every counter 0, `detect=off`).
+4. **`layout`** (research; the positive control on the layout, before
+   anything is injected) - `angelicprobe list dump lootListUnique`: the first
+   line reads `kind=array array_length=6`; six element lines follow; `[5]`
+   reads `ds_list=yes:<size>` with `triples=<size>/<size>`, a size of 10 or
+   more, and the stand-ins as Headhunter with Liquor Holster (n = 1) and
+   Tyrant's Crown with Mask of the Celestial (n = 1). Then `angelicprobe list`:
+   `candidates=` at least 1 and `best=lootListUnique[5]:<size>`. All six
+   element lines are recorded verbatim (what `[0]` to `[4]` hold is a finding
+   on its own), and `angelicprobe list dump lootListNormal` is recorded too,
+   with no verdict. Pass: `[5]` a `ds_list` whose entries are all triples,
+   size 10 or more, each stand-in at n = 1, best as expected. Fail: `[5]` not
+   a `ds_list`, or holding an entry that is not a triple, or a stand-in at an
+   n other than 1; the record names any other element that holds triples with
+   both stand-ins at n = 1, which is check 8's `at` fallback. Not-observed:
+   the first line is not `kind=array array_length=6` (recorded as printed).
+5. **`repo-standin`** (research) - `angelicprobe inject auto`, then
+   `angelicprobe inject status`: `copies=1`, `list=lootListUnique[5]:<size>`
+   with check 4's size, and both stand-ins at n = 1. A stand-in printed as not
+   validated cannot arm; which one is recorded.
+6. **`list-stable`** (research) - **the owner takes the town portal or a
+   waypoint to any ordinary zone.** `angelicprobe list dump lootListUnique`
+   again shows the same six sizes. A different size is the finding, and both
+   are recorded.
+7. **`force-hit`** (validity), **`baseline-off-vanilla`** (acceptance) and
+   **`typing`** (research), both switches off: exactly as Live procedure 3's
+   check 7 (`raredrop angelic 2`, `angelicprobe hit chance 1000000000`, one
+   batch of kills to `gameHits=` of 20 or more, the `builtType=` and
+   `lootDelta=` controls), with `list=` compared against check 4's
+   `lootListUnique[5]:<size>`; `sigdrop status` prints the same token. The
+   baseline share p0, `standinPicks=` over `gameHits=`, is recorded.
+8. **`reach`** (research) and **`inject-build`** (research; the route's
+   input): exactly as Live procedure 3's check 8.
+   `angelicprobe inject copies 200`, then `headhunter force`; one batch of
+   kills, until `gameHits=` has grown by 20 or more. p1 is the growth of
+   `standinPicks=` over the growth of `gameHits=`: `heldMiss=0` and p1 of 0.20
+   or more pass; `heldMiss=` above 0, or p1 below 0.10, fail; p1 between, or
+   too few hits, is not-observed. `inject-build` is judged only when `reach`
+   passed, with the instrument-blind forms written there. **The fallback,
+   replacing Live 1's "next candidate" rule:** on a `reach` fail with
+   `heldMiss=0`, or on a `layout` fail with another element holding triples,
+   `angelicprobe inject at <i>` for each other element check 4's dump showed
+   holding triples with both stand-ins at n = 1 (two at most, lowest index
+   first), `headhunter force` still on, one batch each. Each index's p1 is
+   recorded; `reach` passes on the first index that passes, and the record
+   names that index, which the player build and the curated record then take.
+9. **`on-both`** (acceptance of the shipped pairing; not-run unless
+   `inject-build` passed) - as Live procedure 3's check 9.
+10. **`replace-remove`** (research fallback; run only when `typing` and
+    `reach` passed and `inject-build` failed, else not-run) - as Live
+    procedure 3's check 10.
+11. **`off-removes`** (acceptance) - `angelicprobe inject copies 1`,
+    `angelicprobe inject at 5` (when check 8 moved it), `headhunter off`,
+    `tyrant off`; `sigdrop status` reads `gate=tyrant:off,headhunter:off`, and
+    `angelicprobe inject status` shows `list=lootListUnique[5]:<size>` equal
+    to check 4's. **The owner kills five.** `injected=` and `ourHits=`
+    unchanged, no mod item and no `inject:` line pass.
+12. **`sigdrop-still-forces`** (acceptance) - as Live procedure 3's check 12.
+    The last people step.
+13. **`list-restored`** (acceptance) - `angelicprobe hit off`,
+    `raredrop angelic 1`, then `angelicprobe list dump lootListUnique`: all
+    six sizes equal to check 4's and each stand-in's n equal to check 4's;
+    `angelicprobe inject status` shows `list=` equal to check 4's.
+14. Stop the game normally, then inspect and restore the saves (the standing
+    steps).
+
+The capture lists the checks in this order: `dll-hash`, `marker`, `control`,
+`layout`, `repo-standin`, `list-stable`, `force-hit`, `baseline-off-vanilla`,
+`typing`, `reach`, `inject-build`, `on-both`, `replace-remove`,
+`off-removes`, `sigdrop-still-forces`, `list-restored`. The session must pass
+`dll-hash`, `marker`, `control`, `force-hit`, `baseline-off-vanilla`,
+`off-removes`, `sigdrop-still-forces` and `list-restored`. The route comes
+from Session 3's decision rule, applied to these verdicts in the same order,
+its validity step first.
+
+### Results
+
+Session 4: not yet run.
