@@ -174,6 +174,19 @@ jobs:
             echo "and \`git diff --stat origin/$base...HEAD\` lists every changed file with its size."
             echo "Pathspecs can exclude too, for example \`-- . ':(exclude)*.md'\`."
             echo "If \`gh pr diff\` fails because the diff is too large, use git instead."
+            # hub #365 and ForgePact #141 went green after a 10-20 s pass the
+            # model made itself, without one of the command's agents.
+            echo
+            echo "Run the review through the code-review command's agents, step by step as it describes: the"
+            echo "eligibility, CLAUDE.md-list and summary agents, the four review agents in parallel, then one"
+            echo "validation agent per issue they found. Do not replace them with a review of your own, however"
+            echo "small the change looks; only the eligibility agent decides that a pull request needs no review."
+            echo "A later step of this job counts the agents in this run's transcript and fails the job when"
+            echo "they are missing."
+            echo
+            echo "Read files with Read, Grep and Glob, and the change with \`git diff\` or \`git show\`. Of the"
+            echo "shell's text tools only \`cat\`, \`head\`, \`tail\`, \`wc\` and \`sed -n\` are allowed; a compound"
+            echo "command that also uses anything else is refused as a whole, and costs a turn."
             # ForgePact #105's scoped review was refused four times trying to
             # write its comment to a file first, and posted on the fifth try.
             echo
@@ -415,7 +428,17 @@ jobs:
           # The one thing the skill would otherwise execute, its launcher (no
           # Node or npx: a self-contained binary), runs in "Run impeccable's
           # launcher" above instead, for the reason given there.
-          claude_args: '--allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*)"'
+          # The read-only text tools (`cat`, `head`, `tail`, `wc`, `sed -n`)
+          # are what a review reaches for anyway: ForgePact #141 was denied a compound `head`/`cat` command
+          # and cut its review short. They read no more than `Read` already
+          # can, and shell redirection stays refused.
+          #
+          # `--model` pins the model that follows the command. The command
+          # takes no effort or level argument, and on its default model it
+          # replaced the whole multi-agent review with a single pass of its
+          # own on hub #365 and ForgePact #141. The subagents' models are the
+          # command's own choice (haiku, sonnet and opus by step).
+          claude_args: '--model claude-opus-5-5 --allowedTools "Skill,Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git diff:*),Bash(git log:*),Bash(git blame:*),Bash(git show:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sed -n:*)"'
 
       # The action succeeds whenever the model exits cleanly, which includes
       # a run that reviewed nothing -- hub #56 (tools denied) and hub #59 (the
@@ -446,6 +469,60 @@ jobs:
             jq -r '[.[] | select(.type == "result")] | last | .result // "(no result recorded)"' "$RESULT_FILE" || true
             exit 1
           fi
+
+      # A posted comment is not a review. On hub #365 (4 turns, 10.6 s) and
+      # ForgePact #141 (7 turns, 20.3 s) the model read part of the diff
+      # itself, never launched one of the code-review command's agents, posted
+      # "No issues found", and said in its last message that it had skipped
+      # the review. The check above saw a comment and passed. So this one
+      # reads the transcript: steps 1 to 4 of the command launch seven agents
+      # (eligibility, CLAUDE.md list, summary and four reviewers), and that
+      # does not finish in seconds. The job fails if the run launched fewer,
+      # finished under the floor, or admitted skipping the review, and prints
+      # each agent it did launch with the last message, so an eligibility
+      # stop that still posted a comment reads as one and not as a skip. It
+      # is red all the same, like the check above: a review was requested.
+      # tests/test_ai_review_workflow.py checks ADMITTED against the recorded
+      # last messages of those runs, and against a real review's.
+      - name: Fail if the review skipped the command's agents
+        env:
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RESULT_FILE: ${{ runner.temp }}/claude-execution-output.json
+          MIN_AGENTS: "7"
+          MIN_SECONDS: "60"
+          ADMITTED: "(did not|didn't) (run|launch|use|follow)[^.]*(multi-agent|agents|recipe|command)|not the (four|4) |single pass|(reviewed|read) the (code )?diff (myself|in a single pass)"
+        run: |
+          agents=$(jq '[.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and (.name == "Agent" or .name == "Task"))] | length' "$RESULT_FILE")
+          result=$(jq -c '[.[] | select(.type == "result")] | last // {}' "$RESULT_FILE")
+          turns=$(jq -r '.num_turns // 0' <<< "$result")
+          seconds=$(jq -r '(.duration_ms // 0) / 1000 | floor' <<< "$result")
+          message=$(jq -r '.result // "(no result recorded)"' <<< "$result")
+          echo "Agents launched: $agents. Turns: $turns. Duration: $seconds s."
+          jq -r '.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and (.name == "Agent" or .name == "Task")) | "- " + (.input.description // "(no description)")' "$RESULT_FILE"
+
+          reasons=()
+          if [ "$agents" -eq 0 ]; then
+            reasons+=("it launched no agent at all")
+          elif [ "$agents" -lt "$MIN_AGENTS" ]; then
+            reasons+=("it launched $agents agent(s), where steps 1 to 4 launch $MIN_AGENTS (an eligibility stop launches one)")
+          fi
+          if [ "$seconds" -lt "$MIN_SECONDS" ]; then
+            reasons+=("it finished in $seconds s")
+          fi
+          admitted=$(grep -oiE -m1 "$ADMITTED" <<< "$message" | head -n1 || true)
+          if [ -n "$admitted" ]; then
+            reasons+=("its last message says so: \"$admitted\"")
+          fi
+
+          if [ "${#reasons[@]}" -gt 0 ]; then
+            printf -v joined '%s; ' "${reasons[@]}"
+            echo "::error::The review did not run the code-review command's agents on #$PR: ${joined%; }."
+            echo "Its last message:"
+            printf '%s\n' "$message"
+            exit 1
+          fi
+          echo "The review ran through the command's agents."
+
 
       # ForgePact only. A panel change was reviewed with the design tooling,
       # so a comment posted since the review started must carry each tool's
@@ -484,3 +561,40 @@ jobs:
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: warn
           retention-days: 14
+
+      # The job's summary page says what the review did and where the whole
+      # transcript is, so nobody has to read the step log or guess at the
+      # artifact: which agents ran, how long it took, which tools were denied
+      # and the review's last message. Runs whatever the steps above decided.
+      - name: Summarize the review run
+        if: always()
+        env:
+          RESULT_FILE: ${{ runner.temp }}/claude-execution-output.json
+        run: |
+          {
+            echo "## AI review run"
+            echo
+            if [ ! -f "$RESULT_FILE" ]; then
+              echo "The review left no result file, so there is no transcript to show."
+              exit 0
+            fi
+            jq -r '
+              ([.[] | select(.type == "result")] | last // {}) as $r
+              | [.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")] as $calls
+              | [$calls[] | select(.name == "Agent" or .name == "Task")] as $agents
+              | "| | |", "|---|---|",
+                "| Model | \([.[] | select(.type == "system" and .subtype == "init") | .model] | first // "?") |",
+                "| Agents launched | \($agents | length) |",
+                "| Turns | \($r.num_turns // "?") |",
+                "| Duration | \((($r.duration_ms // 0) / 1000 | floor)) s |",
+                "| Cost | $\($r.total_cost_usd // 0) |",
+                "| Denied tool calls | \($r.permission_denials // [] | length) |",
+                "",
+                (if ($agents | length) > 0 then "Agents:", ($agents[] | "- \(.input.description // "(no description)")"), "" else empty end),
+                (if ($r.permission_denials // [] | length) > 0 then "Denied:", ($r.permission_denials[] | "- `\(.tool_name)`: `\(.tool_input.command // (.tool_input | tostring) | .[0:200])`"), "" else empty end),
+                "### Last message", "", ($r.result // "(no result recorded)")
+            ' "$RESULT_FILE"
+            echo
+            echo "The full transcript, with every tool call and per-model token counts, is this run's"
+            echo "\`claude-execution-output\` artifact (Summary page, Artifacts)."
+          } >> "$GITHUB_STEP_SUMMARY"
