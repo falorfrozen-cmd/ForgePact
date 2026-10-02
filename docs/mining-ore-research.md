@@ -3,8 +3,10 @@
 Status: **verified in play on 2026-09-23** (see "Live verification");
 the multiplier adapter described below is unchanged since. The extra rolls
 added on 2026-09-28 (issue #36) **paid out in a live game on the research
-build the same day** (Live procedure 1); the shipped build through the panel is
-still to be confirmed. See "Extra rolls" at the end.
+build the same day** (Live procedure 1), and Live procedure 2 confirmed the
+shipped build through the panel on 2026-10-02. Mining XP and the floating text
+per roll, bonus finds under rolls and the Miner's Helmet with rolls are still
+not measured. See "Extra rolls" at the end.
 Based on ForgePact `eed66427bda39fcd4ea66096934528f5efb9a2b5`. Nothing has been
 published, and no EXE version has been changed for this experiment.
 
@@ -123,12 +125,16 @@ live on the research DLL** (Live procedure 1, below): every re-run of the
 completion paid ore, rolls 3 and 10 gave three and ten stacks, the multiplier
 scaled every run, and the XP the dig reached counted once. Bonus finds were
 **not observed live** (the character's bonus-find stats all read 0), and the
-Miner's Helmet case was not run. The shipped build through the panel is Live
-procedure 2, recorded separately. The panel row is Mining Ore Extra Rolls
+Miner's Helmet case was not run. Live procedure 2 (2026-10-02, below)
+confirmed the shipped build through the panel: rolls 3 dropped three stacks and
+rolls 1 one. What is still not measured: mining XP and the floating text per
+roll (not observed: the character's mining level was at the cap), bonus finds
+under rolls, and the Miner's Helmet with rolls. The panel row is Mining Ore Extra Rolls
 (`drops.mining_ore_rolls`, 1-10, default 1, off by default) and the plugin
 command is `miningrolls N`. The section "What the game does at a dig" is the
-static reading; what the session measured is under "Live procedure 1
-(2026-09-28)", and where the two disagree the measurement is said so there.
+static reading; what the sessions measured is under "Live procedure 1
+(2026-09-28)" and "Live procedure 2 (2026-10-02)", and where the reading and a
+measurement disagree, the measurement is said so there.
 
 ### What the game does at a dig (static reading)
 
@@ -307,3 +313,46 @@ bonus-find stat above 0 was available, so the bonus sites could not pass); the
 Miner's Helmet with rolls above 1 (x4 per stack, one pulse per dig); and
 whether an extra run can ever pay nothing (never observed; the plugin's stop
 and `hp` reset cover it).
+
+### Live procedure 2 (2026-10-02)
+
+The session the workorder `forgepact-issue-36-extra-ore-rolls` calls Live
+procedure 2 (its capture, `forgepact-issue-36-extra-ore-rolls-live-2.md`, stays
+on the researcher's machine). Date 2026-10-02, 11:00-11:09 UTC. Build: the
+shipped player DLL, the release build of this branch after the 2026-10-02 merge
+of main (`552a4b9`), sha256
+`58bdd9d5461b80a6cffb6c6d26760fb080b78f82a8869b5f6522278ddb21fee9`, matching
+the hash the session's lease read. Character: hero Suh (save slot 2), digging
+Copper Veins. `drops.mining_ore_rolls` was absent from `forgepact.json` before
+launch (so 1). The panel was this branch's build (`panel/dist`), served
+headless on 127.0.0.1, and the rolls were set by sending the panel's own
+`/api/set` request, which is what the Loot tab's sliders send; the Loot tab
+itself was not clicked, because the session had no way to click the panel
+window. The owner dug both nodes by hand. The saves were backed up before
+launch and restored clean afterwards.
+
+| Check | Verdict | Line it rests on |
+|---|---|---|
+| dll-hash | pass | lease `dll_sha256 58bdd9d5...`, `dll_status hashed`, equals the shipped build's |
+| marker | pass | `miningrolls 1` -> `miningrolls: x1 (vanilla)` |
+| control | pass | `ping` -> `pong (YYTK 4.0.1)` |
+| panel-rolls3 | pass | `/api/set` `drops.mining_ore_rolls=3` (multiplier 1) -> `miningrolls: x3 (each dig rolled 3 times)`, `modstate.json` `"rolls":3,"rollsReady":true`; after the dig `miningrolls: first extra roll paid 1 ore stacks`, `extraRuns` 2, `extraRunsUnpaid` 0; the owner saw 3 stacks, copper ore 0 -> 14 on a Copper Vein |
+| panel-off | pass | `/api/set` `drops.mining_ore_rolls=1` -> `miningrolls: x1 (vanilla)`, `"rolls":1`; the owner: "1 stack dropped", copper ore 14 -> 17; no new `first extra roll` line, `extraRuns` stayed 2 |
+| mining-xp-per-dig | not observed | the character's mining level is at the 5000 cap, so no XP change shows; the player build has no back-end read of mining XP; no floating-text count was given; the owner chose to ship it unmeasured |
+
+What it established:
+
+- **The shipped build, set through the panel, re-runs the dig.** At rolls 3
+  both extra runs paid (`extraRuns=2 extraRunsUnpaid=0`) and the dig dropped
+  three stacks, against one stack at rolls 1. All seven detours came up native
+  on the player build (`rollsReady` true).
+- **Back at 1 the panel turns it off.** The next dig dropped one stack and ran
+  no extra roll.
+- **Ore per stack varied, and why is not measured.** The rolls-3 dig gave 14
+  ore in three stacks and the rolls-1 dig 3 ore in one stack, so the stack
+  count is exactly three times, but 14 is not three times 3. Each stack's
+  quantity was not read.
+
+Not observed in this session: mining XP and the floating text per roll (see
+mining-xp-per-dig), bonus finds under extra rolls, and the Miner's Helmet with
+rolls above 1.

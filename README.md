@@ -101,7 +101,7 @@ in place of the multiplier, but that combination has not been measured in play. 
 keeps working exactly as before. If the plugin cannot attach what the extra rolls
 need, the rolls stay at 1 with one `miningrolls: unavailable` line in the log while
 the multiplier keeps working. Checked in play on 2026-10-02 with the release plugin,
-set from the panel's Loot tab: at 3 rolls (multiplier at 1) a Copper Vein dropped
+set through the panel: at 3 rolls (multiplier at 1) a Copper Vein dropped
 three stacks of ore, 14 ore in all, and back at 1 the next Copper Vein dropped one
 stack of 3; how much each stack holds still varies from dig to dig. See
 [research and test scope](docs/mining-ore-research.md).
