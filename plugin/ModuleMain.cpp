@@ -11301,15 +11301,50 @@ static bool SigNumber(const RValue& v, double& out)
     try { out = v.ToDouble(); } catch (...) { return false; }
     return std::isfinite(out);
 }
-// A ds_list handle as the runtime stored it - a number, or a reference (a live data-structure
-// handle can arrive as VALUE_REF on current runners) - and its number in `id`, for the "same
-// list" checks.  A set of kinds, so no one kind decides: ds_exists on the value itself is the
-// gate, and only a value that can be a handle is ever handed to it.
-static bool SigListHandle(const RValue& v, double& id)
+// Whether `v` is a live ds_list, and its handle value in `id` for the "same list" checks.  The
+// route the pet loot collector proved on a pet's lootList: ToDouble only to refuse a handle value
+// that is unreadable, non-finite or negative, then ds_exists (2 = ds_type_list) asked of the value
+// as it was read - never its kind, since a live ds handle can arrive as VALUE_REF on current
+// runners and the kind of lootListUnique[5] is not measured.  On a refusal `why` names the value's
+// kind and the step that refused: `kind=<k>, id unreadable`, `kind=<k>, id <v>`,
+// `kind=<k>, ds_exists threw` or `kind=<k>, ds_exists false`.  The kind is named, never checked.
+static bool SigListHandle(const RValue& v, double& id, std::string& why)
 {
-    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_REF) return false;
-    try { id = v.ToDouble(); } catch (...) { return false; }
-    return std::isfinite(id) && id >= 0.0;
+    const auto refuse = [&](const std::string& step) {
+        std::string kind;
+        switch (v.m_Kind) {
+        case VALUE_REAL:      kind = "real"; break;
+        case VALUE_INT32:     kind = "int32"; break;
+        case VALUE_INT64:     kind = "int64"; break;
+        case VALUE_BOOL:      kind = "bool"; break;
+        case VALUE_STRING:    kind = "string"; break;
+        case VALUE_OBJECT:    kind = "struct"; break;
+        case VALUE_ARRAY:     kind = "array"; break;
+        case VALUE_PTR:       kind = "ptr"; break;
+        case VALUE_UNDEFINED: kind = "undefined"; break;
+        case VALUE_NULL:      kind = "null"; break;
+        case VALUE_REF:       kind = "ref"; break;
+        default:              kind = "kind" + std::to_string((int)v.m_Kind); break;
+        }
+        why = "kind=" + kind + ", " + step;
+        return false;
+    };
+    id = -1.0;
+    why.clear();
+    double value = -1.0;
+    try { value = v.ToDouble(); } catch (...) { return refuse("id unreadable"); }
+    if (!std::isfinite(value)) return refuse("id non-finite");
+    if (value < 0.0) {
+        char b[48];
+        std::snprintf(b, sizeof b, "id %g", value);   // %g of a finite double, bounded (Known Limitations item 10)
+        return refuse(b);
+    }
+    bool live = false;
+    try { live = g_Yytk->CallBuiltin("ds_exists", { v, RValue(2.0) }).ToBoolean(); }
+    catch (...) { return refuse("ds_exists threw"); }
+    if (!live) return refuse("ds_exists false");
+    id = value;
+    return true;
 }
 // Entry i of a ds_list as [type, sub, b]: an array of exactly three numbers, else false.  The
 // shape check, the tail check, the scan and the dump all read the entries through it.
@@ -11347,9 +11382,10 @@ static bool SignatureController(RValue& instance, std::string& why)
 // (`sub`, its number in `id`), its size, and how many of its entries equal each resolved stand-in
 // (counts[which], over that element only).  `why` names the first step that failed, worded to
 // follow `Controller_obj.<name>`: `is not an array`, `has <L> elements, none at [<i>]`,
-// `[<i>] is not a ds_list (kind=<k>)`, `[<i>] has <s> entries, fewer than <min>`, `[<i>] entry <k>
-// is not three numbers`.  The refusal names the element's numeric kind, so a handle kind (a live
-// ref ds_exists turned away) reads apart from a kind SigListHandle never accepts.
+// `[<i>] is not a ds_list (kind=<k>, <step>)`, `[<i>] has <s> entries, fewer than <min>`,
+// `[<i>] entry <k> is not three numbers`.  The ds_list refusal carries SigListHandle's reason - the
+// element's kind by name and the step that refused it (id unreadable, a non-finite or negative id,
+// ds_exists threw, ds_exists false) - so a live ref ds_exists turned away reads as one.
 static bool SignatureListShape(const RValue& outer, int index, RValue& sub, double& id, int& size, int counts[2],
                                std::string& why, int minSize)
 {
@@ -11361,12 +11397,10 @@ static bool SignatureListShape(const RValue& outer, int index, RValue& sub, doub
     int len = -1;
     try { len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble(); } catch (...) { why = "array_length threw"; return false; }
     if (index < 0 || index >= len) { why = "has " + std::to_string(len) + " elements, none at " + at; return false; }
-    bool live = false;
-    try {
-        sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) });
-        live = SigListHandle(sub, id) && g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean();   // 2 = ds_type_list
-    } catch (...) { live = false; }
-    if (!live) { why = at + " is not a ds_list (kind=" + std::to_string((int)sub.m_Kind) + ")"; return false; }
+    try { sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) }); }
+    catch (...) { why = at + " array_get threw"; return false; }
+    std::string step;
+    if (!SigListHandle(sub, id, step)) { why = at + " is not a ds_list (" + step + ")"; return false; }
     try { size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble(); } catch (...) { why = at + " ds_list_size threw"; return false; }
     if (size < minSize) { why = at + " has " + std::to_string(size) + " entries, fewer than " + std::to_string(minSize); return false; }
     for (int i = 0; i < size; ++i) {
@@ -11434,11 +11468,13 @@ static bool SignatureListResolve(RValue& list, bool full, bool quiet, RValue* su
             catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; }
             if (ok) {
                 // Every roll: the element at the index, asked whether it is a live ds_list
-                // (ds_exists, before any ds_list_size), and that list's size.
+                // (SigListHandle's ds_exists, before any ds_list_size), and that list's size.  A
+                // refusal here leaves size at -1, and the full check below words it.
                 try {
                     if (list.m_Kind == VALUE_ARRAY && index < (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble()) {
                         sub = g_Yytk->CallBuiltin("array_get", { list, RValue((double)index) });
-                        if (SigListHandle(sub, id) && g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean())
+                        std::string step;
+                        if (SigListHandle(sub, id, step))
                             size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
                     }
                 } catch (...) { size = -1; }
@@ -11496,7 +11532,8 @@ static bool SignatureHeldReadBack(const RValue& pushedOnto, int index, int befor
     RValue instance, held;
     std::string why;
     double want = -1.0, got = -1.0;
-    if (!SigListHandle(pushedOnto, want) || !SignatureController(instance, why)) return false;
+    if (!SigListHandle(pushedOnto, want, why)) { seen = "nothing (the list pushed onto: " + why + ")"; return false; }
+    if (!SignatureController(instance, why)) return false;
     try {
         held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
         if (held.m_Kind != VALUE_ARRAY || index >= (int)g_Yytk->CallBuiltin("array_length", { held }).ToDouble()) {
@@ -11504,7 +11541,9 @@ static bool SignatureHeldReadBack(const RValue& pushedOnto, int index, int befor
             return false;
         }
         const RValue sub = g_Yytk->CallBuiltin("array_get", { held, RValue((double)index) });
-        if (!SigListHandle(sub, got) || got != want) { seen = "another value at [" + std::to_string(index) + "]"; return false; }
+        // Same list = equal handle values, whatever kind either read arrived as.
+        if (!SigListHandle(sub, got, why)) { seen = "another value at [" + std::to_string(index) + "] (" + why + ")"; return false; }
+        if (got != want) { seen = "another value at [" + std::to_string(index) + "] (another ds_list)"; return false; }
         int len = -1;
         const bool tail = SignatureTailHolds(sub, before, pushed, len);
         seen = len < 0 ? std::string("no ds_list") : std::to_string(len) + " entries";
@@ -21152,7 +21191,8 @@ static void SigListDump(const std::string& var)
             const RValue e = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)i) });
             const std::string line = head + "[" + std::to_string(i) + "] kind=" + ApRollKindName((int)e.m_Kind);
             double id = -1.0;
-            if (!SigListHandle(e, id) || !g_Yytk->CallBuiltin("ds_exists", { e, RValue(2.0) }).ToBoolean()) {
+            std::string step;
+            if (!SigListHandle(e, id, step)) {   // the kind-free gate: ds_exists on the element as read
                 Out(line + " ds_list=no");
                 continue;
             }
