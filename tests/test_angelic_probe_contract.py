@@ -417,8 +417,11 @@ class PlayerBuildUnchangedTests(unittest.TestCase):
         # FindAngelicGate and InstallHook left this list with #69, which
         # changed both on purpose in the player build (the startup record of
         # DropItem's own code); test_angelic_gate_behavior covers them now.
-        for signature in ("static RValue& HookAngelicChance(",
-                          "static bool OpenAngelicGate()",
+        # HookAngelicChance left it with #74, which changed it on purpose in the
+        # player build (the roll-in-progress guard and the hit check that drop
+        # Headhunter / Tyrant's Crown beside a game hit); test_angelic_hit_behavior
+        # runs it natively now.
+        for signature in ("static bool OpenAngelicGate()",
                           "static void CloseAngelicGate()",
                           "static RValue& Hook_EnemyDestroyKillProc("):
             with self.subTest(function=signature):
