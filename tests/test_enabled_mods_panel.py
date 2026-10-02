@@ -99,9 +99,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # save) before it was ported here, plus 4 no legacy page had: the Pet
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
         # switch, Move all into the stash's switch and Extra packs as you
-        # approach's switch (all four the derived oracle's native booleans).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4)
+        # approach's switch (all four the derived oracle's native booleans),
+        # plus 1 for Setup's FPS-drop notices switch, #notify_lag (issue #76,
+        # a panel setting like the theme; the derived oracle's PANEL_BOOLEANS).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

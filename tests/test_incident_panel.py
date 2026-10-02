@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""The panel's half of incident reports (issue #76).
+
+The plugin writes every report bundle under `bp_ipc\\reports\\`; the panel only
+reads that directory, and contributes two small files of its own: `exit.json`
+(what it saw when the game exited with a non-zero code, folded into the next
+crash bundle by the plugin) and `panel.json` (its version and pid, so the
+plugin knows whether a panel is there to notify the player). What is pinned
+here:
+
+- the exit code is read from a handle held on the process, through a real
+  child that exits with a signed `0xC0000005`;
+- the Application log's crash record is parsed from an inline fixture shaped
+  like a real one, and the real `wevtutil` read is checked to answer at all
+  (`queried`, `records_seen`), so "no record" can be told from "could not
+  read" (a machine with no record skips, it never passes);
+- `exit.json` is written for a non-zero code and not for 0;
+- the toast's PowerShell script never has the message pasted into it;
+- `notify_lag` off suppresses the FPS-drop toast and only that one;
+- the reports listing, `panel.json`, `/api/set` and `/api/state`.
+
+Everything is written under `tempfile`; the only port bound is the sandbox's
+own (port 0).
+"""
+
+import base64
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+TESTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(TESTS))
+sys.path.insert(0, str(TESTS.parent / "src"))
+
+import forgepact  # noqa: E402
+from test_satanic_panel import PanelSandbox  # noqa: E402
+
+# A record of the shape this machine's Application log answered with
+# (record 71576, 2026-10-02), trimmed to the fields the panel reads; the
+# names and numbers are not Hero Siege's.
+EVENT_XML = (
+    "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>"
+    "<Provider Name='Application Error' Guid='{a0e9b465-b939-57d7-b27d-95d8e925ff57}'/>"
+    "<EventID>1000</EventID><TimeCreated SystemTime='2026-10-02T07:14:02.7028347Z'/>"
+    "<EventRecordID>71576</EventRecordID><Channel>Application</Channel></System><EventData>"
+    "<Data Name='AppName'>GbtCloudMatrix.exe</Data><Data Name='AppVersion'>22.9.21.1</Data>"
+    "<Data Name='ModuleName'>KERNELBASE.dll</Data><Data Name='ExceptionCode'>e0434352</Data>"
+    "<Data Name='FaultingOffset'>00000000000c483a</Data><Data Name='ProcessId'>0x2dc4</Data>"
+    "</EventData></Event>"
+    "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>"
+    "<Provider Name='Application Error'/><EventID>1000</EventID>"
+    "<TimeCreated SystemTime='2026-10-02T07:20:00.0000000Z'/><EventRecordID>71590</EventRecordID>"
+    "</System><EventData><Data Name='AppName'>Hero_Siege.exe</Data>"
+    "<Data Name='ModuleName'>BloodPactPlugin.dll</Data><Data Name='ExceptionCode'>c0000005</Data>"
+    "<Data Name='FaultingOffset'>0000000000012345</Data><Data Name='ProcessId'>0x1234</Data>"
+    "</EventData></Event>"
+)
+
+
+class GameDir:
+    """A throwaway game folder: `<tmp>/Hero_Siege.exe` and its `bp_ipc`."""
+
+    def __init__(self, test):
+        self.temp = tempfile.TemporaryDirectory(prefix="forgepact-incident-")
+        test.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.exe = self.root / "Hero_Siege.exe"
+        self.exe.write_bytes(b"")
+        self.ipc = self.root / "bp_ipc"
+        self.ipc.mkdir()
+        self.reports = self.ipc / "reports"
+        self.cfg = {**forgepact.DEFAULTS, "game_exe": str(self.exe)}
+
+    def report(self, name, utc=None):
+        d = self.reports / name
+        d.mkdir(parents=True)
+        if utc is not None:
+            (d / "report.json").write_text(json.dumps({"kind": name.split("_")[-1], "utc": utc}), encoding="utf-8")
+        return d
+
+
+class DefaultsTests(unittest.TestCase):
+    def test_notify_lag_is_on_by_default_and_sends_nothing(self):
+        # A panel setting, not a mod: on by default (D1), and the all-off
+        # contract still holds, since build_cmds never sees it.
+        self.assertIs(forgepact.DEFAULTS["notify_lag"], True)
+        self.assertEqual(forgepact.build_cmds(dict(forgepact.DEFAULTS)), [])
+        self.assertEqual(forgepact.build_cmds({**forgepact.DEFAULTS, "notify_lag": False}), [])
+
+
+@unittest.skipUnless(os.name == "nt", "Win32 process handles")
+class ExitCodeTests(unittest.TestCase):
+    def _child(self, code):
+        # os._exit takes a C int, so 0xC0000005 is passed signed; Windows
+        # reports it back as the DWORD 0xC0000005.
+        return subprocess.Popen([sys.executable, "-c", f"import os,time; time.sleep(0.3); os._exit({code})"])
+
+    def test_the_held_handle_reads_an_access_violation(self):
+        proc = self._child(-1073741819)
+        handle = forgepact.open_exit_handle(proc.pid)
+        self.assertTrue(handle, "OpenProcess on our own child failed")
+        try:
+            self.assertIsNone(forgepact.exit_code_of(handle), "a running process has no exit code yet")
+            proc.wait(timeout=30)
+            code = forgepact.exit_code_of(handle)
+        finally:
+            forgepact.close_exit_handle(handle)
+        self.assertEqual(code, 0xC0000005)
+        self.assertEqual(forgepact.exit_code_text(code), "0xC0000005")
+
+    def test_a_clean_exit_reads_zero(self):
+        # The control: the same instrument reads 0 when nothing went wrong.
+        proc = self._child(0)
+        handle = forgepact.open_exit_handle(proc.pid)
+        self.assertTrue(handle)
+        try:
+            proc.wait(timeout=30)
+            self.assertEqual(forgepact.exit_code_of(handle), 0)
+        finally:
+            forgepact.close_exit_handle(handle)
+
+    def test_no_handle_for_a_pid_that_cannot_be_opened(self):
+        # A pid that has gone may be recycled by the time it is opened, so the
+        # refusal is shown on pid 0, which no user process can open.
+        self.assertIsNone(forgepact.open_exit_handle(0))
+
+
+class EventLogTests(unittest.TestCase):
+    def test_the_parser_reads_every_field_the_report_needs(self):
+        events = forgepact.parse_app_error_events(EVENT_XML)
+        self.assertEqual(len(events), 2)
+        first = events[0]
+        self.assertEqual(first["app_name"], "GbtCloudMatrix.exe")
+        self.assertEqual(first["module_name"], "KERNELBASE.dll")
+        self.assertEqual(first["exception_code"], "e0434352")
+        self.assertEqual(first["faulting_offset"], "00000000000c483a")
+        self.assertEqual(first["event_record_id"], 71576)
+        self.assertEqual(first["process_id"], 0x2DC4)
+        self.assertEqual(first["time_created"], "2026-10-02T07:14:02.7028347Z")
+
+    def test_the_parser_answers_nothing_for_nothing(self):
+        self.assertEqual(forgepact.parse_app_error_events(""), [])
+        self.assertEqual(forgepact.parse_app_error_events("not xml <"), [])
+
+    def test_the_game_record_is_chosen_by_pid_then_by_name(self):
+        events = forgepact.parse_app_error_events(EVENT_XML)
+        self.assertEqual(forgepact.match_game_event(events, "Hero_Siege.exe", 0x1234)["event_record_id"], 71590)
+        # Pid unknown: the newest record naming the exe.
+        self.assertEqual(forgepact.match_game_event(events, "hero_siege.exe", None)["event_record_id"], 71590)
+        # Another process's crash never stands in for the game's.
+        self.assertIsNone(forgepact.match_game_event(events[:1], "Hero_Siege.exe", 0x1234))
+
+    @unittest.skipUnless(os.name == "nt", "the Windows Application log")
+    def test_the_real_log_is_read_without_admin_rights(self):
+        events, probe = forgepact.query_app_errors()
+        self.assertTrue(probe["queried"], f"wevtutil did not answer: {probe}")
+        if probe["records_seen"] == 0:
+            self.skipTest("this machine's Application log holds no Application Error 1000 record; "
+                          "the read worked but there is nothing to parse")
+        self.assertGreaterEqual(probe["records_seen"], 1)
+        self.assertEqual(len(events), probe["records_seen"])
+        self.assertTrue(all(isinstance(e["event_record_id"], int) for e in events), events[:2])
+
+
+class ExitRecordTests(unittest.TestCase):
+    def setUp(self):
+        self.game = GameDir(self)
+        self.addCleanup(forgepact.INCIDENTS.update, lastExit=None)
+
+    def _record(self, code, events=(), probe=None):
+        probe = probe or {"queried": True, "records_seen": len(events)}
+        with patch.object(forgepact, "query_app_errors", return_value=(list(events), probe)) as query, \
+                patch.object(forgepact, "show_toast") as toast:
+            facts = forgepact.record_game_exit(self.game.cfg, code, pid=0x1234, attempts=1)
+        return facts, query, toast
+
+    def test_a_crash_writes_exit_json_and_notifies(self):
+        events = forgepact.parse_app_error_events(EVENT_XML)
+        facts, _, toast = self._record(0xC0000005, events, {"queried": True, "records_seen": 2})
+        written = json.loads((self.game.ipc / "exit.json").read_text(encoding="utf-8"))
+        self.assertEqual(written, facts)
+        self.assertEqual(written["exit_code"], "0xC0000005")
+        self.assertRegex(written["exit_utc"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual(written["faulting_module"], "BloodPactPlugin.dll")
+        self.assertEqual(written["faulting_offset"], "0000000000012345")
+        self.assertEqual(written["exception_code"], "c0000005")
+        self.assertEqual(written["event_record_id"], 71590)
+        self.assertEqual(written["event_probe"], {"queried": True, "records_seen": 2})
+        self.assertEqual(forgepact.INCIDENTS["lastExit"], written)
+        toast.assert_called_once()
+        self.assertIn("0xC0000005", toast.call_args.args[1])
+
+    def test_no_record_and_no_read_are_told_apart(self):
+        facts, _, _ = self._record(1, (), {"queried": True, "records_seen": 0})
+        self.assertEqual(facts["exit_code"], "0x00000001")
+        self.assertIsNone(facts["faulting_module"])
+        self.assertIsNone(facts["event_record_id"])
+        self.assertEqual(facts["event_probe"], {"queried": True, "records_seen": 0})
+        facts, _, _ = self._record(1, (), {"queried": False, "records_seen": 0})
+        self.assertEqual(facts["event_probe"], {"queried": False, "records_seen": 0})
+
+    def test_a_clean_exit_writes_nothing_and_clears_the_last_exit(self):
+        forgepact.INCIDENTS["lastExit"] = {"exit_code": "0xC0000005"}
+        facts, query, toast = self._record(0)
+        self.assertIsNone(facts)
+        self.assertFalse((self.game.ipc / "exit.json").exists())
+        self.assertIsNone(forgepact.INCIDENTS["lastExit"])
+        query.assert_not_called()
+        toast.assert_not_called()
+
+    def test_without_bp_ipc_nothing_is_created(self):
+        (self.game.ipc).rmdir()
+        facts, _, _ = self._record(0xC0000005)
+        self.assertEqual(facts["exit_code"], "0xC0000005")
+        self.assertFalse(self.game.ipc.exists(), "the panel must not create bp_ipc")
+
+
+class ExitWatchTests(unittest.TestCase):
+    """watch_game_exit(): open on first sight, read and close once it ended."""
+
+    def test_the_handle_is_held_while_running_and_read_after(self):
+        game = GameDir(self)
+        hold = {"pid": None, "handle": None}
+        with patch.object(forgepact, "game_pid", return_value=4321), \
+                patch.object(forgepact, "open_exit_handle", return_value=99) as opened, \
+                patch.object(forgepact, "exit_code_of", side_effect=[None, 0xC0000005]), \
+                patch.object(forgepact, "close_exit_handle") as closed, \
+                patch.object(forgepact, "record_game_exit", return_value={"exit_code": "0xC0000005"}) as record:
+            forgepact.watch_game_exit(game.cfg, True, hold)      # first sight: open
+            self.assertEqual(hold, {"pid": 4321, "handle": 99})
+            forgepact.watch_game_exit(game.cfg, True, hold)      # still running
+            record.assert_not_called()
+            forgepact.watch_game_exit(game.cfg, False, hold)     # it ended
+        opened.assert_called_once_with(4321)
+        closed.assert_called_once_with(99)
+        record.assert_called_once_with(game.cfg, 0xC0000005, 4321)
+        self.assertEqual(hold, {"pid": None, "handle": None})
+
+
+class ToastTests(unittest.TestCase):
+    def test_the_message_is_an_argument_never_part_of_the_script(self):
+        title = "ForgePact"
+        message = "it's $env:USERNAME's game; `whoami`"
+        argv = forgepact.toast_command(title, message)
+        self.assertEqual(argv[:4], ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"])
+        script = argv[4]
+        for fragment in ("it's", "$env:USERNAME", "whoami"):
+            self.assertNotIn(fragment, script)
+        self.assertIn("ToastNotificationManager", script)
+        self.assertIn(forgepact.TOAST_APP_ID, script)
+        # The text arrives as single-quoted Base64 arguments, which PowerShell
+        # cannot expand, and decodes back to exactly what was asked for.
+        decoded = []
+        for arg in argv[5:]:
+            self.assertRegex(arg, r"^'[A-Za-z0-9+/=]*'$")
+            decoded.append(base64.b64decode(arg[1:-1]).decode("utf-8"))
+        self.assertEqual(decoded, [title, message])
+
+    def test_a_failed_toast_is_swallowed(self):
+        with patch.object(forgepact.subprocess, "run", side_effect=OSError("no powershell")):
+            self.assertFalse(forgepact.show_toast("t", "m"))
+        with patch.object(forgepact.subprocess, "run", side_effect=subprocess.TimeoutExpired("powershell.exe", 10)):
+            self.assertFalse(forgepact.show_toast("t", "m"))
+
+    def test_the_toast_runs_hidden_and_bounded(self):
+        with patch.object(forgepact.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(forgepact.show_toast("t", "m"))
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 10)
+        if os.name == "nt":
+            self.assertEqual(kwargs["creationflags"], forgepact.CREATE_NO_WINDOW)
+
+
+class ReportWatchTests(unittest.TestCase):
+    def setUp(self):
+        self.game = GameDir(self)
+
+    def _notify(self, cfg, seen):
+        with patch.object(forgepact.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            seen = forgepact.notify_new_reports(cfg, seen)
+        return seen, run
+
+    def test_the_first_look_is_not_news(self):
+        self.game.report("20261002-100000_perf")
+        seen, run = self._notify(self.game.cfg, None)
+        self.assertEqual(seen, {"20261002-100000_perf"})
+        run.assert_not_called()
+
+    def test_a_new_perf_report_toasts_only_while_notify_lag_is_on(self):
+        seen, _ = self._notify(self.game.cfg, None)
+        self.game.report("20261002-100000_perf")
+        # Positive control first: on, the same report toasts.
+        _, run = self._notify(self.game.cfg, set(seen))
+        run.assert_called_once()
+        _, run = self._notify({**self.game.cfg, "notify_lag": False}, set(seen))
+        run.assert_not_called()
+
+    def test_notify_lag_off_never_silences_a_freeze_or_a_crash(self):
+        seen, _ = self._notify(self.game.cfg, None)
+        self.game.report("20261002-100000_freeze")
+        self.game.report("20261002-100500_crash")
+        seen, run = self._notify({**self.game.cfg, "notify_lag": False}, seen)
+        self.assertEqual(run.call_count, 2)
+        _, run = self._notify({**self.game.cfg, "notify_lag": False}, seen)
+        run.assert_not_called()
+
+
+class ReportListingTests(unittest.TestCase):
+    def test_newest_first_at_most_ten_reports_only(self):
+        game = GameDir(self)
+        for i in range(12):
+            game.report(f"20261002-1000{i:02d}_perf")
+        game.report("20261002-110000_crash", utc="2026-10-02T09:00:00Z")
+        game.report("not-a-report")
+        (game.reports / "20261002-120000_perf.txt").write_text("a file, not a bundle", encoding="utf-8")
+        listing = forgepact.incident_reports(game.cfg)
+        self.assertEqual(len(listing), 10)
+        self.assertEqual(listing[0], {"dir": "20261002-110000_crash", "kind": "crash", "utc": "2026-10-02T09:00:00Z"})
+        self.assertEqual(listing[1], {"dir": "20261002-100011_perf", "kind": "perf", "utc": "2026-10-02T10:00:11"})
+        self.assertEqual([r["dir"] for r in listing], sorted((r["dir"] for r in listing), reverse=True))
+
+    def test_no_reports_folder_is_an_empty_list(self):
+        game = GameDir(self)
+        self.assertEqual(forgepact.incident_reports(game.cfg), [])
+
+
+class PanelJsonTests(unittest.TestCase):
+    def test_version_and_pid_rewritten_only_on_change(self):
+        game = GameDir(self)
+        self.assertTrue(forgepact.write_panel_json(game.cfg))
+        path = game.ipc / "panel.json"
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")),
+                         {"version": forgepact.__version__, "pid": os.getpid()})
+        self.assertFalse(forgepact.write_panel_json(game.cfg), "same content must not be rewritten")
+        path.write_text('{"version": "0.0.0", "pid": 1}', encoding="utf-8")
+        self.assertTrue(forgepact.write_panel_json(game.cfg))
+
+    def test_never_creates_bp_ipc(self):
+        game = GameDir(self)
+        game.ipc.rmdir()
+        self.assertFalse(forgepact.write_panel_json(game.cfg))
+        self.assertFalse(game.ipc.exists())
+
+
+class ApiTests(unittest.TestCase):
+    def setUp(self):
+        self.sandbox = PanelSandbox()
+        self.sandbox.__enter__()
+        self.addCleanup(self.sandbox.__exit__)
+
+    def _post(self, path, body):
+        from http.client import HTTPConnection
+        connection = HTTPConnection("127.0.0.1", self.sandbox.port, timeout=5)
+        try:
+            connection.request("POST", path, json.dumps(body), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            connection.close()
+
+    def test_state_carries_the_incidents_block(self):
+        code, state = self.sandbox.request()
+        self.assertEqual(code, 200)
+        self.assertEqual(state["incidents"], {"reports": [], "lastExit": None, "notifyLag": True})
+        self.assertIs(state["cfg"]["notify_lag"], True)
+
+    def test_notify_lag_is_saved_as_a_bool_and_sends_no_command(self):
+        send = self.sandbox.mocks[3]
+        with patch.object(forgepact, "game_running", return_value=True):
+            code, body = self._post("/api/set", {"key": "notify_lag", "value": False})
+        self.assertEqual(code, 200)
+        self.assertEqual(body["ok"], "saved")
+        self.assertIs(body["cfg"]["notify_lag"], False)
+        send.assert_not_called()
+        _, state = self.sandbox.request()
+        self.assertIs(state["incidents"]["notifyLag"], False)
+        code, body = self._post("/api/set", {"key": "notify_lag", "value": 1})
+        self.assertIs(body["cfg"]["notify_lag"], True)
+
+    def test_openreports_opens_the_reports_folder(self):
+        reports = Path(self.sandbox.temp.name) / "bp_ipc" / "reports"
+        with patch.object(forgepact.os, "startfile", create=True) as start:
+            code, body = self._post("/api/openreports", {})
+            self.assertEqual(code, 200)
+            self.assertIn("err", body)          # no folder yet: nothing is opened or created
+            start.assert_not_called()
+            self.assertFalse(reports.exists())
+            reports.mkdir(parents=True)
+            code, body = self._post("/api/openreports", {})
+        self.assertIn("ok", body)
+        start.assert_called_once_with(str(reports))
+
+
+if __name__ == "__main__":
+    unittest.main()

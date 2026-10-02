@@ -348,6 +348,11 @@ select.style-select{min-width:96px;height:28px;padding:0 var(--space-3) 0 var(--
 .launch-feedback:before{content:"";width:14px;height:14px;flex:none;background-color:var(--color-ok);mask:var(--icon-check) center/contain no-repeat}
 .launch-feedback.starting{color:var(--color-warn)}.launch-feedback.starting:before{background-color:var(--color-warn)}
 .launch-feedback.error,.launch-feedback.warning{color:var(--color-danger)}.launch-feedback.error:before,.launch-feedback.warning:before{background-color:var(--color-danger);mask-image:var(--icon-warn)}
+/* Incident reports (issue #76): the saved reports as a plain list, the folder name in the mono face. */
+.incident-list{display:flex;flex-direction:column;gap:var(--space-2);margin:var(--space-3) 0 0;padding:0;list-style:none;color:var(--color-text-muted);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs)}
+.incident-list .incident-kind{color:var(--color-text-primary);font-family:inherit}
+.incident-list .incident-empty{font-family:inherit;color:var(--color-text-faint)}
+#incidentLastExit{margin-top:var(--space-3)}
 #chainnote,#eacnote{display:flex;align-items:center;gap:var(--space-4);font-size:var(--font-size-sm)}
 #chainnote:before{content:"";width:14px;height:14px;flex:none;background-color:currentColor;mask:var(--icon-warn) center/contain no-repeat}
 #chainnote:empty,#eacnote:empty{display:none}

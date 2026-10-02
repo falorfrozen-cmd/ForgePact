@@ -17,6 +17,7 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # <version>` moves every site at once and `--check` fails if they disagree.
 __version__ = "2.1.0"
 
+import base64
 import copy
 import hashlib
 import json
@@ -334,7 +335,16 @@ DEFAULTS = {
     # The panel's colour theme, painted as data-theme on the page's root.  A
     # panel setting only: no command ever carries it.
     "theme": "default",
+    # Incident reports (issue #76): whether a new FPS-drop report gets a
+    # Windows toast. A panel setting, not a mod, so it is on by default and no
+    # command carries it: off silences only the FPS-drop toast, while freeze
+    # and crash notices and every report the plugin writes go on as before.
+    "notify_lag": True,
 }
+
+# Settings that only the panel reads: /api/set saves them and tells the plugin
+# nothing, even while the game runs.
+PANEL_SETTINGS = ("theme", "notify_lag")
 
 # Every slider that has an on/off switch: "<section>.<key>" for the table rows,
 # the bare key for the four top-level sliders.  Monster Density is not here:
@@ -562,6 +572,12 @@ if os.name == "nt":
         _wintypes.HANDLE, _wintypes.DWORD, _wintypes.LPWSTR,
         _ctypes.POINTER(_wintypes.DWORD)]
     _K32.QueryFullProcessImageNameW.restype = _wintypes.BOOL
+    # The game's exit code (incident reports, issue #76): watcher() holds a
+    # handle while the game runs and reads it once the process has ended.
+    _K32.WaitForSingleObject.argtypes = [_wintypes.HANDLE, _wintypes.DWORD]
+    _K32.WaitForSingleObject.restype = _wintypes.DWORD
+    _K32.GetExitCodeProcess.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_wintypes.DWORD)]
+    _K32.GetExitCodeProcess.restype = _wintypes.BOOL
     _INVALID_HANDLE_VALUE = _wintypes.HANDLE(-1).value
 else:                                   # pragma: no cover - non-Windows host
     _ctypes = None
@@ -1881,12 +1897,384 @@ def plugin_boot_generation(cfg=None):
         return (_BOOT_CACHE["ident"], count)
 
 
+# ---- incident reports (issue #76) -----------------------------------------
+# The plugin is the one writer of a report bundle
+# (bp_ipc\reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\): it notices FPS
+# drops and freezes while the game runs, and a crash at the next load, when
+# the previous session's log has no clean-shutdown line. The panel never
+# writes under reports\. It adds what only a process outside the game can
+# see, and says so to the player:
+# - exit.json: the exit code of a game that ended with anything but 0, read
+#   from a handle watcher() holds while the game runs, and the Windows
+#   Application log's crash record for it. The plugin folds the file into the
+#   next crash bundle and deletes it.
+# - panel.json: this panel's version and pid, so the plugin shows its own
+#   message box only when no panel is running to show a toast.
+# - a Windows toast for each new report (an FPS drop's only while notify_lag
+#   is on) and for a game that exited with an error.
+# The design and its limits: docs/incident-report.md.
+REPORTS_DIR = "reports"
+EXIT_JSON = "exit.json"
+PANEL_JSON = "panel.json"
+REPORT_LIST_MAX = 10
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0
+_REPORT_DIR = re.compile(r"^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)_(perf|freeze|crash)$")
+# The crash records Windows Error Reporting writes. Readable without admin
+# rights; on the machine this was written on it answered record 71576
+# (another program's crash) on 2026-10-02.
+APP_ERROR_QUERY = "*[System[Provider[@Name='Application Error'] and (EventID=1000)]]"
+# Toasts are shown under Windows PowerShell's own AppUserModelID, which every
+# Windows 10/11 install registers, so the panel needs no shortcut of its own.
+TOAST_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+# The title and the message arrive as two single-quoted Base64 arguments, so
+# no text a toast carries is ever parsed as PowerShell; CreateTextNode keeps
+# it out of the toast's XML too.
+_TOAST_SCRIPT = (
+    "& { param([string]$t, [string]$m) "
+    "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($t)); "
+    "$m = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($m)); "
+    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
+    "$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+    "[Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+    "$n = $x.GetElementsByTagName('text'); "
+    "$n.Item(0).AppendChild($x.CreateTextNode($t)) | Out-Null; "
+    "$n.Item(1).AppendChild($x.CreateTextNode($m)) | Out-Null; "
+    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('" + TOAST_APP_ID + "')"
+    ".Show([Windows.UI.Notifications.ToastNotification]::new($x)) }"
+)
+_REPORTS_WHERE = "The report is in the game's bp_ipc\\reports folder (Setup > Incident reports > Open reports folder)."
+INCIDENT_TOASTS = {
+    "perf": ("ForgePact: FPS drop", "The game's frame rate dropped sharply. " + _REPORTS_WHERE
+             + " You can turn these notices off in Setup."),
+    "freeze": ("ForgePact: the game froze", "Hero Siege stopped drawing frames for several seconds. " + _REPORTS_WHERE),
+    "crash": ("ForgePact: crash report", "Hero Siege did not close normally last time. " + _REPORTS_WHERE),
+}
+# What the panel saw at the game's last exit: exit.json's facts for an exit
+# with an error, None after a clean exit or before any. /api/state shows it.
+INCIDENTS = {"lastExit": None}
+_REPORT_UTC: dict = {}
+
+
+def open_exit_handle(pid):
+    """A handle on process `pid` that can read its exit code once it ends, or
+    None. The handle keeps the exit code readable after the process is gone."""
+    if os.name != "nt" or not pid:
+        return None
+    handle = _K32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, int(pid))
+    return handle or None
+
+
+def exit_code_of(handle):
+    """The exit code of the process behind `handle`, or None while it runs.
+
+    Whether it ended is asked of the handle itself (signalled), not read from
+    the code: a process may exit with 259, which is also STILL_ACTIVE."""
+    if os.name != "nt" or not handle:
+        return None
+    if _K32.WaitForSingleObject(handle, 0) != _WAIT_OBJECT_0:
+        return None
+    code = _wintypes.DWORD()
+    if not _K32.GetExitCodeProcess(handle, _ctypes.byref(code)):
+        return None
+    return code.value
+
+
+def close_exit_handle(handle):
+    if os.name == "nt" and handle:
+        _K32.CloseHandle(handle)
+
+
+def exit_code_text(code) -> str:
+    """An exit code as Windows writes one: 0xC0000005."""
+    return f"0x{int(code) & 0xFFFFFFFF:08X}"
+
+
+def game_pid(cfg=None):
+    """The pid of the configured Hero_Siege.exe, or None. Matched on the full
+    path, as game_running() is, so another copy of the game is not it."""
+    target = exe_path(cfg)
+    try:
+        target_lower = str(target.resolve()).lower()
+    except Exception:
+        target_lower = str(target).lower()
+    try:
+        wanted = target.name.lower()
+        for pid, image in snapshot_processes():
+            if image.lower() == wanted and process_image_path(pid).lower() == target_lower:
+                return pid
+    except Exception:
+        pass
+    return None
+
+
+def _xml_name(tag) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def parse_app_error_events(text: str) -> list:
+    """The Application Error (1000) records in `wevtutil qe ... /f:xml` output,
+    newest first as queried: app_name, module_name, exception_code,
+    faulting_offset, event_record_id, process_id and time_created. [] for
+    nothing, or for text that is not those records."""
+    import xml.etree.ElementTree as ElementTree   # only when a game crashed
+
+    body = re.sub(r"<\?xml[^>]*\?>", "", text or "").strip()
+    if not body:
+        return []
+    try:
+        root = ElementTree.fromstring("<Events>" + body + "</Events>")
+    except ElementTree.ParseError:
+        return []
+    events = []
+    for event in root:
+        if _xml_name(event.tag) != "Event":
+            continue
+        data, record, created = {}, None, None
+        for el in event.iter():
+            name = _xml_name(el.tag)
+            if name == "EventRecordID":
+                record = el.text
+            elif name == "TimeCreated":
+                created = el.get("SystemTime")
+            elif name == "Data" and el.get("Name"):
+                data[el.get("Name")] = (el.text or "").strip()
+        try:
+            record = int(record)
+        except (TypeError, ValueError):
+            record = None
+        pid = data.get("ProcessId") or ""
+        try:
+            pid = int(pid, 16) if pid.lower().startswith("0x") else int(pid)
+        except ValueError:
+            pid = None
+        events.append({
+            "app_name": data.get("AppName") or None,
+            "module_name": data.get("ModuleName") or None,
+            "exception_code": data.get("ExceptionCode") or None,
+            "faulting_offset": data.get("FaultingOffset") or None,
+            "event_record_id": record,
+            "process_id": pid,
+            "time_created": created,
+        })
+    return events
+
+
+def query_app_errors(count: int = 20):
+    """(records, probe): the newest `count` Application Error records, and
+    {"queried", "records_seen"}, which tells "no record" (queried, 0 seen)
+    from "could not read the log" (not queried)."""
+    probe = {"queried": False, "records_seen": 0}
+    if os.name != "nt":
+        return [], probe
+    try:
+        result = subprocess.run(
+            ["wevtutil", "qe", "Application", f"/c:{int(count)}", "/rd:true", "/f:xml", "/q:" + APP_ERROR_QUERY],
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return [], probe
+    if result.returncode != 0:
+        return [], probe
+    events = parse_app_error_events(result.stdout.decode("utf-8", errors="replace"))
+    return events, {"queried": True, "records_seen": len(events)}
+
+
+def match_game_event(events, exe_name: str, pid=None):
+    """The newest record of `exe_name` crashing; with a pid, only that
+    process's record, so an older crash of the game never stands in."""
+    name = (exe_name or "").lower()
+    for event in events:
+        if (event.get("app_name") or "").lower() != name:
+            continue
+        if pid is None or event.get("process_id") == pid:
+            return event
+    return None
+
+
+def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
+    r"""What the panel does when the game it watched has exited with `code`.
+
+    0 is a clean exit: nothing is written and the last exit reads as none.
+    Anything else writes bp_ipc\exit.json (only into a bp_ipc that exists),
+    shows a toast and is returned. Windows writes the crash record a moment
+    after the process ends, so the log is read up to `attempts` times."""
+    if code == 0:
+        INCIDENTS["lastExit"] = None
+        return None
+    exit_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event, probe = None, {"queried": False, "records_seen": 0}
+    for attempt in range(max(1, attempts)):
+        events, probe = query_app_errors()
+        event = match_game_event(events, exe_path(cfg).name, pid)
+        if event or not probe["queried"]:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(wait)
+    facts = {
+        "exit_code": exit_code_text(code),
+        "exit_utc": exit_utc,
+        "faulting_module": event["module_name"] if event else None,
+        "faulting_offset": event["faulting_offset"] if event else None,
+        "exception_code": event["exception_code"] if event else None,
+        "event_record_id": event["event_record_id"] if event else None,
+        "event_probe": {"queried": bool(probe["queried"]), "records_seen": int(probe["records_seen"])},
+    }
+    folder = ipc_dir(cfg)
+    if folder.is_dir():
+        try:
+            staged = folder / (EXIT_JSON + ".tmp")
+            staged.write_text(json.dumps(facts, indent=1), encoding="utf-8")
+            os.replace(staged, folder / EXIT_JSON)
+        except OSError:
+            pass
+    INCIDENTS["lastExit"] = facts
+    show_toast("ForgePact: Hero Siege closed with an error",
+               f"Exit code {facts['exit_code']}. ForgePact adds it to the crash report it saves "
+               "the next time the game starts.")
+    return facts
+
+
+def watch_game_exit(cfg, running: bool, hold: dict):
+    """One watcher() pass of the exit watch. `hold` is {"pid", "handle"}.
+
+    A held handle whose process has ended is read and closed, whether or not
+    another copy is running now (a restart between two polls); then, while
+    the game runs and nothing is held, its process is opened. A game that was
+    running before the panel started is opened on first sight the same way."""
+    facts = None
+    if hold["handle"] is not None:
+        code = exit_code_of(hold["handle"])
+        if code is not None:
+            handle, pid = hold["handle"], hold["pid"]
+            hold.update(pid=None, handle=None)
+            close_exit_handle(handle)
+            facts = record_game_exit(cfg, code, pid)
+    if running and hold["handle"] is None:
+        pid = game_pid(cfg)
+        handle = open_exit_handle(pid) if pid else None
+        if handle:
+            hold.update(pid=pid, handle=handle)
+    return facts
+
+
+def toast_command(title: str, message: str) -> list:
+    """The powershell.exe command line that shows one toast. The text is only
+    ever an argument (see _TOAST_SCRIPT), never part of the script."""
+    def arg(text):
+        return "'" + base64.b64encode(str(text).encode("utf-8")).decode("ascii") + "'"
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _TOAST_SCRIPT, arg(title), arg(message)]
+
+
+def show_toast(title: str, message: str) -> bool:
+    """Show a Windows toast; False on any failure, which is never raised: a
+    notice that cannot be shown must not stop the watcher."""
+    try:
+        result = subprocess.run(toast_command(title, message), capture_output=True, timeout=10,
+                                creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _report_utc(path: Path, match) -> str:
+    """The report's time: report.json's "utc" when it is readable, else the
+    folder name's stamp."""
+    key = str(path)
+    if key in _REPORT_UTC:
+        return _REPORT_UTC[key]
+    try:
+        utc = json.loads((path / "report.json").read_text(encoding="utf-8")).get("utc")
+        if isinstance(utc, str) and utc:
+            _REPORT_UTC[key] = utc
+            return utc
+    except (OSError, ValueError, AttributeError):
+        pass
+    y, mo, d, h, mi, s = match.groups()[:6]
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}"
+
+
+def incident_reports(cfg=None, limit=REPORT_LIST_MAX) -> list:
+    r"""The report folders under bp_ipc\reports\, newest first: [{"dir",
+    "kind", "utc"}]. Anything not named like a bundle is left out."""
+    try:
+        entries = list((ipc_dir(cfg) / REPORTS_DIR).iterdir())
+    except OSError:
+        return []
+    found = []
+    for path in entries:
+        match = _REPORT_DIR.match(path.name)
+        if match and path.is_dir():
+            found.append((path, match))
+    found.sort(key=lambda pm: pm[0].name, reverse=True)
+    if limit is not None:
+        found = found[:limit]
+    return [{"dir": path.name, "kind": match.group(7), "utc": _report_utc(path, match)} for path, match in found]
+
+
+def incidents_state(cfg) -> dict:
+    """/api/state's "incidents"."""
+    return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"],
+            "notifyLag": cfg.get("notify_lag", True) is not False}
+
+
+def notify_new_reports(cfg, seen):
+    """Toast each report folder not in `seen` (an FPS drop's only while
+    notify_lag is on) and return the folders now there. `seen` None is the
+    first look: what is already there is not news."""
+    kinds = {r["dir"]: r["kind"] for r in incident_reports(cfg, limit=None)}
+    if seen is not None:
+        for name in sorted(set(kinds) - set(seen)):
+            kind = kinds[name]
+            if kind == "perf" and not cfg.get("notify_lag", True):
+                continue
+            show_toast(*INCIDENT_TOASTS[kind])
+    return set(kinds)
+
+
+def write_panel_json(cfg=None) -> bool:
+    r"""Write bp_ipc\panel.json ({"version", "pid"}) when its content would
+    change. Never creates bp_ipc. True when it wrote."""
+    folder = ipc_dir(cfg)
+    if not folder.is_dir():
+        return False
+    body = json.dumps({"version": __version__, "pid": os.getpid()})
+    path = folder / PANEL_JSON
+    try:
+        if path.read_text(encoding="utf-8") == body:
+            return False
+    except (OSError, ValueError):
+        pass
+    try:
+        staged = folder / (PANEL_JSON + ".tmp")
+        staged.write_text(body, encoding="utf-8")
+        os.replace(staged, path)
+        return True
+    except OSError:
+        return False
+
+
+def open_reports_folder(cfg=None) -> dict:
+    """/api/openreports: open bp_ipc\\reports in Explorer. The panel never
+    creates it: no folder means no report has been saved yet."""
+    folder = ipc_dir(cfg) / REPORTS_DIR
+    if not folder.is_dir():
+        return {"err": "no reports yet: ForgePact has not saved one"}
+    try:
+        os.startfile(str(folder))
+    except (AttributeError, OSError) as e:
+        return {"err": f"could not open the reports folder: {e}"}
+    return {"ok": "opened the reports folder"}
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
     # False is intentional: if the panel itself starts after the game, the
     # first pass must still attach and apply the saved configuration.
     was_running = False
     last_state = None
+    exit_hold = {"pid": None, "handle": None}
+    seen_reports = None
     while True:
         time.sleep(5)
         try:
@@ -1900,6 +2288,14 @@ def watcher():
             if now:
                 last_state = state
             was_running = now
+        except Exception:
+            pass
+        # Incident reports (issue #76), in a try of their own, so nothing here
+        # can stop a launch from being noticed above.
+        try:
+            write_panel_json(cfg)
+            watch_game_exit(cfg, now, exit_hold)
+            seen_reports = notify_new_reports(cfg, seen_reports)
         except Exception:
             pass
 
@@ -2204,7 +2600,8 @@ class H(BaseHTTPRequestHandler):
                         "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
                         "lastApplied": LAST["applied"], "queued": LAST["queued"],
-                        "launch": offline_launcher.launch_status()})
+                        "launch": offline_launcher.launch_status(),
+                        "incidents": incidents_state(cfg)})
         elif u.path != "/api" and not u.path.startswith("/api/") and (f := panel_file(u.path)):
             self._file(f)
         else:
@@ -2327,10 +2724,13 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid theme"}, 400)
                         return
                     cfg["theme"] = val
+                elif key == "notify_lag":
+                    cfg["notify_lag"] = bool(val)
                 save_cfg(cfg)
                 live = ""
-                # A theme is a panel setting: nothing to tell the plugin.
-                if game_running(cfg) and not (sec is None and key == "theme"):
+                # A theme or a notice setting is the panel's own: nothing to
+                # tell the plugin.
+                if game_running(cfg) and not (sec is None and key in PANEL_SETTINGS):
                     # Sliders send what the game should see: a slider whose
                     # switch is off sends its default's command, as density
                     # does while density_on is off.
@@ -2472,6 +2872,8 @@ class H(BaseHTTPRequestHandler):
                 self._json({"ok": msg + suffix} if not msg.startswith("ERROR") else {"err": msg})
             elif u.path == "/api/launch":
                 self._json(launch_modded_game(cfg))
+            elif u.path == "/api/openreports":
+                self._json(open_reports_folder(cfg))
             else:
                 self._json({"err": "not found"}, 404)
         except Exception as e:

@@ -11,7 +11,10 @@
      and the options carry no button id (the oracle's coverage walk counts every button[id]).
      The launcher's description is body text, not a note (finish review F8), and #eacnote, drawn entirely by
      its own rules (app.css #chainnote,#eacnote), carries no .note either: design-match measures the notes'
-     look on the first .note in the page, which is #ipcnote. -->
+     look on the first .note in the page, which is #ipcnote.
+     Last, Incident reports (issue #76): the reports the plugin saved (bp_ipc\reports), the game's last exit
+     with an error, Open reports folder and #notify_lag, the one switch, which silences only the FPS-drop
+     toast. panel.js paints all of it from /api/state's `incidents`; the list is text, no button[id]. -->
 <div class="card tab-card" data-tab="setup" id="setupCard">
   <h2>Game Location</h2>
   <div class="hint">ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.</div>
@@ -35,4 +38,18 @@
 <div class="card tab-card" data-tab="setup">
   <h2>Appearance</h2>
   <div class="row theme-row"><span class="lbl" id="themeLabel">Theme</span><div class="theme-picker"><button type="button" class="theme-picker-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="themeList" aria-labelledby="themeLabel themeValue"><span class="theme-picker-value" id="themeValue">{THEMES[0].label}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button><ul class="theme-picker-list" id="themeList" role="listbox" tabindex="-1" aria-labelledby="themeLabel" data-instant>{#each THEMES as theme (theme.value)}<li class="theme-picker-option" role="option" id={'themeOption-' + theme.value} data-value={theme.value} aria-selected={theme.value === THEMES[0].value ? 'true' : 'false'}><span class="theme-picker-swatches" aria-hidden="true"><span></span><span></span><span></span></span>{theme.label}</li>{/each}</ul><select id="theme" class="theme-picker-native" aria-hidden="true" tabindex="-1">{#each THEMES as theme (theme.value)}<option value={theme.value}>{theme.label}</option>{/each}</select></div></div>
+</div>
+
+<div class="card tab-card" data-tab="setup" id="incidentCard">
+  <h2>Incident reports</h2>
+  <div class="hint">When the game crashes, freezes or its frame rate drops sharply, ForgePact saves a report you can attach to a bug report. Nothing is uploaded.</div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Tell me about FPS drops (reports are always saved)</span>
+    <label class="switch"><input type="checkbox" id="notify_lag"><span class="sl"></span></label>
+  </div>
+  <div class="note" id="incidentLastExit"></div>
+  <ul class="incident-list" id="incidentList" aria-label="Saved reports"></ul>
+  <div class="row" style="border:none">
+    <button class="btn" id="openreports" title="Open the folder the reports are saved in (bp_ipc\reports, next to the game)">Open reports folder</button>
+  </div>
 </div>

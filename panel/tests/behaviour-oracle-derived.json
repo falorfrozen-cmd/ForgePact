@@ -55,7 +55,9 @@
   "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
   "#sw_percent_stats_allskills",
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
-  "#sw_drops_mining_ore_rolls"
+  "#sw_drops_mining_ore_rolls",
+  "#notify_lag",
+  "#openreports"
  ],
  "steps": [
   {
@@ -5475,6 +5477,71 @@
     },
     "cmds": {
      "same": 444
+    }
+   }
+  },
+  {
+   "step": 451,
+   "control": "tab:setup",
+   "action": "click"
+  },
+  {
+   "step": 452,
+   "control": "#notify_lag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "notify_lag",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 453,
+   "control": "#notify_lag",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "notify_lag",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 454,
+   "control": "#openreports",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/openreports",
+       "body": {}
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
     }
    }
   }

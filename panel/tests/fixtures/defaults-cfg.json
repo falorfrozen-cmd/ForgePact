@@ -138,5 +138,6 @@
   }
  },
  "switches": {},
- "theme": "default"
+ "theme": "default",
+ "notify_lag": true
 }
