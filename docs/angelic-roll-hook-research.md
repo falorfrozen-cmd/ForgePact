@@ -1021,7 +1021,13 @@ of it measured yet):
     Rewritten hits are not compared. Each hit line carries `builtType=`
     either way (source reading: the built-in signature entries make the
     forge hook install its `CreateItemNew` detour in every session, which
-    `built=` rests on too).
+    `built=` rests on too). Both see only an item built **while the roll is
+    still in progress**: a hit whose item is built later, in some other
+    event, leaves `builtType=?` on its line and moves neither counter nor
+    `built=`. That the build happens inside the roll is not established
+    (Session 1 saw no placement there, and `CreateItemNew` is missing from
+    the Ghidra import), so a vanilla hit line's `builtType=` is the
+    comparator's own positive control, read before `typing` is judged.
 
   Each `angelic hit:` line in this build also carries `lootDelta=`
   (ground-loot instances after the original call minus before) and, for the
@@ -1110,7 +1116,16 @@ procedure 3's verdicts, taken in this order:
    not pass: no route. The session is run again on the same build.
 2. `typing` fail or not-observed: **route not-observed**. The hit cannot be
    typed, so nothing ships attributed. The research step is typing at
-   `LootGroundCreate` (above), and the owner decides it.
+   `LootGroundCreate` (above), and the owner decides it. This step is never
+   taken on `typing` not-run (instrument-blind: no build seen inside the
+   roll), which reads as "typing's comparator could not see the build", not
+   "the hit cannot be typed": with `untyped=0` every hit was typed, and only
+   the check of that typing against the built item is missing. That evidence
+   does not prescribe typing at `LootGroundCreate`. The steps below are still
+   taken, with `inject-build` judged in its blind form; steps 4 and 5 need
+   `typing` pass, so such a session ends at step 6 at most, with
+   `inject-build`'s verdict and `untyped=` recorded for the owner, and the
+   research step it names is a comparator placed where the item is built.
 3. `reach` fail or not-observed, after every candidate list `list-scope`
    printed was tried: **route not-observed**. The roll does not read what the
    plugin pushes onto; `inject-build` is recorded as not-run (instrument-blind:
@@ -1245,9 +1260,16 @@ conditions of the session (the decision rule above):
      not pass) and no `inject:` line pass. The growth of `standinPicks=` over
      the growth of `gameHits=` is recorded as the baseline share p0. A
      screenshot of the ground is taken.
-   - `typing`: `untyped=0`, `typeAgree=` at least 10 and `typeDisagree=0`
-     pass. `untyped=` or `typeDisagree=` above 0 fails, and those hit lines
-     are recorded. Fewer than 10 agreements is not-observed.
+   - `typing`: first its instrument's positive control. The `builtType=`
+     field of every vanilla hit line is recorded. If none carries a number
+     (every one reads `builtType=?`), the forge hook's final pass saw no item
+     built inside the roll, so `typeAgree=` and `typeDisagree=` could not
+     grow: `typing` is `not-run (instrument-blind: no build seen inside the
+     roll)`, never not-observed, and `untyped=` is recorded beside it. Only
+     when at least one vanilla hit line carries a number: `untyped=0`,
+     `typeAgree=` at least 10 and `typeDisagree=0` pass. `untyped=` or
+     `typeDisagree=` above 0 fails, and those hit lines are recorded. Fewer
+     than 10 agreements is not-observed.
 8. **`reach`** (research) and **`inject-build`** (research; the route's
    input). `angelicprobe inject copies 200`, then `headhunter force`, which
    answers `headhunter: ON (forced)` and one `signature drops:` line naming
@@ -1264,7 +1286,8 @@ conditions of the session (the decision rule above):
      candidate, `angelicprobe inject name <next candidate>` and this check
      runs again, once per remaining candidate, two at most; each is
      recorded.
-   - `inject-build` runs only when `typing` and `reach` passed; otherwise it
+   - `inject-build` runs only when `reach` passed and `typing` passed or is
+     not-run (instrument-blind: no build seen inside the roll); otherwise it
      is not-run (instrument-blind: whichever of the two did not pass). Pass:
      `ourHits=` grew by 3 or more, `built=` and `belt=` grew by the same
      amount, `crown=0`, `anomalies=0`, every hit line of ours ends
@@ -1274,7 +1297,14 @@ conditions of the session (the decision rule above):
      less than `ourHits=`, a `lootDelta=` other than 1 on a hit of ours, a
      refusal line (its JSON recorded), or an item that is not Headhunter.
      Not-observed: fewer than 3 hits of ours at 40 hits (about 32 are
-     expected when `reach` passed).
+     expected when `reach` passed). When `typing` was instrument-blind,
+     `built=` and `belt=` rest on the same in-roll build and are blind too,
+     as is the hit line's `built by the game` ending (a hit of ours whose
+     build the hook did not see ends `handed to the game, not seen built
+     during the roll`): their growth and endings are recorded but are no
+     criterion, so `built=` growing less than `ourHits=` is not a fail, and
+     the check judges on `lootDelta=1` on every hit of ours plus the owner's
+     named Headhunter, with the other pass and fail criteria unchanged.
 9. **`on-both`** (acceptance of the shipped pairing; not-run unless
    `inject-build` passed). `tyrant force`, copies still 200. **The owner
    kills in batches of ten** until `crown=` is at least 1, two batches at
