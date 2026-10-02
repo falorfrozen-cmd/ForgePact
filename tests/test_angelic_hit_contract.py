@@ -182,10 +182,11 @@ class AngelicHitSourceContractTests(unittest.TestCase):
                         "only a value that can be a handle is handed to ds_exists")
         self.assertIn("SigEntry(sub, i, e)", shape)
         # Each refusal names its step (delta 1's reasons).
-        for reason in ('"is not an array"', '" elements, none at "', '" is not a ds_list"', '" entries, fewer than "',
+        for reason in ('"is not an array"', '" elements, none at "', '" is not a ds_list (kind="', '" entries, fewer than "',
                        '" is not three numbers"'):
             with self.subTest(reason=reason):
                 self.assertIn(reason, shape)
+        self.assertIn("std::to_string((int)sub.m_Kind)", shape, "the ds_list refusal names the kind it got")
         entry = body(self.code, "static bool SigEntry(")
         self.assertIn('"ds_list_find_value", { sub, RValue((double)i) }', entry)
         self.assertIn("!= 3", entry, "an entry is exactly three numbers")
