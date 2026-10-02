@@ -217,21 +217,51 @@ export function getJson(url) {
 // ECONNRESET, ...) or the status and body the sandbox answered with. A fresh
 // connection per write (`agent: false`): the server answers HTTP/1.0 and
 // closes, so there is nothing to reuse. It is never retried.
-export function postSet(page, body) {
+export async function postSet(page, body) {
   const url = new URL('/api/set', page.url()).href;
   const what = `setup POST ${JSON.stringify(body)} to ${url}`;
-  const data = JSON.stringify(body);
-  return new Promise((resolveJson, reject) => {
+  const { status, text } = await postFromNode(url, JSON.stringify(body), what);
+  try { return JSON.parse(text); } catch {
+    throw new Error(`${what}: HTTP ${status}, not JSON: ${text.slice(0, 200)}`);
+  }
+}
+
+// The page's own writes (every POST to the sandbox's /api/), carried the same
+// way: the page still sends each one and gets the sandbox's own answer, but
+// this process makes the request. For a suite whose checks are about
+// something other than the network. A CI run's motion-M7 (PR run 37022617661)
+// timed out waiting for the pointer's Turn off to take its entry out of the
+// list, the one thing that check needs the write for; failing that write on
+// purpose gives the same timeout, with "Connection lost · retry" shown and the
+// entry listed again, which is the page handling a lost write correctly. A
+// socket error here is still the page's failure (the route aborts), printed
+// with its code. Note that page.route turns the page's HTTP cache off.
+export async function writesFromNode(page) {
+  await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+    const req = route.request();
+    if (req.method() !== 'POST') return route.fallback();
+    const what = `page POST ${new URL(req.url()).pathname}`;
+    try {
+      const res = await postFromNode(req.url(), req.postData() || '', what, req.headers()['content-type']);
+      await route.fulfill({ status: res.status, contentType: res.type, body: res.text });
+    } catch (e) {
+      if (page.isClosed()) return;
+      console.error(e.message);
+      await route.abort('failed');
+    }
+  });
+}
+
+// One POST from this process on a fresh connection, never retried: the
+// sandbox's status, content type and text, or an error naming the socket's.
+function postFromNode(url, data, what, type = 'application/json') {
+  return new Promise((resolveRes, reject) => {
     const req = request(url, { method: 'POST', agent: false,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => {
+      headers: { 'Content-Type': type, 'Content-Length': Buffer.byteLength(data) } }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { text += c; });
-      res.on('end', () => {
-        try { resolveJson(JSON.parse(text)); } catch {
-          reject(new Error(`${what}: HTTP ${res.statusCode}, not JSON: ${text.slice(0, 200)}`));
-        }
-      });
+      res.on('end', () => resolveRes({ status: res.statusCode, type: res.headers['content-type'] || 'application/json', text }));
       res.on('error', (e) => reject(new Error(`${what}: response failed: ${e.code || e.message}`, { cause: e })));
     });
     req.on('error', (e) => reject(new Error(`${what} failed: ${e.code || e.message}`, { cause: e })));

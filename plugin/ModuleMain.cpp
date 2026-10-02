@@ -469,6 +469,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
+#include <ForgePact/HiddenLootMod.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -3372,13 +3373,16 @@ static void GoldTraceAppend(const char* fn, int argc, RValue** A)
 // coins. Loot_Ground_obj and Coin_obj are resolved by their SDK names; the
 // walk reads each ground item's `lootFilterVisible` (the game's loot filter
 // verdict, checked with variable_instance_exists first) and its built-in
-// `visible`, up to kLootCensusWalkCap instances. `visible` is read directly,
+// `visible`, up to kLootWalkCap instances. `visible` is read directly,
 // the way the rest of this file reads it, rather than gated on
 // variable_instance_exists, which a GameMaker built-in may not answer true
 // for; an unreadable one is counted rather than guessed. The two trailing
 // counters say how many items the walk could not classify, so a zero
-// `hidden=` cannot come from an instrument that read nothing.
-static constexpr int kLootCensusWalkCap = 2048;
+// `hidden=` cannot come from an instrument that read nothing. The cap is
+// shared with #95 part 2's instruments (`lootspawn` and the rest, below
+// HandleLiveOneResearchCommand), which put up to a few thousand items on the
+// ground at once; it was 2048 until then.
+static constexpr int kLootWalkCap = 8192;
 
 static void LootCensus()
 {
@@ -3395,7 +3399,7 @@ static void LootCensus()
         const long ground = (long)g_Yytk->CallBuiltin("instance_number", { RValue(lootIdx) }).ToDouble();
         const long coins = (long)g_Yytk->CallBuiltin("instance_number", { RValue(coinIdx) }).ToDouble();
         long hidden = 0, invisible = 0, walked = 0, noFilterVar = 0, unreadableVisible = 0;
-        const long toWalk = std::min<long>(ground, kLootCensusWalkCap);
+        const long toWalk = std::min<long>(ground, kLootWalkCap);
         for (long i = 0; i < toWalk; ++i) {
             RValue inst;
             try { inst = g_Yytk->CallBuiltin("instance_find", { RValue(lootIdx), RValue((double)i) }); }
@@ -12596,7 +12600,7 @@ static void CiDispatchDump(unsigned long long tablePtrRva, int maxEntries)
     if (!mod) { Out("citrace dispatchdump: no main module"); return; }
 
     // The RVA names a POINTER to the table, not the table itself (the
-    // decompile reads _DAT_15081b410 as a value and adds id*0x18 to it).
+    // game loads the pointer stored at that address and adds id*0x18 to it).
     unsigned char* pptr = (unsigned char*)mod + tablePtrRva;
     if (IsBadReadPtr(pptr, sizeof(void*))) { Out("citrace dispatchdump: table pointer address not readable - wrong RVA for this build?"); return; }
     unsigned char* table = *(unsigned char**)pptr;
@@ -23277,6 +23281,16 @@ static void FlushModState(uint32_t frame)
             body += ",\"asleep\":" + std::to_string(fs.Asleep());
             body += ",\"wakeRadius\":" + std::to_string(static_cast<long long>(fs.WakeRadius()));
             body += ",\"errors\":" + std::to_string(fs.StatsRef().errors) + "}";
+        }
+        {
+            auto& hl = ForgePact::HiddenLootMod::Instance();
+            body += ",\"hiddenLoot\":{\"enabled\":"; body += hl.Enabled() ? "true" : "false";
+            body += ",\"route\":\""; body += hl.RouteName(); body += "\"";
+            body += ",\"key\":" + std::to_string(hl.Key());
+            body += ",\"asleep\":" + std::to_string(hl.AsleepNow());
+            body += ",\"shown\":" + std::to_string(hl.ShownNow());
+            body += ",\"held\":"; body += hl.Held() ? "true" : "false";
+            body += ",\"errors\":" + std::to_string(hl.StatsRef().errors) + "}";
         }
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
@@ -41438,14 +41452,272 @@ static void GoldTraceCommand(const std::string& rest)
 }
 #endif
 
+#ifndef FORGEPACT_RELEASE
+// ---- #95 part 2: what a filter-hidden ground item costs --------------------
+// docs/hidden-loot-research.md, Live 1 of workorder forgepact-issue-95. Four
+// instruments: `lootspawn` puts copies of one bag item on the ground around
+// the player through the game's own drop script, so a zone holds thousands of
+// hidden items with nothing else changing; `lootsleep` puts the hidden ones
+// to sleep with instance_deactivate_object (far sleep's route) and wakes them
+// again, for the awake/asleep frame captures; `loothide` / `lootshow` set the
+// game's own filter verdict, `lootFilterVisible`, on every ground item - the
+// fallback when the owner's filter shows the spawned template, and the
+// visible-item control. No hook and no address: CallBuiltin, and the game's
+// scripts by their SDK names. None is in kPlayerCommands.
+static constexpr int kLootSpawnMaxPerCall = 2000;
+static constexpr const char* kLootSpawnDropName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem);
+static constexpr double kLootSpawnSpreadX = 600.0;   // px either side of the player
+static constexpr double kLootSpawnSpreadY = 400.0;
+static std::vector<RValue> g_LootSleepHandles;       // what `lootsleep 1` put to sleep, for `lootsleep 0`
+
+// Loot_Ground_obj's object index, by its SDK name.
+static bool LootGroundObject(double& idx)
+{
+    idx = -1;
+    try {
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) });
+        return ApNumber(index, idx) && idx >= 0;
+    } catch (...) { return false; }
+}
+
+// instance_number of the ground items; -1 when the read threw. GameMaker does
+// not count a deactivated instance, so after `lootsleep 1` this falls by the
+// asleep count - the expected observable, not a loss.
+static long LootGroundCount(double idx)
+{
+    try { return (long)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); }
+    catch (...) { return -1; }
+}
+
+// The awake ground items as instance_find answers them, up to kLootWalkCap.
+// Collected whole before anything acts on them: deactivating one while
+// walking by index would shift every later index down and skip items.
+static void LootGroundHandles(double idx, std::vector<RValue>& out)
+{
+    out.clear();
+    const long toWalk = std::min<long>(LootGroundCount(idx), kLootWalkCap);
+    for (long i = 0; i < toWalk; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) });
+            if (inst.m_Kind != VALUE_UNDEFINED) out.push_back(inst);
+        } catch (...) {}
+    }
+}
+
+// The game's own loot filter verdict on one ground item: 1 shown, 0 hidden,
+// -1 it carries no lootFilterVisible, -2 the read threw. The variable is the
+// game's, so it is checked with variable_instance_exists before it is read.
+static int LootFilterVerdict(const RValue& inst)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("lootFilterVisible") }).ToBoolean()) return -1;
+        return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("lootFilterVisible") }).ToBoolean() ? 1 : 0;
+    } catch (...) { return -2; }
+}
+
+// `lootspawn`'s default template: the first map-0 item whose whole itemType
+// is an equipment class (Helmet..Belt, 0..8), since equipment is what the
+// loot filter checks.
+static bool LootSpawnFirstEquipment(const RValue& map0, std::string& key, RValue& source, int64_t& cls)
+{
+    try {
+        const int size = (int)g_Yytk->CallBuiltin("ds_map_size", { map0 }).ToDouble();
+        if (size < 0 || size > kCmMaxMapEntries) return false;
+        RValue k = g_Yytk->CallBuiltin("ds_map_find_first", { map0 });
+        for (int walked = 0; walked < size && k.m_Kind != VALUE_UNDEFINED; ++walked) {
+            const RValue item = g_Yytk->CallBuiltin("ds_map_find_value", { map0, k });
+            RValue type;
+            const int64_t t = CmMember(item, "itemType", type) ? CmWhole(type) : -1;
+            if (t >= (int64_t)HeroSiege::Items::ItemType::Helmet && t <= (int64_t)HeroSiege::Items::ItemType::Belt) {
+                key = k.ToString();
+                source = item;
+                cls = t;
+                return true;
+            }
+            k = g_Yytk->CallBuiltin("ds_map_find_next", { map0, k });
+        }
+    } catch (...) {}
+    return false;
+}
+
+// `lootspawn <count> [template]`: <count> (1..kLootSpawnMaxPerCall) copies of
+// one map-0 item dropped around the player. Each unit is made the way
+// `giveitem bag` makes one, self Console_Save_obj throughout -
+// CreateItemSaveStruct(<template>), LootTimestamp() for a fresh key
+// "0-0-<stamp>-<class>", InitItemFromJson - but without the `o` change and
+// without AddItemToMap / GetItemPreferredGrid / GridAddItem: a ground item is
+// not in map 0 (the pickup puts it there). Each is dropped with
+// LootGroundCreateFromItem(x, y, item), the order sigdrop and angelicdrop use
+// (measured, angelic-drop-research.md), self and other the global instance
+// as sigdrop passes when no kill supplies one, at a random offset within
+// kLootSpawnSpreadX x kLootSpawnSpreadY of the player. The game writes its
+// filter verdict inside that call (LootGroundInit, a static reading), so it
+// is read straight after: hidden-now / visible-now. A drop whose return is
+// not a live instance counts as return-unreadable; an instance with no
+// lootFilterVisible counts in neither of the other two.
+static void LootSpawnCommand(const std::string& rest)
+{
+    const std::string tag = "lootspawn: ";
+    std::istringstream in(rest);
+    std::vector<std::string> tok;
+    for (std::string t; in >> t;) tok.push_back(t);
+    int count = 0;
+    if (tok.empty() || tok.size() > 2 || !TalentAllocWhole(tok[0], kLootSpawnMaxPerCall, count)) {
+        Out(tag + "refused - usage: lootspawn <count> [template fingerprint], count a whole number 1.."
+            + std::to_string(kLootSpawnMaxPerCall) + "; nothing was made");
+        return;
+    }
+    double lootIdx = -1;
+    if (!LootGroundObject(lootIdx)) { Out(tag + "refused - Loot_Ground_obj did not resolve; nothing was made"); return; }
+    CInstance* save = CmSaveInstance();
+    if (!save) { Out(tag + "refused - no Console_Save_obj instance; nothing was made"); return; }
+    RValue map0, source, type;
+    if (!CmItemMap(save, kCmCharacterOwner, map0)) { Out(tag + "refused - GetItemMap(0) answered no map; nothing was made"); return; }
+    std::string key;
+    int64_t cls = -1;
+    if (tok.size() == 2) {
+        key = tok[1];
+        if (!CmMapItem(map0, RValue(key), source)) { Out(tag + "refused - template not found: map 0 holds no item " + key + "; nothing was made"); return; }
+        cls = CmMember(source, "itemType", type) ? CmWhole(type) : -1;
+        if (cls < 0) { Out(tag + "refused - template " + key + " has no whole itemType; nothing was made"); return; }
+    } else if (!LootSpawnFirstEquipment(map0, key, source, cls)) {
+        Out(tag + "refused - no equipment item (itemType 0..8) in map 0 to copy; nothing was made");
+        return;
+    }
+    RValue player;
+    CInstance* playerInst = nullptr;
+    double px = 0.0, py = 0.0;
+    try {
+        if (!CmInstance(HeroSiege::Objects::GameObject::Player_obj, player, playerInst)
+            || !ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }), px)
+            || !ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }), py)) playerInst = nullptr;
+    } catch (...) { playerInst = nullptr; }
+    if (!playerInst) { Out(tag + "refused - no local player position (Player_obj x/y); nothing was made"); return; }
+    CInstance* global = nullptr;
+    g_Yytk->GetGlobalInstance(&global);
+    if (!global) { Out(tag + "refused - no global instance; nothing was made"); return; }
+
+    std::mt19937 rng{ std::random_device{}() };
+    std::uniform_real_distribution<double> offX(-kLootSpawnSpreadX, kLootSpawnSpreadX);
+    std::uniform_real_distribution<double> offY(-kLootSpawnSpreadY, kLootSpawnSpreadY);
+    long made = 0, hiddenNow = 0, visibleNow = 0, unreadable = 0;
+    std::string stopped;
+    for (int n = 0; n < count; ++n) {
+        RValue saved, stamp, item, res;
+        if (!CmCall(kCmSaveStructName, save, { source }, saved) || !ApIsPlainStruct(saved)) {
+            if (n == 0) { Out(tag + "refused - CreateItemSaveStruct answered no struct; nothing was made"); return; }
+            stopped = "CreateItemSaveStruct answered no struct";
+            break;
+        }
+        if (!CmCall(kCmTimestampName, save, {}, stamp) || CmWhole(stamp) < 0) { stopped = "LootTimestamp answered no whole number"; break; }
+        const std::string unit = "0-0-" + std::to_string((long long)CmWhole(stamp)) + "-" + std::to_string((long long)cls);
+        if (!CmCall(kCmFromJsonName, save, { saved, RValue(unit) }, item) || !ApIsPlainStruct(item)) { stopped = "InitItemFromJson answered no item"; break; }
+        const double x = px + offX(rng);
+        const double y = py + offY(rng);
+        if (!ApCallScript(kLootSpawnDropName, global, { RValue(x), RValue(y), item }, res)) { stopped = "LootGroundCreateFromItem did not dispatch"; break; }
+        ++made;
+        if (!HhResolveInstance(res)) { ++unreadable; continue; }
+        const int verdict = LootFilterVerdict(res);
+        if (verdict == 0) ++hiddenNow;
+        else if (verdict == 1) ++visibleNow;
+    }
+    Out(tag + "template=" + key + " class=" + std::to_string((long long)cls) + " made=" + std::to_string(made)
+        + " hidden-now=" + std::to_string(hiddenNow) + " visible-now=" + std::to_string(visibleNow)
+        + " return-unreadable=" + std::to_string(unreadable) + " ground=" + std::to_string(LootGroundCount(lootIdx)));
+    if (!stopped.empty())
+        Out(tag + "stopped after " + std::to_string(made) + " of " + std::to_string(count) + " - " + stopped);
+}
+
+// `lootsleep 1|0|stat`. `1` puts every awake ground item whose lootFilterVisible
+// is false to sleep (instance_deactivate_object on the handle instance_find
+// gave - far sleep measured a plain id and a handle the same) and remembers
+// it; `0` wakes every remembered item (instance_activate_object), counts how
+// many exist again, and forgets them; `stat` says how many are remembered.
+// Items put to sleep and left asleep are cleaned up at the zone's end like far
+// sleep's props; a later `0` then wakes ids that no longer exist, which the
+// exist-after count shows.
+static void LootSleepCommand(const std::string& rest)
+{
+    const std::string tag = "lootsleep: ";
+    const std::string v = Lower(TrimCopy(rest));
+    if (v == "stat" || v.empty()) { Out(tag + "remembered=" + std::to_string(g_LootSleepHandles.size())); return; }
+    if (v != "1" && v != "0") { Out(tag + "usage -> lootsleep 1 | 0 | stat"); return; }
+    double lootIdx = -1;
+    const bool found = LootGroundObject(lootIdx);
+    if (v == "1") {
+        if (!found) { Out(tag + "refused - Loot_Ground_obj did not resolve; nothing was put to sleep"); return; }
+        std::vector<RValue> handles, hidden;
+        LootGroundHandles(lootIdx, handles);
+        long asleep = 0, skippedVisible = 0, noFilterVar = 0, errors = 0;
+        for (const RValue& h : handles) {
+            const int verdict = LootFilterVerdict(h);
+            if (verdict == 0) hidden.push_back(h);
+            else if (verdict == 1) ++skippedVisible;
+            else if (verdict == -1) ++noFilterVar;
+            else ++errors;
+        }
+        for (const RValue& h : hidden) {
+            try {
+                g_Yytk->CallBuiltin("instance_deactivate_object", { h });
+                g_LootSleepHandles.push_back(h);
+                ++asleep;
+            } catch (...) { ++errors; }
+        }
+        Out(tag + "asleep=" + std::to_string(asleep) + " skipped-visible=" + std::to_string(skippedVisible)
+            + " no-filter-var=" + std::to_string(noFilterVar) + " errors=" + std::to_string(errors)
+            + " ground-after=" + std::to_string(LootGroundCount(lootIdx)));
+        return;
+    }
+    long woken = 0, existAfter = 0, errors = 0;
+    for (const RValue& h : g_LootSleepHandles) {
+        try { g_Yytk->CallBuiltin("instance_activate_object", { h }); ++woken; }
+        catch (...) { ++errors; }
+    }
+    for (const RValue& h : g_LootSleepHandles) {
+        try { if (g_Yytk->CallBuiltin("instance_exists", { h }).ToBoolean()) ++existAfter; }
+        catch (...) { ++errors; }
+    }
+    g_LootSleepHandles.clear();
+    Out(tag + "woken=" + std::to_string(woken) + " exist-after=" + std::to_string(existAfter)
+        + " errors=" + std::to_string(errors) + " ground-after=" + std::to_string(found ? LootGroundCount(lootIdx) : -1L));
+}
+
+// `loothide` / `lootshow`: lootFilterVisible set to false / true on every
+// awake ground item that carries it. Only the game's verdict is written; its
+// own Alarm 9 then moves the built-in `visible` within 0.3 s of game speed.
+static void LootFlagCommand(bool show)
+{
+    const std::string tag = show ? "lootshow: " : "loothide: ";
+    double lootIdx = -1;
+    if (!LootGroundObject(lootIdx)) { Out(tag + "refused - Loot_Ground_obj did not resolve; nothing was set"); return; }
+    std::vector<RValue> handles;
+    LootGroundHandles(lootIdx, handles);
+    long set = 0, noFilterVar = 0, errors = 0;
+    for (const RValue& h : handles) {
+        try {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { h, RValue("lootFilterVisible") }).ToBoolean()) { ++noFilterVar; continue; }
+            g_Yytk->CallBuiltin("variable_instance_set", { h, RValue("lootFilterVisible"), RValue(show) });
+            ++set;
+        } catch (...) { ++errors; }
+    }
+    Out(tag + "set=" + std::to_string(set) + " no-filter-var=" + std::to_string(noFilterVar) + " errors=" + std::to_string(errors));
+}
+#endif
+
 // The Live 1 research instruments of the dev2 bug batch (`lootcensus`,
-// `goldtrace`), dispatched from their own function for the C1061 reason
+// `goldtrace`) and of #95 part 2 (`lootspawn`, `lootsleep`, `loothide`,
+// `lootshow`), dispatched from their own function for the C1061 reason
 // HandleMenuProbeCommand gives. Answers false in the player build.
 static bool HandleLiveOneResearchCommand(const std::string& lc, const std::string& rest)
 {
 #ifndef FORGEPACT_RELEASE
     if (lc == "lootcensus") { LootCensus(); return true; }
     if (lc == "goldtrace") { GoldTraceCommand(rest); return true; }
+    if (lc == "lootspawn") { LootSpawnCommand(rest); return true; }
+    if (lc == "lootsleep") { LootSleepCommand(rest); return true; }
+    if (lc == "loothide") { LootFlagCommand(false); return true; }
+    if (lc == "lootshow") { LootFlagCommand(true); return true; }
 #endif
     (void)lc; (void)rest;
     return false;
@@ -41613,6 +41885,159 @@ static void FarSleepCommand(const std::string& rest)
     }
     FarSleepStatus();
 }
+
+// ---- Hidden loot sleep (HiddenLootMod.hpp): the adapter -------------------
+// One hook, on LootGroundInit: LootGroundCreateFromItem and LootGroundDrop
+// call it (a static reading; LootGroundCreate names it as a callee, but its
+// own path was not traced), and it is where the game's filter leaves its
+// verdict on the new item. Nothing else in either build hooks it, so it gets both routes
+// (MiningOre already hooks LootGroundCreate, and the research build's item
+// inspection table-swaps LootGroundCreate and LootGroundCreateFromItem, which
+// would leave a second hook there table-only). The hook calls the game first
+// and then hands the class what the call carried, which the class reduces
+// inside the call to durable handles (instance_exists and the `id` read, so
+// no raw pointer outlives the call); the class acts at the end of the frame,
+// in HiddenLootTick.
+static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
+static bool g_HiddenLootInstallTried = false;
+static bool g_HiddenLootVisibleNoted = false;
+static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& result = g_Orig_LootGroundInit(S, O, R, argc, A);
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (hl.Enabled()) {
+        const RValue none;
+        hl.OnInit(argc > 0 && A && A[0] ? *A[0] : none, argc > 1 && A && A[1] ? *A[1] : none, S ? RValue(S) : none);
+    }
+    return result;
+}
+// The one install attempt, on the first switch-on after setup. Both routes
+// means the drop calls reach the class; table-only or not installed means
+// the game's compiled calls may pass it by, so the class's pass over the
+// awake ground items every 18 frames takes over, and the log says so.
+static void HiddenLootInstall()
+{
+    g_HiddenLootInstallTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundInit), "fp_hiddenloot_init",
+                                  (PVOID)HookHiddenLootInit, &g_Orig_LootGroundInit, &native);
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (ok && native) { hl.SetRoute(ForgePact::HiddenLootMod::Route::Both); return; }
+    hl.SetRoute(ok ? ForgePact::HiddenLootMod::Route::TableOnly : ForgePact::HiddenLootMod::Route::None);
+    Out(std::string("hiddenloot: LootGroundInit hook ") + (ok ? "TABLE-ONLY" : "not installed")
+        + " - the game's own drop calls may pass it by, so a pass every 18 frames over the awake ground items"
+          " puts hidden loot to sleep instead");
+}
+// The show key: the async key state, polled once a frame by the class, and
+// counted only while the foreground window belongs to this process - a key
+// held in another window shows nothing.
+static bool HiddenLootKeyDown(int vk)
+{
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+static bool HiddenLootGameInFront()
+{
+    const HWND front = GetForegroundWindow();
+    if (!front) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(front, &pid);
+    return pid == GetCurrentProcessId();
+}
+static void HiddenLootTick()
+{
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (!hl.Enabled()) return;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    hl.OnFrame(g_RuntimeFrame, CurrentRoomKey(), [] { return FarSleepRoomInfo(); });
+    if (!g_HiddenLootVisibleNoted && hl.StatsRef().visibleUnwritten > 0) {
+        g_HiddenLootVisibleNoted = true;
+        Out("hiddenloot: note - the game did not take a write of the built-in visible; shown items appear"
+            " at the game's own filter refresh, within 0.3 s");
+    }
+}
+static std::string HiddenLootKeyText(int vk)
+{
+    return vk == 0 ? std::string("none") : std::to_string(vk);
+}
+// Shared by `hiddenloot stat` and `hiddenloot 0`; the live procedure reads
+// these fields by name. The fifteen per-value, per-outcome fields at the end
+// (DurableText: obj-a0= ... threw-self=) are what Live 3's struct-safe check
+// reads; the reduced= and dropped= sums above them cannot answer it, since
+// `self` fills them on its own.
+static std::string HiddenLootStatFields()
+{
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    const auto& st = hl.StatsRef();
+    return std::string("on=") + (hl.Enabled() ? "1" : "0")
+        + " route=" + hl.RouteName()
+        + " key=" + HiddenLootKeyText(hl.Key())
+        + " held=" + (hl.Held() ? "1" : "0")
+        + " inits=" + std::to_string(st.inits)
+        + " slept=" + std::to_string(st.slept)
+        + " asleep-now=" + std::to_string(hl.AsleepNow())
+        + " shown-now=" + std::to_string(hl.ShownNow())
+        + " visible=" + std::to_string(st.visible)
+        + " no-filter-var=" + std::to_string(st.noFilterVar)
+        + " unidentified=" + std::to_string(st.unidentified)
+        + " gone=" + std::to_string(st.gone)
+        + " passes=" + std::to_string(st.passes)
+        + " skipped-persistent=" + std::to_string(st.skippedPersistent)
+        + " errors=" + std::to_string(st.errors)
+        + " by-arg0=" + std::to_string(st.byArg0)
+        + " by-arg1=" + std::to_string(st.byArg1)
+        + " by-self=" + std::to_string(st.bySelf)
+        + " reduced=" + std::to_string(st.reduced)
+        + " dropped=" + std::to_string(st.dropped)
+        + " kinds=" + st.kinds[0] + "/" + st.kinds[1] + "/" + st.kinds[2]
+        + " " + hl.DurableText();
+}
+// `hiddenloot 1|0` (the panel's switch), `hiddenloot stat`, and
+// `hiddenloot key <vk>` (the show key: 0 for none, or 3-254; stored whether
+// or not the mod is on, and read only while it is).
+static void HiddenLootCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    if (arg == "1" || arg == "on") {
+        hl.SetInput(&HiddenLootKeyDown, &HiddenLootGameInFront);
+        if (g_Setup && !g_HiddenLootInstallTried) HiddenLootInstall();
+        const auto walk = hl.Enable(CurrentRoomKey(), [] { return FarSleepRoomInfo(); }, g_Setup);
+        Out(std::string("hiddenloot -> ON route=") + hl.RouteName() + " key=" + HiddenLootKeyText(hl.Key())
+            + " walk-slept=" + std::to_string(walk.slept) + " walk-visible=" + std::to_string(walk.visible)
+            + " walk-no-filter-var=" + std::to_string(walk.noFilterVar));
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        const auto off = hl.Disable();
+        Out("hiddenloot -> OFF woken=" + std::to_string(off.woken) + " exist-after=" + std::to_string(off.existAfter)
+            + " " + HiddenLootStatFields());
+        return;
+    }
+    if (arg == "stat") { Out("hiddenloot stat: " + HiddenLootStatFields()); return; }
+    if (arg == "key" || arg.rfind("key ", 0) == 0) {
+        const std::string value = TrimCopy(arg.substr(3));
+        const std::string stays = "; key stays " + HiddenLootKeyText(hl.Key());
+        const bool digits = !value.empty() && value.size() <= 4
+            && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (!digits) {
+            Out("hiddenloot: key refused - " + (value.empty() ? std::string("no key code given") : "'" + value + "' is not a key code") + stays);
+            return;
+        }
+        const int vk = std::stoi(value);
+        if (vk == 1 || vk == 2) {
+            Out("hiddenloot: key refused - " + std::to_string(vk) + " is a mouse button the game plays with" + stays);
+            return;
+        }
+        if (!hl.SetKey(vk)) {
+            Out("hiddenloot: key refused - " + std::to_string(vk) + " is outside 0 (none) and 3-254" + stays);
+            return;
+        }
+        Out("hiddenloot: key=" + HiddenLootKeyText(hl.Key()));
+        return;
+    }
+    Out("hiddenloot: usage hiddenloot 1 | 0 | stat | key <vk>");
+}
+// ---- end of the hidden loot sleep adapter
 
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
@@ -42089,7 +42514,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll"
+        "stashmoveall", "stashmove", "densityroll", "hiddenloot"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -42177,6 +42602,9 @@ static void RunCommand(const std::string& line)
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
     if (lc == "densityroll") { DensityRollCommand(rest); return; }
+    // Hidden loot sleep: the Mods tab's switch and its show key, the same
+    // standalone early return.
+    if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -43546,6 +43974,12 @@ void FrameCallback(FWFrame& FrameContext)
     // while the switch is on (StashMoveAllTick). The move itself runs only on
     // a press with the game in front and the stash open.
     if (g_Setup) StashMoveAllTick();
+
+    // Hidden loot sleep, toggled by `hiddenloot 1`: a drop the player's loot
+    // filter hides sleeps at the end of the frame it dropped in, and wakes
+    // while the show key is held (HiddenLootMod.hpp). Returns at once while
+    // it is off.
+    if (g_Setup) HiddenLootTick();
 
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll

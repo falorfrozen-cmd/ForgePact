@@ -64,6 +64,7 @@ const EXPECTED = [
   'mods-one-card-per-mod-qol',
   'mods-one-card-per-mod-items',
   'mods-columns-balanced',
+  'mods-disabled-select',
   'theme-on-setup',
   'footer-credit',
   'plugin-warning-indicator-placement',
@@ -88,7 +89,7 @@ const EXPECTED = [
 const DUNGEON_AT_4 = '4x its vanilla drop rate; where the game never rolls this family, the roll is opened at the normal-key chance first';
 const DAMAGE_AT_100 = 'adds 100% to the final hit after the game finishes its own calculation (+100% doubles it)';
 // Child rows sit in their parent's card, never in one of their own.
-const CHILD_CONTROLS = ['map_reveal_packs', 'map_reveal_spawn', 'mod_auto_prospect_bag'];
+const CHILD_CONTROLS = ['map_reveal_packs', 'map_reveal_spawn', 'mod_auto_prospect_bag', 'mod_hidden_loot_key'];
 
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
@@ -500,7 +501,8 @@ function modCards([id, children]) {
   const perCard = top.map((t) => ({ id: t.id || t.querySelector('input,select')?.id || t.className, controls: tops.filter((c) => t.contains(c)).map((c) => c.id) }));
   const childHome = children.filter((c) => document.getElementById(c) && card.contains(document.getElementById(c))).map((c) => {
     const holder = top.find((t) => t.contains(document.getElementById(c)));
-    return { child: c, parentInSame: !!holder && holder.querySelectorAll('input[type=checkbox]').length > 1 };
+    // The child's own control and its parent's switch (a child may be a select).
+    return { child: c, parentInSame: !!holder && holder.querySelectorAll('input[type=checkbox], select').length > 1 };
   });
   return {
     wrapper: bg(card), transparent: bg(card) === 'rgba(0, 0, 0, 0)', raised: raised.length, top: top.length,
@@ -513,7 +515,7 @@ async function modsCardsQol({ page }) {
   await subtab(page, 'subtab-qol');
   const got = await $(page, modCards, ['qolCard', CHILD_CONTROLS]);
   assert(got.transparent, `#qolCard is still drawn as a card (${got.wrapper})`);
-  assert(got.top === 14 && got.raised === 14, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 14`);
+  assert(got.top === 15 && got.raised === 15, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 15`);
   assert(got.unitsAreTops, `Quality of Life: the cards are not the column's ${got.units} mods`);
   assert(got.perCard.every((p) => p.controls.length === 1), 'A Quality of Life card does not hold exactly one mod: ' + JSON.stringify(got.perCard));
   assert(got.childHome.length === CHILD_CONTROLS.length && got.childHome.every((c) => c.parentInSame), 'A child row is not in its parent\'s card: ' + JSON.stringify(got.childHome));
@@ -544,6 +546,44 @@ async function modsColumns({ page }) {
     assert(got.n === 2, `${id}: ${got.n} columns`);
     assert(got.h[0] >= got.h[1] - 0.5, `${id}: the left column (${got.h[0]}) is shorter than the right (${got.h[1]})`);
   }
+}
+
+// The hidden-loot key is the one select that can be disabled. While its
+// switch is off it takes the disabled state buttons and switches have (45%),
+// refuses the pointer, and hovering it leaves its fill alone. The switch on is
+// the control: the same select at full opacity, a pointer, and a hover fill.
+async function selectLook(page, id) {
+  const select = page.locator('#' + id);
+  await select.scrollIntoViewIfNeeded();
+  const read = () => select.evaluate(async (el) => {
+    await Promise.all(el.getAnimations().map((a) => a.finished));
+    const s = getComputedStyle(el);
+    return { disabled: el.disabled, opacity: s.opacity, cursor: s.cursor, bg: s.backgroundColor };
+  });
+  await away(page);
+  const idle = await read();
+  const box = await select.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await frames(page);
+  const hover = await read();
+  await away(page);
+  return { ...idle, hoverBg: hover.bg };
+}
+
+async function modsDisabledSelect({ page }) {
+  await tab(page, 'mods');
+  await subtab(page, 'subtab-qol');
+  const off = await selectLook(page, 'mod_hidden_loot_key');
+  assert(off.disabled, 'The hidden-loot key is not disabled with its switch off: ' + JSON.stringify(off));
+  assert(off.opacity === '0.45', `The disabled key select is at opacity ${off.opacity}, not 0.45`);
+  assert(off.cursor === 'not-allowed', `The disabled key select shows the ${off.cursor} cursor`);
+  assert(off.hoverBg === off.bg, `Hovering the disabled key select changes its fill: ${off.bg} -> ${off.hoverBg}`);
+  await $(page, () => document.getElementById('mod_hidden_loot').click());
+  await settled(page);
+  const on = await selectLook(page, 'mod_hidden_loot_key');
+  assert(!on.disabled && on.opacity === '1' && on.cursor === 'pointer', 'The enabled key select (control): ' + JSON.stringify(on));
+  assert(on.hoverBg !== on.bg, `Hovering the enabled key select (control) leaves its fill at ${on.bg}`);
+  return `off ${off.opacity}/${off.cursor}, on ${on.bg} -> ${on.hoverBg}`;
 }
 
 async function themeOnSetup({ page }) {
@@ -1062,6 +1102,7 @@ const CHECKS = [
   ['mods-one-card-per-mod-qol', modsCardsQol],
   ['mods-one-card-per-mod-items', modsCardsItems],
   ['mods-columns-balanced', modsColumns],
+  ['mods-disabled-select', modsDisabledSelect],
   ['theme-on-setup', themeOnSetup],
   ['footer-credit', footerCredit],
   ['plugin-warning-indicator-placement', indicatorPlacement],

@@ -24,7 +24,7 @@
 // rebuilt list), a pointer's Turn off next to the keyboard's. Every check runs on its own sandbox and
 // page. The last line is `e2e-motion: <n>/<n> checks passed`.
 
-import { launchBrowser, openPanel, parseArgs, postSet, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
+import { launchBrowser, openPanel, parseArgs, postSet, startSandbox, waitBooted, waitSaved, writesFromNode } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { OPEN_DELAY_MS } from '../src/lib/slider-note.js';
 import { INSTANT_MS } from '../src/lib/plugin-warning.js';
@@ -682,7 +682,11 @@ async function m7Removed({ page }) {
   await record(page);
   await page.mouse.move(at.x, at.y);
   await page.mouse.click(at.x, at.y);
-  await page.waitForFunction(() => !document.querySelector('#enabledMods li.enabled-mod[data-for="headhunter"]'), null, { timeout: 3000 });
+  await page.waitForFunction(() => !document.querySelector('#enabledMods li.enabled-mod[data-for="headhunter"]'), null, { timeout: 3000 }).catch(async (e) => {
+    // A lost write puts the entry back ("Connection lost · retry"): say which.
+    const shown = await $(page, () => ({ saved: document.getElementById('saveIndicator')?.textContent, on: document.getElementById('headhunter')?.checked }));
+    throw new Error(`the pointer's Turn off left its entry listed ${JSON.stringify(shown)}: ${e.message.split('\n')[0]}`);
+  });
   const ghost = await $(page, (p) => {
     const g = document.querySelector('#enabledMods .enabled-mod-ghost');
     const hit = document.elementFromPoint(p.x, p.y);
@@ -725,7 +729,9 @@ async function withPage(browser, fn, seed = null) {
   const sandbox = await startSandbox({ dist: typeof args.dist === 'string' ? args.dist : null, seed });
   let page = null;
   try {
-    page = await openPanel(browser, sandbox);
+    // The page's writes go through this process (lib/browser.mjs writesFromNode):
+    // these checks measure motion, and M7's needs its Turn off saved.
+    page = await openPanel(browser, sandbox, undefined, { routes: writesFromNode });
     await frames(page);
     return await fn({ page, sandbox });
   } finally {
