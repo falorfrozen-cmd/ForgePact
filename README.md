@@ -228,13 +228,16 @@ prints the status with path-start and applied counters.
 ### Signature drops
 Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game's own
 Angelic roll - the one a Blood Pact or dungeon "Angelic item drop chance" effect turns on - and only while
-their switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) is on. Each time that roll hits
+that item's mechanic is on: its switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) turns it
+on, and so does forging the item in the Custom Forge, which turns the mechanic on at every launch
+even with the switch off. Each time that roll hits
 and the game drops its own Angelic or Unholy item, ForgePact rolls the signature items' share: one
 pool entry's worth, about 1 hit in 50 with one switch on and 2 in 51 with both (ForgePact's Angelic
 pool holds 49 real uniques). On a success the item lands beside the game's own item, where the monster
 died; with both switches on, each success is one or the other at even odds. ForgePact adds no die
-of its own for them, and does not change the game's Angelic chance. With both switches off (the
-default) neither item ever drops, and the game's roll is left alone. The **Angelic / Unholy
+of its own for them, and does not change the game's Angelic chance. On an install where neither
+switch is on and neither item has been forged (the default), neither item drops and the game's
+roll is left alone. The **Angelic / Unholy
 Drops** slider never drops them: its pool is the 49 real uniques only. They arrive as SS-tier
 Unholy items, fully set up, and the plugin recognises them on every load even without the Item
 Editor. `sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command
@@ -280,8 +283,8 @@ resolution. Commands: `hhlabel on|off`, `hhlabeloffset <px>` (height above the h
 Commands: `headhunter on|off|force|status`, `hhdur <seconds>`, `hhmap <affix> <buffId> [v0] [v1]`,
 `hhdefault <buffId>|off`. The panel sends `headhunter force` at every game start while the switch
 is on; `force` also stands in for the equipped-item check, which is not finished yet.
-The same switch gates the Headhunter belt's own drop: only while it is on can the game's Angelic
-roll drop one ([Signature drops](#signature-drops)).
+The same mechanic gates the Headhunter belt's own drop: only while it is on (by the switch, or by
+a forged Headhunter turning it on at launch) can the game's Angelic roll drop one ([Signature drops](#signature-drops)).
 
 ### Tyrant's Crown (Custom Forge mechanic)
 Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **Mods →
@@ -305,8 +308,9 @@ vanilla rules. Live check 2026-09-05 at the default 15 %: 243 monsters seen, 30 
 
 Commands: `tyrant on|off|force|status`, `tyrantchance <pct>` (normal → rare, default 30),
 `tyrantaffix <pct>` (extra affix on rares/champions, default 100). The panel sends `tyrant force`
-at every game start while its switch is on. The same switch gates the crown's own drop: only
-while it is on can the game's Angelic roll drop one ([Signature drops](#signature-drops)).
+at every game start while its switch is on. The same mechanic gates the crown's own drop: only
+while it is on (by the switch, or by a forged Tyrant's Crown turning it on at launch) can the
+game's Angelic roll drop one ([Signature drops](#signature-drops)).
 Research build: `raritytrace <n>` logs entry/exit
 state of the next n monsters.
 
