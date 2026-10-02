@@ -10,7 +10,8 @@ import { ST, setST } from './state.svelte.js';
 import { j, pendingWrites } from './api.js';
 import { PANEL_ICON_MAP } from './icons.js';
 import { activeTab, controlFilter, modsSubtab, openTab, bindModsSubtabs, setControlFilter, setModsSubtab } from './nav.js';
-import { syncRevealPacks, syncProspectBag } from './mods-sync.js';
+import { syncRevealPacks, syncProspectBag, syncHiddenLootKey } from './mods-sync.js';
+import { HIDDEN_LOOT_KEY_DEFAULT } from './hidden-loot-keys.js';
 import { setupModsColumns } from './mods-columns.js';
 import { pollDelayMs, pollNextChangeAt } from './poll-policy.js';
 import { switchControlId, switchOn } from './enabled-mods.js';
@@ -456,6 +457,12 @@ async function boot(){
     document.getElementById('density_rolling').checked=drl;
     document.getElementById('drlval').textContent=drl?'on':'off';
     document.getElementById('drlval').className='val '+(drl?'':'off');
+    const mhl=!!c.mod_hidden_loot;
+    document.getElementById('mod_hidden_loot').checked=mhl;
+    document.getElementById('mhlval').textContent=mhl?'on':'off';
+    document.getElementById('mhlval').className='val '+(mhl?'':'off');
+    showHiddenLootKey(c);
+    syncHiddenLootKey(mhl);
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
       const on=!!c[key];
       document.getElementById(id).checked=on;
@@ -748,6 +755,16 @@ function bind(){
         const v=document.getElementById('drlval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Extra packs as you approach '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    document.getElementById('mod_hidden_loot').onchange=async(e)=>{
+        syncHiddenLootKey(e.target.checked);
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_hidden_loot',value:e.target.checked})});
+        const v=document.getElementById('mhlval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Sleep loot your filter hides '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_hidden_loot_key').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_hidden_loot_key',value:Number(e.target.value)})});
+        toast('Show hidden loot while held: '+e.target.selectedOptions[0].textContent+' - '+(res.ok||res.err));
+    };
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
     // The search and the All mods / Enabled / Disabled filter only show and
@@ -987,6 +1004,8 @@ function preparePanelUI(){
       const group=document.createElement('div');group.className='feature-with-child';parent.before(group);group.append(parent,child,spawnChild);
       const apParent=document.getElementById('mod_auto_prospect').closest('.row'),apChild=document.getElementById('mod_auto_prospect_bag_row');
       const apGroup=document.createElement('div');apGroup.className='feature-with-child';apParent.before(apGroup);apGroup.append(apParent,apChild);
+      const hlParent=document.getElementById('mod_hidden_loot').closest('.row'),hlChild=document.getElementById('mod_hidden_loot_key_row');
+      const hlGroup=document.createElement('div');hlGroup.className='feature-with-child';hlParent.before(hlGroup);hlGroup.append(hlParent,hlChild);
     }
     setupModsColumns(grid);
   }
@@ -1053,6 +1072,14 @@ function updateControlDecoration(){
     if(!value.querySelector('input'))value.textContent=on?'x'+density.value:'off';
   }
 }
+// The saved show key on its select: a missing key (null) is None, and a
+// hand-edited code the list does not offer shows the default, which is what
+// src/forgepact.py sends for it.
+function showHiddenLootKey(c){
+  const sel=document.getElementById('mod_hidden_loot_key');
+  sel.value=String(c.mod_hidden_loot_key??0);
+  if(sel.selectedIndex<0)sel.value=String(HIDDEN_LOOT_KEY_DEFAULT);
+}
 export function refreshSavedControls(){
   if(!ST?.cfg||document.querySelector('.numedit'))return;
   const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient'};
@@ -1070,10 +1097,10 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
@@ -1081,6 +1108,8 @@ export function refreshSavedControls(){
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
+  showHiddenLootKey(c);
+  syncHiddenLootKey(!!c.mod_hidden_loot);
   applyPluginModState(ST.pluginMods);
   applyStashMoveAllSession();
   document.getElementById('theme').value=applyTheme(c.theme);

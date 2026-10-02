@@ -1610,6 +1610,11 @@ html[data-theme="ember"] {
   color: #e7ded0;
   border-color: #574b3f;
 }
+/* The hidden-loot key while its switch is off; the base hover skips :disabled. */
+:where(html[data-theme="ember"]) .style-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 :root[data-theme="ember"] {
   --iron-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.67' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cpath fill='%23fff' opacity='.12' filter='url(%23n)' d='M0 0h180v180H0z'/%3E%3C/svg%3E");
 }

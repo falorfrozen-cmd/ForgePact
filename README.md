@@ -1178,6 +1178,38 @@ gear and buffs still count underneath.
 The first time the game reads a boosted value, the log says so, for example
 `statadd StatSpellHaste: first boosted call 40 -> 140`.
 
+## Sleep loot your filter hides (lighter frames under hidden loot)
+
+Mods → Quality of Life → **Sleep loot your filter hides** (plugin command
+`hiddenloot 1|0`, `hiddenloot stat` for its state, `hiddenloot key <vk>` for
+the show key). Off by default.
+
+An item your loot filter hides is still on the ground, invisible, and the game
+keeps updating it every frame. With this on, a drop your filter hides is put
+to sleep with the runtime's own deactivation at the end of the frame it
+dropped in. The mod never decides what to hide: it reads the verdict the
+game's own filter just left on the item. Switching it on also puts to sleep
+what the filter already hides on the ground; switching it off wakes
+everything it put to sleep.
+
+- **Show hidden loot while held.** While the key picked here is held and the
+  game window is in front, the slept items wake and are drawn despite the
+  filter, so you can see and pick them up; on release they go back to hidden
+  and asleep. Left Alt (virtual key 164) by default; None turns the key off.
+  The left and right mouse buttons are refused, and generic Alt, Right Alt
+  and F10 are not offered.
+- **Never touched.** Items the filter shows, gold, and anything in a
+  persistent room.
+- **What it saved.** In the research session that led to it, 2,736 hidden
+  items in one zone made the frame 14.20-18.30 ms awake against
+  7.54-7.73 ms asleep: about 2.4-5.6 µs per hidden item per frame.
+- **Limits.** Loosening the filter does not reveal slept items (hold the key,
+  or switch the mod off); only the verdict at drop time counts; the pet
+  ignores slept items as it ignores hidden ones.
+
+Measurements, the mechanism and what is not known yet:
+[`docs/hidden-loot-research.md`](docs/hidden-loot-research.md).
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs

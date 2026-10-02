@@ -508,7 +508,8 @@ class TestLiveOneResearchInstruments(unittest.TestCase):
         self.assertIn('"asset_get_index"', census)
         self.assertIn('"instance_number"', census)
         self.assertIn('"instance_find"', census)
-        self.assertIn("kLootCensusWalkCap = 2048", self.plugin_code)
+        # The cap is shared with #95 part 2's instruments (test_hidden_loot_contract.py).
+        self.assertIn("kLootWalkCap = 8192", self.plugin_code)
 
     def test_lootcensus_reads_only(self):
         census = strip_comments(body(self.plugin_code, "static void LootCensus()"))
