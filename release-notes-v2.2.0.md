@@ -91,8 +91,9 @@ if you have forged it.
     never see it.
   - Each item stands in through a real Angelic unique of the same kind and is
     exactly as rare as it: Headhunter as rare as **Liquor Holster**, Tyrant's
-    Crown as rare as the rarer of **Lucifer's Crown** and **Mask of the
-    Celestial** (the log names which one when you turn the switch on). Those
+    Crown as rare as the more common of **Lucifer's Crown** and **Mask of the
+    Celestial**, the one with the lower drop-rate number (the log names which
+    one when you turn the switch on; in Live 3 it was Mask of the Celestial). Those
     uniques keep their own chance to drop.
   - When the game's roll lands on the item, the game itself builds it and drops
     it where the monster died: one item per hit, in place of what that roll
