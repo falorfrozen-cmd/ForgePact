@@ -188,7 +188,7 @@ function paintRollsNote(pm){
   const rolls=switchedOff('drops.mining_ore_rolls')?1:Math.max(1,Math.round(Number(range.value)||1)), mining=pm?.miningOre;
   let status='';
   if(rolls>1&&!ST?.gameRunning){
-    status='Each mining node you finish pays out '+rolls+' times: '+rolls+' sets of ore and '+rolls+' chances at the rare finds your mining stats allow. Mining and character XP still count once.';
+    status='Each mining node you finish pays out '+rolls+' times: '+rolls+' sets of ore and '+rolls+' chances at the rare finds your mining stats allow. Character and guild XP still count once; mining XP is not measured.';
   }else if(rolls>1){
     if(mining?.rollsUnavailable)status='Plugin could not enable extra rolls; each node pays out once.';
     else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
