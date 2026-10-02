@@ -4,7 +4,8 @@ Release date: 2026-10-09
 
 A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
-give.
+give. And a new **Pet collects relics** switch, also off by default, has your
+pet pick up the relics lying around you.
 
 ## New
 
@@ -31,11 +32,26 @@ give.
   the panel: at 3 rolls a Copper Vein dropped three stacks of ore (14 ore in
   all), and with the slider back at 1 the next Copper Vein dropped one stack
   (3 ore). How much ore is in each stack still varies from dig to dig.
+- **Pet collects relics (#124).** A new switch on the Mods tab, under Quality
+  of Life, right after Pet collects quest items. Until now a relic on the
+  ground waited for you to click it: the game's own pet never takes relics.
+  With this on, while your pet is out it walks to the relics lying on screen
+  and picks them up for you, one at a time, through the game's own pickup, so
+  each one raises the relic you own by one level, the same as picking it up
+  yourself. A relic you already have at 10/10 is left where it is, since the
+  game will not let it be picked up: with a 10/10 relic and a lower one on the
+  ground the pet takes the lower one, and with only 10/10 relics around it
+  stays put instead of going back and forth. If the game turns a pickup down,
+  the relic stays on the ground and the pet moves on to the next one. It is
+  separate from Pet collects quest items; with both on, the pet fetches one
+  thing at a time. It is off by default: turn it on in the panel. It has not
+  been checked in play yet; the in-game check, when it runs, is recorded in
+  ForgePact's `docs/pet-relic-collector-research.md`.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, so updating only the plugin leaves it out. Your existing
+gained a slider and a switch, so updating only the plugin leaves them out. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. The plugin changed too, so
 press **Install Mod Plugin** once after updating - updating only the panel
