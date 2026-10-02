@@ -527,10 +527,8 @@ yet, so none of it is confirmed by one.
   hits.
 - **What places a hit's item.** Only on a hit does the roll build the item's
   parameters through `CreateDefaultParams`, and then it places the item by a
-  direct call to the script ForgePact hooks as `LootGroundCreate`, with six
-  arguments: the roll's position, the item type, those parameters, a
-  constant, and the roll's own fourth argument (undefined live), handed on
-  unread. `CreateDefaultParams` is called nowhere else inside the roll, so a
+  direct call to the script ForgePact hooks as `LootGroundCreate`, with the
+  roll's position and the picked item's parameters. `CreateDefaultParams` is called nowhere else inside the roll, so a
   call to it while the roll is in progress is a hit. That fits session 1's
   measured `default-params` row: no call inside the roll over 374 misses, 14
   and 49 calls inside `DropItem` on ordinary drops. Because the placement is a
@@ -730,7 +728,8 @@ judged from the growth of the counters between two status reads instead.
   Crowns (the forced-roll counter went from 0 to 10) while `sigFromGame` stayed
   at 54: the test command is unchanged and is counted apart from the game's
   roll.
-- **`list-scope`** (research) - neither scope answered. `angelicprobe list`
+- **`list-scope`** (research) - not observed in either scope (no positive
+  control on the same instance or the global scope). `angelicprobe list`
   found no global `lootListUnique` and no `lootListUnique` instance variable on
   `Loot_Manager_obj`, and read nothing.
 
@@ -751,10 +750,18 @@ What this settles of the static reading above:
 
 - **A hit is detected, measured.** A call to `CreateDefaultParams` while the
   roll is in progress is how a hit shows, and Live 1 counted 98 of them over
-  108 rolls under the chance lever, each one followed by the game's own item
-  on the ground. A hit at the natural chance (a chance in the low thousands)
+  108 rolls under the chance lever, with the ground filling with the game's
+  own Angelic and Unholy items (seen in screenshots, not counted against the
+  hits). A hit at the natural chance (a chance in the low thousands)
   has still not been observed; the lever replaced only the chance argument,
   not the path a hit takes.
-- **The list's scope is still not identified.** It is neither the
-  `lootListUnique` global nor a `Loot_Manager_obj` instance variable, measured;
-  which scope the roll reads remains unresolved.
+- **Some rolls at a chance of 1e9 still missed, and why is not established.**
+  The first batch counted 47 `gameRolls` against 44 `gameHits`; two candidate
+  causes are unverified: the lever's write reaching only rolls whose chance
+  argument arrived as a real number, and the re-pick running out of entries
+  before one passed its filters.
+- **The list's scope is still not identified.** The list was not observed in
+  either scope (no positive control on the same instance or the global scope):
+  `angelicprobe list` found neither a `lootListUnique` global nor a
+  `Loot_Manager_obj` instance variable; which scope the roll reads remains
+  unresolved.

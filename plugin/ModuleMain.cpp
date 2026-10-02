@@ -7737,7 +7737,7 @@ static void TyrantAutoArm()
     InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
     g_TyEnabled.store(g_TyHookInstalled);
     Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)"
-        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? "on" : g_TyForced.load() ? "off (detection not installed)" : "off (its panel switch is off)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? "on" : g_TyForced.load() ? "off (detection not installed)" : "off (no 'force' received yet - the panel sends it at launch when the switch is on)"));
 }
 static void TyrantStatus()
 {
@@ -10908,8 +10908,8 @@ static bool SignatureSwitchOn(int which)
     return which == 0 ? g_TyForced.load() : g_HhForced.load();
 }
 // One pool entry's share of a game hit: k enabled items among N validated pool uniques, so
-// k / (N + k) - 1 in 50 with one switch on and 2 in 51 with both at the live N = 49.  The
-// reading #63's owner decision accepted for "Liquor Holster's share"; nothing when k or N is 0.
+// k / (N + k) - about 1 in 48 with one switch on and 2 in 49 with both at the N = 47 measured
+// in #74 Live 1.  The reading #63's owner decision accepted for "Liquor Holster's share"; nothing when k or N is 0.
 static double SignatureShare(int k, size_t n)
 {
     if (k <= 0 || n == 0) return 0.0;
@@ -10964,7 +10964,7 @@ static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 // LootGroundCreateFromItem) with c=1 (unique repo).  Each row is validated once against the
 // game's unique repo: the name key must match and the base's info flag 40 (hidden / dev item,
 // which the game's own picker skips) must NOT be set - live 2026-09-07: exactly the nine dev
-// and joke items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 49 real ones do not.
+// and joke items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 47 real ones do not.
 struct AngelicBase { int type, sub, b; const char* key; const char* name; bool angelic; };
 static const AngelicBase kAngelicBases[] = {
     { 0, 0, 85, "helmet_lucifers_crown", "Lucifer's Crown", true },
@@ -17223,7 +17223,7 @@ static void HeadhunterAutoArm()
     if (!wanted) return;
     EnableHeadhunter();
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)"
-        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? "on" : g_HhForced.load() ? "off (detection not installed)" : "off (its panel switch is off)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? "on" : g_HhForced.load() ? "off (detection not installed)" : "off (no 'force' received yet - the panel sends it at launch when the switch is on)"));
 }
 
 static void HeadhunterStatus(bool includeMap = true)

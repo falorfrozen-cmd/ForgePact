@@ -21,9 +21,9 @@ switches off, the default, neither one ever drops, even if you have forged it.
     beside the game's own item, where the monster died. With both switches on,
     each success is one or the other at even odds.
   - This was verified in a live game session, using a test build that made the
-    game's Angelic roll hit far more often than it normally does: with a switch
-    on, its item dropped beside the game's own Angelic items; with both off,
-    neither ever did.
+    game's Angelic roll hit far more often than it normally does, with the
+    switches set from the console: with a switch on, its item dropped beside
+    the game's own Angelic items; with both off, neither ever did.
   - Only while that item's switch (**Mods → Items → Headhunter** or
     **Tyrant's Crown**) is on. Forging the item in the Custom Forge still turns
     its mechanic on, as in earlier versions, but not this drop: a forged
