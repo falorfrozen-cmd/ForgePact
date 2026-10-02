@@ -354,27 +354,22 @@ test('a native slider\'s contract is literal and last: each end posts its value 
   assert.equal(steps.at(-1 - PANEL_STEPS).control, tableRange(last.section, last.key));
 });
 
-test('the panel\'s own Incident reports controls are last: the switch off and on again, the button once, posting literals and sending nothing', () => {
-  assert.deepEqual(PANEL_BOOLEANS, [{ key: 'notify_lag', tab: 'tab:setup', initial: true }]);
+test('the panel\'s own Incident reports control is last: the button once, posting its literal and sending nothing', () => {
+  // The FPS-drop switch went (an FPS drop is recorded without a notice, the
+  // owner, 2026-10-02), so the card has no panel switch left.
+  assert.deepEqual(PANEL_BOOLEANS, []);
   assert.deepEqual(PANEL_BUTTONS, [{ id: 'openreports', tab: 'tab:setup', url: '/api/openreports' }]);
-  for (const c of ['#notify_lag', '#openreports']) {
+  for (const c of ['#openreports']) {
     assert.ok(!LEGACY.controls.includes(c) && !SUPPLEMENT.controls.includes(c) && !KEY_SUPPLEMENT.controls.includes(c),
       `${c}: a recording lists it: derive it from there instead`);
   }
-  // Not a mod: the Enabled mods list never shows it, so it has no Turn off.
-  assert.ok(!BOOLEAN_MODS.includes('notify_lag'));
-  assert.ok(!DERIVED.steps.some((s) => s.control === quickDisable('notify_lag')));
   const steps = DERIVED.steps;
   const at = steps.length - PANEL_STEPS;
   // The last native slider left the Loot tab open, so Setup is entered again.
   assert.equal(steps[at - 1].control, tableRange(NATIVE_SLIDERS.at(-1).section, NATIVE_SLIDERS.at(-1).key));
   assert.deepEqual(steps.slice(at), [
     { step: at, control: 'tab:setup', action: 'click' },
-    { step: at + 1, control: '#notify_lag', action: 'click',
-      expect: { posts: { is: [{ url: '/api/set', body: { key: 'notify_lag', value: false } }] }, cmds: { is: [] } } },
-    { step: at + 2, control: '#notify_lag', action: 'click',
-      expect: { posts: { is: [{ url: '/api/set', body: { key: 'notify_lag', value: true } }] }, cmds: { is: [] } } },
-    { step: at + 3, control: '#openreports', action: 'click',
+    { step: at + 1, control: '#openreports', action: 'click',
       expect: { posts: { is: [{ url: '/api/openreports', body: {} }] }, cmds: { is: [] } } },
   ]);
   assert.equal(DERIVED.controls.at(-1), '#openreports');

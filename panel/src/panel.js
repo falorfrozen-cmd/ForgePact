@@ -501,7 +501,6 @@ async function boot(){
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
-  document.getElementById('notify_lag').checked=c.notify_lag!==false;
   paintIncidents(ST.incidents);
   bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
   document.dispatchEvent?.(new Event('forgepact:ready'));
@@ -893,13 +892,8 @@ function bind(){
     e.target.value=applyTheme((res.cfg||ST.cfg).theme);
     toast(res.ok||res.err);
   };
-  // Incident reports (issue #76): FPS-drop notices are a panel setting like
-  // the theme, never a command. Off silences only that toast; every report is
-  // still saved, and freeze and crash notices still show.
-  document.getElementById('notify_lag').onchange=async(e)=>{
-    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'notify_lag',value:e.target.checked})});
-    toast('FPS-drop notices '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-  };
+  // Incident reports (issue #76): the card has one control, the folder. An FPS
+  // drop is recorded without a notice, so there is no switch for one.
   document.getElementById('openreports').onclick=async()=>{
     const res=await j('/api/openreports',{method:'POST',body:'{}'});
     toast(res.ok||res.err);
@@ -1118,7 +1112,6 @@ export function refreshSavedControls(){
   applyPluginModState(ST.pluginMods);
   applyStashMoveAllSession();
   document.getElementById('theme').value=applyTheme(c.theme);
-  document.getElementById('notify_lag').checked=c.notify_lag!==false;
   updateControlDecoration();decoratePanelIcons();
   // Last: the list reads each entry's value from the row just repainted.
   renderEnabledMods(c);

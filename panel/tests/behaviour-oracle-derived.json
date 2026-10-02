@@ -58,7 +58,6 @@
   "#sw_percent_stats_allskills",
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
   "#sw_drops_mining_ore_rolls",
-  "#notify_lag",
   "#openreports"
  ],
  "steps": [
@@ -5660,48 +5659,6 @@
   },
   {
    "step": 461,
-   "control": "#notify_lag",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "key": "notify_lag",
-        "value": false
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "is": []
-    }
-   }
-  },
-  {
-   "step": 462,
-   "control": "#notify_lag",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "key": "notify_lag",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "is": []
-    }
-   }
-  },
-  {
-   "step": 463,
    "control": "#openreports",
    "action": "click",
    "expect": {

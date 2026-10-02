@@ -59,7 +59,10 @@
 //
 // PANEL_BOOLEANS and PANEL_BUTTONS are panel controls no recorded page ever
 // had that send the plugin nothing (the Setup tab's Incident reports card,
-// issue #76): a switch is clicked off then on again from its default (on),
+// issue #76). The card has one, Open reports folder; PANEL_BOOLEANS is empty
+// since its FPS-drop switch went (an FPS drop is recorded without a notice,
+// the owner, 2026-10-02) and stays as a working list for the next panel
+// switch: a switch is clicked off then on again from its default (on),
 // each click posting its key with the new value and sending no command, and a
 // button is clicked once, posting an empty body to its own route and sending
 // no command. Neither is a mod, so neither has a Turn off button. They come
@@ -137,10 +140,8 @@ export const NATIVE_SLIDERS = [
 ];
 // Panel settings and actions no recorded page ever had, which send the plugin
 // nothing (issue #76's Incident reports card on Setup): a switch's key, tab
-// and default, and a button's id, tab and route. Appended last.
-export const PANEL_BOOLEANS = [
-  { key: 'notify_lag', tab: 'tab:setup', initial: true },
-];
+// and default (none now), and a button's id, tab and route. Appended last.
+export const PANEL_BOOLEANS = [];
 export const PANEL_BUTTONS = [
   { id: 'openreports', tab: 'tab:setup', url: '/api/openreports' },
 ];

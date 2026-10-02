@@ -13,8 +13,8 @@
      its own rules (app.css #chainnote,#eacnote), carries no .note either: design-match measures the notes'
      look on the first .note in the page, which is #ipcnote.
      Last, Incident reports (issue #76): the reports the plugin saved (bp_ipc\reports), the game's last exit
-     with an error, Open reports folder and #notify_lag, the one switch, which silences only the FPS-drop
-     toast. panel.js paints all of it from /api/state's `incidents`; the list is text, no button[id]. -->
+     with an error and Open reports folder. An FPS drop is recorded without a notice, so the card has no
+     switch. panel.js paints all of it from /api/state's `incidents`; the list is text, no button[id]. -->
 <div class="card tab-card" data-tab="setup" id="setupCard">
   <h2>Game Location</h2>
   <div class="hint">ForgePact talks to the mod plugin sitting next to this exe. Change it if your game lives somewhere else.</div>
@@ -43,10 +43,6 @@
 <div class="card tab-card" data-tab="setup" id="incidentCard">
   <h2>Incident reports</h2>
   <div class="hint">When the game crashes, freezes or its frame rate drops sharply, ForgePact saves a report you can attach to a bug report. Nothing is uploaded.</div>
-  <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Tell me about FPS drops (reports are always saved)</span>
-    <label class="switch"><input type="checkbox" id="notify_lag"><span class="sl"></span></label>
-  </div>
   <div class="note" id="incidentLastExit"></div>
   <ul class="incident-list" id="incidentList" aria-label="Saved reports"></ul>
   <div class="row" style="border:none">

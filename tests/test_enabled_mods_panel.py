@@ -100,11 +100,12 @@ class EnabledModsPanelTests(unittest.TestCase):
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
         # switch, Move all into the stash's switch, Extra packs as you
         # approach's switch, and Sleep loot your filter hides' switch and show
-        # key (forgepact-issue-95-mod; all six in the derived oracle), plus 1
-        # for Setup's FPS-drop notices switch, #notify_lag (issue #76, a panel
-        # setting like the theme; the derived oracle's PANEL_BOOLEANS).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 6 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 6 + 1)
+        # key (forgepact-issue-95-mod; all six in the derived oracle). Issue
+        # #76 adds none: its Setup switch for FPS-drop notices went before it
+        # shipped (an FPS drop is recorded without a notice, the owner,
+        # 2026-10-02), and Open reports folder posts to its own route.
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 6)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 6)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

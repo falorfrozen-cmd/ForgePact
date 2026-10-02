@@ -345,16 +345,11 @@ DEFAULTS = {
     # The panel's colour theme, painted as data-theme on the page's root.  A
     # panel setting only: no command ever carries it.
     "theme": "default",
-    # Incident reports (issue #76): whether a new FPS-drop report gets a
-    # Windows toast. A panel setting, not a mod, so it is on by default and no
-    # command carries it: off silences only the FPS-drop toast, while freeze
-    # and crash notices and every report the plugin writes go on as before.
-    "notify_lag": True,
 }
 
 # Settings that only the panel reads: /api/set saves them and tells the plugin
 # nothing, even while the game runs.
-PANEL_SETTINGS = ("theme", "notify_lag")
+PANEL_SETTINGS = ("theme",)
 
 # Every slider that has an on/off switch: "<section>.<key>" for the table rows,
 # the bare key for the four top-level sliders.  Monster Density is not here:
@@ -1959,8 +1954,9 @@ def plugin_boot_generation(cfg=None):
 #   next crash bundle and deletes it.
 # - panel.json: this panel's version and pid, so the plugin shows its own
 #   message box only when no panel is running to show a toast.
-# - a Windows toast for each new report (an FPS drop's only while notify_lag
-#   is on) and for a game that exited with an error.
+# - a Windows toast for each new freeze or crash report and for a game that
+#   exited with an error. An FPS drop is recorded without a notice: its
+#   report is listed, nobody is told (the owner, 2026-10-02).
 # The design and its limits: docs/incident-report.md.
 REPORTS_DIR = "reports"
 EXIT_JSON = "exit.json"
@@ -1994,9 +1990,8 @@ _TOAST_SCRIPT = (
     ".Show([Windows.UI.Notifications.ToastNotification]::new($x)) }"
 )
 _REPORTS_WHERE = "The report is in the game's bp_ipc\\reports folder (Setup > Incident reports > Open reports folder)."
+# No "perf" entry: an FPS drop is recorded without a notice.
 INCIDENT_TOASTS = {
-    "perf": ("ForgePact: FPS drop", "The game's frame rate dropped sharply. " + _REPORTS_WHERE
-             + " You can turn these notices off in Setup."),
     "freeze": ("ForgePact: the game froze", "Hero Siege stopped drawing frames for several seconds. " + _REPORTS_WHERE),
     "crash": ("ForgePact: crash report", "Hero Siege did not close normally last time. " + _REPORTS_WHERE),
 }
@@ -2335,21 +2330,20 @@ def incidents_state(cfg) -> dict:
     with _INCIDENTS_LOCK:
         exit_watch, toasts = dict(INCIDENTS["exitWatch"]), dict(INCIDENTS["toasts"])
     return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"],
-            "notifyLag": cfg.get("notify_lag", True) is not False,
             "exitWatch": exit_watch, "toasts": toasts}
 
 
 def notify_new_reports(cfg, seen):
-    """Toast each report folder not in `seen` (an FPS drop's only while
-    notify_lag is on) and return the folders now there. `seen` None is the
-    first look: what is already there is not news."""
+    """Toast each freeze or crash report folder not in `seen` and return the
+    folders now there. An FPS drop is recorded without a notice: its folder
+    is seen, never toasted. `seen` None is the first look: what is already
+    there is not news."""
     kinds = {r["dir"]: r["kind"] for r in incident_reports(cfg, limit=None)}
     if seen is not None:
         for name in sorted(set(kinds) - set(seen)):
-            kind = kinds[name]
-            if kind == "perf" and not cfg.get("notify_lag", True):
-                continue
-            show_toast(*INCIDENT_TOASTS[kind])
+            toast = INCIDENT_TOASTS.get(kinds[name])
+            if toast is not None:
+                show_toast(*toast)
     return set(kinds)
 
 
@@ -2851,12 +2845,9 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid theme"}, 400)
                         return
                     cfg["theme"] = val
-                elif key == "notify_lag":
-                    cfg["notify_lag"] = bool(val)
                 save_cfg(cfg)
                 live = ""
-                # A theme or a notice setting is the panel's own: nothing to
-                # tell the plugin.
+                # A theme is the panel's own: nothing to tell the plugin.
                 if game_running(cfg) and not (sec is None and key in PANEL_SETTINGS):
                     # Sliders send what the game should see: a slider whose
                     # switch is off sends its default's command, as density

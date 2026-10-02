@@ -140,6 +140,5 @@
   }
  },
  "switches": {},
- "theme": "default",
- "notify_lag": true
+ "theme": "default"
 }

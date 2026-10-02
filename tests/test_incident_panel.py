@@ -16,7 +16,9 @@ here:
   read" (a machine with no record skips, it never passes);
 - `exit.json` is written for a non-zero code and not for 0;
 - the toast's PowerShell script never has the message pasted into it;
-- `notify_lag` off suppresses the FPS-drop toast and only that one;
+- an FPS-drop report is recorded with no notice of any kind and no setting
+  for one remains, while a freeze or a crash report still toasts (the
+  owner, 2026-10-02);
 - the reports listing, `panel.json`, `/api/set` and `/api/state`;
 - both of the panel's routes leave a trace (D15): the exit watch counts the
   pid it holds, the exits it read and the last code, and the toast counts
@@ -109,15 +111,6 @@ class GameDir:
         if utc is not None:
             (d / "report.json").write_text(json.dumps({"kind": name.split("_")[-1], "utc": utc}), encoding="utf-8")
         return d
-
-
-class DefaultsTests(unittest.TestCase):
-    def test_notify_lag_is_on_by_default_and_sends_nothing(self):
-        # A panel setting, not a mod: on by default (D1), and the all-off
-        # contract still holds, since build_cmds never sees it.
-        self.assertIs(forgepact.DEFAULTS["notify_lag"], True)
-        self.assertEqual(forgepact.build_cmds(dict(forgepact.DEFAULTS)), [])
-        self.assertEqual(forgepact.build_cmds({**forgepact.DEFAULTS, "notify_lag": False}), [])
 
 
 @unittest.skipUnless(os.name == "nt", "Win32 process handles")
@@ -458,23 +451,32 @@ class ReportWatchTests(unittest.TestCase):
         self.assertEqual(seen, {"20261002-100000_perf"})
         run.assert_not_called()
 
-    def test_a_new_perf_report_toasts_only_while_notify_lag_is_on(self):
-        seen, _ = self._notify(self.game.cfg, None)
-        self.game.report("20261002-100000_perf")
-        # Positive control first: on, the same report toasts.
-        _, run = self._notify(self.game.cfg, set(seen))
-        run.assert_called_once()
-        _, run = self._notify({**self.game.cfg, "notify_lag": False}, set(seen))
-        run.assert_not_called()
+    def _toasts(self, cfg, seen):
+        with patch.object(forgepact, "show_toast", return_value=True) as toast:
+            seen = forgepact.notify_new_reports(cfg, seen)
+        return seen, [c.args[0] for c in toast.call_args_list]
 
-    def test_notify_lag_off_never_silences_a_freeze_or_a_crash(self):
-        seen, _ = self._notify(self.game.cfg, None)
+    def test_a_new_perf_report_is_recorded_without_any_notice(self):
+        # The owner, 2026-10-02: an FPS drop's report is written and nobody is
+        # told. It is still news to the watcher (seen), it just shows nothing,
+        # also under a forgepact.json that still carries the old switch.
+        seen, _ = self._toasts(self.game.cfg, None)
+        self.game.report("20261002-100000_perf")
+        for cfg in (self.game.cfg, {**self.game.cfg, "notify_lag": True}):
+            now, titles = self._toasts(cfg, set(seen))
+            self.assertEqual(now, {"20261002-100000_perf"})
+            self.assertEqual(titles, [])
+
+    def test_freeze_and_crash_reports_still_toast(self):
+        # The control beside the target above: the same watcher, the same
+        # patch, still toasts a freeze and a crash once each, titles unchanged.
+        seen, _ = self._toasts(self.game.cfg, None)
         self.game.report("20261002-100000_freeze")
         self.game.report("20261002-100500_crash")
-        seen, run = self._notify({**self.game.cfg, "notify_lag": False}, seen)
-        self.assertEqual(run.call_count, 2)
-        _, run = self._notify({**self.game.cfg, "notify_lag": False}, seen)
-        run.assert_not_called()
+        seen, titles = self._toasts(self.game.cfg, seen)
+        self.assertEqual(titles, ["ForgePact: the game froze", "ForgePact: crash report"])
+        _, titles = self._toasts(self.game.cfg, seen)
+        self.assertEqual(titles, [])
 
 
 class ReportListingTests(unittest.TestCase):
@@ -536,23 +538,20 @@ class ApiTests(unittest.TestCase):
         code, state = self.sandbox.request()
         self.assertEqual(code, 200)
         self.assertEqual(state["incidents"], {
-            "reports": [], "lastExit": None, "notifyLag": True,
+            "reports": [], "lastExit": None,
             "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None},
             "toasts": {"sent": 0, "failed": 0, "lastError": None}})
-        self.assertIs(state["cfg"]["notify_lag"], True)
 
-    def test_notify_lag_is_saved_as_a_bool_and_sends_no_command(self):
-        send = self.sandbox.mocks[3]
-        with patch.object(forgepact, "game_running", return_value=True):
-            code, body = self._post("/api/set", {"key": "notify_lag", "value": False})
-        self.assertEqual(code, 200)
-        self.assertEqual(body["ok"], "saved")
-        self.assertIs(body["cfg"]["notify_lag"], False)
-        send.assert_not_called()
+    def test_no_fps_drop_setting_remains(self):
+        # The Setup switch went with the FPS-drop notice: no default, no panel
+        # setting, no toast text, nothing in /api/state.
+        self.assertNotIn("notify_lag", forgepact.DEFAULTS)
+        self.assertEqual(forgepact.PANEL_SETTINGS, ("theme",))
+        self.assertNotIn("perf", forgepact.INCIDENT_TOASTS)
+        self.assertEqual(set(forgepact.INCIDENT_TOASTS), {"freeze", "crash"})
         _, state = self.sandbox.request()
-        self.assertIs(state["incidents"]["notifyLag"], False)
-        code, body = self._post("/api/set", {"key": "notify_lag", "value": 1})
-        self.assertIs(body["cfg"]["notify_lag"], True)
+        self.assertNotIn("notifyLag", state["incidents"])
+        self.assertNotIn("notify_lag", state["cfg"])
 
     def test_openreports_opens_the_reports_folder(self):
         reports = Path(self.sandbox.temp.name) / "bp_ipc" / "reports"
