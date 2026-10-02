@@ -393,13 +393,16 @@ that fails to write is counted, and the `incident: report written` line says
   menu room the list lacks is judged like any other room.
 - **The start-up setup frame is slow, and shows as `setup`.** The one-time
   setup (`LoadConfig` and `InstallHook`, at frame 300 in the main menu)
-  takes one 2-4 s frame on the test machine (Live 1 and Live 2). It falls in
-  the room-change grace, so it is never judged or reported, but for a
-  minute after it the `setup` row's worst in `incident stat` and in any
-  report written in that minute is that frame; the `incident: setup` line
-  in the log says what it cost and names the three slowest installers.
-  Making it faster or spreading it over frames is open, waiting on Live 3's
-  measurement of the installers.
+  takes one frame of about 2.5-2.7 s on the test machine: Live 3 measured
+  `incident: setup 2491.1 ms at frame 301` (config 0.3 ms, hooks 2490.8
+  ms) and 2701.2 ms at the relaunch, and nearly all of it is one
+  installer pair, `InstallCustomForgeItemHooks+InstallItemTruth` at 2486.2
+  ms. It falls in the room-change grace, so it is never judged or
+  reported, but for a minute after it the `setup` row's worst in
+  `incident stat` and in any report written in that minute is that frame;
+  the `incident: setup` line in the log says what it cost and names the
+  three slowest installers. Making it faster or spreading it over frames
+  is not part of 2.2.0; it is left for a follow-up with these numbers.
 - **No function names without the PDB, and the PDB needs renaming first.** A
   report records the faulting module and offset only. Mapping an offset
   inside `BloodPactPlugin.dll` to one of our functions is a maintainer step
@@ -573,3 +576,54 @@ below, and the fix for it is in the code Live 3 runs.
   own `setup` row and prints one `incident: setup` line with its parts'
   milliseconds. Both are under "Decisions". Live 3 runs the same character
   load again to check that no report is written, and measures the setup.
+
+Live 3, 2026-10-02 (capture: the workorder's
+`forgepact-76-incident-report-live-3.md`, kept with the hub's local workorder
+files). The shipping DLL built from ForgePact `092229a`, the commit that
+added the menu-room rule and the `setup` row (SHA-256 `a2a7fa59...cc2b9d097`,
+equal to the lease's hash and to the installed copy), ran the same character
+load as Live 2: launch, main menu, slot 2, then 60 s in town with no input,
+an ordinary close and a relaunch without a character. All eight required
+checks passed; `char-load-gap` records values only, and its load path was
+not exercised.
+
+- **Installed and answering.** `ping` answered `pong (YYTK 4.0.1)`, and
+  after the load the first `incident stat` line read `incident: frames
+  4696 | baseline 6.9 ms | worst 2838.7 ms (not judged) | worst judged 31.1
+  ms | slow judged frames 0 | watching yes | grace no | focus yes | window
+  yes | menu no | in-hook none | in-mod none`. Observed live.
+- **The installer tag.** `hooks tagged 19, untagged 0 | report write errors
+  0` at the main menu, after the load and after the wait. Observed live.
+- **The menu flag.** At the main menu, before any click, the first line
+  ended `| focus no | window yes | menu yes | in-hook none | in-mod none`;
+  after the load it read `| menu no |`. Observed live.
+- **The start-up setup has its own row and its own line.** The log carried
+  `incident: setup 2491.1 ms at frame 301: config 0.3 ms, hooks 2490.8 ms
+  (InstallCustomForgeItemHooks+InstallItemTruth 2486.2 ms,
+  CaptureAngelicScriptCode 3.2 ms, LoadCustomForgeEntries 1.2 ms)`, and the
+  relaunch's line read `incident: setup 2701.2 ms at frame 301`. At the
+  main menu the first line's worst was `2507.5 ms (not judged)`, the setup
+  frame, and the fourth line began `setup 2.44 / 2491.30, frame 0.01 /
+  8.10`; after the load it began `setup 0.53 / 2491.30, frame 0.02 / 8.10`.
+  The `frame` row no longer carries the setup: Live 2's `frame 1.24 /
+  4084.41` is now `setup` at 2491.30 and `frame` at 8.10. After the minute
+  had passed the row was gone from the table (`frame 0.00 / 0.16, ipc 0.00
+  / 0.14, ...`). Observed live.
+- **A normal session writes nothing.** After the load and again after the
+  62 s wait the second line read `incident: episodes 0, held back 0,
+  ignored near a room change or unfocused 4 | reports written 0`, with
+  worst judged 31.1 ms and slow judged frames 0, and `reports\` held only
+  the two folders from Live 1 and Live 2 (`20261002-172932_perf`,
+  `20261002-190757_freeze`). No `FREEZE` and no `CRASH` line followed the
+  session's banner. Observed live.
+- **A character-load gap in a menu room: not observed live; harness
+  evidence only.** The largest gap of the session was the 2838.7 ms worst
+  frame after the load, under the 3 s freeze threshold, so the log carried
+  no `FREEZE` line and no `in a menu room: a load, not reported` line. Live
+  2's 3.53 s gap in `Chose_rm` did not recur at that length, so the menu
+  rule's load path was not exercised live; it rests on the harness's
+  `freeze-menu-room` and `freeze-menu-room-never-ends` scenarios.
+- **The clean-shutdown marker, and no crash after it.** The ordinary close
+  left `==== clean shutdown ====` as the last line of `out.txt`, and the
+  relaunch logged `incident: the previous session shut down cleanly`, with
+  no `CRASH` line and no crash folder. Observed live.
