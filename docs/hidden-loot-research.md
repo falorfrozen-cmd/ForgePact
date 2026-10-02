@@ -36,10 +36,11 @@ facts established here are also recorded in the hub's
 | What a hidden item costs per frame | About 2.4-5.6 µs of frame time per hidden item per frame at 2,736 items, three to seven times the model's 0.4-0.8 µs | **Measured**, Live 1's `cost-hidden-working` and its `perf` annex `cost-hidden-perf`; the prediction was a **Model** ([below](#model-what-a-hidden-item-should-cost)) |
 | Whether hidden items outlive the zone | No. The zone's end ran Clean Up on 809 of 809 hidden items, and none were left | **Measured**, Live 1's `zone-end-cleanup` and `zone-change-gone` |
 | Whether hidden items reach the save | **Not observed.** `saves-diff`, read with 2,736 hidden items still on the ground and before any zone change, is the check that answers it; its control failed. `reload-none` landed in town | Live 1's `saves-diff` and `reload-none`, both `not-observed` |
-| A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **measured** live on real monster drops, through the hold and release of Left Alt, off, the switch-on walk and the zone's end, in Live 2 of `forgepact-issue-95-mod` (2026-09-28); `LootGroundDrop`, a pickup while shown and the table-only fallback **not observed live** ([Live 2 results](#live-2-results-2026-09-28)) |
+| A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **measured** live on real monster drops, through the hold and release of Left Alt, off, the switch-on walk and the zone's end, in Live 2 of `forgepact-issue-95-mod` (2026-09-28); `LootGroundDrop`, a pickup while shown and the table-only fallback **not observed live** ([Live 2 results](#live-2-results-2026-09-28)); the reduced hook **measured** on real monster drops in Live 3 (2026-10-02, `create-slept`, [Live 3 results](#live-3-results-2026-10-02)) |
 | Which ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee, and no path through it was traced | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept` |
 | Whether a sleeping hidden item outlives the zone | No. With 1,495 items asleep, the zone's end ran Clean Up 1,495 times and Destroy 0 | **Measured**, Live 2's `zone-end-asleep` |
-| What the hook keeps of a drop call past the call | Durable handles only: inside the call a number or a reference is kept, an instance pointer is asked `instance_exists` and replaced by its own `id`, anything else becomes undefined; no raw pointer reaches the frame's end ([The mod](#the-mod)) | **Reading of our own code**; harness-verified 2026-10-02, with a runner that counts every builtin handed a dead instance pointer reading 0. Live 2 ran the earlier hook, which kept the pointers; whether `instance_exists` on an item struct is safe on this runtime, and which slot carries the item, are **not established** until Live 3 ([Not established](#not-established)) |
+| What the hook keeps of a drop call past the call | Durable handles only: inside the call a number or a reference is kept, an instance pointer is asked `instance_exists` and replaced by its own `id`, anything else becomes undefined; no raw pointer reaches the frame's end ([The mod](#the-mod)) | **Reading of our own code**; harness-verified 2026-10-02, with a runner that counts every builtin handed a dead instance pointer reading 0. Live 2 ran the earlier hook, which kept the pointers. Live 3 ran this one on real monster drops (`inits=473 slept=462 unidentified=0 errors=0`) and 1,000 `lootspawn` calls, and the runner errors of that session came from another hook of ours, not this one: **measured** ([Live 3 results](#live-3-results-2026-10-02)). Whether `instance_exists` on an item struct is safe on this runtime is **not observed**: argument 1 never arrived as an object, so the hook never asked it ([Not established](#not-established)) |
+| Which argument of `LootGroundInit` carries the new ground item | Argument 0, as a reference, in 1,473 of 1,473 calls (473 monster drops, 1,000 `lootspawn` copies); argument 1 never arrived as an object (its kind read `other`); `self` was a live instance on every monster drop | **Measured**, Live 3's `candidate-slots` and `arg-kinds` ([Which argument carries the item](#which-argument-carries-the-item-candidate-slots-arg-kinds)); the `(instance, item)` order was a **static reading** before it |
 | Whether the game's 0.3 s refresh re-hides an item whose verdict was written visible | No. 522 woken items read `hidden=0` 1 s and 2 s after the write. How many of them were also drawn is not established: 462 read `visible` false, which the on-screen half of Alarm 9 also causes | **Measured**, Live 2's `hold-shows`, its `hidden=` half ([What `hold-shows` measured](#what-hold-shows-measured)) |
 
 Live 1 of `forgepact-issue-95` ran on 2026-09-28; its results are in
@@ -48,7 +49,8 @@ the mod's own session, ran the same day; its results are in
 [Live 2 results](#live-2-results-2026-09-28). After it the hook was changed to
 reduce what each drop call carries to durable handles inside the call
 (2026-10-02, [The mod](#the-mod)); Live 3, a short re-check of that hook on
-the research build, is pending. Part 1's own record stays in the
+the research build, ran on 2026-10-02, and its results are in
+[Live 3 results](#live-3-results-2026-10-02). Part 1's own record stays in the
 [dev2 bug batch](dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
 this document is where it continues.
 
@@ -362,8 +364,8 @@ folded) gets a full report headed `The runner raised an error through YYError
 (full report #N).`, with the runner's own text on the lines after
 `Runner-given error information:`. Every error, repeat or not, is counted in a
 `[hs] YYError summary: total=... distinct=...` line, written from the frame
-hook at most once per 30 s and only when a counter moved. Live 3 reads that
-log for it (see [Not established](#not-established)). Those two builtins are all the class calls inside the call: no
+hook at most once per 30 s and only when a counter moved. Live 3 read that
+log for it (see [How `struct-safe` was read](#how-struct-safe-was-read)). Those two builtins are all the class calls inside the call: no
 `object_index` or verdict read, no deactivation and no write. The kind decides
 how a value is kept, never whether it is looked at. The stat line counts what
 happened, after `errors=`: `by-arg0=`, `by-arg1=` and `by-self=` (which slot
@@ -384,17 +386,19 @@ taking for an instance something that has no id. `threw-`: a read threw
 `dropped=` are those outcomes summed over the three values, and `self`, a
 live instance on every monster drop, fills the sums on its own, so only the
 per-value fields can say what argument 1 met. The arguments are read as
-`(instance, item)`, but that is a reading, not a measurement, so at the end of
-the frame (`EVENT_FRAME`, after every step event) the class takes the first of
+`(instance, item)`, a reading that the code does not rely on (Live 3 later
+measured argument 0 carrying the item in every call, [Live 3
+results](#live-3-results-2026-10-02)), so at the end of the frame (`EVENT_FRAME`, after every step event) the class takes the first of
 the three handles that is a live instance whose `object_index` is
 `Loot_Ground_obj`'s; a handle whose instance is gone by then answers false to
 `instance_exists` and is passed over. Whether `instance_exists` on an item
-struct answers false without an error on this runtime is **not established**:
-the harness assumes it, and Live 3's `struct-safe` reads it from the
+struct answers false without an error on this runtime is **not observed**:
+the harness assumes it, and Live 3's `struct-safe`, which reads it from the
 argument-1 fields only (`obj-a1` > 0 with every one of them in
 `not-instance-a1`, beside a non-zero `reduced-self` and no runner error from
-the hook in `YYToolkit.log` over the drops' window; never the sums; see
-[Not established](#not-established)). It then reads the verdict
+the hook in `YYToolkit.log` over the drops' window; never the sums), found
+`obj-a1=0`: argument 1 never arrived as an object, so the hook never handed
+it to `instance_exists` (see [Not established](#not-established)). It then reads the verdict
 there, after `variable_instance_exists`, and deactivates the item only if the
 verdict reads hidden. It does not deactivate inside the call: the rest of the
 entry point, and whoever called `LootGroundCreateFromItem` with its return
@@ -558,6 +562,167 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   table-only fallback pass (`passes=0`, the route was `both`). The harness
   covers each; no session has.
 
+## Live 3 results (2026-10-02)
+
+Live 3 of the workorder `forgepact-issue-95-mod`, a short re-check of the
+reduced hook, the one that makes each value of the drop call a durable handle
+inside the call ([The mod](#the-mod)). Slot 14 ("Sorak"), the research DLL
+with sha256 `1d828170...45f1` (ForgePact plugin at `989ce3d`, `build.bat dev`,
+boot line `v2.1.0`), at the owner's strict filter with `dropmult item 10`. The
+show key stayed at its default, 164, and was not pressed: the hold, the
+switch-on walk and the zone's end are the code Live 2 measured, and were not
+repeated. The saves were backed up before the launch and restored afterwards,
+and the restored set inspected identical to the backup. Eight of the ten
+checks passed. The two that failed, `arg-kinds` and `struct-safe`, are
+research checks, and each failure is a finding (below), not a defect of the
+mod.
+
+| Check | Verdict | What was seen |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `1d828170...45f1`, the hash the session was dispatched with |
+| `marker` | pass | `==== BloodPact plugin loaded ==== v2.1.0` |
+| `control` | pass | `pong (YYTK 4.0.1)`, and `lootcensus: ground=7 hidden=0 invisible=4 coins=0 walked=7 ...` before any count was recorded |
+| `route-both` | pass | `hiddenloot 1`, in town, logged `HOOK INSTALLED on LootGroundInit` and answered `route=both`; no `TABLE-ONLY` line anywhere in the session's `out.txt` |
+| `create-slept` | pass | After about 60 s of the owner killing monsters in a zone: `inits=473 slept=462 asleep-now=462 visible=11 unidentified=0 errors=0`, and `lootcensus` read `hidden=0`, so no hidden drop was left awake |
+| `candidate-slots` | pass (research) | `by-arg0=473 by-arg1=0 by-self=0`: the sum, 473, is `slept` 462 plus `visible` 11, and argument 0 carries all of it. The finding: argument 0 carries the ground item |
+| `arg-kinds` | fail (research) | `kinds=ref/other/obj`: argument 0 a reference, argument 1 `other`, `self` an object, where the reading expected an instance kind, `obj`, `obj`. The finding: argument 1 is not an object |
+| `struct-safe` | fail (research); the runner errors were another hook's, and the struct question was not observed | `obj-a1=0 reduced-a1=0 not-instance-a1=0 no-id-a1=0 threw-a1=0`, positive control `reduced-self=473`, `errors=0`. `YYToolkit.log`'s YYError total rose by 259 over the kill window, with one new report, `REAL argument incorrect type undefined`, whose stack runs through the plugin's DLL ([below](#struct-safe-what-the-runner-errors-were)) |
+| `spawn-inits` | pass (research) | `lootspawn 1000` made 1,000 copies (`hidden-now=0 visible-now=1000 return-unreadable=0`); `inits` rose from 473 to 1,473, `reduced` stayed 473, `dropped` rose from 0 to 1,000, `errors=0`, and `ping` answered |
+| `no-refusal` | pass | No `hiddenloot:` refusal or error line in the session's `out.txt`; every `hiddenloot` stat line, and the OFF line, read `errors=0 unidentified=0` |
+
+### Which argument carries the item (`candidate-slots`, `arg-kinds`)
+
+In all 473 calls from the game's own monster drops, the end of the frame
+identified the ground item through argument 0, and through argument 1 or
+`self` in none. The 1,000 `lootspawn` calls added 1,000 more to `by-arg0`,
+1,473 of 1,473 in all. Argument 0 arrived as a reference (`ref`), the kind this
+runner gives an instance id, so the hook kept it as it was, with no read.
+**Measured.** That settles the first half of the reading
+`LootGroundInit(instance, item)` ([Static reading](#static-reading)): argument
+0 is the new ground instance.
+
+Argument 1 never arrived as an object: `obj-a1=0` over all 1,473 calls, and the
+last call's kind read `other`, which means none of a number, a reference, an
+object or undefined; the stat line does not say which kind it was.
+**Measured.** The reading takes argument 1 to be the item's data, and this
+session neither confirms nor refutes that, only that on this build it is not
+an object-kind value. So the hook keeps it as undefined with no read and never
+hands it to `instance_exists`.
+
+`self` arrived as an object in every call. On the monster drops it was a live
+instance whose `id` read as a number every time (`reduced-self=473`); which
+instance it was is not recorded. In `lootspawn`'s calls it was not an
+instance (`not-instance-self=1000`, hence `dropped=1000`): `lootspawn` calls
+`LootGroundCreateFromItem` by name with the runner's global instance as `self`
+(**reading of our own code**), and inside the call `instance_exists` answered
+false for it 1,000 times out of 1,000, with `errors=0` and no runner error
+(next section). **Measured.**
+
+### `struct-safe`: what the runner errors were
+
+The check could not answer its own question, because the value it waits for
+never came: with `obj-a1=0`, no item struct reached `instance_exists`, so
+whether it answers false without an error on an item struct is **not
+observed** (`not-observed (no object-kind value on argument 1)`). Both of its
+controls worked: `reduced-self=473` (`instance_exists` ran and answered true
+on this instrument in the same session), and the runner-error instrument was
+in place (`[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS` in this
+launch's `YYToolkit.log`).
+
+The check failed on its runner-error half. The log's last
+`[hs] YYError summary:` line read `total=1 distinct=1/32 overflow_hits=0`,
+with one full report (a menu timer's, written during boot), in town at B0
+(13:01:58 UTC) and again at B1, 128 s later: a rise of 0. At A (13:12:18 UTC),
+after the kill window, it read `total=260 distinct=2/32 overflow_hits=0` with
+two reports, and no line was added between A and the end of the session. The
+new report's runner text is `REAL argument incorrect type undefined`. Two of
+its stack frames lie inside the plugin's DLL, at unnamed offsets, under the
+game's `LoadDrops` and an `Enemy_Parent_obj` Create closure, an enemy's drop
+path; no frame names `LootGroundInit` or `instance_exists`. A new report whose
+stack names the plugin's DLL is a fail by the check's rule, and it was
+recorded as one. The errors cannot be dated within the window from the log,
+whose summary lines carry no time.
+
+The errors are not the hidden-loot hook's. Matched against the research DLL's
+own function table, the two plugin frames are ForgePact's `Hook_DropItem`
+(the `dropmult` hook, set to 10 for the session, inside its loop of extra
+calls) and, above it, the research-only block of `Hook_DropKeys`
+(`#ifndef FORGEPACT_RELEASE`, a trace of which key a drop chose). That block
+reads `room` with `variable_global_get`, but `room` is a built-in variable,
+not a global, so the read gives undefined, and turning it into a number
+raises that message; the trace file the block writes held 1,427 lines with an
+empty room, the last written in the kill window. The player build does not
+have the block. This is a **reading of our own code** and of the research
+DLL's function table, not a separate measurement. The same session holds the
+control: `lootspawn 1000` drove 1,000 more calls through the hidden-loot hook,
+each handing `self` to `instance_exists`, and the YYError total stayed at 260
+through the teardown. **Measured.** The `Hook_DropKeys` read is a separate bug
+of the research build, outside this mod, and was split off from this
+workorder.
+
+### How `struct-safe` was read
+
+The check reads one stat line and YYToolkit's own log. From the stat line,
+taken after the kill window: `obj-a1`, `reduced-a1`, `not-instance-a1`,
+`no-id-a1`, `threw-a1`, `reduced-self` and `errors`. It passes only when all
+of these hold: `obj-a1` > 0; `not-instance-a1` equals `obj-a1` (so
+`reduced-a1`, `no-id-a1` and `threw-a1` are 0); `errors=0`; the positive
+control `reduced-self` > 0 in the same line (`instance_exists` ran and
+answered true on this instrument); and no runner error from the hook. That
+last condition cannot come from `errors`, which counts only C++ exceptions,
+nor from `ping` or a screenshot: this runner catches a `YYError` and carries
+on, as a rule with no dialog, so a struct that made `instance_exists` raise
+one and answer falsy would leave every field above passing. It is read from
+`YYToolkit.log` in the game's install directory, read as a file
+(`hs_ipc_tail` returns the plugin's `out.txt`, not this log). Three reads: B0
+in town after the switch-on, B1 in town 120 s later, just before the kill
+window, and A at least 30 s after the stat line, because the summary line is
+written at most once per 30 s and only when a counter moved. Each read takes,
+from the last `[hs] YYError summary: total=... distinct=...` line, its
+`total=`, `distinct=` and `overflow_hits=`, and counts the full-report headers
+(`The runner raised an error through YYError (full report #N).`). The check
+does not wait for a message to name `instance_exists`: a conversion error may
+name only a type, so that name is a hint, not the gate. A runner error shows
+in one of two ways.
+
+- A new message: a full-report header after B1, or `distinct=` or
+  `overflow_hits=` higher at A than at B1. Each new report's text (the lines
+  after `Runner-given error information:`) is recorded as a finding, whatever
+  it names. One whose text or stack frames name `instance_exists`,
+  `LootGroundInit` or the plugin's DLL is a fail. One whose stack carries
+  named frames, none of them those three, is recorded and does not decide.
+  One with no named frames to tell is `not-observed (unattributed runner
+  error)`, never a pass.
+- A repeat of a message already reported before the kill window, which is
+  counted and not reported again: a fail when `total=` rose from B1 to A by
+  at least `obj-a1` more than the B0-to-B1 rise scaled to the same length,
+  that is rise(B0 to B1) × (tA − tB1) / (tB1 − tB0).
+
+When no summary line was written after B1, no counter moved over the window
+and `total=` rose by 0 there. With the positive control present and no new
+full-report header, that is pass-eligible, not a missing read. The positive
+control is in the same log, written after this launch: the
+`[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS` line, or any
+`[hs] YYError summary:` line. If the log cannot be read, or the control is
+missing, `struct-safe` is `not-observed (runner-error instrument
+unavailable)`, never a pass. `obj-a1=0`, or `reduced-self=0`, is not observed
+too; any other outcome is a finding (for example a non-zero `reduced-a1`:
+`instance_exists` accepted the struct, or a new report from the hook), never
+a pass. The `reduced=` and `dropped=` sums never decide it, because `self`
+fills them alone.
+
+### Other readings in Live 3
+
+- **All 1,000 `lootspawn` calls returned a live instance** this time
+  (`made=1000 return-unreadable=0`, `ground=` 7 to 1,007), and `inits` rose by
+  exactly 1,000. **Measured**, one reading; Live 2 saw 29 of 1,000 return none
+  ([Not established](#not-established)).
+- **The YYToolkit log was recreated by the launch** (83 lines after it, against
+  140 before), so the whole file was this session's.
+- **Not run live, by design:** the hold key, the switch-on walk, the zone's
+  end, `LootGroundDrop` and the table-only fallback pass. Live 2 measured the
+  first three on the same code; the last two are still harness-only.
+
 ## Not established
 
 - **Why 95 items stayed invisible with the filter off** in part 1's Live 1.
@@ -575,57 +740,20 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   of the items it makes get their verdict from `LootGroundInit` is not
   established.
 - **Whether `instance_exists` on an item struct answers false without an
-  error on this runtime.** The hook's reduction asks it of every
-  object-kind value a drop call carries, argument 1 (the item struct, by the
-  reading) on every drop. The harness assumes it answers false; the plugin
-  had only ever handed instances to it, and Live 2 (`unidentified=0` over
-  1,502 calls, before the reduction) never ran the object-kind path. Live 3's
-  `struct-safe` reads it from one stat line, and passes only when all of
-  these hold: `obj-a1` > 0; `not-instance-a1` equals `obj-a1` (so
-  `reduced-a1`, `no-id-a1` and `threw-a1` are 0); `errors=0`; the positive
-  control `reduced-self` > 0 in the same line (`instance_exists` ran and
-  answered true on this instrument); and no runner error from the struct.
-  That last condition cannot come from `errors`, which counts only C++
-  exceptions, nor from `ping` or a screenshot: this runner catches a
-  `YYError` and carries on, as a rule with no dialog, so a struct that makes
-  `instance_exists` raise one and answer falsy would leave every field above
-  passing. It is read from YYToolkit's own log, `YYToolkit.log` in the
-  game's install directory, read as a file (`hs_ipc_tail` returns the
-  plugin's `out.txt`, not this log). Three reads: B0 in town after step 2,
-  B1 in town 120 s later, just before step 3, and A at least 30 s after
-  step 4's stat line, because the summary line is written at most once per
-  30 s and only when a counter moved. Each read takes, from the last
-  `[hs] YYError summary: total=... distinct=...` line, its `total=`,
-  `distinct=` and `overflow_hits=`, and counts the full-report headers
-  (`The runner raised an error through YYError (full report #N).`). The
-  check does not wait for a message to name `instance_exists`: a
-  conversion error may name only a type, so that name is a hint, not the
-  gate. A runner error shows in one of two ways.
-  - A new message: a full-report header after B1, or `distinct=` or
-    `overflow_hits=` higher at A than at B1. Each new report's text (the
-    lines after `Runner-given error information:`) is recorded as a
-    finding, whatever it names. One whose text or stack frames name
-    `instance_exists`, `LootGroundInit` or the plugin's DLL is a fail. One
-    whose stack carries named frames, none of them those three, is
-    recorded and does not decide. One with no named frames to tell is
-    `not-observed (unattributed runner error)`, never a pass.
-  - A repeat of a message already reported before step 3, which is counted
-    and not reported again: a fail when `total=` rose from B1 to A by at
-    least `obj-a1` more than the B0-to-B1 rise scaled to the same length,
-    that is rise(B0 to B1) × (tA − tB1) / (tB1 − tB0).
-  When no summary line was written after B1, no counter moved over the
-  window and `total=` rose by 0 there. With the positive control present
-  and no new full-report header, that is pass-eligible, not a missing
-  read. The positive control is in the same log, written after this
-  launch: the `[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS`
-  line, or any `[hs] YYError summary:` line. If the log cannot be read, or
-  the control is missing, `struct-safe` is
-  `not-observed (runner-error instrument unavailable)`, never a pass.
-  `obj-a1=0`, or `reduced-self=0`, is not observed too; any other outcome
-  is a finding (for example a non-zero `reduced-a1`: `instance_exists`
-  accepted the struct, or a new report from the hook), never a pass. The
-  `reduced=` and `dropped=` sums never decide it, because `self` fills
-  them alone.
+  error on this runtime.** **Not observed.** The hook's reduction asks it of
+  every object-kind value a drop call carries, and by the reading argument 1
+  was the item struct. Live 3 found that argument 1 never arrives as an object
+  on this build (`obj-a1=0` over 1,473 calls; the last call's kind read
+  `other`), so the hook keeps it as undefined and never hands it to
+  `instance_exists`; `struct-safe` read
+  `not-observed (no object-kind value on argument 1)` on that field
+  ([Live 3 results](#struct-safe-what-the-runner-errors-were); how the check
+  is read: [How `struct-safe` was read](#how-struct-safe-was-read)). The
+  harness still assumes the answer is false. The nearest reading is another
+  object that is not an instance: inside the same call `instance_exists`
+  answered false for the runner's global instance, `lootspawn`'s `self`,
+  1,000 times out of 1,000, with `errors=0` and no runner error. **Measured**,
+  Live 3; it says nothing about an item struct, which no call carried.
 - **The guard in front of the filter call** inside `LootGroundInit` was not
   read; `skipLootFilter` is a candidate, not a finding.
 - **Whether ground items reach the save.** `SaveSlot`'s body was not read, and
@@ -645,4 +773,5 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   second, returned no live instance, and the ground count rose only by the
   instances returned. **Measured**; the cause is not established. In Live 2,
   29 of 1,000 returned none and the hook on `LootGroundInit` counted 971 calls,
-  so those 29 did not reach it as far as the hook saw.
+  so those 29 did not reach it as far as the hook saw. In Live 3 all 1,000
+  returned one, and the hook counted 1,000 calls.
