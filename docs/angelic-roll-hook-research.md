@@ -1052,6 +1052,14 @@ from a rewritten struct).
   were seen, and the owner decides whether to run another session. A short
   sample never selects a route.
 
+Build is read only after reach passed. With reach failed or not-observed, the
+build counters are recorded as printed but carry no verdict, because the
+plugin's coin and rewrite produce every one of them on a push the picker never
+saw. Not-observed always means *not powered*: the batch reached its cap
+without the hits a verdict needs. It goes to the owner and is never evidence
+that injection does not build the item, so it never selects `route replace`.
+Replace ships only on a build that failed under a reach that passed.
+
 So only a reach that passed can ship the inject route, and only a reach that
 failed can close the inject line.
 
@@ -1152,16 +1160,21 @@ record:
   (Session 2's validated pool held 47). One push of one entry cannot be
   measured: it moves the triple's share of hits from about 1/47 to 2/48,
   which a session's rolls cannot tell apart. 47 copies move it to about
-  48/94, one hit in two, which ten kills can. Ten kills, one more batch of
-  ten allowed (Session 2 measured about 47 rolls per ten-odd kills, and with
-  the chance lever every roll hits).
+  48/94, one hit in two, which ten kills can. Session 2 measured about 47
+  rolls per ten-odd kills, and with the chance lever every roll hits, so ten
+  kills give about 45 typed hits. The thresholds below are counted in hits,
+  which here are rolls, not in kills; the kill count only bounds the owner's
+  time. After ten kills each part is read. A part still short of its
+  threshold (H below 20, or one or two hits of ours) is not a verdict: a
+  second batch of ten kills runs, and that is the cap. A part still short at
+  the cap is not-observed, which the decision rule routes to the owner.
   - **Reach**, the injection's positive control, read off what the picker
     drew and not off the plugin's own counters. Count the typed `angelic
     hit:` lines (H) and, among them, those naming the stand-in's triple
     (type 8, sub 0, b 51), ours or vanilla alike (S); untyped hits count in
     neither and are recorded. Pass: H at least 20 and S at least H / 4.
-    Fail: H at least 20 and S below H / 4. Not-observed: H below 20 after 20
-    kills. A push the picker cannot see (a copy of the array, another array
+    Fail: H at least 20 and S below H / 4. Not-observed: H below 20 at the
+    cap. A push the picker cannot see (a copy of the array, another array
     of the same shape, a `Controller_obj` instance the roll does not read)
     leaves the triple at its vanilla one hit in 47, whatever `injected=`
     says. At H = 20, a quarter or more without reach has a probability of
@@ -1175,8 +1188,11 @@ record:
     one recorded for the player build. `injected=`, `ourHits=`, `built=` and
     a Headhunter on the ground are never reach evidence: the plugin's own
     coin and rewrite produce all four on a push the picker never saw.
-  - **Build**, from the same batches. With 47 copies the coin reads 47/48, so
-    once reach holds about one hit in two is ours. Pass: `injected=` grew by
+  - **Build**, from the same batches, read only once reach passed. With 47
+    copies the coin reads 47/48, so once reach holds a typed hit is ours with
+    probability 48/94 times 47/48, which is one in two. At H = 20 a working
+    injection then gives fewer than 3 hits of ours about 2 times in 10,000.
+    Pass: `injected=` grew by
     47 times the growth of `gameRolls=`, `ourHits=` at least 3, `built=`
     equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`, every hit of
     ours with `lootDelta=1`, no `sigdrop:` line, and the owner names a
@@ -1186,8 +1202,9 @@ record:
     `lootDelta=` other than 1 on a hit of ours, a struct missing a field, a
     ground item that is not Headhunter, or a hit of ours whose triple is not
     Liquor Holster's. An `untyped=` above zero is recorded with its hit lines
-    and means the definition-read typing was not observed as read.
-    Not-observed: fewer than 3 hits of ours after 20 kills.
+    and means the definition-read typing was not observed as read. One or
+    two hits of ours continue to the cap. Not-observed: fewer than 3 hits of
+    ours at the cap, recorded as not powered, never as replace evidence.
   - **The shipped count**, last: `angelicprobe inject copies 1` and five
     kills. `injected=` grew by the growth of `gameRolls=` (one push per
     roll), no anomaly line, and afterwards the list's length equals
