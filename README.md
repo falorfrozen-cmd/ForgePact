@@ -677,8 +677,12 @@ itself.
   Checked in play (ForgePact #131, `docs/stash-move-research.md` § Live 6
   results): all 16 copied settings reading back as the Sort button's, and the
   label centred like Sort's, on the first opening and again after the stash
-  was closed and reopened. Its place under the **Extra** tab is not yet
-  checked in play. A
+  was closed and reopened. Its place under the **Extra** tab was checked in
+  play too (`docs/stash-move-research.md` § Live 7 results): on the first
+  opening and again after a close and reopen, its left and right edges
+  equalled that tab's and its top and bottom the Sort button's, with
+  `button_ref=tab`, at one interface scale only (2560x1440); the fallback from
+  the Sort button's own box (`button_ref=grid`) was not seen in play. A
   moment after it appears the mod checks
   where and how the game drew it and moves it once if needed; the log says
   where it ended up, once a session (`stashmoveall: button - placed in the
