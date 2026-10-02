@@ -2002,8 +2002,23 @@ INCIDENT_TOASTS = {
 }
 # What the panel saw at the game's last exit: exit.json's facts for an exit
 # with an error, None after a clean exit or before any. /api/state shows it.
-INCIDENTS = {"lastExit": None}
+# exitWatch and toasts count what the panel's two routes did (D15): the pid
+# whose handle is held, the exits read from a held handle and the last code;
+# the toasts shown and the ones that failed, with the last reason. Without
+# them "no exit was recorded" and "no toast appeared" could not be told from
+# "the panel never saw the game" and "PowerShell refused".
+INCIDENTS = {
+    "lastExit": None,
+    "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None},
+    "toasts": {"sent": 0, "failed": 0, "lastError": None},
+}
+_INCIDENTS_LOCK = threading.Lock()
 _REPORT_UTC: dict = {}
+# The plugin's clean-shutdown marker (IncidentMonitor.hpp's ShutdownMarker):
+# "==== clean shutdown ====" from the ExitProcess hook, "==== clean shutdown
+# (detach) ====" from the unload fallback; the prefix is what counts.
+CLEAN_SHUTDOWN_PREFIX = b"==== clean shutdown"
+CLEAN_SHUTDOWN_TAIL = 64 * 1024
 
 
 def open_exit_handle(pid):
@@ -2141,13 +2156,48 @@ def match_game_event(events, exe_name: str, pid=None):
     return None
 
 
+def session_shut_down_cleanly(cfg=None) -> bool:
+    r"""Whether the game session that just ended wrote ForgePact's clean-shutdown
+    marker: a line starting "==== clean shutdown" after out.txt's last
+    "==== BloodPact plugin loaded ====" line.
+
+    The marker is the last thing the plugin writes, so only the tail is read
+    (out.txt grows to megabytes). A banner above that tail leaves the whole
+    tail inside the last session; a marker before the last banner is the
+    previous session's. A missing or unreadable out.txt is False."""
+    try:
+        with (ipc_dir(cfg) / "out.txt").open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            start = max(0, size - CLEAN_SHUTDOWN_TAIL)
+            fh.seek(start)
+            tail = fh.read()
+    except OSError:
+        return False
+    lines = tail.split(b"\n")
+    if start > 0:
+        lines = lines[1:]          # the first line is cut by the seek
+    session = []
+    for line in lines:
+        if line.lstrip(b"\xef\xbb\xbf").startswith(b"==== " + BOOT_MARKER):
+            session = []
+        else:
+            session.append(line)
+    return any(line.startswith(CLEAN_SHUTDOWN_PREFIX) for line in session)
+
+
 def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
     r"""What the panel does when the game it watched has exited with `code`.
 
     0 is a clean exit: nothing is written and the last exit reads as none.
-    Anything else writes bp_ipc\exit.json (only into a bp_ipc that exists),
-    shows a toast and is returned. Windows writes the crash record a moment
-    after the process ends, so the log is read up to `attempts` times."""
+    Anything else writes bp_ipc\exit.json (only into a bp_ipc that exists)
+    and is returned. Windows writes the crash record a moment after the
+    process ends, so the log is read up to `attempts` times.
+
+    An exit after ForgePact's clean-shutdown marker (a mod file aborting
+    during exit, Known Limitations item 25) is still written, with
+    after_clean_shutdown true, so the plugin can fold it into its next-load
+    note; it is not toasted, or every exit would read as an error."""
     if code == 0:
         INCIDENTS["lastExit"] = None
         return None
@@ -2168,6 +2218,7 @@ def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
         "exception_code": event["exception_code"] if event else None,
         "event_record_id": event["event_record_id"] if event else None,
         "event_probe": {"queried": bool(probe["queried"]), "records_seen": int(probe["records_seen"])},
+        "after_clean_shutdown": session_shut_down_cleanly(cfg),
     }
     folder = ipc_dir(cfg)
     if folder.is_dir():
@@ -2178,9 +2229,10 @@ def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
         except OSError:
             pass
     INCIDENTS["lastExit"] = facts
-    show_toast("ForgePact: Hero Siege closed with an error",
-               f"Exit code {facts['exit_code']}. ForgePact adds it to the crash report it saves "
-               "the next time the game starts.")
+    if not facts["after_clean_shutdown"]:
+        show_toast("ForgePact: Hero Siege closed with an error",
+                   f"Exit code {facts['exit_code']}. ForgePact adds it to the crash report it saves "
+                   "the next time the game starts.")
     return facts
 
 
@@ -2198,12 +2250,17 @@ def watch_game_exit(cfg, running: bool, hold: dict):
             handle, pid = hold["handle"], hold["pid"]
             hold.update(pid=None, handle=None)
             close_exit_handle(handle)
+            with _INCIDENTS_LOCK:
+                watch = INCIDENTS["exitWatch"]
+                watch.update(pidHeld=None, exitsSeen=watch["exitsSeen"] + 1, lastCode=exit_code_text(code))
             facts = record_game_exit(cfg, code, pid)
     if running and hold["handle"] is None:
         pid = game_pid(cfg)
         handle = open_exit_handle(pid) if pid else None
         if handle:
             hold.update(pid=pid, handle=handle)
+            with _INCIDENTS_LOCK:
+                INCIDENTS["exitWatch"]["pidHeld"] = pid
     return facts
 
 
@@ -2217,13 +2274,25 @@ def toast_command(title: str, message: str) -> list:
 
 def show_toast(title: str, message: str) -> bool:
     """Show a Windows toast; False on any failure, which is never raised: a
-    notice that cannot be shown must not stop the watcher."""
+    notice that cannot be shown must not stop the watcher. Every attempt is
+    counted in INCIDENTS["toasts"], a failure with its reason."""
+    error = None
     try:
         result = subprocess.run(toast_command(title, message), capture_output=True, timeout=10,
                                 creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
-        return result.returncode == 0
-    except Exception:
-        return False
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else ""
+            detail = " ".join(detail.split())[:200]
+            error = f"powershell.exe exit code {result.returncode}" + (f": {detail}" if detail else "")
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+    with _INCIDENTS_LOCK:
+        toasts = INCIDENTS["toasts"]
+        if error is None:
+            toasts["sent"] += 1
+        else:
+            toasts.update(failed=toasts["failed"] + 1, lastError=error)
+    return error is None
 
 
 def _report_utc(path: Path, match) -> str:
@@ -2262,9 +2331,12 @@ def incident_reports(cfg=None, limit=REPORT_LIST_MAX) -> list:
 
 
 def incidents_state(cfg) -> dict:
-    """/api/state's "incidents"."""
+    """/api/state's "incidents", the counters copied under their lock."""
+    with _INCIDENTS_LOCK:
+        exit_watch, toasts = dict(INCIDENTS["exitWatch"]), dict(INCIDENTS["toasts"])
     return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"],
-            "notifyLag": cfg.get("notify_lag", True) is not False}
+            "notifyLag": cfg.get("notify_lag", True) is not False,
+            "exitWatch": exit_watch, "toasts": toasts}
 
 
 def notify_new_reports(cfg, seen):

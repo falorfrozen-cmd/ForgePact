@@ -533,10 +533,15 @@ function paintIncidents(inc){
     li.append(kind,' '+incidentTime(r.utc)+' \u00b7 '+r.dir);
     return li;
   }):[Object.assign(document.createElement('li'),{className:'incident-empty',textContent:'No reports saved yet.'})]));
+  // after_clean_shutdown: ForgePact had already shut down cleanly when the
+  // code was set, so a mod file aborted during the game's exit (Known
+  // Limitations item 25); that is noted, not reported as a crash.
   const last=inc?.lastExit;
   setText(document.getElementById('incidentLastExit'),last?'Last game exit: '+last.exit_code+
     (last.faulting_module?' in '+last.faulting_module+(last.faulting_offset?' at offset 0x'+last.faulting_offset:''):'')+
-    (last.exit_utc?' ('+incidentTime(last.exit_utc)+')':'')+' - a crash report is saved the next time the game starts':'');
+    (last.exit_utc?' ('+incidentTime(last.exit_utc)+')':'')+
+    (last.after_clean_shutdown?' - after ForgePact\'s clean shutdown: the game had closed, then a mod file aborted during exit. Not a crash; ForgePact notes it the next time the game starts'
+      :' - a crash report is saved the next time the game starts'):'');
 }
 let launcherBusy=false;
 function renderLaunchStatus(){
