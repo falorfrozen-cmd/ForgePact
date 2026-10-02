@@ -499,3 +499,146 @@ has to plan around, each sourced above: a hit was never seen, so neither a
 hit's return value nor the script that places a hit's item is known; the
 game's unique list was not found where the static reading put it; and the
 chance the game passes did not follow the value `buffme` supplied.
+
+## Session 2: the substitution (issue #74)
+
+Issue #74 takes Headhunter and Tyrant's Crown out of ForgePact's own Angelic
+pool and puts them on the game's own roll instead: while an item's World
+switch is on, a real Angelic hit can also drop that item beside the game's own
+Angelic or Unholy item, at one pool entry's share, and with both switches off
+the game's roll is left alone. The closing paragraph of `## Decision` named
+three things this round had to plan around. The static reading below answers
+them in words; `### Live procedure 2` describes the session that measures the
+result, and `### Results` is where that session's replies go.
+
+### Static reading (2026-10-02)
+
+Read locally on 2026-10-02 in the named Ghidra project: `DropItemAngelicChance`
+and the scripts it calls, `GetUniqueRepoStruct`, `GetUniqueRandomItemID`, and a
+scan of the roll's callers. Every claim in this subsection is a static
+reading unless it says measured; no hit of the game's roll has been seen live
+yet, so none of it is confirmed by one.
+
+- **A hit's return value.** The roll sets its result to undefined as it
+  starts and never assigns it again, so a hit returns undefined exactly as a
+  miss does. That explains why all 374 measured misses in session 1 came back
+  undefined, and it rules the return value out as a way to tell a hit from a
+  miss: a hit has to be recognised by something the roll does only when it
+  hits.
+- **What places a hit's item.** Only on a hit does the roll build the item's
+  parameters through `CreateDefaultParams`, and then it places the item by a
+  direct call to the script ForgePact hooks as `LootGroundCreate`, with six
+  arguments: the roll's position, the item type, those parameters, a
+  constant, and the roll's own fourth argument (undefined live), handed on
+  unread. `CreateDefaultParams` is called nowhere else inside the roll, so a
+  call to it while the roll is in progress is a hit. That fits session 1's
+  measured `default-params` row: no call inside the roll over 374 misses, 14
+  and 49 calls inside `DropItem` on ordinary drops. Because the placement is a
+  direct call, the table-only `LootGroundCreate` hook the player build keeps
+  for item inspection cannot see it. `CreateDefaultParams` can be watched
+  instead: session 1 measured its own inline detour counting the game's
+  direct calls, and nothing in the player build holds it at startup, so a
+  hook installed by name on it is a first install and gets the detour.
+- **Where the list lives.** The roll reads its unique list through a
+  reference-typed scope whose variable slot is resolved at runtime. It is not
+  an instance variable of `Loot_Manager_obj`, which agrees with session 1's
+  measured `variable_instance_exists` false on that instance; which scope it
+  is was not resolved. The pick around it: a random index into the list, an
+  entry that must be three numbers (type, sub and b), the definition read
+  through `GetUniqueRepoStruct`, and a re-pick whenever that definition is
+  flagged hidden or its rarity is neither Angelic (7) nor Unholy (10) - the
+  same two filters ForgePact's own pool applies. Roughly one entry in eight
+  passes, which is the eight-or-so definition reads per roll session 1
+  measured. The die is then rolled against the picked definition's rate, a
+  value the definition supplies scaled by one global read when the roll
+  starts (`droprate.base` is the plausible reading; neither part is
+  resolved), and the roll hits when the die lands below the chance.
+- **What the chance is made of.** Unresolved. The caller, `DropItem`,
+  computes it, and that caller's body did not finish decompiling within the
+  planning session. The owner put the chance out of scope for #74, and the
+  feature does not need it: it reacts to a hit, whatever produced it.
+
+What #74 builds on this reading: the player build holds a roll-in-progress
+state over each of the game's roll calls (ForgePact's extra rolls included),
+hooks `CreateDefaultParams` by name, and counts a call to it seen while that
+state is raised as a hit. On each hit it rolls the share once - k / (N + k),
+k the number of switches on and N the size of ForgePact's validated pool (49
+live on 2026-09-23) - and on success drops one of the enabled items through
+`SpawnSignatureItem` at the roll's own position, with the dying monster as
+the calling instance, while the game's own item lands as well. Neither hook is
+installed until a switch is turned on, and with both switches off a hit
+passes straight through. The **Angelic / Unholy Drops** slider's pool no
+longer carries either item.
+
+### Live procedure 2
+
+Session 2 runs the research build (`plugin_build\BloodPactPlugin_rel.dll`,
+built with the literal `dev`) through the drive tool, with the owner doing the
+killing, on session 1's character (save slot 14, Sorak, White Mage). The
+step-by-step procedure (the exact commands, the hygiene, the five short kill
+batches) is `### Live procedure 1` in the workorder's context file,
+`.claude/workorders/forgepact-74-signature-angelic-roll-context.md`, which
+stays on the owner's machine; it is this document's second live procedure,
+hence the heading here. Its hygiene adds one rule to session 1's: no
+`angelicprobe on`, because that command's `default-params` row would take the
+detour this feature needs on `CreateDefaultParams`.
+
+A natural hit is not expected in one session (a chance in the low thousands
+against rates in the millions), so the research build carries levers under
+`angelicprobe hit`: `chance <n>` overwrites the roll's chance argument when it
+arrives as a real number, `rate <n>` sets `droprate.base` on every validated
+pool entry's definition (remembered and restored), `share <pct>` forces the
+share so dispatch shows in a few kills, `off` restores everything, and
+`status` reports each lever. Any lever turning on installs the detection, so
+hits are counted with both switches off. None of this is in the player build.
+
+Each check below is recorded as pass, fail or not-observed, with the replies
+quoted in the session record. `force-hit` and `list-scope` are research
+checks about the game; the others check behaviour that ships.
+
+- **`dll-hash`** - the installed DLL's SHA-256 equals the one recorded when
+  the research build was made. Pass: the session measures this build. Fail:
+  another build is installed, and nothing after it counts.
+- **`marker`** - `angelicprobe hit status` names every lever off and the
+  detection not installed. Pass: the research build, from a clean start. Fail
+  (a player build answers `command unavailable in player build`): the session
+  ends there.
+- **`control`** - `sigdrop status` answers with the force off and every new
+  counter (`gameRolls=`, `gameHits=`, `shareRolls=`, `sigFromGame=`) at zero.
+  Pass: the command channel is alive and the counters start clean. Fail: no
+  counter read later in the session can be trusted.
+- **`force-hit`** (research) - with both switches off and the chance lever
+  set (the rate lever as the fallback), ten kills give at least one
+  `gameHits`. Pass: a lever makes the game's own roll hit, and the detection
+  sees it - the first hit of the game's roll seen live in this research.
+  Not-observed: neither lever produced a hit; that is a statement about the
+  levers as much as the detection, so both levers' replies are recorded, the
+  hit path rests on the harness and the static reading alone, and the two
+  checks that need a hit (`on-headhunter-only`, `on-both`) do not run.
+- **`baseline-off-no-signature`** - with both switches off, no signature item
+  comes from the game's roll: `sigFromGame` stays at zero and no `sigdrop:`
+  line appears, hits or not. Pass: off really is off. Fail: the switch gate
+  leaks, a shipping defect.
+- **`on-headhunter-only`** - Headhunter on, Tyrant's Crown off, share forced
+  to certain: every hit drops one Headhunter beside the game's item and no
+  crown, with one `angelic hit:` line each. Pass: the gate and the dispatch
+  work per item. Fail: a wrong item or a count that does not match the hits,
+  a shipping defect. Not run when `force-hit` is not-observed.
+- **`on-both`** - both switches on: `sigFromGame` grows by the hit count and
+  both items appear. Pass: the even split between two enabled items works.
+  Fail: a shipping defect. Not run when `force-hit` is not-observed.
+- **`pool-without-signature`** - switches and levers off, the slider at one
+  in one: every kill drops an Angelic item, `angeliclist` prints no signature
+  line, and `sigFromGame` does not move. Pass: the slider's pool is the game's
+  real uniques again. Fail: one of the two items is still in ForgePact's own
+  pool.
+- **`sigdrop-still-forces`** - `sigdrop crown` and one kill drop a Tyrant's
+  Crown. Pass: the test command is unchanged. Fail: a regression in it.
+- **`list-scope`** (research) - `angelicprobe list` says which scope answered
+  for the unique list and what it held. This is a result, not a pass
+  condition: a global answer locates the list, an instance answer would
+  contradict session 1, and neither leaves its location unresolved.
+
+### Results
+
+results: not yet run
