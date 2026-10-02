@@ -93,7 +93,7 @@ if you have forged it.
     exactly as rare as it: Headhunter as rare as **Liquor Holster**, Tyrant's
     Crown as rare as the more common of **Lucifer's Crown** and **Mask of the
     Celestial**, the one with the lower drop-rate number (the log names which
-    one when you turn the switch on; in Live 3 it was Mask of the Celestial). Those
+    one when you turn the switch on; in our testing it was Mask of the Celestial). Those
     uniques keep their own chance to drop.
   - When the game's roll lands on the item, the game itself builds it and drops
     it where the monster died: one item per hit, in place of what that roll
@@ -109,23 +109,19 @@ if you have forged it.
     game's Angelic chance. If the plugin cannot find the game's list on your
     game, turning a switch on says so in the log and the roll stays the game's
     own.
-  - Checked in a live session on 2026-10-02 (Live 3), on this release's
-    research build with the game's Angelic chance raised so that hits came
-    quickly: every hit that fell to an added entry became the item, 46 of 46
-    for Headhunter and 11 of 11 for Tyrant's Crown, each built by the game
-    where the monster died, one per hit, and with both switches off every hit
-    stayed the game's own. Not yet watched: a hit at the game's normal Angelic
-    chance, which is about one in several thousand rolls. How often the item
-    drops with the single entry a normal install adds is worked out from that
-    session, where the research build added 200 entries so that hits would
-    fall to it, not measured.
+  - Checked in a live session on 2026-10-02, with the game's Angelic chance
+    raised so that hits came quickly and the item given many entries instead
+    of one so that hits would fall to it: every hit that fell to the item
+    became the item, 48 of 48 for Headhunter and 11 of 11 for Tyrant's Crown,
+    each built by the game where the monster died, one per hit, and with both
+    switches off every hit stayed the game's own. Not yet watched: a hit at the
+    game's normal Angelic chance, which is about one in several thousand rolls.
+    How often the item drops with the single entry a normal install adds is
+    worked out from that session, not measured.
 - **The Angelic / Unholy Drops slider's pool is the game's real Angelic and
   Unholy uniques again**, with no signature items in it.
 - `sigdrop crown|belt|off|status` is still a test command that makes every kill
-  drop the named item. `sigdrop status` now also counts the game's Angelic
-  rolls and hits, the entries added to its list, the hits that fell to a
-  signature item and the signature items the game built, and shows the list
-  it found.
+  drop the named item.
 
 ## How to update
 

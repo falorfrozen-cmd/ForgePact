@@ -2568,4 +2568,79 @@ record says so.
 
 ### Results
 
-Not yet run.
+**Measured (Live 4, 2026-10-02, research dll `4b5994c3…`, built with
+`build.bat dev` from ForgePact `ed59983`).** Live 4 ran Live procedure 6
+once, on the frozen `plugin_build\live4\` copy, with save slot 14 (Sorak)
+selected on the back end, in town, with no kills and no zone change. All six
+checks passed. The session record is
+`forgepact-74-list-injection-live2-live-3.md`, kept with the hub's workorder.
+
+- **`dll-hash`: pass.** The lease's DLL SHA-256 was
+  `4b5994c3ae7f313c47f82ac40bf8a8d4a0662d71aba1fcbf4f290dd7e6868ee7`, the
+  `live4` copy, not Live 3's `e0749368…`.
+- **`marker`: pass.** `angelicprobe hit status` answered
+  `angelicprobe hit: chance off | rate off | show=0 | detection not installed (CreateDefaultParams not hooked, DropItemAngelicChance not hooked, GetUniqueRepoStruct not hooked, CreateItemNew hooked) | gameRolls=0 gameHits=0 cdpCalls=0 detect=off`.
+- **`control`: pass.** `sigdrop status` read the fresh-session line exactly,
+  `sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 refused=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`.
+- **`yyerror-control`: pass (T0, H0).** More than 35 s after the character
+  loaded, `bin\YYToolkit.log`, written this launch, carried
+  `[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS` and the summary
+  `[hs] YYError summary: total=1 distinct=1/32 reports=1 report_failures=0 ... top=report#1 x1`,
+  with one full-report header: T0 `total=1`, H0 = 1. That report's error
+  text is `Unable to find any instance for object index '257102' name '<undefined>'`,
+  raised while the main menu was being navigated, before the character was
+  played and before any command, so it is not the scan's. The previous
+  session's log, copied before launch, holds the same single report and
+  `total=1`.
+- **`scan-clean`: pass (T1, H1).** `angelicprobe inject auto`, the only
+  command between the two reads, answered
+  `angelic pool: 47 candidates, 11 rejected`,
+  `angelicprobe inject auto: list lootListUnique[5]:380 stand-ins Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1)`
+  and
+  `angelicprobe inject: mode=inject copies=1 list=lootListUnique[5]:380 standins=Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1) injected=0 ourHits=0 untyped=0 standinPicks=0 heldMiss=0 typeAgree=0 typeDisagree=0 built=0 removed=0 anomalies=0`.
+  Read 40 s later, the log was unchanged and its newest summary line was
+  still the `total=1 ... top=report#1 x1` one: T1 `total=1` = T0, H1 = 1 =
+  H0. On Live 3's DLL the same command had taken the total from 1 to 19.
+- **`list-refusals`: pass (T2, H2).** `angelicprobe list` printed
+  `angelicprobe list: candidate lootListUnique array_length=6 at=5 ds_list_size=380 first=[0,0,1][0,0,15][0,0,29] standins=Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1)`
+  and `angelicprobe list: candidates=1 best=lootListUnique[5]:380`, so the
+  gate still accepts the real list, a ref. Its refusals, by kind and step:
+  15 `kind=array, never a handle`, 3 `kind=string, never a handle`, and no
+  `id unreadable` line of either kind (Live 2 had the same 15 and 3, every
+  one `id unreadable`). Of the other kinds it printed one
+  `[5] is not a ds_list (kind=real, ds_exists false)` (`questlogId`) and two
+  `kind=ref, ds_exists false` (`buffSprite`, `monsterHandleArray`); the rest
+  were refused for their length (`has <L> elements, none at [5]`) or their
+  sub-list's size (`[5] has <s> entries, fewer than 10`). It also printed the
+  two scopes Session 2 asked (no `lootListUnique` global, none on
+  `Loot_Manager_obj`), `Controller_obj instances=1 names=221` (the first
+  instance a ref), and the other variables by kind, `bool=24 int64=3 real=93 ref=18 string=7 struct=8 undefined=3`.
+  Read 40 s later, the log was unchanged: T2 `total=1` = T1, H2 = 1 = H1.
+- **The log copies.** The previous session's `bin\YYToolkit.log`, copied
+  before launch:
+  `C:\Users\stann\AppData\Local\Temp\claude\C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-workorder-test-optimization-2395e1\5706ebd7-4ede-4811-8542-154d2cef9c96\scratchpad\YYToolkit.prev.log`.
+  This session's, copied after the game stopped:
+  `C:\Users\stann\AppData\Local\Temp\claude\C--Users-stann-Projects-hero-siege-offline-toolkit--claude-worktrees-workorder-test-optimization-2395e1\5706ebd7-4ede-4811-8542-154d2cef9c96\scratchpad\YYToolkit.live3.log`
+  (one full report, the `Unable to find any instance` one above, and its
+  last line the `total=1` summary). Neither copy is tracked. No new report
+  appeared during the session, so there is no new error text to record.
+- **Teardown.** The game stopped normally, the save inspection after exit
+  showed only `shop.ini` changed, the session's own backup was restored
+  (nothing changed after the restore), and the lease was released with no
+  restore pending.
+
+**What Live 4 settles, and what it does not.** With the kind gate refusing
+the 15 array and 3 string elements before converting them, two scans (`inject
+auto`, then `angelicprobe list`) added nothing to the runner's total, where
+each scan had added 18 on the earlier DLLs (Live 3, 1 to 19 over one scan;
+Live 2, 1 to 37 over two). So the research scan's numeric conversions of
+those elements are measured as the cause of Live 2's and Live 3's rise, and
+the fix as what removed it. Live 4 refused arrays and strings alike, so it
+cannot split the 18 between them: the arrays' part has its measured message
+(`REAL argument incorrect type array`, Live 3), the strings' part is still
+the arithmetic fit, and that a string conversion raises is still a source
+reading, its error text not captured. Not observed: a struct or a null on
+the scan (the scan reads only array variables, and no `kind=struct` or
+`kind=null` element was met), and whether a bool or ptr element would
+raise (none was printed). The player build's own calls of the gate hand it
+only `lootListUnique[5]`, a ref, which Live 4 shows is still accepted.

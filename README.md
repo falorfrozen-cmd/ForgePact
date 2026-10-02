@@ -280,13 +280,18 @@ one from `sigdrop`.
 
 Verified in a live session (Live 3, 2026-10-02) on the research build, with the roll's chance
 raised so that hits came quickly and 200 entries added per roll so that they fell to the item:
-46 of 46 hits that fell to Headhunter's entry and 11 of 11 that fell to Tyrant's Crown's were built
+48 of 48 hits that fell to Headhunter's entry (46 with Headhunter alone on, 2 more with both on)
+and 11 of 11 that fell to Tyrant's Crown's were built
 by the game as that item, one per hit (`ourHits=` and `built=` grew together, `refused=0`), and
 with both switches off every hit stayed the game's own and the list was left as it was. Not
 observed: a hit at the game's natural chance (about one in several thousand rolls), and the share
 the player build's single entry gets, which is arithmetic on that session, not a measurement.
+That session ran the build from before the list check's kind gate (the check now refuses, before
+converting it, a value that can never be a list handle). The player path hands the check only
+the game's list, a ref, and a later live session (Live 4, 2026-10-02) on the gated build measured
+that the list is still accepted and that the research scan no longer raises runner errors.
 Record: [`docs/angelic-roll-hook-research.md`](docs/angelic-roll-hook-research.md) § "Session 5:
-the id on the built item (issue #74)".
+the id on the built item (issue #74)" and § "Session 6: the scan and the runner errors (issue #74)".
 
 ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
 both switches off (the default), no entry is added, neither item drops, forged or not, and the
