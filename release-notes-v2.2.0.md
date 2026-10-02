@@ -3,9 +3,10 @@
 Release date: 2026-10-09
 
 **Headhunter** and **Tyrant's Crown** now drop the way the game's own Angelic
-items do: from the game's Angelic roll, and only while their switch is on. The
-**Angelic / Unholy Drops** slider no longer drops them, and with both switches
-off, the default, neither one ever drops.
+items do: from the game's Angelic roll, and only while that item's mechanic is
+on. The **Angelic / Unholy Drops** slider no longer drops them. On a default
+install, where neither is switched on and neither has been forged, neither one
+ever drops.
 
 ## Changed
 
@@ -20,9 +21,15 @@ off, the default, neither one ever drops.
     50 with one switch on and 2 in 51 with both. On a success, the item lands
     beside the game's own item, where the monster died. With both switches on,
     each success is one or the other at even odds.
-  - Only while its switch is on (**Mods → Items → Headhunter** or **Tyrant's
-    Crown**). Both are off by default, so a default install drops neither, and
-    the game's roll is left as it is.
+  - Only while that item's mechanic is on. Its switch (**Mods → Items →
+    Headhunter** or **Tyrant's Crown**) turns it on. As in earlier versions,
+    so does forging the item in the Custom Forge: ForgePact turns the mechanic
+    on at every launch while a forged Headhunter or Tyrant's Crown is in your
+    list, even with its switch off. In that case the item can drop from the
+    game's Angelic roll too. Turning the switch on and then off stops it until
+    the next launch.
+  - Both switches are off by default, so an install that has forged neither
+    item drops neither, and the game's roll is left as it is.
   - ForgePact adds no chance of its own for these two and does not change the
     game's Angelic chance.
 - **The Angelic / Unholy Drops slider's pool is the game's 49 real Angelic and
