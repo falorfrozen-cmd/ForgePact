@@ -36990,6 +36990,10 @@ static constexpr double kSmaSharedStackA1 = 9.0, kSmaSharedStackA2 = 2.0;
 // (wholeStackMerge), 8 in the Socketable tab's merge (socketMergeRoute, the
 // value the game's own hand move there passed too, Live 1e).
 static constexpr double kSmaStackA5 = 0.0, kSmaSocketStackA5 = 8.0;
+// The cap the core's model reads from that argument (ForgePact #131: 999
+// without flag 8, 999999 with it) is the one for the value passed here.
+static_assert((int)kSmaStackA5 == ForgePact::StashMoveAllMod::kPageStackFlags, "the pages' sixth argument");
+static_assert((int)kSmaSocketStackA5 == ForgePact::StashMoveAllMod::kSocketStackFlags, "the Socketable tab's sixth argument");
 static constexpr int kSmaPersonalTab = 0;
 
 // One by-name call, self and other passed apart, keeping the routine's
@@ -37140,19 +37144,22 @@ static bool SmaResolve(const SmaScene& s, const std::string& key, RValue& item)
     return ApItemFromFingerprint(s.bag, RValue(key), item);
 }
 
-// The shown tab's stack of one identity: the sum of `o` over its items of
-// that class and base id. -1 when the array is unreadable or any of its items
-// could not be identified, since a missed item may be of that identity.
-static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+// The shown tab's stacks of one identity (ForgePact #131): the count (`o`) of
+// each of its items of that class and base id, in the array's order, each
+// item once. Unread as a whole when the array is unreadable or any of its
+// items could not be identified, since a missed item may be of that identity.
+// The Materials tab holds several stacks of one kind, 999 each at most, so
+// the core decides from each stack, not from their sum.
+static ForgePact::StashMoveStacks SmaStacks(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
 {
+    ForgePact::StashMoveStacks out;
     try {
-        if (cells.m_Kind != VALUE_ARRAY) return -1;
+        if (cells.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveStacks();
         std::vector<std::string> seen;
-        int64_t sum = 0;
         const int n = CmLength(cells);
         for (int i = 0; i < n; ++i) {
             const RValue line = CmAt(cells, i);
-            if (line.m_Kind != VALUE_ARRAY) return -1;
+            if (line.m_Kind != VALUE_ARRAY) return ForgePact::StashMoveStacks();
             const int m = CmLength(line);
             for (int j = 0; j < m; ++j) {
                 RValue fp, item;
@@ -37163,15 +37170,23 @@ static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_
                 auto known = s.ids.find(key);
                 if (known != s.ids.end() && (known->second.first != cls || known->second.second != base)) continue;
                 int64_t c = -1, b = -1, o = -1;
-                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return -1;
+                if (!SmaResolve(s, key, item) || !SmaReadIdentity(item, c, b, o)) return ForgePact::StashMoveStacks();
                 s.ids[key] = { c, b };
                 if (c != cls || b != base) continue;
-                if (o < 0) return -1;
-                sum += o;
+                if (o < 0) return ForgePact::StashMoveStacks();
+                out.counts.push_back(o);
             }
         }
-        return sum;
-    } catch (...) { return -1; }
+        out.read = true;
+        return out;
+    } catch (...) { return ForgePact::StashMoveStacks(); }
+}
+
+// The same identity's sum on the shown tab, which a merge is confirmed by: -1
+// when the stacks did not read.
+static int64_t SmaStackSum(SmaScene& s, const RValue& cells, int64_t cls, int64_t base)
+{
+    return ForgePact::StashMoveAllMod::StackSum(SmaStacks(s, cells, cls, base));
 }
 
 // The Socketable tab, read as what it is (socketMergeRoute): the set of
@@ -37260,7 +37275,7 @@ static bool SmaReadScene(SmaScene& s, std::string& why)
     if (!CmArrayVar(s.bagNode, "nodeGrid", grid)) { why = "the bag's cells could not be read"; return false; }
     const bool shownRead = SmaShownArray(s, s.view.stashTab, shown);
     const bool socket = ForgePact::StashMoveAllMod::TabOf(s.view.stashTab) == ForgePact::StashMoveTab::Socketable;
-    std::map<std::pair<int64_t, int64_t>, int64_t> stacks;   // identity -> the shown tab's sum
+    std::map<std::pair<int64_t, int64_t>, ForgePact::StashMoveStacks> stacks;   // identity -> the shown tab's stacks
     const int rows = CmLength(grid);
     for (int y = 0; y < rows; ++y) {
         const RValue line = CmAt(grid, y);
@@ -37282,17 +37297,19 @@ static bool SmaReadScene(SmaScene& s, std::string& why)
                 const auto id = std::make_pair(cls, base);
                 if (!stacks.count(id)) {
                     if (socket) {
-                        // The Socketable tab: the node holding its identity, if any.
+                        // The Socketable tab: the one node holding its identity, if any.
                         RValue node, cells;
                         const int held = SmaSocketNode(s, cls, base, node, cells);
-                        stacks[id] = held == 1 ? SmaStackSum(s, cells, cls, base) : held;
+                        ForgePact::StashMoveStacks none;
+                        none.read = held == 0;
+                        stacks[id] = held == 1 ? SmaStacks(s, cells, cls, base) : none;
                     } else {
-                        stacks[id] = shownRead ? SmaStackSum(s, shown, cls, base) : -1;
+                        stacks[id] = shownRead ? SmaStacks(s, shown, cls, base) : ForgePact::StashMoveStacks();
                     }
                 }
-                // A count that did not read is never merged: the merge passes it.
-                c.destinationStackRead = stacks[id] >= 0 && (count >= 1 || stacks[id] == 0);
-                c.destinationHasStack = stacks[id] > 0;
+                // A count that did not read is never moved (the core's rule):
+                // both routes pass it.
+                c.destinationStacks = stacks[id];
             }
             s.view.cells.push_back(c);
         }
@@ -37331,25 +37348,33 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     const bool tabStill = SmaTab(s.window, "stashTabSelected") == plan.stashTab;
     const int held = tabStill && socket ? SmaSocketNode(s, cls, base, node, arr) : -1;
     const bool arrRead = tabStill && (socket ? held >= 0 : SmaShownArray(s, plan.stashTab, arr));
-    // The route again, here: a stackable's stack sum re-read on the shown
-    // array just before its call, whatever the plan said, since an earlier
-    // item of this run may have made the stack it now joins (round-2 review:
-    // planned as a cell, the second item of such an identity merged one unit
-    // and stayed in the bag). Above 0 merges the whole count, 0 places, -1 is
-    // a skip that calls nothing.
+    // The route again, here: a stackable's stacks re-read on the shown array
+    // just before its call, whatever the plan said, since an earlier item of
+    // this run may have made or filled the stack it now meets (round-2
+    // review: planned as a cell, the second item of such an identity merged
+    // one unit and stayed in the bag). The core decides per stack (ForgePact
+    // #131): a stack with room for the whole count merges, none with room
+    // places a new stack, stacks that did not read are a skip that calls
+    // nothing. `before` is their sum, which a merge is confirmed by.
     ForgePact::StashMoveItem use = it;
+    ForgePact::StashMoveStacks stacksNow;
     int64_t before = -1;
     if (it.cell.stackable) {
         use.cell.count = count;
-        before = arrRead ? (held == 0 ? 0 : SmaStackSum(s, arr, cls, base)) : -1;
-        use = Mod::RouteAtUse(use, plan.stashTab, before);
+        if (arrRead && held == 0) stacksNow.read = true;
+        else if (arrRead) stacksNow = SmaStacks(s, arr, cls, base);
+        before = Mod::StackSum(stacksNow);
+        use = Mod::RouteAtUse(use, plan.stashTab, stacksNow);
     }
     const bool cellRoute = use.route == ForgePact::StashMoveRoute::Cell;
     int room = -1;
     // No placement on the Socketable tab has a measured array (socketRoute
-    // new: not-observed), so its room is never read as there.
+    // new: not-observed), so its room is never read as there. The stack
+    // route's room is a stack with room for the whole count, not any stack:
+    // a full one answers false and moves nothing.
     if (arrRead && cellRoute && !socket) room = Mod::Room(SmaGrid(arr), use.width, use.height);
-    else if (arrRead && use.route == ForgePact::StashMoveRoute::Stack) room = before > 0 ? 1 : (before == 0 ? 0 : -1);
+    else if (arrRead && use.route == ForgePact::StashMoveRoute::Stack)
+        room = Mod::StackRoom(stacksNow, use.cell.count, Mod::CapFor(plan.stashTab));
     ForgePact::StashMoveResult skip;
     if (!Mod::MayCall(use, room, skip)) return skip;
 
@@ -37365,20 +37390,32 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     };
     // A page's sequence opens with ValidateItem, self = other = the bag grid
     // (gridMoveRoute); the Materials and Socketable tabs' recorded routes do not.
+    // A merge the item takes (the stack route, or a true answer on the cell
+    // route): decided on its identity's sum.
+    bool merge = false;
     TalentAllocCall c = TalentAllocCall::Ran;
     if (!materials && !socket) c = SmaCall(kSmaValidate, s.bag, s.bag, { item }, res);
     if (c != TalentAllocCall::Ran) notRun(kSmaValidate, c);
     else if (cellRoute) {
         // StashAddToStack answers false for an item with no stack of its
-        // identity (every recorded placement), then GridAddItem places it on
-        // the shown tab's array and nowhere else.
-        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue(1.0), RValue(0.0) }, res);
+        // identity that has room for it (every recorded placement), then
+        // GridAddItem places it on the shown tab's array and nowhere else. A
+        // stackable passes its whole count, the value the measured merge
+        // passes (ForgePact #131): were the game to merge after all, it takes
+        // the whole item, never one unit of it; a non-stackable keeps the
+        // measured placement shape.
+        c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item,
+                                                    RValue(use.cell.stackable ? (double)count : 1.0), RValue(kSmaStackA5) }, res);
         if (c != TalentAllocCall::Ran) notRun(kSmaAddToStack, c);
         else if (res.m_Kind == VALUE_BOOL && res.ToBoolean()) {
-            // Merged where the plan saw no stack: nothing was placed, and
-            // the re-read below cannot confirm a cell.
+            // It joined a stack the model read as without room for it:
+            // decided as a merge by the sum below. A non-stackable cannot
+            // merge, so its true answer stays on the cell route, where
+            // nothing was placed and the re-read cannot confirm it.
             r.answered = r.accepted = true;
-            r.answer = "StashAddToStack answered true (merged, not placed)";
+            merge = use.cell.stackable;
+            r.answer = merge ? "true (StashAddToStack joined it to a stack of its kind)"
+                             : "StashAddToStack answered true for an item that does not stack";
         } else {
             c = SmaCall(kSmaPlace, s.bag, s.bag, { arr, item, RValue(0.0), RValue() }, res);
             if (c != TalentAllocCall::Ran) notRun(kSmaPlace, c);
@@ -37422,10 +37459,9 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
         }
     } else {
         // A merge: the item's whole count (wholeStackMerge; one unit is the
-        // one-unit shape, stackMoveRoute), then the source clear only once
-        // the shown tab's sum rose by exactly that count. On the Socketable
-        // tab the array is the node's own and the sixth argument 8
-        // (socketMergeRoute), and the sum is that node's.
+        // one-unit shape, stackMoveRoute) into a stack the core read as with
+        // room for it. On the Socketable tab the array is the node's own and
+        // the sixth argument 8 (socketMergeRoute), and the sum is that node's.
         r.stackBefore = before;
         c = SmaCall(kSmaAddToStack, s.bag, s.bag, { arr, RValue(a1), RValue(a2), item, RValue((double)count),
                                                     RValue(socket ? kSmaSocketStackA5 : kSmaStackA5) }, res);
@@ -37434,12 +37470,22 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
             r.answered = true;
             r.accepted = res.m_Kind == VALUE_BOOL && res.ToBoolean();
             r.answer = r.accepted ? "true" : "StashAddToStack answered " + Describe(res);
-            RValue now;
-            const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;
-            if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
-                SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+            merge = true;
         }
     }
+    if (merge) {
+        // The source clear only once the shown tab's sum rose by exactly the
+        // item's count; the core decides it as a merge (AsMerge on the cell
+        // route), so a unit taken from a larger stack is never a move.
+        r.stackBefore = before;
+        RValue now;
+        const int64_t after = SmaReread(s, plan.stashTab, node, now) ? SmaStackSum(s, now, cls, base) : -1;
+        if (r.accepted && before >= 0 && after - before == count && SmaBagCellHolds(s, it.cell.x, it.cell.y, key, &cell) == 1)
+            SmaCall(kSmaClear, s.bag, s.bag, { cell, RValue() }, res);
+        if (cellRoute) use = Mod::AsMerge(use);
+    }
+    // What the item's outcome is read as: a placement, or a merge.
+    const bool placing = cellRoute && !merge;
 
     // The re-reads the core decides on: the tab on show, its own array and
     // the bag cell - nothing else.
@@ -37448,7 +37494,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     RValue now;
     const bool nowRead = r.shownTabChanged == 0 && SmaReread(s, plan.stashTab, node, now);
     r.sourceHasKey = SmaBagCellHolds(s, it.cell.x, it.cell.y, key);
-    if (cellRoute) {
+    if (placing) {
         if (!nowRead) r.destinationHasKey = -1;
         else if (r.accepted && r.destinationX >= 0) r.destinationHasKey = SmaAnswerCellHolds(now, r.destinationX, r.destinationY, key, materials);
         else r.destinationHasKey = CmCellsHold(now, key);
@@ -37460,7 +37506,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
     // The undo: a placed item whose bag cell did not clear is taken back out
     // of the shown tab (GridRemoveItem, the measured shape), and the owner
     // step reversed if it ran. Not measured live (Known Limitations).
-    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && nowRead
+    if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing && nowRead
         && r.sourceHasKey == 1 && CmCellsHold(now, key) == 1) {
         SmaCall(kSmaRemove, s.sg, s.sg, { now, RValue(key) }, res);
         if (ownerRan) SmaCall(kSmaOwner, s.sg, s.bag, { RValue(kSmaStashOwner), RValue(kSmaCharacterOwner), RValue(key) }, res);
@@ -37468,7 +37514,7 @@ static ForgePact::StashMoveResult SmaMoveOne(SmaScene& s, const ForgePact::Stash
         const int left = SmaShownArray(s, plan.stashTab, after) ? CmCellsHold(after, key) : -1;
         note = "undo " + key + ": taken back out of the stash tab by GridRemoveItem"
             + std::string(left == 0 ? "" : " - NOT confirmed: the stash tab still reads it");
-    } else if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && cellRoute && r.ownerStep == 1
+    } else if (out.outcome == ForgePact::StashMoveOutcome::Unconfirmed && placing && r.ownerStep == 1
                && r.sourceHasKey == 0 && r.destinationHasKey == 1) {
         // The owner step did not take after the bag cell was cleared. Taking
         // the item back out of the stash tab now would leave it in no grid at
@@ -37644,7 +37690,13 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   name, with self = other = the UI_Stash_obj window on show (buttonOwner:
 //   the stash's own close destroys it, Live 1g), placed from the Sort node's
 //   row (found by its uiNodeCallstack InventorySort, never by its text, which
-//   reads Sort Tab: sortActivation), its uiNodeCallstack ForgePactMoveAll,
+//   reads Sort Tab: sortActivation) - in the column of the bag's Extra tab
+//   above the slot (the owner, 2026-10-02): InventoryTab_4's left and right
+//   edges, that tab read by name at each ensure step, with Sort's top and
+//   bottom; the core works the same column out from Sort's box by the tab
+//   grid's measured relation when no such tab reads (the old rule, its right
+//   edge 8 GUI units left of Sort's, only as the last fallback), from the
+//   extents measured on the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
 //   and its activation LEFT UNDEFINED - no UiSetActivationFunc, no script
 //   hooked for it. A node with no activation runs nothing of the game's when
 //   clicked (the static reading of the node's own click event; Live 1g's
@@ -37659,18 +37711,31 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   else instance_destroy on the mod's own node (the window's close has
 //   already dropped it from the window's list); on `stashmoveall 0`, a loss,
 //   and whenever the core says the node should not exist.
-// The one write this block makes is the `text` of the node the mod made. A
-// node that cannot be made is reported once (`stashmoveall: button - ...`)
-// and the mod stays on: F4 and the verbs work without it.
+// - its look (owner scope, 2026-09-30): the Sort button's own, copied onto
+//   the node from the Sort node's variables that carry its sprite and size
+//   and its label's place, font and shadow (Live 5: with those copied the
+//   label is drawn centred like Sort's), read by name at that moment - never
+//   a sprite, font or offset named or sized here - and read back; the core
+//   judges the look and the size on the settled read.
+// The writes this block makes are the `text` and those look variables, on
+// the node the mod made only. A node that cannot be made is reported once
+// (`stashmoveall: button - ...`) and the mod stays on: F4 and the verbs work
+// without it.
 
 static constexpr TalentAllocScript kSmaUiCreateNode{ HeroSiege::Scripts::gml_Script_UiCreateNode,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiCreateNode) };
 static constexpr TalentAllocScript kSmaUiRemoveNode{ HeroSiege::Scripts::gml_Script_UiRemoveNode,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiRemoveNode) };
 static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";
-static constexpr const char* kSmaButtonText = "Move all";
+static constexpr const char* kSmaButtonText = "Move All";
 static constexpr const char* kSmaSortCallstack = "InventorySort";   // sortActivation (Live 1f and 1g)
-static constexpr double kSmaButtonGap = 8.0;                         // GUI units between the node and Sort
+static constexpr double kSmaButtonGap = 8.0;                         // the old rule's GUI units between the node and Sort
+// buttonTarget: tab (docs/stash-move-research.md § Decision buttonTarget): the
+// target is the column of the bag's page tab above the slot left of Sort,
+// read by its uiNodeCallstack at each ensure step; the core takes the tab
+// grid's column from Sort's box when it does not read.
+static constexpr ForgePact::StashMoveButtonRef kSmaButtonRoute = ForgePact::StashMoveButtonRef::Tab;
+static constexpr const char* kSmaTabCallstack = "InventoryTab_4";    // the 4th of Main/Extra x4, above the slot (toolkit #147)
 static constexpr double kSmaMbLeft = 1.0;                            // mb_left
 
 static RValue g_SmaButton;               // the node the mod made, while it holds one
@@ -37727,40 +37792,61 @@ static void SmaButtonRemove()
     SmaButtonForget();
 }
 
-// Make the node beside Sort; a refusal is reported once by the core's line.
-static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
+// A node's bbox, read by name as menulayout reads it (NaN a side that did not).
+static ForgePact::StashMoveBox SmaBox(const RValue& inst)
+{
+    ForgePact::StashMoveBox b;
+    b.left = MenuLayoutRead(inst, "bbox_left");
+    b.top = MenuLayoutRead(inst, "bbox_top");
+    b.right = MenuLayoutRead(inst, "bbox_right");
+    b.bottom = MenuLayoutRead(inst, "bbox_bottom");
+    return b;
+}
+
+// The bag's page tab above the slot left of Sort, read now, by name: the
+// bbox of the first visible UI_Button_Inventory_Tab_obj whose uiNodeCallstack
+// is kSmaTabCallstack. Unread (every side NaN) when none is listed, none of
+// those listed is visible, or every read threw; the core then takes the tab
+// grid's column from Sort's box. Read at each ensure step that uses it,
+// never kept across steps or opens.
+static ForgePact::StashMoveBox SmaTabBox()
+{
+    for (const RValue& h : TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Button_Inventory_Tab_obj)) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("uiNodeCallstack") });
+            if (v.m_Kind != VALUE_STRING || v.ToString() != kSmaTabCallstack) continue;
+            if (!g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("visible") }).ToBoolean()) continue;
+            return SmaBox(h);
+        } catch (...) {}
+    }
+    return ForgePact::StashMoveBox();
+}
+
+// Make the node at x, y under the stash window, labelled; false with the
+// reason when it could not be. UiCreateNode(x, y, object, activation,
+// callstack name): the activation undefined, so a click on the node runs
+// nothing of the game's. Then the label: the one write, on the mod's own
+// node, read back. Without it the node would be a blank button, so it is
+// taken away again.
+static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, double y, std::string& why)
 {
     auto& mod = ForgePact::StashMoveAllMod::Instance();
-    auto refuse = [&](const std::string& why) {
-        const std::string line = mod.ButtonRefused(why);
-        if (!line.empty()) Out(line);
-    };
-    const double sx = MenuLayoutRead(sort, "x"), sy = MenuLayoutRead(sort, "y");
-    const double sw = MenuLayoutRead(sort, "bbox_right") - MenuLayoutRead(sort, "bbox_left");
-    if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sw) || sw <= 0) {
-        refuse("the Sort button's x, y or bbox did not read; nothing was called");
-        return;
-    }
     double objIdx = -1;
     RValue object;
     try { object = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Button_Small_obj))) }); }
     catch (...) {}
-    if (!ApNumber(object, objIdx) || objIdx < 0) { refuse("asset_get_index found no UI_Button_Small_obj; nothing was called"); return; }
-    // UiCreateNode(x, y, object, activation, callstack name): the activation
-    // undefined, so a click on the node runs nothing of the game's.
+    if (!ApNumber(object, objIdx) || objIdx < 0) { why = "asset_get_index found no UI_Button_Small_obj; nothing was called"; return false; }
     RValue node;
     const TalentAllocCall c = SmaCall(kSmaUiCreateNode, stash, stash,
-        { RValue(sx - sw - kSmaButtonGap), RValue(sy), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
+        { RValue(x), RValue(y), object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);
     if (c != TalentAllocCall::Ran || !SmaButtonIsOurs(node)) {
-        refuse(c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c));
-        return;
+        why = c == TalentAllocCall::Ran ? "UiCreateNode answered " + Describe(node) : TalentAllocCallText(kSmaUiCreateNode, c);
+        return false;
     }
     g_SmaButton = node;
     g_SmaButtonOwner = window;
     g_SmaButtonHeld = true;
     mod.NoteButtonHeld(true);
-    // The label: the one write, on the mod's own node, read back. Without it
-    // the node would be a blank button, so it is taken away again.
     bool labelled = false;
     try {
         g_Yytk->CallBuiltin("variable_instance_set", { node, RValue("text"), RValue(std::string(kSmaButtonText)) });
@@ -37769,8 +37855,239 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
     } catch (...) { labelled = false; }
     if (!labelled) {
         SmaButtonRemove();
-        refuse("its label could not be set, so it was taken away again");
+        why = "its label could not be set, so it was taken away again";
+        return false;
     }
+    return true;
+}
+
+// Sort's look, the variables the game gives the Sort node its sprite and
+// size by (docs/stash-move-research.md § Static reading 5), then the 13
+// members Live 5's trial copy wrote when the node's label was drawn centred
+// like Sort's (§ Decision buttonLabel): its font, shadow, label offsets, the
+// box the game keeps beside the sprite and the navigation flags. Read off the
+// Sort node by name each time, so a game patch that restyles Sort restyles
+// the button too.
+static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", "textFont", "dropShadow",
+                                                "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY",
+                                                "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev",
+                                                "naviRight", "naviRightPrev" };
+
+// How each of those is written, entry for entry: as read, as Live 5 wrote
+// them (navBboxX and createX held Sort's own position there and the label
+// still centred in the node's box), or the sprite's scale by the target's
+// size over Sort's on one axis, as Live 4 measured.
+using SmaLookWrite = ForgePact::StashMoveLookWrite;
+static constexpr SmaLookWrite kSmaLookWrites[] = { SmaLookWrite::AsRead, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead };
+static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / sizeof(kSmaLookWrites[0]),
+              "every look variable has its write");
+
+// What the writes need: the target's size over Sort's on each axis (the
+// core's ButtonScale).
+struct SmaLookFrame {
+    double sx = 1, sy = 1;
+};
+
+// A handle's type words that name an asset (a handle prints "ref <type> <name
+// or number>", measured: `ref room Main_Menu_rm`, `ref ds_map 1049`, `ref
+// instance 263555`). An instance, a data structure or any other type is a
+// reference: the look copy and the probe's lookcopy never write one.
+static const char* const kSmaProbeAssetTypes[] = {
+    "sprite", "sound", "font", "path", "script", "shader", "timeline", "object", "room", "sequence",
+    "animcurve", "tileset",
+};
+
+enum class SmaProbeKind { Number, Bool, String, Asset, Reference, Struct, Array, Method, Undefined, Other };
+
+// What a value is, read off the value itself: a number, bool or string by its
+// kind; a method or struct by the runtime's own is_method and is_struct; a
+// handle an asset only when its printed type names one. Shared by the look
+// copy and the research probe (dump, diff, lookcopy).
+static SmaProbeKind SmaProbeKindOf(const RValue& v)
+{
+    try {
+        switch (v.m_Kind) {
+        case VALUE_REAL: case VALUE_INT32: case VALUE_INT64: return SmaProbeKind::Number;
+        case VALUE_BOOL:      return SmaProbeKind::Bool;
+        case VALUE_STRING:    return SmaProbeKind::String;
+        case VALUE_ARRAY:     return SmaProbeKind::Array;
+        case VALUE_UNDEFINED: case VALUE_NULL: return SmaProbeKind::Undefined;
+        case VALUE_OBJECT:
+            if (g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) return SmaProbeKind::Method;
+            if (g_Yytk->CallBuiltin("is_struct", { v }).ToBoolean()) return SmaProbeKind::Struct;
+            return SmaProbeKind::Other;
+        case VALUE_REF: {
+            std::istringstream in(v.ToString());
+            std::string ref, type;
+            in >> ref >> type;
+            if (ref != "ref") return SmaProbeKind::Other;
+            for (const char* asset : kSmaProbeAssetTypes) if (type == asset) return SmaProbeKind::Asset;
+            return SmaProbeKind::Reference;
+        }
+        default: return SmaProbeKind::Other;
+        }
+    } catch (...) { return SmaProbeKind::Other; }
+}
+
+// A look member's value in the core's plain terms, by the probe's kinds: a
+// number as read, a bool as 0 or 1, a string by its text, an asset by its
+// index (and its printed name); undefined, and any other kind, as that.
+static ForgePact::StashMoveLookValue SmaLookValue(const RValue& v)
+{
+    using Kind = ForgePact::StashMoveLookKind;
+    ForgePact::StashMoveLookValue out;
+    try {
+        switch (SmaProbeKindOf(v)) {
+        case SmaProbeKind::Number: out.kind = Kind::Number; out.number = v.ToDouble(); break;
+        case SmaProbeKind::Bool:   out.kind = Kind::Bool; out.number = v.ToBoolean() ? 1.0 : 0.0; break;
+        case SmaProbeKind::String: out.kind = Kind::String; out.text = v.ToString(); break;
+        case SmaProbeKind::Asset:
+            out.kind = Kind::Asset;
+            out.text = v.ToString();
+            if (!ApNumber(v, out.number)) out.number = std::numeric_limits<double>::quiet_NaN();
+            break;
+        case SmaProbeKind::Undefined: out.kind = Kind::Undefined; break;
+        default: out.kind = Kind::Other; break;
+        }
+    } catch (...) { out = ForgePact::StashMoveLookValue(); }
+    return out;
+}
+
+// The node's look against Sort's (fix2's round 2: a member's kind never
+// decides whether the copy runs). Every entry of kSmaLookVars is read off the
+// Sort node by name; with `copy`, it is written onto the mod's own node as
+// the core's LookStep says - the value as read whatever its kind, or a scale
+// written scaled - after the label, so a look that does not take still
+// leaves a working button; then it is read back off the node and the core
+// compares it by kind. A member that cannot be read, written or compared, or
+// that throws, costs its own entry in the tally and the loop goes on to the
+// next: the verdict is the core's, once the whole list has been through.
+// Nothing else is written or called.
+static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy, const SmaLookFrame& frame)
+{
+    ForgePact::StashMoveLookTally tally;
+    for (size_t i = 0; i < sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]); ++i) {
+        const char* var = kSmaLookVars[i];
+        ForgePact::StashMoveLookSame same = ForgePact::StashMoveLookSame::Unread;
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
+            const ForgePact::StashMoveLookStep step = ForgePact::StashMoveAllMod::LookStep(SmaLookValue(v),
+                kSmaLookWrites[i], frame.sx, frame.sy);
+            if (copy && step.put != ForgePact::StashMoveLookPut::Nothing)
+                g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
+                    step.put == ForgePact::StashMoveLookPut::AsRead ? v : RValue(step.want.number) });
+            same = ForgePact::StashMoveAllMod::LookCompare(step.want,
+                SmaLookValue(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(var) })));
+        } catch (...) { same = ForgePact::StashMoveLookSame::Unread; }
+        tally.Note(var, same);
+    }
+    return tally;
+}
+
+// The frame for a node made to `target`: the scale the target asks for (1
+// when it has no size to divide).
+static SmaLookFrame SmaButtonLookFrame(const ForgePact::StashMoveBox& sortBox, const ForgePact::StashMoveBox& target)
+{
+    SmaLookFrame f;
+    if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;
+    return f;
+}
+
+// Make the node on its target; a refusal is reported once by the core's
+// line. The target is the column of the Extra tab above the slot, worked out
+// by the core from that tab's bbox and Sort's, both read now (ButtonTarget;
+// the tab grid's column from Sort's alone when the tab does not read, and the
+// old rule's box when neither can be had, each said once), and the node's
+// right edge and vertical centre are put on the
+// target's (the core's TargetOrigin, ForgePact #131: UiCreateNode's x, y are
+// the node's origin, which follows the sprite it wears). The extents are the
+// ones the core measured on a settled node this session, else Sort's own
+// about Sort's x, y, scaled to the target's size, since the node is given
+// Sort's look (the centred box of the target's size when those did not
+// read). The place is not checked here: a box read in the frame the node is
+// made is not known to be its settled box, so SmaButtonCheck does it on
+// later steps.
+static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue& sort)
+{
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    auto refuse = [&](const std::string& why) {
+        const std::string line = mod.ButtonRefused(why);
+        if (!line.empty()) Out(line);
+    };
+    const ForgePact::StashMoveBox sortBox = SmaBox(sort);
+    if (!ForgePact::StashMoveAllMod::BoxReads(sortBox)) {
+        refuse("the Sort button's bbox did not read; nothing was called");
+        return;
+    }
+    const ForgePact::StashMoveBox tabBox = SmaTabBox();
+    ForgePact::StashMoveBox target;
+    const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
+        tabBox, kSmaButtonGap, target);
+    const std::string fallback = mod.NoteButtonRef(ref, tabBox);
+    if (!fallback.empty()) Out(fallback);
+    double x = 0, y = 0;
+    const ForgePact::StashMoveExtents extents = mod.ButtonExtentsFor(sortBox, target, MenuLayoutRead(sort, "x"),
+                                                                     MenuLayoutRead(sort, "y"));
+    if (!ForgePact::StashMoveAllMod::TargetOrigin(target, extents, x, y)) {
+        refuse("the Sort button's bbox did not give an origin; nothing was called");
+        return;
+    }
+    std::string why;
+    if (!SmaButtonMake(stash, window, x, y, why)) { refuse(why); return; }
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sortBox, target)));
+}
+
+// The place check, each ensure step the node is held and wanted (the core's
+// ButtonCheck): what the node reads now - visible, its x, y and bbox - and
+// Sort's bbox and the Extra tab's, with the target the core works out from
+// them this step. The
+// core decides once the box has settled; an off-target node is taken away
+// with UiRemoveNode and made again, once, at the origin its measured extents
+// give - at most two UiCreateNode calls per Create step. One still off after
+// that is kept and said once; it never turns the mod off. While the node is
+// checked its look is read again each step, so the core judges the look on
+// the settled read, not the frame it was written in.
+static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue& sort)
+{
+    if (!g_SmaButtonHeld) return;
+    auto& mod = ForgePact::StashMoveAllMod::Instance();
+    const ForgePact::StashMoveBox sortBox = SmaBox(sort);
+    const ForgePact::StashMoveBox tabBox = SmaTabBox();
+    ForgePact::StashMoveBox target;
+    const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
+        tabBox, kSmaButtonGap, target);
+    // The grid's column or the old rule standing in is said when it first
+    // happens, on whichever step that is, not only at the make.
+    const std::string fallback = mod.NoteButtonRef(ref, tabBox);
+    if (!fallback.empty()) Out(fallback);
+    const double nodeX = MenuLayoutRead(g_SmaButton, "x"), nodeY = MenuLayoutRead(g_SmaButton, "y");
+    if (mod.ButtonLookWanted())
+        mod.NoteButtonLook(SmaButtonLook(sort, false, SmaButtonLookFrame(sortBox, target)));
+    bool visible = false;
+    try { visible = g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue("visible") }).ToBoolean(); }
+    catch (...) { visible = false; }
+    double x = 0, y = 0;
+    std::string line;
+    const ForgePact::StashMoveButtonCheck step = mod.ButtonCheck(visible, sortBox, target, ref,
+        nodeX, nodeY, SmaBox(g_SmaButton), x, y, line);
+    if (!line.empty()) Out(line);
+    if (step != ForgePact::StashMoveButtonCheck::Remake) return;
+    SmaButtonRemove();
+    if (g_SmaButtonHeld) return;   // UiRemoveNode left it: kept, and the core says it off next step
+    std::string why;
+    if (!SmaButtonMake(stash, window, x, y, why)) {
+        const std::string refused = mod.ButtonRefused(why);
+        if (!refused.empty()) Out(refused);
+        return;
+    }
+    mod.NoteButtonMade(true);
+    mod.NoteButtonLook(SmaButtonLook(sort, true, SmaButtonLookFrame(sortBox, target)));
 }
 
 // The ensure step (StashMoveAllTick, at most every tenth frame while the
@@ -37803,7 +38120,7 @@ static void SmaButtonEnsure()
     switch (mod.ButtonStep(stashListed, sortListed, sortVisible, g_SmaButtonHeld)) {
     case ForgePact::StashMoveButtonStep::Create: SmaButtonCreate(stash, window, sort); break;
     case ForgePact::StashMoveButtonStep::Remove: SmaButtonRemove(); break;
-    default: break;
+    default: SmaButtonCheck(stash, window, sort); break;
     }
 }
 
@@ -37859,6 +38176,13 @@ static bool SmaButtonPoll()
 //   probe copy <key> <count>    giveitem's loader order with the template read
 //                               from map 9, so a stash socketable is copied into
 //                               the bag with no person
+//   probe dump <label> id:<n>   (#131, Live 5) one instance's members by name,
+//                               kept under the label
+//   probe diff <a> <b>          two kept dumps compared
+//   probe lookcopy id:<src> missing|changed
+//                               a source node's members written onto the mod's
+//                               own Move all node and read back
+//   probe help                  the usage line
 // Route A's counter (detour_presses) is counted by the craftprobe detour of the
 // bound script's row when its self is the node, and row_calls_self_node by the
 // same detour for the watched row, bound or not (SmaProbeSawCall, with the
@@ -37878,7 +38202,7 @@ static constexpr TalentAllocScript kSmaProbeRemove{ HeroSiege::Scripts::gml_Scri
 static constexpr TalentAllocScript kSmaProbeBind{ HeroSiege::Scripts::gml_Script_UiSetActivationFunc,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiSetActivationFunc) };
 static constexpr const char* kSmaProbeCallstack = "ForgePactMoveAll";
-static constexpr const char* kSmaProbeText = "Move all";
+static constexpr const char* kSmaProbeText = "Move All";
 static constexpr double kSmaProbeGap = 8.0;    // GUI units between the node and Sort
 static constexpr double kSmaProbeMbLeft = 1.0; // mb_left
 
@@ -38264,6 +38588,356 @@ static void SmaProbeCopyCommand(const std::vector<std::string>& tok)
             + std::to_string(inCells) + " for " + made + ", items " + std::to_string(before) + " -> " + std::to_string(after));
 }
 
+// ---- probe dump, diff, lookcopy: the label's members (ForgePact #131, Live 5)
+//
+// docs/stash-move-research.md, § Static reading 6 and § Live procedure 5. The
+// static reading named no member that places a node's label, so these measure
+// it: `dump <label> id:<n>` keeps one instance's members, read by name, under a
+// label; `diff <a> <b>` compares two dumps; `lookcopy id:<src> missing|changed`
+// writes a source node's members onto the mod's own Move all node and reads
+// each back, so one session both finds the members and tries the copy. Their
+// own store and printer rather than restartprobe's RpDumpCapture/RpDumpDiff:
+// those read a shorter builtin list, print an asset handle by its raw kind, and
+// their output is pinned (tests/test_restart_anytime_contract.py).
+
+static constexpr size_t kSmaProbeDumpKeep = 8;         // dumps kept, oldest evicted
+static constexpr size_t kSmaProbeDumpMaxNames = 512;   // instance variables read per dump
+static constexpr size_t kSmaProbeDumpLines = 300;      // member lines diff and lookcopy print
+static constexpr size_t kSmaProbeValueCap = 120;       // characters of a printed value
+static constexpr int kSmaProbeNestDepth = 2;           // levels of a struct or array member expanded
+static constexpr size_t kSmaProbeNestNames = 64;       // names or elements read per struct or array
+static constexpr size_t kSmaProbeNestEntries = 2048;   // expanded entries kept per dump
+
+static const char* const kSmaProbeDumpBuiltins[] = {
+    "id", "object_index", "visible", "sprite_index", "image_index", "image_speed", "image_blend", "image_alpha",
+    "image_xscale", "image_yscale", "image_angle", "depth", "x", "y", "bbox_left", "bbox_top", "bbox_right",
+    "bbox_bottom",
+};
+// What lookcopy never writes: what the node is, where it is and what it does.
+static const char* const kSmaProbeLookCopyNever[] = {
+    "id", "object_index", "x", "y", "xstart", "ystart", "xprevious", "yprevious",
+    "bbox_left", "bbox_top", "bbox_right", "bbox_bottom",
+    "uiNodeCallstack", "activationFunc", "activationArgs", "text", "visible", "enabled",
+};
+struct SmaProbeDump {
+    std::string label;
+    long long id = -1;
+    std::string object;
+    size_t names = 0;          // instance variables read, after the builtins
+    bool truncated = false;
+    size_t nested = 0;         // entries read inside struct and array members
+    size_t nestedCut = 0;      // names or elements left unread by the caps
+    std::vector<std::pair<std::string, std::string>> values;   // builtins first, then the variables
+};
+static std::vector<SmaProbeDump> g_SmaProbeDumps;   // oldest first; game thread only
+
+static const char* SmaProbeKindName(SmaProbeKind k)
+{
+    switch (k) {
+    case SmaProbeKind::Number:    return "number";
+    case SmaProbeKind::Bool:      return "bool";
+    case SmaProbeKind::String:    return "string";
+    case SmaProbeKind::Asset:     return "asset";
+    case SmaProbeKind::Reference: return "reference";
+    case SmaProbeKind::Struct:    return "struct";
+    case SmaProbeKind::Array:     return "array";
+    case SmaProbeKind::Method:    return "method";
+    case SmaProbeKind::Undefined: return "undefined";
+    default:                      return "other";
+    }
+}
+
+// Only these kinds are ever written by lookcopy.
+static bool SmaProbeWritable(SmaProbeKind k)
+{
+    return k == SmaProbeKind::Number || k == SmaProbeKind::Bool || k == SmaProbeKind::String
+        || k == SmaProbeKind::Asset;
+}
+
+// A value as `<value> (<kind>)`: a number to ten digits (with int32/int64 kept
+// apart from real), a string as it reads on one line, a handle as it prints, a
+// struct by its name count and an array by its length (their contents are
+// entries of their own, SmaProbeExpand), a method by the script it wraps.
+static std::string SmaProbeValue(const RValue& v)
+{
+    const SmaProbeKind k = SmaProbeKindOf(v);
+    std::string text, kind = SmaProbeKindName(k);
+    try {
+        switch (k) {
+        case SmaProbeKind::Number: {
+            char buf[64];
+            sprintf_s(buf, "%.10g", v.ToDouble());
+            text = buf;
+            kind = v.m_Kind == VALUE_REAL ? "real" : v.m_Kind == VALUE_INT32 ? "int32" : "int64";
+            break;
+        }
+        case SmaProbeKind::Bool:   text = v.ToBoolean() ? "true" : "false"; break;
+        case SmaProbeKind::String: text = MenuLayoutOneLine(v.ToString()); break;
+        case SmaProbeKind::Asset: case SmaProbeKind::Reference: text = MenuLayoutOneLine(v.ToString()); break;
+        case SmaProbeKind::Array:
+            text = "array[" + MenuLayoutInteger(g_Yytk->CallBuiltin("array_length", { v }).ToDouble()) + "]";
+            break;
+        case SmaProbeKind::Struct:
+            text = "struct{" + MenuLayoutInteger(g_Yytk->CallBuiltin("array_length",
+                { g_Yytk->CallBuiltin("variable_struct_get_names", { v }) }).ToDouble()) + "}";
+            break;
+        case SmaProbeKind::Method: text = "method" + CiTryResolveMethod(v); break;   // described, never called
+        case SmaProbeKind::Undefined: text = "undefined"; break;
+        default: text = "<" + kind + ">"; break;
+        }
+    } catch (...) { text = "<unreadable>"; }
+    if (text.size() > kSmaProbeValueCap) text = text.substr(0, kSmaProbeValueCap) + "...";
+    return text + " (" + kind + ")";
+}
+
+static bool SmaProbeLookCopyExcluded(const std::string& name)
+{
+    for (const char* never : kSmaProbeLookCopyNever) if (name == never) return true;
+    return false;
+}
+
+static SmaProbeDump* SmaProbeFindDump(const std::string& label)
+{
+    for (SmaProbeDump& d : g_SmaProbeDumps) if (d.label == label) return &d;
+    return nullptr;
+}
+
+static SmaProbeDump& SmaProbeStoreDump(const std::string& label)
+{
+    for (auto it = g_SmaProbeDumps.begin(); it != g_SmaProbeDumps.end(); ++it) {
+        if (it->label == label) { g_SmaProbeDumps.erase(it); break; }
+    }
+    if (g_SmaProbeDumps.size() >= kSmaProbeDumpKeep) {
+        Out(std::string(kSmaProbeTag) + "dump - evicted the oldest dump '" + g_SmaProbeDumps.front().label
+            + "' (keeps " + std::to_string(kSmaProbeDumpKeep) + ")");
+        g_SmaProbeDumps.erase(g_SmaProbeDumps.begin());
+    }
+    g_SmaProbeDumps.push_back(SmaProbeDump());
+    g_SmaProbeDumps.back().label = label;
+    return g_SmaProbeDumps.back();
+}
+
+// A struct or array member's contents as entries of their own: `<path>.<name>`
+// for a struct's variable (variable_struct_get_names, variable_struct_get),
+// `<path>[<i>]` for an array's element (array_get), kSmaProbeNestDepth levels
+// down, each level's first kSmaProbeNestNames, kSmaProbeNestEntries per dump;
+// what the caps leave unread is counted in nestedCut. Printed as one token, a
+// struct or array member whose contents differ between two nodes diffed as
+// equal and lookcopy never named it (the round-0 review of this instrument), so
+// a label place held inside one would have read as "no member places it".
+// Reads only; an instance handle inside is printed, never followed.
+static void SmaProbeExpand(const std::string& path, const RValue& v, int depth, SmaProbeDump& d)
+{
+    if (depth >= kSmaProbeNestDepth) return;
+    const SmaProbeKind k = SmaProbeKindOf(v);
+    if (k != SmaProbeKind::Struct && k != SmaProbeKind::Array) return;
+    const bool isStruct = k == SmaProbeKind::Struct;
+    try {
+        const RValue names = isStruct ? g_Yytk->CallBuiltin("variable_struct_get_names", { v }) : RValue();
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { isStruct ? names : v }).ToDouble());
+        for (size_t i = 0; i < n; ++i) {
+            if (i >= kSmaProbeNestNames || d.nested >= kSmaProbeNestEntries) { d.nestedCut += n - i; return; }
+            std::string sub = path + (isStruct ? ".?" : "[" + std::to_string(i) + "]");
+            ++d.nested;
+            try {
+                RValue child;
+                if (isStruct) {
+                    const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                    sub = path + "." + nm.ToString();
+                    child = g_Yytk->CallBuiltin("variable_struct_get", { v, nm });
+                } else {
+                    child = g_Yytk->CallBuiltin("array_get", { v, RValue((double)i) });
+                }
+                d.values.emplace_back(sub, SmaProbeValue(child));
+                SmaProbeExpand(sub, child, depth + 1, d);
+            } catch (...) { d.values.emplace_back(sub, "<unreadable>"); }
+        }
+    } catch (...) { d.values.emplace_back(path + (isStruct ? ".*" : "[*]"), "<unreadable>"); ++d.nested; }
+}
+
+// One instance's members, read by name: the fixed builtin list (sprite_index
+// with its sprite's name) and every instance variable the runtime names, a
+// struct or array variable's contents after it (SmaProbeExpand). False, with
+// nothing read, when the instance is not listed.
+static bool SmaProbeDumpCapture(const RValue& inst, SmaProbeDump& d, std::string& why)
+{
+    d.values.clear();
+    d.names = 0;
+    d.truncated = false;
+    d.nested = 0;
+    d.nestedCut = 0;
+    if (!SmaProbeExists(inst)) { why = "not an instance (instance_exists answered false)"; return false; }
+    d.id = SmaProbeId(inst);
+    for (const char* b : kSmaProbeDumpBuiltins) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(b) });
+            std::string text = SmaProbeValue(v);
+            if (std::strcmp(b, "sprite_index") == 0 && SmaProbeKindOf(v) == SmaProbeKind::Number && v.ToDouble() >= 0)
+                text += " name=" + MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { v }).ToString());
+            if (std::strcmp(b, "object_index") == 0)
+                d.object = MenuLayoutOneLine(g_Yytk->CallBuiltin("object_get_name", { v }).ToString());
+            d.values.emplace_back(b, text);
+        } catch (...) { d.values.emplace_back(b, "<unreadable>"); }
+    }
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        const size_t n = (size_t)(std::max)(0.0, g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+        d.truncated = n > kSmaProbeDumpMaxNames;
+        for (size_t i = 0; i < n && i < kSmaProbeDumpMaxNames; ++i) {
+            std::string name = "?";
+            try {
+                const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                name = nm.ToString();
+                const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+                d.values.emplace_back(name, SmaProbeValue(v));
+                SmaProbeExpand(name, v, 0, d);
+            } catch (...) { d.values.emplace_back(name, "<unreadable>"); }
+            ++d.names;
+        }
+    } catch (...) { why = "variable_instance_get_names threw"; }
+    return true;
+}
+
+// `probe dump <label> id:<n>`: capture, keep and print.
+static void SmaProbeDumpCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "dump ";
+    long long id = -1;
+    if (tok.size() != 4 || Lower(tok[3]).rfind("id:", 0) != 0) {
+        Out(tag + "refused - usage: stashmoveall probe dump <label> id:<n>; nothing read");
+        return;
+    }
+    try { id = std::stoll(tok[3].substr(3)); }
+    catch (...) { Out(tag + "refused - id:<n> needs a whole number; nothing read"); return; }
+    SmaProbeDump probe;
+    std::string why;
+    if (!SmaProbeDumpCapture(RValue((double)id), probe, why)) {
+        Out(tag + tok[2] + ": id " + std::to_string(id) + " " + why + "; nothing kept");
+        return;
+    }
+    SmaProbeDump& d = SmaProbeStoreDump(tok[2]);
+    const std::string label = d.label;
+    d = probe;
+    d.label = label;
+    Out(tag + d.label + ": id=" + std::to_string(d.id) + " object=" + (d.object.empty() ? std::string("?") : d.object)
+        + " names=" + std::to_string(d.names)
+        + (d.truncated ? " (truncated at " + std::to_string(kSmaProbeDumpMaxNames) + ")" : "")
+        + " nested=" + std::to_string(d.nested)
+        + (d.nestedCut ? " nested_cut=" + std::to_string(d.nestedCut) : "")
+        + (why.empty() ? "" : " error=" + why));
+    for (const auto& kv : d.values) Out("  " + kv.first + "=" + kv.second);
+}
+
+// `probe diff <a> <b>`: `~` a member both have whose values differ, `+` one only
+// b has, `-` one only a has, then the count line.
+static void SmaProbeDiffCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "diff ";
+    if (tok.size() != 4) { Out(tag + "refused - usage: stashmoveall probe diff <a> <b>"); return; }
+    const SmaProbeDump* da = SmaProbeFindDump(tok[2]);
+    const SmaProbeDump* db = SmaProbeFindDump(tok[3]);
+    if (!da || !db) { Out(tag + "refused - no dump labelled '" + (da ? tok[3] : tok[2]) + "' is kept"); return; }
+    const std::map<std::string, std::string> ma(da->values.begin(), da->values.end());
+    const std::map<std::string, std::string> mb(db->values.begin(), db->values.end());
+    size_t changed = 0, added = 0, removed = 0, printed = 0;
+    Out(tag + da->label + " (id " + std::to_string(da->id) + ") -> " + db->label + " (id " + std::to_string(db->id) + "):");
+    for (const auto& kv : mb) {
+        const auto it = ma.find(kv.first);
+        if (it == ma.end()) {
+            ++added;
+            if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "+ " + kv.first + "=" + kv.second);
+        } else if (it->second != kv.second) {
+            ++changed;
+            if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "~ " + kv.first + ": " + it->second + " -> " + kv.second);
+        }
+    }
+    for (const auto& kv : ma) {
+        if (mb.count(kv.first)) continue;
+        ++removed;
+        if (printed++ < kSmaProbeDumpLines) Out(std::string("  ") + "- " + kv.first + " (was " + kv.second + ")");
+    }
+    Out(tag + da->label + " " + db->label + ": " + "changed=" + std::to_string(changed) + " added=" + std::to_string(added)
+        + " removed=" + std::to_string(removed)
+        + (printed > kSmaProbeDumpLines ? " (first " + std::to_string(kSmaProbeDumpLines) + " lines shown)" : ""));
+}
+
+// `probe lookcopy id:<src> missing|changed`: onto the mod's own Move all node
+// only (refused, nothing written, while the mod holds none), each member of the
+// source that the node lacks (`missing`) or that both have with different
+// values (`changed`), when its value is a number, bool, string or asset and it
+// is not one of kSmaProbeLookCopyNever. Each write is read back off the node and
+// printed beside what was written; an entry inside a struct or array member
+// that the tier selects gets a `skip` line naming it, so the capture shows it
+// even though it is never written; the count line closes it.
+static void SmaProbeLookCopyCommand(const std::vector<std::string>& tok)
+{
+    const std::string tag = std::string(kSmaProbeTag) + "lookcopy ";
+    const std::string tier = tok.size() >= 4 ? Lower(tok[3]) : std::string();
+    if (tok.size() != 4 || Lower(tok[2]).rfind("id:", 0) != 0 || (tier != "missing" && tier != "changed")) {
+        Out(tag + "refused - usage: stashmoveall probe lookcopy id:<src> missing|changed; nothing written");
+        return;
+    }
+    long long id = -1;
+    try { id = std::stoll(tok[2].substr(3)); }
+    catch (...) { Out(tag + "refused - id:<src> needs a whole number; nothing written"); return; }
+    if (!g_SmaButtonHeld || !SmaButtonIsOurs(g_SmaButton)) {
+        Out(tag + "refused - the mod holds no Move all node (`stashmoveall 1` with the stash open); nothing written");
+        return;
+    }
+    const RValue src((double)id);
+    if (!SmaProbeExists(src)) { Out(tag + "refused - id " + std::to_string(id) + " is not an instance; nothing written"); return; }
+    const long long nodeId = SmaProbeId(g_SmaButton);
+    if (id == nodeId) { Out(tag + "refused - the source is the node itself; nothing written"); return; }
+    SmaProbeDump s, n;
+    std::string why;
+    if (!SmaProbeDumpCapture(src, s, why) || !SmaProbeDumpCapture(g_SmaButton, n, why)) {
+        Out(tag + "refused - a capture failed (" + why + "); nothing written");
+        return;
+    }
+    const std::map<std::string, std::string> node(n.values.begin(), n.values.end());
+    size_t wrote = 0, held = 0, excluded = 0, refusedKind = 0, nested = 0, failed = 0, printed = 0;
+    auto say = [&](const std::string& line) { if (printed++ < kSmaProbeDumpLines) Out(line); };
+    Out(tag + tier + " from id=" + std::to_string(id) + " onto the mod's node id=" + std::to_string(nodeId) + ":");
+    for (const auto& kv : s.values) {
+        const std::string& name = kv.first;
+        const auto it = node.find(name);
+        if (tier == "missing" ? it != node.end() : (it == node.end() || it->second == kv.second)) continue;
+        // An entry inside a struct or array member (SmaProbeExpand) is judged by
+        // the member it sits in, and is only ever named, never written.
+        const size_t cut = name.find_first_of(".[");
+        const std::string top = cut == std::string::npos ? name : name.substr(0, cut);
+        if (SmaProbeLookCopyExcluded(top)) { ++excluded; continue; }
+        if (cut != std::string::npos) {
+            if (!node.count(top)) continue;   // the member's own line already says the node lacks it
+            ++nested;
+            say("  skip " + name + "=" + kv.second + " (node " + (it == node.end() ? std::string("lacks it") : it->second)
+                + ") - inside a struct or array member, never written");
+            continue;
+        }
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { src, RValue(name) });
+            const SmaProbeKind kind = SmaProbeKindOf(v);
+            if (!SmaProbeWritable(kind)) {
+                ++refusedKind;
+                say("  skip " + name + "=" + SmaProbeValue(v) + " - a " + SmaProbeKindName(kind) + " is never written");
+                continue;
+            }
+            if (!SmaButtonIsOurs(g_SmaButton)) { say("  stopped - the node is gone"); break; }
+            const std::string want = SmaProbeValue(v);
+            g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(name), v });
+            const std::string got = SmaProbeValue(g_Yytk->CallBuiltin("variable_instance_get", { g_SmaButton, RValue(name) }));
+            ++wrote;
+            if (got == want) ++held;
+            say("  wrote " + name + "=" + want + " read back " + got);
+        } catch (...) { ++failed; say("  failed " + name + " - a read or the write threw"); }
+    }
+    Out(tag + tier + ": wrote=" + std::to_string(wrote) + " held=" + std::to_string(held)
+        + " not_held=" + std::to_string(wrote - held) + " refused_kind=" + std::to_string(refusedKind)
+        + " nested=" + std::to_string(nested)
+        + " excluded=" + std::to_string(excluded) + " failed=" + std::to_string(failed)
+        + (printed > kSmaProbeDumpLines ? " (first " + std::to_string(kSmaProbeDumpLines) + " lines shown)" : ""));
+}
+
 static bool SmaProbeCommand(const std::string& rest)
 {
     std::istringstream in(rest);
@@ -38271,13 +38945,21 @@ static bool SmaProbeCommand(const std::string& rest)
     for (std::string t; in >> t;) tok.push_back(t);
     if (tok.empty() || Lower(tok[0]) != "probe") return false;
     const std::string sub = tok.size() >= 2 ? Lower(tok[1]) : std::string();
+    // `probe help`, and any word it does not know, print the usage line.
+    auto usage = []() {
+        Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
+            "copy <template key on map 9> <count> | dump <label> id:<n> | diff <a> <b> | lookcopy id:<src> missing|changed | help "
+            "(research build; docs/stash-move-research.md, Live procedures 1f and 5)");
+    };
     if (sub == "sort") SmaProbeSortCommand(tok);
     else if (sub == "create") SmaProbeCreateCommand(tok);
     else if (sub == "remove") SmaProbeRemoveCommand();
     else if (sub == "show") SmaProbeShowCommand();
     else if (sub == "copy") SmaProbeCopyCommand(tok);
-    else Out(std::string(kSmaProbeTag) + "usage - stashmoveall probe sort [id:<n>] | create [<script>|none] [watch:<script>] | remove | show | "
-             "copy <template key on map 9> <count> (research build; docs/stash-move-research.md, Live procedure 1f)");
+    else if (sub == "dump") SmaProbeDumpCommand(tok);
+    else if (sub == "diff") SmaProbeDiffCommand(tok);
+    else if (sub == "lookcopy") SmaProbeLookCopyCommand(tok);
+    else usage();   // `help`, or a word it does not know
     return true;
 }
 

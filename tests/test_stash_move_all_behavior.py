@@ -31,14 +31,41 @@ material identity goes into a cell of the Materials tab, a whole stack merges
 by its count, and the bag's Materials view feeds the Materials tab only. Live
 1f and 1g decided the Socketable tab (socketMergeRoute: byname): fed from the
 bag's Socket view only, a socketable whose identity has a node on the tab
-merges and a new kind stays in the bag; since Live 1f measured that merge with
-one unit only, a socketable of more than one unit stays in the bag too
-(socketWholeStackMerge off; the Materials tab's wholeStackMerge is its own
-measurement). And the in-game
+merges and a new kind stays in the bag. And the in-game
 Move all button (buttonRoute: poll): its node exists only while the switch is
 on and the stash and Sort are listed, a left press inside its bbox is a press,
 taken once under the key's guard, and a node that cannot be made is reported
 once without turning the mod off.
+
+ForgePact #131 (the owner's report of 2026-09-30): the route is decided per
+stack, not per sum. The game's merge (the static reading of StashAddToStack)
+takes the first stack of the kind whose count plus the item's stays at or
+below the cap, 999, or 999999 with the sixth argument's flag 8 (the Socketable
+tab's merge); the baseline pins that model. So on the Materials tab and a
+stash page a stackable joins a stack with room for its whole count, and when
+every stack of its kind is too full it starts a new stack in a free cell of
+the same tab (no free cell: it stays in the bag); the Socketable tab, one
+stack per kind, takes a socketable of any count onto that stack
+(socketWholeStackMerge on, confirmed by Live procedure 3's socket-whole; the
+flag off is kept as a negative control) and never starts a second stack; a
+true answer on the cell route is decided as a merge by the sum. The button's
+origin comes from Sort's box and the node's own extents: its right edge 8 GUI
+units left of Sort, centred on it (UI_Button_Small_obj's origin is its bbox
+centre, the Sort node's its top-left, Live 1f and 1g).
+
+#131, owner scope of 2026-09-30: the button takes the Sort Tab button's own
+look and size. The first node of a session is made with Sort's extents about
+Sort's origin, so a node wearing Sort's look lands on target at once; its size
+is judged against Sort's on the same settled read as its place, and a size or
+a look that is not Sort's is kept and said once each, never remade for it and
+never turning the mod off (baseline: Live 1's node sat right at 206x48 beside
+Sort's 192x66).
+
+#131, the review of fix2's round 2: the look copy runs whole. Every one of
+Live 5's 16 members is written and read back whatever its kind - a number, a
+bool, a string, an asset reference compared by its index - and one that
+cannot be read costs only its own entry; the verdict comes after the whole
+list, with the count that read the same and the first member that did not.
 """
 import os
 import shutil
@@ -218,13 +245,198 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # placement would go into a cell.
         self.assertScenario("target/socketable_new_kind_stays_in_the_bag")
 
-    def test_target_socketable_merge_of_more_than_one_unit_is_a_planned_skip(self):
-        # Live 1f measured the socket merge with one unit only, so
-        # socketWholeStackMerge is off: more than one unit is a skip that
-        # calls nothing, one unit still merges, and the Materials tab keeps
-        # its own whole-stack merge. Negative control: with the flag on the
-        # gem merges by its whole count.
-        self.assertScenario("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip")
+    def test_target_socketable_whole_stack_merges_into_its_one_stack(self):
+        # #131: socketWholeStackMerge is on; [81] + 3 merges by the whole
+        # count, confirmed on the node rising by exactly 3. Negative control:
+        # with the flag off, the same stack is a planned skip.
+        self.assertScenario("target/socketable_whole_stack_merges_into_its_one_stack")
+
+    def test_target_full_socketable_stack_never_starts_a_second_stack(self):
+        # [999999] + 1 stays with the full-stack reason, even were the new
+        # kind's placement measured. Negative control: [999998] + 1 merges.
+        self.assertScenario("target/full_socketable_stack_never_starts_a_second_stack")
+
+    # ---- #131: the game's merge rule and the per-stack route ------------------
+
+    def test_baseline_game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap(self):
+        # The static reading of StashAddToStack: cap 999, 999999 with flag 8;
+        # the first stack that fits the whole count; unread is unknown.
+        self.assertScenario("baseline/game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap")
+
+    def test_target_full_materials_stack_overflows_into_a_free_cell(self):
+        # The owner's report: [999] + 1 with room is a new stack in a cell.
+        # Negative control: the sum-only rule's merge was refused and skipped.
+        self.assertScenario("target/full_materials_stack_overflows_into_a_free_cell")
+
+    def test_target_materials_merge_skips_the_full_stack_for_one_with_room(self):
+        # [999, 400] + 500 merges; negative control [999, 600] + 500 is a cell.
+        self.assertScenario("target/materials_merge_skips_the_full_stack_for_one_with_room")
+
+    def test_target_merge_at_exactly_the_cap_is_a_merge(self):
+        # [949] + 50 merges; negative control [950] + 50 is a cell.
+        self.assertScenario("target/merge_at_exactly_the_cap_is_a_merge")
+
+    def test_target_no_stack_fits_and_no_free_cell_stays_in_the_bag(self):
+        # Never overflow holds for a new stack: no room calls nothing, an
+        # unread list is a skip. Negative control: with room, it is placed.
+        self.assertScenario("target/no_stack_fits_and_no_free_cell_stays_in_the_bag")
+
+    def test_target_full_key_stack_on_a_page_overflows_into_a_free_cell(self):
+        # A stash page too. Negative control: [998] + 1 merges.
+        self.assertScenario("target/full_key_stack_on_a_page_overflows_into_a_free_cell")
+
+    def test_target_unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge(self):
+        # The cell route passes the whole count; a true answer there is
+        # decided as a merge by the sum. Negative control: decided on the
+        # cell route it cannot be confirmed.
+        self.assertScenario("target/unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge")
+
+    # ---- #131: the button's origin ---------------------------------------------
+
+    def test_baseline_button_small_origin_is_its_centre_and_sort_origin_its_top_left(self):
+        # Live 1f and 1g's geometry, and the old formula reproducing the
+        # measured origin. Negative control: a box that did not read.
+        self.assertScenario("baseline/button_small_origin_is_its_centre_and_sort_origin_its_top_left")
+
+    def test_target_button_right_edge_sits_the_gap_left_of_sort_centred_on_it(self):
+        # ButtonOrigin gives 2196.7, 1230.25 from the measured extents; a node
+        # of another size is still placed right; the off-target line is said
+        # once. Negative controls: unread boxes.
+        self.assertScenario("target/button_right_edge_sits_the_gap_left_of_sort_centred_on_it")
+
+    def test_target_old_button_origin_put_its_corner_inside_the_target_box(self):
+        # The report reproduced: the old box's bottom-right corner lies inside
+        # the target box. Negative control: its top-left does not.
+        self.assertScenario("target/old_button_origin_put_its_corner_inside_the_target_box")
+
+    def test_target_button_is_checked_on_its_settled_box_not_the_creation_frame(self):
+        # Review of round 0: the place is checked on later ensure steps, once
+        # the node reads visible and its box reads the same twice; a box that
+        # changes after the creation frame is judged by its settled read. The
+        # placed line is said once, and the state line carries the box and
+        # extents read. Negative controls: a box that never settles is said
+        # unchecked and never remade; no third make; a remake UiRemoveNode
+        # could not carry out is not asked again; no node, nothing checked.
+        self.assertScenario("target/button_is_checked_on_its_settled_box_not_the_creation_frame")
+
+    # ---- #131, owner scope 2026-09-30: the button takes Sort's look and size
+
+    def test_baseline_live1_node_of_another_size_sat_beside_sort(self):
+        # Live 1: the node on target (right edge 8 left of Sort, centres
+        # level) at 206x48 beside Sort's 192x66, so not Sort-sized. Positive
+        # control: Sort's own box is.
+        self.assertScenario("baseline/live1_node_of_another_size_sat_beside_sort")
+
+    def test_target_first_node_made_with_sorts_own_extents_lands_on_target(self):
+        # Before a measurement the extents are Sort's own about its origin
+        # (0, 0, 192, 66; origin 2090, 1262); a node wearing Sort's look
+        # settles on target and Sort-sized with one make, button_look=sort.
+        # After a measurement the node's own extents are used. Negative
+        # control: Sort's x, y unread falls back to the centred box.
+        self.assertScenario("target/first_node_made_with_sorts_own_extents_lands_on_target")
+
+    def test_target_button_size_within_one_of_sorts_is_sort_sized(self):
+        # 192.4x65.6 beside 192x66 is Sort-sized; 206x48, 1.5 wider or 1.5
+        # higher is not. Negative controls: an unread box never is.
+        self.assertScenario("target/button_size_within_one_of_sorts_is_sort_sized")
+
+    def test_target_button_of_another_size_is_kept_and_said_once(self):
+        # Live 1's 206x48 box is kept, never remade for its size, said once
+        # on its own line, button_size=206.0x48.0, the mod on; a second node
+        # is silent. Negative control: a Sort-sized node says nothing of it.
+        self.assertScenario("target/button_of_another_size_is_kept_and_said_once")
+
+    def test_target_button_look_not_taken_is_kept_and_said_once(self):
+        # The look judged on the settled read, not the frame it was written:
+        # one that read Sort's when written and differs later is differs;
+        # kept, said once on its own line, button_look=differs, the mod on;
+        # an unread look is said once apart. Negative control: a look that
+        # took says nothing of it.
+        self.assertScenario("target/button_look_not_taken_is_kept_and_said_once")
+
+    # ---- #131, owner 2026-10-02: the column of the Extra tab above it --------
+
+    def test_baseline_live6_mercenary_box_is_off_the_tab_column(self):
+        # Live 6's node box, 2094,1262,2286,1328 (the Mercenary button's), is
+        # not on the column worked out from Live 6's Sort, 2290,1262,2482,1328:
+        # its right edge is 4 short, at the same width. The old Sort rule's
+        # box is 8 short. Positive control: the column is on itself.
+        self.assertScenario("baseline/live6_mercenary_box_is_off_the_tab_column")
+
+    def test_target_button_takes_the_tab_columns_sides_and_sorts_row(self):
+        # Route Tab with a sized InventoryTab_4: the tab's left and right with
+        # Sort's top and bottom. Made from Sort's extents the node settles
+        # there with one make; button_ref=tab and button_tab= the tab's box;
+        # the placed line names the tab's column, never the Mercenary button.
+        # Negative controls: Live 6's node is remade once onto the column, one
+        # still off is said once, and an unread Sort gives no target.
+        self.assertScenario("target/button_takes_the_tab_columns_sides_and_sorts_row")
+
+    def test_target_tab_column_matches_the_grid_at_the_measured_scale(self):
+        # The recorded 2560x1368 rows: Sort 2303.5,1198.9,2485.9,1261.6 and
+        # InventoryTab_4 2121.1,1136.2,2303.5,1198.9 give the Tab target
+        # 2121.1,1198.9,2303.5,1261.6, and the Grid target from Sort alone is
+        # the same box within 0.05 on each side. Sort under InventoryTab_5 is
+        # the relation's own positive control.
+        self.assertScenario("target/tab_column_matches_the_grid_at_the_measured_scale")
+
+    def test_target_button_falls_back_to_the_tab_grid_when_no_tab_reads(self):
+        # No tab read: Sort's left minus Sort's width up to Sort's left, in
+        # Sort's row (Grid), said once a session with the mod on, and the
+        # state reads button_ref=grid button_tab=none. With Sort unread as
+        # well, no target (None).
+        self.assertScenario("target/button_falls_back_to_the_tab_grid_when_no_tab_reads")
+
+    def test_target_a_tab_of_another_width_scales_the_node_to_it(self):
+        # A tab 200 wide gives a 200-wide target; ButtonScale is 200/192 by 1,
+        # TargetSized judges a Sort-sized node against the target, and the
+        # size line names the tab's column, not the Mercenary button.
+        self.assertScenario("target/a_tab_of_another_width_scales_the_node_to_it")
+
+    def test_target_an_unsized_tab_box_is_never_taken(self):
+        # Negative control: a tab box of no width or height, inside out, or
+        # with a NaN side is never the target - Grid with a readable Sort,
+        # None without one. Positive control: a sized tab is taken.
+        self.assertScenario("target/an_unsized_tab_box_is_never_taken")
+
+    def test_target_unread_target_falls_back_to_the_sort_rule(self):
+        # A Sort box the grid cannot scale, on route Tab or Grid, or the old
+        # rule's own route: the old rule's box, said once, button_ref=sort,
+        # placed beside Sort. Negative controls: a route that gave its box
+        # says nothing; an unread Sort box gives no target.
+        self.assertScenario("target/unread_target_falls_back_to_the_sort_rule")
+
+    # ---- #131, fix2's round 2: the look copy never stops on a member's kind ---
+
+    def test_baseline_look_all_numeric_members_copied_and_read_sort(self):
+        # The kinds fix2's copy accepted (numbers, bools, asset references):
+        # all 16 of Live 5's members written, 16/16 the same, sort, the
+        # scales alone scaled. Negative control: button_look_same=none
+        # before any node.
+        self.assertScenario("baseline/look_all_numeric_members_copied_and_read_sort")
+
+    def test_target_look_string_member_is_copied_and_compared_as_text(self):
+        # textFont read as a string is written as read, every member after
+        # it too, and compared by its text; a scale that reads as a string is
+        # not written and compares unread, the rest still written.
+        self.assertScenario("target/look_string_member_is_copied_and_compared_as_text")
+
+    def test_target_look_asset_member_compares_by_its_index(self):
+        # A reference, or a number, of the same index is the same. Negative
+        # controls: another index differs, an index that did not read is
+        # unread, a string differs.
+        self.assertScenario("target/look_asset_member_compares_by_its_index")
+
+    def test_target_look_unread_member_is_named_after_the_whole_copy(self):
+        # An undefined drawXOffset mid-list: the other 15 written, unread only
+        # at the end, the line naming it, button_look_same=15/16. Negative
+        # control: nothing listed is never sort.
+        self.assertScenario("target/look_unread_member_is_named_after_the_whole_copy")
+
+    def test_target_look_differing_string_reads_differs(self):
+        # Negative control for the wider kinds: a string that reads back
+        # different is differs, never sort, and the line names it.
+        self.assertScenario("target/look_differing_string_reads_differs")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")

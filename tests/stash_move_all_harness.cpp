@@ -86,18 +86,90 @@
 // the header had either; the first error line was `error C2039:
 // 'socketWholeStackMerge': is not a member of 'ForgePact::StashMoveRoutes'`,
 // 2026-09-28.
+//
+// ForgePact #131 (the owner's report of 2026-09-30: the button sat with its
+// bottom-right corner in the middle of where it belongs, and items stayed in
+// the bag with room on the tab). The game's merge as a model (a stack takes
+// the whole count only while it stays at or below the cap, 999, or 999999
+// with the sixth argument's flag 8: the static reading of StashAddToStack);
+// the route and room rule per stack, not per sum (a full stack of the kind on
+// Materials or a page starts a new stack in a free cell, a stack with room
+// takes the merge, the Socketable tab's one stack takes a socketable of any
+// count and is never doubled); a true answer on the cell route decided as a
+// merge by the sum; and the button's origin from Sort's box and the node's own
+// extents (UI_Button_Small_obj's origin is its bbox centre, the Sort node's
+// its top-left: Live 1f and 1g). Written before the header had them; the
+// first error line was `error C2039: 'StashMoveStacks': is not a member of
+// 'ForgePact'` (on its using-declaration), 2026-09-30.
+//
+// #131 round 1 (the review's instrument-blindness finding: the button's place
+// was checked on a box read in the frame the node was made, which is not
+// known to be its settled box). The check moved to later ensure steps, on a
+// box that reads the same twice with the node visible, and the state line
+// carries what it read. Written before the header had it; the first error
+// line was `error C2039: 'StashMoveButtonCheck': is not a member of
+// 'ForgePact'`, 2026-09-30.
+//
+// #131, owner scope of 2026-09-30 ("Button should be the size and look of
+// sort tab button"): Live 1 placed the node right but at 206x48 beside Sort's
+// 192x66. The node now wears Sort's look, copied from the Sort node by the
+// adapter, so the first node is made with Sort's own extents about Sort's
+// origin; its size is judged against Sort's on the settled read, and a size
+// or a look that is not Sort's is kept and said once each, never a remake
+// and never the mod off. Compiled against the header before it had them, the
+// first error line was `error C2039: 'StashMoveButtonLook': is not a member
+// of 'ForgePact'`, 2026-09-30.
+//
+// #131, owner of 2026-09-30 ("Use its coordinates"): the node's box is the
+// Mercenary button's, which Live 5 measured beside Sort with the bag open on
+// its own and found not listed while the stash is open, so the target is
+// Sort's box moved and sized by the measured fractions (merc-route:
+// relation); the old Sort rule stays only as the fallback, and the state line
+// names which (button_ref=). Written before the header had it; the first
+// error line was `error C2039: 'SortRuleBox': is not a member of
+// 'ForgePact::StashMoveAllMod'`, 2026-09-30.
+//
+// #131, owner of 2026-10-02 ("take sort button and copy it to vertical bounds
+// (left and right sides) of the extra button above the space ... and
+// horizontal bounds (top and bottom) of the sort button"): Live 6's node, on
+// the Mercenary button's box, sat 4 GUI units left of the column of the Extra
+// tab above it. The target is now InventoryTab_4's left and right edges with
+// Sort's top and bottom (route Tab), or, when no tab reads, the same column
+// worked out from Sort's box by the tab grid's measured relation (Grid); the
+// old Sort rule stays the last fallback, and the state line carries the tab's
+// box (button_tab=). Written before the header had it; the first error line
+// was `error C2838: 'Tab': illegal qualified name in member declaration`,
+// 2026-10-02.
+//
+// #131, the review of fix2's round 2: the adapter's look copy returned from
+// inside its loop on the first member of a kind it did not accept (a
+// `textFont` read as a string, possibly), so the label offsets after it were
+// never written. The per-member decisions (LookStep, LookCompare) and the
+// verdict (StashMoveLookTally) moved into the core, over every kind the
+// runtime returns for these members, and the copy is Live 5's 13 members as
+// read. The scenarios drive them through a stand-in of the adapter's loop.
+// Compiled against the header before it had them, the first error line was
+// `error C2039: 'StashMoveLookKind': is not a member of 'ForgePact'`,
+// 2026-09-30.
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
 // PRODUCTION_STASHMOVEALL
 
+using ForgePact::StashMoveStacks;
+using ForgePact::StashMoveBox;
+using ForgePact::StashMoveExtents;
 using ForgePact::StashMoveAllMod;
 using ForgePact::StashMoveButtonStep;
+using ForgePact::StashMoveButtonLook;
 using ForgePact::StashMoveCell;
 using ForgePact::StashMoveItem;
 using ForgePact::StashMoveOutcome;
@@ -119,6 +191,28 @@ static void Check(const std::string& label, bool ok, const std::string& detail)
     else { std::cout << "FAIL " << label << " " << detail << "\n"; ++g_Failures; }
 }
 
+// The shown tab's stacks of one identity, each stack's count in the array's
+// order, as the adapter read them.
+static StashMoveStacks Stacks(const std::vector<long long>& counts)
+{
+    StashMoveStacks s;
+    s.read = true;
+    for (long long n : counts) s.counts.push_back(n);
+    return s;
+}
+
+// The round-2 scenarios' one-number form of a re-read: -1 unread, 0 no stack
+// of the identity, else one stack of that count.
+static StashMoveStacks Sum(long long n)
+{
+    if (n < 0) return StashMoveStacks();
+    return n == 0 ? Stacks({}) : Stacks({n});
+}
+
+// A stack with room for any count these scenarios move (the Materials cap is
+// 999): what "a stack of its identity is there" meant before #131.
+static const std::vector<long long> kRoomyStack = {100};
+
 static StashMoveCell Cell(int x, int y, const std::string& key, int itemClass,
                           bool stackable = false, long long count = 1, bool destinationHasStack = false)
 {
@@ -129,7 +223,7 @@ static StashMoveCell Cell(int x, int y, const std::string& key, int itemClass,
     c.itemClass = itemClass;
     c.stackable = stackable;
     c.count = count;
-    c.destinationHasStack = destinationHasStack;
+    c.destinationStacks = Stacks(destinationHasStack ? kRoomyStack : std::vector<long long>());
     return c;
 }
 
@@ -239,10 +333,17 @@ static std::string Joined(const std::vector<std::string>& lines)
 }
 
 static StashMoveRoutes Flipped(bool socketNew, bool socketMerge, bool newMaterial, bool wholeStackMerge);
+static StashMoveReport MergedWherePlannedACell();
 
+// The place check's fields of the state line before any node was made (the
+// look and size: owner scope, 2026-09-30; the look's members that read the
+// same last: the review of fix2's round 2).
+static const std::string kIdlePlace =
+    " button_place=none button_box=none button_extents=none button_makes=0 button_step=0"
+    " button_look=none button_size=none button_ref=none button_tab=none button_look_same=none";
 // The button's fields of the state line before any node or press.
 static const std::string kIdleButton =
-    " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none";
+    " button=none presses=0 in_node=0 outside=0 unread=0 errors=0 taken=0 dropped=0 last_drop=none" + kIdlePlace;
 
 // ---- baseline: off is vanilla ----------------------------------------------
 
@@ -358,7 +459,7 @@ static void TargetStackablePlansStack()
     // page's entries answer on no map by name) is a skip, never "no stack";
     // a non-stackable does not need the read.
     StashMoveView unreadStack = grid;
-    for (StashMoveCell& c : unreadStack.cells) { c.destinationHasStack = false; c.destinationStackRead = false; }
+    for (StashMoveCell& c : unreadStack.cells) c.destinationStacks = StashMoveStacks();
     StashMovePlan u = mod.Plan(unreadStack);
     ok = ok && u.items.size() == 3 && u.items[0].route == StashMoveRoute::None && u.items[1].route == StashMoveRoute::None
         && u.items[0].refusal == "its stack on the shown tab could not be read" && u.items[2].route == StashMoveRoute::Cell;
@@ -366,7 +467,7 @@ static void TargetStackablePlansStack()
     // its identity is there, else into a cell (newMaterialRoute). Another
     // class is planned as a skip that calls nothing.
     StashMoveView mats = MixedView(-4);
-    mats.cells[0].destinationHasStack = true;
+    mats.cells[0].destinationStacks = Stacks(kRoomyStack);
     StashMovePlan m = mod.Plan(mats);
     for (const StashMoveItem& i : m.items) {
         bool mine = i.cell.itemClass == 14;
@@ -378,7 +479,7 @@ static void TargetStackablePlansStack()
     // Live 1f measured (more than one: its own scenario below).
     StashMoveView sock = MixedView(-2);
     sock.bagTab = -2;
-    sock.cells[6].destinationHasStack = true;
+    sock.cells[6].destinationStacks = Stacks(kRoomyStack);
     sock.cells[6].count = 1;
     StashMovePlan s = mod.Plan(sock);
     for (const StashMoveItem& i : s.items) {
@@ -796,9 +897,9 @@ static void TargetSocketableMergesAnIdentityWithANode()
     // socketMergeRoute: byname (Live 1f byname-socket-merge, Live 1g): a
     // socketable whose identity has a node on the tab merges by its whole
     // count, confirmed only on that identity's count rising by exactly it; a
-    // ring is not taken there. Live 1f measured one unit only, so a count
-    // above 1 merges only with socketWholeStackMerge on (the next scenario
-    // pins it off); the gem's merge is checked with it turned on.
+    // ring is not taken there. A count above 1 merges while
+    // socketWholeStackMerge is on (on since #131; its own scenario below
+    // pins both states); the gem's merge is checked with it on.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
     const StashMovePlan p = mod.Plan(SocketView());
@@ -817,8 +918,8 @@ static void TargetSocketableMergesAnIdentityWithANode()
     ok = ok && StashMoveAllMod::Decide(pw.items[1], Stacked(2, 3)).outcome == StashMoveOutcome::Unconfirmed;
     // At the point of use the sum decides, as on the Materials tab: a node
     // still there is merged into, an unread sum is a skip that calls nothing.
-    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, 81).route == StashMoveRoute::Stack
-        && StashMoveAllMod::RouteAtUse(p.items[0], -2, -1).refusal == "its stack on the shown tab could not be read";
+    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, Sum(81)).route == StashMoveRoute::Stack
+        && StashMoveAllMod::RouteAtUse(p.items[0], -2, Sum(-1)).refusal == "its stack on the shown tab could not be read";
     // Negative control: with the merge not measured (socketMergeRoute
     // not-observed) the tab is refused as a destination, as before Live 1f.
     const StashMovePlan off = StashMoveAllMod::PlanWith(SocketView(), Flipped(false, false, true, true), true);
@@ -844,7 +945,7 @@ static void TargetSocketableNewKindStaysInTheBag()
     ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
     // At the point of use too: a sum of 0 is a new kind, still a skip.
     StashMoveItem planned = p.items[0];
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 0).refusal == "a new kind stays in the bag";
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, Sum(0)).refusal == "a new kind stays in the bag";
     // Negative control: were the new-identity placement measured, it would
     // go into a cell.
     const StashMovePlan withNew = StashMoveAllMod::PlanWith(SocketView(), Flipped(true, true, true, true), true);
@@ -852,44 +953,938 @@ static void TargetSocketableNewKindStaysInTheBag()
     Check("target/socketable_new_kind_stays_in_the_bag", ok, Keys(p) + " " + p.items[2].refusal);
 }
 
-static void TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip()
+static void TargetSocketableWholeStackMergesIntoItsOneStack()
 {
-    // Live 1f measured the Socketable tab's merge with a count of 1 only (an
-    // orb and a gem); wholeStackMerge was measured on the Materials tab. So
-    // the Socketable tab reads its own flag, socketWholeStackMerge, off: a
-    // socketable of more than one unit is a skip that calls nothing and stays
-    // in the bag, the run goes on, and one unit still merges.
-    const char* why = "a socketable merge of more than one unit is not measured";
+    // #131: most bag socketables are stacks, and the flag that kept a stack of
+    // more than one in the bag (Live 1f measured the Socketable tab's merge
+    // with one unit only) is on, confirmed by Live procedure 3's socket-whole.
+    // The tab holds one stack per kind (owner, 2026-09-30), and its merge
+    // passes the sixth argument 8, so the cap is 999999: [81] + 3 merges by
+    // the whole count, moved only on that node's count rising by exactly 3.
     StashMoveAllMod mod;
     mod.SetEnabled(true);
     const StashMovePlan p = mod.Plan(SocketView());
-    bool ok = !StashMoveAllMod::kMeasuredRoutes.socketWholeStackMerge && StashMoveAllMod::kMeasuredRoutes.wholeStackMerge
+    bool ok = StashMoveAllMod::kMeasuredRoutes.socketWholeStackMerge && !StashMoveAllMod::kMeasuredRoutes.socketNew
         && !p.refused && p.items.size() == 4
-        && p.items[0].route == StashMoveRoute::Stack && p.items[0].cell.count == 1
-        && p.items[1].route == StashMoveRoute::None && p.items[1].refusal == why;
+        && p.items[1].cell.key == "0-0-38-15" && p.items[1].route == StashMoveRoute::Stack && p.items[1].cell.count == 3;
+    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(p.items[1], -2, Stacks({81}));
+    ok = ok && atUse.route == StashMoveRoute::Stack && atUse.cell.count == 3;
+    StashMoveResult none;
+    ok = ok && StashMoveAllMod::StackRoom(Stacks({81}), 3, StashMoveAllMod::CapFor(-2)) == 1
+        && StashMoveAllMod::MayCall(atUse, 1, none);
+    const StashMoveResult moved = StashMoveAllMod::Decide(atUse, Stacked(81, 84));
+    ok = ok && moved.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(moved) == "stashmoveall: item 0-0-38-15 -> stack";
+    // One unit short is a loss, never a move.
+    ok = ok && StashMoveAllMod::Decide(atUse, Stacked(81, 82)).outcome == StashMoveOutcome::Unconfirmed;
+    // A single socketable still merges (the ordinary case Live 1f measured).
+    ok = ok && StashMoveAllMod::RouteAtUse(p.items[0], -2, Stacks({81})).route == StashMoveRoute::Stack;
+    // Negative control: with the flag off (the state before #131), a stack
+    // of more than one is a planned skip and one unit still merges.
+    const char* why = "a socketable merge of more than one unit is not measured";
+    StashMoveRoutes off = StashMoveAllMod::kMeasuredRoutes;
+    off.socketWholeStackMerge = false;
+    const StashMovePlan po = StashMoveAllMod::PlanWith(SocketView(), off, true);
+    ok = ok && po.items.size() == 4 && po.items[1].route == StashMoveRoute::None && po.items[1].refusal == why
+        && po.items[0].route == StashMoveRoute::Stack
+        && StashMoveAllMod::RouteAtUse(p.items[1], -2, Stacks({81}), off).refusal == why;
+    Check("target/socketable_whole_stack_merges_into_its_one_stack", ok,
+          Keys(p) + " " + (p.items.size() > 1 ? std::to_string((int)p.items[1].route) + p.items[1].refusal : std::string()));
+}
+
+static void TargetFullSocketableStackNeverStartsASecondStack()
+{
+    // The Socketable tab has one stack per kind: a stack its merge cannot
+    // take (999999 is the cap with flag 8) is a skip with its own reason, and
+    // no placement is tried, since the tab never holds a second stack of a
+    // kind. No stack at all is still a new kind (socketNew: not-observed).
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    StashMoveItem gem;
+    gem.cell = Cell(1, 0, "0-0-38-15", 15, true, 1, true);
+    gem.route = StashMoveRoute::Stack;
+    const StashMoveItem full = StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999999}));
+    bool ok = full.route == StashMoveRoute::None && full.refusal == "its stack on the shown tab is full";
     StashMoveResult skip;
-    ok = ok && !StashMoveAllMod::MayCall(p.items[1], 1, skip) && skip.outcome == StashMoveOutcome::Skipped
-        && StashMoveAllMod::ItemLine(skip) == std::string("stashmoveall: item 0-0-38-15 -> skipped: ") + why;
-    StashMoveTally t = mod.Begin(p);
+    ok = ok && !StashMoveAllMod::MayCall(full, 1, skip)
+        && StashMoveAllMod::ItemLine(skip) == "stashmoveall: item 0-0-38-15 -> skipped: its stack on the shown tab is full";
+    StashMoveTally t;
     ok = ok && mod.Record(t, skip) && !t.stopped && mod.IsEnabled();
-    // At the point of use too: a merge planned under another rule, re-read
-    // with 3 units, is the same skip; with 1 unit it merges.
-    StashMoveItem planned = p.items[0];
-    planned.cell.count = 3;
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).refusal == why;
-    planned.cell.count = 1;
-    ok = ok && StashMoveAllMod::RouteAtUse(planned, -2, 81).route == StashMoveRoute::Stack;
-    // The Materials tab keeps its own measured rule: 15 units still merge.
-    const StashMovePlan mats = mod.Plan(MaterialsView(-4));
-    ok = ok && mats.items.size() == 3 && mats.items[0].route == StashMoveRoute::Stack && mats.items[0].cell.count == 15;
-    // Negative control: were the multi-unit socket merge measured, the gem
-    // would merge by its whole count.
-    StashMoveRoutes whole = StashMoveAllMod::kMeasuredRoutes;
-    whole.socketWholeStackMerge = true;
-    const StashMovePlan withWhole = StashMoveAllMod::PlanWith(SocketView(), whole, true);
-    ok = ok && withWhole.items.size() == 4 && withWhole.items[1].route == StashMoveRoute::Stack;
-    Check("target/socketable_merge_of_more_than_one_unit_is_a_planned_skip", ok,
-          Keys(p) + " " + (p.items.size() > 1 ? p.items[1].refusal : std::string()));
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({})).refusal == "a new kind stays in the bag";
+    // Even with the new-kind placement turned on, a full stack is no new one.
+    StashMoveRoutes withNew = StashMoveAllMod::kMeasuredRoutes;
+    withNew.socketNew = true;
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999999}), withNew).refusal == "its stack on the shown tab is full";
+    // Negative control: one unit below the cap still takes it.
+    ok = ok && StashMoveAllMod::RouteAtUse(gem, -2, Stacks({999998})).route == StashMoveRoute::Stack;
+    Check("target/full_socketable_stack_never_starts_a_second_stack", ok, full.refusal);
+}
+
+// ---- #131: the game's merge rule, and the per-stack route --------------------
+
+static void BaselineGameMergeTakesAStackOnlyWhileTheSumStaysAtTheCap()
+{
+    // The static reading of StashAddToStack (2026-09-30): the cap is 999, or
+    // 999999 when the sixth argument carries flag 8; the first stack of the
+    // identity, in array order, whose count plus the moved count is at or
+    // below the cap takes the whole count; none does, and the answer is
+    // false. A list that could not be read is unknown, never "fits" or "full".
+    using M = StashMoveAllMod;
+    const int64_t cap = M::StackCap(0);
+    bool ok = cap == 999 && M::StackCap(8) == 999999 && M::StackCap(9) == 999999 && M::StackCap(2) == 999
+        && M::CapFor(-4) == 999 && M::CapFor(0) == 999 && M::CapFor(7) == 999 && M::CapFor(-2) == 999999;
+    ok = ok && M::StackThatFits(Stacks({998}), 1, cap) == 0
+        && M::StackThatFits(Stacks({999}), 1, cap) == M::kNoStackFits
+        && M::StackThatFits(Stacks({999, 400}), 500, cap) == 1
+        && M::StackThatFits(Stacks({949}), 50, cap) == 0
+        && M::StackThatFits(Stacks({950}), 50, cap) == M::kNoStackFits
+        && M::StackThatFits(Stacks({}), 1, cap) == M::kNoStackFits;
+    // The first that fits, not the fullest or the emptiest.
+    ok = ok && M::StackThatFits(Stacks({10, 20}), 5, cap) == 0;
+    // Unknown: the list unread, a stack in it unread, or the count unread.
+    ok = ok && M::StackThatFits(StashMoveStacks(), 1, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5, -1}), 1, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5}), 0, cap) == M::kStacksUnknown
+        && M::StackThatFits(Stacks({5}), -1, cap) == M::kStacksUnknown;
+    // The same answers as the room a stack route has, and the sum it is
+    // confirmed by.
+    ok = ok && M::StackRoom(Stacks({998}), 1, cap) == 1 && M::StackRoom(Stacks({999}), 1, cap) == 0
+        && M::StackRoom(StashMoveStacks(), 1, cap) == -1
+        && M::StackSum(Stacks({999, 400})) == 1399 && M::StackSum(Stacks({})) == 0
+        && M::StackSum(StashMoveStacks()) == -1 && M::StackSum(Stacks({3, -1})) == -1;
+    // Negative control: the sum-only rule this replaces would have merged
+    // [999] + 1, which the game refuses.
+    ok = ok && M::StackSum(Stacks({999})) > 0 && M::StackThatFits(Stacks({999}), 1, cap) < 0;
+    Check("baseline/game_merge_takes_a_stack_only_while_the_sum_stays_at_the_cap", ok, "");
+}
+
+// The Materials tab (sixth argument 0, cap 999), from its view: one bag
+// material of `count` whose identity has `stacks` on the tab.
+static StashMoveItem MaterialAtUse(long long count, const StashMoveStacks& stacks, const std::string& key = "0-0-72-14")
+{
+    StashMoveItem it;
+    it.cell = Cell(0, 0, key, 14, true, count, true);
+    it.route = StashMoveRoute::Stack;
+    return StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, stacks);
+}
+
+static void TargetFullMaterialsStackOverflowsIntoAFreeCell()
+{
+    // The owner's report: a Materials stack at 999 left the next unit in the
+    // bag although the tab had free cells. [999] + 1 with room is a new stack
+    // in a cell (the tab placement, as a new identity takes); the ordinary
+    // cases beside it: [100] + 50 merges, a new identity with room is placed.
+    const int64_t cap = StashMoveAllMod::CapFor(StashMoveAllMod::kMaterialsTab);
+    const StashMoveItem full = MaterialAtUse(1, Stacks({999}));
+    StashMoveResult none;
+    bool ok = full.route == StashMoveRoute::Cell && StashMoveAllMod::MayCall(full, 1, none);
+    const StashMoveResult placed = StashMoveAllMod::Decide(full, PlacedCell(4, 2));
+    ok = ok && placed.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(placed) == "stashmoveall: item 0-0-72-14 -> cell 4,2";
+    const StashMoveItem ordinary = MaterialAtUse(50, Stacks({100}));
+    ok = ok && ordinary.route == StashMoveRoute::Stack && StashMoveAllMod::StackRoom(Stacks({100}), 50, cap) == 1
+        && StashMoveAllMod::Decide(ordinary, Stacked(100, 150)).outcome == StashMoveOutcome::Moved;
+    ok = ok && MaterialAtUse(50, Stacks({})).route == StashMoveRoute::Cell;
+    // Negative control: before #131 any stack of the kind meant a merge, the
+    // game answered false, and a false with both sides unchanged is a skip.
+    StashMoveItem sumOnly = full;
+    sumOnly.route = StashMoveRoute::Stack;
+    StashMoveReport refused = Refused("StashAddToStack answered false");
+    refused.stackBefore = 999;
+    refused.stackAfter = 999;
+    ok = ok && StashMoveAllMod::Decide(sumOnly, refused).outcome == StashMoveOutcome::Skipped;
+    Check("target/full_materials_stack_overflows_into_a_free_cell", ok,
+          std::to_string((int)full.route) + " " + full.refusal);
+}
+
+static void TargetMaterialsMergeSkipsTheFullStackForOneWithRoom()
+{
+    // The tab holds several stacks of a kind (owner, 2026-09-30): [999, 400]
+    // + 500 merges (the game takes the second stack), confirmed on the kind's
+    // sum rising by 500.
+    const StashMoveItem it = MaterialAtUse(500, Stacks({999, 400}));
+    bool ok = it.route == StashMoveRoute::Stack
+        && StashMoveAllMod::StackThatFits(Stacks({999, 400}), 500, 999) == 1
+        && StashMoveAllMod::StackRoom(Stacks({999, 400}), 500, 999) == 1;
+    ok = ok && StashMoveAllMod::Decide(it, Stacked(1399, 1899)).outcome == StashMoveOutcome::Moved;
+    // Negative control: [999, 600] + 500 fits neither, so it is a new cell.
+    ok = ok && MaterialAtUse(500, Stacks({999, 600})).route == StashMoveRoute::Cell;
+    Check("target/materials_merge_skips_the_full_stack_for_one_with_room", ok, it.refusal);
+}
+
+static void TargetMergeAtExactlyTheCapIsAMerge()
+{
+    // The cap is inclusive: [949] + 50 reaches 999 exactly and merges;
+    // [950] + 50 would pass it and starts a new stack instead.
+    bool ok = MaterialAtUse(50, Stacks({949})).route == StashMoveRoute::Stack
+        && MaterialAtUse(50, Stacks({950})).route == StashMoveRoute::Cell
+        && MaterialAtUse(1, Stacks({998})).route == StashMoveRoute::Stack;
+    Check("target/merge_at_exactly_the_cap_is_a_merge", ok, "");
+}
+
+static void TargetNoStackFitsAndNoFreeCellStaysInTheBag()
+{
+    // Never overflow (D4) holds for a new stack too: [999, 600] + 500 with no
+    // free block on the shown tab calls nothing and stays in the bag; the
+    // room read failing calls nothing either; with room, it is placed.
+    const StashMoveItem it = MaterialAtUse(500, Stacks({999, 600}));
+    StashMoveResult skip, unread, none;
+    bool ok = it.route == StashMoveRoute::Cell
+        && !StashMoveAllMod::MayCall(it, 0, skip) && skip.outcome == StashMoveOutcome::Skipped
+        && StashMoveAllMod::ItemLine(skip) == "stashmoveall: item 0-0-72-14 -> skipped: no room on the shown tab"
+        && !StashMoveAllMod::MayCall(it, -1, unread) && unread.answer == "the shown tab's room could not be read"
+        && StashMoveAllMod::MayCall(it, 1, none);
+    // A stack list that could not be read is a skip, never a new stack.
+    const StashMoveItem u = MaterialAtUse(500, StashMoveStacks());
+    ok = ok && u.route == StashMoveRoute::None && u.refusal == "its stack on the shown tab could not be read";
+    // A new stack on the Materials tab is the new-identity placement: not
+    // measured, it stays in the bag.
+    StashMoveItem planned;
+    planned.cell = Cell(0, 0, "0-0-72-14", 14, true, 1, true);
+    planned.route = StashMoveRoute::Stack;
+    ok = ok && StashMoveAllMod::RouteAtUse(planned, StashMoveAllMod::kMaterialsTab, Stacks({999}),
+                                           Flipped(false, true, false, true)).refusal == "a new kind stays in the bag";
+    Check("target/no_stack_fits_and_no_free_cell_stays_in_the_bag", ok, skip.answer + " | " + u.refusal);
+}
+
+static void TargetFullKeyStackOnAPageOverflowsIntoAFreeCell()
+{
+    // A stash page (the personal one, the sixth argument 0, cap 999): a key
+    // stack at 999 is no merge for one more key; with room it goes into a
+    // free cell of the page. Negative control: [998] merges.
+    StashMoveItem key;
+    key.cell = Cell(0, 0, "0-0-5-12", 12, true, 1, true);
+    key.route = StashMoveRoute::Stack;
+    const StashMoveItem full = StashMoveAllMod::RouteAtUse(key, 0, Stacks({999}));
+    StashMoveResult none;
+    bool ok = StashMoveAllMod::CapFor(0) == 999 && full.route == StashMoveRoute::Cell && StashMoveAllMod::MayCall(full, 1, none)
+        && StashMoveAllMod::Decide(full, PlacedCell(3, 0)).outcome == StashMoveOutcome::Moved;
+    ok = ok && StashMoveAllMod::RouteAtUse(key, 0, Stacks({998})).route == StashMoveRoute::Stack;
+    // The plan says the same before the run.
+    StashMoveView v;
+    v.stashListed = true; v.bagTab = 0; v.stashTab = 0;
+    v.cells = { Cell(0, 0, "0-0-5-12", 12, true, 1) };
+    v.cells[0].destinationStacks = Stacks({999});
+    const StashMovePlan p = StashMoveAllMod::PlanWith(v, StashMoveAllMod::kMeasuredRoutes, true);
+    ok = ok && p.items.size() == 1 && p.items[0].route == StashMoveRoute::Cell;
+    Check("target/full_key_stack_on_a_page_overflows_into_a_free_cell", ok, full.refusal);
+}
+
+static void TargetUnexpectedMergeOnTheCellRouteIsConfirmedAsAMerge()
+{
+    // The cell route's StashAddToStack now carries the item's whole count
+    // (the value the measured merge passes). A true answer there is the game
+    // merging where the model read no stack with room: decided as a merge,
+    // moved only when the kind's sum rose by exactly the count, never a loss
+    // by construction and never a unit taken from a larger stack.
+    StashMoveItem it = MaterialAtUse(5, Stacks({999}));
+    bool ok = it.route == StashMoveRoute::Cell;
+    const StashMoveItem merge = StashMoveAllMod::AsMerge(it);
+    ok = ok && merge.route == StashMoveRoute::Stack && merge.cell.key == it.cell.key && merge.cell.count == 5;
+    const StashMoveResult moved = StashMoveAllMod::Decide(merge, Stacked(999, 1004));
+    ok = ok && moved.outcome == StashMoveOutcome::Moved && StashMoveAllMod::ItemLine(moved) == "stashmoveall: item 0-0-72-14 -> stack";
+    // Anything else is unconfirmed: one unit taken, or the bag cell kept.
+    ok = ok && StashMoveAllMod::Decide(merge, Stacked(999, 1000)).outcome == StashMoveOutcome::Unconfirmed
+        && StashMoveAllMod::Decide(merge, Stacked(999, 1004, 1)).outcome == StashMoveOutcome::Unconfirmed;
+    // Negative control: decided on the cell route, the same answer cannot be
+    // confirmed (nothing was placed) - the round-2 duplicate's shape.
+    ok = ok && StashMoveAllMod::Decide(it, MergedWherePlannedACell()).outcome == StashMoveOutcome::Unconfirmed;
+    Check("target/unexpected_merge_on_the_cell_route_is_confirmed_as_a_merge", ok, "");
+}
+
+// ---- #131: the button's origin ----------------------------------------------
+
+// Live 1f and 1g, the same numbers both times (2560x1440 GUI, save slot 14):
+// the Sort node's x, y and bbox, and the Move all node the old formula made.
+static StashMoveBox Box(double l, double t, double r, double b)
+{
+    StashMoveBox box;
+    box.left = l; box.top = t; box.right = r; box.bottom = b;
+    return box;
+}
+static const StashMoveBox kSortBox = Box(2303.5, 1198.9, 2485.9, 1261.6);
+static const double kSortX = 2303.5, kSortY = 1198.9;
+static const StashMoveBox kOldNodeBox = Box(2016.2, 1176.1, 2211.9, 1221.7);
+static const double kOldNodeX = 2113.1, kOldNodeY = 1198.9;
+static const double kGap = 8.0;
+
+static bool Near(double a, double b, double tol) { return a - b <= tol && b - a <= tol; }
+
+static void BaselineButtonSmallOriginIsItsCentreAndSortOriginItsTopLeft()
+{
+    // What UiCreateNode's x, y are: the node's origin, which for
+    // UI_Button_Small_obj (sprite Menu_Button_Chat_spr) lies at its bbox
+    // centre, while the Sort node's lies at its bbox top-left.
+    bool ok = Near(kOldNodeX, (kOldNodeBox.left + kOldNodeBox.right) / 2, 1.0)
+        && Near(kOldNodeY, (kOldNodeBox.top + kOldNodeBox.bottom) / 2, 1.0)
+        && Near(kSortX, kSortBox.left, 0.05) && Near(kSortY, kSortBox.top, 0.05);
+    StashMoveExtents e;
+    ok = ok && StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e)
+        && Near(e.left, 96.9, 0.05) && Near(e.up, 22.8, 0.05) && Near(e.right, 98.8, 0.05) && Near(e.down, 22.8, 0.05);
+    // The old formula: Sort's x less its width less the gap, Sort's y, as if
+    // the new node's origin were its top-left - which gives the origin Live
+    // 1f and 1g measured.
+    const double oldX = kSortX - (kSortBox.right - kSortBox.left) - kGap;
+    ok = ok && Near(oldX, kOldNodeX, 0.05) && Near(kSortY, kOldNodeY, 0.05);
+    // Negative control: a box that did not read gives no extents.
+    StashMoveExtents none;
+    ok = ok && !StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, StashMoveBox(), none)
+        && !StashMoveAllMod::ExtentsOf(std::nan(""), kOldNodeY, kOldNodeBox, none);
+    Check("baseline/button_small_origin_is_its_centre_and_sort_origin_its_top_left", ok, "");
+}
+
+static void TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt()
+{
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    double x = 0, y = 0;
+    bool ok = StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, x, y) && Near(x, 2196.7, 0.05) && Near(y, 1230.25, 0.05);
+    // The box it gives: right edge the gap left of Sort, the vertical centre
+    // Sort's; on target, and clear of Sort.
+    const StashMoveBox target = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    ok = ok && Near(target.left, 2099.8, 0.05) && Near(target.top, 1207.45, 0.05)
+        && Near(target.right, 2295.5, 0.05) && Near(target.bottom, 1253.05, 0.05)
+        && target.right < kSortBox.left && StashMoveAllMod::ButtonOnTarget(kSortBox, target, kGap);
+    // Within 1 GUI unit is on target; 1.5 off is not.
+    ok = ok && StashMoveAllMod::ButtonOnTarget(kSortBox, Box(target.left + 0.9, target.top, target.right + 0.9, target.bottom), kGap)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, Box(target.left, target.top + 1.5, target.right, target.bottom + 1.5), kGap);
+    // Extents measured on the node, not built in: a node half the size (a
+    // GUI scale change) is still placed right.
+    StashMoveExtents half;
+    half.left = e.left / 2; half.up = e.up / 2; half.right = e.right / 2; half.down = e.down / 2;
+    double hx = 0, hy = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, half, kGap, hx, hy)
+        && StashMoveAllMod::ButtonOnTarget(kSortBox, Box(hx - half.left, hy - half.up, hx + half.right, hy + half.down), kGap);
+    // The first creation of a session, before any extents are measured, sits
+    // at a provisional origin: a box of Sort's own size about its centre.
+    double px = 0, py = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, StashMoveAllMod::ProvisionalExtents(kSortBox), kGap, px, py)
+        && Near(px, 2303.5 - 8 - 91.2, 0.05) && Near(py, 1230.25, 0.05);
+    // The line for a node still off target after the second creation: said
+    // once, the offsets to a tenth, and the mod stays on.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // (dy is -31.35 on paper, so its last digit is left to the rounding.)
+    const std::string off = mod.ButtonOffTarget(kSortBox, kOldNodeBox, kGap);
+    const std::string head = "stashmoveall: button - placed -83.6,-31.", tail = " off beside Sort; F4 still works";
+    ok = ok && off.rfind(head, 0) == 0 && off.size() == head.size() + 1 + tail.size()
+        && off.compare(off.size() - tail.size(), tail.size(), tail) == 0
+        && mod.ButtonOffTarget(kSortBox, kOldNodeBox, kGap).empty() && mod.IsEnabled();
+    // Negative controls: a Sort box that did not read gives no origin; a node
+    // box that did not read is never on target.
+    double nx = 0, ny = 0;
+    ok = ok && !StashMoveAllMod::ButtonOrigin(StashMoveBox(), e, kGap, nx, ny)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, StashMoveBox(), kGap);
+    Check("target/button_right_edge_sits_the_gap_left_of_sort_centred_on_it", ok,
+          std::to_string(x) + "," + std::to_string(y) + " " + off);
+}
+
+static void TargetOldButtonOriginPutItsCornerInsideTheTargetBox()
+{
+    // The owner's report, reproduced from the measured numbers: the old
+    // origin centred the node on the point meant for its top-left corner, so
+    // its bottom-right corner (2211.9, 1221.7) lies inside the box it should
+    // occupy. The old box is off target; the new one is on it.
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    double x = 0, y = 0;
+    StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, x, y);
+    const StashMoveBox target = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    const double cx = kOldNodeX + e.right, cy = kOldNodeY + e.down;
+    bool ok = Near(cx, 2211.9, 0.05) && Near(cy, 1221.7, 0.05)
+        && StashMoveAllMod::PressInNode(cx, cy, target.left, target.top, target.right, target.bottom)
+        && !StashMoveAllMod::ButtonOnTarget(kSortBox, kOldNodeBox, kGap)
+        && StashMoveAllMod::ButtonOnTarget(kSortBox, target, kGap);
+    // Negative control: the old box's own top-left is outside the target box.
+    ok = ok && !StashMoveAllMod::PressInNode(kOldNodeBox.left, kOldNodeBox.top, target.left, target.top, target.right, target.bottom);
+    Check("target/old_button_origin_put_its_corner_inside_the_target_box", ok, "");
+}
+
+static bool Has(const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; }
+
+static void TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame()
+{
+    // Review of #131 round 0 (instrument blindness): a box read in the frame
+    // UiCreateNode returned is not known to be the node's settled box (Live
+    // 1f: visible=0 in the reply, 1 a frame later), so the place is checked
+    // on later ensure steps only, once the node reads visible and its box
+    // reads the same on two steps in a row. Here the box changes between the
+    // creation and the first settled read: an early read that happens to sit
+    // on target is never taken as the answer.
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveExtents e;
+    StashMoveAllMod::ExtentsOf(kOldNodeX, kOldNodeY, kOldNodeBox, e);
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    bool ok = Has(mod.StateLine(), " button_place=none button_box=none button_extents=none button_makes=0 button_step=0");
+    // The first make of a session: at the provisional origin.
+    double px = 0, py = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, mod.ButtonExtents(kSortBox), kGap, px, py)
+        && Near(px, 2303.5 - 8 - 91.2, 0.05) && Near(py, 1230.25, 0.05);
+    mod.NoteButtonMade(false);
+    ok = ok && Has(mod.StateLine(), " button_place=pending") && Has(mod.StateLine(), " button_makes=1");
+    double tx = 0, ty = 0;
+    StashMoveAllMod::ButtonOrigin(kSortBox, e, kGap, tx, ty);
+    const StashMoveBox onTarget = Box(tx - e.left, ty - e.up, tx + e.right, ty + e.down);
+    const StashMoveBox settled = Box(px - e.left, py - e.up, px + e.right, py + e.down);   // 7.6 right of its place
+    double x = 0, y = 0;
+    std::string line;
+    // Not visible yet; then visible once with the early box; then the box
+    // changes: none of these is a settled read, so nothing is decided.
+    ok = ok && mod.ButtonCheck(false, kSortBox, px, py, onTarget, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, px, py, onTarget, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=pending");
+    // The same box twice: settled, off target, so it is made again at the
+    // origin its own measured extents give.
+    ok = ok && mod.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake && line.empty()
+        && Near(x, 2196.7, 0.05) && Near(y, 1230.25, 0.05)
+        && Has(mod.StateLine(), " button_place=remake") && Has(mod.StateLine(), " button_extents=96.9,22.8,98.8,22.8")
+        && Has(mod.StateLine(), " button_step=4");
+    mod.NoteButtonMade(true);
+    // The new node's check starts from nothing: the last node's extents are
+    // not shown as this one's (the review of #131 round 1).
+    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none button_extents=none button_makes=2");
+    const StashMoveBox good = Box(x - e.left, y - e.up, x + e.right, y + e.down);
+    ok = ok && mod.ButtonCheck(false, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep && line.empty();
+    // Settled on target: said once, positively, with the box it read.
+    ok = ok && mod.ButtonCheck(true, kSortBox, x, y, good, kGap, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed beside Sort, box 2099.8,", 0) == 0
+        && Has(mod.StateLine(), " button_place=on button_box=2099.8,") && Has(mod.StateLine(), " button_makes=2 button_step=3");
+    const std::string placed = line;
+    // Checked: later steps read nothing more and say nothing.
+    ok = ok && mod.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=on");
+    // The next stash open makes it straight at the measured extents, and
+    // checks that node again; the placed line is not said twice.
+    double nx = 0, ny = 0;
+    ok = ok && StashMoveAllMod::ButtonOrigin(kSortBox, mod.ButtonExtents(kSortBox), kGap, nx, ny)
+        && Near(nx, 2196.7, 0.05) && Near(ny, 1230.25, 0.05);
+    mod.NoteButtonMade(false);
+    ok = ok && Has(mod.StateLine(), " button_place=pending button_box=none button_extents=none")
+        && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kSortBox, nx, ny, good, kGap, x, y, line) == Check_::Keep && line.empty()
+        && Has(mod.StateLine(), " button_place=on button_box=2099.8,");
+
+    // Negative control: a box that never settles is never judged nor made
+    // again; after kButtonSettleSteps it is said unchecked, once.
+    StashMoveAllMod drift;
+    drift.SetEnabled(true);
+    drift.NoteButtonMade(false);
+    bool remade = false;
+    int said = 0;
+    std::string unsettled;
+    for (int i = 0; i < StashMoveAllMod::kButtonSettleSteps + 3; ++i) {
+        const StashMoveBox moving = Box(settled.left + i, settled.top, settled.right + i, settled.bottom);
+        remade = remade || drift.ButtonCheck(true, kSortBox, px, py, moving, kGap, x, y, line) == Check_::Remake;
+        if (!line.empty()) { ++said; unsettled = line; }
+    }
+    ok = ok && !remade && said == 1 && Has(unsettled, "had not settled") && Has(unsettled, "; F4 still works")
+        && Has(drift.StateLine(), " button_place=unsettled") && drift.IsEnabled();
+    // A later node of that session which settles off target still says so:
+    // each cause is said once on its own, so an early unsettled line does not
+    // hide a real misplacement (the review of #131 round 1).
+    drift.NoteButtonMade(false);
+    ok = ok && drift.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && drift.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake;
+    drift.NoteButtonMade(true);
+    ok = ok && drift.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && drift.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep
+        && Has(line, " off beside Sort; F4 still works") && Has(drift.StateLine(), " button_place=off");
+    // Negative control: no third make. Still off after the remake, the node
+    // is kept and said once, and the mod stays on.
+    StashMoveAllMod off;
+    off.SetEnabled(true);
+    off.NoteButtonMade(false);
+    ok = ok && off.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && off.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake;
+    off.NoteButtonMade(true);
+    ok = ok && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty()
+        && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed -83.6,", 0) == 0 && Has(line, " off beside Sort; F4 still works")
+        && Has(off.StateLine(), " button_place=off") && off.IsEnabled()
+        && off.ButtonCheck(true, kSortBox, x, y, kOldNodeBox, kGap, x, y, line) == Check_::Keep && line.empty();
+    // Negative control: a remake UiRemoveNode could not carry out (the node
+    // still held, no second make) is not asked for again: said off instead.
+    StashMoveAllMod kept;
+    kept.SetEnabled(true);
+    kept.NoteButtonMade(false);
+    kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line);
+    ok = ok && kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Remake
+        && kept.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep
+        && Has(line, " off beside Sort; F4 still works") && Has(kept.StateLine(), " button_place=off");
+    // Negative control: no node made, nothing to check.
+    StashMoveAllMod none;
+    none.SetEnabled(true);
+    ok = ok && none.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty()
+        && none.ButtonCheck(true, kSortBox, px, py, settled, kGap, x, y, line) == Check_::Keep && line.empty();
+    Check("target/button_is_checked_on_its_settled_box_not_the_creation_frame", ok, placed + " | " + unsettled);
+}
+
+// ---- #131, owner scope 2026-09-30: the button takes Sort's look and size ---
+
+// Live 1 of this workorder (the capture's button-placed row, 2560x1440 GUI):
+// Sort's x, y (its top-left) and bbox, 192x66, and the node the #131 origin
+// made, wearing its own sprite, 206x48.
+static const StashMoveBox kLive1Sort = Box(2290.0, 1262.0, 2482.0, 1328.0);
+static const double kLive1SortX = 2290.0, kLive1SortY = 1262.0;
+static const StashMoveBox kLive1Node = Box(2076.0, 1271.0, 2282.0, 1319.0);
+static const double kLive1NodeX = 2178.0, kLive1NodeY = 1295.0;
+
+static void BaselineLive1NodeOfAnotherSizeSatBesideSort()
+{
+    // What Live 1 measured: the place was right (right edge 8 left of Sort,
+    // the centres level) and the size was not Sort's: 14 wider, 18 lower.
+    bool ok = StashMoveAllMod::ButtonOnTarget(kLive1Sort, kLive1Node, kGap)
+        && Near((kLive1Node.right - kLive1Node.left) - (kLive1Sort.right - kLive1Sort.left), 14.0, 0.05)
+        && Near((kLive1Sort.bottom - kLive1Sort.top) - (kLive1Node.bottom - kLive1Node.top), 18.0, 0.05)
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Node);
+    // Sort's origin is its top-left, the node's within one unit of its centre.
+    ok = ok && Near(kLive1SortX, kLive1Sort.left, 0.05) && Near(kLive1SortY, kLive1Sort.top, 0.05)
+        && Near(kLive1NodeX, (kLive1Node.left + kLive1Node.right) / 2, 1.0)
+        && Near(kLive1NodeY, (kLive1Node.top + kLive1Node.bottom) / 2, 1.0);
+    // Positive control: Sort's own box is Sort-sized.
+    ok = ok && StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Sort);
+    Check("baseline/live1_node_of_another_size_sat_beside_sort", ok, "");
+}
+
+static void TargetFirstNodeMadeWithSortsOwnExtentsLandsOnTarget()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    // Before any node is measured, the extents are Sort's own about its
+    // origin (its x, y and bbox, read by name): 0, 0, 192, 66, so the origin
+    // is 2090, 1262 - Sort's left less 8 less its width, Sort's top.
+    const StashMoveExtents e = mod.ButtonExtents(kLive1Sort, kLive1SortX, kLive1SortY);
+    double x = 0, y = 0;
+    bool ok = Near(e.left, 0.0, 0.05) && Near(e.up, 0.0, 0.05) && Near(e.right, 192.0, 0.05) && Near(e.down, 66.0, 0.05)
+        && StashMoveAllMod::ButtonOrigin(kLive1Sort, e, kGap, x, y) && Near(x, 2090.0, 0.05) && Near(y, 1262.0, 0.05);
+    // Made there wearing Sort's look, it settles at 2090,1262,2282,1328: on
+    // target and Sort-sized with one make, said once on one line.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=sort button_size=none");
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    double rx = 0, ry = 0;
+    std::string line;
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, x, y, wearing, kGap, rx, ry, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kLive1Sort, x, y, wearing, kGap, rx, ry, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on button_box=2090.0,1262.0,2282.0,1328.0 button_extents=0.0,0.0,192.0,66.0"
+                                " button_makes=1 button_step=2 button_look=sort button_size=192.0x66.0")
+        && mod.IsEnabled();
+    // After a measurement the node's own extents are used, whatever Sort's
+    // x, y read: a node of another size still lands right.
+    StashMoveAllMod other;
+    other.SetEnabled(true);
+    other.NoteButtonMade(false);
+    other.NoteButtonLook(StashMoveButtonLook::Differs);
+    other.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, rx, ry, line);
+    other.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, rx, ry, line);
+    const StashMoveExtents m = other.ButtonExtents(kLive1Sort, kLive1SortX, kLive1SortY);
+    double mx = 0, my = 0;
+    ok = ok && Near(m.left, 102.0, 0.05) && Near(m.up, 24.0, 0.05) && Near(m.right, 104.0, 0.05) && Near(m.down, 24.0, 0.05)
+        && StashMoveAllMod::ButtonOrigin(kLive1Sort, m, kGap, mx, my) && Near(mx, 2178.0, 0.05) && Near(my, 1295.0, 0.05);
+    // Negative control: Sort's x, y unread - the provisional box of Sort's
+    // size about its centre stays the fallback.
+    StashMoveAllMod fresh;
+    const StashMoveExtents p = fresh.ButtonExtents(kLive1Sort, std::nan(""), kLive1SortY);
+    ok = ok && Near(p.left, 96.0, 0.05) && Near(p.right, 96.0, 0.05) && Near(p.up, 33.0, 0.05) && Near(p.down, 33.0, 0.05);
+    Check("target/first_node_made_with_sorts_own_extents_lands_on_target", ok, line);
+}
+
+static void TargetButtonSizeWithinOneOfSortsIsSortSized()
+{
+    // Within kButtonTolerance on width and height is Sort-sized.
+    bool ok = StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2089.6, 1262.2, 2282.0, 1327.8))   // 192.4x65.6
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, kLive1Node)                              // 206x48
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2088.5, 1262.0, 2282.0, 1328.0))     // 193.5 wide
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2090.0, 1262.0, 2282.0, 1329.5));    // 67.5 high
+    // Negative controls: a box that did not read never is, the node's or Sort's.
+    ok = ok && !StashMoveAllMod::ButtonSortSized(kLive1Sort, StashMoveBox())
+        && !StashMoveAllMod::ButtonSortSized(StashMoveBox(), kLive1Sort)
+        && !StashMoveAllMod::ButtonSortSized(kLive1Sort, Box(2090.0, std::nan(""), 2282.0, 1328.0));
+    Check("target/button_size_within_one_of_sorts_is_sort_sized", ok, "");
+}
+
+static void TargetButtonOfAnotherSizeIsKeptAndSaidOnce()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    // Settles at Live 1's box: on target, so kept - never a remake for its
+    // size - and the size said once, on a line of its own after the placed one.
+    const std::string size = "stashmoveall: button - its size 206.0x48.0 is not the Sort button's 192.0x66.0, "
+                             "so it is kept as it is; F4 still works";
+    bool ok = mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2076.0,1271.0,2282.0,1319.0\n" + size
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_makes=1")
+        && Has(mod.StateLine(), " button_look=sort button_size=206.0x48.0") && mod.IsEnabled();
+    const std::string first = line;
+    // A second node of that size (the next stash open) is silent.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=sort button_size=none")
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && mod.ButtonCheck(true, kLive1Sort, kLive1NodeX, kLive1NodeY, kLive1Node, kGap, x, y, line) == Check_::Keep
+        && line.empty() && Has(mod.StateLine(), " button_size=206.0x48.0") && mod.IsEnabled();
+    // Negative control: a Sort-sized node on target says no size line.
+    StashMoveAllMod sized;
+    sized.SetEnabled(true);
+    sized.NoteButtonMade(false);
+    sized.NoteButtonLook(StashMoveButtonLook::Sort);
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    sized.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    sized.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && !Has(line, "its size") && !Has(line, "\n");
+    Check("target/button_of_another_size_is_kept_and_said_once", ok, first);
+}
+
+static void TargetButtonLookNotTakenIsKeptAndSaidOnce()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    const StashMoveBox wearing = Box(2090.0, 1262.0, 2282.0, 1328.0);
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    // The look read back as Sort's when it was written, then not on the
+    // later ensure steps (the UI layer putting its own back, say): the look
+    // judged is the one on the settled read.
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    bool ok = mod.ButtonLookWanted();
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep;
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    const std::string look = "stashmoveall: button - it did not take the Sort button's look, so it is kept with its "
+                             "own; F4 still works";
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0\n" + look
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_look=differs button_size=192.0x66.0")
+        && mod.IsEnabled() && !mod.ButtonLookWanted();
+    const std::string first = line;
+    // Decided: a later read changes nothing.
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && Has(mod.StateLine(), " button_look=differs");
+    // A second node whose look did not take is silent.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Differs);
+    mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line.empty() && Has(mod.StateLine(), " button_look=differs") && mod.IsEnabled();
+    // A look that could not be read is said once on its own line, apart
+    // from the not-taken one, which does not hide it.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Unread);
+    mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - its look beside Sort could not be read, so it is unchecked; F4 still works"
+        && Has(mod.StateLine(), " button_look=unread") && mod.IsEnabled();
+    // Negative control: a look that took says no look line.
+    StashMoveAllMod took;
+    took.SetEnabled(true);
+    took.NoteButtonMade(false);
+    took.NoteButtonLook(StashMoveButtonLook::Sort);
+    took.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    took.ButtonCheck(true, kLive1Sort, 2090.0, 1262.0, wearing, kGap, x, y, line);
+    ok = ok && !Has(line, "look") && Has(took.StateLine(), " button_look=sort");
+    Check("target/button_look_not_taken_is_kept_and_said_once", ok, first);
+}
+
+// ---- #131, owner 2026-10-02: the column of the Extra tab above it ------------
+
+// Live 5 and Live 6 (docs/stash-move-research.md § Live 5 results, § Live 6
+// results, 2560x1440 GUI): the backpack's Sort (InventorySort, x, y its
+// top-left); the node fix3 made on the Mercenary button's box, its right
+// edge 4 left of Sort's (Live 6); and the node the old Sort rule made, its
+// right edge 8 left of Sort's (Live 5).
+static const StashMoveBox kLive5Sort = Box(2290.0, 1262.0, 2482.0, 1328.0);
+static const double kLive5SortX = 2290.0, kLive5SortY = 1262.0;
+static const StashMoveBox kLive6Node = Box(2094.0, 1262.0, 2286.0, 1328.0);
+static const StashMoveBox kLive5Node = Box(2090.0, 1262.0, 2282.0, 1328.0);
+// The bag's page tabs at 2560x1368 (toolkit #147's stash-bag-layout live 2,
+// the stash open): InventoryTab_4 and InventoryTab_5, Sort's width, the row
+// directly above Sort's (kSortBox, Live 1f and 1g).
+static const StashMoveBox kTab4 = Box(2121.1, 1136.2, 2303.5, 1198.9);
+static const StashMoveBox kTab5 = Box(2303.5, 1136.2, 2485.9, 1198.9);
+// InventoryTab_4 where that grid puts it beside Live 5's Sort: Sort's left
+// minus Sort's width up to Sort's left, the row above Sort's. Worked out from
+// the grid, not read in a session - a stand-in a tab read would return.
+static const StashMoveBox kLive6Tab4 = Box(2098.0, 1196.0, 2290.0, 1262.0);
+// The column under it, in Sort's row: the box the node is made to.
+static const StashMoveBox kLive6Column = Box(2098.0, 1262.0, 2290.0, 1328.0);
+
+static bool SameSides(const StashMoveBox& a, const StashMoveBox& b, double tol)
+{
+    return Near(a.left, b.left, tol) && Near(a.top, b.top, tol) && Near(a.right, b.right, tol) && Near(a.bottom, b.bottom, tol);
+}
+
+static void BaselineLive6MercenaryBoxIsOffTheTabColumn()
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    // The column the owner asked for (2026-10-02), worked out from Live 6's
+    // Sort alone: Sort's left minus its width up to Sort's left, Sort's row.
+    StashMoveBox column;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, StashMoveBox(), kGap, column) == Ref::Grid
+        && SameSides(column, kLive6Column, 0.05);
+    // Live 6's node, on the Mercenary button's box, is not on it: its right
+    // edge is 4 short, more than kButtonTolerance, at the same width.
+    double dx = 0, dy = 0;
+    ok = ok && StashMoveAllMod::TargetOffset(column, kLive6Node, dx, dy) && Near(dx, -4.0, 0.05) && Near(dy, 0.0, 0.05)
+        && !StashMoveAllMod::OnTarget(column, kLive6Node) && StashMoveAllMod::TargetSized(column, kLive6Node);
+    // The old rule (Sort-sized, right edge 8 left of Sort) still gives the
+    // box Live 5's node read, and the old check calls it on target; it is 8
+    // short of the column.
+    const StashMoveBox rule = StashMoveAllMod::SortRuleBox(kLive5Sort, kGap);
+    ok = ok && SameSides(rule, kLive5Node, 0.05) && StashMoveAllMod::ButtonOnTarget(kLive5Sort, kLive5Node, kGap)
+        && StashMoveAllMod::TargetOffset(column, rule, dx, dy) && Near(dx, -8.0, 0.05)
+        && !StashMoveAllMod::OnTarget(column, rule);
+    // Positive control: the column target is on itself.
+    ok = ok && StashMoveAllMod::OnTarget(column, column);
+    Check("baseline/live6_mercenary_box_is_off_the_tab_column", ok, StashMoveAllMod::BoxText(column));
+}
+
+static void TargetButtonTakesTheTabColumnsSidesAndSortsRow()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    using Ref = ForgePact::StashMoveButtonRef;
+    // Route Tab with InventoryTab_4 read: the target is the tab's left and
+    // right edges with Sort's top and bottom (the owner, 2026-10-02).
+    StashMoveBox t;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, kLive6Tab4, kGap, t) == Ref::Tab
+        && SameSides(t, kLive6Column, 1e-6) && Near(t.left, kLive6Tab4.left, 1e-9) && Near(t.right, kLive6Tab4.right, 1e-9)
+        && Near(t.top, kLive5Sort.top, 1e-9) && Near(t.bottom, kLive5Sort.bottom, 1e-9);
+    // Made from Sort's own extents (the node wears Sort's sprite), the
+    // origin is the column's top-left.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    ok = ok && Has(mod.StateLine(), " button_ref=none button_tab=none");
+    const StashMoveExtents e = mod.ButtonExtentsFor(kLive5Sort, t, kLive5SortX, kLive5SortY);
+    double x = 0, y = 0;
+    ok = ok && Near(e.left, 0.0, 0.05) && Near(e.up, 0.0, 0.05) && Near(e.right, 192.0, 0.05) && Near(e.down, 66.0, 0.05)
+        && StashMoveAllMod::TargetOrigin(t, e, x, y) && Near(x, 2098.0, 0.05) && Near(y, 1262.0, 0.05);
+    // It settles there: on target with one make, said once, the route and
+    // the tab's box it was taken from on the state line.
+    ok = ok && mod.NoteButtonRef(Ref::Tab, kLive6Tab4).empty();
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double rx = 0, ry = 0;
+    std::string line;
+    ok = ok && mod.ButtonCheck(true, kLive5Sort, t, Ref::Tab, x, y, kLive6Column, rx, ry, line) == Check_::Keep && line.empty()
+        && mod.ButtonCheck(true, kLive5Sort, t, Ref::Tab, x, y, kLive6Column, rx, ry, line) == Check_::Keep
+        && line == "stashmoveall: button - placed in the column of the Extra tab above it, box 2098.0,1262.0,2290.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on button_box=2098.0,1262.0,2290.0,1328.0 button_extents=0.0,0.0,192.0,66.0"
+                                " button_makes=1 button_step=2 button_look=sort button_size=192.0x66.0 button_ref=tab"
+                                " button_tab=2098.0,1196.0,2290.0,1262.0 button_look_same=")
+        && mod.IsEnabled();
+    const std::string placed = line;
+    // Negative control: Live 6's node, on the Mercenary button's box, is off
+    // this target and made again once, at the column's top-left.
+    StashMoveAllMod old;
+    old.SetEnabled(true);
+    old.NoteButtonMade(false);
+    old.NoteButtonLook(StashMoveButtonLook::Sort);
+    ok = ok && old.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2094.0, 1262.0, kLive6Node, rx, ry, line) == Check_::Keep
+        && old.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2094.0, 1262.0, kLive6Node, rx, ry, line) == Check_::Remake
+        && line.empty() && Near(rx, 2098.0, 0.05) && Near(ry, 1262.0, 0.05) && Has(old.StateLine(), " button_place=remake");
+    old.NoteButtonMade(true);
+    ok = ok && old.ButtonCheck(true, kLive5Sort, t, Ref::Tab, rx, ry, kLive6Column, x, y, line) == Check_::Keep
+        && old.ButtonCheck(true, kLive5Sort, t, Ref::Tab, rx, ry, kLive6Column, x, y, line) == Check_::Keep
+        && line.rfind("stashmoveall: button - placed in the column of the Extra tab above it, box 2098.0,", 0) == 0
+        && Has(old.StateLine(), " button_place=on") && Has(old.StateLine(), " button_makes=2");
+    // Still off after the remake: kept and said once against this target.
+    StashMoveAllMod off;
+    off.SetEnabled(true);
+    off.NoteButtonMade(false);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2094.0, 1262.0, kLive6Node, rx, ry, line);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2094.0, 1262.0, kLive6Node, rx, ry, line);
+    off.NoteButtonMade(true);
+    off.ButtonCheck(true, kLive5Sort, t, Ref::Tab, rx, ry, kLive6Node, x, y, line);
+    ok = ok && off.ButtonCheck(true, kLive5Sort, t, Ref::Tab, rx, ry, kLive6Node, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed -4.0,0.0 off the column of the Extra tab above it; F4 still works"
+        && Has(off.StateLine(), " button_place=off") && off.IsEnabled();
+    // No line names the Mercenary button any more.
+    ok = ok && !Has(placed, "Mercenary") && !Has(line, "Mercenary") && !Has(mod.StateLine(), "mercenary");
+    // Negative control: a Sort box that did not read gives no target.
+    StashMoveBox none;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Tab, StashMoveBox(), kLive6Tab4, kGap, none) == Ref::None
+        && !StashMoveAllMod::BoxReads(none);
+    Check("target/button_takes_the_tab_columns_sides_and_sorts_row", ok, placed);
+}
+
+static void TargetTabColumnMatchesTheGridAtTheMeasuredScale()
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    // The recorded 2560x1368 rows: Sort (Live 1f and 1g) and InventoryTab_4
+    // (toolkit #147). The Tab target is the tab's column in Sort's row.
+    StashMoveBox t;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Tab, kSortBox, kTab4, kGap, t) == Ref::Tab
+        && SameSides(t, Box(2121.1, 1198.9, 2303.5, 1261.6), 1e-6);
+    // The Grid target from Sort alone is the same box, within a twentieth on
+    // each side, on either route.
+    StashMoveBox g, routeGrid;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Tab, kSortBox, StashMoveBox(), kGap, g) == Ref::Grid
+        && SameSides(g, t, 0.05)
+        && StashMoveAllMod::ButtonTarget(Ref::Grid, kSortBox, kTab4, kGap, routeGrid) == Ref::Grid
+        && SameSides(routeGrid, g, 1e-9);
+    // The relation's own positive control in the same rows: Sort's left and
+    // right are InventoryTab_5's, its top the tab row's bottom, its width a
+    // tab's.
+    ok = ok && Near(kSortBox.left, kTab5.left, 0.05) && Near(kSortBox.right, kTab5.right, 0.05)
+        && Near(kSortBox.top, kTab5.bottom, 0.05) && Near(kSortBox.top, kTab4.bottom, 0.05)
+        && Near(kSortBox.right - kSortBox.left, kTab4.right - kTab4.left, 0.05);
+    // A Sort-sized node there is the target's size: scale 1 by 1.
+    double sx = 0, sy = 0;
+    ok = ok && StashMoveAllMod::ButtonScale(kSortBox, t, sx, sy) && Near(sx, 1.0, 1e-3) && Near(sy, 1.0, 1e-9);
+    Check("target/tab_column_matches_the_grid_at_the_measured_scale", ok, StashMoveAllMod::BoxText(t));
+}
+
+static void TargetButtonFallsBackToTheTabGridWhenNoTabReads()
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    // No tab read: Sort's left minus Sort's width, up to Sort's left, in
+    // Sort's row.
+    StashMoveBox g;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, StashMoveBox(), kGap, g) == Ref::Grid
+        && Near(g.left, kLive5Sort.left - (kLive5Sort.right - kLive5Sort.left), 1e-9) && Near(g.right, kLive5Sort.left, 1e-9)
+        && Near(g.top, kLive5Sort.top, 1e-9) && Near(g.bottom, kLive5Sort.bottom, 1e-9);
+    // Said once a session, the mod on, the state line naming the grid and no
+    // tab box.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const std::string said = mod.NoteButtonRef(Ref::Grid, StashMoveBox());
+    ok = ok && said == "stashmoveall: button - the Extra tab above it did not read, so its column is worked out from "
+                       "the Sort button's box; F4 still works"
+        && mod.NoteButtonRef(Ref::Grid, StashMoveBox()).empty() && Has(mod.StateLine(), " button_ref=grid button_tab=none")
+        && mod.IsEnabled() && !Has(said, "Mercenary");
+    // A tab box read on an earlier step is not shown once the target is the
+    // grid's.
+    StashMoveAllMod was;
+    ok = ok && was.NoteButtonRef(Ref::Tab, kLive6Tab4).empty()
+        && Has(was.StateLine(), " button_ref=tab button_tab=2098.0,1196.0,2290.0,1262.0")
+        && !was.NoteButtonRef(Ref::Grid, StashMoveBox()).empty()
+        && Has(was.StateLine(), " button_ref=grid button_tab=none");
+    // With Sort unread as well: no target, nothing said.
+    StashMoveAllMod quiet;
+    StashMoveBox none;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Tab, StashMoveBox(), StashMoveBox(), kGap, none) == Ref::None
+        && !StashMoveAllMod::BoxReads(none) && quiet.NoteButtonRef(Ref::None, StashMoveBox()).empty()
+        && Has(quiet.StateLine(), " button_ref=none button_tab=none");
+    Check("target/button_falls_back_to_the_tab_grid_when_no_tab_reads", ok, said);
+}
+
+static void TargetATabOfAnotherWidthScalesTheNodeToIt()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    using Ref = ForgePact::StashMoveButtonRef;
+    // A tab 200 wide gives a 200-wide target in Sort's row.
+    const StashMoveBox tab200 = Box(2090.0, 1196.0, 2290.0, 1262.0);
+    StashMoveBox t;
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, tab200, kGap, t) == Ref::Tab
+        && SameSides(t, Box(2090.0, 1262.0, 2290.0, 1328.0), 1e-6);
+    // The scale is Sort's times target over Sort per axis, and the extents
+    // to make it with follow.
+    double sx = 0, sy = 0;
+    ok = ok && StashMoveAllMod::ButtonScale(kLive5Sort, t, sx, sy) && Near(sx, 200.0 / 192.0, 1e-9) && Near(sy, 1.0, 1e-9);
+    StashMoveAllMod scaled;
+    const StashMoveExtents w = scaled.ButtonExtentsFor(kLive5Sort, t, kLive5SortX, kLive5SortY);
+    ok = ok && Near(w.left, 0.0, 0.05) && Near(w.right, 200.0, 0.05) && Near(w.down, 66.0, 0.05);
+    // A Sort-sized node is judged against the target, not against Sort: it
+    // is Sort's size and not the target's, and that is said once.
+    const StashMoveBox sortSized = Box(2098.0, 1262.0, 2290.0, 1328.0);
+    ok = ok && StashMoveAllMod::TargetSized(kLive5Sort, sortSized) && !StashMoveAllMod::TargetSized(t, sortSized)
+        && StashMoveAllMod::TargetSized(t, Box(2090.0, 1262.0, 2290.0, 1328.0));
+    scaled.SetEnabled(true);
+    ok = ok && scaled.NoteButtonRef(Ref::Tab, tab200).empty();
+    scaled.NoteButtonMade(false);
+    scaled.NoteButtonLook(StashMoveButtonLook::Sort);
+    double rx = 0, ry = 0;
+    std::string line;
+    scaled.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2098.0, 1262.0, sortSized, rx, ry, line);
+    ok = ok && scaled.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2098.0, 1262.0, sortSized, rx, ry, line) == Check_::Keep
+        && Has(line, "stashmoveall: button - its size 192.0x66.0 is not the Extra tab column's 200.0x66.0, so it is kept "
+                     "as it is; F4 still works")
+        && !Has(line, "Mercenary") && Has(scaled.StateLine(), " button_tab=2090.0,1196.0,2290.0,1262.0");
+    // Negative controls: no scale from a box that did not read or has no
+    // size.
+    ok = ok && !StashMoveAllMod::ButtonScale(kLive5Sort, StashMoveBox(), sx, sy)
+        && !StashMoveAllMod::ButtonScale(Box(2290.0, 1262.0, 2290.0, 1328.0), t, sx, sy);
+    Check("target/a_tab_of_another_width_scales_the_node_to_it", ok, line);
+}
+
+static void TargetAnUnsizedTabBoxIsNeverTaken()
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    // Negative control: a tab box of no width, inside out, of no height, or
+    // with a side that did not read is never the target - the grid's box is,
+    // with a readable Sort, and none without one.
+    const StashMoveBox bad[] = { Box(2290.0, 1196.0, 2290.0, 1262.0), Box(2290.0, 1196.0, 2098.0, 1262.0),
+                                 Box(2098.0, 1262.0, 2290.0, 1262.0), Box(std::nan(""), 1196.0, 2290.0, 1262.0),
+                                 Box(2098.0, 1196.0, 2290.0, std::nan("")) };
+    bool ok = true;
+    std::string detail;
+    for (const StashMoveBox& b : bad) {
+        StashMoveBox t, none;
+        const bool grid = StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, b, kGap, t) == Ref::Grid
+            && SameSides(t, kLive6Column, 0.05);
+        const bool noSort = StashMoveAllMod::ButtonTarget(Ref::Tab, StashMoveBox(), b, kGap, none) == Ref::None
+            && !StashMoveAllMod::BoxReads(none);
+        if (!grid || !noSort) detail += StashMoveAllMod::BoxText(b) + " ";
+        ok = ok && grid && noSort;
+    }
+    // Positive control: a sized tab is taken.
+    StashMoveBox t;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, kLive6Tab4, kGap, t) == Ref::Tab;
+    Check("target/an_unsized_tab_box_is_never_taken", ok, detail.empty() ? "grid" : detail);
+}
+
+static void TargetUnreadTargetFallsBackToTheSortRule()
+{
+    using Check_ = ForgePact::StashMoveButtonCheck;
+    using Ref = ForgePact::StashMoveButtonRef;
+    // A Sort box of no width, on either route, gives the grid nothing to
+    // scale by: each falls back to the old rule's box.
+    StashMoveBox t;
+    const StashMoveBox noWidth = Box(2290.0, 1262.0, 2290.0, 1328.0);
+    bool ok = StashMoveAllMod::ButtonTarget(Ref::Grid, noWidth, StashMoveBox(), kGap, t) == Ref::Sort
+        && Near(t.right, 2282.0, 0.05);
+    StashMoveBox flat;
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Tab, noWidth, StashMoveBox(), kGap, flat) == Ref::Sort
+        && Near(flat.right, 2282.0, 0.05);
+    // The old rule's route keeps its box.
+    ok = ok && StashMoveAllMod::ButtonTarget(Ref::Sort, kLive5Sort, kLive6Tab4, kGap, t) == Ref::Sort
+        && SameSides(t, kLive5Node, 0.05);
+    // Said once a session, the mod on, the state line naming the rule.
+    StashMoveAllMod mod;
+    mod.SetEnabled(true);
+    const std::string said = mod.NoteButtonRef(Ref::Sort);
+    ok = ok && said == "stashmoveall: button - the column of the Extra tab above it could not be worked out, so it sits "
+                       "beside Sort by the old rule; F4 still works"
+        && mod.NoteButtonRef(Ref::Sort).empty() && Has(mod.StateLine(), " button_ref=sort button_tab=none") && mod.IsEnabled();
+    // It is then checked against that rule's box, and said placed beside Sort.
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(StashMoveButtonLook::Sort);
+    double x = 0, y = 0;
+    std::string line;
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Sort, 2090.0, 1262.0, kLive5Node, x, y, line);
+    ok = ok && mod.ButtonCheck(true, kLive5Sort, t, Ref::Sort, 2090.0, 1262.0, kLive5Node, x, y, line) == Check_::Keep
+        && line == "stashmoveall: button - placed beside Sort, box 2090.0,1262.0,2282.0,1328.0"
+        && Has(mod.StateLine(), " button_place=on") && Has(mod.StateLine(), " button_ref=sort");
+    // Negative controls: a route that gave its box says nothing; a Sort box
+    // that did not read gives no target and says nothing (making the node is
+    // refused on its own line).
+    StashMoveAllMod quiet;
+    StashMoveBox none;
+    ok = ok && quiet.NoteButtonRef(Ref::Tab, kLive6Tab4).empty()
+        && StashMoveAllMod::ButtonTarget(Ref::Sort, StashMoveBox(), kLive6Tab4, kGap, none) == Ref::None
+        && quiet.NoteButtonRef(Ref::None).empty() && Has(quiet.StateLine(), " button_ref=none");
+    Check("target/unread_target_falls_back_to_the_sort_rule", ok, said);
 }
 
 static void TargetShownTabRoom()
@@ -932,7 +1927,7 @@ static void TargetLines()
     mod.SetEnabled(true);
     ok = ok && mod.StateLine() == "stashmoveall: state=on key=F4" + kIdleButton;
     StashMoveView mats = MixedView(-4);
-    mats.cells[0].destinationHasStack = true;
+    mats.cells[0].destinationStacks = Stacks(kRoomyStack);
     StashMovePlan p = mod.Plan(mats);
     StashMoveTally t = mod.Begin(p);
     // Planned order: 0-0-20-7 (class 7), 0-0-10-18, 0-0-40-14 (stack), 0-0-30-15.
@@ -993,13 +1988,13 @@ static bool SecondItemOfOneIdentity(int stashTab, int itemClass, std::string& de
         && p.items[1].route == StashMoveRoute::Cell;
     StashMoveTally t = mod.Begin(p);
     // The first: its identity is still not on the tab (the sum re-reads 0).
-    const StashMoveItem first = StashMoveAllMod::RouteAtUse(p.items[0], stashTab, 0);
+    const StashMoveItem first = StashMoveAllMod::RouteAtUse(p.items[0], stashTab, Sum(0));
     ok = ok && first.route == StashMoveRoute::Cell;
     StashMoveResult one;
     ok = ok && StashMoveAllMod::MayCall(first, 1, one);
     ok = ok && mod.Record(t, StashMoveAllMod::Decide(first, PlacedCell(0, 0)));
     // The second: the first's 5 units are on the tab now.
-    const StashMoveItem second = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5);
+    const StashMoveItem second = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, Sum(5));
     ok = ok && second.route == StashMoveRoute::Stack && second.cell.count == 3;
     const StashMoveResult merged = StashMoveAllMod::Decide(second, Stacked(5, 8));
     ok = ok && merged.outcome == StashMoveOutcome::Moved && merged.route == StashMoveRoute::Stack
@@ -1011,11 +2006,11 @@ static bool SecondItemOfOneIdentity(int stashTab, int itemClass, std::string& de
     // The whole-count rule still holds at the point of use: not measured,
     // more than one unit is a skip and one unit merges.
     const StashMoveRoutes noWhole = Flipped(false, false, true, false);
-    const StashMoveItem many = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, 5, noWhole);
+    const StashMoveItem many = StashMoveAllMod::RouteAtUse(p.items[1], stashTab, Sum(5), noWhole);
     StashMoveItem unit = p.items[1];
     unit.cell.count = 1;
     ok = ok && many.route == StashMoveRoute::None && many.refusal == "whole-stack merge not measured"
-        && StashMoveAllMod::RouteAtUse(unit, stashTab, 5, noWhole).route == StashMoveRoute::Stack;
+        && StashMoveAllMod::RouteAtUse(unit, stashTab, Sum(5), noWhole).route == StashMoveRoute::Stack;
     detail = Keys(p) + " second=" + std::to_string((int)second.route) + " " + Joined(t.lines);
     return ok;
 }
@@ -1029,7 +2024,7 @@ static void TargetSecondItemMergesAtUseOnMaterials()
     StashMoveItem it;
     it.cell = Cell(0, 0, "0-0-83-14", 14, true, 4, false);
     it.route = StashMoveRoute::Cell;
-    ok = ok && StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, 0, Flipped(false, false, false, true)).refusal
+    ok = ok && StashMoveAllMod::RouteAtUse(it, StashMoveAllMod::kMaterialsTab, Sum(0), Flipped(false, false, false, true)).refusal
         == "a new kind stays in the bag";
     Check("target/second_item_of_one_identity_merges_at_the_point_of_use_on_materials", ok, detail);
 }
@@ -1051,31 +2046,35 @@ static void TargetUnreadableStackSumAtUseSkips()
     it.route = StashMoveRoute::Cell;
     // The sum could not be re-read: a skip that calls nothing, whatever the
     // plan said, and the run goes on.
-    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(it, 3, -1);
+    const StashMoveItem atUse = StashMoveAllMod::RouteAtUse(it, 3, Sum(-1));
     bool ok = atUse.route == StashMoveRoute::None && atUse.refusal == "its stack on the shown tab could not be read";
     StashMoveResult skip;
     ok = ok && !StashMoveAllMod::MayCall(atUse, 1, skip) && skip.outcome == StashMoveOutcome::Skipped
         && skip.answer == "its stack on the shown tab could not be read";
     StashMoveItem stacked = it;
     stacked.route = StashMoveRoute::Stack;
-    ok = ok && StashMoveAllMod::RouteAtUse(stacked, 3, -1).route == StashMoveRoute::None;
-    // A count that did not read is never merged: the merge passes it.
+    ok = ok && StashMoveAllMod::RouteAtUse(stacked, 3, Sum(-1)).route == StashMoveRoute::None;
+    // A count that did not read is never merged: the merge passes it. Since
+    // #131 the cell route passes it too, so it is never placed either.
     StashMoveItem noCount = it;
     noCount.cell.count = -1;
-    ok = ok && StashMoveAllMod::RouteAtUse(noCount, 3, 4).route == StashMoveRoute::None;
+    ok = ok && StashMoveAllMod::RouteAtUse(noCount, 3, Sum(4)).route == StashMoveRoute::None
+        && StashMoveAllMod::RouteAtUse(noCount, 3, Sum(0)).route == StashMoveRoute::None;
+    // One stack of the list that could not be read makes the whole list unread.
+    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, Stacks({4, -1})).refusal == "its stack on the shown tab could not be read";
     StashMoveTally t;
     ok = ok && mod.Record(t, skip) && t.skipped == 1 && !t.stopped && mod.IsEnabled();
     // Negative controls: a sum of 0 is a cell; a non-stackable needs no sum;
     // a planned skip stays a skip with its own reason.
-    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, 0).route == StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(it, 3, Sum(0)).route == StashMoveRoute::Cell;
     StashMoveItem ring;
     ring.cell = Cell(1, 0, "0-0-85-7", 7);
     ring.route = StashMoveRoute::Cell;
-    ok = ok && StashMoveAllMod::RouteAtUse(ring, 3, -1).route == StashMoveRoute::Cell;
+    ok = ok && StashMoveAllMod::RouteAtUse(ring, 3, Sum(-1)).route == StashMoveRoute::Cell;
     StashMoveItem refused;
     refused.cell = Cell(2, 0, "0-0-86-7", 7);
     refused.refusal = "not taken by the Materials tab";
-    const StashMoveItem still = StashMoveAllMod::RouteAtUse(refused, StashMoveAllMod::kMaterialsTab, 3);
+    const StashMoveItem still = StashMoveAllMod::RouteAtUse(refused, StashMoveAllMod::kMaterialsTab, Sum(3));
     ok = ok && still.route == StashMoveRoute::None && still.refusal == "not taken by the Materials tab";
     Check("target/unreadable_stack_sum_at_the_point_of_use_skips", ok, atUse.refusal + " " + Joined(t.lines));
 }
@@ -1278,12 +2277,12 @@ static void TargetButtonCountersNameWhereAPressWent()
     const double l = 520, t = 600, r = 600, b = 632;
     StashMoveAllMod mod;
     const std::string off0 = "stashmoveall: state=off key=F4 button=none presses=0 in_node=0 outside=0 unread=0 errors=0"
-                             " taken=0 dropped=0 last_drop=none";
+                             " taken=0 dropped=0 last_drop=none" + kIdlePlace;
     bool ok = mod.StateLine() == off0;
     mod.SetEnabled(true);
     mod.NoteButtonHeld(true);
     const std::string blind = "stashmoveall: state=on key=F4 button=held presses=0 in_node=0 outside=0 unread=0 errors=0"
-                              " taken=0 dropped=0 last_drop=none";
+                              " taken=0 dropped=0 last_drop=none" + kIdlePlace;
     ok = ok && mod.StateLine() == blind;
     // The misses: outside the box, a box that did not read, a box inside
     // out, a mouse point that did not read; and a poll that threw.
@@ -1305,7 +2304,7 @@ static void TargetButtonCountersNameWhereAPressWent()
     const bool nothing = mod.TakeButtonPress(true, true, false);
     ok = ok && !fg && !stash && !held && taken && !nothing;
     const std::string after = "stashmoveall: state=on key=F4 button=held presses=8 in_node=4 outside=1 unread=3 errors=1"
-                              " taken=1 dropped=3 last_drop=modifier";
+                              " taken=1 dropped=3 last_drop=modifier" + kIdlePlace;
     ok = ok && mod.StateLine() == after;
     // A press recorded, then the switch off before the tick took it: dropped
     // as off. The node gone: button=none, the counts kept for the session.
@@ -1314,7 +2313,7 @@ static void TargetButtonCountersNameWhereAPressWent()
     const bool whileOff = mod.TakeButtonPress(true, true, false);
     mod.NoteButtonHeld(false);
     const std::string offAfter = "stashmoveall: state=off key=F4 button=none presses=9 in_node=5 outside=1 unread=3 errors=1"
-                                 " taken=1 dropped=4 last_drop=off";
+                                 " taken=1 dropped=4 last_drop=off" + kIdlePlace;
     ok = ok && !whileOff && mod.StateLine() == offAfter;
     // Negative control: PressReads is true for a readable point and box
     // whether the point is inside or not.
@@ -1341,7 +2340,7 @@ static void TargetOffForThisSessionStateLineKeepsTheButtonFields()
     ok = ok && taken && loss.outcome == StashMoveOutcome::Unconfirmed && !mod.Record(t, loss) && mod.OffThisSession();
     mod.NoteButtonHeld(false);
     const std::string want = "stashmoveall: state=off-for-this-session button=none presses=1 in_node=1 outside=0"
-                             " unread=0 errors=0 taken=1 dropped=0 last_drop=none reason=" + mod.OffReason();
+                             " unread=0 errors=0 taken=1 dropped=0 last_drop=none" + kIdlePlace + " reason=" + mod.OffReason();
     ok = ok && !mod.OffReason().empty() && mod.StateLine() == want;
     // The state word stays first, for the panel.
     ok = ok && mod.StateLine().rfind("stashmoveall: state=off-for-this-session ", 0) == 0;
@@ -1353,6 +2352,307 @@ static void TargetOffForThisSessionStateLineKeepsTheButtonFields()
     ok = ok && byHand.StateLine() == "stashmoveall: state=off key=F4" + kIdleButton
         && byHand.StateLine().find(" reason=") == std::string::npos;
     Check("target/off_for_this_session_state_line_keeps_the_button_fields", ok, mod.StateLine());
+}
+
+// ---- #131, fix2's round 2: the look copy never stops on a member's kind -----
+
+using ForgePact::StashMoveLookKind;
+using ForgePact::StashMoveLookPut;
+using ForgePact::StashMoveLookSame;
+using ForgePact::StashMoveLookStep;
+using ForgePact::StashMoveLookTally;
+using ForgePact::StashMoveLookValue;
+using ForgePact::StashMoveLookWrite;
+
+// A member's value as the adapter hands it to the core, one per kind the
+// runtime returns for these members (a number, a bool, a string, an asset
+// reference, undefined).
+static StashMoveLookValue LookNumber(double v)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Number;
+    r.number = v;
+    return r;
+}
+
+static StashMoveLookValue LookBool(bool b)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Bool;
+    r.number = b ? 1.0 : 0.0;
+    return r;
+}
+
+static StashMoveLookValue LookString(const std::string& s)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::String;
+    r.text = s;
+    return r;
+}
+
+static StashMoveLookValue LookAsset(double index, const std::string& printed)
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Asset;
+    r.number = index;
+    r.text = printed;
+    return r;
+}
+
+static StashMoveLookValue LookUndefined()
+{
+    StashMoveLookValue r;
+    r.kind = StashMoveLookKind::Undefined;
+    return r;
+}
+
+struct LookMember {
+    std::string        name;
+    StashMoveLookWrite how;
+    StashMoveLookValue sort;   // what it reads off InventorySort
+};
+
+// The adapter's 16 members (kSmaLookVars/kSmaLookWrites) with what Live 5
+// read off InventorySort (docs/stash-move-research.md § Decision
+// buttonLabel): the 13 as read, the two scales scaled. The sprite's index is
+// a fixture (Live 4 read the name, not the index); `textFont` is handed in,
+// since whether it reads as a string or a font reference is not established.
+static std::vector<LookMember> Live5Look(const StashMoveLookValue& textFont)
+{
+    const StashMoveLookWrite as = StashMoveLookWrite::AsRead;
+    return {
+        {"sprite_index", as, LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr")},
+        {"image_xscale", StashMoveLookWrite::ScaleX, LookNumber(1.0)},
+        {"image_yscale", StashMoveLookWrite::ScaleY, LookNumber(1.0)},
+        {"textFont", as, textFont},
+        {"dropShadow", as, LookBool(false)},
+        {"createX", as, LookNumber(2290)},
+        {"drawXOffset", as, LookNumber(48)},
+        {"drawYOffset", as, LookNumber(9)},
+        {"navBboxX", as, LookNumber(2290)},
+        {"navBboxY", as, LookNumber(1262)},
+        {"navBboxWidth", as, LookNumber(192)},
+        {"navBboxHeight", as, LookNumber(66)},
+        {"naviDown", as, LookBool(false)},
+        {"naviDownPrev", as, LookBool(false)},
+        {"naviRight", as, LookBool(false)},
+        {"naviRightPrev", as, LookBool(false)},
+    };
+}
+
+// The mod's node as the copy leaves it: each member as it reads, and the
+// members written, in order. Before the copy it holds the node's own (Live
+// 5: `textFont` __newfont6, `drawXOffset` 0, ...); a member the copy does not
+// write keeps its own.
+struct FakeLookNode {
+    std::map<std::string, StashMoveLookValue> members;
+    std::vector<std::string>                  written;
+};
+
+// A stand-in for the adapter's loop (SmaButtonLook in ModuleMain.cpp, which
+// cannot be compiled here: it calls the runtime), the same shape: every
+// member is read off Sort, the core's LookStep says what to write, the write
+// is made, the member is read back (or as `back` says, the game putting its
+// own back, say) and the core's LookCompare goes into the tally. The verdict
+// is the tally's, after the whole list.
+static StashMoveLookTally CopyLook(const std::vector<LookMember>& list, FakeLookNode& node, double sx, double sy,
+                                   const std::map<std::string, StashMoveLookValue>& back = {})
+{
+    StashMoveLookTally t;
+    for (const LookMember& m : list) {
+        const StashMoveLookStep step = StashMoveAllMod::LookStep(m.sort, m.how, sx, sy);
+        if (step.put == StashMoveLookPut::AsRead) node.members[m.name] = m.sort;
+        else if (step.put == StashMoveLookPut::Number) node.members[m.name] = LookNumber(step.want.number);
+        if (step.put != StashMoveLookPut::Nothing) node.written.push_back(m.name);
+        const auto b = back.find(m.name);
+        const auto own = node.members.find(m.name);
+        const StashMoveLookValue got = b != back.end() ? b->second
+            : own != node.members.end() ? own->second : LookUndefined();
+        t.Note(m.name, StashMoveAllMod::LookCompare(step.want, got));
+    }
+    return t;
+}
+
+// The node before the copy: Live 5's own values beside Sort's.
+static FakeLookNode Live5Node()
+{
+    FakeLookNode n;
+    n.members = {
+        {"sprite_index", LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr")},
+        {"image_xscale", LookNumber(1.0)}, {"image_yscale", LookNumber(1.0)},
+        {"textFont", LookString("__newfont6")}, {"dropShadow", LookBool(true)}, {"createX", LookNumber(2090)},
+        {"drawXOffset", LookNumber(0)}, {"drawYOffset", LookNumber(-7)}, {"navBboxX", LookNumber(1988)},
+        {"navBboxY", LookNumber(1238)}, {"navBboxWidth", LookNumber(206)}, {"navBboxHeight", LookNumber(48)},
+        {"naviDown", LookBool(true)}, {"naviDownPrev", LookBool(true)}, {"naviRight", LookBool(true)},
+        {"naviRightPrev", LookBool(true)},
+    };
+    return n;
+}
+
+static std::string Written(const FakeLookNode& n)
+{
+    std::string s;
+    for (const std::string& w : n.written) s += (s.empty() ? "" : ",") + w;
+    return s;
+}
+
+static const std::string kAllSixteen = "sprite_index,image_xscale,image_yscale,textFont,dropShadow,createX,drawXOffset,"
+                                       "drawYOffset,navBboxX,navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,"
+                                       "naviRight,naviRightPrev";
+
+// Settle a node on the Extra tab's column with `look` noted, and return the check's lines.
+static std::string SettleWithLook(StashMoveAllMod& mod, const StashMoveLookTally& look)
+{
+    using Ref = ForgePact::StashMoveButtonRef;
+    StashMoveBox t;
+    StashMoveAllMod::ButtonTarget(Ref::Tab, kLive5Sort, kLive6Tab4, kGap, t);
+    mod.SetEnabled(true);
+    mod.NoteButtonMade(false);
+    mod.NoteButtonLook(look);
+    double x = 0, y = 0;
+    std::string line;
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2098.0, 1262.0, kLive6Column, x, y, line);
+    mod.ButtonCheck(true, kLive5Sort, t, Ref::Tab, 2098.0, 1262.0, kLive6Column, x, y, line);
+    return line;
+}
+
+static void BaselineLookAllNumericMembersCopiedAndReadSort()
+{
+    // The kinds fix2's copy accepted (numbers, bools, asset references):
+    // `textFont` as a font reference. Every member is written, 16 of 16
+    // read back the same, and the verdict is sort, as it was.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), node, 1.0, 1.0);
+    bool ok = Written(node) == kAllSixteen && t.listed == 16 && t.equal == 16 && t.first.empty()
+        && t.Verdict() == StashMoveButtonLook::Sort
+        && node.members["drawXOffset"].number == 48 && node.members["navBboxX"].number == 2290
+        && node.members["createX"].number == 2290 && node.members["dropShadow"].number == 0;
+    // The scales alone are scaled: to a target 1.5 wide, image_xscale is
+    // written 1.5; everything else as read, navBboxWidth included.
+    FakeLookNode wide = Live5Node();
+    const StashMoveLookTally w = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), wide, 1.5, 1.0);
+    ok = ok && w.Verdict() == StashMoveButtonLook::Sort && Near(wide.members["image_xscale"].number, 1.5, 1e-12)
+        && Near(wide.members["image_yscale"].number, 1.0, 1e-12) && wide.members["navBboxWidth"].number == 192;
+    // The state line says it, and no look line is said.
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(mod.StateLine(), " button_look=sort") && Has(mod.StateLine(), " button_look_same=16/16")
+        && !Has(line, "look");
+    // Negative control: before any node the field reads none.
+    StashMoveAllMod idle;
+    ok = ok && Has(idle.StateLine(), " button_look_same=none");
+    Check("baseline/look_all_numeric_members_copied_and_read_sort", ok, Written(node) + " | " + mod.StateLine());
+}
+
+static void TargetLookStringMemberIsCopiedAndComparedAsText()
+{
+    // `textFont` reads as a string (the probe printed a bare __newfont2).
+    // fix2's copy stopped there, before the label offsets; now it is written
+    // as read, every member after it is written too, and it compares by text.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookString("__newfont2")), node, 1.0, 1.0);
+    bool ok = Written(node) == kAllSixteen && node.members["textFont"].kind == StashMoveLookKind::String
+        && node.members["textFont"].text == "__newfont2" && node.members["drawYOffset"].number == 9
+        && node.members["naviRightPrev"].number == 0 && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort;
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(LookString("__newfont2"), StashMoveLookWrite::AsRead, 1, 1);
+    ok = ok && step.put == StashMoveLookPut::AsRead
+        && StashMoveAllMod::LookCompare(step.want, LookString("__newfont2")) == StashMoveLookSame::Same;
+    // A scaled member that reads as anything but a number is not written
+    // and compares unread; the members after it are still written.
+    std::vector<LookMember> list = Live5Look(LookString("__newfont2"));
+    list[1].sort = LookString("1");
+    FakeLookNode odd = Live5Node();
+    const StashMoveLookTally o = CopyLook(list, odd, 1.0, 1.0);
+    ok = ok && StashMoveAllMod::LookStep(LookString("1"), StashMoveLookWrite::ScaleX, 1, 1).put == StashMoveLookPut::Nothing
+        && Written(odd) == "sprite_index,image_yscale,textFont,dropShadow,createX,drawXOffset,drawYOffset,navBboxX,"
+                           "navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
+        && o.equal == 15 && o.first == "image_xscale" && o.Verdict() == StashMoveButtonLook::Unread;
+    Check("target/look_string_member_is_copied_and_compared_as_text", ok, Written(node));
+}
+
+static void TargetLookAssetMemberComparesByItsIndex()
+{
+    // An asset reference compares by its index: read back as the same
+    // reference, or as a plain number of that index, it is the same; the
+    // name it prints plays no part.
+    const StashMoveLookValue sprite = LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr");
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(sprite, StashMoveLookWrite::AsRead, 1, 1);
+    bool ok = step.put == StashMoveLookPut::AsRead
+        && StashMoveAllMod::LookCompare(step.want, sprite) == StashMoveLookSame::Same
+        && StashMoveAllMod::LookCompare(step.want, LookNumber(1502)) == StashMoveLookSame::Same
+        && StashMoveAllMod::LookCompare(step.want, LookAsset(1502, "ref sprite 1502")) == StashMoveLookSame::Same;
+    // Negative controls: another index differs, even with the same name
+    // printed; an index that did not read is unread; a string differs.
+    ok = ok && StashMoveAllMod::LookCompare(step.want, LookAsset(1503, sprite.text)) == StashMoveLookSame::Differs
+        && StashMoveAllMod::LookCompare(step.want, LookAsset(std::nan(""), sprite.text)) == StashMoveLookSame::Unread
+        && StashMoveAllMod::LookCompare(step.want, LookString(sprite.text)) == StashMoveLookSame::Differs;
+    // In the copy: the sprite read back as its index is still sort.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), node, 1.0, 1.0,
+                                          {{"sprite_index", LookNumber(1502)}, {"textFont", LookNumber(7)}});
+    ok = ok && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort;
+    Check("target/look_asset_member_compares_by_its_index", ok, "");
+}
+
+static void TargetLookUnreadMemberIsNamedAfterTheWholeCopy()
+{
+    // `drawXOffset` reads undefined off Sort (a member missing on some
+    // build): it is not written, every other member is, and the verdict is
+    // unread only once the whole list has been through, naming it.
+    std::vector<LookMember> list = Live5Look(LookString("__newfont2"));
+    list[6].sort = LookUndefined();
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(list, node, 1.0, 1.0);
+    bool ok = Written(node) == "sprite_index,image_xscale,image_yscale,textFont,dropShadow,createX,drawYOffset,navBboxX,"
+                               "navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
+        && node.members["drawXOffset"].number == 0   // the node's own, untouched
+        && t.listed == 16 && t.equal == 15 && t.first == "drawXOffset" && t.firstWas == StashMoveLookSame::Unread
+        && t.Verdict() == StashMoveButtonLook::Unread;
+    // A member whose read or write threw is noted unread by the adapter's
+    // catch, and the members after it still count.
+    StashMoveLookTally thrown;
+    thrown.Note("sprite_index", StashMoveLookSame::Same);
+    thrown.Note("textFont", StashMoveLookSame::Unread);
+    thrown.Note("drawXOffset", StashMoveLookSame::Same);
+    ok = ok && thrown.listed == 3 && thrown.equal == 2 && thrown.first == "textFont"
+        && thrown.Verdict() == StashMoveButtonLook::Unread;
+    // Said once, naming the member, and the state line counts the rest.
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(line, "stashmoveall: button - its look beside Sort could not be read (drawXOffset did not read; "
+                         "15/16 members the same), so it is unchecked; F4 still works")
+        && Has(mod.StateLine(), " button_look=unread") && Has(mod.StateLine(), " button_look_same=15/16") && mod.IsEnabled();
+    // Negative control: nothing listed is never sort.
+    ok = ok && StashMoveLookTally().Verdict() == StashMoveButtonLook::Unread;
+    Check("target/look_unread_member_is_named_after_the_whole_copy", ok, Written(node) + " | " + line);
+}
+
+static void TargetLookDifferingStringReadsDiffers()
+{
+    // Negative control for the wider kinds: a string that reads back other
+    // than it was written (the node's own __newfont6, the game putting it
+    // back, say) differs, never sort - accepting strings is not accepting
+    // anything.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLook(Live5Look(LookString("__newfont2")), node, 1.0, 1.0,
+                                          {{"textFont", LookString("__newfont6")}});
+    bool ok = Written(node) == kAllSixteen && t.equal == 15 && t.first == "textFont"
+        && t.firstWas == StashMoveLookSame::Differs && t.Verdict() == StashMoveButtonLook::Differs;
+    // A string against a number, and a differing string beside an unread
+    // member: still differs.
+    ok = ok && StashMoveAllMod::LookCompare(LookString("48"), LookNumber(48)) == StashMoveLookSame::Differs
+        && StashMoveAllMod::LookCompare(LookString("__newfont2"), LookString("__newfont2 ")) == StashMoveLookSame::Differs;
+    StashMoveLookTally both;
+    both.Note("textFont", StashMoveLookSame::Differs);
+    both.Note("drawXOffset", StashMoveLookSame::Unread);
+    ok = ok && both.Verdict() == StashMoveButtonLook::Differs;
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(line, "stashmoveall: button - it did not take the Sort button's look (textFont differs; 15/16 members "
+                         "the same), so it is kept with its own; F4 still works")
+        && Has(mod.StateLine(), " button_look=differs") && Has(mod.StateLine(), " button_look_same=15/16");
+    Check("target/look_differing_string_reads_differs", ok, line);
 }
 
 int main()
@@ -1376,7 +2676,36 @@ int main()
     BaselineSocketableTabTakesOnlyTheBagSocketView();
     TargetSocketableMergesAnIdentityWithANode();
     TargetSocketableNewKindStaysInTheBag();
-    TargetSocketableMergeOfMoreThanOneUnitIsAPlannedSkip();
+    TargetSocketableWholeStackMergesIntoItsOneStack();
+    TargetFullSocketableStackNeverStartsASecondStack();
+    BaselineGameMergeTakesAStackOnlyWhileTheSumStaysAtTheCap();
+    TargetFullMaterialsStackOverflowsIntoAFreeCell();
+    TargetMaterialsMergeSkipsTheFullStackForOneWithRoom();
+    TargetMergeAtExactlyTheCapIsAMerge();
+    TargetNoStackFitsAndNoFreeCellStaysInTheBag();
+    TargetFullKeyStackOnAPageOverflowsIntoAFreeCell();
+    TargetUnexpectedMergeOnTheCellRouteIsConfirmedAsAMerge();
+    BaselineButtonSmallOriginIsItsCentreAndSortOriginItsTopLeft();
+    TargetButtonRightEdgeSitsTheGapLeftOfSortCentredOnIt();
+    TargetOldButtonOriginPutItsCornerInsideTheTargetBox();
+    TargetButtonIsCheckedOnItsSettledBoxNotTheCreationFrame();
+    BaselineLive1NodeOfAnotherSizeSatBesideSort();
+    TargetFirstNodeMadeWithSortsOwnExtentsLandsOnTarget();
+    TargetButtonSizeWithinOneOfSortsIsSortSized();
+    TargetButtonOfAnotherSizeIsKeptAndSaidOnce();
+    TargetButtonLookNotTakenIsKeptAndSaidOnce();
+    BaselineLive6MercenaryBoxIsOffTheTabColumn();
+    TargetButtonTakesTheTabColumnsSidesAndSortsRow();
+    TargetTabColumnMatchesTheGridAtTheMeasuredScale();
+    TargetButtonFallsBackToTheTabGridWhenNoTabReads();
+    TargetATabOfAnotherWidthScalesTheNodeToIt();
+    TargetAnUnsizedTabBoxIsNeverTaken();
+    TargetUnreadTargetFallsBackToTheSortRule();
+    BaselineLookAllNumericMembersCopiedAndReadSort();
+    TargetLookStringMemberIsCopiedAndComparedAsText();
+    TargetLookAssetMemberComparesByItsIndex();
+    TargetLookUnreadMemberIsNamedAfterTheWholeCopy();
+    TargetLookDifferingStringReadsDiffers();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();
