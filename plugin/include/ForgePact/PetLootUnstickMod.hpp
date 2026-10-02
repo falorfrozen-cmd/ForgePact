@@ -20,6 +20,19 @@ namespace ForgePact {
 // left on the ground and passes the next scan. So one item the game cannot
 // pick up pins the pet for as long as it lies there.
 //
+// A second shape was measured on 2026-10-02 (docs/pet-loot-stuck-research.md,
+// "Live 2 results"): the target can also be an id that is not loot at all.
+// The game frees a destroyed item's instance id and reuses it for whatever is
+// created next, so `lootTarget` starts naming a stranger (in the measured
+// case a zone's decoration object) and `instance_exists` keeps passing, so
+// the game never retargets. The pet travels to that object and grinds at it
+// - 52-88 px away, `move=true`, `deltaSpeed` at travel speed - while the
+// player walks away. For that shape the watch below is the wrong tool (its
+// 90-frame count needs the pet within 160 px, and the pet has no business at
+// that object at all): a live target whose `object_index` is from neither the
+// ground-item nor the coin family can never be picked up, so it is given up
+// on the tick that sees it, through the header's PetLootRoute.
+//
 // The mod does not need to know why the pickup failed. It watches for the
 // observable shape - the same target, within reach, not going away - and when
 // it sees it, the tick (ModuleMain.cpp's PetLootUnstickTick) hands the item
@@ -124,6 +137,22 @@ private:
 // tick set, or tried to set, its itemCompanionTimer), a coin (no timer; only
 // the target was dropped), or neither.
 enum class PetLootKind { Other, Ground, Coin };
+
+// The tick's routing question for a live target, from what the game's own
+// data says the target is: feed the same-target watch, or drop it on sight?
+// A live target from neither loot family can never be picked up - the pet's
+// list only ever holds ground items and coins - so an id that names anything
+// else is a stale one the game reused (above), and waiting out the watch
+// would leave the pet grinding at it. An unreadable kind is not evidence of a
+// wrong id, so it keeps the watch route. Pure, so the harness pins it.
+enum class PetLootTargetRoute { Watch, DropOnSight };
+
+inline PetLootTargetRoute PetLootRoute(bool kindRead, bool isGround, bool isCoin)
+{
+    if (!kindRead) return PetLootTargetRoute::Watch;
+    if (isGround || isCoin) return PetLootTargetRoute::Watch;
+    return PetLootTargetRoute::DropOnSight;
+}
 
 // A re-pick while held: the pet's live target is one given up less than
 // kPetLootHoldFrames frames ago.

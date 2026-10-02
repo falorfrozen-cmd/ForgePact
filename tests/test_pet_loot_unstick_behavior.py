@@ -19,11 +19,14 @@ frame earlier; a travel beyond the radius never counts; a different target, no
 target or a skipped frame restarts; a target taken straight back after its
 give-up (ground item or coin) is given up again every kPetLootStuckFrames and
 counted once per give-up as a re-pick, by kind (PetLootRepickRing); a target
-that vanishes first asks for nothing; and the singleton's toggle lines and
-stat line.
+that vanishes first asks for nothing; the singleton's toggle lines and
+stat line; and the Live 2 routing question (a live target from neither loot
+family is dropped on sight, `target/not_loot_target_drops_on_sight`).
 
 No automated session measures #94; Live procedure 1 of workorder
-forgepact-pet-loot-stuck is the live confirmation.
+forgepact-pet-loot-stuck is the live confirmation. Live 2 (2026-10-02) is the
+measured stale-target capture that the routing question comes from
+(docs/pet-loot-stuck-research.md).
 """
 import os
 import shutil
@@ -162,6 +165,14 @@ class PetLootUnstickBehaviorTests(unittest.TestCase):
 
     def test_target_vanished_target_asks_nothing(self):
         self.assertScenario("target/vanished_target_asks_nothing")
+
+    def test_target_not_loot_target_drops_on_sight(self):
+        # Live 2 (2026-10-02): a live target from neither loot family is a
+        # stale id the game reused (a zone decoration in the capture), and the
+        # routing question sends it to the on-sight drop, never to the watch;
+        # an unreadable kind keeps the watch route (a failed read is not
+        # evidence of a wrong id).
+        self.assertScenario("target/not_loot_target_drops_on_sight")
 
     def test_target_mod_on_asks_and_counts(self):
         self.assertScenario("target/mod_on_asks_and_counts")

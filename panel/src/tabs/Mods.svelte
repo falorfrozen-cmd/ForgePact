@@ -38,7 +38,7 @@
         <span class="val" id="mpqpval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Pet moves on from loot it cannot pick up<br><span class="feature-description">When a lot of loot is on the ground and your pet stays stuck on one item it cannot pick up, it leaves that item for a few seconds and goes for the next one. Nothing is picked up or destroyed for you. Off by default.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Pet moves on from loot it cannot pick up<br><span class="feature-description">When a lot of loot is on the ground and your pet stays stuck on one item it cannot pick up, it leaves that item for a few seconds and goes for the next one. A target that is not an item or a coin at all is left at once. Nothing is picked up or destroyed for you. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_pet_loot_unstick"><span class="sl"></span></label>
         <span class="val" id="mpluval">off</span>
     </div>
@@ -56,6 +56,11 @@
         <span class="lbl" style="width:auto;flex:1">Craft from the stash<br><span class="feature-description">Crafting Cube recipes also count the materials and socketables in your stash's Materials and Socketable tabs. When you craft, only what your bag is short of leaves the stash, and the stash is saved right after. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_craft_mats"><span class="sl"></span></label>
         <span class="val" id="mcmval">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Move all into the stash<br><span class="feature-description">With the stash open, click the Move all button beside your bag's Sort, or press F4, to move every item on the bag tab you see into the stash tab you see. Items the tab has no room for or does not take stay in your bag. If a move cannot be confirmed, it turns off until you restart. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_stash_move_all"><span class="sl"></span></label>
+        <span class="val" id="msmaval">off</span>
     </div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Mark a running toggle skill<br><span class="feature-description">For a fixed set of toggle skills, each measured in-game: draws a soft red outline around that skill's skill-bar slot while its toggle is running, so you can see at a glance that it is still active. The outline disappears when the toggle ends. A plain cast, made without the skill's toggle sub-talent, lights nothing.</span></span>
@@ -76,6 +81,11 @@
         <span class="lbl" style="width:auto;flex:1">Far scenery sleep<br><span class="feature-description">Lets the game skip a zone's far trees, bushes, hay, rocks and fences every frame, and wakes them before they come into view, so busy zones run lighter. Shrines, chests, traps and monsters are never touched. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_far_sleep"><span class="sl"></span></label>
         <span class="val" id="mfsval">off</span>
+    </div>
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Extra packs as you approach<br><span class="feature-description">With Monster Density above x1, the extra monster packs are set up as you come near instead of all at once when a zone loads, so crowded zones run lighter. You meet just as many packs. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="density_rolling"><span class="sl"></span></label>
+        <span class="val" id="drlval">off</span>
     </div>
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Sleep loot your filter hides<br><span class="feature-description">Items your loot filter hides are put to sleep as they drop, so the game stops spending time on them every frame. Hold Left Alt, or the key you pick below, to see them and pick them up; let go and they hide again. Off by default.</span></span>

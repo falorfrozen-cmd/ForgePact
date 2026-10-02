@@ -96,8 +96,9 @@ for a dry run.
 
 **Why a missing notes file is never a refusal here.** The point of the
 generated-notes fallback is that nobody has to author `release-notes-vX.Y.Z.md`
-before tagging -- see "Notes composition" below. A file that exists must still
-carry a valid release date, and `cut_release.py --check` still refuses a
+before tagging -- see "Notes composition" below. A Friday release's file that
+exists must still carry a valid release date (a hotfix's needs none, but a date
+it gives must be real), and `cut_release.py --check` still refuses a
 missing notes file by default; only `--allow-missing-notes`, which the tag
 workflow passes, relaxes that.
 

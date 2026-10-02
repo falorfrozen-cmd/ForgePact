@@ -35,10 +35,11 @@
 // sandbox after the legacy ones.
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
-// sleep, the Pet moves on switch of forgepact-pet-loot-stuck, and Sleep loot
-// your filter hides, whose show-key select is derived after them): the same
-// on, off, on and Turn off shape the legacy recording holds for
-// #mod_pet_quest_pickup, but nothing recorded stands for them, so their
+// sleep, the Pet moves on switch of forgepact-pet-loot-stuck, Move all into
+// the stash, Extra packs as you approach, and Sleep loot your filter hides,
+// whose show-key select is derived after them): the same on, off, on and Turn
+// off shape the legacy recording holds for #mod_pet_quest_pickup, but nothing
+// recorded stands for them, so their
 // contract is written out here as literals - on posts the mod's key with true and sends its plugin
 // verb with 1, off posts false and sends the verb with 0, on again repeats the
 // first, and its Turn off button repeats the off - entered on the tab and Mods
@@ -84,6 +85,8 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
+  { key: 'mod_stash_move_all', tab: 'tab:mods', sub: 'subtab:qol', verb: 'stashmoveall' },
+  { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
@@ -95,6 +98,20 @@ export const NATIVE_BOOLEANS = [
 // switch's first on, off its off).
 export const HIDDEN_LOOT_KEY_PARENT = 'mod_hidden_loot';
 export const HIDDEN_LOOT_KEY_CODES = [17, 0, 164];
+// Switched sliders no recorded page ever had (Skill Haste and All Skills,
+// ForgePact#114): the section and key, the tab they sit on (their neighbour
+// Faster Cast Rate's, which the legacy walk reached on the Modifiers tab),
+// their range, and the line src/forgepact.py sends at each end. Their
+// contract is written out as literals, as NATIVE_BOOLEANS' is, and they come
+// after everything else (the show key's select included, which needs the tab
+// the native booleans left open), so no earlier step's index moves.
+export const NATIVE_SLIDERS = [
+  { section: 'percent_stats', key: 'skillhaste', tab: 'tab:modifiers', min: 0, max: 200,
+    atMin: 'statadd skillhaste 0', atMax: 'statadd skillhaste 200' },
+  { section: 'percent_stats', key: 'allskills', tab: 'tab:modifiers', min: 0, max: 100,
+    atMin: 'statadd allskills 0', atMax: 'statadd allskills 100' },
+];
+export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
 
 // The tab (and Mods sub-tab) the legacy walk had open when it first reached
@@ -230,6 +247,30 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     });
   }
   push(parent, 'click', { expect: { posts: { same: parentOff }, cmds: { same: parentOff } } });
+  // The switched sliders no recording has: a legacy slider's eight steps,
+  // with the two ends' posts and lines written out, last. The range and its
+  // switch are both controls here, since no recording lists the range.
+  for (const { section, key, tab, min, max, atMin, atMax } of NATIVE_SLIDERS) {
+    const selector = tableRange(section, key);
+    const switchId = `${section}.${key}`;
+    const sw = '#' + switchControlId(switchId);
+    controls.push(selector, sw);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    const top = push(selector, 'max', { expect: { posts: { is: setPost({ section, key, value: max }) }, cmds: { is: [atMax] } } });
+    const atMinStep = push(selector, 'min', { expect: { posts: { is: setPost({ section, key, value: min }) }, cmds: { is: [atMin] } } });
+    const atMaxStep = push(selector, 'max', { expect: { posts: { same: top }, cmds: { same: top } } });
+    const off = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: false }) }, cmds: { same: atMinStep } },
+    });
+    const on = push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: atMaxStep } },
+    });
+    push(quickDisable(switchControlId(switchId)), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    push(sw, 'click', {
+      expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
+    });
+    push(selector, 'min', { expect: { posts: { same: atMinStep }, cmds: { same: atMinStep } } });
+  }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),
     ...(keySupplement ? { keySupplementFrom } : {}), controls, steps,

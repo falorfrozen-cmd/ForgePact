@@ -360,9 +360,15 @@ class FridayReleasesWaitForTheirDate(unittest.TestCase):
         forgepact_tag.schedule(
             "2.0.1", "v2.0.0", "Release date: 2026-10-05\n", THURSDAY)
 
-    def test_a_hotfix_notes_file_still_needs_a_date(self):
+    def test_an_undated_hotfix_notes_file_is_accepted_any_day(self):
+        for today in (THURSDAY, FRIDAY, SATURDAY):
+            with self.subTest(today=today):
+                forgepact_tag.schedule("2.0.1", "v2.0.0", "# ForgePact 2.0.1\n", today)
+
+    def test_a_hotfix_date_that_is_not_real_is_still_refused(self):
         with self.assertRaises(SystemExit):
-            forgepact_tag.schedule("2.0.1", "v2.0.0", "# ForgePact 2.0.1\n", THURSDAY)
+            forgepact_tag.schedule(
+                "2.0.1", "v2.0.0", "Release date: 2026-02-30\n", THURSDAY)
 
 
 class TheReleaseClockIsTurkeys(unittest.TestCase):

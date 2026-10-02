@@ -124,11 +124,31 @@ class CutReleaseTests(unittest.TestCase):
         self.assertEqual(self.run_cli("--check").returncode, 0)
 
     # ---- the release date -------------------------------------------------
-    def test_notes_without_a_release_date_fail_the_check(self):
+    def test_undated_notes_fail_the_check_only_for_a_friday_release(self):
+        # The tree's own version decides which kind this is, so assert the
+        # outcome for whichever kind it is; the two notes_date tests below
+        # pin both kinds regardless of the tree.
         self.write_notes(date_line="Some text, no date.")
         result = self.run_cli("--check")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("Release date: ", result.stdout)
+        if cut_release.is_hotfix(self.version):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("needs no release date", result.stdout)
+        else:
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("Release date: ", result.stdout)
+
+    def test_a_friday_release_needs_a_date(self):
+        when, problem = cut_release.notes_date("2.1.0", "# ForgePact 2.1.0\n")
+        self.assertIsNone(when)
+        self.assertIn("Release date: ", problem)
+
+    def test_a_hotfix_needs_no_date(self):
+        self.assertEqual(
+            cut_release.notes_date("2.0.1", "# ForgePact 2.0.1\n"), (None, None))
+
+    def test_a_date_a_hotfix_does_give_must_still_be_real(self):
+        _, problem = cut_release.notes_date("2.0.1", "Release date: 2026-02-30\n")
+        self.assertIn("not a real date", problem)
 
     def test_the_check_reports_the_date(self):
         result = self.run_cli("--check")

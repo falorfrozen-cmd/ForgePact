@@ -48,8 +48,14 @@
   "#sw_keys_primeevil",
   "#mod_far_sleep",
   "#mod_pet_loot_unstick",
+  "#mod_stash_move_all",
+  "#density_rolling",
   "#mod_hidden_loot",
-  "#mod_hidden_loot_key"
+  "#mod_hidden_loot_key",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+  "#sw_percent_stats_skillhaste",
+  "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+  "#sw_percent_stats_allskills"
  ],
  "steps": [
   {
@@ -4861,6 +4867,150 @@
   },
   {
    "step": 417,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 418,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_stash_move_all",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "stashmoveall 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 419,
+   "control": "#mod_stash_move_all",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 417
+    },
+    "cmds": {
+     "same": 417
+    }
+   }
+  },
+  {
+   "step": 420,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_stash_move_all\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 418
+    },
+    "cmds": {
+     "same": 418
+    }
+   }
+  },
+  {
+   "step": 421,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 422,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "density_rolling",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "densityroll 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 423,
+   "control": "#density_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 421
+    },
+    "cmds": {
+     "same": 421
+    }
+   }
+  },
+  {
+   "step": 424,
+   "control": "#enabledMods .quick-disable[data-for=\"density_rolling\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 422
+    },
+    "cmds": {
+     "same": 422
+    }
+   }
+  },
+  {
+   "step": 425,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -4884,7 +5034,7 @@
    }
   },
   {
-   "step": 418,
+   "step": 426,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -4907,46 +5057,46 @@
    }
   },
   {
-   "step": 419,
+   "step": 427,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 417
+     "same": 425
     },
     "cmds": {
-     "same": 417
+     "same": 425
     }
    }
   },
   {
-   "step": 420,
+   "step": 428,
    "control": "#enabledMods .quick-disable[data-for=\"mod_hidden_loot\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 418
+     "same": 426
     },
     "cmds": {
-     "same": 418
+     "same": 426
     }
    }
   },
   {
-   "step": 421,
+   "step": 429,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 417
+     "same": 425
     },
     "cmds": {
-     "same": 417
+     "same": 425
     }
    }
   },
   {
-   "step": 422,
+   "step": 430,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "17",
@@ -4970,7 +5120,7 @@
    }
   },
   {
-   "step": 423,
+   "step": 431,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "0",
@@ -4994,7 +5144,7 @@
    }
   },
   {
-   "step": 424,
+   "step": 432,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "164",
@@ -5018,15 +5168,326 @@
    }
   },
   {
-   "step": 425,
+   "step": 433,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 418
+     "same": 426
     },
     "cmds": {
-     "same": 418
+     "same": 426
+    }
+   }
+  },
+  {
+   "step": 434,
+   "control": "tab:modifiers",
+   "action": "click"
+  },
+  {
+   "step": 435,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "percent_stats",
+        "key": "skillhaste",
+        "value": 200
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "statadd skillhaste 200"
+     ]
+    }
+   }
+  },
+  {
+   "step": 436,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "percent_stats",
+        "key": "skillhaste",
+        "value": 0
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "statadd skillhaste 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 437,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "same": 435
+    },
+    "cmds": {
+     "same": 435
+    }
+   }
+  },
+  {
+   "step": 438,
+   "control": "#sw_percent_stats_skillhaste",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.skillhaste",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 436
+    }
+   }
+  },
+  {
+   "step": 439,
+   "control": "#sw_percent_stats_skillhaste",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.skillhaste",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 437
+    }
+   }
+  },
+  {
+   "step": 440,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_skillhaste\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 438
+    },
+    "cmds": {
+     "same": 438
+    }
+   }
+  },
+  {
+   "step": 441,
+   "control": "#sw_percent_stats_skillhaste",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.skillhaste",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 439
+    }
+   }
+  },
+  {
+   "step": 442,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 436
+    },
+    "cmds": {
+     "same": 436
+    }
+   }
+  },
+  {
+   "step": 443,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "percent_stats",
+        "key": "allskills",
+        "value": 100
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "statadd allskills 100"
+     ]
+    }
+   }
+  },
+  {
+   "step": 444,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "percent_stats",
+        "key": "allskills",
+        "value": 0
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "statadd allskills 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 445,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "same": 443
+    },
+    "cmds": {
+     "same": 443
+    }
+   }
+  },
+  {
+   "step": 446,
+   "control": "#sw_percent_stats_allskills",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.allskills",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 444
+    }
+   }
+  },
+  {
+   "step": 447,
+   "control": "#sw_percent_stats_allskills",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.allskills",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 445
+    }
+   }
+  },
+  {
+   "step": 448,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_allskills\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 446
+    },
+    "cmds": {
+     "same": 446
+    }
+   }
+  },
+  {
+   "step": 449,
+   "control": "#sw_percent_stats_allskills",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.allskills",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 447
+    }
+   }
+  },
+  {
+   "step": 450,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 444
+    },
+    "cmds": {
+     "same": 444
     }
    }
   }

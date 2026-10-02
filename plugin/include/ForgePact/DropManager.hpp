@@ -12,11 +12,12 @@ namespace ForgePact {
 // Gold is the exception (#77): "dropmult gold N" multiplies the amount of the
 // one coin the game creates, not the number of coins. See Hook_DropGold below.
 //
-// DropRelic is deliberately NOT here even though the panel treats it as one
-// more "dropmult" target: Hook_DropRelic is a shared chokepoint also used by
+// DropRelic is NOT here even though the panel treats it as one more
+// "dropmult" target. Hook_DropRelic used to be a shared chokepoint with
 // RelicFilterMod's max-relic exclusion, and splitting a single installed hook
-// across two classes is a bigger, riskier step than one module's worth of
-// work (the same reasoning that kept it out of RelicFilterMod earlier).
+// across two classes was a bigger, riskier step than one module's worth of
+// work. Since #125 the relic filter uses GetRelicQuest instead, so moving
+// DropRelic here is now only a cleanup, not yet done.
 // ModuleMain's InstallDropMultHooks()/SetDropMult() call into this class for
 // the 19 hooks below and still install/set DropRelic themselves.
 class DropManager {

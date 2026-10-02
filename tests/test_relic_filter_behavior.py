@@ -1,14 +1,19 @@
-"""Run the real RelicFilterMod and the real Hook_DropRelic against controlled game API responses.
+"""Run the real relic filter through the game's own relic pick, against controlled game API responses.
 
 Companion to test_relic_filter_contract.py, which asserts on source text.
-Origin's review of PR #4 showed why that is not enough on its own: the
-`relicfilter` log line reported the scan's INPUT count, taken before the guards
-and repository writes that decide whether anything is held back, so it
-announced a working filter on three paths where nothing was applied. Source
-assertions could not see the difference; these scenarios compare what was
-logged against what was actually written to the repository.
+
+- ForgePact 2.0.1's filter logged "holding back 1 of 1" while the relic it
+  named kept dropping (#125). Its lever wrote `droprate.base`, which no relic
+  pick reads (hub docs/models/relic-pick-spec.md).
+- Earlier, origin's review of PR #4 had shown a log line announcing a working
+  filter on paths where nothing was applied.
+
+These scenarios play the game's draw-again loop through the real
+Hook_GetRelicQuest and report which relic actually dropped, beside what was
+logged.
 """
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -34,11 +39,21 @@ def implementation(source, signature):
     raise AssertionError(f"unterminated: {signature}")
 
 
+def statics(source):
+    """The lever's own statics, from its trampoline to the skip-log constant."""
+    match = re.search(
+        r"^static PFUNC_YYGMLScript g_Orig_GetRelicQuest = nullptr;$.*?^static constexpr long kRelicSkipLinesLogged = \d+;$",
+        source, re.S | re.M)
+    if match is None:
+        raise AssertionError("the GetRelicQuest statics were not found in ModuleMain.cpp")
+    return match.group(0)
+
+
 class RelicFilterBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
-        header = (ROOT / "plugin/include/ForgePact/RelicFilterMod.hpp").read_text(encoding="utf-8")
+        plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8").replace("\r\n", "\n")
+        header = (ROOT / "plugin/include/ForgePact/RelicFilterMod.hpp").read_text(encoding="utf-8").replace("\r\n", "\n")
 
         # The real class, verbatim, minus the include of Common.hpp (the
         # harness supplies the stand-ins Common.hpp would have pulled in).
@@ -47,14 +62,21 @@ class RelicFilterBehaviorTests(unittest.TestCase):
             if not line.strip().startswith("#pragma once")
             and '#include "Common.hpp"' not in line
         )
-        hook = implementation(plugin, "static RValue& Hook_DropRelic(")
-        # The arm-time report (#93) lives beside the hook in ModuleMain.cpp.
-        hook += "\n\n" + implementation(plugin, "static void RelicFilterReportArmScan(")
+        functions = "\n\n".join(implementation(plugin, signature) for signature in (
+            "static RValue& Hook_DropRelic(",
+            "static RValue& Hook_GetRelicQuest(",
+            "static std::string RelicFilterHookState(",
+            "static void RelicFilterStatus(",
+            # The arm-time report (#93, #125) lives beside the hooks.
+            "static void RelicFilterReportArmScan(",
+        ))
 
         out = ROOT / "build/relic-filter-behavior"
         out.mkdir(parents=True, exist_ok=True)
         code = (ROOT / "tests/relic_filter_harness.cpp").read_text(encoding="utf-8")
-        code = code.replace("// PRODUCTION_RELICFILTER", klass).replace("// PRODUCTION_FUNCTIONS", hook)
+        code = (code.replace("// PRODUCTION_RELICFILTER", klass)
+                    .replace("// PRODUCTION_STATICS", statics(plugin))
+                    .replace("// PRODUCTION_FUNCTIONS", functions))
         cpp = out / "relicfilter.cpp"
         cpp.write_text(code, encoding="utf-8")
 
@@ -107,105 +129,103 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         parts = dict(piece.split("=") for piece in self.scenario(label).split(" ")[2:] if "=" in piece)
         return {key: int(value) for key, value in parts.items()}
 
+    def skip_lines(self, label):
+        return [line for line in self.logs(label) if line.startswith("relicfilter: skipped maxed relic ")]
+
     def test_harness_ran(self):
         self.assertIn("HARNESS DONE", self.output, self.output)
 
-    def test_positive_control_holds_one_back_and_restores_it(self):
-        """The feature must still work: one maxed relic is suppressed then restored."""
+    # ---- the lever, through the game's own pick (#125) ---------------------
+
+    def test_baseline_the_filter_off_lets_the_maxed_relic_drop(self):
+        counts = self.counts("baseline_off")
+        self.assertEqual(counts["dropped"], 140, self.output)
+        self.assertEqual(counts["scans"], 0, self.output)
+        self.assertEqual(self.skip_lines("baseline_off"), [])
+
+    def test_target_a_maxed_relic_is_skipped_and_another_drops(self):
         counts = self.counts("positive_control")
-        self.assertEqual(counts["suppressed"], 1, self.output)
-        self.assertEqual(counts["restored"], 1, self.output)
-        self.assertEqual(counts["origcalls"], 1, self.output)
-        self.assertIn("relicfilter: holding back 1 of 1 maxed relic(s) on this roll",
-                      self.logs("positive_control"), self.output)
+        self.assertEqual(counts["dropped"], 5, self.output)
+        self.assertEqual(counts["skips"], 1, self.output)
+        self.assertEqual(self.skip_lines("positive_control"),
+                         ["relicfilter: skipped maxed relic 140, the game picks again (1 since armed)"])
 
-    def test_all_maxed_does_not_claim_to_hold_anything_back(self):
-        """REPORTED: logged 'holding back 156' while the bypass applied nothing."""
+    def test_a_quest_relic_is_the_games_own_reroll(self):
+        counts = self.counts("quest_is_the_games")
+        self.assertEqual(counts["dropped"], 3, self.output)
+        self.assertEqual(counts["skips"], 0, self.output)
+
+    def test_a_relic_that_is_not_maxed_drops_untouched(self):
+        counts = self.counts("not_maxed")
+        self.assertEqual(counts["dropped"], 9, self.output)
+        self.assertEqual(counts["skips"], 0, self.output)
+
+    def test_every_relic_maxed_stands_down_once_and_lets_the_game_pick(self):
         counts = self.counts("all_maxed")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        logged = " ".join(self.logs("all_maxed"))
-        self.assertNotIn("holding back", logged)
-        self.assertIn("all 156 relics maxed", logged)
-        self.assertIn("stands down", logged)
+        self.assertEqual(counts["dropped"], 140, self.output)
+        self.assertEqual(counts["skips"], 0, self.output)
+        logged = self.logs("all_maxed")
+        self.assertEqual(logged.count(
+            "relicfilter: every droppable relic is maxed, filter stands down (nothing left to drop instead)"), 1, logged)
+        self.assertEqual(self.skip_lines("all_maxed"), [])
 
-    def test_failed_repository_lookup_does_not_claim_a_filtered_roll(self):
-        """REPORTED: logged 'holding back 1' while no write reached the repository."""
-        counts = self.counts("repo_lookup_fails")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        logged = " ".join(self.logs("repo_lookup_fails"))
-        self.assertIn("held back none", logged)
-        self.assertIn("repository lookup failed", logged)
+    def test_the_last_relic_left_drops(self):
+        counts = self.counts("one_left")
+        self.assertEqual(counts["dropped"], 77, self.output)
+        self.assertEqual(counts["skips"], 3, self.output)
 
-    def test_missing_player_is_reported_as_no_scan_not_as_zero_maxed(self):
-        """REPORTED: logged 'holding back 0', which reads as a successful empty scan."""
-        counts = self.counts("no_player")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        logged = " ".join(self.logs("no_player"))
-        self.assertIn("no player resolved yet", logged)
-        self.assertIn("nothing scanned", logged)
-        self.assertNotIn("no maxed relics to hold back", logged)
+    def test_afk_farm_reward_scope_gets_the_games_answer(self):
+        counts = self.counts("reward_scope")
+        self.assertEqual(counts["dropped"], 140, self.output)
+        self.assertEqual(counts["scans"], 0, self.output)
 
-    def test_a_real_empty_scan_is_distinguishable_from_a_missing_player(self):
-        logged = " ".join(self.logs("scanned_none_maxed"))
-        self.assertIn("scanned, no maxed relics to hold back", logged)
-        self.assertNotIn("nothing scanned", logged)
+    def test_a_scan_that_did_not_run_holds_nothing_back(self):
+        for label in ("no_player", "scan_throws"):
+            counts = self.counts(label)
+            self.assertEqual(counts["dropped"], 140, self.output)
+            self.assertEqual(counts["skips"], 0, self.output)
 
-    def test_a_thrown_write_is_not_counted_as_held_back(self):
-        """REPORTED: the rollback list grew before the write, so a swallowed throw read as success."""
-        counts = self.counts("write_throws")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        logged = " ".join(self.logs("write_throws"))
-        self.assertNotIn("holding back 1 of 1", logged)
-        self.assertIn("held back none", logged)
-        self.assertIn("drop table write failed", logged)
+    def test_one_scan_per_frame(self):
+        one = self.counts("frame_cache_one_frame")
+        self.assertEqual(one["dropped"], 9, self.output)
+        self.assertEqual(one["skips"], 3, self.output)
+        self.assertEqual(one["scans"], 1, self.output)
+        self.assertEqual(self.counts("frame_cache_next_frame")["scans"], 2, self.output)
 
-    def test_a_write_that_reports_success_but_changes_nothing_is_not_counted(self):
-        """The harness returns SUCCESS and writes nothing, so only a read-back can catch it."""
-        counts = self.counts("write_fails_silently")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        logged = " ".join(self.logs("write_fails_silently"))
-        self.assertNotIn("holding back", logged)
-        self.assertIn("found 2 maxed relic(s) but held back none", logged)
-        self.assertIn("drop table write failed", logged)
+    def test_the_skip_log_thins_out(self):
+        self.assertEqual(self.counts("log_thinning")["skips"], 100, self.output)
+        lines = self.skip_lines("log_thinning")
+        self.assertEqual(len(lines), 21, lines)
+        self.assertEqual(lines[-1], "relicfilter: skipped maxed relic 140, the game picks again (100 since armed)")
 
-    def test_afk_farm_reward_scope_passes_the_game_drop_through(self):
-        counts = self.counts("reward_scope_passthrough")
-        self.assertEqual(counts["suppressed"], 0, self.output)
-        self.assertEqual(counts["restored"], 0, self.output)
-        self.assertEqual(counts["origcalls"], 1, self.output)
+    def test_research_test_ids_join_a_scan_that_ran(self):
+        self.assertEqual(self.counts("testmaxed_joins")["dropped"], 3, self.output)
+        self.assertEqual(self.counts("testmaxed_needs_a_scan")["dropped"], 7, self.output)
 
-    def test_a_partial_write_reports_the_confirmed_count_and_names_the_shortfall(self):
-        counts = self.counts("partial_write")
-        self.assertEqual(counts["suppressed"], 1, self.output)
-        logged = " ".join(self.logs("partial_write"))
-        self.assertIn("holding back 1 of 2 maxed relic(s) on this roll", logged)
-        self.assertIn("1 write(s) failed", logged)
+    def test_status_names_the_hook_and_the_count(self):
+        self.assertEqual(self.logs("status_on"), [
+            "relicfilter status: ON (GetRelicQuest, native detour) | skipped 1 maxed relic(s) since armed "
+            "(last 140) | stands down: no | testmaxed=0"])
+        (table_only,) = self.logs("status_table_only")
+        self.assertIn("FAILED (GetRelicQuest is table-only", table_only)
+        (off,) = self.logs("status_off")
+        self.assertTrue(off.startswith("relicfilter status: OFF | "), off)
 
-    def test_the_rollback_list_still_covers_every_attempt(self):
-        """Bookkeeping and the applied count answer different questions.
+    def test_arming_again_starts_a_fresh_count(self):
+        self.assertIn("SCENARIO rearm_resets before=2 after=0", self.output)
 
-        A write whose outcome is unknown must still be restored, so restoration
-        attempts track attempts - not confirmed suppressions.
-        """
-        # partial_write attempted two writes and confirmed one: two restores.
-        self.assertEqual(self.counts("partial_write")["restored"], 2, self.output)
-        self.assertEqual(self.counts("partial_write")["suppressed"], 1, self.output)
-        # write_fails_silently confirmed none and still restores both attempts.
-        self.assertEqual(self.counts("write_fails_silently")["restored"], 2, self.output)
-        self.assertEqual(self.counts("write_fails_silently")["suppressed"], 0, self.output)
+    def test_drop_relic_is_only_the_multiplier_now(self):
+        self.assertEqual(self.counts("drop_x1")["dropcalls"], 1, self.output)
+        self.assertEqual(self.counts("drop_x3")["dropcalls"], 3, self.output)
+        self.assertEqual(self.counts("drop_reward_scope")["dropcalls"], 1, self.output)
+        for label in ("drop_x1", "drop_x3", "drop_reward_scope"):
+            self.assertEqual(self.counts(label)["scans"], 0, self.output)
 
-    def test_every_scenario_reports_a_distinct_state(self):
-        """The line dedupes on its own text, so each state must read differently."""
-        lines = [self.logs(label)[-1] for label in (
-            "positive_control", "all_maxed", "repo_lookup_fails", "no_player",
-            "scanned_none_maxed", "write_throws", "write_fails_silently", "partial_write")]
-        self.assertEqual(len(set(lines)), len(lines), lines)
-
-    # ---- #93: the one line the filter logs when it arms ---------------------
-    # The filter's only other report sits inside a relic roll, and relics roll
-    # only in Satanic zones, so a live session cannot wait for one. This line,
-    # built from the scan's own set, is what a live check and a player's log
-    # read instead.
+    # ---- #93/#125: the lines the filter logs when it arms ------------------
+    # The filter's other lines sit inside a relic roll, and relics roll only
+    # in Satanic zones, so a live session cannot wait for one. These lines,
+    # built from the scan's own set and reports, are what a live check and a
+    # player's log read instead.
 
     def test_two_maxed_relics_are_named_by_count_and_id(self):
         self.assertIn("relicfilter: scan found 2 maxed relics (ids 7,42)",
@@ -234,7 +254,7 @@ class RelicFilterBehaviorTests(unittest.TestCase):
                              self.logs(label))
 
     def test_the_report_rolls_no_relic(self):
-        self.assertEqual(self.counts("arm_scan_two")["origcalls"], 0, self.output)
+        self.assertEqual(self.counts("arm_scan_two")["questcalls"], 0, self.output)
 
     def test_switching_off_cancels_a_due_report(self):
         self.assertEqual(self.counts("arm_then_off")["due"], 0, self.output)
@@ -244,44 +264,30 @@ class RelicFilterBehaviorTests(unittest.TestCase):
         self.assertEqual(counts["pending"], 0, self.output)
         self.assertEqual(counts["due"], 1, self.output)
 
-    # ---- #93: the equipped-slot read's own report, on the line after --------
-    # A `scan found 0` alone cannot tell "nothing maxed" from "the equipped-slot
-    # read stopped at a stage"; the line after it names the stage.
-
-    def test_the_equipped_slot_report_follows_the_scan_line(self):
-        logged = self.logs("arm_scan_two")
-        self.assertEqual(logged[-2:], [
+    def test_the_equipped_slot_and_relic_tab_reports_follow_the_scan_line(self):
+        self.assertEqual(self.logs("arm_scan_two")[-3:], [
             "relicfilter: scan found 2 maxed relics (ids 7,42)",
             "relicfilter: equipped slots relic=2 stopped=none",
+            "relicfilter: relic tab relic=14 stopped=none",
         ], self.output)
         self.assertEqual(self.counts("arm_scan_two")["reports"], 1, self.output)
 
     def test_a_stopped_read_names_its_stage_beside_the_zero(self):
-        logged = self.logs("arm_scan_stopped_owner")
-        self.assertEqual(logged[-2:], [
+        self.assertEqual(self.logs("arm_scan_stopped")[-3:], [
             "relicfilter: scan found 0 maxed relics (ids none)",
             "relicfilter: equipped slots relic=0 stopped=owner",
+            "relicfilter: relic tab relic=0 stopped=controller",
         ], self.output)
-        # The same zero from a complete read says so: the two are told apart.
-        self.assertIn("relicfilter: equipped slots relic=0 stopped=none",
-                      self.logs("arm_scan_empty"), self.output)
 
-    def test_one_equipped_slot_line_per_arm(self):
-        for label in ("arm_scan_two", "arm_scan_sorted", "arm_scan_empty", "arm_scan_stopped_owner"):
-            self.assertEqual(
-                len([line for line in self.logs(label) if line.startswith("relicfilter: equipped slots ")]), 1,
-                self.logs(label))
-
-    def test_a_scan_that_did_not_run_claims_no_equipped_slot_stage(self):
+    def test_a_scan_that_did_not_run_claims_no_stage(self):
         for label in ("arm_scan_no_player", "arm_scan_throws"):
             logged = self.logs(label)
             self.assertIn("relicfilter: scan did not run (no player yet)", logged, self.output)
-            self.assertFalse([line for line in logged if "equipped slots" in line], logged)
+            self.assertFalse([line for line in logged if "equipped slots" in line or "relic tab" in line], logged)
 
     def test_the_roll_itself_asks_for_no_report(self):
-        """The hook's scan runs at every relic roll; the report (and its slot-0
-        control call) belongs to the once-per-arm line only."""
-        for label in ("positive_control", "all_maxed", "scanned_none_maxed", "partial_write"):
+        """The hook's scan runs at relic rolls; the reports belong to the once-per-arm lines only."""
+        for label in ("positive_control", "all_maxed", "frame_cache_one_frame", "log_thinning"):
             self.assertEqual(self.counts(label)["reports"], 0, self.output)
 
 

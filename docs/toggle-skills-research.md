@@ -4784,6 +4784,78 @@ With Mana Orb added, the countdown ships eight explicit rows. The rule
 coverage expectation below was written when there were seven; `manaOrb` was
 never among its rule-selected rows, so its selection is unchanged.
 
+#### Issue #122 (2026-10-01): the Marksman's Beacon
+
+Issue #122 reported the countdown missing for a few Marksman skills - Beacon
+confirmed, Master Mechanic ("turret related but it is not turret / companion
+skill per se") to check as the outlier. The owner's own profile has no
+Marksman, so this round ran on a test copy of one: an old level-100 Marksman
+save out of `hs2saves_backup_mercslots_20260903` was placed in a spare
+character slot on the research install after a whole-directory save backup
+(`hs_saves_backup`, `20261001T114522Z_pre-122-marksman-injection`), with the
+Beacon's 20 points allocated in the save's active `talent_loadout_0` section
+and freed from two other talents so the level-100 budget stayed exact. No
+player save was edited, and the spare slot's own files are restored
+afterwards. Casts were made through `skillprobe call TalentUse` with the
+session-6-measured player-press shape (`self` = the player, `a0` = the
+player's own instance, `a1` = the talent id, `a2` = 1, `a3` = false,
+`a4` = true) - the game's own cast entry point, observed by the armed
+`TalentUse` detour on the Master Mechanic round - and read with the session-8
+`tgprobe sweep` and session-12 `tgprobe buffwatch` instruments, against the
+same rules (a)-(f).
+
+- **Why it drew nothing: no rule entry.** The live talent struct reads
+  `talent 49 abilityId=beacon abilityAura=false abilityDuration=0
+  abilityCooldown=10 abilityLength=240 abilityTags=[15,18,10]
+  predictedTotal=0.000000`. `abilityDuration=0` fails the rule's
+  `duration > 0` test, so no rule entry exists even though the generated
+  name table maps `beacon` to `Marksman_Beacon_obj`. Tag 10 is the
+  turret/totem/hydra family's own tag, but the object's static ancestry is
+  `Player_Ability_Parent_obj`, not the sentry parent, so the generator kept
+  its key and the object was there to measure.
+- **The beacon's own timer spans the cast.** Two clean casts - the previous
+  beacon expired first, records cleared - each read a single instance.
+  First: `Marksman_Beacon_obj idx=2642 runtime=Marksman_Beacon_obj
+  root=Player_Ability_Parent_obj app=1 present=1 draws=197
+  first=516.000000 last=316.981380 min=316.981380 max=516.000000
+  timerUnreadable=0 maxInst=1 own=unreadable firstFrame=3823
+  lastFrame=4019`; second: the same object, `draws=167 first=516.000000
+  last=349.466820 max=516.000000`, `firstFrame=8623 lastFrame=8789`. A cast
+  made while a beacon was alive replaced it, the fresh timer back at 516,
+  and `maxInst` stayed 1 on every clear window: not a multi-instance
+  companion in the observed behaviour.
+- **The report's other candidate needs the buff route, not this one.**
+  Master Mechanic has no cast object for the name convention to resolve at
+  all (the rule counts it `ruleNoName`), so it is measured with the
+  session-12 instrument and shipped as a buff row - see the sub-block under
+  "### Buff-carried countdown (session 12)".
+- **The turrets stay out.** Arrow Turret was already measured and excluded
+  (multi-instance companion, session 8); nothing in this round changes that.
+
+| skill (abilityId) | class | object (SDK name, index) | root | app | first #1 | first #2 | draws #1 | own | talents dur line | status | reason |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Beacon (`beacon`) | Marksman | `Marksman_Beacon_obj`, 2642 | ability | 1 (clean cast) + 1 (fresh cast after expiry) | `first=516.000000` | `first=516.000000` | 197 (second clean cast 167 against the same first) | unreadable | `talent 49 abilityId=beacon abilityAura=false abilityDuration=0 abilityCooldown=10 abilityLength=240 abilityTags=[15,18,10] predictedTotal=0.000000` | ship | issue #122: two casts; (b) 516/516; (c) `first > 0`; (d) 197 and 167 draws against 516; (e) `own=unreadable` -> no ownership field; (f) under `Player_Ability_Parent_obj`, not the sentry parent; `maxInst=1` on both, a recast replaces the live beacon |
+
+**Ship check (2026-10-01, research build carrying the rows above).** The
+countdown was switched on and both skills were cast through the same
+`TalentUse` call, then `skilltimer stat` was read. Beacon (`arc`, then `bar`):
+`beacon drawn=632 noSlot=0 latched=2` - every decision that reached a draw
+found the skill's own slot. Master Mechanic: `drawn=228` on the first read and
+`1781` on a longer one, `noSlot=0`, `identityMismatch=0`. The bar-style
+capture at that moment shows the gold bar draining across the top of the
+Beacon's own slot. One detail from the setup that matters to a wider question:
+on the test copy the freshly allocated Beacon first sat only in the HUD's
+hidden mirror row, and the slot lookup - which scans the bar's visible `row0`
+- then answered `noSlot` (513 times) instead of drawing. Setting the save's
+own bar binding (`[talent_loadout_0]` -> `bind_skill_4 = 49`) put it on the
+visible bar, after which the row drew on the first cast. So a skill that is
+allocated but not on the visible bar has no slot to draw on, by design; the
+indicator covers hands that actually show the skill.
+
+With Beacon added, the countdown ships nine explicit rows. Its talent never
+entered the rule-selected set (`abilityDuration=0`), so the coverage
+expectation below is unchanged by it.
+
 #### Rule coverage expectation
 
 D-S4 (owner, 2026-09-21, verbatim): "lets ship untested following a rule -
@@ -4794,7 +4866,7 @@ below (146 lines, this session's live capture - interoperability facts only:
 abilityId/duration/cooldown/tags/length, never a game script body). Eligible
 when `abilityDuration > 0` AND `abilityCooldown > 0.25` (the no-cooldown
 floor - Meteor Storm reads 0.25 and has none, per the owner), the talent is
-not one of the seven explicit rows above (D-R1: those stay explicit and win),
+not one of the nine explicit rows above (D-R1: those stay explicit and win),
 it is not on the measured deny-list (`kSkillTimerRuleDeny`,
 `plugin/include/ForgePact/SkillTimerMod.hpp`), and its abilityId resolves to
 an object by the generator's own name convention
@@ -4802,7 +4874,7 @@ an object by the generator's own name convention
 `plugin/include/ForgePact/SkillTimerNames.hpp`).
 `test_rule_expectation_in_the_research_doc_matches_the_capture`
 (`tests/test_toggle_skill_contract.py`) recomputes this from the 146 lines
-below, the generated header, the deny-list and the seven explicit rows, and
+below, the generated header, the deny-list and the nine explicit rows, and
 asserts it against this table's `selected` rows - this is a documented
 EXPECTATION pinned by test, **not** shipped data: the runtime reads the live
 talent struct, not this table.
@@ -5286,6 +5358,20 @@ context file.
 | `agility` | Viking | 22 | 3600.000000 | 0.758880 | 0.758880 | 3600.000000 | 7476 | 3600.000000 | 0 / 45 | buffStack=0 | no (passive, no hotbar slot) | owner, verbatim: "agility is a passive skill, not represented by any skill on hud which makes adding a counter impossible. we can record it but not add a counter." Measured shape is a ship row's (added inside talent use 45, re-added to 3600, `app=2`) - recorded, not shipped. |
 | (fifth representative, tag-12 pick) | - | - | - | - | - | - | - | - | - | - | not cast | owner: "i will not open a different class with a buff". |
 | `holyForm` | Butcher | 140 | 1.000000 | 1.000000 | 1.000000 | 1.000000 | 6193 | 1.000000 | 0 / 364 | - | no (toggle; constant 1) | the negative shape, as predicted (`useTalent=364` matches `talent 364 abilityId=holyForm`); toggling off went through BuffRemove (calls 4 -> 6 at frame 145225) and the slot emptied. |
+
+#### Issue #122 (2026-10-01): Master Mechanic
+
+The second skill issue #122 named. Master Mechanic is the Marksman's 25 s
+self-buff (tag 12, the self-buff tag); the name convention has no
+`Marksman_Master_Mechanic_obj` to resolve, so the rule counts it `ruleNoName`
+and the buff route is its only cover. Cast with the same
+`skillprobe call TalentUse` shape as the Beacon above, into a cleared
+`tgprobe buffwatch` window, twice (the section "#### Issue #122 (2026-10-01):
+the Marksman's Beacon" above records the method and the test copy):
+
+| skill | class | buffId | first | last | min | max | draws | lastAddFrames | inUse/useTalent | vars | status | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `masterMechanic` | Marksman | 21 | 1500.000000 | 1333.319520 | 1333.319520 | 1500.000000 | 167 | 1500.000000 | n/a / n/a | buffValueHash=non-numeric, mercenary=non-numeric, resetPlayer=non-numeric, playerEffect=non-numeric, drawTime=0.000000, leapChargeDestroy=non-numeric, leapDestroy=non-numeric, isDebuff=non-numeric | ship | issue #122: two casts, both `[21] app=1 first=1500.000000 lastAddPlayer=1 identityMismatch=0` against a player id; `first` is the talent's 25 s at 60 fps; the 167 draws are the window, not the buff's life; the first round's call was also observed by the armed `TalentUse` detour (`skillprobe TalentUse #1 ... a1=54 ... a4=true`) |
 
 #### Decision
 

@@ -314,6 +314,24 @@ int main() {
     pm().OnFrame(f + PackMarkers::kEnumerateMinGapFrames + 2, 2, readable);
     check("zone/fresh_enumeration", pm().Count() == 5, "count=" + std::to_string(pm().Count()));
 
+    // A density copy made on its own as the player walks (rolling density
+    // copies) is counted into its family: the count poll that follows does
+    // not re-list the zone for it.
+    uint64_t g = f + PackMarkers::kEnumerateMinGapFrames + 3;
+    const uint64_t enumsBeforeCopy = pm().Enumerations();
+    world.spawners.push_back({ 1100, 10, 60, 0, true, true, false });
+    pm().NoteCopy(10);
+    for (int k = 0; k < 4 * static_cast<int>(PackMarkers::kCountPollFrames); ++k) pm().OnFrame(g++, 2, readable);
+    check("copy/no_relisting", pm().Enumerations() == enumsBeforeCopy && pm().CopiesNoted() == 1,
+        "enumerations=" + std::to_string(pm().Enumerations() - enumsBeforeCopy));
+    // A spawner the game makes itself still grows the family past its peak
+    // and is listed.
+    world.spawners.push_back({ 1101, 10, 70, 0, true, true, false });
+    for (int k = 0; k < 4 * static_cast<int>(PackMarkers::kCountPollFrames) && pm().Enumerations() == enumsBeforeCopy; ++k)
+        pm().OnFrame(g++, 2, readable);
+    check("copy/real_growth_still_lists", pm().Enumerations() == enumsBeforeCopy + 1 && pm().Count() == 7,
+        "enumerations=" + std::to_string(pm().Enumerations() - enumsBeforeCopy) + " count=" + std::to_string(pm().Count()));
+
     // Off again: the list is gone and nothing is drawn.
     pm().SetEnabled(false);
     world.draws = 0;
