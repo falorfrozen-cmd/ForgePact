@@ -899,8 +899,9 @@ established**. Nothing of this design has been seen live yet.
   follows from the order the roll was read to run in (pick, read the
   definition, skip and pick again on the filters, then roll the die against
   the definition just read, then build the parameters): **static reading,
-  not measured**. Live procedure 3 checks it on every hit (`inject-build`
-  below).
+  not measured**. The plugin does not rely on it: it never reads the hit's
+  type, and refuses a stand-in whose sub and b would be ambiguous instead
+  (below).
 
 What #74 builds on this reading (the design as the plugin implements it; none
 of it measured yet):
@@ -919,36 +920,37 @@ of it measured yet):
   them: a push into a copy, into another array of the same shape, or onto a
   `Controller_obj` instance the roll does not read counts exactly the same.
   Only a change in what the picker draws shows that, and at one entry that
-  change is too small to measure (below, `inject-build`'s reach control).
-- **The hit's triple.** While the roll is in progress a detour on
-  `GetUniqueRepoStruct`, installed by name through `HookOneScript`, records
-  the type, sub and b of the roll's latest definition read; nothing is
-  recorded outside the roll, where most of its calls come from. When the
-  roll's `CreateDefaultParams` call comes, the hit's triple is that record,
-  and only if the record's sub and b equal the call's own sub and b. With no
-  record, or a record that disagrees, the hit is not typed: it stays vanilla,
-  is never rewritten, and `untyped=` counts it. The type is never inferred
-  from sub and b.
+  change is too small to measure (below, `inject-build`'s reach reading).
+- **The hit's pair, and the stand-ins that are refused.** The plugin never
+  reads the hit's type. While the roll is in progress the `CreateDefaultParams`
+  detour takes the call's own first two arguments, sub and b, and a hit is a
+  candidate of ours when that pair equals the sub and b of a stand-in this roll
+  pushed. A sub and b pair alone names no entry (above), so the ambiguity is
+  settled when the stand-ins are chosen rather than at the hit: a stand-in
+  that shares its sub and b with a validated unique of another type is
+  refused, reported as not validated with `ambiguous: <name> shares its
+  sub/b`, and its item's switch cannot arm. Among the validated uniques a hit
+  on a stand-in's pair can then only be the stand-in. Liquor Holster's 0/51
+  is shared only by the hidden Supreme Elemelon, which the validated pool does
+  not hold; that the game's picker never draws it either is a static reading,
+  not measured. The check runs against the validated pool, so a unique
+  outside it that shared a stand-in's pair would still read as the stand-in.
 - **Attribution, one in n + 1.** The picker cannot tell our entry from the
-  vanilla stand-in, because they are the same triple. A hit is a candidate of
-  ours only when its whole triple, type included, equals a stand-in's triple;
-  a hit that shares only the stand-in's sub and b under another type is
-  vanilla. A candidate is ours with probability 1 / (n + 1), where n is how
-  many times the vanilla list already holds that same triple, matched on all
-  three numbers (counted when the list resolves and whenever its length
-  changes; 1 when the stand-in is listed once). The match and the count
-  therefore read the same thing. The stand-in keeps exactly one entry's share
-  and our item gets one entry's share, the same as every other entry. Two
-  enabled items sharing one stand-in split the extra share evenly. `ourHits=`
-  counts them. The coin is the plugin's own, so it fires whether or not the
-  pushed entry was ever drawn: on a list the picker never saw, a vanilla
-  Liquor Holster hit still becomes ours one time in two, and `ourHits=`,
-  `built=` and the Headhunter on the ground look the same as on a working
-  injection. `ourHits=` is therefore evidence of the rewrite, never of the
-  injection. In the research build the push can carry k copies of each
-  stand-in (`angelicprobe inject copies <k>`, 1 by default and in the player
-  build); the coin then reads k / (n + k), so the attribution stays one entry's
-  share per copy.
+  vanilla stand-in, because they are the same triple. A candidate is ours
+  with probability 1 / (n + 1), where n is how many times the vanilla list
+  already holds the stand-in's whole triple, type included (counted when the
+  list resolves, whenever its length changes and whenever the stand-ins
+  change; 1 when the stand-in is listed once). The stand-in keeps exactly one
+  entry's share and our item gets one entry's share, the same as every other
+  entry. When m enabled items share one stand-in, m of its n + m entries are
+  ours and they split them evenly. `ourHits=` counts them. The coin is the
+  plugin's own, so it fires whether or not the pushed entry was ever drawn:
+  on a list the picker never saw, a vanilla Liquor Holster hit still becomes
+  ours one time in two, and `ourHits=`, `built=` and the Headhunter on the
+  ground look the same as on a working injection. `ourHits=` is therefore
+  evidence of the rewrite, never of the injection. Each roll pushes one entry
+  per enabled item, in the research build as in the player build; no lever
+  pushes more (`inject-build` below says what that leaves unmeasured).
 - **What "Liquor Holster's share" means now.** In Session 2 the share was
   one pool entry of ForgePact's own validated pool, k / (47 + k), rolled on
   top of the game's hit. Now it is literal: Headhunter is one more entry in
@@ -963,14 +965,14 @@ of it measured yet):
   hook dresses it, and the game places it where the roll said. No
   `SpawnSignatureItem` runs on this path. `built=`, `crown=` and `belt=`
   count what the game built, and each hit logs one `angelic hit:` line naming
-  its triple and saying vanilla, untyped, or our item with its stand-in and
-  the one-in-n+1 odds.
-- **Gate.** As in Session 2: the item's panel switch and a detoured
-  `CreateDefaultParams` detection, plus a detoured `GetUniqueRepoStruct`
-  definition read (a table-only route cannot be shown to see the roll's
-  calls, and without it no hit can be typed) and the list resolved (`list=`
-  names it and its length), else the gate stays off and the switch-on logs
-  one refusal naming what is missing. Both switches off: no entry pushed, no rewrite, the
+  the picked sub/b and saying vanilla (with the stand-in and its odds when
+  the pair was a stand-in's) or our item with its stand-in, the one-in-n+1
+  odds and whether the game was seen to build it.
+- **Gate.** As in Session 2: the item's panel switch and the detection, with
+  both `CreateDefaultParams` and `DropItemAngelicChance` detoured (a
+  table-only route cannot be shown to see the roll's calls), plus a
+  validated stand-in and the list resolved (`list=` names it and its length),
+  else the gate stays off and the switch-on logs what is missing. Both switches off: no entry pushed, no rewrite, the
   roll untouched, and with neither ever on no hook installed. Forging an item
   turns its mechanic on, never the drop.
 
@@ -997,17 +999,18 @@ Alternatives set aside:
   construction.
 - **Rewriting the picked entry's type.** Not possible: the type comes from the
   list entry, not from the parameter struct.
-- **Recognising our hit by the parameter struct's sub and b.** That is the
-  part of the triple the struct happens to carry, not the entry's identity: it
-  would take another type's unique with the same sub and b for a stand-in,
-  rewrite it into a mod item built under the wrong type, and count n by a
-  triple the match never checked.
+- **Typing the hit from the roll's last `GetUniqueRepoStruct` read**, a
+  detour recording the type, sub and b of the definition the roll read last
+  before the hit. Not built: that the last read is the picked entry's rests on
+  the order the roll was read to run in (static reading, not measured), and
+  refusing an ambiguous stand-in makes the type unnecessary for the two items
+  in the table.
 - **Typing the hit at `LootGroundCreate`**, which receives the type and the
   parameter struct together. The player build holds `LootGroundCreate`
   through the deliberately table-only inspection installer, so this needs a
   second, inline route on a function those hooks already own, and which
-  struct field carries sub is not established. It is the next research step
-  when `inject-build` reads `typing-not-observed` (below).
+  struct field carries sub is not established. It is the research step if a
+  wanted stand-in is ever refused as ambiguous.
 - **Suppressing the game's placement and spawning ours beside it** (the
   fallback as the owner first worded it). No name-resolved way to make
   `LootGroundCreate` place nothing was found: the player build's hook on it is
@@ -1026,56 +1029,34 @@ Alternatives set aside:
 The decision between injection and replacement is mechanical, from Live
 procedure 3's verdicts:
 
-`inject-build` has two parts: the **reach** control (does the picker draw the
-entries the plugin pushes), which ends pass, fail or not-observed, and the
-**build** check (does the game build and place our item from a rewritten
-struct), which ends pass, fail, not-observed or **typing-not-observed**. There
-is no other outcome.
+`inject-build` is the **build** check (does the game build and place our item
+from a rewritten struct), read off the counters and lines the plugin prints,
+and it ends pass, fail or not-observed. Beside it the session records a
+**reach** reading (does the picker draw the entry the plugin pushes), which
+carries no verdict: at one pushed entry per roll the stand-in's pair moves from
+about 1 hit in 47 to about 2 in 48, a difference no session's kill count can
+show, and the plugin has no lever that pushes more.
 
-- Any `untyped=` above zero across `inject-build`'s batches:
-  **`inject-build: typing-not-observed`**, whatever the other counters read.
-  The build check takes this verdict in place of pass, fail or not-observed,
-  because an untyped hit is left vanilla and never counted as ours, so the
-  static reading the typing rests on (the roll's last definition read before
-  a hit is the picked entry's, not measured) did not hold on that hit. Reach's
-  H and S are recorded as printed but close nothing, since a broken ordering
-  puts the typed hits' triples in doubt too. **No route**: `on-both` and
-  `replace-remove` are not run, the owner decides, and the next step is the
-  research into typing the hit at `LootGroundCreate` (the alternative above).
-  It is never read as build failed, so it never selects `route replace`.
-  This branch is checked first; the ones below apply only with `untyped=0`.
-
-- Reach pass and build pass (every hit of ours built exactly one item, the
-  game's own ground-loot count rose by one per hit, the forge hook dressed it,
-  no vanilla item for that hit, no crash): **route inject**. The design above
-  ships; the replace mode stays research-only.
-- Reach pass and build fail, and `replace-remove` (run only then) pass:
+- Build pass (every hit of ours built exactly one item, the game's own
+  ground-loot count rose by one per hit, the forge hook dressed it, no vanilla
+  item for that hit, no crash): **route inject**. The design above ships; the
+  replace mode stays research-only. What this route does not show is that the
+  picker draws the pushed entry: the plugin's coin and rewrite produce every
+  build counter on a push the picker never saw, so the session record states
+  the injection's reach as **not observed**, and Headhunter's share of one
+  entry as a static reading.
+- Build fail or not-observed, and `replace-remove` (run only then) pass:
   **route replace**. On a hit of ours the game places the stand-in, the
-  plugin removes it and spawns ours. Replace still rests on the injection
-  reaching the picker, which is why it is never taken on a reach that failed
-  or was not measured. If `replace-remove` fails as well, **route
-  not-observed** and the owner decides; if it is not-observed, **no route**,
-  as below.
-- Reach fail: **route not-observed**, recorded as a measured negative (the
-  picker does not draw what the plugin pushes, on every candidate list the
-  probe printed). Replace is not run, since it would only rewrite a share of
-  the stand-in's own hits. The owner decides; registering a definition in the
-  repository is the research route left.
-- Reach or build not-observed (too few hits to decide): **no route**. Nothing
-  is concluded about injection, the session record says how many typed hits
-  were seen, and the owner decides whether to run another session. A short
-  sample never selects a route.
+  plugin removes it and spawns ours. Replace rests on the same coin, so on a
+  push the picker never sees it still turns one in n + 1 of the stand-in's own
+  hits into ours, about half the share the design intends; the session record
+  says so.
+- Neither passes: **route not-observed**. The owner decides; registering a
+  definition in the repository is the research route left.
 
-Build is read only after reach passed. With reach failed or not-observed, the
-build counters are recorded as printed but carry no verdict, because the
-plugin's coin and rewrite produce every one of them on a push the picker never
-saw. Not-observed always means *not powered*: the batch reached its cap
-without the hits a verdict needs. It goes to the owner and is never evidence
-that injection does not build the item, so it never selects `route replace`.
-Replace ships only on a build that failed under a reach that passed.
-
-So only a reach that passed can ship the inject route, and only a reach that
-failed can close the inject line.
+Not-observed always means *not powered*: the batch reached its cap without the
+hits a verdict needs. It is never evidence that injection does not build the
+item.
 
 `inject-build` and `replace-remove` are never pass conditions of the session:
 their verdict is the finding. `off-removes` and `list-restored` check
@@ -1092,9 +1073,8 @@ context file, `.claude/workorders/forgepact-74-angelic-list-injection-context.md
 which stays on the owner's machine; it is this document's third live
 procedure, hence the heading here. Hygiene is Session 2's: a fresh session; no
 `citrace nativetrace`, `raredrop ceiling`, `scount`, `zonegenlog` or
-`angelicwatch`; and no `angelicprobe on`, whose `default-params` and
-`unique-repo` rows would take the `CreateDefaultParams` and
-`GetUniqueRepoStruct` detours this feature needs. The one people step
+`angelicwatch`; and no `angelicprobe on`, whose `default-params` row would
+take the `CreateDefaultParams` detour this feature needs. The one people step
 before the kill block is a portal or waypoint to an ordinary zone, so the
 owner can leave once the kills are done.
 
@@ -1110,19 +1090,18 @@ dispatcher's branch count and the `angelicprobe` literal are both pinned by
   ends with one summary line naming the number of candidates and the best one
   with its length.
 - `angelicprobe inject` takes `name` (a variable, or `auto` for the probe's
-  best candidate), `mode` (`inject`, the default, or `replace`, the fallback),
-  `copies <k>` (how many copies of each enabled stand-in one roll pushes,
-  1 by default; the attribution coin becomes k / (n + k) and the tail check
-  before removal covers all k) and `status`, which prints the copies, the mode, the list's name and length, each
-  item's stand-in with its count n, and the `injected=`, `ourHits=`,
-  `built=`, `removed=` and anomaly counters.
+  best candidate), `mode` (`inject`, the default, or `replace`, the fallback)
+  and `status`, which prints the mode, the list's name and length, each item's
+  stand-in with its count n, and the `injected=`, `ourHits=`, `built=`,
+  `removed=` and `anomalies=` counters. It has no lever for the number of
+  entries a roll pushes: one per enabled item, as in the player build.
 - `angelicprobe hit` keeps its chance, rate, off and status levers. Each hit's
-  `angelic hit:` line in this build also carries `lootDelta=` (ground-loot
-  instances after the original call minus before) and, for the first three
-  hits of ours, the parameter struct's JSON before and after the rewrite.
+  `angelic hit:` line (`picked <sub>/<b> at <x>,<y> gate=... -> <outcome>`)
+  in this build also carries `lootDelta=` (ground-loot instances after the
+  original call minus before) and, for the first three hits of ours, the
+  parameter struct's JSON before and after the rewrite.
 - `sigdrop status`, in both builds, reports the force, then `gameRolls=`,
-  `gameHits=`, `injected=`, `ourHits=`, `untyped=`, `built=`, `crown=`,
-  `belt=`, `list=`
+  `gameHits=`, `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`, `list=`
   (`none` until a switch resolves it, then the name and length, or `missing`
   after a failed resolution) and `gate=` per item, and ends with
   `cdpCalls=<n> detect=<route>`.
@@ -1165,86 +1144,58 @@ record:
   `built=0`, the list's length equal to `list-scope`'s and no injection line
   in the log pass `baseline-off-vanilla`. Only the game's own Angelic and
   Unholy items lie on the ground.
-- **`inject-build`** (the route's first branch, recorded as its two parts'
-  verdicts, reach and build, per the decision rule above) - `headhunter force`
-  turns Headhunter on and logs one line naming the list and Liquor Holster;
-  the gate reads Headhunter on, Tyrant's Crown off. Then
-  `angelicprobe inject copies 47`: each roll pushes 47 copies of Liquor
-  Holster's triple, about as many entries as pass the picker's filters
-  (Session 2's validated pool held 47). One push of one entry cannot be
-  measured: it moves the triple's share of hits from about 1/47 to 2/48,
-  which a session's rolls cannot tell apart. 47 copies move it to about
-  48/94, one hit in two, which ten kills can. Session 2 measured about 47
-  rolls per ten-odd kills, and with the chance lever every roll hits, so ten
-  kills give about 45 typed hits. The thresholds below are counted in hits,
-  which here are rolls, not in kills; the kill count only bounds the owner's
-  time. After ten kills each part is read. A part still short of its
-  threshold (H below 20, or one or two hits of ours) is not a verdict: a
-  second batch of ten kills runs, and that is the cap. A part still short at
-  the cap is not-observed, which the decision rule routes to the owner.
-  - **Reach**, the injection's positive control, read off what the picker
-    drew and not off the plugin's own counters. Count the typed `angelic
-    hit:` lines (H) and, among them, those naming the stand-in's triple
-    (type 8, sub 0, b 51), ours or vanilla alike (S); untyped hits count in
-    neither and are recorded. Pass: H at least 20 and S at least H / 4.
-    Fail: H at least 20 and S below H / 4. Not-observed: H below 20 at the
-    cap. A push the picker cannot see (a copy of the array, another array
-    of the same shape, a `Controller_obj` instance the roll does not read)
-    leaves the triple at its vanilla one hit in 47, whatever `injected=`
-    says. At H = 20, a quarter or more without reach has a probability of
-    about 5 in 100,000, and under a quarter with reach about 5 in 1,000; at
-    H = 40, about 1 in 100,000,000 and 2 in 10,000. S / H is recorded beside
-    the 48/94 expected; a share near it also shows that each pushed copy
-    counts as one entry. Before fail is recorded, when `list-scope` printed
-    more than one candidate, the control is repeated with `angelicprobe
-    inject name <candidate>` for each other candidate, ten kills each; a
-    candidate that passes is the list the roll reads, and its name is the
-    one recorded for the player build. `injected=`, `ourHits=`, `built=` and
-    a Headhunter on the ground are never reach evidence: the plugin's own
-    coin and rewrite produce all four on a push the picker never saw.
-  - **Build**, from the same batches, read only once reach passed. With 47
-    copies the coin reads 47/48, so once reach holds a typed hit is ours with
-    probability 48/94 times 47/48, which is one in two. At H = 20 a working
-    injection then gives fewer than 3 hits of ours about 2 times in 10,000.
-    Pass: `injected=` grew by
-    47 times the growth of `gameRolls=`, `ourHits=` at least 3, `built=`
-    equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`, every hit of
-    ours with `lootDelta=1`, no `sigdrop:` line, and the owner names a
-    Headhunter on the ground. Typing is checked on every hit: each `angelic
-    hit:` line names a triple whose sub and b equal its parameter struct's,
-    and `untyped=` stays 0. Fail: a crash, fewer built than hits, a
-    `lootDelta=` other than 1 on a hit of ours, a struct missing a field, a
-    ground item that is not Headhunter, or a hit of ours whose triple is not
-    Liquor Holster's. Typing-not-observed: `untyped=` above zero at any
-    point, recorded with its hit lines; it is the build check's verdict in
-    place of pass, fail or not-observed, stops the route there, and sends the
-    next step to the `LootGroundCreate` typing research, per the decision
-    rule. One or two hits of ours continue to the cap. Not-observed: fewer than 3 hits of
-    ours at the cap, recorded as not powered, never as replace evidence.
-  - **The shipped count**, last: `angelicprobe inject copies 1` and five
-    kills. `injected=` grew by the growth of `gameRolls=` (one push per
-    roll), no anomaly line, and afterwards the list's length equals
-    `list-scope`'s. This batch measures no rate and records none. That the
-    shipped single entry carries one entry's share is inferred from reach
-    and from the picker drawing every entry alike (static reading), not
-    measured at one copy.
-- **`on-both`** (not run unless `inject-build`'s reach and build both
-  passed): `angelicprobe inject copies 47` again and Tyrant's Crown on as
-  well; ten to twenty kills, then `copies 1`. At one copy a crown of ours is
-  about one roll in 48, about two in twenty kills, too few for a verdict; at
-  47 copies of each stand-in both items are common. `built=` grew by the growth of `ourHits=`, `crown=` reached at
-  least 3 and `belt=` grew, and both items are seen on the ground.
-  Not-observed: `crown=` below 3 after 20 kills.
+- **`inject-build`** (the route's first branch, per the decision rule above) -
+  `headhunter force` turns Headhunter on and logs one line naming the list
+  and Liquor Holster; the gate reads Headhunter on, Tyrant's Crown off. Each
+  roll then pushes one Liquor Holster entry, as the player build does. Ten
+  kills, then the counters are read; with fewer than 3 hits of ours a second
+  batch of ten runs, and that is the cap. With the chance lever every roll
+  hits, and a hit is ours about one roll in 48 (the stand-in's two entries in
+  48, then the coin's one in two). Session 2 measured about 47 rolls per
+  ten-odd kills, so twenty kills give about two hits of ours on average and
+  the cap ends not-observed more often than not; another session is the
+  owner's call. The verdict is read off `sigdrop status` (`gameRolls=`,
+  `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`), `angelicprobe inject
+  status` (`anomalies=`) and the `angelic hit:` lines:
+  - **Pass**: `injected=` grew by exactly the growth of `gameRolls=` since
+    `baseline-off-vanilla` (one push per roll), `ourHits=` at least 3,
+    `built=` equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`,
+    `anomalies=0`, every hit of ours with a line naming `0/51`, ending
+    `built by the game` and carrying `lootDelta=1`, no `sigdrop:` line, and
+    the owner names a Headhunter on the ground.
+  - **Fail**: a crash, `built=` below `ourHits=`, a hit of ours whose line
+    ends `handed to the game, not seen built during the roll` or says it was
+    refused (the struct's JSON is logged with it and recorded), a
+    `lootDelta=` other than 1 on a hit of ours, a hit of ours naming a pair
+    other than `0/51`, or a ground item that is not Headhunter.
+  - **Not-observed**: fewer than 3 hits of ours at the cap, recorded as not
+    powered.
+  - **Reach**, recorded without a verdict. Count the `angelic hit:` lines (H)
+    and, among them, those naming `0/51`, ours and vanilla alike (S). A push
+    the picker draws puts the pair at about 2 hits in 48, and one it cannot see
+    (a copy of the array, another array of the same shape, a `Controller_obj`
+    instance the roll does not read) leaves it at about 1 in 47, whatever
+    `injected=` says; no session's kill count separates the two, so S and H
+    are recorded as printed and the reach as not observed. `injected=`,
+    `ourHits=`, `built=` and a Headhunter on the ground are never reach
+    evidence: the plugin's own coin and rewrite produce all four on a push
+    the picker never saw. Measuring it would need a research lever that pushes
+    many copies of the stand-in per roll (47 copies move the pair to about 48
+    hits in 94, which ten kills can show); no such lever is built.
+- **`on-both`** (not run unless `inject-build` passed): `tyrant force` as
+  well, both on; ten to twenty kills. `built=` grew by the growth of
+  `ourHits=`, `crown=` at least 1 and `belt=` grew, and both items are seen
+  on the ground. A crown of ours is about one roll in 48, so twenty kills
+  may not give one: not-observed at `crown=0` after 20 kills.
 - **`off-removes`** - both switches off; the gate reads both off and the list's
   length equals `list-scope`'s. Five kills: `injected=` and `ourHits=`
   unchanged, no mod item, no injection line.
-- **`replace-remove`** (research fallback, run only if `inject-build`'s reach
-  passed and its build failed) - replace mode, `copies 47` and Headhunter on;
-  ten to twenty kills. Pass: at least 3 hits of ours, every one saying it
+- **`replace-remove`** (research fallback, run only if `inject-build` failed
+  or was not observed) - replace mode and Headhunter on; ten to twenty kills. Pass: at least 3 hits of ours, every one saying it
   removed the stand-in and spawned Headhunter, `removed=` equals `ourHits=`,
   `lootDelta=1` after the swap, another ground item picks up without an
   error, and `lootcensus` runs. Not-observed: fewer than 3 hits of ours after
-  20 kills. Headhunter off, inject mode and `copies 1` again afterwards.
+  20 kills. Headhunter off and inject mode again afterwards.
 - **`sigdrop-still-forces`** - `sigdrop crown` and one kill drop a Tyrant's
   Crown, then `sigdrop off`. The last people step.
 - **`list-restored`** - every lever off and the Angelic gate vanilla again;
