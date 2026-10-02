@@ -63,8 +63,11 @@ report, without a notification: you find it on the panel's Setup tab.
   ForgePact hook the game was inside when it stopped, and the mod as well
   when it is one of the mods that keep time for these reports, including
   when the mod had handed over to the game's own work; an FPS-drop report
-  shows which mods were on and how much of each frame each of them took;
-  both say which room you were in. A mod's time counts
+  shows which mods were on and how much of each frame the mods that keep
+  time for these reports took. Some mods keep no time (Sleep loot your
+  filter hides, for one), so their time has no row of its own, and a mod
+  missing from the table has not been cleared. Both reports say which
+  room you were in. A mod's time counts
   only ForgePact's own code: when a mod's hook lets the game do its normal work (drawing the HUD,
   dropping an item, spawning a monster, and the extra drops or monsters a
   multiplier asks for), that game work is not added to the mod's time, and
