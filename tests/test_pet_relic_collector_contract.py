@@ -102,7 +102,13 @@ class TestPetRelicCollectorContract(unittest.TestCase):
         self.assertIn("mod.Maxed().IsMaxed(read.relicId)", self.collect)
 
     def test_maxed_set_comes_from_the_sdk_not_the_relic_filter(self):
-        self.assertIn("HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player)", self.tick)
+        self.assertIn("PetRelicReadOwned(player, owned, stopped)", self.tick)
+        self.assertIn("HeroSiege::Player::MaxedRelicIdsOf(owned)", self.tick)
+        # The owned read passes both scan reports and refuses an incomplete walk.
+        read = function_body(self.plugin, "static bool PetRelicReadOwned(")
+        self.assertIn("GetOwnedRelicLevels(g_Yytk, player, &equipped, &tab)", read)
+        self.assertIn("equipped.stopped", read)
+        self.assertIn("tab.stopped", read)
         self.assertIn("HhResolveLocalPlayer(player)", self.tick)
         self.assertIn("ForgePact::RelicFilterMod::Instance().TestMaxed()", self.tick)
         self.assertIn("mod.Maxed().Due(g_PetRelicFrame)", self.tick)
