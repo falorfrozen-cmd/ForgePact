@@ -7,7 +7,8 @@ pay out up to ten times, including more chances at the rare finds a dig can
 give.
 
 A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
-tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
+tab, is built to make every boss come as a Rare ("uber") or Ancient ("uber
+uber") boss; that has not yet been confirmed in a live game.
 
 ## New
 
@@ -47,8 +48,9 @@ tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
   during its fight. Ordinary monsters are not affected, and the Monster Rarity
   sliders on the World tab still leave bosses alone. If the plugin cannot set it
   up on your game, `bossrarity status` in the log says so (`hook=failed` or
-  `hook=table-only`). What a raised boss's health, damage, experience and drops
-  come to is not yet confirmed in a live game.
+  `hook=table-only`). Not yet confirmed in a live game: that every boss really
+  comes out raised, and what the raise does to its health, damage, experience
+  and drops.
 
 ## How to update
 
