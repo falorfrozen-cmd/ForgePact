@@ -169,7 +169,12 @@ class DocsTests(unittest.TestCase):
         self.assertIn("[Skill Haste and All Skills](#skill-haste-and-all-skills)", readme)
 
     def test_the_release_notes_name_both_boosts(self):
-        notes = (ROOT / "release-notes-v2.1.0.md").read_text(encoding="utf-8")
+        # forgepact-notes-cleanup.yml deletes release-notes-v*.md from main once
+        # that version is published; the check reads them while they exist.
+        path = ROOT / "release-notes-v2.1.0.md"
+        if not path.is_file():
+            self.skipTest("release notes already published and removed from main")
+        notes = path.read_text(encoding="utf-8")
         new = notes.split("\n## New\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("**Skill Haste and All Skills**", new)
         self.assertIn("at most 200", new)

@@ -30,8 +30,15 @@ class HiddenLootBehaviorTests(unittest.TestCase):
             if not line.strip().startswith("#pragma once")
             and '#include "Common.hpp"' not in line
         )
-        out = ROOT / "build/hidden-loot-behavior"
+        # One directory per process: the suite and a targeted run of this
+        # module can compile at the same time, and a shared hiddenloot.obj
+        # then fails one of them with a permission error. A compile failure
+        # carries the compiler's output in its message and every scenario
+        # assertion quotes the harness's output, so the directory goes when
+        # the class does.
+        out = ROOT / "build/hidden-loot-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/hidden_loot_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_HIDDENLOOT", klass)
         cpp = out / "hiddenloot.cpp"

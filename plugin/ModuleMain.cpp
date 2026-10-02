@@ -12586,7 +12586,7 @@ static void CiDispatchDump(unsigned long long tablePtrRva, int maxEntries)
     if (!mod) { Out("citrace dispatchdump: no main module"); return; }
 
     // The RVA names a POINTER to the table, not the table itself (the
-    // decompile reads _DAT_15081b410 as a value and adds id*0x18 to it).
+    // game loads the pointer stored at that address and adds id*0x18 to it).
     unsigned char* pptr = (unsigned char*)mod + tablePtrRva;
     if (IsBadReadPtr(pptr, sizeof(void*))) { Out("citrace dispatchdump: table pointer address not readable - wrong RVA for this build?"); return; }
     unsigned char* table = *(unsigned char**)pptr;
