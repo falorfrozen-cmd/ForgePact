@@ -115,6 +115,27 @@ def droprelic_call_argument_counts(source):
             re.finditer(r"g_Orig_DropRelic\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*(\d+)\s*,", source)]
 
 
+def collect_reads_through_a_handle(collect, handle):
+    """PetTravelStep hands the collect the target's instance id, a plain number
+    (`RValue(targetId)`, VALUE_REAL), and the SDK's ground read refuses anything
+    IsInstanceHandle does not accept (OBJECT or REF) as NoHandle. So the collect
+    turns the number into its Loot_Ground_obj instance first, refuses the collect
+    by name when none carries the id, and reads the relic only through that
+    instance. `handle` is LootGroundHandle's body: a number is matched against
+    instance_find's Loot_Ground_obj instances by `id`, and only a handle is
+    returned."""
+    convert = collect.find("LootGroundHandle(target, inst)")
+    read = collect.find("HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read)")
+    return (0 <= convert < read
+            and 'PetRelicRefuse("no ground handle")' in collect[convert:read]
+            and "ReadGroundRelic(g_Yytk, target" not in collect
+            and "if (HeroSiege::Player::IsInstanceHandle(value)) { inst = value; return true; }" in handle
+            and "value.m_Kind != VALUE_REAL" in handle
+            and '"instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) }' in handle
+            and "if (!HeroSiege::Player::IsInstanceHandle(cand)) continue;" in handle
+            and '{ cand, RValue("id") }).ToDouble() == want) { inst = cand; return true; }' in handle)
+
+
 def refusal_after(body, guard):
     """The first Out(...) statement after `guard`, up to its semicolon."""
     out = body.index("Out(", body.index(guard))
@@ -211,6 +232,33 @@ class TestPetRelicCollectorContract(unittest.TestCase):
             # No literal relic class in the tick: the SDK compares against
             # kRelicItemClass.
             self.assertIsNone(re.search(r"\b16\b", body))
+
+    def test_collect_reads_the_relic_through_a_handle_not_the_travel_id(self):
+        # What the collect is handed: the shared walk's bare id, a number.
+        self.assertIn("RValue target = RValue(targetId);", self.travel)
+        self.assertIn("collect(target)", self.travel)
+        self.assertTrue("PetRelicCollectOne(const RValue& target)" in self.plugin)
+        # The SDK read refuses a number, so a number fed straight in is
+        # `no-handle` on every arrival.
+        sdk = (REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "player.hpp").read_text(encoding="utf-8")
+        self.assertIn("return value.m_Kind == ::YYTK::VALUE_OBJECT || value.m_Kind == ::YYTK::VALUE_REF;", sdk)
+        handle = function_body(self.plugin, "static bool LootGroundHandle(const RValue& value, RValue& inst)")
+        self.assertTrue(collect_reads_through_a_handle(self.collect, handle))
+        # The helper ships: it is not inside a research block.
+        self.assertIn("static bool LootGroundHandle(const RValue& value, RValue& inst)", self.shipped)
+        # forcerelic resolves its LootGroundCreateFromItem result through the same helper.
+        self.assertIn("LootGroundHandle(res, inst)", self.plugin)
+        # Negative controls: round 4's shape, the travel id read directly...
+        broken = self.collect.replace("LootGroundHandle(target, inst)", "true", 1).replace(
+            "ReadGroundRelic(g_Yytk, inst, read)", "ReadGroundRelic(g_Yytk, target, read)", 1)
+        self.assertNotEqual(broken, self.collect)
+        self.assertFalse(collect_reads_through_a_handle(broken, handle))
+        # ...and a helper that lets only handles through refuses every id.
+        broken = handle.replace(
+            "if (value.m_Kind != VALUE_REAL && value.m_Kind != VALUE_INT32 && value.m_Kind != VALUE_INT64) return false;",
+            "return false;", 1)
+        self.assertNotEqual(broken, handle)
+        self.assertFalse(collect_reads_through_a_handle(self.collect, broken))
 
     def test_objects_resolved_by_name(self):
         resolve = function_body(self.plugin, "static void ResolvePetRelicAssets()")

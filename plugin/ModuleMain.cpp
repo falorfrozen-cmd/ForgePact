@@ -9433,6 +9433,29 @@ static void ResolvePetRelicAssets()
     } catch (...) {}
 }
 
+// The Loot_Ground_obj instance behind `value`. A handle passes through; a plain
+// number (an instance id: what PetTravelStep hands a collect, and what
+// LootGroundCreateFromItem can return) is matched against the Loot_Ground_obj
+// instances by their `id`. The SDK's ground read takes a handle and refuses a
+// number as NoHandle, so a number read directly would make every ground relic
+// look like "not a relic". False when no Loot_Ground_obj carries the id.
+static bool LootGroundHandle(const RValue& value, RValue& inst)
+{
+    if (HeroSiege::Player::IsInstanceHandle(value)) { inst = value; return true; }
+    if (value.m_Kind != VALUE_REAL && value.m_Kind != VALUE_INT32 && value.m_Kind != VALUE_INT64) return false;
+    if (g_LootGroundObjIdx < 0) return false;
+    const double want = value.ToDouble();
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); }
+    catch (...) { return false; }
+    for (int i = 0; i < total; ++i) {
+        RValue cand = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
+        if (!HeroSiege::Player::IsInstanceHandle(cand)) continue;
+        if (g_Yytk->CallBuiltin("variable_instance_get", { cand, RValue("id") }).ToDouble() == want) { inst = cand; return true; }
+    }
+    return false;
+}
+
 enum class PetRelicPhase { Idle, Travel };
 static PetRelicPhase g_PetRelicPhase = PetRelicPhase::Idle;
 static double g_PetRelicTargetId = -4.0;
@@ -9574,14 +9597,19 @@ static void PetRelicRemained(const std::string& why)
 // or the owned levels could not be read whole before the call. Only a true
 // return followed by a seen raise ever destroys anything. A true return that
 // does not end in Collected also puts the id in g_PetRelicNeverRetry.
-static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
+static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& target)
 {
     using ForgePact::PetQuestOutcome;
     auto& mod = ForgePact::PetRelicCollectorMod::Instance();
-    // PetTravelStep hands the target over as its instance id.
-    const double targetId = inst.ToDouble();
+    // PetTravelStep hands the target over as its instance id, a plain number.
+    const double targetId = target.ToDouble();
     bool returnedTrue = false;
     try {
+        // Everything below works on the ground item's own instance handle:
+        // the SDK's ground read refuses a number, which would count every
+        // relic the pet reached as "not a relic" and pick nothing up.
+        RValue inst;
+        if (!LootGroundHandle(target, inst)) { PetRelicRefuse("no ground handle"); return PetQuestOutcome::Refused; }
         // Eligibility, re-read now and never cached from selection: the
         // instance is a relic with an id, the id is not maxed, and the item is
         // active. (The travel already checked that it exists.) The cached
@@ -22080,23 +22108,6 @@ static int ForceRelicGroundItems()
     catch (...) { return -1; }
 }
 
-// LootGroundCreateFromItem returns the new Loot_Ground_obj instance, or a negative number
-// when none exists (static reading). ReadGroundRelic takes an instance handle, so a plain
-// number is matched against the Loot_Ground_obj instances by their `id`.
-static bool ForceRelicGroundHandle(const RValue& res, RValue& inst)
-{
-    if (HeroSiege::Player::IsInstanceHandle(res)) { inst = res; return true; }
-    if (res.m_Kind != VALUE_REAL && res.m_Kind != VALUE_INT32 && res.m_Kind != VALUE_INT64) return false;
-    const double want = res.ToDouble();
-    const int total = ForceRelicGroundItems();
-    for (int i = 0; i < total && i < 512; ++i) {
-        RValue cand = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
-        if (!HeroSiege::Player::IsInstanceHandle(cand)) continue;
-        if (g_Yytk->CallBuiltin("variable_instance_get", { cand, RValue("id") }).ToDouble() == want) { inst = cand; return true; }
-    }
-    return false;
-}
-
 // Builds relic `id` and places it at (x, y) with the player as `self`. Returns "" when a
 // relic with that id is on the ground, otherwise the stage that failed and what was
 // supplied and returned, for the command's "not placed" line.
@@ -22122,9 +22133,11 @@ static std::string ForceRelicPlaceOne(int id, long long stamp, CInstance* g, CIn
         if (!AurieSuccess(st2))
             return "LootGroundCreateFromItem (st=" + std::to_string((int)st2) + " returned " + Describe(res) + ")";
         stage = "no-instance";
+        // LootGroundCreateFromItem returns the new Loot_Ground_obj instance, or a negative
+        // number when none exists (static reading); a number becomes its handle here.
         RValue inst;
         const bool exists = g_Yytk->CallBuiltin("instance_exists", { res }).ToBoolean();
-        if (!exists || !ForceRelicGroundHandle(res, inst))
+        if (!exists || !LootGroundHandle(res, inst))
             return "no-instance (returned " + Describe(res) + (exists ? "; it exists but no Loot_Ground_obj carries that id" : "") + ")";
         stage = "not-a-relic";
         HeroSiege::Player::GroundRelicRead read;
