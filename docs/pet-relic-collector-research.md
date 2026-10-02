@@ -190,9 +190,11 @@ level), and only while that is below 10 calls `RelicSetLevel(owned, o + 1)` and
 - **a relic-tab copy at 10/10**: nothing is raised, but the script returns
   **true**, the same result as a raise. A caller treats that as a pickup and
   destroys the ground relic, which is then consumed for nothing. Not
-  established live. The pet mod never targets a maxed relic, so it cannot reach
-  this branch; it is recorded as a game fact to measure, not as a mod
-  requirement;
+  established live. The pet mod cannot reach this branch while the maxed scan
+  reads the whole relic tab; the plugin refuses to collect when it does not
+  (see [The mechanism](#the-mechanism)). Because a true return here raises
+  nothing, the plugin also never takes a true return alone as a pickup: it
+  checks that the level actually rose before it destroys the relic;
 - **a relic the player does not own**: it goes into a new relic-tab entry
   (`GridAddItem`, `AddItemToMap`, `CreateItemSaveStruct`) and the script returns
   true.
@@ -201,8 +203,9 @@ level), and only while that is below 10 calls `RelicSetLevel(owned, o + 1)` and
 
 - **The relic-tab 10/10 outcome on the running game**: whether a ground relic
   whose owned copy sits at 10/10 in the relic tab really is consumed with
-  nothing raised. The mod does not depend on it (it never targets a maxed
-  relic).
+  nothing raised. The mod does not rely on it either way: it refuses to collect
+  without a complete maxed scan, and it destroys a relic only when the owned
+  level is seen to rise (`true-but-nothing-raised=` counts the rest).
 - **The companion's `other` on the running game.** By the reading it is the
   `Companion_obj` instance, and neither `PickupLoot` nor `PickupRelic` reads
   `other` directly, but no trace has shown the value. The research build's
@@ -253,19 +256,37 @@ no other:
 | `args[3]` | `true` |
 | `args[4]` | the ground relic's `isPlayerDrop` through `GetVariable`, called by name the way the runtime calls a builtin; `undefined` when that name does not resolve or the result is the "not set" sentinel |
 
-Then:
+Immediately before the call the plugin reads the owned level of this relic id
+with `HeroSiege::Player::GetOwnedRelicLevels`, passing both scan reports (see
+the eligibility paragraph below; an incomplete read refuses the collect). Then:
 
-- **a true return**: the plugin destroys the ground relic itself
-  (`instance_destroy` with the relic as the instance), because the companion,
-  the player's pickup and the automated-player caller all do so and
-  `PickupLoot` does not. So by the reading the relic **still exists** when
-  `PickupLoot` returns true: that is the expected state after a successful
-  pickup, not a sign the pickup failed. The plugin checks `instance_exists`
-  before destroying, so an item something else already removed is not
-  destroyed twice;
+- **a true return**: a true return is not evidence that anything happened.
+  By the reading `PickupLoot` and `PickupRelic` never destroy the ground relic,
+  so it **still exists** after every true return, a successful one included;
+  and `PickupRelic` also returns true on the relic-tab 10/10 branch, which
+  raises nothing. So the plugin checks the effect the pickup claims, not the
+  instance: it reads `GetOwnedRelicLevels` again, both reports complete, and
+  the pickup counts as done only when the owned level of this id is exactly one
+  higher than before, or the id was not owned before and now is. Only then
+  does the plugin destroy the ground relic itself (`instance_destroy` with the
+  relic as the instance), as the companion, the player's pickup and the
+  automated-player caller all do; counts `collected=` and
+  `destroyed-by-plugin=`; and checks `instance_exists` afterwards, counting
+  `destroy-failed=` when the relic is still there. It also checks
+  `instance_exists` before destroying, so an item something else already
+  removed is not destroyed twice (that collect counts `collected=` but not
+  `destroyed-by-plugin=`);
+- **a true return with no raise seen** (the level did not rise, or the read
+  after the call stopped early): nothing is destroyed. The target is held back
+  through the selector (the #94 shape) and counted `true-but-nothing-raised=`,
+  with the last reason (`no-raise(<before>-><after>)` or
+  `after-scan-incomplete(<stage>)`). On a working collect this counter stays 0.
+  An after-read that stopped early leaves a relic whose raise may have
+  happened unseen, which a second pickup would raise again; that is why it is
+  held back from the pet and counted rather than destroyed or retried;
 - **a false return, or a call that throws**: nothing is destroyed; the target
-  is held back through the selector (the #94 shape), and the refusal is counted
-  with what was supplied;
+  is held back through the selector, and the refusal is counted with what was
+  supplied;
 - the plugin never writes the companion's `lootList` or `lootTarget`. A relic is
   never in them: the companion's type filter tests for classes 11 to 15 only,
   never 16.
@@ -275,14 +296,55 @@ the relic class (`HeroSiege::Player::kRelicItemClass`) and its definition yields
 an id; the owned copy's level comes from the player's relic tab and equipped
 slots, never from the dropped relic (it always drops at level 1). Eligibility is
 read again at collect time: the instance exists, the class and id read again,
-the id is not in the maxed set, and `itemActive` is true when the instance
-carries that name.
+the id is not maxed, and `itemActive` is true when the instance carries that
+name.
+
+The maxed set is a struct walk (`GetMaxedRelicIds` over the relic tab's
+`inventoryRelicGrid` and the equipped slots), and a walk that stops early does
+not fail: it returns a smaller, plausible set. A relic-tab 10/10 id missing
+from it is exactly the relic whose pickup returns true and raises nothing. So
+every maxed or owned-level read passes both scan reports
+(`EquippedSlotScanReport`, `RelicTabScanReport`) and counts as complete only
+when both report `stopped == nullptr`:
+
+- **targeting** (the periodic refresh of the maxed set) keeps the last complete
+  set when a refresh stops early, and with no complete set yet targets nothing;
+- **the collect-time read** (the one taken just before the call) must itself be
+  complete. When it is not, the plugin does not call, holds the target back and
+  counts `refused=` with the reason `maxed-scan-incomplete(<scan>:<stage>)`,
+  naming the scan (`tab` or `equipped`) and the stage it stopped at (`mplr`,
+  `key`, `inventoryData`, `profile`, `grid`, `global`, `exception`, `not-run`
+  and so on, as the report spells them).
 
 **Route B** (research build only, `petrelic route b`) calls
 `PickupRelic(global.mplr, itemInstance)` by name with the same `self` and
 `other`. By the reading it does exactly what route A's class-16 branch does,
 minus `PickupLoot`'s top-of-script steps (the class read, the `Client_obj`
 `inventoryMapChanged` flag, and the not-local path that `args[2] = true`
-skips anyway). It exists so a refused route A costs a command, not a rebuild.
-Both routes are confirmed or refused by Live 1, through `petrelic trace` on the
-player's own click pickup first.
+skips anyway). Its result goes through the same before/after level check. It
+exists so a refused route A costs a command, not a rebuild. Both routes are
+confirmed or refused by Live 1, through `petrelic trace` on the player's own
+click pickup first.
+
+### What `petrelic 0` and `petrelic stat` count
+
+One line: `petrelic stat: collected=<n> skipped(maxed)=<n> skipped(not relic)=<n>
+skipped(gate)=<n> refused=<n> (last <why>) true-but-nothing-raised=<n> (last
+<why>) destroyed-by-plugin=<n> destroy-failed=<n> target lost=<n> travel
+timeouts=<n> held back=<n> maxed scans=<n> maxed ids=<list> route=<a|b>
+phase=<idle|travel>`. The fields this mechanism defines:
+
+- `collected=`: true returns whose raise was seen (level one higher, or a newly
+  owned id);
+- `true-but-nothing-raised=`: true returns with no raise seen, held back, not
+  destroyed. It replaces the earlier `dispatched-but-item-remained=`, which by
+  this reading would count every successful pickup (the relic always remains
+  until the caller destroys it);
+- `destroyed-by-plugin=` and `destroy-failed=`: the plugin's own
+  `instance_destroy` calls, and those after which `instance_exists` still read
+  true;
+- `refused=`: no call made or the call refused (no pet, no player, call threw,
+  no callable, `maxed-scan-incomplete(<scan>:<stage>)`), with the last reason.
+
+Live 1's `collects-relics` check therefore reads `collected=` above 0 together
+with `true-but-nothing-raised=0`, a pair a working collect produces.
