@@ -9541,10 +9541,9 @@ static bool PetRelicReadOwned(const RValue& player, std::unordered_map<int, int>
 }
 
 // A true return after which the relic is still on the ground: no raise was
-// seen, or the plugin's destroy did not take. Counted in
-// `dispatched-but-item-remained=` (noEffect, counted by the caller); the
-// first few also log one line naming which, since the stat line has one
-// counter for both.
+// seen (`true-but-nothing-raised=`, with its reason as `(last <why>)`), or
+// the plugin's destroy did not take (`destroy-failed=`); both counted by the
+// caller. The first few also log one line each, naming which.
 static volatile long g_PetRelicRemainedLines = 0;
 static void PetRelicRemained(const std::string& why)
 {
@@ -9553,9 +9552,11 @@ static void PetRelicRemained(const std::string& why)
 }
 
 // Returns how the collect went, for the selector: Collected when the pickup
-// returned true, the owned level rose and the relic is gone; NoEffect when
-// it returned true but no raise was seen (nothing destroyed), or the
-// plugin's destroy left it there; Gate when eligibility failed at arrival;
+// returned true, the owned level rose by one (or the id is newly owned at
+// level 1) and the relic is gone; NoEffect when it returned true but no
+// raise was seen (nothing destroyed, `true-but-nothing-raised=`), or the
+// plugin's destroy left it there (`destroy-failed=`); Gate when eligibility
+// failed at arrival;
 // Refused when the call could not be made, threw, the game answered false,
 // or the owned levels could not be read whole before the call. Only a true
 // return followed by a seen raise ever destroys anything.
@@ -9643,24 +9644,27 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
         mod.Maxed().MarkStale();
         // A true return is not a pickup by itself (a relic-tab copy at 10/10
         // also answers true and raises nothing). The pickup counts only when
-        // the owned level is exactly one higher, or the id is newly owned,
-        // read whole again. Otherwise nothing is destroyed, and the relic is
-        // held back rather than retried: a raise the read missed would be
-        // raised again by a second pickup.
+        // the owned level is exactly one higher, or the id was not owned and
+        // now is at level 1 (relics drop at level 1), read whole again.
+        // Otherwise nothing is destroyed, and the relic is held back rather
+        // than retried: a raise the read missed would be raised again by a
+        // second pickup.
         std::unordered_map<int, int> after;
         if (!PetRelicReadOwned(player, after, stopped)) {
-            mod.noEffect.fetch_add(1);
-            PetRelicRemained("after-scan-incomplete(" + stopped + ")");
+            const std::string why = "after-scan-incomplete(" + stopped + ")";
+            mod.NothingRaised(PetRelicReason(why));
+            PetRelicRemained(why);
             return PetQuestOutcome::NoEffect;
         }
         const auto ownedAfter = after.find(read.relicId);
         const bool nowOwned = ownedAfter != after.end();
         const int levelAfter = nowOwned ? ownedAfter->second : 0;
-        const bool raised = wasOwned ? (nowOwned && levelAfter == levelBefore + 1) : nowOwned;
+        const bool raised = nowOwned && (wasOwned ? levelAfter == levelBefore + 1 : levelAfter == 1);
         if (!raised) {
-            mod.noEffect.fetch_add(1);
-            PetRelicRemained("no-raise(" + std::string(wasOwned ? std::to_string(levelBefore) : "none") + "->"
-                             + (nowOwned ? std::to_string(levelAfter) : "none") + ")");
+            const std::string why = "no-raise(" + std::string(wasOwned ? std::to_string(levelBefore) : "none") + "->"
+                                    + (nowOwned ? std::to_string(levelAfter) : "none") + ")";
+            mod.NothingRaised(PetRelicReason(why));
+            PetRelicRemained(why);
             return PetQuestOutcome::NoEffect;
         }
         mod.collected.fetch_add(1);
@@ -9671,7 +9675,7 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
             g_Yytk->CallBuiltin("instance_destroy", { inst });
             mod.destroyedByPlugin.fetch_add(1);
             if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
-                mod.noEffect.fetch_add(1);
+                mod.destroyFailed.fetch_add(1);
                 PetRelicRemained("destroy-failed");
                 return PetQuestOutcome::NoEffect;
             }

@@ -199,10 +199,16 @@ class TestPetRelicCollectorContract(unittest.TestCase):
             'PetRelicRefuse("returned false"', 'g_Yytk->CallBuiltin("instance_destroy", { inst }); PetRelicRefuse("returned false"', 1)
         self.assertFalse(destroy_only_after_true_return(broken))
         # The destroy is guarded: an item something else removed is not
-        # destroyed twice, and one that stayed is counted.
+        # destroyed twice, and one that stayed is counted destroy-failed.
         after = self.collect[self.collect.index("mod.collected.fetch_add(1);"):]
         self.assertLess(after.index('"instance_exists"'), after.index('"instance_destroy"'))
-        self.assertIn("mod.noEffect.fetch_add(1);", after)
+        self.assertLess(after.index('"instance_destroy"'), after.index("mod.destroyFailed.fetch_add(1);"))
+        # A true return with no raise seen destroys nothing: both of its
+        # counts come before the collect is counted and the relic destroyed.
+        first_destroy = self.collect.index('"instance_destroy"')
+        for why in ('"after-scan-incomplete("', '"no-raise("'):
+            self.assertLess(self.collect.index(why), self.collect.index("mod.collected.fetch_add(1);"))
+            self.assertLess(self.collect.index(why), first_destroy)
         # Nothing else in the relic code destroys anything.
         self.assertNotIn("instance_destroy", self.tick)
         self.assertNotIn("instance_destroy", self.travel)
@@ -237,14 +243,39 @@ class TestPetRelicCollectorContract(unittest.TestCase):
     def test_petrelic_0_prints_every_counter(self):
         stat_line = self.header[self.header.index("std::string StatLine("):]
         for label in ("petrelic stat: collected=", "skipped(maxed)=", "skipped(not relic)=", "skipped(gate)=",
-                      "refused=", "(last ", "dispatched-but-item-remained=", "destroyed-by-plugin=",
-                      "target lost=", "travel timeouts=", "held back=", "maxed scans=", "maxed ids=",
-                      "route=", "phase="):
+                      "refused=", "(last ", "true-but-nothing-raised=", "destroyed-by-plugin=",
+                      "destroy-failed=", "target lost=", "travel timeouts=", "held back=", "maxed scans=",
+                      "maxed ids=", "route=", "phase="):
             self.assertIn(label, stat_line)
+        # Both reasoned counters print their last reason.
+        self.assertIn('" (last " + LastRefusal() + ")"', stat_line)
+        self.assertIn('" (last " + LastNothingRaised() + ")"', stat_line)
+        self.assertLess(stat_line.index("true-but-nothing-raised="), stat_line.index("LastNothingRaised()"))
         counters = re.findall(r"std::atomic<long> (\w+)\{ 0 \};", self.header)
-        self.assertGreaterEqual(len(counters), 10)
+        self.assertGreaterEqual(len(counters), 11)
+        for counter in ("collected", "trueButNothingRaised", "destroyedByPlugin", "destroyFailed"):
+            self.assertIn(counter, counters)
         for counter in counters:
             self.assertIn(counter + ".load()", stat_line, f"{counter} is never printed")
+        # What each one counts: a newly owned id counts as raised only at
+        # after-level 1, an owned one only one level higher; every other true
+        # return goes to true-but-nothing-raised with its reason.
+        raised = re.search(r"const bool raised = ([^;]*);", self.collect)
+        self.assertIsNotNone(raised)
+        self.assertIn("levelAfter == levelBefore + 1", raised.group(1))
+        self.assertIn("levelAfter == 1", raised.group(1))
+        self.assertIn("nowOwned", raised.group(1))
+        self.assertEqual(self.collect.count("mod.NothingRaised("), 2)
+        self.assertNotIn("NothingRaised(", self.collect[self.collect.index("mod.collected.fetch_add(1);"):])
+        # Negative control: the label Pet Quest Collector keeps for its own
+        # count is gone from the relic stat line and the relic code, where it
+        # named a counter that every working collect would have raised.
+        self.assertNotIn("dispatched-but-item-remained", self.header)
+        relic_section = self.raw[self.raw.index("// ---- pet collects relics (#124"):]
+        self.assertNotIn("dispatched-but-item-remained", relic_section)
+        self.assertNotIn("noEffect", self.header)
+        self.assertIn("dispatched-but-item-remained=",
+                      self.raw[:self.raw.index("// ---- pet collects relics (#124")])   # petquest keeps its own
         stats = function_body(self.shipped, "static void PetRelicCollectorStats()")
         self.assertIn("StatLine(g_PetRelicSelector.HeldBack()", stats)
         branch = self.shipped.split('lc == "petrelic"', 1)[1][:1200]

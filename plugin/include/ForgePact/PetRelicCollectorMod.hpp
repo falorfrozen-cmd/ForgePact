@@ -188,15 +188,26 @@ public:
     }
     const char* LastRefusal() const { return m_LastRefusal.load(); }
 
+    // A pickup that returned true with no raise of the owned copy seen, with
+    // the reason `petrelic 0` names as `(last <why>)`: `no-raise(<before>->
+    // <after>)` or `after-scan-incomplete(<scan>:<stage>)`. Nothing was
+    // destroyed; the relic is held back. `why` must outlive the call.
+    void NothingRaised(const char* why) {
+        trueButNothingRaised.fetch_add(1);
+        m_LastNothingRaised.store(why);
+    }
+    const char* LastNothingRaised() const { return m_LastNothingRaised.load(); }
+
     // The counters. Every one is printed by StatLine.
-    std::atomic<long> collected{ 0 };            // a pickup returned true
+    std::atomic<long> collected{ 0 };            // a true return whose raise was seen: one level up, or newly owned at 1
     std::atomic<long> skippedMaxed{ 0 };         // candidate reads left out as maxed, and collects refused as maxed
     std::atomic<long> skippedNotRelic{ 0 };      // ground items on screen the SDK read did not call a relic
     std::atomic<long> skippedGate{ 0 };          // the target's itemActive read false at collect time
     std::atomic<long> itemActiveMissing{ 0 };    // the target carried no itemActive (counted, not treated as false)
     std::atomic<long> refused{ 0 };              // the collect could not be made, or the game refused it
-    std::atomic<long> noEffect{ 0 };             // the pickup returned true and the relic was still there afterwards
-    std::atomic<long> destroyedByPlugin{ 0 };    // ground relics the plugin destroyed after a true return
+    std::atomic<long> trueButNothingRaised{ 0 }; // a true return with no raise seen (nothing destroyed, held back)
+    std::atomic<long> destroyedByPlugin{ 0 };    // ground relics the plugin destroyed after a seen raise
+    std::atomic<long> destroyFailed{ 0 };        // the relic was still there after the plugin's destroy (held back)
     std::atomic<long> targetLost{ 0 };           // the target vanished while the pet travelled
     std::atomic<long> travelTimeouts{ 0 };       // the pet never reached the target
 
@@ -211,8 +222,10 @@ public:
             + " skipped(gate)=" + std::to_string(skippedGate.load())
             + " itemActive missing=" + std::to_string(itemActiveMissing.load())
             + " refused=" + std::to_string(refused.load()) + " (last " + LastRefusal() + ")"
-            + " dispatched-but-item-remained=" + std::to_string(noEffect.load())
+            + " true-but-nothing-raised=" + std::to_string(trueButNothingRaised.load())
+            + " (last " + LastNothingRaised() + ")"
             + " destroyed-by-plugin=" + std::to_string(destroyedByPlugin.load())
+            + " destroy-failed=" + std::to_string(destroyFailed.load())
             + " target lost=" + std::to_string(targetLost.load())
             + " travel timeouts=" + std::to_string(travelTimeouts.load())
             + " held back=" + std::to_string(heldBack)
@@ -234,6 +247,7 @@ private:
     std::atomic<bool> m_Enabled{ false };
     std::atomic<PetRelicRoute> m_Route{ PetRelicRoute::PickupLoot };
     std::atomic<const char*> m_LastRefusal{ "none" };
+    std::atomic<const char*> m_LastNothingRaised{ "none" };
     PetRelicMaxedCache m_Maxed;
 };
 
