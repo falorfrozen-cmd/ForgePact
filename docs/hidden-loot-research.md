@@ -349,22 +349,41 @@ a reference on this runner), the same route the creation hooks' `InstanceIdOf`
 and the Miner's Helmet already use. Anything else becomes undefined: an
 object that `instance_exists` answers false (an item struct, if the reading
 holds), an `id` that does not read as a number, a read that throws, a kind no
-instance has. Those two builtins are all the class calls inside the call: no
+instance has. A read that throws means a C++ exception from the plugin's call
+wrapper, caught there and counted in `errors`; that is all `errors` can see. A
+runner error inside `instance_exists` itself goes through the game's own error
+path instead and never reaches `errors`, so Live 3 reads it through `ping`
+and a screenshot. Those two builtins are all the class calls inside the call: no
 `object_index` or verdict read, no deactivation and no write. The kind decides
 how a value is kept, never whether it is looked at. The stat line counts what
 happened, after `errors=`: `by-arg0=`, `by-arg1=` and `by-self=` (which slot
 identified the item at the frame's end), `reduced=` (pointers made an id
 inside the call), `dropped=` (pointers that were not), and `kinds=` (the last
 call's three values as passed, before the reduction: `num`, `ref`, `obj`,
-`undef` or `other`, and `-` before the first call). The arguments are read as
+`undef` or `other`, and `-` before the first call). The line goes on with
+fifteen per-value fields, each its own token: `obj-`, `reduced-`,
+`not-instance-`, `no-id-` and `threw-`, each for `a0`, `a1` and `self` in that
+order, so `obj-a0=` comes first and `threw-self=` last. `obj-` counts the
+values that arrived as an object (`VALUE_OBJECT`) and so were handed to
+`instance_exists` at all; per value, the four outcomes add up to it.
+`reduced-`: `instance_exists` answered true and `id` read as a number.
+`not-instance-`: it answered false (the item struct, if the reading holds).
+`no-id-`: it answered true but `id` did not read as a number, the runner
+taking for an instance something that has no id. `threw-`: a read threw
+(also counted in `errors`, which counts more than this). `reduced=` and
+`dropped=` are those outcomes summed over the three values, and `self`, a
+live instance on every monster drop, fills the sums on its own, so only the
+per-value fields can say what argument 1 met. The arguments are read as
 `(instance, item)`, but that is a reading, not a measurement, so at the end of
 the frame (`EVENT_FRAME`, after every step event) the class takes the first of
 the three handles that is a live instance whose `object_index` is
 `Loot_Ground_obj`'s; a handle whose instance is gone by then answers false to
 `instance_exists` and is passed over. Whether `instance_exists` on an item
 struct answers false without an error on this runtime is **not established**:
-the harness assumes it, and Live 3 measures it (`struct-safe`; see
-[Not established](#not-established)). It then reads the verdict
+the harness assumes it, and Live 3's `struct-safe` reads it from the
+argument-1 fields only (`obj-a1` > 0 with every one of them in
+`not-instance-a1`, beside a non-zero `reduced-self` and a `ping` with no error
+dialog; never the sums; see [Not established](#not-established)). It then reads the verdict
 there, after `variable_instance_exists`, and deactivates the item only if the
 verdict reads hidden. It does not deactivate inside the call: the rest of the
 entry point, and whoever called `LootGroundCreateFromItem` with its return
@@ -549,8 +568,18 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   object-kind value a drop call carries, argument 1 (the item struct, by the
   reading) on every drop. The harness assumes it answers false; the plugin
   had only ever handed instances to it, and Live 2 (`unidentified=0` over
-  1,502 calls, before the reduction) never ran the object-kind path. Live 3
-  measures it (`struct-safe`: `reduced` + `dropped` > 0 with `errors=0`).
+  1,502 calls, before the reduction) never ran the object-kind path. Live 3's
+  `struct-safe` reads it from one stat line, and passes only when all of
+  these hold: `obj-a1` > 0; `not-instance-a1` equals `obj-a1` (so
+  `reduced-a1`, `no-id-a1` and `threw-a1` are 0); `errors=0`; the positive
+  control `reduced-self` > 0 in the same line (`instance_exists` ran and
+  answered true on this instrument); and `ping` answering with no error
+  dialog on screen, since a runner error inside `instance_exists` would not
+  reach `errors`, which counts only C++ exceptions. `obj-a1=0`, or
+  `reduced-self=0`, is not observed; any other outcome is a finding (for
+  example `reduced-a1` > 0: `instance_exists` accepted the struct), never a
+  pass. The `reduced=` and `dropped=` sums never decide it, because `self`
+  fills them alone.
 - **The guard in front of the filter call** inside `LootGroundInit` was not
   read; `skipLootFilter` is a candidate, not a finding.
 - **Whether ground items reach the save.** `SaveSlot`'s body was not read, and

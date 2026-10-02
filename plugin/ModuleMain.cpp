@@ -41856,9 +41856,10 @@ static void FarSleepCommand(const std::string& rest)
 }
 
 // ---- Hidden loot sleep (HiddenLootMod.hpp): the adapter -------------------
-// One hook, on LootGroundInit: all three ground-drop entry points call it (a
-// static reading), and it is where the game's filter leaves its verdict on
-// the new item. Nothing else in either build hooks it, so it gets both routes
+// One hook, on LootGroundInit: LootGroundCreateFromItem and LootGroundDrop
+// call it (a static reading; LootGroundCreate names it as a callee, but its
+// own path was not traced), and it is where the game's filter leaves its
+// verdict on the new item. Nothing else in either build hooks it, so it gets both routes
 // (MiningOre already hooks LootGroundCreate, and the research build's item
 // inspection table-swaps LootGroundCreate and LootGroundCreateFromItem, which
 // would leave a second hook there table-only). The hook calls the game first

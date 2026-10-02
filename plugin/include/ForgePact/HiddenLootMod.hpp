@@ -213,8 +213,10 @@ public:
     // From the LootGroundInit hook, after the game's own trampoline returned
     // but still inside the call: what the call carried, reduced to durable
     // handles (Durable) and kept for the frame's end. Reads only: nothing is
-    // deactivated or written here, and a read that throws is caught here,
-    // never left to unwind through the game's own call.
+    // deactivated or written here. The catch below covers a C++ exception
+    // from the call wrapper (CallBuiltin) only, counted in `errors`; a runner
+    // error inside a builtin (instance_exists on a value it cannot take, say)
+    // goes through the game's own error path instead, and no counter sees it.
     void OnInit(const RValue& arg0, const RValue& arg1, const RValue& self) {
         if (!m_Enabled) return;
         ++m_Stats.inits;
@@ -299,8 +301,9 @@ private:
     // it (the caller may be freed before the frame's end), so it is asked
     // instance_exists now and, if it is one, replaced by its own `id`, which
     // this runner answers as a reference. Anything else (an item struct,
-    // which instance_exists answers false, an id that is not a number, a
-    // kind no instance has) is kept as undefined. The kind decides how a
+    // which by the reading instance_exists answers false, not established
+    // until a live session prints not-instance-a1; an id that is not a
+    // number; a kind no instance has) is kept as undefined. The kind decides how a
     // value is kept, never whether the frame's end looks at it: every kind
     // an instance arrives as is kept or resolved. Two reads at most. Which
     // way an instance pointer went is left in m_Outcome, for CountOutcome.

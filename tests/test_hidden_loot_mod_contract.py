@@ -12,7 +12,8 @@ instance_destroy anywhere in the mod; the builtins it calls are the documented
 ones; the object's kind never decides whether it is looked at; the key is read
 only while the game's own window is in front; the class starts off with Left
 Alt (164) stored; and the modstate field and the line formats the live
-operator reads byte for byte.
+operator reads byte for byte, the stat line ending with DurableText's fifteen
+per-value counts.
 """
 import re
 import unittest
@@ -51,6 +52,22 @@ def _body(source: str, signature: str) -> str:
 def _code(source: str) -> str:
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     return re.sub(r"//[^\n]*", "", source)
+
+
+def _per_value_append_problems(stat: str) -> list:
+    """What keeps HiddenLootStatFields()'s body (comments stripped) from ending
+    with the per-value counts: `hl.DurableText()` once, after `" kinds="`, as
+    the return expression's last term."""
+    problems = []
+    if '" kinds="' not in stat:
+        return ['no " kinds=" field']
+    if stat.count("hl.DurableText()") != 1:
+        problems.append(f"hl.DurableText() appears {stat.count('hl.DurableText()')} times, not once")
+    elif stat.index("hl.DurableText()") < stat.index('" kinds="'):
+        problems.append('hl.DurableText() comes before " kinds="')
+    if not re.search(r'\+\s*" "\s*\+\s*hl\.DurableText\(\)\s*;\s*$', stat.strip()):
+        problems.append('the return does not end with + " " + hl.DurableText()')
+    return problems
 
 
 def _research_blocks(source: str) -> list:
@@ -193,6 +210,32 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
         self.assertEqual(on.count("HiddenLootStatFields()"), 2)
         # A key is written as its code, or `none` for 0.
         self.assertIn('"none"', a)
+
+    def test_stat_line_ends_with_the_per_value_counts(self):
+        # Live 3's struct-safe check reads the fifteen per-value fields
+        # (obj-a0= ... threw-self=), which DurableText prints and
+        # HiddenLootStatFields appends after `kinds=`. The field-order test
+        # above reads only the literal `"name="` strings, so it cannot see
+        # the append go missing; this one can.
+        stat = _code(_body(self.plugin, "static std::string HiddenLootStatFields()"))
+        self.assertEqual(_per_value_append_problems(stat), [])
+        # Negative control: the same body with the append removed fails.
+        cut = re.sub(r'\s*\+\s*" "\s*\+\s*hl\.DurableText\(\)', "", stat)
+        self.assertNotEqual(cut, stat, "the negative control did not remove the append")
+        self.assertTrue(_per_value_append_problems(cut))
+        # DurableText: the rows obj, reduced, not-instance, no-id, threw, each
+        # over its own counter, and the slots a0, a1, self, rows outermost, so
+        # the line reads obj-a0 obj-a1 obj-self reduced-a0 ... threw-self.
+        header = _code(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+        durable = _body(header, "std::string DurableText() const")
+        rows = re.findall(r'\{\s*"([a-z-]+)",\s*m_Stats\.(\w+)\s*\}', durable)
+        self.assertEqual(rows, [("obj", "objBy"), ("reduced", "reducedBy"), ("not-instance", "notInstanceBy"),
+                                ("no-id", "noIdBy"), ("threw", "threwBy")])
+        slots = re.search(r"kSlots\[3\]\s*=\s*\{([^}]*)\}", durable)
+        self.assertIsNotNone(slots, durable)
+        self.assertEqual(re.findall(r'"(\w+)"', slots.group(1)), ["a0", "a1", "self"])
+        self.assertLess(durable.index("for (const auto& row : rows)"), durable.index("for (int slot = 0; slot < 3; ++slot)"))
+        self.assertIn('row.name) + "-" + kSlots[slot] + "="', durable)
 
 
 class HiddenLootClassRulesTests(unittest.TestCase):
