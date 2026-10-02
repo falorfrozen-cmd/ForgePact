@@ -9,8 +9,11 @@ Angelic list (a variable of the first `Controller_obj` instance) carries one sta
 entry per switched-on item - a real Angelic unique of the item's own type, Liquor Holster
 for Headhunter - the game's picker and die decide, a hit typed (replan 1) from the
 `GetUniqueRepoStruct` read the roll made for it as the stand-in's whole entry (type, sub,
-b) is ours at one entry's share, and on ours the `CreateDefaultParams` result is rewritten
-so the game itself builds and places the item, one per hit, never beside. A hit no read
+b) is ours at one entry's share, and on ours the record the item is built from is rewritten
+at `CreateItemNew`'s entry (Session 5: `CreateDefaultParams`' struct has no `a`, and
+`LootGroundCreate` stores its own `a` after it) so the game itself builds and places the
+item, one per hit, never beside; a refused rewrite latches its item off for the session
+(`rewrite refused: <why>`, `refused=`). A hit no read
 types stays the game's (`untyped=`), and a push a fresh read of the list does not show is
 taken off again before the roll can carry it (the held read-back). The owner's decision of
 2026-10-02 ("Panel switch only") makes the gate the panel switch (`force`), not the
@@ -74,6 +77,8 @@ ROLL_PATH = (
     "static void SignatureInjectRemove(",
     "static void SignatureAttributeHit(",
     "static bool SignatureRewriteParams(",
+    "static void SignatureRefuse(",
+    "static void SignatureBeforeCreate(",
     "static void SignatureAfterHit(",
     "static void SignatureNoteBuilt(",
 )
@@ -334,7 +339,7 @@ class AngelicHitSourceContractTests(unittest.TestCase):
     def test_a_hit_is_attributed_after_the_game_built_the_parameters(self):
         hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
         self.assertIn("RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;", hook)
-        self.assertLess(hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), hook.index("SignatureAttributeHit(r)"))
+        self.assertLess(hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), hook.index("SignatureAttributeHit()"))
         self.assertIn("g_SigRollPushed > 0", hook)
         attribute = body(self.code, "static void SignatureAttributeHit(")
         self.assertIn("g_SigHitType != (double)kSignatureItems[w].t", attribute, "attribution compares the type")
@@ -342,7 +347,39 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn("share += g_SigRollCopies[w];", attribute)
         self.assertIn("std::uniform_int_distribution<int>(0, n + share - 1)", attribute, "m·k in n + m·k")
         self.assertIn("InterlockedIncrement(&g_SigOurHits)", attribute)
-        self.assertIn("SignatureRewriteParams(params, kSignatureItems[which], g_SigHitWhy)", attribute)
+        # Session 5: CreateDefaultParams' struct has no `a` (Live 2), and LootGroundCreate stores
+        # its own `a` after it, so attribution only hands the hit to the rewrite point.
+        self.assertIn("g_SigHitItem = which;", attribute)
+        self.assertNotIn("SignatureRewriteParams(", attribute, "the rewrite no longer runs at CreateDefaultParams' return")
+        self.assertIn("SignatureAttributeHit();", hook)
+
+    def test_the_rewrite_runs_at_create_item_new_entry(self):
+        # The rewrite point (static reading, Session 5): CreateItemNew's entry, in the item hook's
+        # pre-call slot beside GemsBeforeCreate, on the instance's itemDefinitionStruct.
+        macro = self.code[self.code.index("#define ITEM_CREATE_HOOK(NAME)"):]
+        macro = macro[:macro.index("return _res; \\\n    }")]
+        pre = macro.index("SignatureBeforeCreate(argc, A);")
+        self.assertLess(macro.index("GemsBeforeCreate(argc, A);"), pre)
+        self.assertLess(pre, macro.index("g_Orig_##NAME(S, O, R, argc, A)"), "the record is rewritten before the original builds from it")
+        self.assertIn("if (_final && g_TruthDepth == 0) {", macro, "only on CreateItemNew's outermost call")
+        before = body(self.code, "static void SignatureBeforeCreate(")
+        self.assertIn("g_SigRollDepth <= 0 || !g_SigHitSeen || g_SigHitAtPoint", before, "once per hit, inside the roll")
+        self.assertIn('RValue("itemDefinitionStruct")', before)
+        self.assertIn("SignatureRewriteParams(record, kSignatureItems[which], g_SigHitWhy)", before)
+        self.assertIn("if (which < 0) return;", before, "the game's own hit is never touched")
+        self.assertLess(before.index("if (which < 0) return;"), before.index("SignatureRewriteParams("))
+        self.assertIn("SignatureRefuse(which,", before)
+        self.assertIn("++g_SigPending[which]", before)
+        self.assertNotIn("SignatureBeforeCreate", body(self.code, "static RValue& Hook_CreateDefaultParams("))
+        # The point is reached only through a detour (LootGroundCreate calls CreateItemNew
+        # directly), so the installer hooks it by its SDK name and counts its route into the gate.
+        install = strip_comments(body(self.code, "static void InstallSignatureAngelicHooks("))
+        self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_CreateItemNew\),\s*"
+                                  r"\"fp_sig_citemnew\",\s*\(PVOID\)Hook_CreateItemNew,\s*&g_Orig_CreateItemNew,\s*&native\)")
+        self.assertIn("itemRoute = savedRoute(g_Orig_CreateItemNew);", install)
+        self.assertIn("gml_Script_CreateItemNew", body(self.shipped_code, "static void InstallSignatureAngelicHooks("),
+                      "the rewrite point ships: the gate needs it")
+        self.assertIn("SignatureBeforeCreate(argc, A);", self.shipped_code)
 
     def test_the_rewrite_reads_back_what_it_wrote(self):
         rewrite = body(self.code, "static bool SignatureRewriteParams(")
@@ -355,8 +392,32 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertLess(write, read_back, "the fields are read back after the write")
         self.assertIn("did not read back", rewrite)
         self.assertIn("restore()", rewrite, "a refusal puts every field back")
-        self.assertIn("SigJson(params)", body(self.code, "static void SignatureAttributeHit("),
-                      "a refusal logs the struct's JSON")
+        # A field the record lacks is created, not refused; a refusal removes it again.
+        self.assertNotIn("no field ", rewrite, "a missing field is created, not a refusal")
+        self.assertIn('"variable_struct_remove", { params, RValue(kFields[k]) }', rewrite)
+        self.assertIn("if (had[k])", rewrite)
+        self.assertIn("SigJson(record)", body(self.code, "static void SignatureBeforeCreate("),
+                      "a refusal logs the record's JSON")
+
+    def test_a_refused_rewrite_latches_its_item_off(self):
+        # Both builds: the first refusal turns that item off for the session (no more copies
+        # pushed), the status says `rewrite refused: <why>`, and `sigdrop status` counts refused=.
+        refuse = body(self.code, "static void SignatureRefuse(")
+        self.assertIn("InterlockedIncrement(&g_SigRefusals)", refuse)
+        self.assertIn("g_SigRefused[which] = true;", refuse)
+        self.assertIn('" refused ("', refuse)
+        gate = body(self.shipped_code, "static bool SignatureSwitchOn(")
+        self.assertIn("g_SigRefused[which]", gate)
+        reason = body(self.shipped_code, "static std::string SignatureOffReason(")
+        self.assertIn('"rewrite refused: " + g_SigRefusedWhy[which]', reason)
+        status = body(self.shipped_code, "static void SigDropStatus()")
+        self.assertLess(status.index('" ourHits="'), status.index('" refused=" + std::to_string(g_SigRefusals)'))
+        self.assertLess(status.index('" refused="'), status.index('" untyped="'))
+        # A hit of ours that never reached the rewrite point is a refusal too.
+        self.assertIn("SignatureRefuse(which,", body(self.shipped_code, "static void SignatureAfterHit("))
+        # `headhunter status` / the tyrant line stop reading on.
+        self.assertIn('SignatureRefused(1) ? "refused"', body(self.shipped_code, "static void HeadhunterStatus("))
+        self.assertIn('SignatureRefused(0) ? "refused"', body(self.shipped_code, "static void TyrantStatus()"))
 
     def test_built_is_what_the_forge_hook_saw_the_game_build(self):
         forge = body(self.code, "static bool TryApplyCustomForge(")
@@ -444,9 +505,10 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         for name in ("g_TyForced", "g_HhForced", "g_SigDetectNative", "g_SigListOk", "g_SigStandIn[which].ok"):
             self.assertIn(name, gate)
         self.assertNotIn("Enabled", gate)
-        # g_SigDetectNative is all three routes: a hit the plugin cannot see or type never arms.
+        # g_SigDetectNative is all four routes: a hit the plugin cannot see, type or rewrite never arms.
         install = body(self.code, "static void InstallSignatureAngelicHooks(")
-        self.assertIn("g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute && detoured == repoRoute;", install)
+        self.assertIn("g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute && detoured == repoRoute && detoured == itemRoute;", install)
+        self.assertIn("g_SigRefused[which]", gate, "a refused item is latched off")
         # The auto-arm log lines say what the gate does, not what the mechanic does.
         self.assertIn("SignatureSwitchOn(0)", body(self.code, "static void TyrantAutoArm()"))
         self.assertIn("SignatureSwitchOn(1)", body(self.code, "static void HeadhunterAutoArm()"))
@@ -478,7 +540,7 @@ class AngelicHitSourceContractTests(unittest.TestCase):
     def test_sigdrop_status_carries_the_live_procedure_tokens(self):
         status = body(self.code, "static void SigDropStatus()")
         # Design step 7's banner, in this order (the live procedure's `control` reads it whole).
-        ordered = ('" | game roll: gameRolls="', '" gameHits="', '" injected="', '" ourHits="', '" untyped="',
+        ordered = ('" | game roll: gameRolls="', '" gameHits="', '" injected="', '" ourHits="', '" refused="', '" untyped="',
                    '" built="', '" crown="', '" belt="', '" anomalies="', '" list=" + SignatureListText()',
                    '" gate=tyrant:"', '",headhunter:"', '" cdpCalls="', '" detect="')
         at = [status.index(token) for token in ordered]
@@ -530,11 +592,12 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertLess(hook.index("InterlockedIncrement(&g_SigCdpCalls)"), hook.index("g_SigRollDepth"),
                         "cdpCalls counts every call that reaches the hook, before the roll check")
         self.assertIn('static std::string g_SigDetectRoute = "off";', self.shipped_code)
-        # `detoured` only when all three are; otherwise the first that is not, by name.
+        # `detoured` only when all four are; otherwise the first that is not, by name.
         install = strip_comments(body(self.code, "static void InstallSignatureAngelicHooks("))
         self.assertRegex(install, r"g_SigDetectRoute = detoured != cdpRoute \? std::string\(cdpRoute\)\s*"
                                   r": detoured != rollRoute \? std::string\(\"DropItemAngelicChance:\"\) \+ rollRoute\s*"
                                   r": detoured != repoRoute \? std::string\(\"GetUniqueRepoStruct:\"\) \+ repoRoute\s*"
+                                  r": detoured != itemRoute \? std::string\(\"CreateItemNew:\"\) \+ itemRoute\s*"
                                   r": detoured;")
 
     def test_one_angelic_hit_line_per_hit(self):
@@ -552,9 +615,17 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn('"angelicprobe hit', SOURCE)
         self.assertNotIn("angelicprobe hit", self.shipped)
         command = body(self.code, "static void AngelicHitCommand(")
-        for lever in ("chance", "rate", "share", "off", "status"):
+        for lever in ("chance", "rate", "show", "share", "off", "status"):
             self.assertIn('"%s"' % lever, command)
         self.assertNotIn("AngelicHitCommand", self.shipped)
+        # Live 3's `record` dump (Session 5) replaces the parameter lines and ships in neither form.
+        for token in ("angelic hit record: vanilla ", "angelic hit record: before ", "angelic hit record: after ",
+                      "angelic hit built: itemType=", "g_SigShowLeft", "g_SigHitShow"):
+            with self.subTest(token=token):
+                self.assertIn(token, SOURCE)
+                self.assertNotIn(token, self.shipped)
+        self.assertNotIn("angelic hit params", SOURCE)
+        self.assertIn('" | show=" + std::to_string(g_SigShowLeft)', body(self.code, "static void AngelicHitStatus()"))
 
     def test_hit_share_is_a_no_op(self):
         # The beside design's share lever has nothing left to set: the game's picker gives each

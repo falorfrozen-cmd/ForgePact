@@ -1860,3 +1860,366 @@ the hit is typed on every hit; the pushed entries are drawn (p1 0.81 at
 copies 200, against p0 0.043 with nothing pushed; the player build's share
 with one copy is arithmetic on that, not measured); and
 `CreateDefaultParams`' struct is `{b, j, c}`, with no field a.
+
+## Session 5: the id on the built item (issue #74)
+
+Live 2 (Session 4's `### Results`) refused all 65 of its own hits with
+`no field a`: the plugin rewrote the struct `CreateDefaultParams` returns, and
+that struct carries `b`, `j` and `c` only. On 2026-10-02 the owner chose one
+more round for inject over shipping the replace fallback ("One more round for
+inject"): find where the unique's id reaches the built item, move the rewrite
+there, rebuild, and run Live 3. The chain from the roll to the built item was
+read locally; this session's static reading is below.
+`### What the plugin does with it` lists the changes. Everything else in
+Sessions 3 and 4 stands - the list, the push and its removal, the typing, the
+attribution and the gate. `### Live procedure 5` is Live 3, and
+`### Results` is where that session's record goes.
+
+### Static reading (2026-10-02, the built item's id)
+
+Each claim is labelled **static reading** (what the game's code was read to
+do, in our own words), **measured** (with the session), **source reading**
+(ForgePact's own code) or **not established**. The chain was read in a
+private read-only copy of the named Ghidra project; the decompiler's output
+stays on the researcher's machine and none of it is quoted here. The bodies
+read were `LootGroundCreate`, `LootGroundCreateFromItem`,
+`CreateLootInFreePos`, `LootGroundInit`, the item-instance constructor
+`s_ItemInstanceStruct`, and the item constructor, which the import left
+unnamed: the registration body that binds names to scripts binds it to
+`CreateItemNew`, and it is the one function `LootGroundCreate` calls directly
+with the new item instance.
+
+The variable slots these bodies use are not named by `FindSlotNames`, and no
+store into them has the shape `FindWrites` matches: they are filled at
+startup from a name table. In this build each such slot sits right after a
+pointer to its own name, so every slot the bodies use was named by reading
+that pointer (a small local script, kept beside the output). Every load and
+store of the `a`, `b`, `c`, `j`, `w`, `itemDefinitionStruct` and `itemType`
+slots in the chain was then listed.
+
+1. **The roll calls `CreateDefaultParams`** with the sub, the unique's b and
+   1, and it returns a new struct holding exactly `j`, `b` and `c` (static
+   reading, Session 3; measured, Live 2: `{"b":51.0,"j":0.0,"c":1.0}`).
+   There is no field a.
+2. **The roll passes that struct, the record, to `LootGroundCreate`**, with
+   the position and the picked entry's type (static reading). On both of its
+   branches that build an item
+   locally, `LootGroundCreate` stores a value of its own into the record's
+   `a` before anything else uses the record, computed from a protected game
+   variable (what that value is made of is out of scope). The store does not
+   look at what was there: the only references to the `a` slot in
+   `LootGroundCreate` are those two stores, so nothing reads or tests an `a`
+   already on the record (static reading). Its third branch, taken when the
+   game's online flag is set, hands the record to an online creation pool and
+   builds nothing locally; that is not the offline path (static reading).
+   `LootGroundCreate` never references `b`, `c`, `j` or `w` (static reading).
+3. **`LootGroundCreate` creates the item instance with the record as its
+   argument.** The instance constructor resets the instance's own fields
+   (`itemType` among them, to 0) and keeps its argument as
+   `itemDefinitionStruct`. For a struct that is a second reference to the
+   same record, not a copy of its fields (static reading). So the built item's
+   `itemDefinitionStruct` is the very struct `CreateDefaultParams` returned,
+   with `LootGroundCreate`'s `a` on it.
+4. **`LootGroundCreate` then sets the instance's `itemType` to its own type
+   argument** (static reading). In the roll that is the picked entry's type,
+   the stand-in's: 8 for Liquor Holster, 0 for Mask of the Celestial (source
+   reading of the stand-in table). Nothing reads a type from the record.
+5. **`LootGroundCreate` calls `CreateItemNew` on the instance, directly**
+   (static reading; only an inline detour sees that call, which
+   `HookOneScript` installs). `CreateItemNew` reads the instance's
+   `itemType` and the definition's `b`, `c` and `j`: `c` chooses the unique
+   or the normal repository, which is looked up by type, `j` and `b`. It reads
+   the definition's `a` once and hands it to a one-argument helper ahead of
+   the item's random rolls. That this `a` seeds those rolls agrees with
+   ForgePact's gem mod, which swaps this `a` for a Mythic seed at this very
+   point (source reading, `GemsBeforeCreate`); it is not resolved further.
+   `CreateItemNew` stores into none of `a`, `b`, `c`, `j` or `w`; its only
+   member stores are the item's info and stat structs (static reading).
+6. **`CreateLootInFreePos`** only finds a free spot and creates the ground
+   object. **`LootGroundInit`**, after `CreateItemNew`, sets the ground
+   object's display, sound and filter state and reads the definition's `b`.
+   Neither references `a`, `c`, `j` or `w` (static reading).
+   **`LootGroundCreateFromItem`** (the `sigdrop` path) only hands an
+   already-built item to the ground object. `sigdrop` builds its item through
+   `InitItemFromJson`, never through `CreateItemNew` here, so its `a` 777002
+   is not evidence about this chain (source reading of `SpawnSignatureItem`,
+   static reading of the script).
+
+`w` is referenced nowhere in this chain (static reading), so the constructor
+does not need it. Whether a built definition carries `w` at all is not
+established; Live 3's `built:` line records it.
+
+**The rewrite point: `CreateItemNew`'s entry**, before the original runs, on
+its argument's `itemDefinitionStruct` (the record itself), writing `a`
+777002, `b` 2, `c` 0, `j` 0 for the belt and `a` 777001, `b` 7, `c` 0, `j` 0
+for the crown, and no `w` (static reading). By then the record already
+carries `a`, stored by `LootGroundCreate`, so the write overwrites rather than
+creates.
+
+- **An `a` written where `CreateDefaultParams` returns does not survive**
+  (static reading): `LootGroundCreate` overwrites it before the item instance
+  exists. `b`, `c` and `j` written there would survive, since nothing in the
+  chain stores into them. So the old point was right for three of the four
+  fields and wrong for `a`. Live 2 never tested even that, because it refused
+  before writing anything.
+- **An `a` written at `CreateItemNew`'s entry survives** to its own reads and
+  to its return (static reading: nothing between the entry and the return
+  stores into `a`, `b`, `c` or `j`). ForgePact already writes the
+  definition's `a`, `b`, `c` and `j` at exactly this point for its gem mod
+  (source reading: `GemsBeforeCreate`, in the pre-call slot of the existing
+  `CreateItemNew` hook, the same hook whose return is the Custom Forge's
+  final pass).
+- **The forge's selector can match** (static reading): at `CreateItemNew`'s
+  return the item's `itemType` is the stand-in's (8 or 0) and its definition
+  reads the four written values, the `{t, a, b, c, j}` selector `built=`
+  waits for. Not established until Live 3's `inject-build`: that the game
+  builds a playable Headhunter from a `c` 0 record through this constructor,
+  rather than through `InitItemFromJson`.
+- **Second candidate**, if the first fails live: the instance constructor's
+  entry, on its argument (the record itself), with the same fields. It runs
+  after `LootGroundCreate`'s store and before `CreateItemNew`, and nothing
+  between them stores into `a`, `b`, `c` or `j` (static reading). It ranks
+  second because it runs through the runtime's new-object builtin, which no
+  ForgePact hook has attached to yet; whether a hook on it fires is not
+  established.
+- **What Live 3's `record` check should see** (a prediction from the
+  reading, not established): a vanilla record dumped at `CreateItemNew`'s
+  entry already carries `a` (the value `LootGroundCreate` stored), `b` the
+  unique, `c` 1 and `j` the sub, and the `built:` definition shows the same
+  four values.
+- **`report#2`'s 30 repeats** in Live 2 are not established; Live 3 records
+  the message text. The reading found no error this chain raises on every
+  hit, and 30 repeats over a batch of about 49 rolls that gave 46 hits is not
+  one per hit. One unranked candidate: both `LootGroundCreate` and
+  `LootGroundInit`, which run on every placed drop rather than only on Angelic
+  hits, read protected game values through a route that can call the
+  runtime's extension stub builtin; whether that raises offline is not
+  established.
+
+### What the plugin does with it
+
+Only the rewrite moves, and it gains a latch; the rest of Sessions 3 and 4's
+design is unchanged.
+
+- **The rewrite point.** `Hook_CreateDefaultParams` still types the hit and
+  attributes it (`SignatureAttributeHit`), but no longer writes anything: it
+  hands the hit to the rewrite point by `g_SigHitItem`.
+  `SignatureBeforeCreate` runs in the `CreateItemNew` hook's pre-call slot,
+  beside `GemsBeforeCreate`, on the outermost call only, once per hit, and
+  only while the roll is in progress and a hit was seen. It reads the
+  argument's `itemDefinitionStruct` and, on a hit of ours, writes the item's
+  `a`, `b`, `c` 0 and `j` 0 onto it. A hit that is not ours is never touched.
+- **A missing field is created, not refused.** The rewrite asks which of
+  `a`, `b`, `c`, `j` the record has, keeps their values, writes all four
+  (`variable_struct_set` creates a field a struct lacks) and reads every one
+  back. A value that does not read back is still a refusal, and the refusal
+  puts every field back, removing one the rewrite created
+  (`variable_struct_remove`). No `w` is written: the reading found the
+  constructor never reads it.
+- **The hook is the fourth route.** `LootGroundCreate` calls `CreateItemNew`
+  directly, so the rewrite needs an inline detour there.
+  `InstallSignatureAngelicHooks` installs `Hook_CreateItemNew` by its SDK
+  name (`gml_Script_CreateItemNew`) beside the other three, unless the Custom
+  Forge or Item Truth already hold it (the same hook either way), and then
+  reads its route from the saved original like the others. The gate needs
+  all four detoured, and `detect=` names `CreateItemNew:<route>` when it is
+  not. In the research build, the item-inspect hooks install a table-only
+  `CreateItemNew` at startup when no forge entry did first; that reads
+  `detect=CreateItemNew:TABLE-ONLY`, and the gate stays off.
+- **`built=` keeps its meaning.** The forge hook's final pass, on the same
+  `CreateItemNew` call's return, saw an item whose `{t, a, b, c, j}` is a mod
+  item's selector while that item's rewrite was pending in this roll.
+- **The refusal latch, both builds.** The first refused rewrite of an item
+  turns it off for the rest of the session. `SignatureSwitchOn` says no, so
+  no more of its copies are pushed: a copy whose hits are all refused would
+  only double a vanilla unique's share while the switch reads on. The
+  refusal prints `inject: <item> refused (<why>), the record left vanilla:
+  <json>` and says the item stays off for this session. `SignatureOffReason`
+  answers `rewrite refused: <why>`, so the switch-on and auto-arm lines say
+  why; `headhunter status` and `tyrant status` read `angelicDrops=refused`;
+  and `sigdrop status` counts every refusal as `refused=`, beside
+  `ourHits=`. A hit of ours that no `CreateItemNew` call reached during the
+  roll is a refusal too (`CreateItemNew did not run for it during the
+  roll`).
+- **The record dump (research build only).** `angelicprobe hit show <k>`
+  (0..50, default 3) marks the next k hits inside the roll. Each prints,
+  at the rewrite point, `angelic hit record: vanilla <json>` on a hit that is
+  not ours (the record as the game made it), or `angelic hit record: before
+  <json>` and `angelic hit record: after <json>` around our write. On the
+  forge hook's final pass it prints `angelic hit built: itemType=<t>
+  definition=<json>`, the built item's `itemDefinitionStruct`. The JSON is
+  the game's own `json_stringify`, bounded at 420 characters.
+  `angelicprobe hit status` prints `show=<k>` remaining. These replace
+  Session 4's parameter lines, which printed the struct at the old point.
+- **No `point` lever.** The reading established the point
+  (`CreateItemNew`'s entry), so the second candidate is recorded above and
+  not built. If Live 3's `record` check shows the record is not the one the
+  constructor fills, the instance constructor is the next round's point.
+- **The model.** The behaviour harness's `CreateDefaultParams` now returns
+  the measured `{j, b, c}`; its `LootGroundCreate` stores its own `a` and
+  hands `CreateItemNew` an instance whose definition is the record; and its
+  `CreateItemNew` hook is the Custom Forge's, detoured, as in Live 2.
+  `test_build_id` runs `measured_params_build_our_item` (switch on: no
+  refusal, the game's build recorded once with `t` 8, `a` 777002, `b` 2, `c`
+  0, `j` 0, `built=1`, `belt=1`) and `measured_params_vanilla_untouched`
+  (switches off: the record keeps the model's own `a`). Against the plugin
+  Live 2 ran (tag `forgepact-74-live2-base`) the first fails with `no field
+  a`, which is the baseline of this session. `test_refusal_latch` runs
+  `refusal_latches_item_off`.
+
+### Live procedure 5
+
+Live 3 runs the rebuilt research build through the drive tool, with the
+owner doing the killing. It is `### Live procedure 4` with three changes: the
+record dump replaces `repo-standin` and `list-stable` as the second positive
+control, `inject-build` is judged on the rewrite at `CreateItemNew`'s entry,
+and `replace-remove` is not re-run (Live 2 measured it, 42 of 42). It is a
+new session on a restored save, so every starting value is the state before
+Live 2. The session's capture is
+`forgepact-74-list-injection-live2-live-2.md`, kept with the hub's workorder
+and not tracked; its record goes under `### Results` below.
+
+- **Build.** `plugin_build\live3\BloodPactPlugin_rel.dll`, a frozen copy of
+  `plugin_build\build.bat dev` with this session's change; its SHA-256 is
+  recorded when it is built. The owner installs it when asked; until then
+  `dll-hash` fails and nothing else runs.
+- **Character.** Save slot 14 (Sorak), selected on the back end, in town at
+  load.
+- **Standing steps** and **hygiene**: as `### Live procedure 3`. In addition,
+  the newest `[hs] YYError summary: total=` line of `bin\YYToolkit.log` is
+  recorded, with no verdict, before check 4, after check 6's first batch and
+  before teardown, and once `top=report#N` names a report, the message line
+  of that report's first-occurrence block (the line with the error text,
+  never the frames below it).
+- **People steps.** One zone change (check 5), then batches of 10 kills with
+  the drops left on the ground, read after each batch; a step ends as soon as
+  its hit count is reached. Counts are hits (`gameHits=` growth), never
+  kills.
+
+Each check is recorded as pass, fail, not-observed or not-run, with the
+replies quoted in the session record. The research checks are never pass
+conditions of the session.
+
+1. **`dll-hash`** - the lease's DLL SHA-256 equals the research build's.
+   Fail: nothing after it runs.
+2. **`marker`** - `angelicprobe hit status` answers a line beginning
+   `angelicprobe hit:` and ending `detect=off`. A player build answers that
+   the command is unavailable, and the session ends there.
+3. **`control`** - `sigdrop status` reads exactly the fresh-session line,
+   `sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 refused=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`.
+4. **`layout`** (research; the positive control on the layout, before
+   anything is injected) - `angelicprobe list dump lootListUnique`: the first
+   line reads `kind=array array_length=6`, six element lines follow, and
+   `[5]` reads `kind=ref ds_list=yes:<size> triples=<size>/<size>` with both
+   stand-ins at n = 1 (Live 2: 380). Then `angelicprobe inject auto` answers
+   `list lootListUnique[5]:<size>`, and `angelicprobe inject status` reads
+   `copies=1 list=lootListUnique[5]:<size>` with no `(not validated)`. Pass:
+   all of that. Fail: `[5]` not a `ds_list` of triples, a stand-in at an n
+   other than 1, or `(not validated)` (the record names which). Not-observed:
+   the first line is not `kind=array array_length=6`.
+5. **`record`** (research; the positive control on the dump, before anything
+   of ours is written) - **the owner takes the town portal or a waypoint to
+   any ordinary zone.** `angelicprobe hit show 6` confirms `show=6`;
+   `raredrop angelic 2` opens the gate; `angelicprobe hit chance 1000000000`
+   turns the override on with `detect=detoured`. **The owner kills in batches
+   of 10** until `gameHits=` is 20 or more (three batches at most), both
+   switches off. The first `angelic hit record: vanilla <json>` line and the
+   first `angelic hit built: itemType=<t> definition=<json>` line are read
+   from the log.
+   - Pass: at least one vanilla hit printed both lines; the `record: vanilla`
+     JSON names the record's fields as the game made them (the field set is
+     recorded verbatim, and whether it carries `a` at all); and the `built:`
+     definition carries `a` as a number, with `b`, `c` 1 and `j` matching the
+     record.
+   - Fail: a `built:` definition without `a`, or with a `b`, `c` or `j` the
+     record did not carry (the record is not the one the constructor fills,
+     and `inject-build` is then judged in its blind form).
+   - Not-observed: no hit printed a `record: vanilla` line (the dump did not
+     see the point) or no `built:` line (the forge hook did not see the build
+     inside the roll). The record says which, and the session continues.
+6. **`force-hit`** (validity), **`baseline-off-vanilla`** (acceptance) and
+   **`typing`** (research), from check 5's batches (more kills only when
+   `gameHits=` is below 20):
+   - `force-hit`: `cdpCalls=` above 0, `detect=detoured` and `gameHits=` of 20
+     or more pass; anything else fails, and checks 7 and 8 are not-run.
+   - `baseline-off-vanilla`: `injected=0 ourHits=0 refused=0 built=0`,
+     `list=` equal to check 4's `lootListUnique[5]:<size>`, and no `inject:`
+     line pass. The baseline share p0, `standinPicks=` over `gameHits=`, is
+     recorded.
+   - `typing`: every vanilla hit line carries a numeric `builtType=` (if none
+     does: not-run, instrument-blind, with `untyped=` recorded); then
+     `untyped=0`, `typeAgree=` of 10 or more and `typeDisagree=0` pass;
+     `untyped=` or `typeDisagree=` above 0 fail; fewer than 10 agreements are
+     not-observed. Every vanilla hit's `lootDelta=` is recorded, and a
+     screenshot of the ground taken.
+7. **`reach`** (research) and **`inject-build`** (research; the route's
+   input) - `angelicprobe hit show 6` again (so our first hits print),
+   `angelicprobe inject copies 200`, then `headhunter force`: `headhunter:
+   ON (forced)` and a `signature drops:` line naming `lootListUnique[5]` and
+   Liquor Holster, and `sigdrop status` reading
+   `gate=tyrant:off,headhunter:on`. The step's starting `gameHits=`,
+   `standinPicks=`, `ourHits=`, `refused=`, `built=` and `belt=` are
+   recorded. **The owner kills in batches of 10** until `gameHits=` has grown
+   by 20 or more (two batches at most; up to 40 hits and four batches only
+   when `reach` is inconclusive).
+   - `reach`, from p1, the growth of `standinPicks=` over the growth of
+     `gameHits=`: `heldMiss=0` and p1 of 0.20 or more pass (Live 2: 0.81);
+     `heldMiss=` above 0, or p1 below 0.10, fail; anything between is
+     not-observed. There is no `at` fallback in this session: the layout and
+     the index are measured.
+   - `inject-build` is judged only when `reach` passed and `typing` passed or
+     was instrument-blind; otherwise it is not-run (instrument-blind, naming
+     which did not pass).
+   - Pass: `ourHits=` grew by 3 or more; `built=` and `belt=` grew by the same
+     amount; `crown=0`, `anomalies=0` and `refused=0`; every our-hit line ends
+     `built by the game` with `lootDelta=1`; no `refused` line and no
+     `sigdrop:` line; the first our-hit printed `angelic hit record: before
+     <json>` and `angelic hit record: after <json>`, the `after` JSON with `a`
+     777002, `b` 2, `c` 0 and `j` 0, and an `angelic hit built: itemType=8
+     definition=<json>` with the same four values. Then **the owner hovers one
+     item on the ground and names it**: Headhunter (with a screenshot).
+   - Fail: a crash; `built=` growth below `ourHits=` growth; a `lootDelta=`
+     other than 1 on an our-hit; a refusal line (its text and JSON recorded:
+     the latch then turns Headhunter off, `gate=...headhunter:off` and
+     `angelicDrops=refused`, which the record notes); a `built:` definition
+     whose `a` is not 777002 after an `after` JSON that carried it (the
+     constructor overwrote it: both JSONs recorded); or an item that is not
+     Headhunter.
+   - Not-observed: fewer than 3 hits of ours by 40 hits.
+   - Blind form (`record` or `typing` did not pass): `built=`, `belt=` and
+     the line endings are recorded but decide nothing; the verdict rests on
+     `ourHits=` growth of 3 or more, `crown=0`, `anomalies=0`, no refusal, no
+     `sigdrop:` line, and the owner naming a Headhunter.
+8. **`on-both`** (acceptance of the shipped pairing; not-run unless
+   `inject-build` passed) - `tyrant force`, copies still 200. **The owner
+   kills in batches of 10** until `crown=` is 1 or more (two batches at
+   most). Pass: `crown=` 1 or more, `belt=` grew, `built=` growth equal to
+   `ourHits=` growth, and a Tyrant's Crown seen on the ground (screenshot).
+9. **`off-removes`** (acceptance) - `angelicprobe inject copies 1`,
+   `headhunter off`, `tyrant off`; `sigdrop status` reads
+   `gate=tyrant:off,headhunter:off`, and `angelicprobe inject status` shows
+   `list=lootListUnique[5]:<size>` equal to check 4's. **The owner kills
+   five.** `injected=` and `ourHits=` unchanged, no mod item and no `inject:`
+   line pass.
+10. **`sigdrop-still-forces`** (acceptance) - `sigdrop crown`; **the owner
+    kills one**; the log shows `sigdrop: Tyrant's Crown dropped at`; then
+    `sigdrop off`. The last people step.
+11. **`list-restored`** (acceptance) - `angelicprobe hit off`,
+    `raredrop angelic 1`, then `angelicprobe list dump lootListUnique`: all
+    six sizes equal to check 4's and each stand-in's n equal to check 4's;
+    `angelicprobe inject status` shows `list=` equal to check 4's.
+12. Stop the game normally, then inspect and restore the saves (the standing
+    steps).
+
+The capture lists the checks in this order: `dll-hash`, `marker`, `control`,
+`layout`, `record`, `force-hit`, `baseline-off-vanilla`, `typing`, `reach`,
+`inject-build`, `on-both`, `off-removes`, `sigdrop-still-forces`,
+`list-restored`. The session must pass `dll-hash`, `marker`, `control`,
+`force-hit`, `baseline-off-vanilla`, `off-removes`, `sigdrop-still-forces`
+and `list-restored`. The route comes from Session 3's decision rule as the
+owner's decision after Live 2 amends it: `route: replace` is never set
+without the owner's word.
+
+### Results
+
+Session 5: not yet run.

@@ -17,10 +17,20 @@
 // return a copy of the list, so a push onto what it returned is not visible on a fresh read.
 //
 // The list's layout is replan 2's static reading (Session 4): the Controller_obj variable is an
-// array of six ds_list ids, the roll reads element 5 - ds_list_size, an index drawn up to it,
+// array whose element 5 is a ds_list (the model holds a ds_list at every element; what elements
+// 0-4 hold is not established), the roll reads element 5 - ds_list_size, an index drawn up to it,
 // ds_list_find_value, and a fresh draw unless is_array - and each entry of that ds_list is an
 // array [type, sub, b]. The ds_lists live in a model store (id -> entries) that the stub runtime's
 // ds_exists / ds_list_size / ds_list_find_value / ds_list_add / ds_list_delete read and write.
+//
+// The build is Live 2's measurement and Session 5's static reading: CreateDefaultParams returns
+// {j, b, c} only - no field a and no w (Live 2: {"b":51.0,"j":0.0,"c":1.0}); LootGroundCreate
+// stores a value of its own into the record's a, unconditionally, hands CreateItemNew an item
+// instance whose itemDefinitionStruct is that same record and whose itemType is the placement's
+// type, and CreateItemNew reads a, b, c, j from the record and stores none of them. Its call is
+// direct, so only a detoured hook on CreateItemNew (the Custom Forge's, by default here, as in
+// Live 2) sees its entry - the rewrite point - and its return, where the forge recognises a
+// built Headhunter / Tyrant's Crown.
 #define FORGEPACT_RELEASE
 #include <algorithm>
 #include <array>
@@ -87,6 +97,7 @@ namespace HeroSiege::Scripts {
 inline constexpr std::string_view gml_Script_DropItemAngelicChance = "gml_Script_DropItemAngelicChance";
 inline constexpr std::string_view gml_Script_CreateDefaultParams = "gml_Script_CreateDefaultParams";
 inline constexpr std::string_view gml_Script_GetUniqueRepoStruct = "gml_Script_GetUniqueRepoStruct";
+inline constexpr std::string_view gml_Script_CreateItemNew = "gml_Script_CreateItemNew";
 }
 namespace HeroSiege::Objects {
 enum class GameObject { Loot_Ground_obj = 902, Controller_obj = 984 };
@@ -268,6 +279,9 @@ static std::map<std::string, RValue>& obj(const RValue& v) {
     if (v.m_Kind != VALUE_OBJECT || !v.fields) throw std::runtime_error("not a struct");
     return *v.fields;
 }
+// A field name the runtime will not let variable_struct_set change (empty: none): what the
+// rewrite reads back is then not what it wrote, the one refusal a created field cannot cure.
+static std::string frozenField;
 struct FakeYytk {
     RValue CallBuiltin(const char* functionName, std::vector<RValue> a) {
         ++builtinCalls;
@@ -312,7 +326,9 @@ struct FakeYytk {
         }
         if (n == "variable_struct_exists") return RValue(obj(a[0]).count(a[1].text) ? 1.0 : 0.0);
         if (n == "variable_struct_get") { auto& f = obj(a[0]); auto it = f.find(a[1].text); return it == f.end() ? RValue() : it->second; }
-        if (n == "variable_struct_set") { obj(a[0])[a[1].text] = a[2]; return RValue(); }
+        // variable_struct_set creates a field the struct lacks, as in GameMaker.
+        if (n == "variable_struct_set") { if (a[1].text != frozenField) obj(a[0])[a[1].text] = a[2]; return RValue(); }
+        if (n == "variable_struct_remove") { obj(a[0]).erase(a[1].text); return RValue(); }
         if (n == "json_stringify") {
             std::string s = "{";
             for (const auto& kv : obj(a[0])) { char b[64]; std::snprintf(b, sizeof b, "%g", kv.second.number); s += (s.size() > 1 ? "," : "") + ("\"" + kv.first + "\":") + b; }
@@ -434,8 +450,20 @@ static bool g_SigRollItem[2] = { false, false };
 static int g_SigInjectDepth = 0;
 static int g_SigHitItem = -1, g_SigHitCoin = 0, g_SigHitStandIn = -1;
 static bool g_SigHitRewritten = false;
+static bool g_SigHitAtPoint = false;   // the current hit reached the rewrite point (CreateItemNew's entry)
 static std::string g_SigHitWhy;
 static int g_SigPending[2] = { 0, 0 };
+// The refusal latch: an item whose rewrite was refused is off for the rest of the session, why,
+// and how many rewrites were refused (`refused=`).
+static bool g_SigRefused[2] = { false, false };
+static std::string g_SigRefusedWhy[2];
+static volatile long g_SigRefusals = 0;
+// The CreateItemNew hook the rewrite runs in (the Custom Forge's Hook_CreateItemNew in the plugin;
+// the model's stand-in for it is defined after the production functions) and its saved original.
+static PFUNC_YYGMLScript g_Orig_CreateItemNew = nullptr;
+static RValue& Hook_CreateItemNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+// `angelicprobe hit show <k>`'s remaining hits (research build; `angelicprobe hit status` prints it).
+static long g_SigShowLeft = 0;
 // `angelicprobe hit status` (research build) reads its levers; the harness holds them off.
 struct AngelicHitBase {};
 static std::vector<AngelicHitBase> g_AngHitBases;
@@ -452,14 +480,20 @@ static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
 #endif
 
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
+// CreateDefaultParams(sub, b, c) returns the struct Live 2 measured, {"b":51.0,"j":0.0,"c":1.0}:
+// `j` the first argument, `b` the second, `c` the third, and no field a and no w. The built
+// item's `a` is LootGroundCreate's, below.
 static int gameCdpCalls = 0;
 static bool paramsLackJ = false;   // a CreateDefaultParams whose struct has no `j`
+static std::vector<std::string> lastParamsFields;   // the field names the last call returned
 static RValue& gameCreateDefaultParams(CInstance*, CInstance*, RValue& result, int argc, RValue** A) {
     ++gameCdpCalls;
-    std::map<std::string, RValue> f = { { "w", RValue(1.0) }, { "a", RValue(424242.0) } };
+    std::map<std::string, RValue> f;
     if (argc > 0 && !paramsLackJ) f["j"] = *A[0];
     if (argc > 1) f["b"] = *A[1];
     if (argc > 2) f["c"] = *A[2];
+    lastParamsFields.clear();
+    for (const auto& kv : f) lastParamsFields.push_back(kv.first);
     result = makeStruct(std::move(f));
     return result;
 }
@@ -491,32 +525,51 @@ static void readDefinition(CInstance* self, CInstance* other, const Triple& t) {
     repoEntry(self, other, result, 3, args);
 }
 
-// LootGroundCreate -> CreateItemNew: one item per placement, built from the parameters it was
-// handed under the picked entry's type; the Custom Forge hook recognises the two built-in items
-// by their selector {t, a, b, c, j} and reports each to the plugin, as TryApplyCustomForge does.
-struct BuildRecord { double t, a, b, c, j; int forged; };   // forged: 0 crown, 1 belt, -1 neither
+// LootGroundCreate -> CreateItemNew: one item per placement (Session 5's static reading).
+// LootGroundCreate stores a value of its own into the record's `a` - unconditionally, whatever
+// was there - then builds the item instance, whose itemType is the placement's type argument (the
+// picked entry's) and whose itemDefinitionStruct is the record itself (a second reference, not a
+// copy), and calls CreateItemNew on it directly. CreateItemNew reads itemType and the record's
+// a, b, c, j and stores none of them. The Custom Forge hook on CreateItemNew (Hook_CreateItemNew,
+// below the production functions) sees the call's entry - the rewrite point - and, on its
+// return, recognises the two items by their selector {t, a, b, c, j} and reports each to the
+// plugin, as TryApplyCustomForge does.
+static constexpr double kLootGroundSeed = 515151.0;   // the model's own `a`, LootGroundCreate's store
+struct BuildRecord { double t, a, b, c, j; int forged; };   // forged: what was built, 0 crown, 1 belt, -1 neither
 static std::vector<BuildRecord> builds;
 static double field(const RValue& params, const char* key) {
     if (params.m_Kind != VALUE_OBJECT || !params.fields) return -1;
     const auto it = params.fields->find(key);
     return it == params.fields->end() ? -1 : it->second.number;
 }
-static void gameLootGroundCreate(double type, const RValue& params) {
-    BuildRecord r{ type, field(params, "a"), field(params, "b"), field(params, "c"), field(params, "j"), -1 };
-    const std::map<std::string, double> selectors[2] = {
-        { { "t", 0.0 }, { "a", 777001.0 }, { "b", 7.0 }, { "c", 0.0 }, { "j", 0.0 } },
-        { { "t", 8.0 }, { "a", 777002.0 }, { "b", 2.0 }, { "c", 0.0 }, { "j", 0.0 } },
-    };
+static const std::map<std::string, double> kSelectors[2] = {
+    { { "t", 0.0 }, { "a", 777001.0 }, { "b", 7.0 }, { "c", 0.0 }, { "j", 0.0 } },
+    { { "t", 8.0 }, { "a", 777002.0 }, { "b", 2.0 }, { "c", 0.0 }, { "j", 0.0 } },
+};
+static int selectorOf(double t, const RValue& definition) {
     for (int w = 0; w < 2; ++w) {
-        const auto& s = selectors[w];
-        if (r.t == s.at("t") && r.a == s.at("a") && r.b == s.at("b") && r.c == s.at("c") && r.j == s.at("j")) {
-            r.forged = w;
-#ifdef HAS_SIGNATURENOTEBUILT
-            SignatureNoteBuilt(s);
-#endif
-        }
+        const auto& s = kSelectors[w];
+        if (t == s.at("t") && field(definition, "a") == s.at("a") && field(definition, "b") == s.at("b")
+            && field(definition, "c") == s.at("c") && field(definition, "j") == s.at("j")) return w;
     }
-    builds.push_back(r);
+    return -1;
+}
+static RValue& gameCreateItemNew(CInstance*, CInstance*, RValue& result, int argc, RValue** A) {
+    result = argc > 0 && A && A[0] ? *A[0] : RValue();
+    if (result.m_Kind != VALUE_OBJECT) return result;
+    const double t = obj(result)["itemType"].number;
+    const RValue definition = obj(result)["itemDefinitionStruct"];
+    builds.push_back({ t, field(definition, "a"), field(definition, "b"), field(definition, "c"), field(definition, "j"), selectorOf(t, definition) });
+    return result;
+}
+// Where LootGroundCreate's direct call lands: the game's own function, or a detoured hook on it.
+static PFUNC_YYGMLScript citemEntry = gameCreateItemNew;
+static void gameLootGroundCreate(double type, RValue record) {
+    if (record.m_Kind == VALUE_OBJECT) obj(record)["a"] = RValue(kLootGroundSeed);
+    RValue instance = makeStruct({ { "itemType", RValue(type) }, { "itemDefinitionStruct", record } });
+    RValue* args[] = { &instance };
+    RValue built;
+    citemEntry(nullptr, nullptr, built, 1, args);
 }
 static int countBuilds(int forged) { int n = 0; for (const auto& b : builds) if (b.forged == forged) ++n; return n; }
 
@@ -610,6 +663,12 @@ static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest,
         else gameImage.push_back(reinterpret_cast<const void*>(gameGetUniqueRepoStruct));
         return true;
     }
+    if (name == "CreateItemNew") {
+        *origOut = gameCreateItemNew;
+        if (native) citemEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameCreateItemNew));
+        return true;
+    }
     return false;
 }
 // The production test for "this saved original is the game's own code" (HookOneScript's
@@ -623,6 +682,26 @@ static bool AddrIsExecutableInModule(HMODULE, const void* address) {
 
 // PRODUCTION_FUNCTIONS
 
+// ForgePact's Hook_CreateItemNew (the ITEM_CREATE_HOOK macro) as far as #74 reaches it: the
+// pre-call slot where GemsBeforeCreate and SignatureBeforeCreate run (the rewrite point), the
+// original, then the Custom Forge's final pass, which reports a recognised Headhunter / Tyrant's
+// Crown through SignatureNoteBuilt.
+static RValue& Hook_CreateItemNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+#ifdef HAS_SIGNATUREBEFORECREATE
+    SignatureBeforeCreate(argc, A);
+#endif
+    RValue& res = g_Orig_CreateItemNew ? g_Orig_CreateItemNew(S, O, R, argc, A) : R;
+    if (res.m_Kind == VALUE_OBJECT) {
+        const int w = selectorOf(obj(res)["itemType"].number, obj(res)["itemDefinitionStruct"]);
+#ifdef HAS_SIGNATURENOTEBUILT
+        if (w >= 0) SignatureNoteBuilt(kSelectors[w]);
+#else
+        (void)w;
+#endif
+    }
+    return res;
+}
+
 static void reset() {
     outLines.clear();
     g_HhEnabled = false; g_TyEnabled = false; g_HhForced = false; g_TyForced = false;
@@ -631,7 +710,12 @@ static void reset() {
     controllerCount = 1; controllerVars.clear(); dsIdKind = VALUE_REAL; setList(vanillaTriples());
     controllerKind = VALUE_REF; getReturnsCopy = false; copiedIds.clear();
     repoBase = { { { 8, 0, 51 }, 5000000.0 }, { { 0, 0, 85 }, 111111111.0 }, { { 0, 0, 86 }, 30000000.0 } };
-    gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams; paramsLackJ = false;
+    gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams; paramsLackJ = false; lastParamsFields.clear();
+    // The Custom Forge installed its CreateItemNew hook at startup, detoured, as in Live 2 (where
+    // builtType= read every hit's built item inside the roll).
+    g_Orig_CreateItemNew = gameCreateItemNew; citemEntry = Hook_CreateItemNew; frozenField.clear();
+    g_SigHitAtPoint = false; g_SigRefused[0] = g_SigRefused[1] = false; g_SigRefusedWhy[0].clear(); g_SigRefusedWhy[1].clear();
+    g_SigRefusals = 0; g_SigShowLeft = 0;
     gameRepoCalls = 0; repoEntry = gameGetUniqueRepoStruct; repoRead = RepoRead::Picked;
     g_Orig_GetUniqueRepoStruct = nullptr; g_SigRepoSeen = false; g_SigRepoType = g_SigRepoSub = g_SigRepoB = -1.0;
     g_SigHitTyped = false; g_SigHitType = -1.0; g_SigUntyped = 0;
@@ -933,7 +1017,9 @@ int main(int argc, char** argv) {
             pickPolicy = Pick::Last;
             roll(monster, { false, true, false });
             require(g_SigOurHits == 1 && countBuilds(1) == 1, "a hit in an extra roll was not ours and built");
-        } else if (test == "missing_field_refuses_and_leaves_vanilla") {
+        } else if (test == "missing_field_is_created_and_a_refusal_restores") {
+            // A record without a field the rewrite writes (here j): the field is created and read
+            // back like the others, and the game builds ours.
             setList(vanillaTriples(false));
             paramsLackJ = true;
             g_HhForced = true;
@@ -941,15 +1027,32 @@ int main(int argc, char** argv) {
             pickPolicy = Pick::Last;
             roll(monster, { true });
             require(g_SigOurHits == 1, "the hit was not ours");
-            require(anyLineHas("inject: Headhunter refused", "no field j"), "the refusal does not name the missing field");
-            require(anyLineHas("inject: Headhunter refused", "\"b\":51"), "the refusal does not carry the struct's JSON");
-            require(builds.size() == 1 && builds[0].b == 51 && builds[0].c == 1.0 && builds[0].a == 424242, "a refused rewrite did not leave the parameters vanilla");
+            for (const auto& line : outLines) require(line.find("refused") == std::string::npos, "a missing field was refused instead of created: " + line);
+            require(builds.size() == 1 && builds[0].t == 8 && builds[0].a == 777002 && builds[0].b == 2 && builds[0].c == 0 && builds[0].j == 0,
+                    "the created field did not reach the build");
+            require(countBuilds(1) == 1 && g_SigBuilt == 1, "a record that lacked j did not build Headhunter");
+            // A value that does not read back is still a refusal, and it puts every field back,
+            // the one it created removed again: the game builds its own record.
+            reset();
+            setList(vanillaTriples(false));
+            paramsLackJ = true;
+            frozenField = "b";
+            g_HhForced = true;
+            installDetection();
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(g_SigOurHits == 1, "the hit was not ours");
+            require(anyLineHas("inject: Headhunter refused", "field b did not read back"), "the refusal does not name the field: " + lastLine("inject:"));
+            require(anyLineHas("inject: Headhunter refused", "\"b\":51"), "the refusal does not carry the record's JSON");
+            require(builds.size() == 1 && builds[0].t == 8 && builds[0].a == kLootGroundSeed && builds[0].b == 51 && builds[0].c == 1.0,
+                    "a refused rewrite did not leave the record vanilla");
+            require(builds[0].j == -1, "a refused rewrite left the field it created on the record");
             require(g_SigBuilt == 0 && spawns.empty(), "a refused rewrite counted or spawned an item");
-            require(anyLineHas("angelic hit:", "refused (no field j)"), "the hit line does not say it was refused");
+            require(anyLineHas("angelic hit:", "refused (field b did not read back)"), "the hit line does not say it was refused");
         } else if (test == "sigdrop_status_tokens") {
             const std::string line = sigdropStatusLine();
             // Exactly the fresh-session banner the live procedure's `control` step reads.
-            const std::string banner = "sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off";
+            const std::string banner = "sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 refused=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off";
             require(line == banner, "`sigdrop status` is not the fresh-session banner: " + line);
             g_HhForced = true;
             installDetection();
@@ -970,7 +1073,7 @@ int main(int argc, char** argv) {
             require(g_SigGameHits == 400 && builds.size() == 400, "not one item built per hit");
             require(g_SigOurHits == 0, "a hit on another type's same-pair entry was attributed: ourHits=" + std::to_string(g_SigOurHits));
             for (const auto& b : builds)
-                require(b.t == 10 && b.b == 51 && b.c == 1.0 && b.a == 424242, "a hit on another type's same-pair entry was rewritten");
+                require(b.t == 10 && b.b == 51 && b.c == 1.0 && b.a == kLootGroundSeed, "a hit on another type's same-pair entry was rewritten");
             require(countBuilds(1) == 0 && g_SigBuilt == 0, "a Headhunter came from another type's entry");
             require(g_SigUntyped == 0, "a hit whose definition the roll read was counted untyped");
             require(anyLineHas("angelic hit: picked 10/0/51 ", "-> vanilla"), "the hit line does not name the typed triple 10/0/51");
@@ -993,7 +1096,7 @@ int main(int argc, char** argv) {
                 const char* how = read == RepoRead::Skip ? "no definition read" : "another definition read last";
                 require(g_SigUntyped == untyped + 1, std::string(how) + ": the hit was not counted untyped");
                 require(g_SigOurHits == 0, std::string(how) + ": an untyped hit was attributed");
-                require(builds.size() == built + 1 && builds.back().t == 8 && builds.back().b == 51 && builds.back().c == 1.0 && builds.back().a == 424242,
+                require(builds.size() == built + 1 && builds.back().t == 8 && builds.back().b == 51 && builds.back().c == 1.0 && builds.back().a == kLootGroundSeed,
                         std::string(how) + ": an untyped hit did not build the game's own Liquor Holster from its own parameters");
                 require(lastLine("angelic hit:").find("picked untyped 0/51 ") != std::string::npos, std::string(how) + ": the hit line does not say untyped: " + lastLine("angelic hit:"));
             }
@@ -1273,6 +1376,127 @@ int main(int argc, char** argv) {
 #else
             require(false, "no `angelicprobe list dump` to read the layout with");
 #endif
+        // ---- build id (Session 5): Live 2's struct; the target fails against forgepact-74-live2-base ----
+        } else if (test == "measured_params_build_our_item") {
+            // The target. CreateDefaultParams hands back {j, b, c}, no field a, which the plugin Live
+            // 2 ran refused on (`no field a`) at every one of 65 hits. LootGroundCreate stores its
+            // own a; the plugin writes Headhunter's a, b, c, j onto that record at CreateItemNew's
+            // entry, and the game builds Headhunter once from it.
+            setList(vanillaTriples(false));   // n = 0: every typed hit on the stand-in is ours
+            g_HhForced = true;
+            installDetection();
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(lastParamsFields == std::vector<std::string>{ "b", "c", "j" }, "the model's CreateDefaultParams did not return the measured {j, b, c}");
+            require(g_SigOurHits == 1, "the hit on our entry was not ours");
+            for (const auto& line : outLines) require(line.find("refused") == std::string::npos, "the rewrite refused: " + line);
+            require(builds.size() == 1, "the game did not build exactly one item for one hit");
+            const BuildRecord b = builds[0];
+            require(b.t == 8 && b.a == 777002 && b.b == 2 && b.c == 0 && b.j == 0,
+                    "the game did not build from Headhunter's own definition {t 8, a 777002, b 2, c 0, j 0}: t=" + std::to_string(b.t)
+                    + " a=" + std::to_string(b.a) + " b=" + std::to_string(b.b) + " c=" + std::to_string(b.c) + " j=" + std::to_string(b.j));
+            require(b.forged == 1 && g_SigBuilt == 1 && g_SigBuiltBelt == 1 && g_SigBuiltCrown == 0, "the forge hook's final pass did not record built=1 belt=1");
+            const std::string status = sigdropStatusLine();
+            require(status.find(" built=1 ") != std::string::npos && status.find(" belt=1 ") != std::string::npos, "`sigdrop status` does not read built=1 belt=1: " + status);
+            require(linesEndingWith("angelic hit:", "Headhunter (stand-in Liquor Holster, 1 in 1) built by the game") == 1, "the hit line does not end `built by the game`: " + lastLine("angelic hit:"));
+            require(spawns.empty(), "the roll path spawned an item of its own");
+        } else if (test == "measured_params_vanilla_untouched") {
+            // The baseline on the same struct: both switches off, the detection installed (as a
+            // research lever installs it). The game builds its own Liquor Holster from its own
+            // record - LootGroundCreate's a, b 51, c 1, j 0 - and nothing of ours touches it.
+            installDetection();
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            roll(monster, { true });
+            require(lastParamsFields == std::vector<std::string>{ "b", "c", "j" }, "the model's CreateDefaultParams did not return the measured {j, b, c}");
+            require(builds.size() == 1, "the game did not build exactly one item for one hit");
+            const BuildRecord b = builds[0];
+            require(b.t == 8 && b.a == kLootGroundSeed && b.b == 51 && b.c == 1.0 && b.j == 0 && b.forged == -1,
+                    "the game's own Liquor Holster was not built from its own record (the model's a, b 51, c 1, j 0)");
+            require(g_SigOurHits == 0 && g_SigBuilt == 0 && g_SigInjected == 0, "with both switches off something of ours was counted");
+            require(linesStartingWith("inject:") == 0, "with both switches off an `inject:` line was printed");
+            require(listTriples() == vanilla && spawns.empty(), "with both switches off the list changed or an item was spawned");
+        } else if (test == "item_hook_route_decides_the_gate") {
+            // LootGroundCreate calls CreateItemNew directly, so the rewrite point is reached only
+            // through a detour. 1. Nothing holds CreateItemNew (no Custom Forge, no Item Truth): the
+            // installer hooks it by its SDK name, once, and our hit is built.
+            g_Orig_CreateItemNew = nullptr; citemEntry = gameCreateItemNew;
+            setList(vanillaTriples(false));
+            g_HhForced = true;
+            installDetection();
+            installDetection();
+            require(installs["CreateItemNew"] == 1, "CreateItemNew was not hooked exactly once");
+            require(citemEntry != gameCreateItemNew, "LootGroundCreate's direct call does not reach the hook");
+            require(switchOn(1), "four detoured hooks with the list resolved did not arm the gate");
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(countBuilds(1) == 1 && g_SigBuilt == 1, "with the installer's own CreateItemNew hook our hit was not built");
+            // 2. A table-only hook holds it already: the direct call never reaches the rewrite, so
+            // the gate stays off and `detect=` names it.
+            reset();
+            gameImage.push_back(reinterpret_cast<const void*>(gameCreateItemNew));
+            citemEntry = gameCreateItemNew;
+            g_HhForced = true;
+            installDetection();
+            require(anyLineHas("signature drops: game-roll detection NOT installed", "CreateItemNew TABLE-ONLY"), "a table-only CreateItemNew was not logged");
+            require(!switchOn(1), "a table-only CreateItemNew armed the gate");
+            std::string status = sigdropStatusLine();
+            const std::string tail = " detect=CreateItemNew:TABLE-ONLY";
+            require(status.size() >= tail.size() && status.compare(status.size() - tail.size(), std::string::npos, tail) == 0,
+                    "`detect=` does not name CreateItemNew: " + status);
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 20; ++i) roll(monster, { true });
+            require(g_SigInjected == 0 && g_SigOurHits == 0, "entries were pushed or a hit taken with the rewrite point unreachable");
+            // 3. The runtime cannot resolve it by name.
+            reset();
+            g_Orig_CreateItemNew = nullptr; citemEntry = gameCreateItemNew;
+            missingHook = "CreateItemNew";
+            g_HhForced = true;
+            installDetection();
+            require(!switchOn(1), "an unresolved CreateItemNew armed the gate");
+            status = sigdropStatusLine();
+            const std::string missing = " detect=CreateItemNew:not found";
+            require(status.size() >= missing.size() && status.compare(status.size() - missing.size(), std::string::npos, missing) == 0,
+                    "`detect=` does not say CreateItemNew was not found: " + status);
+        } else if (test == "refusal_latches_item_off") {
+            // The first refused rewrite latches that item off for the session: no more copies of it
+            // are pushed, the gate reads off with `rewrite refused: <why>`, and `refused=` counts it.
+            // The other item, not refused, stays on (the positive control).
+            setList(vanillaTriples(false));
+            g_HhForced = true; g_TyForced = true;
+            installDetection();
+            require(switchOn(0) && switchOn(1), "both switches on did not arm both items");
+            frozenField = "b";          // the record's b will not take the write
+            pickPolicy = Pick::Last;    // the belt's copy, pushed after the crown's
+            roll(monster, { true });
+            require(g_SigOurHits == 1 && anyLineHas("inject: Headhunter refused", "field b did not read back"),
+                    "the refused rewrite was not logged: " + lastLine("inject:"));
+            require(builds.size() == 1 && builds[0].t == 8 && builds[0].a == kLootGroundSeed && builds[0].b == 51 && builds[0].c == 1.0 && g_SigBuilt == 0,
+                    "a refused rewrite did not leave the game's own Liquor Holster");
+            require(anyLineHas("angelic hit:", "refused (field b did not read back), the game placed its own stand-in"), "the hit line does not say it was refused");
+#ifdef HAS_SIGNATUREOFFREASON
+            require(SignatureOffReason(1) == "rewrite refused: field b did not read back", "the off reason is not the refusal: " + SignatureOffReason(1));
+#else
+            require(false, "no off reason to name the refusal");
+#endif
+            require(!switchOn(1), "a refused item stayed on");
+            require(switchOn(0), "the latch took the other item off too");
+            std::string status = sigdropStatusLine();
+            require(status.find(" ourHits=1 refused=1 ") != std::string::npos && status.find(" gate=tyrant:on,headhunter:off ") != std::string::npos,
+                    "`sigdrop status` does not count refused=1 with Headhunter off: " + status);
+            // For the rest of the session nothing of Headhunter's is pushed, the write now works or not.
+            frozenField.clear();
+            listDuringCall.clear();
+            roll(monster, { false });
+            require(listDuringCall.size() == 1 && listDuringCall[0] == plus(vanilla, { kCrownStandIn }),
+                    "a latched item was pushed again: " + (listDuringCall.empty() ? std::string("no roll") : describe(listDuringCall.back())));
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 50; ++i) roll(monster, { true });
+            for (const auto& seen : listDuringCall)
+                require(std::find(seen.begin(), seen.end(), kBeltStandIn) == seen.end(), "a latched item's stand-in was on the list during a roll");
+            require(g_SigOurHits == 1 && countBuilds(1) == 0, "a latched item took a hit");
+            status = sigdropStatusLine();
+            require(status.find(" refused=1 ") != std::string::npos, "refused= moved without a refusal: " + status);
+            require(listTriples() == vanilla, "the list is not the game's own after the rolls");
         // ---- detection: the beside design's install and gate, kept ----
         } else if (test == "install_is_idempotent") {
             g_OrigAngChance = nullptr;

@@ -34,6 +34,14 @@ step of the nested resolution refuses with its own reason, a fresh read whose
 element 5 is another list is a held miss, and `list=` reads `<name>[5]:<size>`.
 The model's fixture is that nested layout for every test, so the earlier
 tests' scenarios now run on it too.
+`test_build_id` is Session 5's change, and fails by its own assertions against
+`forgepact-74-live2-base` (the plugin Live 2 ran, which refused every hit with
+`no field a`): the model's `CreateDefaultParams` returns the struct Live 2
+measured, `{j, b, c}` with no `a`; `LootGroundCreate` stores its own `a` into
+that record and `CreateItemNew` builds from it, so the plugin writes the item's
+`a`, `b`, `c`, `j` at `CreateItemNew`'s entry, creating a field the record
+lacks. `test_refusal_latch` holds the refusal latch: a refused rewrite turns its
+item off for the session (`rewrite refused: <why>`, `refused=`).
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -58,7 +66,8 @@ PRODUCTION_TYPES = (
 # Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
 PRODUCTION = (
     'static bool SignatureSwitchOn(',
-    'static double SignatureShare(',              # the beside design only
+    'static std::string SignatureOffReason(',      # `rewrite refused: <why>` once an item is latched off
+    'static double SignatureShare(',             # the beside design only
     'static void SignatureDropOnAngelicHit(',     # the beside design only
     'static bool SigNumber(',
     'static bool SigListHandle(',                 # replan 2: a ds_list handle, number or reference
@@ -78,7 +87,9 @@ PRODUCTION = (
     'struct SignatureInjectGuard {',
     'static std::string SigJson(',
     'static bool SignatureRewriteParams(',
+    'static void SignatureRefuse(',               # a refused rewrite: its line, refused=, the latch
     'static void SignatureAttributeHit(',
+    'static void SignatureBeforeCreate(',         # Session 5: the rewrite at CreateItemNew's entry
     'static void SignatureNoteBuilt(',
     'static void SignatureHitReset(',
     'static void SignatureAfterHit(',
@@ -209,7 +220,7 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'roll_path_never_spawns', 'off_after_on_pushes_nothing',
             'both_on_pushes_two_and_builds_both', 'list_refusals',
             'list_changed_during_roll_left_as_found', 'extra_rolls_carry_the_entries',
-            'missing_field_refuses_and_leaves_vanilla', 'sigdrop_status_tokens',
+            'missing_field_is_created_and_a_refusal_restores', 'sigdrop_status_tokens',
         ))
 
     def test_identity(self):
@@ -240,6 +251,23 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'layout_hit_on_pushed_entry_k_in_n_plus_k', 'layout_handle_as_reference',
             'layout_dump_two_levels',
         ))
+
+    def test_build_id(self):
+        # Session 5: the game model is Live 2's measurement - CreateDefaultParams returns {j, b, c},
+        # no field a - and the static reading of the build: LootGroundCreate stores its own a into
+        # that record, and CreateItemNew builds from it. The target (ours built once with t 8,
+        # a 777002, b 2, c 0, j 0) fails by `no field a` against forgepact-74-live2-base, the
+        # plugin Live 2 ran; the baseline (switches off, the game's own record untouched) holds
+        # there too. The rewrite point is reached only through a detoured CreateItemNew hook.
+        self.run_scenarios((
+            'measured_params_vanilla_untouched', 'measured_params_build_our_item',
+            'item_hook_route_decides_the_gate',
+        ))
+
+    def test_refusal_latch(self):
+        # A refused rewrite latches its item off for the session: no more copies pushed, the gate
+        # off with `rewrite refused: <why>`, `refused=` counting it, the other item still on.
+        self.run_scenarios(('refusal_latches_item_off',))
 
     def test_detection(self):
         # Kept from the beside design: the detection is installed once, by name, as two inline
