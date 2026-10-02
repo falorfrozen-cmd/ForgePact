@@ -286,7 +286,8 @@ that fails to write is counted, and the `incident: report written` line says
   item-truth, auto-arm and Headhunter installers; the development build's
   continues through every research installer). The clock readings go
   through `ForgePact::Incident::Qpc()`. Bounding or moving the setup is not
-  decided here; Live 3 measures which installer costs what first.
+  decided here; Live 3 measured which installer costs what (see "Live
+  results"); bounding it is ForgePact#151.
 - **The panel's route leaves a trace.** `/api/state`'s `incidents` carries
   `reports`, `lastExit` and `exitWatch` (`pidHeld`, `exitsSeen`,
   `lastCode`), so "the game exited cleanly" is told apart from "no exit was
