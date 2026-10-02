@@ -1288,8 +1288,9 @@ class SkillTimerShipContractTests(unittest.TestCase):
     # abilityId -> (object, ownership, measuredFirst): session 8's four rows
     # plus session 10's three (Progenies, Pickup Raid, Dissipating Tornado),
     # plus issue #83's Mana Orb (workorder forgepact-dev2-bug-batch, Live 1:
-    # measured with the Chosen One upgrade, `own=unreadable`) - eight
-    # explicit rows in total.
+    # measured with the Chosen One upgrade, `own=unreadable`), plus issue
+    # #122's Beacon (measured 2026-10-01 on a test copy of the Marksman) -
+    # nine explicit rows in total.
     SHIP_SET = {
         "healingZone": ("White_Mage_Healing_Zone_obj", "nullptr", 1152.0),
         "bladeBarrier": ("Samurai_Blade_Barrier_obj", '"isMyClient"', 1296.0),
@@ -1299,6 +1300,7 @@ class SkillTimerShipContractTests(unittest.TestCase):
         "pickupRaid": ("Redneck_Pickup_Truck_obj", '"isMyClient"', 576.0),
         "dissipatingTornado": ("Dissipating_Tornado_obj", "nullptr", 432.0),
         "manaOrb": ("White_Mage_Mana_Orb_obj", "nullptr", 5040.0),
+        "beacon": ("Marksman_Beacon_obj", "nullptr", 516.0),
     }
 
     def countdown_table(self):
@@ -1346,8 +1348,14 @@ class SkillTimerShipContractTests(unittest.TestCase):
         for row in self.countdown_rows():
             self.assertRegex(objects_hpp, rf"\b{row['obj']}\s*=\s*\d+,", row)
             # Every runtime name lives in the header's table, never again in
-            # the plugin's player build.
-            self.assertNotIn(f'"{row["ability"]}"', self.stripped, row)
+            # the plugin's player build. One abilityId is exempt BY NAME:
+            # `beacon` is also a shipped custom-forge mechanic ("World ->
+            # Beacon", BeaconActive/MechanicWorn/"beacon" commands), so the
+            # literal already exists in the player build for that unrelated
+            # feature; the object check on the next line still proves the
+            # countdown row itself adds no name of its own.
+            if row["ability"] not in ("beacon",):
+                self.assertNotIn(f'"{row["ability"]}"', self.stripped, row)
             self.assertNotIn(row["obj"], self.stripped, row)
         # Companion skills are out (owner, 2026-09-21): no row sits under the
         # sentry parent, whose members this table's objects would be named for.
@@ -1499,7 +1507,7 @@ class SkillTimerRuleContractTests(unittest.TestCase):
     EXPLICIT_ROWS = {
         "healingZone", "bladeBarrier", "soulSpurn", "maelstromOfFrost",
         "progeniesOfTheGreatCataclysm", "pickupRaid", "dissipatingTornado",
-        "manaOrb",
+        "manaOrb", "beacon",
     }
 
     def test_generated_table_matches_the_sdk(self):
@@ -2549,7 +2557,7 @@ class SkillTimerBuffContractTests(unittest.TestCase):
     # ---- 1: every shipped row was measured (AC10) ---------------------------
 
     def test_every_buff_row_is_measured_in_the_research_doc(self):
-        self.assertEqual(len(self.buff_rows), 4, self.buff_table)
+        self.assertEqual(len(self.buff_rows), 5, self.buff_table)
         doc = self.research_doc
         section = doc[doc.index("### Buff-carried countdown (session 12)"):]
         results = section[section.index("#### Results"):section.index("#### Decision")]

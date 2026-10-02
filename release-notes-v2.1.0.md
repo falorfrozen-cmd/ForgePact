@@ -83,6 +83,13 @@ to your own totals the way Faster Cast Rate does.
 
 ## Fixed
 
+- **Two Marksman skills now show the skill countdown.**
+  - One is a placed skill whose duration is not in the game's own skill data,
+    which is what the countdown's rule reads, so it had been skipped; the
+    other keeps its duration as a buff on you. Both now draw on their
+    skill-bar slot like the other covered skills.
+  - Companion skills - turrets, totems and the like - are still left out, as
+    before.
 - **Remove owned relics from drop pool now works.**
   - Before, a relic you already had at 10/10 kept dropping even with the switch on,
     while ForgePact's log said it was holding that relic back.

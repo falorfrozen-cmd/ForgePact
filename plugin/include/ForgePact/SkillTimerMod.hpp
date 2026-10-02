@@ -181,6 +181,19 @@ inline constexpr SkillTimerRow kSkillTimerRows[] = {
     // spans the cast); the plain cast was not observed.
     { "manaOrb", HeroSiege::Objects::GameObject::White_Mage_Mana_Orb_obj,
       nullptr, 5040.0, "Mana Orb (White Mage)" },
+    // Issue #122: the Marksman's Beacon, reported by a player as missing its
+    // countdown and measured 2026-10-01 on a test copy of the class, on a
+    // research DLL (docs/toggle-skills-research.md, "Issue #122 (2026-10-01):
+    // the Marksman's Beacon"). Its talent reads `abilityDuration=0` - and
+    // `abilityCooldown=10`, tags [15,18,10] - so the rule never selected it;
+    // the cast object does carry a serving `destroyTimer` that spans the
+    // whole cast: first 516 on two clean casts, `maxInst=1` both times (a
+    // recast replaces the live beacon), ownership unreadable, so no field
+    // name. Not a companion by the generator's own ancestry (its parent is
+    // `Player_Ability_Parent_obj`), and not multi-instance in the two casts
+    // observed, which is why it ships where the turrets do not.
+    { "beacon", HeroSiege::Objects::GameObject::Marksman_Beacon_obj,
+      nullptr, 516.0, "Beacon (Marksman)" },
 };
 inline constexpr int kSkillTimerRowCount =
     (int)(sizeof(kSkillTimerRows) / sizeof(kSkillTimerRows[0]));
@@ -211,16 +224,21 @@ struct SkillTimerBuffRow {
 
 // Session 12's four `ship` rows (docs/toggle-skills-research.md,
 // "### Buff-carried countdown (session 12)" -> "#### Results"), in that
-// order. `counter` is the only row with a toggle twin (kToggleSkillRows'
-// `PlayerBuff` row below): while Counter's Give No Quarter sub-talent reads
-// Allocated, that twin's own read decides the toggle is ON and this row
-// draws nothing instead (ctx "The Give No Quarter form split" of the
-// workorder that shipped this).
+// order, plus issue #122's `masterMechanic` - the Marksman's 25 s
+// self-buff, measured 2026-10-01 on a test copy of the class (that section's
+// own "Issue #122" sub-block): no cast object at all by the name convention
+// (the rule counted it `ruleNoName`), so the buff route is the only one that
+// can cover it. `counter` is the only row with a toggle twin
+// (kToggleSkillRows' `PlayerBuff` row below): while Counter's Give No
+// Quarter sub-talent reads Allocated, that twin's own read decides the
+// toggle is ON and this row draws nothing instead (ctx "The Give No Quarter
+// form split" of the workorder that shipped this).
 inline constexpr SkillTimerBuffRow kSkillTimerBuffRows[] = {
     { "counter", 104, 1036.800000, "Counter (Shield Lancer)" },
     { "lastStand", 107, 3600.000000, "Last Stand (Shield Lancer)" },
     { "defensiveShout", 9, 14400.000000, "Defensive Shout (Viking)" },
     { "berserk", 1, 720.000000, "Berserk (Viking)" },
+    { "masterMechanic", 21, 1500.000000, "Master Mechanic (Marksman)" },
 };
 inline constexpr int kSkillTimerBuffRowCount =
     (int)(sizeof(kSkillTimerBuffRows) / sizeof(kSkillTimerBuffRows[0]));
@@ -235,7 +253,7 @@ inline constexpr int kSkillTimerBuffRowCount =
 // structurally by the generator, never reaches this file), and a cast object
 // resolves by NAME CONVENTION from the abilityId (SkillTimerNames.hpp,
 // generated - never hand-typed, AGENTS.md "Never Call an Address You
-// Resolved by Hand"). A measured deny-list always wins. The eight rows above
+// Resolved by Hand"). A measured deny-list always wins. The nine rows above
 // stay explicit and win over the rule (D-R1): Soul Spurn reads
 // `abilityDuration=0`, so the rule would not select it anyway.
 //
@@ -252,7 +270,7 @@ inline constexpr int kSkillTimerRuleCap = 64;
 // SkillTimerNames.hpp naming convention, see that file's own header comment)
 // and the object it names. No game API here - this struct, and the table
 // built from it, are read by ModuleMain.cpp's rule walk and rule draw, never
-// spelled as a literal `GameObject::` enumerator outside the eight explicit
+// spelled as a literal `GameObject::` enumerator outside the nine explicit
 // rows above and the generated header itself
 // (test_no_hand_typed_object_name_reaches_the_rule_path).
 struct SkillTimerNameEntry {
@@ -315,7 +333,7 @@ inline bool SkillTimerRuleDenied(const std::string& abilityId)
     return false;
 }
 
-// D-R1: the eight object rows above stay explicit and win over the rule - a
+// D-R1: the nine object rows above stay explicit and win over the rule - a
 // talent id matching one of them is never entered into the rule map at all.
 // Session 12 adds the buff-carried rows to the same exclusion: a buff row
 // has no object at all, so the rule (which only ever resolves an object by
@@ -353,7 +371,7 @@ class SkillTimerRuleModel {
 public:
     // The pure decision (D-S4's rule, interpreted): both fields read as
     // numbers, a positive duration, a cooldown above the no-cooldown floor,
-    // not denied, not one of the eight explicit rows. No game call and no
+    // not denied, not one of the nine explicit rows. No game call and no
     // object name here - resolving (or not) an object by name is the
     // caller's job, once eligibility is decided. Pinned truth-table points
     // (context, "Eligibility, read once per room"): cooldown == floor is

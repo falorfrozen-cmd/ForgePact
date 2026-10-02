@@ -5802,7 +5802,7 @@ static bool ToggleTableResolveIds()
                         // talent counts ruleDenied even when it has no object
                         // by name convention at all (bushido/holyForm/
                         // unholyForm/melonForm). D-R1: a talent id matching
-                        // one of the eight explicit rows above is never
+                        // one of the nine explicit rows above is never
                         // entered here.
                         if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
                             if (ForgePact::SkillTimerRuleDenied(name)) {
@@ -6463,7 +6463,7 @@ static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, d
 // ForgePact::kSkillTimerField among them - otherwise the same shape as
 // SkillTimerReadRow, written separately rather than shared because that
 // function always resolves its object by name fresh (SkillTimerResolveRowObject,
-// no caching - fine for eight explicit rows, wasteful for up to
+// no caching - fine for nine explicit rows, wasteful for up to
 // kSkillTimerRuleCap rule entries), while this one is handed an
 // already-resolved, cached objIdx.
 static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
