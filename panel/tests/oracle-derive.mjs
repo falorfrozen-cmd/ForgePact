@@ -36,10 +36,10 @@
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
 // sleep, the Pet moves on switch of forgepact-pet-loot-stuck, Move all into
-// the stash, Extra packs as you approach, and Sleep loot your filter hides,
-// whose show-key select is derived after them): the same on, off, on and Turn
-// off shape the legacy recording holds for #mod_pet_quest_pickup, but nothing
-// recorded stands for them, so their
+// the stash, Extra packs as you approach, Pet collects relics (#124), and Sleep
+// loot your filter hides, whose show-key select is derived after them, so it
+// stays last): the same on, off, on and Turn off shape the legacy recording
+// holds for #mod_pet_quest_pickup, but nothing recorded stands for them, so their
 // contract is written out here as literals - on posts the mod's key with true and sends its plugin
 // verb with 1, off posts false and sends the verb with 0, on again repeats the
 // first, and its Turn off button repeats the off - entered on the tab and Mods
@@ -57,10 +57,24 @@
 // show key's select, so no earlier step's index moves, and both the range and its switch are in
 // `controls`, since no recording lists the range either.
 //
+// PANEL_BOOLEANS and PANEL_BUTTONS are panel controls no recorded page ever
+// had that send the plugin nothing (the Setup tab's Incident reports card,
+// issue #76). The card has one, Open reports folder; PANEL_BOOLEANS is empty
+// since its FPS-drop switch went (an FPS drop is recorded without a notice,
+// the owner, 2026-10-02) and stays as a working list for the next panel
+// switch: a switch is clicked off then on again from its default (on),
+// each click posting its key with the new value and sending no command, and a
+// button is clicked once, posting an empty body to its own route and sending
+// no command. Neither is a mod, so neither has a Turn off button. They come
+// after the native sliders, so no earlier step's index moves, and each is in
+// `controls`.
+//
 // NATIVE_SELECTS are selects no recorded page ever had (the Bosses select of
 // the Mods tab's Gameplay sub-tab, issue #44): raised, off, raised again and
 // Turn off, each post and line written out as a literal, entered on their tab
-// and Mods sub-tab. They come after the native sliders, last.
+// and Mods sub-tab (Mods, then Gameplay, since the panel buttons leave Setup
+// open). They come after the panel controls, last of all, so no earlier
+// step's index moves.
 //
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
@@ -103,6 +117,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
   { key: 'mod_stash_move_all', tab: 'tab:mods', sub: 'subtab:qol', verb: 'stashmoveall' },
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
+  { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
@@ -131,13 +146,21 @@ export const NATIVE_SLIDERS = [
   { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', min: 1, max: 10,
     atMin: 'miningrolls 1', atMax: 'miningrolls 10' },
 ];
+// Panel settings and actions no recorded page ever had, which send the plugin
+// nothing (issue #76's Incident reports card on Setup): a switch's key, tab
+// and default (none now), and a button's id, tab and route. Appended after the
+// native sliders; only NATIVE_SELECTS come after them.
+export const PANEL_BOOLEANS = [];
+export const PANEL_BUTTONS = [
+  { id: 'openreports', tab: 'tab:setup', url: '/api/openreports' },
+];
 // Selects no recorded page ever had (the Bosses select, issue #44, the only
 // control of the Mods tab's Gameplay sub-tab): the config key, where it sits,
 // the value it is raised to, and the plugin verb src/forgepact.py sends with
 // the chosen value. The legacy #mod_skill_timer_style branch above walks only
 // the recording's controls, so these are written out as literals - raised,
 // off, raised again, then the Turn off button, which sends what off sends -
-// after the native sliders, so no earlier step's index moves.
+// after the panel controls, last of all, so no earlier step's index moves.
 export const NATIVE_SELECTS = [
   { key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' },
 ];
@@ -301,7 +324,24 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     });
     push(selector, 'min', { expect: { posts: { same: atMinStep }, cmds: { same: atMinStep } } });
   }
-  // The selects no recording has: their literal contract, last of all.
+  // The panel's own switches and buttons: a switch away from its default and
+  // back, a button once, each posting its own literal and sending no command.
+  for (const { key, tab, initial } of PANEL_BOOLEANS) {
+    const selector = '#' + key;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    for (const value of [!initial, initial]) {
+      push(selector, 'click', { expect: { posts: { is: setPost({ key, value }) }, cmds: { is: [] } } });
+    }
+  }
+  for (const { id, tab, url } of PANEL_BUTTONS) {
+    const selector = '#' + id;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    push(selector, 'click', { expect: { posts: { is: [{ url, body: {} }] }, cmds: { is: [] } } });
+  }
+  // The selects no recording has: their literal contract, last of all (after
+  // the panel controls, so Mods and its Gameplay sub-tab are entered again).
   for (const { key, tab, sub, on: raised, verb } of NATIVE_SELECTS) {
     const selector = '#' + key;
     controls.push(selector);

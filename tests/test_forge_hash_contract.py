@@ -81,6 +81,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # The pet moves on from loot it cannot pick up (#94, workorder
     # forgepact-pet-loot-stuck; test_pet_loot_unstick_contract.py pins it).
     "petunstick",
+    # Pet Collects Relics (#124, workorder forgepact-124-pet-relics;
+    # test_pet_relic_collector_contract.py pins it).
+    "petrelic",
     # The frame profiler: measures, changes nothing in the game
     # (test_frame_profiler.py pins it).
     "frameprof",
@@ -100,6 +103,10 @@ EXPECTED_PLAYER_COMMANDS = {
     # The Bosses control, Mods > Gameplay (ForgePact #44;
     # test_boss_rarity_contract.py and test_boss_rarity_panel.py pin it).
     "bossrarity",
+    # The incident monitor's `incident stat` (ForgePact #76): reads the
+    # plugin's own counters, changes nothing in the game
+    # (test_incident_monitor_contract.py pins it).
+    "incident",
 }
 
 

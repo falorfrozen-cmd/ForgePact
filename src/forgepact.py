@@ -241,6 +241,12 @@ DEFAULTS = {
     # ForgePact/docs/pet-quest-collector-plan.md). Off by default like the
     # other mod toggles.
     "mod_pet_quest_pickup": False,
+    # Pet collects relics (#124, docs/pet-relic-collector-research.md): while
+    # the pet is out it walks to relics on screen and picks each up through the
+    # game's own loot pickup, never one the player already owns at 10/10. Its
+    # own switch, separate from Pet collects quest items. Off by default like
+    # the other mod toggles.
+    "mod_pet_relic_pickup": False,
     # The pet moves on from loot it cannot pick up (#94): when the game's own
     # companion loot pickup sits on one item, the plugin holds that item back
     # for the pet and lets it choose another (docs/pet-loot-stuck-research.md).
@@ -350,6 +356,10 @@ DEFAULTS = {
     # panel setting only: no command ever carries it.
     "theme": "default",
 }
+
+# Settings that only the panel reads: /api/set saves them and tells the plugin
+# nothing, even while the game runs.
+PANEL_SETTINGS = ("theme",)
 
 # Every slider that has an on/off switch: "<section>.<key>" for the table rows,
 # the bare key for the four top-level sliders.  Monster Density is not here:
@@ -577,6 +587,12 @@ if os.name == "nt":
         _wintypes.HANDLE, _wintypes.DWORD, _wintypes.LPWSTR,
         _ctypes.POINTER(_wintypes.DWORD)]
     _K32.QueryFullProcessImageNameW.restype = _wintypes.BOOL
+    # The game's exit code (incident reports, issue #76): watcher() holds a
+    # handle while the game runs and reads it once the process has ended.
+    _K32.WaitForSingleObject.argtypes = [_wintypes.HANDLE, _wintypes.DWORD]
+    _K32.WaitForSingleObject.restype = _wintypes.DWORD
+    _K32.GetExitCodeProcess.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_wintypes.DWORD)]
+    _K32.GetExitCodeProcess.restype = _wintypes.BOOL
     _INVALID_HANDLE_VALUE = _wintypes.HANDLE(-1).value
 else:                                   # pragma: no cover - non-Windows host
     _ctypes = None
@@ -1009,6 +1025,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: no hook is installed, so unlike relicfilter
         # there is no arm/defer lifecycle to worry about.
         out.append("petquest 1")
+    if cfg.get("mod_pet_relic_pickup", False):
+        # Safe to send at launch: the player build installs no hook for it,
+        # only a per-frame tick while on, like petquest.
+        out.append("petrelic 1")
     if cfg.get("mod_pet_loot_unstick", False):
         # Safe to send at launch: no hook, only a per-frame tick while on.
         out.append("petunstick 1")
@@ -1955,12 +1975,379 @@ def plugin_boot_generation(cfg=None):
         return (_BOOT_CACHE["ident"], count)
 
 
+# ---- incident reports (issue #76) -----------------------------------------
+# The plugin is the one writer of a report bundle
+# (bp_ipc\reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\): it notices FPS
+# drops and freezes while the game runs, and a crash at the next load, when
+# the previous session's log has no clean-shutdown line. The panel never
+# writes under reports\; it lists every report (Setup > Incident reports) and
+# tells nobody about any of them: no toast, no message box, no notice of any
+# kind, for an FPS drop, a freeze, a crash or an exit with an error (the
+# owner, 2026-10-02). It records what only a process outside the game can
+# see:
+# - exit.json: the exit code of a game that ended with anything but 0, read
+#   from a handle watcher() holds while the game runs, and the Windows
+#   Application log's crash record for it. The plugin folds the file into the
+#   next crash bundle and deletes it.
+# - panel.json: this panel's version and pid; the plugin records the version
+#   in a report.
+# The design and its limits: docs/incident-report.md.
+REPORTS_DIR = "reports"
+EXIT_JSON = "exit.json"
+PANEL_JSON = "panel.json"
+REPORT_LIST_MAX = 10
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0
+_REPORT_DIR = re.compile(r"^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)_(perf|freeze|crash)$")
+# The crash records Windows Error Reporting writes. Readable without admin
+# rights; on the machine this was written on it answered record 71576
+# (another program's crash) on 2026-10-02.
+APP_ERROR_QUERY = "*[System[Provider[@Name='Application Error'] and (EventID=1000)]]"
+# What the panel recorded, which is all /api/state's incidents carries beside
+# the report list; nothing here is ever shown to the player as a notice.
+# lastExit: exit.json's facts for an exit with an error, None after a clean
+# exit or before any. exitWatch counts what the exit watch did (D15): the pid
+# whose handle is held, the exits read from a held handle and the last code.
+# Without it "no exit was recorded" could not be told from "the panel never
+# saw the game".
+INCIDENTS = {
+    "lastExit": None,
+    "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None},
+}
+_INCIDENTS_LOCK = threading.Lock()
+_REPORT_UTC: dict = {}
+# The plugin's clean-shutdown marker (IncidentMonitor.hpp's ShutdownMarker):
+# "==== clean shutdown ====" from the ExitProcess hook, "==== clean shutdown
+# (detach) ====" from the unload fallback; the prefix is what counts.
+CLEAN_SHUTDOWN_PREFIX = b"==== clean shutdown"
+CLEAN_SHUTDOWN_TAIL = 64 * 1024
+
+
+def open_exit_handle(pid):
+    """A handle on process `pid` that can read its exit code once it ends, or
+    None. The handle keeps the exit code readable after the process is gone."""
+    if os.name != "nt" or not pid:
+        return None
+    handle = _K32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, int(pid))
+    return handle or None
+
+
+def exit_code_of(handle):
+    """The exit code of the process behind `handle`, or None while it runs.
+
+    Whether it ended is asked of the handle itself (signalled), not read from
+    the code: a process may exit with 259, which is also STILL_ACTIVE."""
+    if os.name != "nt" or not handle:
+        return None
+    if _K32.WaitForSingleObject(handle, 0) != _WAIT_OBJECT_0:
+        return None
+    code = _wintypes.DWORD()
+    if not _K32.GetExitCodeProcess(handle, _ctypes.byref(code)):
+        return None
+    return code.value
+
+
+def close_exit_handle(handle):
+    if os.name == "nt" and handle:
+        _K32.CloseHandle(handle)
+
+
+def exit_code_text(code) -> str:
+    """An exit code as Windows writes one: 0xC0000005."""
+    return f"0x{int(code) & 0xFFFFFFFF:08X}"
+
+
+def game_pid(cfg=None):
+    """The pid of the configured Hero_Siege.exe, or None. Matched on the full
+    path, as game_running() is, so another copy of the game is not it."""
+    target = exe_path(cfg)
+    try:
+        target_lower = str(target.resolve()).lower()
+    except Exception:
+        target_lower = str(target).lower()
+    try:
+        wanted = target.name.lower()
+        for pid, image in snapshot_processes():
+            if image.lower() == wanted and process_image_path(pid).lower() == target_lower:
+                return pid
+    except Exception:
+        pass
+    return None
+
+
+def _xml_name(tag) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def parse_app_error_events(text: str) -> list:
+    """The Application Error (1000) records in `wevtutil qe ... /f:xml` output,
+    newest first as queried: app_name, module_name, exception_code,
+    faulting_offset, event_record_id, process_id and time_created. [] for
+    nothing, or for text that is not those records."""
+    import xml.etree.ElementTree as ElementTree   # only when a game crashed
+
+    body = re.sub(r"<\?xml[^>]*\?>", "", text or "").strip()
+    if not body:
+        return []
+    try:
+        root = ElementTree.fromstring("<Events>" + body + "</Events>")
+    except ElementTree.ParseError:
+        return []
+    events = []
+    for event in root:
+        if _xml_name(event.tag) != "Event":
+            continue
+        data, record, created = {}, None, None
+        for el in event.iter():
+            name = _xml_name(el.tag)
+            if name == "EventRecordID":
+                record = el.text
+            elif name == "TimeCreated":
+                created = el.get("SystemTime")
+            elif name == "Data" and el.get("Name"):
+                data[el.get("Name")] = (el.text or "").strip()
+        try:
+            record = int(record)
+        except (TypeError, ValueError):
+            record = None
+        pid = data.get("ProcessId") or ""
+        try:
+            pid = int(pid, 16) if pid.lower().startswith("0x") else int(pid)
+        except ValueError:
+            pid = None
+        events.append({
+            "app_name": data.get("AppName") or None,
+            "module_name": data.get("ModuleName") or None,
+            "exception_code": data.get("ExceptionCode") or None,
+            "faulting_offset": data.get("FaultingOffset") or None,
+            "event_record_id": record,
+            "process_id": pid,
+            "time_created": created,
+        })
+    return events
+
+
+def query_app_errors(count: int = 20):
+    """(records, probe): the newest `count` Application Error records, and
+    {"queried", "records_seen"}, which tells "no record" (queried, 0 seen)
+    from "could not read the log" (not queried)."""
+    probe = {"queried": False, "records_seen": 0}
+    if os.name != "nt":
+        return [], probe
+    try:
+        result = subprocess.run(
+            ["wevtutil", "qe", "Application", f"/c:{int(count)}", "/rd:true", "/f:xml", "/q:" + APP_ERROR_QUERY],
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return [], probe
+    if result.returncode != 0:
+        return [], probe
+    events = parse_app_error_events(result.stdout.decode("utf-8", errors="replace"))
+    return events, {"queried": True, "records_seen": len(events)}
+
+
+def match_game_event(events, exe_name: str, pid=None):
+    """The newest record of `exe_name` crashing; with a pid, only that
+    process's record, so an older crash of the game never stands in."""
+    name = (exe_name or "").lower()
+    for event in events:
+        if (event.get("app_name") or "").lower() != name:
+            continue
+        if pid is None or event.get("process_id") == pid:
+            return event
+    return None
+
+
+def session_shut_down_cleanly(cfg=None) -> bool:
+    r"""Whether the game session that just ended wrote ForgePact's clean-shutdown
+    marker: a line starting "==== clean shutdown" after out.txt's last
+    "==== BloodPact plugin loaded ====" line.
+
+    The marker is the last thing the plugin writes, so only the tail is read
+    (out.txt grows to megabytes). A banner above that tail leaves the whole
+    tail inside the last session; a marker before the last banner is the
+    previous session's. A missing or unreadable out.txt is False."""
+    try:
+        with (ipc_dir(cfg) / "out.txt").open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            start = max(0, size - CLEAN_SHUTDOWN_TAIL)
+            fh.seek(start)
+            tail = fh.read()
+    except OSError:
+        return False
+    lines = tail.split(b"\n")
+    if start > 0:
+        lines = lines[1:]          # the first line is cut by the seek
+    session = []
+    for line in lines:
+        if line.lstrip(b"\xef\xbb\xbf").startswith(b"==== " + BOOT_MARKER):
+            session = []
+        else:
+            session.append(line)
+    return any(line.startswith(CLEAN_SHUTDOWN_PREFIX) for line in session)
+
+
+def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
+    r"""What the panel does when the game it watched has exited with `code`.
+
+    0 is a clean exit: nothing is written and the last exit reads as none.
+    Anything else writes bp_ipc\exit.json (only into a bp_ipc that exists)
+    and is returned. Windows writes the crash record a moment after the
+    process ends, so the log is read up to `attempts` times.
+
+    An exit after ForgePact's clean-shutdown marker (a mod file aborting
+    during exit, Known Limitations item 25) is still written, with
+    after_clean_shutdown true, so the plugin can fold it into its next-load
+    note rather than read it as a crash. Nobody is told about either kind
+    (the owner, 2026-10-02): the exit is recorded and shown in /api/state."""
+    if code == 0:
+        INCIDENTS["lastExit"] = None
+        return None
+    exit_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event, probe = None, {"queried": False, "records_seen": 0}
+    for attempt in range(max(1, attempts)):
+        events, probe = query_app_errors()
+        event = match_game_event(events, exe_path(cfg).name, pid)
+        if event or not probe["queried"]:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(wait)
+    facts = {
+        "exit_code": exit_code_text(code),
+        "exit_utc": exit_utc,
+        "faulting_module": event["module_name"] if event else None,
+        "faulting_offset": event["faulting_offset"] if event else None,
+        "exception_code": event["exception_code"] if event else None,
+        "event_record_id": event["event_record_id"] if event else None,
+        "event_probe": {"queried": bool(probe["queried"]), "records_seen": int(probe["records_seen"])},
+        "after_clean_shutdown": session_shut_down_cleanly(cfg),
+    }
+    folder = ipc_dir(cfg)
+    if folder.is_dir():
+        try:
+            staged = folder / (EXIT_JSON + ".tmp")
+            staged.write_text(json.dumps(facts, indent=1), encoding="utf-8")
+            os.replace(staged, folder / EXIT_JSON)
+        except OSError:
+            pass
+    INCIDENTS["lastExit"] = facts
+    return facts
+
+
+def watch_game_exit(cfg, running: bool, hold: dict):
+    """One watcher() pass of the exit watch. `hold` is {"pid", "handle"}.
+
+    A held handle whose process has ended is read and closed, whether or not
+    another copy is running now (a restart between two polls); then, while
+    the game runs and nothing is held, its process is opened. A game that was
+    running before the panel started is opened on first sight the same way."""
+    facts = None
+    if hold["handle"] is not None:
+        code = exit_code_of(hold["handle"])
+        if code is not None:
+            handle, pid = hold["handle"], hold["pid"]
+            hold.update(pid=None, handle=None)
+            close_exit_handle(handle)
+            with _INCIDENTS_LOCK:
+                watch = INCIDENTS["exitWatch"]
+                watch.update(pidHeld=None, exitsSeen=watch["exitsSeen"] + 1, lastCode=exit_code_text(code))
+            facts = record_game_exit(cfg, code, pid)
+    if running and hold["handle"] is None:
+        pid = game_pid(cfg)
+        handle = open_exit_handle(pid) if pid else None
+        if handle:
+            hold.update(pid=pid, handle=handle)
+            with _INCIDENTS_LOCK:
+                INCIDENTS["exitWatch"]["pidHeld"] = pid
+    return facts
+
+
+def _report_utc(path: Path, match) -> str:
+    """The report's time: report.json's "utc" when it is readable, else the
+    folder name's stamp."""
+    key = str(path)
+    if key in _REPORT_UTC:
+        return _REPORT_UTC[key]
+    try:
+        utc = json.loads((path / "report.json").read_text(encoding="utf-8")).get("utc")
+        if isinstance(utc, str) and utc:
+            _REPORT_UTC[key] = utc
+            return utc
+    except (OSError, ValueError, AttributeError):
+        pass
+    y, mo, d, h, mi, s = match.groups()[:6]
+    return f"{y}-{mo}-{d}T{h}:{mi}:{s}"
+
+
+def incident_reports(cfg=None, limit=REPORT_LIST_MAX) -> list:
+    r"""The report folders under bp_ipc\reports\, newest first: [{"dir",
+    "kind", "utc"}]. Anything not named like a bundle is left out."""
+    try:
+        entries = list((ipc_dir(cfg) / REPORTS_DIR).iterdir())
+    except OSError:
+        return []
+    found = []
+    for path in entries:
+        match = _REPORT_DIR.match(path.name)
+        if match and path.is_dir():
+            found.append((path, match))
+    found.sort(key=lambda pm: pm[0].name, reverse=True)
+    if limit is not None:
+        found = found[:limit]
+    return [{"dir": path.name, "kind": match.group(7), "utc": _report_utc(path, match)} for path, match in found]
+
+
+def incidents_state(cfg) -> dict:
+    """/api/state's "incidents", the counters copied under their lock."""
+    with _INCIDENTS_LOCK:
+        exit_watch = dict(INCIDENTS["exitWatch"])
+    return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"], "exitWatch": exit_watch}
+
+
+def write_panel_json(cfg=None) -> bool:
+    r"""Write bp_ipc\panel.json ({"version", "pid"}) when its content would
+    change. Never creates bp_ipc. True when it wrote."""
+    folder = ipc_dir(cfg)
+    if not folder.is_dir():
+        return False
+    body = json.dumps({"version": __version__, "pid": os.getpid()})
+    path = folder / PANEL_JSON
+    try:
+        if path.read_text(encoding="utf-8") == body:
+            return False
+    except (OSError, ValueError):
+        pass
+    try:
+        staged = folder / (PANEL_JSON + ".tmp")
+        staged.write_text(body, encoding="utf-8")
+        os.replace(staged, path)
+        return True
+    except OSError:
+        return False
+
+
+def open_reports_folder(cfg=None) -> dict:
+    """/api/openreports: open bp_ipc\\reports in Explorer. The panel never
+    creates it: no folder means no report has been saved yet."""
+    folder = ipc_dir(cfg) / REPORTS_DIR
+    if not folder.is_dir():
+        return {"err": "no reports yet: ForgePact has not saved one"}
+    try:
+        os.startfile(str(folder))
+    except (AttributeError, OSError) as e:
+        return {"err": f"could not open the reports folder: {e}"}
+    return {"ok": "opened the reports folder"}
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
     # False is intentional: if the panel itself starts after the game, the
     # first pass must still attach and apply the saved configuration.
     was_running = False
     last_state = None
+    exit_hold = {"pid": None, "handle": None}
     while True:
         time.sleep(5)
         try:
@@ -1974,6 +2361,14 @@ def watcher():
             if now:
                 last_state = state
             was_running = now
+        except Exception:
+            pass
+        # Incident reports (issue #76), in a try of their own, so nothing here
+        # can stop a launch from being noticed above. Recording only: a new
+        # report is listed by /api/state and nobody is told.
+        try:
+            write_panel_json(cfg)
+            watch_game_exit(cfg, now, exit_hold)
         except Exception:
             pass
 
@@ -2278,7 +2673,8 @@ class H(BaseHTTPRequestHandler):
                         "minEnabledSatanicBuffs": MIN_ENABLED_SATANIC_BUFFS,
                         "minEnabledSatanicDebuffs": MIN_ENABLED_SATANIC_DEBUFFS,
                         "lastApplied": LAST["applied"], "queued": LAST["queued"],
-                        "launch": offline_launcher.launch_status()})
+                        "launch": offline_launcher.launch_status(),
+                        "incidents": incidents_state(cfg)})
         elif u.path != "/api" and not u.path.startswith("/api/") and (f := panel_file(u.path)):
             self._file(f)
         else:
@@ -2382,7 +2778,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -2415,8 +2811,8 @@ class H(BaseHTTPRequestHandler):
                     cfg["theme"] = val
                 save_cfg(cfg)
                 live = ""
-                # A theme is a panel setting: nothing to tell the plugin.
-                if game_running(cfg) and not (sec is None and key == "theme"):
+                # A theme is the panel's own: nothing to tell the plugin.
+                if game_running(cfg) and not (sec is None and key in PANEL_SETTINGS):
                     # Sliders send what the game should see: a slider whose
                     # switch is off sends its default's command, as density
                     # does while density_on is off.
@@ -2476,6 +2872,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"orbpickup {10 if cfg['mod_orb_pickup_radius'] else 0}"], cfg)
                     elif key == "mod_pet_quest_pickup":
                         send_cmds([f"petquest {1 if cfg['mod_pet_quest_pickup'] else 0}"], cfg)
+                    elif key == "mod_pet_relic_pickup":
+                        send_cmds([f"petrelic {1 if cfg['mod_pet_relic_pickup'] else 0}"], cfg)
                     elif key == "mod_pet_loot_unstick":
                         send_cmds([f"petunstick {1 if cfg['mod_pet_loot_unstick'] else 0}"], cfg)
                     elif key == "mod_auto_prospect":
@@ -2574,6 +2972,8 @@ class H(BaseHTTPRequestHandler):
                 self._json({"ok": msg + suffix} if not msg.startswith("ERROR") else {"err": msg})
             elif u.path == "/api/launch":
                 self._json(launch_modded_game(cfg))
+            elif u.path == "/api/openreports":
+                self._json(open_reports_folder(cfg))
             else:
                 self._json({"err": "not found"}, 404)
         except Exception as e:

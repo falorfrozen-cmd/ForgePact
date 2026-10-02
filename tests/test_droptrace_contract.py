@@ -5,9 +5,9 @@ deaths (the rank-1 and the ancient Karp King) printed no `droptrace:` line,
 no gold line and no item line, while a traced rare Karp King and a traced
 slider-raised Skeleton_Mage_Fire_obj printed and dropped. These tests pin the
 part of that question our code can answer: every DropManager hook enters the
-probe scope first and then calls the original with its own arguments on
-every path, so an armed trace cannot skip a drop or change one, and the
-trace's own name read never hands the runner an unconvertible kind. What the
+probe scope first (after only the incident monitor's timing scope, #76) and
+then calls the original with its own arguments on every path, so an armed
+trace cannot skip a drop or change one, and the trace's own name read never hands the runner an unconvertible kind. What the
 game decided for those two deaths is in `docs/boss-rarity-research.md`
 ("The plugin's runner error and the traced kills").
 """
@@ -19,6 +19,7 @@ from test_map_reveal_behavior import implementation
 
 ROOT = Path(__file__).resolve().parents[1]
 DROP_MANAGER = ROOT / 'plugin/include/ForgePact/DropManager.hpp'
+INCIDENT_MONITOR = ROOT / 'plugin/include/ForgePact/IncidentMonitor.hpp'
 MODULE_MAIN = ROOT / 'plugin/ModuleMain.cpp'
 KIND_CHECK = 'static bool IsNumericInstanceRead('
 
@@ -46,11 +47,16 @@ class DropTraceContractTests(unittest.TestCase):
     def test_drop_hook_calls_the_original_whatever_the_trace(self):
         body = hook_body(drop_hook_macro())
         steps = statements(body)
-        # The probe scope (which carries `droptrace`) is entered first ...
-        self.assertEqual(steps[0], 'BP_ANGELIC_PROBE_SCOPE(#NAME, S, argc, A)', steps)
+        # The probe scope (which carries `droptrace`) is entered first; the one
+        # step allowed before it is the incident monitor's timing scope (#76),
+        # a declaration or nothing, which cannot return from the body ...
+        probe = 'BP_ANGELIC_PROBE_SCOPE(#NAME, S, argc, A)'
+        self.assertIn(probe, steps)
+        self.assertEqual(steps[:steps.index(probe)], ['FP_DROP_INCIDENT_SCOPE()'], steps)
         # ... and the original runs, unconditionally (outside every block), with the
-        # hook's own arguments; the only return is its result.
-        call = 'RValue& _res = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R;'
+        # hook's own arguments; the only return is its result. #76 wraps the
+        # call in FP_DROP_GAME_ORIGINAL, which only times it (pinned below).
+        call = 'RValue& _res = mgr.m_Orig_##NAME ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_##NAME(S, O, R, argc, A)) : R;'
         self.assertEqual(body.count(call), 1, body)
         at = body.index(call)
         self.assertEqual(body[:at].count('{'), body[:at].count('}'), 'the original call sits inside a block')
@@ -63,6 +69,21 @@ class DropTraceContractTests(unittest.TestCase):
         self.assertNotIn('DropTrace', body)
         for arg in ('S', 'O', 'R', 'argc', 'A'):
             self.assertNotRegex(body, r'(?<![\w.>])' + arg + r'\s*=(?!=)', 'the hook reassigns ' + arg)
+        # The incident scope is a declaration with the monitor and nothing without
+        # it, and the original's wrapper is the bare call or the monitor's
+        # GameOriginal, which calls it once and returns its own result.
+        manager = DROP_MANAGER.read_text(encoding='utf-8-sig')
+        for define in ('#define FP_DROP_INCIDENT_SCOPE() ::ForgePact::Incident::IncidentScope incidentScope(::ForgePact::Incident::Mod::drops)',
+                       '#define FP_DROP_INCIDENT_SCOPE() ((void)0)',
+                       '#define FP_DROP_GAME_ORIGINAL(call) FP_GAME_ORIGINAL(call)',
+                       '#define FP_DROP_GAME_ORIGINAL(call) (call)'):
+            self.assertTrue(define in manager, define)
+        monitor = INCIDENT_MONITOR.read_text(encoding='utf-8-sig')
+        self.assertIn('#define FP_GAME_ORIGINAL(call) ::ForgePact::Incident::GameOriginal([&]() -> decltype(auto) { return call; })',
+                      monitor)
+        wrapper = implementation(monitor, 'decltype(auto) GameOriginal(Call&& call)')
+        self.assertEqual(wrapper.count('call()'), 1, wrapper)
+        self.assertIn('return call();', wrapper)
 
         source = MODULE_MAIN.read_text(encoding='utf-8-sig')
         # The scope is a declaration in the research build and nothing in the player build:

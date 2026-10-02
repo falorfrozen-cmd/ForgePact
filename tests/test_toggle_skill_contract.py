@@ -796,6 +796,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # "Unstick the companion's loot" (#94, forgepact-pet-loot-stuck;
             # test_pet_loot_unstick_contract.py).
             "petunstick",
+            # Pet Collects Relics (#124, forgepact-124-pet-relics;
+            # test_pet_relic_collector_contract.py).
+            "petrelic",
             # ForgePact #9 Stage B, merged from main: auto-prospect's own
             # player command (test_auto_prospect_contract.py pins it). Added
             # here because this set is an exact match, so another feature
@@ -846,6 +849,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The Bosses control (ForgePact #44; test_boss_rarity_contract.py
             # and test_boss_rarity_panel.py).
             "bossrarity",
+            # The incident monitor's `incident stat` (ForgePact #76;
+            # test_incident_monitor_contract.py).
+            "incident",
         }
         self.assertEqual(entries, expected)
 
@@ -2489,6 +2495,11 @@ SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 # The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
 # on the line straight after the countdown's; it is removed the same way.
 MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
+# ForgePact #76, amendment 5: the call into the game's original runs inside the
+# incident monitor's guard, so `hudlabels` counts only our own code.
+INCIDENT_HUD_ORIGINAL_LINE = "    RValue& r = g_Orig_DrawHudBuffs ? FP_GAME_ORIGINAL(g_Orig_DrawHudBuffs(S, O, R, argc, A)) : R;"
+INCIDENT_HUD_ORIGINAL_BEFORE = "    RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;"
 
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
@@ -2497,8 +2508,18 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     one new statement - the countdown's own call, on its own line right after
     `ToggleIndicatorDraw();` - so the pin is narrowed the same way the table
     above narrows the other five: remove exactly that one line and assert
-    what is left is still byte-identical to the round base."""
+    what is left is still byte-identical to the round base.
+
+    NARROWED again for ForgePact #76: the incident monitor's per-mod timer
+    (`IncidentScope`, test_incident_monitor_contract.py) is the body's first
+    statement. Exactly that one line is stripped, once, before the compare.
+    And once more (amendment 5): the original's call sits inside the monitor's
+    guard; exactly that line is put back to its unguarded form."""
     lines = new_body.split("\n")
+    testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
+    lines.remove(INCIDENT_HUD_SCOPE_LINE)
+    testcase.assertEqual(lines.count(INCIDENT_HUD_ORIGINAL_LINE), 1, new_body)
+    lines[lines.index(INCIDENT_HUD_ORIGINAL_LINE)] = INCIDENT_HUD_ORIGINAL_BEFORE
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
@@ -2980,6 +3001,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
         # (test_stash_bag_layout_contract.py), `petunstick` is #94's
         # companion loot unstick (test_pet_loot_unstick_contract.py),
+        # `petrelic` is #124's Pet Collects Relics
+        # (test_pet_relic_collector_contract.py),
         # `frameprof` the frame profiler (test_frame_profiler.py),
         # `farsleep` is far sleep's switch (test_far_sleep_contract.py),
         # `stashmoveall` and `stashmove` are Move all into the stash's
@@ -2988,15 +3011,17 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # (test_rolling_density_contract.py), `hiddenloot` is hidden loot
         # sleep's switch (test_hidden_loot_mod_contract.py), `miningrolls`
         # is Mining Ore Extra Rolls (ForgePact #36, test_mining_ore_behavior.py),
-        # and `bossrarity` is the Bosses control (ForgePact #44,
-        # test_boss_rarity_contract.py).
+        # `bossrarity` is the Bosses control (ForgePact #44,
+        # test_boss_rarity_contract.py), and `incident` is the incident
+        # monitor's `incident stat` (ForgePact #76,
+        # test_incident_monitor_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "hiddenloot", "bossrarity"})
+                                        "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
+                                        "densityroll", "hiddenloot", "bossrarity", "incident"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

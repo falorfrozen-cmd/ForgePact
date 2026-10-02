@@ -38,6 +38,11 @@
         <span class="val" id="mpqpval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Pet collects relics<br><span class="feature-description">While your pet is out, it walks to relics lying on screen and picks them up for you, one at a time, raising the relic you own by one level the way picking it up yourself does. A relic you already have at 10/10 is left where it is, since it cannot be picked up. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_pet_relic_pickup"><span class="sl"></span></label>
+        <span class="val" id="mprpval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Pet moves on from loot it cannot pick up<br><span class="feature-description">When a lot of loot is on the ground and your pet stays stuck on one item it cannot pick up, it leaves that item for a few seconds and goes for the next one. A target that is not an item or a coin at all is left at once. Nothing is picked up or destroyed for you. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_pet_loot_unstick"><span class="sl"></span></label>
         <span class="val" id="mpluval">off</span>

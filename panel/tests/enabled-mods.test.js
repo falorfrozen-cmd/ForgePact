@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 19);
+  assert.equal(BOOLEAN_MODS.length, 20);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -64,6 +64,14 @@ test('extra packs as you approach is an entry while on, and off by default', () 
   assert.ok(BOOLEAN_MODS.includes('density_rolling'));
   assert.equal(DEFAULTS.density_rolling, false);
   assert.deepEqual(enabledControls(cfg({ density_rolling: true })), ['density_rolling']);
+});
+
+test('pet collects relics is an entry while on, and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_pet_relic_pickup'));
+  assert.equal(DEFAULTS.mod_pet_relic_pickup, false);
+  assert.deepEqual(enabledControls(cfg({ mod_pet_relic_pickup: true })), ['mod_pet_relic_pickup']);
+  // Its own switch: Pet collects quest items on does not list it, nor the reverse.
+  assert.deepEqual(enabledControls(cfg({ mod_pet_quest_pickup: true })), ['mod_pet_quest_pickup']);
 });
 
 test('sleep loot your filter hides is an entry while on, off by default, and its show key never is one', () => {

@@ -19,8 +19,9 @@ every control's full path can be recorded:
   in);
 - `send_cmds` appends the lines to `<tmp>/cmds.txt` instead of the game's
   `bp_ipc/cmd.txt`, and answers `"<n> command(s) sent"` as the real one does;
-- `op_install_mod`, `op_remove_mod` and `launch_modded_game` answer
-  `{"ok": "stubbed <name>"}` - nothing is installed, patched or launched;
+- `op_install_mod`, `op_remove_mod`, `launch_modded_game` and
+  `open_reports_folder` answer `{"ok": "stubbed <name>"}` - nothing is
+  installed, patched, launched or opened in Explorer;
 - `pick_exe_dialog` answers the sandbox's own (empty) `Hero_Siege.exe`.
 
 `--satanic-minimum` starts at `PanelSandbox.at_minimum()` (3 buffs and 2
@@ -169,6 +170,9 @@ def main(argv=None):
             patch.object(forgepact, "op_install_mod", side_effect=stub("op_install_mod")),
             patch.object(forgepact, "op_remove_mod", side_effect=stub("op_remove_mod")),
             patch.object(forgepact, "launch_modded_game", side_effect=stub("launch_modded_game")),
+            # create=True for the same reason as PANEL_DIST below: an older
+            # tree served with --src has no Incident reports card to click.
+            patch.object(forgepact, "open_reports_folder", side_effect=stub("open_reports_folder"), create=True),
             patch.object(forgepact, "pick_exe_dialog", return_value=str(exe)),
             # create=True: this works on a tree where the static serving (and
             # so the name) does not exist yet, which is where --legacy records.

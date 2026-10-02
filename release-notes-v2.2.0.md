@@ -6,7 +6,11 @@ A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
-shows it again while you hold a key.
+shows it again while you hold a key. A new **Pet collects relics** switch,
+also off by default, has your pet pick up the relics lying around you. And
+when the game crashes, freezes or drops frames badly, ForgePact now saves a
+report you can attach to a bug report, without a notification: you find it on
+the panel's Setup tab.
 
 A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
 tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
@@ -90,14 +94,76 @@ experience.
   turned the setting on and off in a running game and the hook went in on
   both routes; no boss was fought on that build, so the raise itself was
   measured on the research build.
+- **Incident reports (#76).** When the game crashes or freezes, ForgePact
+  saves a report folder under `bp_ipc\reports\` in the game's `bin` folder.
+  A significant FPS drop (a single frame that takes over a quarter of a
+  second, or play running two and a half times slower than usual for a
+  couple of seconds) is saved as a report too. Every report is saved
+  without a notification: nothing pops up while you play, and the reports
+  are listed on the panel's Incident reports card. A freeze report names the
+  ForgePact hook the game was inside when it stopped, and the mod as well
+  when it is one of the mods that keep time for these reports, including
+  when the mod had handed over to the game's own work; an FPS-drop report
+  shows which mods were on and how much of each frame the mods that keep
+  time for these reports took. Some mods keep no time (Sleep loot your
+  filter hides, for one), so their time has no row of its own, and a mod
+  missing from the table has not been cleared. Both reports say which
+  room you were in. A mod's time counts
+  only ForgePact's own code: when a mod's hook lets the game do its normal work (drawing the HUD,
+  dropping an item, spawning a monster, and the extra drops or monsters a
+  multiplier asks for), that game work is not added to the mod's time, and
+  the setup ForgePact does once when the game starts shows as its own
+  `setup` row in the per-mod table. Not
+  every ForgePact hook can be
+  named, so a report that says `none` does not clear ForgePact: it means
+  only that none of the hooks it can name was running. A crash report cannot say what was running, because the crash
+  is found after the game has closed. A zone or character load that stops
+  the game for a few seconds is not reported as a freeze. Every report also
+  holds your ForgePact settings, the list of installed mod files and your
+  Windows, processor, graphics card and memory. Your Windows user name is
+  replaced in every path. Nothing is uploaded: the report stays
+  on your PC until you attach it to a bug report yourself. While the panel is
+  open, a crash is noticed as soon as the game closes and shown on the card.
+  A crash's report folder is saved the next time the game starts with
+  ForgePact, and holds what Windows recorded about the crash when the panel
+  was open to read it. If another mod file fails while the game is closing,
+  after ForgePact has already shut down cleanly, ForgePact notes it in its
+  log and on the card instead of reporting a crash. FPS drops
+  are not reported in the first few seconds after a zone change, while the
+  game window is in the background, and at most one FPS-drop report folder
+  is saved every five minutes, ten a session. The
+  new **Incident reports** card on the Setup tab lists the latest reports,
+  shows how the game last closed and opens the reports folder. No report, of
+  any kind, comes with a notification or a message box, and there is no
+  setting for one. The last ten reports are kept. This is always on and
+  changes nothing in the game.
+- **Pet collects relics (#124).** A new switch on the Mods tab, under Quality
+  of Life, right after Pet collects quest items. Until now a relic on the
+  ground waited for you to click it: the game's own pet never takes relics.
+  With this on, while your pet is out it walks to the relics lying on screen
+  and picks them up for you, one at a time, through the game's own pickup, so
+  each one raises the relic you own by one level, the same as picking it up
+  yourself. A relic you already have at 10/10 is left where it is, since
+  picking it up cannot raise it any further: with a 10/10 relic and a lower
+  one on the ground the pet takes the lower one, and with only 10/10 relics
+  around it stays put instead of going back and forth. If the game turns a
+  pickup down,
+  the relic stays on the ground and the pet moves on to the next one. It is
+  separate from Pet collects quest items; with both on, the pet fetches one
+  thing at a time. It is off by default: turn it on in the panel. Checked in
+  play on 2026-10-02: the pet picked up 31 relics, each one raising the owned
+  relic by one level, left 10/10 relics alone and stayed put when only those
+  were on screen. The relics in that check were placed by a test command, so
+  a relic the game itself drops has not been watched being collected yet.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, a switch and a Gameplay page, so updating only the plugin
-leaves them out. Your existing settings are retained. Source users can run
-`Prepare-Plugin.bat` if plugin files are missing before using **Install Mod
-Plugin**. The plugin changed too, so press **Install Mod Plugin** once after
-updating - updating only the panel leaves the old plugin in place.
+gained a slider, two switches, an Incident reports card and a Gameplay page,
+so updating only the plugin leaves them out. Your existing settings are
+retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
+before using **Install Mod Plugin**. The plugin changed too, so press **Install
+Mod Plugin** once after updating - updating only the panel leaves the old
+plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

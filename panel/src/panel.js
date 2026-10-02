@@ -418,6 +418,10 @@ async function boot(){
     document.getElementById('mod_pet_quest_pickup').checked=mpqp;
     document.getElementById('mpqpval').textContent=mpqp?'on':'off';
     document.getElementById('mpqpval').className='val '+(mpqp?'':'off');
+    const mprp=!!c.mod_pet_relic_pickup;
+    document.getElementById('mod_pet_relic_pickup').checked=mprp;
+    document.getElementById('mprpval').textContent=mprp?'on':'off';
+    document.getElementById('mprpval').className='val '+(mprp?'':'off');
     const mplu=!!c.mod_pet_loot_unstick;
     document.getElementById('mod_pet_loot_unstick').checked=mplu;
     document.getElementById('mpluval').textContent=mplu?'on':'off';
@@ -502,6 +506,7 @@ async function boot(){
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
+  paintIncidents(ST.incidents);
   bind(); preparePanelUI(); refreshSavedControls(); renderEnabledMods(ST.cfg); status(); paintVersion();
   document.dispatchEvent?.(new Event('forgepact:ready'));
   document.getElementById('saveIndicator').textContent='Settings loaded';
@@ -512,6 +517,35 @@ function paintVersion(){
   // bug report needs to say which one it is looking at.
   const el=document.getElementById('panelver');
   if(el&&ST&&ST.version)el.textContent=' \u00b7 v'+ST.version;
+}
+// Incident reports (issue #76): the Setup tab's list of the reports the plugin
+// saved and the game's last exit with an error, from /api/state's `incidents`.
+// Repainted only when the answer changed, so an idle poll writes nothing; the
+// server's strings only ever reach textContent.
+const INCIDENT_KINDS={perf:'FPS drop',freeze:'Freeze',crash:'Crash'};
+const incidentTime=(utc)=>String(utc||'').replace('T',' ').replace(/Z$/,' UTC');
+let incidentsPainted=null;
+function paintIncidents(inc){
+  const list=document.getElementById('incidentList');
+  const key=JSON.stringify(inc||null);
+  if(!list||key===incidentsPainted)return;
+  incidentsPainted=key;
+  const reports=inc?.reports||[];
+  list.replaceChildren(...(reports.length?reports.map(r=>{
+    const li=document.createElement('li'),kind=document.createElement('span');
+    kind.className='incident-kind';kind.textContent=INCIDENT_KINDS[r.kind]||r.kind;
+    li.append(kind,' '+incidentTime(r.utc)+' \u00b7 '+r.dir);
+    return li;
+  }):[Object.assign(document.createElement('li'),{className:'incident-empty',textContent:'No reports saved yet.'})]));
+  // after_clean_shutdown: ForgePact had already shut down cleanly when the
+  // code was set, so a mod file aborted during the game's exit (Known
+  // Limitations item 25); that is noted, not reported as a crash.
+  const last=inc?.lastExit;
+  setText(document.getElementById('incidentLastExit'),last?'Last game exit: '+last.exit_code+
+    (last.faulting_module?' in '+last.faulting_module+(last.faulting_offset?' at offset 0x'+last.faulting_offset:''):'')+
+    (last.exit_utc?' ('+incidentTime(last.exit_utc)+')':'')+
+    (last.after_clean_shutdown?' - after ForgePact\'s clean shutdown: the game had closed, then a mod file aborted during exit. Not a crash; ForgePact notes it the next time the game starts'
+      :' - a crash report is saved the next time the game starts'):'');
 }
 let launcherBusy=false;
 function renderLaunchStatus(){
@@ -664,6 +698,11 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_quest_pickup',value:e.target.checked})});
         const v=document.getElementById('mpqpval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Pet collects quest items '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_pet_relic_pickup').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_relic_pickup',value:e.target.checked})});
+        const v=document.getElementById('mprpval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Pet collects relics '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('mod_pet_loot_unstick').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_loot_unstick',value:e.target.checked})});
@@ -867,6 +906,12 @@ function bind(){
     e.target.value=applyTheme((res.cfg||ST.cfg).theme);
     toast(res.ok||res.err);
   };
+  // Incident reports (issue #76): the card has one control, the folder. An FPS
+  // drop is recorded without a notice, so there is no switch for one.
+  document.getElementById('openreports').onclick=async()=>{
+    const res=await j('/api/openreports',{method:'POST',body:'{}'});
+    toast(res.ok||res.err);
+  };
   document.getElementById('applyall').onclick=async()=>{
     const res=await j('/api/applyall',{method:'POST',body:'{}'});
     toast(res.ok||res.err); if(!res.err)ST.lastApplied=new Date().toTimeString().slice(0,8); status();
@@ -1065,11 +1110,11 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   document.getElementById('boss_rarity').value=c.boss_rarity||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mprpval:'mod_pet_relic_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
@@ -1267,7 +1312,7 @@ async function pollOnce(){
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;ST.incidents=s.incidents;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();paintIncidents(s.incidents);document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }

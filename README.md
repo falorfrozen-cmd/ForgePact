@@ -40,6 +40,7 @@ none of these diagnostic hooks or the recorder. See
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect, and moves on from an item it cannot collect. Pick-up items only; activate/break/talk objectives are left alone |
+| **Pet Collects Relics** | Off by default (plugin command `petrelic 1` / `petrelic 0`). While your pet is out it walks to relics lying on screen and picks them up for you one at a time, through the game's own pickup, raising the relic you own by one level as picking it up yourself does. A relic you already own at 10/10 is never targeted, so with only 10/10 relics on screen the pet stays idle. Separate from Pet Collects Quest Items; with both on, the pet fetches one thing at a time ([details](#pet-collects-relics)). Collect checked in a live game on the research build; relics were placed by a test command, not natural drops |
 | **Pet Moves On From Loot It Cannot Pick Up** | Off by default. With a lot of loot on the ground the game's own pet can stay on one item, hopping around it without taking it (#94). With this on, the pet moves on from loot it cannot pick up: an item it has stayed on for about 1.5 s is left alone for about 10 s and the pet goes for the rest. That hold is for items on the ground: a coin (gold) the pet gives up is only turned away from, not held back, so the pet may try it again sooner. A target that is not loot at all - an old item id the game reused for something else on the map - is given up the moment it is seen instead. It picks nothing up itself and does not change what the pet collects. Not yet confirmed in a live game |
 | **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
@@ -56,6 +57,7 @@ none of these diagnostic hooks or the recorder. See
 | **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
+| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -798,6 +800,59 @@ How the game's own move was measured, over six research sessions, is in
 [`docs/stash-move-research.md`](docs/stash-move-research.md); its
 `## Ship design` describes this mod and what has not been observed in play.
 
+## Pet collects relics
+
+Mods → Quality of Life → **Pet collects relics** (plugin command `petrelic 1` /
+`petrelic 0`, issue #124). Off by default, and a switch of its own, separate
+from Pet collects quest items.
+
+The game's own pet never takes relics (its pickup leaves the relic class out),
+and nothing picks a relic up when you walk over it, so a dropped relic waits
+for your click. With this on, while your pet is out it walks to the relics
+lying on screen and picks them up for you, one at a time, through `PickupLoot`,
+the pickup script the game's own pet and your own click both call. Each pickup
+raises the relic you own by one level, exactly as picking it up by hand does
+(a relic you do not own yet goes into the relic tab).
+
+- **10/10 relics are left alone.** Whether a relic can be picked up depends on
+  the copy you already own, in the relic tab or equipped: a dropped relic is
+  always level 1. The plugin reads the levels of the relics you own through
+  `hs-game-sdk` (the same scans Remove owned relics uses, but it works with
+  that switch off), refreshes them about once a second and straight after
+  every pickup, and never sends the pet to a relic you own at 10/10. It reads
+  them again just before each pickup. A read that could not see the whole
+  relic tab and every equipped slot does not count: the pet then fetches
+  nothing rather than guess. With a 10/10 relic and a lower one on the ground
+  the pet takes the lower one; with only 10/10 relics on screen it stays idle.
+- **One fetch at a time.** With Pet collects quest items on as well, both
+  share the one pet: whichever picked a target first walks it, and the other
+  waits until that walk ends.
+- **When the game says no.** A pickup the game turns down destroys nothing:
+  the relic stays on the ground, and the pet holds it back for a while and
+  goes for the next one, the way Pet collects quest items does. The pickup
+  script leaves removing the picked-up relic from the ground to its caller,
+  and it can answer "done" without raising anything, so the plugin removes
+  the relic itself only once it sees your relic's level go up by one (or the
+  relic newly in your relic tab); a pickup that raised nothing leaves the
+  relic where it is.
+- **What it did.** `petrelic 0` turns it off and prints one `petrelic stat:`
+  line: relics collected, candidates skipped (maxed, not a relic, inactive),
+  pickups refused with the last reason, pickups that answered "done" and left
+  the relic on the ground, ground relics the plugin removed,
+  lost targets and travel timeouts, how many are held back, the maxed relic
+  ids it last read, the route and whether the pet is travelling. The research
+  build (`build.bat dev`) adds `petrelic stat` (the same line without turning
+  it off), `petrelic census` (one line per ground relic on screen: its id, your
+  owned level, maxed or not), `petrelic route a|b` (try `PickupRelic` directly
+  instead of `PickupLoot`) and `petrelic trace 1|0` (logs every `PickupLoot`
+  call, your own clicks included).
+
+Checked in a live game on 2026-10-02 (the collect on the research build, the
+panel switch on the player build); a relic the game itself drops, collected by
+the pet, is not observed yet. The pickup call, what the game's code was read
+to do, what was measured and what is not established yet:
+[`docs/pet-relic-collector-research.md`](docs/pet-relic-collector-research.md).
+
 ## Gems of Incarnation
 
 Loot → **Gems of Incarnation**, the tab's last card: **Mythic Gems of
@@ -1051,6 +1106,113 @@ go; the rest of the work happens on another CPU core. The report states what
 the pauses cost (under about 2% of the frame thread's time on a quiet PC), and
 the profiler slows itself down whenever they add up to more than 3%. Design,
 measurements and limits: [`docs/frame-profiler.md`](docs/frame-profiler.md).
+
+## Incident reports (crash, freeze and FPS-drop reports)
+
+When the game crashes, freezes or drops frames badly, ForgePact notices and
+saves a report you can attach to a bug report as it is, without a notification:
+the reports are listed on the panel's Setup tab. It answers the
+questions a bug report about a slow or crashing game needs: which ForgePact
+hook the game was inside, which of ForgePact's mods was on or busy at the
+time, and how much of each frame ForgePact's own code was taking. It is
+always on, in both builds, because a report that is missing because a switch
+was off is the one outcome it exists to prevent. It changes nothing in the
+game: it puts a name tag around each ForgePact hook as the hook is installed,
+and it watches Windows' own exit call to write the clean-shutdown line.
+Nothing is uploaded.
+
+What counts as an incident:
+
+- **FPS drop** (`perf`): one frame over 250 ms, or frames 2.5 times slower than
+  the usual median for 2 seconds. "Usual" is the median of the last 600 frames
+  before the drop. Not reported in the first 5 seconds after a room change
+  (loading a zone is slow by design), while the game window is in the
+  background or minimised, or more than once every 30 seconds. `incident stat`
+  prints the worst frame of the session and, apart from it, the worst frame
+  that was actually judged (not loading, not in the background), so you can
+  tell a slow load from a slow scene.
+- **Freeze** (`freeze`): no frame for 3 seconds. The report is written once
+  frames come back (or after 15 seconds if they never do), and a gap that
+  ends with a zone change is a load, not a freeze, so loading a zone or a
+  character is never reported. A gap that begins in a menu room (the login,
+  main menu and character screens) is a load too, such as the save loading
+  when you click a character slot, so a hang on those screens leaves no
+  freeze report. The report names the ForgePact hook and the
+  ForgePact mod the game was inside when the frames stopped, or `none`. When
+  the mod's hook had handed over to the game's own work (the game function
+  the hook wraps), the mod is marked so, for example `in-mod hudlabels (game
+  original)`: the game stopped inside its own code, called from that hook.
+  `none` also covers the few ForgePact hooks that cannot be tagged (the
+  population hooks; `incident stat` counts them as `untagged`), so `none`
+  does not clear ForgePact: it says only that none of the tagged hooks was
+  running.
+- **Crash** (`crash`): the previous session ended without a clean shutdown.
+  On a normal exit the plugin writes a line starting `==== clean shutdown` to
+  `out.txt` at the moment the game asks Windows to exit, and again, as a
+  fallback, when the plugin is unloaded; a crash or a killed process leaves
+  no such line, and the next time the plugin loads it writes the crash report.
+  A crash report cannot say which hook or mod was running: it says `unknown`.
+  While the panel is open it also reads the game's exit code when the game
+  closes, and what Windows recorded about the crash in its Application log
+  (the faulting module and offset), and that goes into the same report. If
+  another mod file aborts while the game is closing, after ForgePact's clean
+  shutdown line (the tracker producer can, see the module guide's Known
+  Limitations), that is noted in `out.txt` and on the panel's card as an exit
+  after a clean shutdown, not reported as a crash.
+
+Each report is a folder, `bp_ipc\reports\<date>-<time>_<perf|freeze|crash>\`:
+`report.json` (the kind, the time, the plugin, panel and game versions, the
+frame summary with the room and monster and instance counts, and the per-mod
+table for the last minute and for the episode), the last 500 lines of
+`out.txt` and of `out.prev.txt`, your `forgepact.json` settings and the
+mods' state, `mods.txt` (every file in `mods\aurie\` and `AurieCore.dll` with
+its size, version and SHA-256) and `system.txt` (Windows build, CPU, graphics
+card and driver, memory). Your user folder in every path is replaced with
+`%USERPROFILE%`. The ten newest folders are kept. A line also lands in
+`out.txt`, for example `PERF hitch 412 ms frame | baseline 16.7 | room ... |
+top mapreveal 0.3/frame`, `FREEZE 4 s without a frame | in-hook none | in-mod
+none`, `CRASH
+previous session ended without a clean shutdown | exit 0xC0000005 | module
+...` and `incident: report written <folder>`.
+
+Finding them: every report, crash, freeze or FPS drop, is saved without a
+notification, with or without the panel: nothing pops up, no message box is
+shown, and there is no switch for one. The panel's Setup tab has an
+**Incident reports** card: the latest reports of every kind, how the game last
+closed, and a button that opens the reports folder. The plugin limits itself to 50 episodes and 10 report
+folders a session, at most one folder every 5 minutes.
+
+`incident stat` (send it with `tools/ipc.ps1`) prints what the monitor sees
+right now. Its first line starts `incident: frames ` and gives the frames
+seen, the median, the worst frame of the session and whether it was judged,
+the worst judged frame (a frame the monitor actually judged: not loading,
+not in the background), how many judged frames took 250 ms or more, and
+whether the game window was found (without it freezes cannot be noticed),
+and whether the current room is a menu room (`menu yes|no`).
+Then whether the grace period after a room change is active, whether the
+game has focus, which hook the frame thread is in, episodes and reports so
+far, how many hooks are tagged and how many are not, how many report files
+failed to write, and each mod's average and worst milliseconds a frame over
+the last minute.
+
+What a mod's time counts: only ForgePact's own code. When a mod's hook calls
+the game function it wraps (drawing the HUD, dropping an item, creating a
+monster, and the extra drops or monsters a multiplier asks for), the mod's
+clock is paused for that call, so the game's own work is never charged to the
+mod. Each row is that mod's own time, the `setup` row is the one-time setup
+ForgePact does a few seconds after the game starts (loading its settings and
+installing its hooks, one slow frame in the main menu, described in `out.txt`
+by an `incident: setup` line), and the `frame` row is the frame callback's
+own code outside the named mods, so the rows add up to ForgePact's total.
+
+How it works: the game's frame thread only reads the clock and stores numbers
+(a few readings a frame); a background thread in the plugin wakes four times a
+second, reads only those numbers, and does every comparison and every file
+write. It never calls into the game or pauses it. A crash is caught after the
+fact rather than inside the crashing process. Each release keeps the plugin's
+symbol file (PDB) as a CI artifact, so a maintainer can map the crash offset
+in a report to one of ForgePact's functions. Design, decisions and limits:
+[`docs/incident-report.md`](docs/incident-report.md).
 
 ## Far scenery sleep (lighter frames in busy zones)
 

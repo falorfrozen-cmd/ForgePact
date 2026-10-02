@@ -173,7 +173,7 @@ export const STATIC_ICONS = {
   'den': 'density', 'enemyspeed': 'boots', 'enemyspeed_ct': 'chaos-tower',
   'angelic_items': 'angelic', 'rarity_rare': 'rare', 'rarity_ancient': 'ancient',
   'map_reveal': 'map', 'map_reveal_packs': 'density', 'mod_filter_max_relics': 'relic-filter',
-  'mod_orb_pickup_radius': 'pickup-orbs', 'mod_pet_quest_pickup': 'pet', 'mod_pet_loot_unstick': 'pet',
+  'mod_orb_pickup_radius': 'pickup-orbs', 'mod_pet_quest_pickup': 'pet', 'mod_pet_relic_pickup': 'pet', 'mod_pet_loot_unstick': 'pet',
   'headhunter': 'headhunter', 'tyrant': 'tyrant', 'beacon': 'beacon',
   'boss_rarity': 'ancient',
 };
@@ -188,7 +188,7 @@ export const SECTION_ICONS = {
 export const ACTION_ICONS = {
   'exebrowse': 'folder', 'exesave': 'save', 'installmod': 'install',
   'removeplugin': 'remove', 'launchgame': 'play', 'applyall': 'auto-apply',
-  'satRestore': 'restore',
+  'satRestore': 'restore', 'openreports': 'folder',
 };
 export const SATANIC_ICONS = {
   'buff': numbered(['chest', 'chest', 'rune', 'gold', 'rare', 'angelic', 'boots', 'attack-speed', 'cast-speed', 'damage', 'spell-damage', 'relic', 'goblin', 'magic-find', 'magic-find', 'magic-find', 'experience', 'experience', 'experience', 'recovery', 'density', 'critical-damage', 'ancient', 'ancient', 'ancient']),
