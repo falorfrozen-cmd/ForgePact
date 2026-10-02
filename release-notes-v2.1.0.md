@@ -13,6 +13,9 @@ game less every frame.
 **Remove owned relics from drop pool** now really keeps your 10/10 relics from
 dropping.
 
+Two new sliders on the Modifiers tab, **Skill Haste** and **All Skills**, add
+to your own totals the way Faster Cast Rate does.
+
 ## New
 
 - **Move all into the stash** (Mods → Quality of Life, off by default). With the
@@ -75,9 +78,27 @@ dropping.
   - **Install Mod Plugin** now checks again that the game is closed right before
     it copies anything, and a file that is in use is reported in plain words
     instead of a raw Windows error.
+- **Skill Haste and All Skills** (Modifiers → Offense, beside Faster Cast Rate,
+  both off by default). Each adds to your own total after the game has worked it
+  out, so your gear and buffs still count underneath.
+  - **Skill Haste** adds Skill Haste points: every skill cooldown runs down half a
+    percent faster per point, so +100 makes a cooldown take 2/3 of its time. The
+    game counts at most 200 Skill Haste in total, where a cooldown takes half its
+    time, so the slider stops at 200.
+  - **All Skills** adds levels to every skill you have put a point in, like
+    "+N to All Skills" on an item, in whole levels up to 100.
+  - Don't run Stat Forge's boosts of the same names at the same time: they work
+    on the same game functions.
 
 ## Fixed
 
+- **Two Marksman skills now show the skill countdown.**
+  - One is a placed skill whose duration is not in the game's own skill data,
+    which is what the countdown's rule reads, so it had been skipped; the
+    other keeps its duration as a buff on you. Both now draw on their
+    skill-bar slot like the other covered skills.
+  - Companion skills - turrets, totems and the like - are still left out, as
+    before.
 - **Remove owned relics from drop pool now works.**
   - Before, a relic you already had at 10/10 kept dropping even with the switch on,
     while ForgePact's log said it was holding that relic back.
@@ -89,13 +110,19 @@ dropping.
     usual odds.
   - If every relic that can drop is already at 10/10, the switch stands down.
   - `relicfilter status` in the log shows how many maxed relics it has skipped.
+- **The pet no longer chases something that is not loot.** After a zone change
+  its target could end up being an old item's number reused by something else
+  on the map, and the pet would run at that spot and grind there while you
+  walked on. A target that is not an item or a coin is now dropped the moment
+  it is seen, and the pet goes back to collecting. The switch itself is still
+  off by default.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. Move all into the stash,
-Extra packs as you approach and the relic fix are in the plugin. **Launch Modded Game** brings
+Extra packs as you approach, Skill Haste, All Skills and the relic fix are in the plugin. **Launch Modded Game** brings
 the plugin up to date for you. If you start the game from Steam instead, or
 ForgePact's warning asks for it,
 press **Install Mod Plugin** once after updating.

@@ -105,6 +105,9 @@ enum class GameObject { White_Mage_Soul_Spurn_AOE_obj, UI_Hud_Talent_obj, Univer
                         // Issue #83 (workorder forgepact-dev2-bug-batch):
                         // Mana Orb's orb, the eighth countdown row.
                         White_Mage_Mana_Orb_obj,
+                        // Issue #122: Beacon's cast object, the ninth
+                        // countdown row.
+                        Marksman_Beacon_obj,
                         // Issue #55 follow-up (D-S4): two synthetic objects for
                         // the rule map's own stand-in generated table below -
                         // this harness does not carry the real 700+-entry
@@ -132,6 +135,7 @@ inline const char* GetObjectName(GameObject g) {
     case GameObject::Redneck_Pickup_Truck_obj: return "Redneck_Pickup_Truck_obj";
     case GameObject::Dissipating_Tornado_obj: return "Dissipating_Tornado_obj";
     case GameObject::White_Mage_Mana_Orb_obj: return "White_Mage_Mana_Orb_obj";
+    case GameObject::Marksman_Beacon_obj: return "Marksman_Beacon_obj";
     case GameObject::Player_Damage_Parent_obj: return "Player_Damage_Parent_obj";
     case GameObject::Skill_Controller_obj: return "Skill_Controller_obj";
     case GameObject::Player_Buff_Parent_obj: return "Player_Buff_Parent_obj";

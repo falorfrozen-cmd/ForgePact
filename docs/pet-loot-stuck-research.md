@@ -139,6 +139,12 @@ full grid or a full stack leaves the item on the ground and returns false.
   away".
 - **Whether coins ever stick.** The reading allows it (a coin its collision
   event does not remove); not observed.
+- **When the freed instance id is re-minted.** Live 2 captured the pet's
+  target naming a decoration object (no item data on it), so the id stopped
+  being the item the pet's scan chose by then; no sample caught the
+  free-and-reuse itself, so "the item died and the game reused the id" is the
+  reading that fits the samples, not a measured event
+  ([Live 2 results](#live-2-results-2026-10-02)).
 - **`seekSpeed`'s value** (set in Alarm 0 from character data) and
   **`itemCompanionTimer`'s starting value** (a global). The mod needs neither.
 - **What the gate helper tests.**
@@ -146,11 +152,14 @@ full grid or a full stack leaves the item on the ground and returns false.
   handle; whether this runner hands it back as a real or as `VALUE_REF` was not
   measured, which is why the mod gates the clear on `ds_exists` and never on
   the kind.
-- **Nothing here is measured.** Every claim above is a static reading of the
-  current build. Live 1 (2026-09-28) did not reproduce the stuck state with
-  the mod off, and with it on no give-up counter rose, so it measured neither
-  the stuck state nor the fix ([Live 1 results](#live-1-results-2026-09-28)).
-  That is not observed, not evidence that the stuck state does not happen.
+- **The stuck state's frequency and its exact trigger for #94's own shape.**
+  Live 1 (2026-09-28) did not reproduce an item that stays with the mod off,
+  and with it on no give-up counter rose
+  ([Live 1 results](#live-1-results-2026-09-28)). Live 2 (2026-10-02) did
+  measure a stuck pet, but of a different shape - a stale target id naming a
+  decoration ([Live 2 results](#live-2-results-2026-10-02)) - so #94's
+  item-that-stays remains unobserved, which is not evidence that it does not
+  happen.
 
 ## The fix and what it does not do
 
@@ -163,9 +172,16 @@ runs `PetLootUnstickTick()` in `plugin/ModuleMain.cpp`:
    `asset_get_index`, with the `hs-game-sdk` constants as the fallback. Find
    the first `Companion_obj`; none (a menu, no pet out) forgets the watch.
 2. Read the pet's `lootTarget` as a number, whatever kind carries it; below 0,
-   or a target `instance_exists` denies, forgets the watch. Read pet and
-   target `x`/`y` and take the distance.
-3. Feed the game-independent `PetLootStuckWatch`
+   or a target `instance_exists` denies, forgets the watch. Read the target's
+   `object_index` and classify it by family (ground item, coin, or neither).
+   **A target from neither family is given up on this very tick, without the
+   watch** ([Live 2](#live-2-results-2026-10-02)): the pet's list only ever
+   holds ground items and coins, so such an id is a stale one the game reused
+   for something else, and it can never be picked up. An unreadable
+   `object_index` keeps the watch route - a failed read is not evidence of a
+   wrong id. The routing question is the header's `PetLootRoute`.
+3. For a target from either family, read pet and target `x`/`y` and take the
+   distance, then feed the game-independent `PetLootStuckWatch`
    (`plugin/include/ForgePact/PetLootUnstickMod.hpp`). It answers "give it up"
    on the frame the same target's run within `kPetLootStuckRadiusPx` (160 px;
    the game's pickup circle is 144 px) reaches `kPetLootStuckFrames`
@@ -240,7 +256,9 @@ runs `PetLootUnstickTick()` in `plugin/ModuleMain.cpp`:
 
 Why these numbers: a target within 160 px for 1.5 s that has not gone away has
 had dozens of arrived frames of `PickupLoot` attempts, and a pet travelling to
-a far item never counts because it is beyond the radius. 600 frames is the same
+a far item never counts because it is beyond the radius. The on-sight drop has
+no number to tune: it fires on the tick that sees a target from neither
+family, at any distance. 600 frames is the same
 hold the Pet Quest Collector uses (`kPetQuestHoldFrames`): long enough that the
 pet visibly moves on and other items get their turn, short enough that an item
 whose pickup failed for a passing reason (the player made room) is tried again.
@@ -250,7 +268,10 @@ All three are constants in the header, so a live finding moves one number.
 no game script: no `PickupLoot`, no `instance_destroy`, no coin moved. It does
 not change what the pet picks up or how fast it walks, and it does not make a
 failed pickup succeed: an item the game cannot put in the inventory stays on
-the ground, and the pet comes back to it about ten seconds later. A coin gets no
+the ground, and the pet comes back to it about ten seconds later. Dropping a
+target from neither family destroys nothing either: there is no item there -
+only an id the game reused - so the drop only frees the pet to take the next
+scan. A coin gets no
 timer (it has none), only a dropped target, so a coin that sticks again is
 given up again and counted again (`coins released=`, and, when the pet takes
 it back within the hold, `re-picked while held=` under `coin`). A coin taken
@@ -308,11 +329,14 @@ function or in the tick, or with the decision taken out). No harness runs the
 ground item's timer branch, where no `itemCompanionTimer` means
 `timer absent=`; it is pinned by shape only.
 
-**Live.** Not yet confirmed in a live game. Live 1 (player DLL, one crowded
-spot with mixed loot, mod off then on) ran on 2026-09-28 and did not reproduce
-the stuck state, so the mod had nothing to act on; its record is
-[Live 1 results](#live-1-results-2026-09-28) below. The owner shipped the mod
-off by default on that result.
+**Live.** The same-target rule is still not confirmed in a live game: Live 1
+(player DLL, one crowded spot with mixed loot, mod off then on) ran on
+2026-09-28 and did not reproduce the stuck state, so the mod had nothing to
+act on, and the owner shipped the mod off by default on that result
+([Live 1 results](#live-1-results-2026-09-28)). The on-sight rule (added
+2026-10-02, ForgePact #138) has the measured capture it was written from - a
+stale target id naming a decoration - but the switch acting on that shape live
+is not yet measured either ([Live 2 results](#live-2-results-2026-10-02)).
 
 ## Live 1 results (2026-09-28)
 
@@ -339,3 +363,47 @@ owner reported (#94), and it cannot say whether the stuck state needs a full
 grid, a stack limit or something else (§ [Not established](#not-established)). The owner shipped the mod off by
 default in ForgePact 2.0.1 (2026-09-28) on this result. The 2.0.1 player DLL,
 built later from the merged tree, has not been run by any session.
+
+## Live 2 results (2026-10-02)
+
+**Measured**, one session: the owner's own save with the research DLL, the
+owner playing a zone's content, and the pet watched from outside the game by a
+poller over `bp_ipc` (about 2 s polls, `tgprobe`/`cb` reads; the watcher and
+its log are not part of the repo). `petunstick` was off for the captures
+below. This is the first live capture of a stuck pet at all, and its shape is
+not #94's item-that-stays: the pet's `lootTarget` held a stale instance id
+that by then named an object which is not loot.
+
+| Time | Target id | What the id named | Pet -> target | Pet movement |
+|---|---|---|---|---|
+| 10:30:03 | 304090 | `Abyss_Jungle_Dead_Aztec_Skeleton_01_obj` (object 15, child of `Visual_Parent_obj`) | 71 px, holding | `move=true`, `deltaSpeed=21.9` (travel speed); `petmove` 17 over the window |
+| 10:30:41 | 298393 | the same object (another instance) | 52 px, oscillating around it | `move=true`, `deltaSpeed=21.9`; `petmove` 19 |
+
+Both targets read `itemType=undefined`, `visible=0`, `timer=-6`, and the pet's
+own movement never took it away: it travelled to the object and then ground at
+it while the player stood thousands of pixels away. Both appeared within
+seconds of a zone change (about 10:28:59), the moment with the most instance
+churn. A Corgi companion, room `Act_04_05`.
+
+**What this establishes.** The pet can hold a `lootTarget` that is not a loot
+object at all, and it will travel to and grind at it - the "stuck in random
+places" report. The game's only check on the target is `instance_exists`, which
+a reused id passes, so nothing re-targets the pet while the stranger lives.
+The pet's own list only ever holds `Loot_Ground_obj` and `Coin_obj`
+descendants, so an id that names neither is stale by construction, and
+dropping it cannot lose an item.
+
+**What this does not establish.** No sample caught the id being freed and
+re-minted, so "the item died and the game reused the id" is the reading that
+fits the samples (§ [Not established](#not-established)); which item started
+it, what zone state lets the reuse happen, and whether loot density speeds it
+up are all unmeasured. And the A/B of the switch on this shape was not run:
+with the switch on for the last stretch of the session no such target
+reappeared (`held back=0`, no `other kind=`), so the fix's live effect is not
+measured - its capture, the harness scenarios and the tick's routing shape
+are.
+
+This session produced the on-sight rule in §
+[The fix and what it does not do](#the-fix-and-what-it-does-not-do) (added
+2026-10-02, ForgePact #138): a live target from neither family is given up on
+the tick that sees it, and `other kind=` counts it.

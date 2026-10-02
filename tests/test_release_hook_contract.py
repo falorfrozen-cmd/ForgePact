@@ -378,7 +378,8 @@ class ReleaseHookContractTests(unittest.TestCase):
         # Stat hook telemetry moved to ForgePact::StatsManager (2026-09 class
         # split): same BP_DIAG_INCREMENT macro, now on class members.
         self.assertIn("BP_DIAG_INCREMENT(mgr.m_Calls_##NAME);", self.stats_header)
-        self.assertIn("BP_DIAG_INCREMENT(mgr.m_CallsAdd_StatFasterCastRate);", self.stats_header)
+        # The additive `statadd` hooks share one macro since #114.
+        self.assertIn("BP_DIAG_INCREMENT(mgr.m_CallsAdd_##NAME);", self.stats_header)
 
         create = function_body(self.plugin, "static void DoMultiCreate(")
         research_prefix = create.split("#endif", 1)[0]

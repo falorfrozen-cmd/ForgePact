@@ -5802,7 +5802,7 @@ static bool ToggleTableResolveIds()
                         // talent counts ruleDenied even when it has no object
                         // by name convention at all (bushido/holyForm/
                         // unholyForm/melonForm). D-R1: a talent id matching
-                        // one of the eight explicit rows above is never
+                        // one of the nine explicit rows above is never
                         // entered here.
                         if (!ForgePact::SkillTimerRuleIsExplicitRow(name)) {
                             if (ForgePact::SkillTimerRuleDenied(name)) {
@@ -6463,7 +6463,7 @@ static bool SkillTimerRuleResolveObject(ForgePact::SkillTimerRuleEntry& entry, d
 // ForgePact::kSkillTimerField among them - otherwise the same shape as
 // SkillTimerReadRow, written separately rather than shared because that
 // function always resolves its object by name fresh (SkillTimerResolveRowObject,
-// no caching - fine for eight explicit rows, wasteful for up to
+// no caching - fine for nine explicit rows, wasteful for up to
 // kSkillTimerRuleCap rule entries), while this one is handed an
 // already-resolved, cached objIdx.
 static void SkillTimerRuleReadEntry(double objIdx, bool& anyOwn, bool& anyReadable, double& remaining)
@@ -9385,9 +9385,10 @@ static bool PetLootIsOf(int objIdx, int family)
 // Two give-up outcomes PetLootUnstickMod's own counters do not name, kept
 // here and appended to `petunstick 0`'s line: a give-up write that threw (the
 // target was not dropped; the watch forgets it and may try again), and a
-// target of neither the ground-item nor the coin family (dropped with no
-// timer to set). Each logs its first occurrence once, with the reason or the
-// object index, and keeps the latest for the stat line.
+// target of neither the ground-item nor the coin family (dropped on the tick
+// that saw it, with no timer to set). Each logs its first occurrence once,
+// with the reason or the object index, and keeps the latest for the stat
+// line.
 static std::atomic<long> g_PetLootGiveUpFailed{ 0 };
 static std::atomic<const char*> g_PetLootGiveUpFailedLast{ nullptr };
 static std::atomic<bool> g_PetLootGiveUpFailedLogged{ false };
@@ -9409,7 +9410,7 @@ static void PetLootNoteOtherKind(int objIdx)
     g_PetLootOtherKind.fetch_add(1);
     g_PetLootOtherKindLast.store(objIdx);
     if (!g_PetLootOtherKindLogged.exchange(true))
-        Out("petunstick: gave up a target that is neither a ground item nor a coin (object_index " +
+        Out("petunstick: gave up a target that is neither a ground item nor a coin on the tick it was seen (object_index " +
             std::to_string(objIdx) + "; counted as other kind=; logged once)");
 }
 
@@ -9572,24 +9573,37 @@ static void PetLootUnstickTick()
     g_PetLootPrevTarget = targetId;
     PetLootNoteTargetSeen(targetId, target, prevTarget);
 
-    double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
-    if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
-    if (!readNumber(pet, "y", py)) { mod.Reset(); mod.NoteUnreadable("pet y"); return; }
-    if (!readNumber(target, "x", tx)) { mod.Reset(); mod.NoteUnreadable("target x"); return; }
-    if (!readNumber(target, "y", ty)) { mod.Reset(); mod.NoteUnreadable("target y"); return; }
-    const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
-    if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+    // What the target is, read once up front: it decides both whether the
+    // target can ever be picked up (the routing question in the header) and,
+    // if it is given up, which family's hold applies. A failed read is
+    // counted only when a give-up follows with an unreadable index, exactly
+    // as before; until then it keeps the watch route.
+    double oiD = -1.0;
+    const bool kindRead = readNumber(target, "object_index", oiD);
+    const int oi = kindRead ? (int)oiD : -1;
+    const bool isGround = kindRead && PetLootIsOf(oi, g_PetLootGroundObjIdx);
+    const bool isCoin = kindRead && PetLootIsOf(oi, g_PetLootCoinObjIdx);
+
+    // A target from neither loot family is dropped on this very tick - no
+    // watch, no proximity: it is a stale id the game reused for something
+    // that can never be picked up (Live 2, docs/pet-loot-stuck-research.md),
+    // and waiting out the watch would leave the pet grinding at it.
+    // Everything else feeds the watch.
+    if (ForgePact::PetLootRoute(kindRead, isGround, isCoin) == ForgePact::PetLootTargetRoute::Watch) {
+        double px = 0.0, py = 0.0, tx = 0.0, ty = 0.0;
+        if (!readNumber(pet, "x", px)) { mod.Reset(); mod.NoteUnreadable("pet x"); return; }
+        if (!readNumber(pet, "y", py)) { mod.Reset(); mod.NoteUnreadable("pet y"); return; }
+        if (!readNumber(target, "x", tx)) { mod.Reset(); mod.NoteUnreadable("target x"); return; }
+        if (!readNumber(target, "y", ty)) { mod.Reset(); mod.NoteUnreadable("target y"); return; }
+        const double distancePx = std::sqrt((tx - px) * (tx - px) + (ty - py) * (ty - py));
+        if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;
+    }
 
     // Give it up. The item first, so a throw below still leaves it held.
     // Which kind it is decides only whether there is a timer to set, never
     // whether the target is dropped: the pet is stuck on it either way.
-    double oiD = -1.0;
-    const bool kindRead = readNumber(target, "object_index", oiD);
     if (!kindRead) mod.NoteUnreadable("target object_index");
-    const int oi = kindRead ? (int)oiD : -1;
-    bool isGround = false;
-    if (PetLootIsOf(oi, g_PetLootGroundObjIdx)) {
-        isGround = true;
+    if (isGround) {
         // Ask whether the item carries the name before writing it: a set on
         // a name the instance lacks would create a stray variable and hold
         // nothing. The check itself is not measured on this runner (no
@@ -9628,9 +9642,9 @@ static void PetLootUnstickTick()
     }
     // Remembered for the re-pick count only once the target is dropped.
     PetLootRememberGiveUp(targetId, isGround ? ForgePact::PetLootKind::Ground
-        : PetLootIsOf(oi, g_PetLootCoinObjIdx) ? ForgePact::PetLootKind::Coin : ForgePact::PetLootKind::Other);
+        : isCoin ? ForgePact::PetLootKind::Coin : ForgePact::PetLootKind::Other);
     // Counted only once the target is actually dropped.
-    if (!isGround && PetLootIsOf(oi, g_PetLootCoinObjIdx)) {
+    if (!isGround && isCoin) {
         // No timer on a coin: only the target is dropped, so a coin that
         // sticks again is counted again.
         mod.NoteCoinReleased();
@@ -19283,6 +19297,8 @@ static void NAddrAll()
         "StatLifeReplenish", "StatManaReplenish", "StatDefense", "StatCritDamage",
         "StatCritRate", "StatSpellCritDamage", "StatSpellCritRate",
         "EnemyCalculateExperience",
+        // ForgePact::StatsManager's `statadd` table (StatFasterCastRate is above).
+        "StatSpellHaste", "StatAllSkills",
     };
 
     std::ofstream f(IPC_DIR + "\\script_addresses.csv", std::ios::trunc);
@@ -35419,11 +35435,38 @@ static void TgProbeSpurnCommand(const std::string& rest)
     }
 }
 
+// `tgprobe cast <talentId>` (#114 live check): the game's own cast, made the
+// way one key press makes it (measured in the toggle research: TalentUse with
+// self Player_obj and the arguments (player ref, talent id, 1, false, true)).
+// A live check can then start a cooldown or read a talent's level without the
+// keyboard.
+static void TgProbeCast(const std::string& rest)
+{
+    std::string tail;
+    const std::string tok = FirstToken(rest, tail);
+    int id = -1;
+    try { id = std::stoi(tok); } catch (...) {}
+    if (id < 0) { Out("tgprobe cast: usage -> tgprobe cast <talentId>"); return; }
+    RValue player;
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) { Out("tgprobe cast: no local player (" + how + ")"); return; }
+    CInstance* self = HhResolveInstance(player);
+    if (!self) { Out("tgprobe cast: the player instance did not resolve"); return; }
+    try {
+        RValue r;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(r, HeroSiege::Scripts::gml_Script_TalentUse.data(), self, self,
+            { player, RValue((double)id), RValue(1.0), RValue(false), RValue(true) });
+        Out("tgprobe cast " + std::to_string(id) + ": frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
+            + " st=" + std::to_string((int)st) + " ret=" + Describe(r));
+    } catch (...) { Out("tgprobe cast: EXCEPTION"); }
+}
+
 static void TgProbeCommand(const std::string& rest)
 {
     std::string subRest;
     const std::string sub = Lower(FirstToken(rest, subRest));
     if (sub == "hook") { TgProbeHook(subRest); return; }
+    if (sub == "cast") { TgProbeCast(subRest); return; }
     if (sub == "show") { TgProbeShow(); return; }
     if (sub == "reset") { TgProbeReset(); return; }
     if (sub == "verbose") {
@@ -35460,7 +35503,7 @@ static void TgProbeCommand(const std::string& rest)
     if (sub == "sweep") { TgProbeSweepCommand(subRest); return; }
     // Buff-carried skills: global.playerBuff[1][0] (issue #55 follow-up, session 12).
     if (sub == "buffwatch") { TgProbeBuffWatchCommand(subRest); return; }
-    Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities"
+    Out("tgprobe: usage -> tgprobe hook [substr...] | show | reset | verbose on|off | slots | buffs | abilities | cast <talentId>"
         " | vars <Obj|global> | snap <Obj|global> | diff | room"
         " | deep snap|diff|flip|find|get|census|selftest|drop ..."
         " | spurn [log on|off | as foreign | slots | fields] | mark <x> <y> <w> <h> | off"

@@ -32,7 +32,7 @@ function rowsOf(root) {
     const range = row?.querySelector('input[type=range]');
     if (!range) continue;
     const format = range.dataset.sec
-      ? (v) => { const text = sliderText(range.dataset.sec, v); return text === 'off' ? '' : text; }
+      ? (v) => { const text = sliderText(range.dataset.sec, v, range.dataset.key); return text === 'off' ? '' : text; }
       : HAND_DRAWN[box.dataset.switch];
     if (format) rows.push({ box, row, range, format });
   }
