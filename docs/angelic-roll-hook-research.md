@@ -1515,8 +1515,12 @@ nothing of it is quoted here.
   `ToDouble` cannot convert is refused as `id unreadable` before `ds_exists`
   is asked; that is a failed conversion, not a rule about kinds. (Session 6
   adds one step in front of the conversion: a kind that can never be a
-  handle is refused as `never a handle` without being converted, because the
-  failed conversion itself raises a runner error.) Building an entry with
+  handle is refused as `never a handle` without being converted, because
+  converting one raises a runner error that the catch cannot take back:
+  measured for an array, `REAL argument incorrect type array` in Live 3's
+  capture, and for undefined, ForgePact #144; a source reading for a
+  string, a struct and null, whose error text has not been captured.)
+  Building an entry with
   `array_create` and `array_set`, as Session 3's push does. New on a list the
   game owns are `ds_list_add` and `ds_list_delete`; their first live use is
   Live 2 (`reach`, `off-removes`, `list-restored`).
@@ -2392,20 +2396,28 @@ the fix, and the session that confirms it.
   (`angelicprobe inject auto`) and went from 1 to 19, which is 1 + 18, with
   `report#2` x15. That Live 3's scan, which prints no rejected lines, met the
   same 18 elements is inferred, not measured. The text of reports #3 to #5 is
-  not established; the three string conversions are the likeliest source.
+  not established; by the same fit, the three string conversions are the
+  likeliest source. Live 4 cannot settle the strings' share: the fix refuses
+  strings before converting them, so it can show only that the total stops
+  rising, not that a string conversion raises.
 - **Not per hit or per roll (measured).** Live 3's total held at 19 from its
   step 6 to teardown, while `gameHits` went from 47 to 157, `injected` reached
   27200 and 59 of our hits were built. Live 2's held at 37 through 215 hits.
   The later `angelicprobe list dump` runs, which read only `lootListUnique`'s
   own elements (all `kind=ref`), left it unchanged.
-- **Mechanism (source reading).** `RValue::ToDouble` is the runner's own REAL
-  conversion (`plugin_build/include/YYToolkit/YYTK_Shared_Types.cpp`). Given
-  an array or a string, the runner raises its error and the call then fails.
-  The plugin's C++ `try` turns the failure into `id unreadable`, but it does
+- **Mechanism (source reading, with two kinds measured).** By source
+  reading, `RValue::ToDouble` is the runner's own REAL conversion
+  (`plugin_build/include/YYToolkit/YYTK_Shared_Types.cpp`); that
+  identification is itself part of the reading. Given a kind it cannot turn
+  into a number, the runner raises its error and the call then fails. The
+  plugin's C++ `try` turns the failure into `id unreadable`, but it does
   not take back the runner's report, which the YYError hook has already
-  counted. The measured precedent is `REAL argument incorrect type undefined`
-  on the same kind of route (ForgePact #144, `docs/RUNTIME_DATA_MODELS.md`
-  in the hub, § 5.4).
+  counted. For an array the raise is measured: Live 3's capture holds
+  `REAL argument incorrect type array`. For undefined it is measured on the
+  same kind of route: `REAL argument incorrect type undefined` (ForgePact
+  #144, `docs/RUNTIME_DATA_MODELS.md` in the hub, § 5.4). For a string, a
+  struct and null it rests on the reading alone; their error text has not
+  been captured.
 - **Who reaches it (source reading).** The scan over every array variable,
   `SigListScan`, runs only in the research build (`angelicprobe inject auto`
   and `angelicprobe list`), and it is the only caller that hands
