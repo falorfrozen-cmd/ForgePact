@@ -16,7 +16,7 @@
 // config reaches the page; the checks themselves use the page's controls.
 
 import { readFileSync } from 'node:fs';
-import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
+import { launchBrowser, openPanel, parseArgs, postSet, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -43,7 +43,8 @@ const THREE = ['map_reveal', 'headhunter', 'mod_orb_pickup_radius'];
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
 
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes go to the sandbox from this process, not the page (lib/browser.mjs postSet).
+const post = postSet;
 
 // Every boolean mod off but `on`, then a reload: the list renders from the
 // saved config in boot().

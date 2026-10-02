@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include "CombatTextHook.hpp"
 #include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
@@ -75,6 +76,7 @@ public:
 
         if (c == 1.0 && !*hedef->orig) {
             *hedef->mult = 1.0;
+            ShareXpMultiplier(*hedef, 1.0);
             Out(std::string("stat ") + hedef->name + " -> x1.00 (native, no hook)");
             return;
         }
@@ -84,9 +86,12 @@ public:
         }
         *hedef->mult = c;
         if (std::string(hedef->name) == "EnemyCalculateExperience") HeroSiege::RewardScope::SetForgePactXp(c);
+        ShareXpMultiplier(*hedef, c);
         // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
-        if (c != 1.0 && std::string(hedef->name) == "EnemyCalculateExperience" && !m_OrigCombatText)
-            HookOneScript("CombatText", "fp_ctext", (void*)Hook_CombatText, &m_OrigCombatText);
+        // The one shared CombatText detour (CombatTextHook.hpp); installed at
+        // most once a session, whichever mod asks first.
+        if (c != 1.0 && std::string(hedef->name) == "EnemyCalculateExperience")
+            ForgePact::CombatText::Install();
         char b[160];
         sprintf_s(b, "stat %s -> x%.2f", hedef->name, c);
         Out(b);
@@ -281,38 +286,16 @@ private:
     FP_STAT_ADD_HOOK(StatAllSkills)
 #undef FP_STAT_ADD_HOOK
 
-    // Baloncuk metni duzeltmesi: EnemyGiveExperience/ExperienceUpdate zaten
-    // bicimlenmis "N XP" metni uretiyor, XP carpanindan ONCE. Verilen XP'ye
-    // dokunulmuyor; bu tamamen gorsel bir duzeltme.
-    PFUNC_YYGMLScript m_OrigCombatText{ nullptr };
-    static RValue& Hook_CombatText(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
-        auto& mgr = Instance();
-        RValue yeni;
-        std::vector<RValue*> A2;
-        double c = mgr.m_Mult_EnemyCalculateExperience;
-        if (!HeroSiege::RewardScope::Active() && c != 1.0 && A && argc > 0 && A[0] && A[0]->m_Kind == VALUE_STRING) {
-            try {
-                std::string s = A[0]->ToString();
-                static const std::string sonek = " XP";
-                if (s.size() > sonek.size() && s.compare(s.size() - sonek.size(), sonek.size(), sonek) == 0) {
-                    std::string sayi = s.substr(0, s.size() - sonek.size());
-                    size_t kac = 0;
-                    double n = std::stod(sayi, &kac);
-                    if (kac == sayi.size()) {
-                        char b[64];
-                        sprintf_s(b, "%.0f XP", n * c);
-                        yeni = RValue(b);
-                        A2.assign(A, A + argc);
-                        A2[0] = &yeni;
-                    }
-                }
-            } catch (...) {}
-        }
-        RValue** kullan = A2.empty() ? A : A2.data();
-        return mgr.m_OrigCombatText ? mgr.m_OrigCombatText(S, O, R, argc, kullan) : R;
-    }
-
     struct Entry { const char* name; const char* hookId; void* hook; PFUNC_YYGMLScript* orig; volatile long* calls; double* mult; const char* alias; };
+
+    // Baloncuk metni duzeltmesi: the "N XP" rescale lives in the one shared
+    // CombatText detour (CombatTextHook.hpp), which reads the Experience
+    // multiplier this class hands it here, and the reward-scope check with it.
+    static void ShareXpMultiplier(const Entry& e, double c) {
+        if (std::string(e.name) != "EnemyCalculateExperience") return;
+        ForgePact::CombatText::rewardScopeActive = &HeroSiege::RewardScope::Active;
+        ForgePact::CombatText::xpMultiplier = c;
+    }
     static constexpr int kEntryCount = 14;
     const Entry* Table() {
         static const Entry table[kEntryCount] = {

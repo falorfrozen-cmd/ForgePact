@@ -336,9 +336,15 @@ private:
                     ad = nm.ToString();
                 }
             }
-            RValue rm = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") });
+            // `room` is a GameMaker built-in, not a global: variable_global_get
+            // answered undefined, and converting it raised a runner error on
+            // every DropKeys call (#144). Read it as the built-in, by name.
+            std::string room = "(unreadable)";
+            RValue rm;
+            if (AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, rm)))
+                room = g_Yytk->CallBuiltin("room_get_name", { rm }).ToString();
             std::ofstream f(IPC_DIR + "\\keychoice.txt", std::ios::app);
-            f << "DropKeys -> " << ad << "   room=" << (int)rm.ToDouble() << "\n";
+            f << "DropKeys -> " << ad << "   room=" << room << "\n";
             f.flush();
         } catch (...) {}
 #endif

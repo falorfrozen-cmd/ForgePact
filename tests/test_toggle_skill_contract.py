@@ -838,6 +838,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "stashmoveall", "stashmove",
             # Rolling density copies' switch (test_rolling_density_contract.py).
             "densityroll",
+            # Mining Ore Extra Rolls (ForgePact #36; test_mining_ore_behavior.py
+            # and test_mining_ore_panel.py).
+            "miningrolls",
         }
         self.assertEqual(entries, expected)
 
@@ -2969,9 +2972,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `stashmoveall` and `stashmove` are Move all into the stash's
         # (ForgePact #68, test_stash_move_all_contract.py) and
         # `densityroll` rolling density copies'
-        # (test_rolling_density_contract.py).
+        # (test_rolling_density_contract.py), and `miningrolls` is Mining Ore
+        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
-                                        "miningore", "minerhelm", "packmarks", "craftmats",
+                                        "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",

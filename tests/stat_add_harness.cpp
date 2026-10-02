@@ -157,6 +157,15 @@ inline bool Active() { return false; }
 inline void SetForgePactXp(double) {}
 }}
 
+// The shared CombatText detour (CombatTextHook.hpp), reduced to the surface
+// StatsManager touches. Only the Experience multiplier reaches it, which no
+// statadd scenario sets; tests/mining_ore_harness.cpp runs the real one.
+namespace ForgePact { namespace CombatText {
+inline double xpMultiplier = 1.0;
+inline bool (*rewardScopeActive)() = nullptr;
+inline bool Install() { return false; }
+}}
+
 #define BP_DIAG_INCREMENT(counter) (++(counter))
 #ifndef _MSC_VER
 #define sprintf_s(buf, ...) std::snprintf(buf, sizeof(buf), __VA_ARGS__)

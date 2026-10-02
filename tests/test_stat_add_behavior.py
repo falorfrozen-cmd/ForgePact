@@ -47,6 +47,7 @@ def stats_manager(header):
         if not line.strip().startswith("#pragma once")
         and '#include "Common.hpp"' not in line
         and "#include <hs_game_sdk/reward_scope.hpp>" not in line
+        and '#include "CombatTextHook.hpp"' not in line
     )
     private_ctor = "private:\n    StatsManager() = default;"
     if text.count(private_ctor) != 1:

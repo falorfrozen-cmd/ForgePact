@@ -98,6 +98,10 @@ Figma export files are unchanged. A shared Figma library is a separate follow-up
 wheel scrolling, native thumb dragging, keyboard navigation, last-card reachability,
 independent lists/sidebar and all four themes. It exercises six viewport sizes,
 including a 1093x614 CSS viewport (1366x768 at 125% scaling), 640x400 and mobile.
+The thumb drag presses the thumb where a screenshot shows Edge drew it. Edge's
+compositor hit-tests a scrollbar press against the last frame it finished, so
+a point computed from the DOM right after a page switch could land on the
+previous page's track on a slow runner (ForgePact#133).
 `tests/test_panel_e2e_ember_scroll.py` includes it in the release browser-test group.
 The form suite explicitly seeds Ledger for its original 1280px inline-width
 contract; Ember's narrower content area correctly switches three long names to
