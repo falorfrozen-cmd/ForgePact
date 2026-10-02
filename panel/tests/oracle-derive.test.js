@@ -97,7 +97,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 65 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -105,7 +105,7 @@ test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2);
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 64);
+  assert.equal(quick.length, 65);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -183,7 +183,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
-  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling']);
+  assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key), ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup']);
   for (const n of NATIVE_BOOLEANS) {
     assert.ok(BOOLEAN_MODS.includes(n.key), `${n.key}: the Enabled mods list shows it, so it has a Turn off button`);
     const cb = '#' + n.key;

@@ -96,12 +96,13 @@ class EnabledModsPanelTests(unittest.TestCase):
     def test_api_set_call_sites_are_the_old_ones_plus_switch_and_theme(self):
         # The old ones: the legacy page's 25, plus the 2 main's legacy page
         # added for Gems of Incarnation (its switches' handler and the filter's
-        # save) before it was ported here, plus 4 no legacy page had: the Pet
+        # save) before it was ported here, plus 5 no legacy page had: the Pet
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
-        # switch, Move all into the stash's switch and Extra packs as you
-        # approach's switch (all four the derived oracle's native booleans).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4)
+        # switch, Move all into the stash's switch, Extra packs as you
+        # approach's switch and Pet collects relics' switch (#124; all five
+        # the derived oracle's native booleans).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 5)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 5)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
