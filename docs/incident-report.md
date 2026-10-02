@@ -441,3 +441,67 @@ recorded below as the owner accepted them.
   "Decisions"), so 2.2.0 shows no notice at all. The crash and freeze
   notices this session did not produce were removed before any session
   could observe them.
+
+Live 2, 2026-10-02 (capture: the workorder's
+`forgepact-76-incident-report-live-2.md`, kept with the hub's local workorder
+files). The shipping DLL built from ForgePact `c674757` (SHA-256
+`5dd7cbf6...8ca8990`, equal to the lease's hash) ran after the owner's later
+decisions: no notice of any kind, and every per-mod row, `frame` included,
+is ForgePact's own code only. Eight checks were recorded: six passed, one
+is values only, and `no-report-normal` failed. That fail is the finding
+below, and the fix for it is in the code Live 3 runs.
+
+- **Installed and answering.** `ping` answered `pong (YYTK 4.0.1)`, and
+  the first `incident stat` line read `incident: frames 3570 | baseline 6.9
+  ms | worst 4100.7 ms (not judged) | worst judged 64.2 ms | slow judged
+  frames 0 | watching yes | grace no | focus yes | window yes | in-hook none
+  | in-mod ipc`. Observed live.
+- **The installer tag.** `hooks tagged 19, untagged 0 | report write errors
+  0`. Observed live.
+- **A mod switched off is not charged: not observed live; harness evidence
+  only.** The values the session gave: the `DrawHudBuffs` hook kept running
+  with the HUD mods off, `hudCalls` 1988 before the 70 s wait and 14198
+  after it, while the `hudlabels` row read 0.00 / 0.02 ms after the wait
+  (0.00 / 0.05 before it), beside Live 1's step-0 `hudlabels 0.08 / 1.34`
+  when the row still included the game original. The label was on with no
+  draws and the border and the skill timer were already off with none, so
+  no draw of our own was charged either way, and the release DLL has no
+  readout of the original's own time to compare against. The claim rests on
+  the harness's `game-original-excluded` and `game-original-in-mod`
+  scenarios.
+- **The clean-shutdown marker, and no crash after it.** An ordinary close
+  left `==== clean shutdown ====` after the session's banner, and at the
+  next load the plugin logged `incident: the previous session shut down
+  cleanly; the panel recorded exit 0xC0000409 after it`, with no `CRASH`
+  line and no crash folder. Observed live.
+- **A normal session writes nothing: failed (`no-report-normal`).** The
+  second line read `episodes 1, held back 0, ignored near a room change or
+  unfocused 5 | reports written 1 | last reports\20261002-190757_freeze`,
+  unchanged across the 70 s wait. The bundle `20261002-190757_freeze` says
+  what happened: a 3.53 s gap without a frame (`worstMs 3527.96`) in
+  `Chose_rm`, right after the slot click of `hs_select_character` (the last
+  lines before the `FREEZE` line in its `out-tail.txt` are the `Chose_rm`
+  menu listing the click reads, and the Play click came about three seconds
+  after the report), with `inHook none`, `inMod none` and `modsEpisode []`:
+  no ForgePact code ran on the frame thread during the gap. RAM was 6578 MB
+  free of 32689 MB. The slot click loads the save and opens the character
+  panel in the same room, so no room change followed the gap and the
+  room-change lead that keeps a zone load from being a freeze had nothing to
+  see. The game was loading, and the monitor called it a freeze.
+- **The `frame` row's 4084 ms was our start-up setup, not the load.** The
+  bundle's `modsLastMinute` read `frame 2.302 / 4084.412` and step 0's
+  `incident stat` `frame 1.24 / 4084.41`; by step 2 the row was `frame 0.00
+  / 0.19`, outside the minute window. That 4084 ms is the one-time setup at
+  start-up (`LoadConfig` and `InstallHook`, which installs every mod's hooks),
+  which ran inside `frame`'s scope with no row of its own, so a minute later
+  it read as the cause of a load it had nothing to do with. The bundle's
+  `out-tail.txt` shows the installers still logging `HOOK INSTALLED` lines
+  after the monitor's 10 s previous-session check. Which installer takes
+  the time, and whether the 4100.7 ms worst frame is the setup frame or the
+  town load (both fall in a room change's grace), was not established.
+- **The fix.** A gap that begins in a menu room (the login, main menu and
+  character rooms, `Chose_rm` and `Main_Menu_rm` among them, named from the
+  SDK) is a load, never a freeze; and the start-up setup is timed under its
+  own `setup` row and prints one `incident: setup` line with its parts'
+  milliseconds. Both are under "Decisions". Live 3 runs the same character
+  load again to check that no report is written, and measures the setup.
