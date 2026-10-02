@@ -41928,7 +41928,10 @@ static std::string HiddenLootKeyText(int vk)
     return vk == 0 ? std::string("none") : std::to_string(vk);
 }
 // Shared by `hiddenloot stat` and `hiddenloot 0`; the live procedure reads
-// these fields by name.
+// these fields by name. The fifteen per-value, per-outcome fields at the end
+// (DurableText: obj-a0= ... threw-self=) are what Live 3's struct-safe check
+// reads; the reduced= and dropped= sums above them cannot answer it, since
+// `self` fills them on its own.
 static std::string HiddenLootStatFields()
 {
     auto& hl = ForgePact::HiddenLootMod::Instance();
@@ -41953,7 +41956,8 @@ static std::string HiddenLootStatFields()
         + " by-self=" + std::to_string(st.bySelf)
         + " reduced=" + std::to_string(st.reduced)
         + " dropped=" + std::to_string(st.dropped)
-        + " kinds=" + st.kinds[0] + "/" + st.kinds[1] + "/" + st.kinds[2];
+        + " kinds=" + st.kinds[0] + "/" + st.kinds[1] + "/" + st.kinds[2]
+        + " " + hl.DurableText();
 }
 // `hiddenloot 1|0` (the panel's switch), `hiddenloot stat`, and
 // `hiddenloot key <vk>` (the show key: 0 for none, or 3-254; stored whether
