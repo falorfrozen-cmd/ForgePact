@@ -53,6 +53,7 @@ none of these diagnostic hooks or the recorder. See
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
+| **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, set up by the game the way it sets up its own rare and ancient monsters. Bosses the game already made rare are left alone, and the Monster Rarity sliders still never touch a boss. What the raise does to a boss's health, damage and drops is not yet measured ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 
@@ -163,6 +164,9 @@ taken from the test sandbox, which reports the game open without the mod plugin
 ![The Mods tab, Items](assets/panel/mods-items-1280.png)
 **Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
+![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
+**Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made.
+
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
 Saved decimal values are retained after reopening the panel. Disabled Monster
@@ -179,12 +183,13 @@ embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
 main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
-has two sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
+has three sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
-toggle marker/guard and the timed skill countdown), and **Items**, the custom
+toggle marker/guard and the timed skill countdown), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
+Crown, Beacon), and **Gameplay**, which holds the Bosses setting. Quality of
+Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
 Reveal full map; its switch is unavailable while the parent is off. All
@@ -250,7 +255,27 @@ zone vanilla; goblins and online client movement use their own movement code and
 touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `enemyspeed` alone
 prints the status with path-start and applied counters.
 
-### Signature drops
+### Bosses: "uber" and "uber uber" bosses
+**Mods › Gameplay → Bosses** picks how the bosses you meet are made: **Normal (the game's
+own)**, the default, which changes nothing; **Rare — "uber" boss**; or **Ancient — "uber
+uber" boss**. While it is set to Rare or Ancient, every boss that spawns comes at that
+rarity, and the game sets it up itself, the same way it sets up its own rare and ancient
+monsters, through the same `EnemyRaritySettings` hook the Monster Rarity sliders and
+Tyrant's Crown use. A raised boss gets the same affix top-up the sliders give a monster
+they raise: up to two affixes on a rare, three on an ancient.
+
+- **Left alone:** a boss the game already made champion, rare or ancient keeps its own
+  rarity; the monsters, phases and clones a boss creates during its fight keep theirs;
+  ordinary monsters are never touched by this setting. The Monster Rarity sliders on the
+  World tab still leave every boss alone.
+- **Not yet measured:** what the raise does to a boss's health, damage, experience and
+  drops has not been checked in a live game yet, so nothing here claims it
+  ([research and test scope](docs/boss-rarity-research.md)).
+- **Commands:** the panel sends `bossrarity rare`, `bossrarity ancient` or
+  `bossrarity off`. `bossrarity status` (or `bossrarity` alone) prints the mode, how many
+  bosses were raised and seen, how many were left alone and why, and whether the hook is
+  in (`hook=ok`; `table-only` or `failed` means bosses are not being raised).
+
 Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) are two more items in the **Angelic /
 Unholy Drops** pool above: they drop from the very same die as every other item in it, such as
 **Liquor Holster**, at exactly the same rate - so they never drop while that slider is off (the

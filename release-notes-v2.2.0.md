@@ -6,6 +6,9 @@ A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
 give.
 
+A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
+tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
+
 ## New
 
 - **Mining Ore Extra Rolls (#36).** A new slider on the Loot tab, right under
@@ -31,11 +34,26 @@ give.
   the panel: at 3 rolls a Copper Vein dropped three stacks of ore (14 ore in
   all), and with the slider back at 1 the next Copper Vein dropped one stack
   (3 ore). How much ore is in each stack still varies from dig to dig.
+- **Bosses: "uber" and "uber uber" bosses (#44).** The Mods tab has a third
+  page, **Gameplay**, after Quality of Life and Items, with one setting:
+  **Bosses**. Pick **Rare — "uber" boss** and every boss that spawns while it is
+  set comes as a rare boss; pick **Ancient — "uber uber" boss** and it comes as
+  an ancient one. The game sets the boss up itself, the same way it sets up its
+  own rare and ancient monsters, and the boss gets the same extra affixes the
+  Monster Rarity sliders give a monster they raise (up to two on a rare, three on
+  an ancient). It is off by default (**Normal (the game's own)**): choose a
+  setting to use it. Bosses the game itself already made champion, rare or
+  ancient are left alone, and so are the monsters and phases a boss creates
+  during its fight. Ordinary monsters are not affected, and the Monster Rarity
+  sliders on the World tab still leave bosses alone. If the plugin cannot set it
+  up on your game, `bossrarity status` in the log says so (`hook=failed` or
+  `hook=table-only`). What a raised boss's health, damage, experience and drops
+  come to is not yet confirmed in a live game.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, so updating only the plugin leaves it out. Your existing
+gained a slider and a Gameplay page, so updating only the plugin leaves them out. Your existing
 settings are retained. Source users can run `Prepare-Plugin.bat` if plugin files
 are missing before using **Install Mod Plugin**. The plugin changed too, so
 press **Install Mod Plugin** once after updating - updating only the panel
