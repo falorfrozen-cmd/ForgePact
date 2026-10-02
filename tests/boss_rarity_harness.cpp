@@ -154,6 +154,31 @@ int main() {
         const int tier = BR::RaiseBoss(c, BR::Mode::Rare, boss.rarity, true, false, [&](int, int) { return false; });
         check("command/failed_write_not_counted_raised", tier == 0 && c.raised == 0 && c.writeFailed == 1);
     }
+    {
+        // What BossRarityCommand stores after it asked for the hook: every
+        // mode against every state BossRarityHookState() answers. Only a
+        // failed install refuses, and only rare/ancient; the stored mode is
+        // then the one already in place. Each refusal sits beside a stored
+        // pair, so a decision that refuses everything fails here too.
+        const BR::Mode modes[] = { BR::Mode::Off, BR::Mode::Rare, BR::Mode::Ancient };
+        const char* states[] = { "ok", "table-only", "failed", "none" };
+        bool ok = true;
+        std::string detail;
+        for (BR::Mode asked : modes) {
+            for (const char* hook : states) {
+                const bool expect = asked == BR::Mode::Off || std::string_view(hook) != "failed";
+                BR::Mode stored = BR::Mode::Off;   // the mode at load
+                const bool kept = BR::StoresMode(asked, hook);
+                if (kept) stored = asked;
+                const bool pair = kept == expect && stored == (expect ? asked : BR::Mode::Off);
+                if (!pair) { ok = false; detail += std::string(" ") + BR::ModeName(asked) + "/" + hook; }
+            }
+        }
+        const std::string line = BR::RefusedLine(BR::Mode::Ancient, BR::Mode::Off, "failed");
+        ok = ok && line.rfind("bossrarity: refused ancient ", 0) == 0 && line.find(" hook=failed") != std::string::npos
+            && line.find("unchanged: off") != std::string::npos;
+        check("command/refused_when_hook_failed", ok, line + (detail.empty() ? "" : " wrong:" + detail));
+    }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return failures ? 1 : 0;

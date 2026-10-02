@@ -9,8 +9,10 @@ YYToolkit full report #2) instead of throwing, so the surrounding
 `docs/boss-rarity-research.md` ("The plugin's runner error and the traced
 kills").
 
-`caller_kind_harness.cpp` compiles the production `CallerObjectIndex` and
-`InstanceIdOf` (and the kind check they share) against a stub whose
+`caller_kind_harness.cpp` compiles the production `CallerObjectIndex`,
+`InstanceIdOf` and `RarInstanceIsBoss` (the shared rarity hook's boss check,
+which runs for every enemy while the Bosses control is on), and the kind check
+they share, against a stub whose
 conversion records a runner error for every kind it cannot convert, as the
 real one does, and keeps the unchecked shape beside them as the negative
 control. The harness is compiled once per run and each test reads its case.
@@ -40,6 +42,7 @@ class CallerKindBehaviorTests(unittest.TestCase):
             harness = harness.replace('// PRODUCTION_KIND_CHECK', check)
             harness = harness.replace('// PRODUCTION_CALLER_OBJECT_INDEX', implementation(source, 'static int CallerObjectIndex('))
             harness = harness.replace('// PRODUCTION_INSTANCE_ID_OF', implementation(source, 'static double InstanceIdOf('))
+            harness = harness.replace('// PRODUCTION_RAR_INSTANCE_IS_BOSS', implementation(source, 'static bool RarInstanceIsBoss('))
             self.compile_and_run('caller-kind', harness, 'caller kind harness DONE')
             cls._output = (ROOT / 'build/adaptive-population/caller-kind.log').read_text(encoding='utf-8')
         return cls._output
@@ -59,6 +62,10 @@ class CallerKindBehaviorTests(unittest.TestCase):
     def test_undefined_instance_id_raises_no_runner_error(self):
         """Target: the same for the `id` read."""
         self.assertCasePasses('undefined_instance_id')
+
+    def test_undefined_boss_object_index_raises_no_runner_error(self):
+        """Target: the rarity hook's boss check never converts a non-numeric object_index, and still finds a boss."""
+        self.assertCasePasses('undefined_boss_object_index')
 
     def test_harness_sees_the_unchecked_conversion(self):
         """Negative control: the pre-fix shape, in the same harness, records the runner error."""

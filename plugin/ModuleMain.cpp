@@ -7694,6 +7694,9 @@ static bool RarInstanceIsBoss(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        // Runs for every enemy while Bosses is on: a ToDouble on a kind with no
+        // number raises the runner's error, which catch (...) never sees.
+        if (!IsNumericInstanceRead(oi)) return false;
         return HeroSiege::Objects::IsDescendantOf((int32_t)oi.ToDouble(), (int32_t)HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj);
     } catch (...) { return false; }
 }
@@ -7782,7 +7785,9 @@ static const char* BossRarityHookState()
 // `bossrarity off|rare|ancient|status` - the panel's Mods > Gameplay > Bosses
 // select. `rare` / `ancient` install the shared hook (once); `off` leaves it in
 // place and only turns the mode off, so the sliders and the crown keep theirs.
-// Every form answers one `bossrarity:` line.
+// A hook that failed to install refuses `rare` / `ancient` and leaves the mode
+// as it was (BossRarityMod.hpp's StoresMode), as Tyrant's Crown refuses in that
+// case; `table-only` keeps the mode. Every form answers one `bossrarity:` line.
 static void BossRarityCommand(const std::string& rest)
 {
     namespace BR = ForgePact::BossRarity;
@@ -7797,8 +7802,13 @@ static void BossRarityCommand(const std::string& rest)
         return;
     }
     if (m != BR::Mode::Off) InstallTyrantHook();
+    const char* hook = BossRarityHookState();
+    if (!BR::StoresMode(m, hook)) {
+        Out(BR::RefusedLine(m, BR::CurrentMode(), hook));
+        return;
+    }
     BR::SetMode(m);
-    Out(BR::StatusLine(m, BR::counters, BossRarityHookState()));
+    Out(BR::StatusLine(m, BR::counters, hook));
 }
 static void TyrantAutoArm()
 {

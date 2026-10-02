@@ -10,8 +10,10 @@ shows it again while you hold a key.
 
 A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
 tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
-Measured in a live game: a boss set to Ancient had about five times its usual
-health, about twice its damage and 6.25 times its experience.
+Measured in a live game on one boss, a Karp King spawned from the research
+console: set to Ancient, with the rarity and the affixes the mod added, it had
+about five times its usual health, about twice its damage and 6.25 times its
+experience.
 
 ## New
 
@@ -65,17 +67,23 @@ health, about twice its damage and 6.25 times its experience.
   (up to two on a rare, three on an ancient). It is off by default (**Normal
   (the game's own)**): choose a setting to use it. Bosses the game itself
   already made champion, rare or ancient are left alone, and so are the
-  monsters and phases a boss creates during its fight. Ordinary monsters are
-  not affected, and the Monster Rarity sliders on the World tab still leave
-  bosses alone. If the plugin cannot set it up on your game,
-  `bossrarity status` in the log says so (`hook=failed` or `hook=table-only`).
+  monsters and phases a boss creates during its fight; that is how the
+  setting is built, and neither case has come up in a live game yet. Ordinary
+  monsters are not affected, and the Monster Rarity sliders on the World tab
+  still leave bosses alone. With Tyrant's Crown also on, a boss this setting
+  raised to Rare can also get the crown's extra affix. If the plugin cannot
+  set it up on your game, choosing Rare or Ancient is refused and bosses stay
+  as the game makes them: the log shows `bossrarity: refused` with
+  `hook=failed`. If `bossrarity status` shows `hook=table-only`, bosses the
+  game creates through its compiled code's direct calls are not raised.
   What was measured in a live game, on 2026-10-02: on the research build, a
   Karp King set to Rare and to Ancient, and Damien, Uber Damien and Uber Anubis
   set to Ancient, each came out at the rarity chosen with its extra affixes. On
-  an Ancient Karp King the game then built a stronger boss: about 4.7 to 5.7
-  times its usual health (two sessions), about 2.1 times its damage and 6.25
-  times its experience, and its death rolled its loot at the ancient rank
-  instead of the normal one. Not seen in those sessions: an ancient look (its
+  an Ancient Karp King, spawned from the research console, the game then built
+  a stronger boss from the rarity and the affixes the mod added: about 4.7 to
+  5.7 times its usual health (two sessions), about 2.1 times its damage and
+  6.25 times its experience, and its death rolled its loot at the ancient rank
+  instead of the normal one. Those numbers come from that one boss. Not seen in those sessions: an ancient look (its
   name bar looked the same), more or better loot (one kill at each rank, too
   few to tell), or extra boss gems, runes or parts; and what Rare changes on a
   boss beyond its rarity was not measured. On the release plugin, the panel

@@ -135,4 +135,24 @@ inline std::string StatusLine(Mode m, const Counters& c, const char* hook)
         + " hook=" + (hook ? hook : "?");
 }
 
+// Whether `bossrarity <mode>` stores the mode it was asked for, given the hook
+// state above as read after the command asked for the hook. `off` is always
+// stored. `rare` / `ancient` are refused only when the hook failed to install:
+// a mode stored then would report itself armed for the whole session while
+// raising nothing (the install is attempted once). `table-only` keeps the mode,
+// since the table swap still sees table-routed calls, as Tyrant's Crown accepts.
+inline bool StoresMode(Mode m, std::string_view hook)
+{
+    return m == Mode::Off || hook != "failed";
+}
+
+// The one line a refused `bossrarity <mode>` answers: the mode asked for, the
+// hook state that refused it, and the mode left in place.
+inline std::string RefusedLine(Mode asked, Mode kept, const char* hook)
+{
+    return std::string("bossrarity: refused ") + ModeName(asked)
+        + " hook=" + (hook ? hook : "?")
+        + " (the shared rarity hook did not install; unchanged: " + ModeName(kept) + ")";
+}
+
 } // namespace ForgePact::BossRarity

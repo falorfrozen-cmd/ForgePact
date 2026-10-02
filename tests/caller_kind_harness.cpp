@@ -1,5 +1,6 @@
-// The enemy-born guard's caller reads (CallerObjectIndex, InstanceIdOf), compiled
-// from ModuleMain.cpp and run against a stub runtime (issue #44, Live 1 rerun).
+// The enemy-born guard's caller reads (CallerObjectIndex, InstanceIdOf) and the
+// rarity hook's boss check (RarInstanceIsBoss), compiled from ModuleMain.cpp and
+// run against a stub runtime (issue #44, Live 1 rerun).
 //
 // The stub's ToDouble() stands in for the runner's REAL_RValue, which is what
 // YYToolkit's RValue::ToDouble() calls. On a kind it cannot convert, the real
@@ -8,6 +9,7 @@
 // `catch (...)` around the conversion never sees it. The stub does the same:
 // it records the error and returns 0. Undefined is the measured rejection; the
 // other kinds the stub rejects are the ones that carry no number.
+#include <cstdint>
 #include <cstdio>
 #include <initializer_list>
 #include <string>
@@ -47,9 +49,22 @@ struct YytkStub {
 static YytkStub g_YytkStub;
 static YytkStub* g_Yytk = &g_YytkStub;
 
+// RarInstanceIsBoss asks hs-game-sdk's ancestry table, which this harness does
+// not compile (it builds with only plugin/include on the include path). The
+// stub's one boss family: Enemy_Child_Boss_obj itself and kStubBossChild.
+namespace HeroSiege::Objects {
+enum class GameObject : int32_t { Enemy_Child_Boss_obj = 900 };
+static constexpr int32_t kStubBossChild = 901;
+static bool IsDescendantOf(int32_t object, int32_t ancestor)
+{
+    return ancestor == (int32_t)GameObject::Enemy_Child_Boss_obj && (object == ancestor || object == kStubBossChild);
+}
+}
+
 // PRODUCTION_KIND_CHECK
 // PRODUCTION_CALLER_OBJECT_INDEX
 // PRODUCTION_INSTANCE_ID_OF
+// PRODUCTION_RAR_INSTANCE_IS_BOSS
 
 // The shape the guard had before the fix, kept here as the negative control: a
 // harness whose stub never records an error would pass the targets for nothing.
@@ -98,6 +113,23 @@ int main()
         const double a = InstanceIdOf(undef.ToRValue()), b = InstanceIdOf(text.ToRValue());
         Report("undefined_instance_id", a == -1.0 && b == -1.0 && g_RunnerErrors == before,
                Errors(before) + " reads=" + std::to_string(a) + "," + std::to_string(b));
+    }
+    {   // Target: the boss check reads `object_index` the same way. Undefined, string and
+        // object kinds are not a boss and raise no runner error; a numeric boss index is
+        // a boss, and a numeric ordinary one is not.
+        const int before = g_RunnerErrors;
+        CInstance undef{ RValue(), RValue::Of(VALUE_REAL, 5) };
+        CInstance text{ RValue("Karp_King_obj"), RValue::Of(VALUE_REAL, 6) };
+        CInstance object{ RValue::Of(VALUE_OBJECT, 0), RValue::Of(VALUE_REAL, 7) };
+        CInstance boss{ RValue::Of(VALUE_REAL, HeroSiege::Objects::kStubBossChild), RValue::Of(VALUE_REAL, 8) };
+        CInstance bossRef{ RValue::Of(VALUE_REF, HeroSiege::Objects::kStubBossChild), RValue::Of(VALUE_REAL, 9) };
+        CInstance monster{ RValue::Of(VALUE_REAL, 71), RValue::Of(VALUE_REAL, 10) };
+        const bool a = RarInstanceIsBoss(undef.ToRValue()), b = RarInstanceIsBoss(text.ToRValue()),
+                   c = RarInstanceIsBoss(object.ToRValue()), d = RarInstanceIsBoss(boss.ToRValue()),
+                   e = RarInstanceIsBoss(bossRef.ToRValue()), f = RarInstanceIsBoss(monster.ToRValue());
+        Report("undefined_boss_object_index", !a && !b && !c && d && e && !f && g_RunnerErrors == before,
+               Errors(before) + " reads=" + std::to_string(a) + "," + std::to_string(b) + "," + std::to_string(c)
+                   + "," + std::to_string(d) + "," + std::to_string(e) + "," + std::to_string(f));
     }
     {   // Negative control: the unchecked conversion, in this same harness, records the error.
         const int before = g_RunnerErrors;

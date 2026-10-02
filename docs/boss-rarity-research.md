@@ -403,6 +403,15 @@ does: the numeric reads come back unchanged (baseline), an undefined
 failed against the unfixed source), and the old unchecked shape, compiled in
 the same harness, records the error (the negative control).
 
+The rarity hook's own boss check, `RarInstanceIsBoss`, converted the
+instance's `object_index` the same unchecked way. It was in neither list
+here: no input that triggers it is known (the enemy the hook judges has a
+numeric `object_index`), but it runs for every enemy while the Bosses control
+is on. It is checked now: it asks `IsNumericInstanceRead` first and answers
+"not a boss" for any other kind. The same harness compiles it
+(`undefined_boss_object_index`: undefined, string and object reads are not a
+boss and record no error; a numeric boss index is a boss).
+
 **Reach into the player build: not established.** The guard is compiled in
 both builds, but the player build has no `cb`. Whether any game code path
 creates a monster or spawner with a `self` that has no `object_index` was
@@ -552,7 +561,7 @@ setup had finished (`enemy_hp` 1000000000000, `damage` 0); a second probe
 about 10 s later, at the same `currentHpTimer` as (b) and (c), is the (a)
 read used.
 
-| Variable | (a) rank 1 | (b) rank 3 | (c) rank 4 | Ratios | MK1 (ordinary monsters' medians) |
+| Record named by the key in | (a) rank 1 | (b) rank 3 | (c) rank 4 | Ratios | MK1 (ordinary monsters' medians) |
 | --- | --- | --- | --- | --- | --- |
 | `damage` | 257 | 360 | 515 | ×1.4008, ×2.0039 | ×1.53, ×1.90 |
 | `killExperience` | 221 | 943 | 1387 | ×4.2670, ×6.2760 | ×4.25, ×6.25 (exact) |
@@ -563,11 +572,20 @@ read used.
   of MK1.
 - `rank-xp-control` **pass (killExperience)**: both within 2%, and
   `experience` too.
-- So `damage` and `killExperience`, still printed `->?`, move with an ordinary
-  monster's rank by MK1's ratios on this instrument. That measurement, not
-  their names, is what lets the boss's values below count. Health is not a
-  control here: one spawn per rank read far above MK1's medians and fell from
-  rank 3 to rank 4.
+- So the records that the protected-store keys in `damage` and
+  `killExperience` name (reads the probe still prints `->?`) move with an
+  ordinary monster's rank by MK1's ratios on this instrument. That
+  measurement, not the variables' names, is what lets the boss's values below
+  count. Health is not a control here: one spawn per rank read far above MK1's
+  medians and fell from rank 3 to rank 4.
+- The variables hold the keys, not the values. The three Skeletons' probe
+  lines (`Skeleton_Mage_Fire_obj#301757`, `#301920` and `#302055`) each
+  printed `damage=real:176880`, `killExperience=real:176863` and
+  `experience=real:176879`, the same keys as the rank-1 Karp King's line
+  below; the numbers in the table are the records those keys name. Every
+  probe's control line in the session read
+  `getter=PC_GetVariableGMLWrapper (agrees with GPV)`, so each record was read
+  through the proven getter.
 - `drop-rank-control` **pass**: the (c) Skeleton's traced death printed
   `droptrace: DropItem self=Skeleton_Mage_Fire_obj#302055 argc=12 a0=real:4.000000 a1=int64:0 a2=real:2853.000000 a3=real:4351.000000 a4=real:1.000000 a5=real:0.000000 a6=kind=15 str=ref ds_list 895 a7=kind=15 str=ref ds_list 896`.
 - `baseline-drop-trace` **pass**: the rank-1 Karp King's traced death (step 3)
@@ -579,9 +597,9 @@ read used.
 - `visual-source-control` **pass** on the repeat: after
   `oset Karp_King_obj enemyRarity 4` read back `now real:4.000000`, the shot 2
   s later drew "The Karp King" in the same red bar and lettering as the
-  reference shot, the body in view. Writing the rank after the setup does not
-  restyle the name, so a changed name after the raise would have had to come
-  from the setup. The first attempt is **not-observed**: its shots fell in the
+  reference shot, the body in view. Writing the rank after the setup did not
+  restyle the name within 2 s (one Karp King, one shot), so a changed name
+  after the raise would have had to come from the setup. The first attempt is **not-observed**: its shots fell in the
   frozen picture above and were byte-identical.
 
 The three rank-1 Karp King reads (steps 3, 4 and its repeat): `max_hp`
@@ -611,15 +629,19 @@ What the game built, on the Karp King the Bosses control raised to Ancient
   Both are above MK1's ×4.23, but each carried its own affixes, built into the
   same health, and neither session had a health control, so
   `boss_hp_follows_rank_table` stays `None`.
-- `ancient-damage` **pass (2.0968)**: `damage` 217 -> 455. MK1's rank-4 row is
-  ×1.90, and ×2.0968 is 10.4% above it, just outside the 10% the control was
-  held to, so `boss_damage_follows_rank_table` is `False`: this boss's damage
-  rose by more than the table's row. The ordinary control's own rank-4 ratio
-  was ×2.0039. Whether the extra is the boss's, its different affixes' or one
-  sample's spread is not established.
-- `ancient-xp` **pass (6.2505)**: `killExperience` 4,950 -> 30,940
-  (`experience` 2,152 -> 13,452, ×6.2509), the table's exact ×6.25:
-  `boss_xp_follows_rank_table` is `True`.
+- `ancient-damage` **pass (2.0968)**: the record the key in `damage` names,
+  217 -> 455. MK1's rank-4 row is ×1.90, and ×2.0968 is 10.4% above it, just
+  outside the 10% the control was held to. `boss_damage_follows_rank_table`
+  stays `None` (open), not decided either way: it is one spawn, the boss's
+  affixes (12, 20, 31) were not the control's (5, 12, 18), and the control
+  itself drifted from the table, 8.4% below it at rank 3 and 5.5% above it at
+  rank 4 (×2.0039). Whether the extra is the boss's, its different affixes' or
+  one sample's spread is not established.
+- `ancient-xp` **pass (6.2505)**: the record the key in `killExperience`
+  names, 4,950 -> 30,940 (`experience`'s, 2,152 -> 13,452, ×6.2509), the
+  table's exact ×6.25: `boss_xp_follows_rank_table` is `True` for what was
+  measured, rank 4 on this one boss; the rank-3 row was not measured on a
+  boss.
 - `ancient-drop-rank` **pass**: the anchor `a0=int64:1` (step 3), then the
   ancient Karp King's death printed
   `droptrace: DropItem self=Karp_King_obj#310750 argc=12 a0=real:4.000000 a1=int64:2 a2=real:1960.455688 a3=real:4431.812988 a4=real:1.000000 a5=real:0.000000 a6=kind=15 str=ref ds_list 895 a7=kind=15 str=ref ds_list 896`.
@@ -700,10 +722,14 @@ Each of these is "not observed", not "does not happen":
 - **Whether the hook fired at all.** `seen` counts only bosses judged while the
   mode is on, so `seen=0 hook=ok` does not tell "no boss came through" from
   "the hook never ran".
-- **A hook that did not install.** `bossrarity rare|ancient` stores the mode
-  even when the shared hook came up `failed` or `table-only`; the status line
-  says which (`hook=`), and the boss is then not raised on the paths a
-  table-only hook cannot see.
+- **A hook that did not install.** When the shared hook came up `failed`,
+  `bossrarity rare|ancient` is refused (`bossrarity: refused <mode>
+  hook=failed`) and the mode stays as it was, so it cannot report itself armed
+  while raising nothing; the refusal is our code's, covered by the harness,
+  not met in a live session. A `table-only` hook keeps the mode, the status
+  line says so (`hook=table-only`), and the boss is then not raised on the
+  paths a table-only hook cannot see. The panel's `/api/set` answers ok and
+  keeps the saved value either way; only the plugin's line shows a refusal.
 - **The affix counts.** A raised boss gets the sliders' own top-up, up to 2
   affixes at Rare and 3 at Ancient, from the same pool. Those are the floors the
   sliders already use (their code notes the game's own rares carry 1-2 and
@@ -733,7 +759,11 @@ Each of these is "not observed", not "does not happen":
   clears the mode and leaves the hook in place for the sliders and the crown.
   Every form answers one line:
   `bossrarity: <mode> raised=<n> (rare <r>, ancient <a>) seen=<s> enemyBorn=<e> notRank1=<k> writeFailed=<w> hook=ok|table-only|failed|none`.
-  An unknown word answers the usage and leaves the mode unchanged.
+  An unknown word answers the usage and leaves the mode unchanged. When the
+  hook failed to install, `rare` and `ancient` are refused instead: the line is
+  `bossrarity: refused <mode> hook=failed (the shared rarity hook did not install; unchanged: <mode>)`
+  and the mode stays as it was (`StoresMode` in `BossRarityMod.hpp`; `off` is
+  always stored, and `table-only` keeps the mode).
 - **The raise.** In `Hook_EnemyRaritySettings`, before the sliders' own boss
   check: an instance that `RarInstanceIsBoss` accepts (ancestry, asked at the
   point of use), not created by a monster, at `enemyRarity` exactly 1, gets
@@ -744,6 +774,9 @@ Each of these is "not observed", not "does not happen":
 - **Tests.** `tests/test_boss_rarity_behavior.py` compiles
   `tests/boss_rarity_harness.cpp` against the header (baseline: mode off leaves
   a boss and a monster alone; target: rank 1 to 3 and to 4, and what the mode
-  leaves alone), `tests/test_boss_rarity_contract.py` pins the wiring, and
+  leaves alone; and the refusal on a failed hook, with a decision that stores
+  every mode as its negative control), `tests/test_boss_rarity_contract.py`
+  pins the wiring, `tests/test_caller_kind_behavior.py` the boss check's kind
+  check, and
   `tests/test_boss_rarity_panel.py` the panel half, including that the Gameplay
   card names no damage, drops or XP until the session above records them.

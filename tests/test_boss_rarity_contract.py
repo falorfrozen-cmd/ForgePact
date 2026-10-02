@@ -13,9 +13,11 @@ for an instance the hook identified as a boss at the point of use, and only
 through a decision that tests rarity 1 before anything is written; that the
 sliders still leave every boss alone (the boss mode adds a branch, it does not
 loosen theirs); that the research probes (`bossprobe`, `droptrace`) never
-reach the player build; that the player build accepts `bossrarity`; and that
-a hook which went in table-only says so instead of reporting itself armed
-(AGENTS.md, "Prove the Instrument Before Trusting a Negative Result").
+reach the player build; that the player build accepts `bossrarity`; that a
+hook which went in table-only says so instead of reporting itself armed
+(AGENTS.md, "Prove the Instrument Before Trusting a Negative Result"); and
+that a hook which failed to install refuses `rare`/`ancient` instead of
+storing a mode that raises nothing.
 """
 
 import re
@@ -188,6 +190,28 @@ class TestBossRarityContract(unittest.TestCase):
         command = slice_function(self.plugin, "static void BossRarityCommand(", "static void TyrantAutoArm()")
         self.assertEqual(command.count("BossRarityHookState()"), 2)
         self.assertIn('" hook="', self.header)
+
+    def test_command_refuses_a_mode_when_the_hook_failed(self):
+        # A failed install is attempted once and never retried, so a mode
+        # stored after it would report itself armed all session while raising
+        # nothing. The command asks the header's decision after asking for the
+        # hook and before storing, and answers the refusal line instead.
+        command = slice_function(self.plugin, "static void BossRarityCommand(", "static void TyrantAutoArm()")
+        install = command.index("InstallTyrantHook()")
+        decide = command.index("BR::StoresMode(")
+        store = command.index("BR::SetMode(")
+        self.assertLess(install, decide)
+        self.assertLess(decide, store)
+        self.assertEqual(command.count("BR::SetMode("), 1, "the mode is stored in one place, after the decision")
+        refusal = command[decide:store]
+        self.assertIn("BR::RefusedLine(", refusal)
+        self.assertIn("return;", refusal, "a refused mode returns before SetMode")
+        # The decision refuses only `failed`, and never `off`.
+        stores = slice_function(self.header, "inline bool StoresMode(", "inline std::string RefusedLine(")
+        self.assertIn('return m == Mode::Off || hook != "failed";', stores)
+        refused = slice_function(self.header, "inline std::string RefusedLine(", "} // namespace")
+        self.assertIn('std::string("bossrarity: refused ") + ModeName(asked)', refused)
+        self.assertIn('" hook="', refused)
 
 
 if __name__ == "__main__":

@@ -9,11 +9,17 @@ already made champion/rare/ancient left alone, an ordinary monster never
 touched, a boss another monster created left alone, and a status line that
 counts what was raised, not what was asked for.
 
-The header is compiled twice. Once as written, where every scenario must pass;
-once with the decision replaced by one that never raises, where the two
+The header is compiled three times. Once as written, where every scenario must
+pass; once with the decision replaced by one that never raises, where the two
 baselines must still pass and every target must fail. That second run is the
 negative control: it shows the targets measure the raise itself, and that the
 "left alone" targets cannot pass for a decision that does nothing.
+
+The third run is the same kind of control for the command's refusal: a hook
+that failed to install must leave the mode where it was, so `bossrarity rare`
+cannot report itself armed while nothing is hooked. The never-raises build
+leaves that decision alone, so it cannot show it; this build replaces it with
+one that stores every mode, and the refusal scenario must fail there.
 """
 import os
 import shutil
@@ -27,6 +33,10 @@ HARNESS = ROOT / "tests/boss_rarity_harness.cpp"
 # The decision's one line that answers a tier; the negative control swaps it.
 DECISION_LINE = "return enemyRarity == 1.0 ? TierFor(mode) : 0;"
 NEVER_RAISES = "return 0;"
+# The command's store-or-refuse decision; its negative control stores every mode.
+STORE_LINE = 'return m == Mode::Off || hook != "failed";'
+STORES_EVERY_MODE = "return true;"
+REFUSAL = "command/refused_when_hook_failed"
 
 BASELINES = ("baseline/off_boss_untouched", "baseline/off_normal_monster_untouched")
 TARGETS = (
@@ -95,6 +105,9 @@ class BossRarityBehaviorTests(unittest.TestCase):
         assert header.count(DECISION_LINE) == 1, "the decision line moved; update DECISION_LINE"
         cls.output = _compile_and_run("bossrarity", header)
         cls.never_raises = _compile_and_run("bossrarity-never-raises", header.replace(DECISION_LINE, NEVER_RAISES))
+        assert header.count(STORE_LINE) == 1, "the store decision moved; update STORE_LINE"
+        cls.stores_every_mode = _compile_and_run(
+            "bossrarity-stores-every-mode", header.replace(STORE_LINE, STORES_EVERY_MODE))
 
     def assertScenario(self, label):
         line = _line(self.output, label)
@@ -122,6 +135,18 @@ class BossRarityBehaviorTests(unittest.TestCase):
 
     def test_command_words(self):
         self.assertScenario("command/modes_parsed")
+
+    def test_failed_hook_leaves_the_mode_off(self):
+        """Every mode x hook state: only `failed` refuses, only rare/ancient, and the mode stays off."""
+        self.assertScenario(REFUSAL)
+
+    def test_negative_control_refusal_fails_when_every_mode_is_stored(self):
+        line = _line(self.stores_every_mode, REFUSAL)
+        self.assertTrue(line.startswith("FAIL "),
+                        f"{REFUSAL} passed against a decision that stores every mode: {line}")
+        # Only the store decision was swapped: the raise scenarios still pass there.
+        for label in BASELINES + TARGETS:
+            self.assertTrue(_line(self.stores_every_mode, label).startswith("PASS "), label)
 
     def test_negative_control_baselines_pass_and_targets_fail_without_the_raise(self):
         for label in BASELINES:
