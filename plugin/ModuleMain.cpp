@@ -661,6 +661,18 @@ static int64_t CurrentRoomKey()
     } catch (...) { return INT64_MIN; }
 }
 
+// The current room's name, read through the same built-in, for log lines.
+// Never `variable_global_get("room")`: that answers undefined, and converting
+// it raised `REAL argument incorrect type undefined` on every call (#144).
+static std::string CurrentRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        return g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
+    } catch (...) { return "(unreadable)"; }
+}
+
 // Called every frame from FrameCallback, and the reason it is not a flat
 // throttle is the whole design.
 //
@@ -9791,7 +9803,8 @@ static int CiGetProfileManagerObjIdx();
 using CiSnapshot = std::unordered_map<std::string, std::string>;
 static CiSnapshot g_CiSnapGlobalsBefore, g_CiSnapPlayerBefore, g_CiSnapPmBefore, g_CiSnapItemBefore;
 static bool g_CiSnapTaken = false;
-static double g_CiSnapRoomBefore = -1.0;   // MEASURED 2026-09-10: a room/zone change (or death/respawn)
+static std::string g_CiSnapRoomNameBefore;   // for the ROOM CHANGED line; the key above decides it
+static int64_t g_CiSnapRoomBefore = INT64_MIN; // MEASURED 2026-09-10: a room/zone change (or death/respawn)
                                             // between snap1 and snap2 recreates the player and every
                                             // per-zone instance - a real, observed confound, not a guess.
                                             // Checked so "item vanished" can be told apart from "the whole
@@ -11179,7 +11192,8 @@ static void CiSnapTake()
 {
     ResolveCiProfileManagerIdx();
     ResolveCiPlayerId();
-    try { g_CiSnapRoomBefore = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") }).ToDouble(); } catch (...) { g_CiSnapRoomBefore = -1.0; }
+    g_CiSnapRoomBefore = CurrentRoomKey();
+    g_CiSnapRoomNameBefore = CurrentRoomName();
     CiSnapshotGlobals(g_CiSnapGlobalsBefore);
     try {
         RValue player;
@@ -11223,9 +11237,9 @@ static void CiSnapDiff()
 {
     if (!g_CiSnapTaken) { Out("citrace snap2: no snap1 taken yet"); return; }
     try {
-        double roomNow = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") }).ToDouble();
-        if (g_CiSnapRoomBefore >= 0.0 && roomNow != g_CiSnapRoomBefore) {
-            Out("citrace snap2: ROOM CHANGED (" + std::to_string((long)g_CiSnapRoomBefore) + " -> " + std::to_string((long)roomNow)
+        const int64_t roomNow = CurrentRoomKey();
+        if (g_CiSnapRoomBefore != INT64_MIN && roomNow != INT64_MIN && roomNow != g_CiSnapRoomBefore) {
+            Out("citrace snap2: ROOM CHANGED (" + g_CiSnapRoomNameBefore + " -> " + CurrentRoomName()
                 + ") - everything below is contaminated by the room/zone transition, not the collect itself. Retake snap1 without changing rooms.");
         }
     } catch (...) {}
@@ -21315,7 +21329,7 @@ static void SpawnAtPlayer(int objIdx)
 // kullanmiyor; kuleyi biz koyuyoruz.  Dogal yol ZoneGenChaosTower'i oyunun
 // kendisine cagirtmaktan geciyor ama onu tetikleyen sart henuz bulunamadi.
 static bool g_CtOto = false;          // her bolgede bir kule
-static double g_CtSonOda = -1.0;      // bolge degisimini yakalamak icin
+static int64_t g_CtSonOda = INT64_MIN;      // bolge degisimini yakalamak icin
 static int  g_CtGecikme = 0;          // oyuncu yerlesene kadar bekle (kare)
 
 static void ChaosTowerKur(bool sessiz)
@@ -21339,8 +21353,8 @@ static void ChaosTowerTick()
 {
     if (!g_CtOto || !g_Yytk) return;
     try {
-        RValue oda = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") });
-        double o = oda.ToDouble();
+        const int64_t o = CurrentRoomKey();   // `room` is a built-in, not a global (#144)
+        if (o == INT64_MIN) return;
         if (o != g_CtSonOda) {
             g_CtSonOda = o;
             g_CtGecikme = 90;   // ~1.5 sn: oyuncu ve zemin yerlessin
@@ -29811,6 +29825,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         auto num = [&](const char* fn, std::vector<RValue> a) -> std::string {
             try { RValue v = g_Yytk->CallBuiltin(fn, a); return Describe(v); } catch (...) { return "EXC"; }
         };
+        // room_width/room_height are built-ins, which variable_global_get cannot see (#144).
+        auto builtinNum = [&](const char* nm) -> std::string {
+            try { RValue v; return AurieSuccess(g_Yytk->GetBuiltin(nm, nullptr, NULL_INDEX, v)) ? Describe(v) : std::string("FAILED"); } catch (...) { return "EXC"; }
+        };
         std::string s = "hhlabelprobe: playerId=" + std::to_string(g_HhLabelPlayerId);
         if (g_HhLabelPlayerId >= 0) {
             RValue id((double)g_HhLabelPlayerId);
@@ -29832,7 +29850,7 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
                 Out("    viewmat:" + ms); Out("    projmat:" + ps);
             } catch (...) { Out("    matrices: EXC"); }
         }
-        Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + num("variable_global_get", { RValue("room_width") }) + "x" + num("variable_global_get", { RValue("room_height") }) + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
+        Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + builtinNum("room_width") + "x" + builtinNum("room_height") + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
         Out("  active labels=" + std::to_string(g_HhStolen.size()) + " lastErr=" + g_HhLabelLastErr);
 #ifndef FORGEPACT_RELEASE
     } else if (lc == "roomprobe") {
