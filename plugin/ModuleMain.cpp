@@ -469,6 +469,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
+#include <ForgePact/BossRarityMod.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -1861,7 +1862,7 @@ struct EnemyBornScope
     EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
     {
         try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
-        if (!(RarityFloorActive() || TyrantActive() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
+        if (!(RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
         if (!(IsEnemyObject(objIdx) || IsCachedCreatorObject(objIdx))) return;
         if (!IsEnemyObject(caller.ObjectIndex())) return;   // only a real monster starts a chain
         active = true; prevCreating = g_CreatingFromEnemy; prevCaller = g_CallerIsEnemy;
@@ -7529,6 +7530,9 @@ static long g_RarSkippedBoss = 0;
 #endif
 static bool RarityFloorActive() { return g_RarRarePct > 0.0 || g_RarAncientPct > 0.0; }
 static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
+// HookOneScript answers true for a TABLE-ONLY install too; this says whether
+// the inline detour went in, so `bossrarity` can report a blind hook.
+static bool g_TyHookNative = false;
 static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
 // enemyAffix indices whose meaning is live-confirmed (see kHhAffixNames); 0 = champion marker.
 // Left out on purpose (2026-09-07 player reports "the more I kill, the more there are"):
@@ -7634,6 +7638,28 @@ static std::string RarState(const RValue& inst)
     return s;
 }
 #endif
+// Bosses control (`bossrarity`, BossRarityMod.hpp): raises a boss the hook
+// already identified, through the sliders' own writes - enemyRarity first,
+// then the affix top-up from kTyAffixPool - so the original that runs next
+// builds the boss as if it had rolled that tier. The decision and the
+// counters live in the header, where tests/boss_rarity_harness.cpp runs them.
+static void BossRarityRaise(const RValue& inst, bool enemyBorn)
+{
+    namespace BR = ForgePact::BossRarity;
+    double rar = -1.0;
+    try {
+        RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
+        if (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) rar = rv.ToDouble();
+    } catch (...) {}
+    BR::RaiseBoss(BR::counters, BR::CurrentMode(), rar, /*isBoss=*/true, enemyBorn, [&](int tier, int wantAffixes) {
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue((double)tier) });
+            const int add = BR::AffixesToAdd(wantAffixes, TyCountAffixes(inst));
+            if (add > 0) TyAddAffixes(inst, add);
+            return true;
+        } catch (...) { return false; }
+    });
+}
 // Bosses (Anubis, Damien, Cthulhu, the Uber_* variants, and the rest of the
 // Enemy_Child_Boss_obj family - hs-game-sdk's OBJECT_PARENT_INDEX confirms
 // Anubis_obj's own chain runs Anubis_obj -> Enemy_Child_Boss_obj ->
@@ -7663,10 +7689,15 @@ static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, i
     if (g_RarPreLeft > 0 && S) { --g_RarPreLeft; try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue(g_RarPreVal) }); Out("   -> enemyRarity pre-set to " + std::to_string((int)g_RarPreVal)); } catch (...) {} }
 #endif
     bool enemyBorn = g_CreatingFromEnemy;
-    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive())) {
+    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) {
         try { const double id = InstanceIdOf(inst); if (id >= 0.0 && g_EnemyBornIds.erase((int)id)) enemyBorn = true; } catch (...) {}
     }
-    if (enemyBorn && S && (RarityFloorActive() || TyrantActive())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    if (enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    // Bosses control: a boss, judged here at the point of use, is raised to
+    // the chosen tier when the game rolled it at rarity 1 and no monster made
+    // it (BossRarityMod.hpp decides and counts). It runs before the sliders'
+    // own boss check below, which still leaves every boss alone.
+    if (S && ForgePact::BossRarity::Active() && RarInstanceIsBoss(inst)) BossRarityRaise(inst, enemyBorn);
     if (S && !enemyBorn && RarityFloorActive() && RarInstanceIsBoss(inst)) {
 #ifndef FORGEPACT_RELEASE
         InterlockedIncrement(&g_RarSkippedBoss);
@@ -7716,8 +7747,38 @@ static void InstallTyrantHook()
 {
     if (g_TyHookAttempted) return;
     g_TyHookAttempted = true;
-    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings);
+    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings, &g_TyHookNative);
     InstallCreateHooks();   // enemy-born tracking rides the instance_create hooks
+}
+// The shared hook as `bossrarity` reports it. `table-only` is HookOneScript's
+// TABLE-ONLY fallback: installed, but blind to compiled GML's direct calls,
+// so a boss mode reporting it is armed and does nothing on those paths.
+static const char* BossRarityHookState()
+{
+    if (!g_TyHookAttempted) return "none";
+    if (!g_TyHookInstalled) return "failed";
+    return g_TyHookNative ? "ok" : "table-only";
+}
+// `bossrarity off|rare|ancient|status` - the panel's Mods > Gameplay > Bosses
+// select. `rare` / `ancient` install the shared hook (once); `off` leaves it in
+// place and only turns the mode off, so the sliders and the crown keep theirs.
+// Every form answers one `bossrarity:` line.
+static void BossRarityCommand(const std::string& rest)
+{
+    namespace BR = ForgePact::BossRarity;
+    const std::string v = Lower(TrimCopy(rest));
+    if (v.empty() || v == "status" || v == "stat") {
+        Out(BR::StatusLine(BR::CurrentMode(), BR::counters, BossRarityHookState()));
+        return;
+    }
+    BR::Mode m = BR::CurrentMode();
+    if (!BR::ParseMode(v, m)) {
+        Out("bossrarity: usage bossrarity off|rare|ancient|status (unchanged: " + std::string(BR::ModeName(BR::CurrentMode())) + ")");
+        return;
+    }
+    if (m != BR::Mode::Off) InstallTyrantHook();
+    BR::SetMode(m);
+    Out(BR::StatusLine(m, BR::counters, BossRarityHookState()));
 }
 static void TyrantAutoArm()
 {
@@ -7742,6 +7803,87 @@ static void TyrantStatus()
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
 }
+
+#ifndef FORGEPACT_RELEASE
+// --- Bosses control research probes (issue #44, docs/boss-rarity-research.md) ---
+// `bossprobe`: one line per live boss (an Enemy_Parent_obj instance that
+// RarInstanceIsBoss accepts): its name, rarity, forceRarity, affixes and
+// health bar (RarState), then every instance variable whose name carries one
+// of the words below. A real is also handed to the game's own
+// PC_GetVariableGMLWrapper and printed as `<name>=<key>-><value>`: a boss's
+// health is a protected key (`oget <Boss_obj> enemy_hp`), and whether the
+// getter takes the key and answers the value is what Live 1 settles - the
+// probe prints whatever comes back, never a guess.
+static const char* const kBossProbeWords[] = { "hp", "health", "damage", "dmg", "exp", "slots", "chance", "dropmult", "droptable" };
+static void BossProbeCommand()
+{
+    try {
+        const RValue eobj((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+        int bosses = 0;
+        for (int n = 0; n < total && n < 2000; ++n) {
+            RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+            if (!RarInstanceIsBoss(id)) continue;
+            std::string line = "bossprobe #" + std::to_string(bosses++) + " " + TyInstName(id) + RarState(id) + " |";
+            try {
+                RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+                const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+                std::string vars;
+                for (int i = 0; i < count; ++i) {
+                    RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                    const std::string s = nm.ToString(), ls = Lower(s);
+                    bool hit = false;
+                    for (const char* w : kBossProbeWords) if (ls.find(w) != std::string::npos) { hit = true; break; }
+                    if (!hit) continue;
+                    RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
+                    std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
+                    vars += " " + s + "=" + d;
+                    if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+                        try {
+                            RValue got = g_Yytk->CallGameScript("gml_Script_PC_GetVariableGMLWrapper", { RValue(v.ToDouble()) });
+                            std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
+                            vars += "->" + g;
+                        } catch (...) { vars += "->EXC"; }
+                    }
+                }
+                line += vars.empty() ? std::string(" (no matching vars)") : vars;
+            } catch (...) { line += " (vars exc)"; }
+            Out(line);
+        }
+        Out("bossprobe: " + std::to_string(bosses) + " boss(es) among " + std::to_string(total) + " enemies");
+    } catch (...) { Out("bossprobe: EXC"); }
+}
+// `droptrace <n>`: the next n DropItem / DropItemBoss calls through
+// DropManager's hooks, one line each with the dropping instance and the
+// arguments (DropItem's first argument is the drop rank,
+// docs/RUNTIME_DATA_MODELS.md 13.7). Noted from ApRollDropScopeEnter, which
+// every DropManager hook body enters first in this build.
+static std::atomic<int> g_DropTraceLeft{ 0 };
+static void DropTraceNote(const char* hookName, CInstance* S, int argc, RValue** A)
+{
+    if (!hookName || g_DropTraceLeft.load(std::memory_order_relaxed) <= 0) return;
+    const std::string_view fn(hookName);
+    if (fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem)
+        && fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemBoss)) return;
+    if (g_DropTraceLeft.fetch_sub(1, std::memory_order_relaxed) <= 0) return;
+    RValue self; bool haveSelf = false;
+    try { if (S) { self = S->ToRValue(); haveSelf = true; } } catch (...) {}
+    Out("droptrace: " + std::string(fn) + " self=" + (haveSelf ? TyInstName(self) : std::string("none"))
+        + " argc=" + std::to_string(argc) + TyArgs(argc, A));
+}
+static void DropTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    int n = 20;
+    if (v == "off" || v == "0") n = 0;
+    else if (!v.empty()) { try { n = std::stoi(v); } catch (...) { n = 20; } }
+    if (n < 0) n = 0;
+    if (n > 500) n = 500;
+    if (n > 0) ForgePact::DropManager::Instance().InstallHooks();   // idempotent; the research build has them from startup
+    g_DropTraceLeft.store(n, std::memory_order_relaxed);
+    Out("droptrace -> next " + std::to_string(n) + " DropItem / DropItemBoss calls through DropManager's hooks");
+}
+#endif
 
 #ifndef FORGEPACT_RELEASE
 // --- monster AI target trace (Beacon amulet groundwork) ------------------------------
@@ -20156,6 +20298,9 @@ static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, 
 // hook body returns.
 static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    DropTraceNote(hookName, S, argc, A);   // `droptrace` (the Bosses research); off unless asked for
+#endif
     if (!hookName || !g_ApRollAttached.load(std::memory_order_relaxed)) return false;
     for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
         ApRollRow& r = g_ApRollRows[i];
@@ -42089,7 +42234,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll"
+        "stashmoveall", "stashmove", "densityroll", "bossrarity"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -42141,6 +42286,9 @@ static void RunCommand(const std::string& line)
     // standalone early returns.
     if (lc == "zonecensus") { ZoneCensusCommand(rest); return; }
     if (lc == "evcount") { EvCountCommand(rest); return; }
+    // Bosses control research (issue #44): the same standalone early returns.
+    if (lc == "bossprobe") { BossProbeCommand(); return; }
+    if (lc == "droptrace") { DropTraceCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -42177,6 +42325,8 @@ static void RunCommand(const std::string& line)
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
     if (lc == "densityroll") { DensityRollCommand(rest); return; }
+    // Bosses (Mods > Gameplay): the select's command, the same early return.
+    if (lc == "bossrarity") { BossRarityCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
