@@ -58,6 +58,7 @@ const HELMET_STATUS = "Miner's Helmet: x4 replaces this slider while the helmet 
 const EXPECTED = [
   'mining-label-multiplier',
   'mining-note-empty-offline',
+  'mining-note-live-running',
   'mining-status-still-shown',
   'mods-no-repeated-heading',
   'mods-one-card-per-mod-qol',
@@ -391,17 +392,49 @@ async function miningNoteOffline({ page }) {
   assert(note, 'The mining row has no note element');
   assert(note.entry, 'The mining note is not in its row\'s entry');
   assert(note.text.trim() === '' && !note.visible, `The offline mining note is not empty: "${note.text}"`);
-  // Both mining notes are polite live regions, so a poll's status change is
-  // announced; at x1 offline the rolls note is as empty and hidden as this one.
-  const roles = await $(page, () => ['mining_ore', 'mining_ore_rolls'].map((k) => {
-    const n = document.querySelector(`.note[data-note="${k}"]`);
-    return n && { key: k, role: n.getAttribute('role'), text: n.textContent, visible: n.checkVisibility() };
-  }));
-  for (const r of roles) {
+  // Only the plugin's status is a live region. With the game closed neither
+  // mining note is one: at x1 the rolls note is as empty and hidden as this
+  // one, and above x1 it explains the slider, which the range already reads
+  // through aria-describedby, so a slider step must not announce it again.
+  for (const r of await miningNotes(page)) {
     assert(r, 'A mining row has no note element');
-    assert(r.role === 'status', `The ${r.key} note's role is "${r.role}", not status`);
+    assert(r.role === null && r.live === null, `The offline ${r.key} note is a live region: role "${r.role}", aria-live "${r.live}"`);
     assert(r.text.trim() === '' && !r.visible, `The offline ${r.key} note is not empty: "${r.text}"`);
   }
+  await stepRange(page, 'mining_ore_rolls', 3);
+  const rolls = (await miningNotes(page))[1];
+  assert(rolls.text === 'Each mining node you finish pays out 3 times.' && rolls.visible, `The offline rolls note at x3 reads "${rolls.text}"`);
+  assert(rolls.role === null && rolls.live === null, `The offline rolls note at x3 is a live region: role "${rolls.role}", aria-live "${rolls.live}"`);
+}
+
+// While the game runs both mining notes hold the plugin's status, and are polite
+// live regions already when empty, so the first status written is announced.
+async function miningNoteLiveRunning({ page }) {
+  await patchState(page, helmetOn);
+  await reload(page);
+  await tab(page, 'loot');
+  const live = (r) => r.role === 'status' && r.live === 'polite';
+  let [ore, rolls] = await miningNotes(page);
+  assert(ore.text.trim() === HELMET_STATUS && ore.visible, `The running mining note reads "${ore.text}"`);
+  assert(live(ore), `The running mining note is not a live region: role "${ore.role}", aria-live "${ore.live}"`);
+  assert(rolls.text === '' && !rolls.visible, `The running rolls note at x1 is not empty: "${rolls.text}"`);
+  assert(live(rolls), `The running rolls note at x1 is not a live region: role "${rolls.role}", aria-live "${rolls.live}"`);
+  await stepRange(page, 'mining_ore_rolls', 3);
+  [, rolls] = await miningNotes(page);
+  assert(rolls.text === 'Waiting for the matching mining plugin to confirm the setting.' && rolls.visible, `The running rolls note at x3 reads "${rolls.text}"`);
+  assert(live(rolls), `The running rolls note at x3 is not a live region: role "${rolls.role}", aria-live "${rolls.live}"`);
+}
+
+// Both mining notes: text, shown, and their live-region attributes.
+const miningNotes = (page) => $(page, () => ['mining_ore', 'mining_ore_rolls'].map((k) => {
+  const n = document.querySelector(`.note[data-note="${k}"]`);
+  return n && { key: k, role: n.getAttribute('role'), live: n.getAttribute('aria-live'), text: n.textContent, visible: n.checkVisibility() };
+}));
+// A keyboard step's worth of a drops slider: the value and its input event,
+// which repaints the row without saving.
+async function stepRange(page, key, value) {
+  await $(page, ([k, v]) => { const r = document.querySelector(`input[type=range][data-sec="drops"][data-key="${k}"]`); r.value = v; r.dispatchEvent(new Event('input', { bubbles: true })); }, [key, value]);
+  await frames(page);
 }
 
 async function miningStatus({ page }) {
@@ -999,6 +1032,7 @@ async function withPage(browser, { viewport = VIEWPORTS[1280], offline = false, 
 const CHECKS = [
   ['mining-label-multiplier', miningLabel],
   ['mining-note-empty-offline', miningNoteOffline, { offline: true }],
+  ['mining-note-live-running', miningNoteLiveRunning],
   ['mining-status-still-shown', miningStatus],
   ['mods-no-repeated-heading', modsHeading],
   ['mods-one-card-per-mod-qol', modsCardsQol],

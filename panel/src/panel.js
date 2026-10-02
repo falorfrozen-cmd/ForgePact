@@ -85,6 +85,16 @@ function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el
 function setClass(el,v){if(el&&el.className!==v)el.className=v}
 function setTitle(el,v){if(el&&el.title!==v)el.title=v}
 function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
+// A mining note is a polite live region only while it holds the plugin's
+// status, i.e. while the game runs (already when empty, so the first status
+// is announced). With the game closed it holds the slider's own explanation,
+// which the range reads through aria-describedby: live, every slider step
+// would announce it again (review of ForgePact #141). Call before setText.
+function setNoteLive(el,live){
+  if(!el||(el.getAttribute('aria-live')==='polite')===live)return;
+  if(live){el.setAttribute('role','status');el.setAttribute('aria-live','polite')}
+  else{el.removeAttribute('role');el.removeAttribute('aria-live')}
+}
 // Move all into the stash turns itself off for the rest of a session after a
 // move it could not confirm; the plugin's last `stashmoveall: state=` line
 // says so (`stash_move_all_session`), and the value beside the switch shows
@@ -141,6 +151,7 @@ function applyPluginModState(pm){
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
     // Only the live status: the note is empty (and hidden) while there is none.
+    setNoteLive(miningNote,!!ST?.gameRunning);
     setText(miningNote,status.trim());
   }
   paintRollsNote(pm);
@@ -195,6 +206,7 @@ function paintRollsNote(pm){
     else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
     else status='Waiting for the matching mining plugin to confirm the setting.';
   }
+  setNoteLive(note,!!ST?.gameRunning);
   setText(note,status);
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
@@ -228,10 +240,10 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   // still write into it. Rows passed no note (drops, spawners) get none.
   // The note's id carries the section (data-note is the key alone), and the
   // range names it in aria-describedby, so a screen reader reads the note.
-  // The two mining notes carry the plugin's live status, which a poll changes,
-  // so they are polite live regions (setText writes only a changed status).
-  const noteId=`note-${sec}-${key}`, live=sec==='drops'&&MINING_DROPS.includes(key)?' role="status" aria-live="polite"':'';
-  const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}"${live}>${note}</div>`:'';
+  // The two mining notes become polite live regions while the game runs and
+  // they carry the plugin's status (setNoteLive, from their painters).
+  const noteId=`note-${sec}-${key}`;
+  const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}"${n?` aria-describedby="${noteId}"`:''}>
