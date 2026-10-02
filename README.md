@@ -664,7 +664,7 @@ itself.
   **Sort** and level with it - worked out from the Sort button's own place and
   size each time, so it is expected to follow the game's interface scale
   (measured at one scale only). It looks like the backpack's **Sort Tab**
-  button, dark and framed, with its **Move all** label centred inside it: the
+  button, drawn with that button's own sprite and scale and with its **Move all** label centred inside it: the
   mod copies onto it, from the Sort button itself each time, the Sort button's
   sprite and scale and the 13 settings whose copy in a research session drew
   the label centred like the Sort button's (Live 5). Each is written as the

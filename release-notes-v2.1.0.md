@@ -26,9 +26,10 @@ dropping.
   - The **Move all** button is there only while the switch is on and the stash
     is open; switching off removes it. One click is one move-all, exactly like
     F4. If the button cannot be shown, F4 still works.
-  - The button has the backpack **Sort Tab** button's dark framed look, with
-    its **Move all** label centred inside it, the same when you close the
-    stash and open it again.
+  - The button is drawn with the backpack **Sort Tab** button's own sprite and
+    scale, with every look setting copied from it reading back as the same,
+    and its **Move all** label centred inside it, checked at one interface
+    scale. It reads the same when you close the stash and open it again.
   - **When the stash tab fills up**, the items that fit move and the rest stay
     in your backpack. They never spill onto another stash tab or page, and
     nothing already in the stash moves.
