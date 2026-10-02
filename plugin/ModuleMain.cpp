@@ -11347,8 +11347,9 @@ static bool SignatureController(RValue& instance, std::string& why)
 // (`sub`, its number in `id`), its size, and how many of its entries equal each resolved stand-in
 // (counts[which], over that element only).  `why` names the first step that failed, worded to
 // follow `Controller_obj.<name>`: `is not an array`, `has <L> elements, none at [<i>]`,
-// `[<i>] is not a ds_list`, `[<i>] has <s> entries, fewer than <min>`, `[<i>] entry <k> is not
-// three numbers`.
+// `[<i>] is not a ds_list (kind=<k>)`, `[<i>] has <s> entries, fewer than <min>`, `[<i>] entry <k>
+// is not three numbers`.  The refusal names the element's numeric kind, so a handle kind (a live
+// ref ds_exists turned away) reads apart from a kind SigListHandle never accepts.
 static bool SignatureListShape(const RValue& outer, int index, RValue& sub, double& id, int& size, int counts[2],
                                std::string& why, int minSize)
 {
@@ -11365,7 +11366,7 @@ static bool SignatureListShape(const RValue& outer, int index, RValue& sub, doub
         sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) });
         live = SigListHandle(sub, id) && g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean();   // 2 = ds_type_list
     } catch (...) { live = false; }
-    if (!live) { why = at + " is not a ds_list"; return false; }
+    if (!live) { why = at + " is not a ds_list (kind=" + std::to_string((int)sub.m_Kind) + ")"; return false; }
     try { size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble(); } catch (...) { why = at + " ds_list_size threw"; return false; }
     if (size < minSize) { why = at + " has " + std::to_string(size) + " entries, fewer than " + std::to_string(minSize); return false; }
     for (int i = 0; i < size; ++i) {
