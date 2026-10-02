@@ -1456,11 +1456,10 @@ static int ToplamOrnek()
 }
 
 
-#ifdef FORGEPACT_RELEASE
-// The player build detaches the game from YYToolkit's "YYToolkit Log"
-// console instead of hiding its window (#58). YYToolkit opens that console
-// inside the game's own process (AllocConsole), which makes it the game's
-// standard output, so GameMaker writes every runtime warning to it
+// Both builds detach the game from YYToolkit's "YYToolkit Log" console
+// instead of hiding its window (#58). YYToolkit opens that console inside the
+// game's own process (AllocConsole), which makes it the game's standard
+// output, so GameMaker writes every runtime warning and error to it
 // synchronously - hidden or not. Underground Garden's zone generation
 // (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
 // specified tilemap" warnings, and writing them to the console froze the load
@@ -1468,12 +1467,18 @@ static int ToplamOrnek()
 // main thread sat in WriteFile, called from the game's own code, for the whole
 // freeze, and the console buffer held nothing but that warning. The unmodded
 // game has no console, so there those writes fail at once; detaching restores
-// that. Players never saw this console, and the research build keeps it.
+// that. The second case, 2026-10-02 (#44, Live 1, research build): right after
+// a raw Karp King spawn the game froze while the console filled with the
+// runner's own YYError lines from timer_system_update ("Unable to find any
+// instance for object index ...", a different id each line) - observed by the
+// owner in the console, not instrumented, and none of it in out.txt, so no
+// ForgePact print was involved. Nothing either build prints needs the
+// console: every Out() line goes to out.txt first, and YYToolkit's own lines
+// go to bin\YYToolkit.log.
 static void DetachConsole()
 {
     if (GetConsoleWindow()) FreeConsole();
 }
-#endif
 
 static void KuyrukIsle()
 {
@@ -44388,9 +44393,7 @@ EXPORTED AurieStatus ModuleInitialize(
     ForgePact::ModManager::Instance().Initialize();
     HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
-#ifdef FORGEPACT_RELEASE
     DetachConsole();
-#endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
     InstallHeadLabelHook();

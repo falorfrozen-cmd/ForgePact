@@ -124,9 +124,39 @@ pinned by `tests/test_boss_rarity_contract.py`).
 
 ### Session
 
-Not yet run. The procedure (the bosses, the order, and what each check passes
-on) is in the workorder; the session's capture, each check's verdict and the
-route it sets are recorded here when it has run.
+**2026-10-02, aborted after the control.** Capture
+`.claude/workorders/forgepact-issue-44-uber-bosses-live-1.md` (hub, local),
+research DLL `a3efc8e8...bef29`.
+
+- Passed: `dll-hash`, `marker` (`bossrarity: off ... hook=ok`) and `control`
+  (a Karp King `rarity` `ENTRY`/`EXIT` pair at `enemyRarity=1`).
+- Then the game froze. The owner watched YYToolkit's console fill with the
+  runner's own `YYError` text, "Unable to find any instance for object index
+  '<id>'", raised in `timer_system_update`, a different id on each line
+  (owner-observed, not instrumented). `out.txt` holds none of it, so no
+  ForgePact print was involved. The game's `bin\YYToolkit.log` kept only
+  report #1, id 257102, which is the vanilla error every launch raises at
+  character load (`docs/RUNTIME_DATA_MODELS.md` § 5.7), not a finding; the
+  repeats take the toolkit's count-only path and are not in the file.
+  `no-crash` was recorded as a fail (frozen after the raw
+  `instance_create_depth` spawn); every other check is `not-run`.
+- Conditions: the hero stood in a Hell zone (Outskirts of Inoya, zone level
+  243), and that zone's load had already stalled the game 50.5 s.
+- What left those timers without an owner is **not measured**. A timer in the
+  game's timer list addressed an instance that no longer existed, and several
+  did; whether those were short-lived objects of the raw spawn or the Hell
+  zone's own population is open. This record does not say the spawn caused
+  the storm.
+- Why the console froze the game is the #58 mechanism: the runner writes each
+  runtime error to YYToolkit's console synchronously. The player build has
+  detached from that console since #58; the research build kept it until this
+  session. It now detaches too (the module guide's #58 entry).
+
+The rerun uses the detached-console research build, a low-level zone
+confirmed by screenshot before any spawn, and a liveness check after every
+spawn and kill, with the runner's own error counter read before and after
+each spawn. The procedure is in the workorder; the rerun's capture, each
+check's verdict and the route it sets are recorded here when it has run.
 
 ## Not verified
 
