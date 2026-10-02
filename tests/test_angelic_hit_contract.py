@@ -171,27 +171,31 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         resolve = body(self.code, "static bool SignatureListResolve(")
         self.assertIn('"array_get", { list, RValue((double)index) }', resolve)
         self.assertIn("const int index = g_SigListIndex;", resolve)
-        self.assertLess(resolve.index('"ds_exists"'), resolve.index('"ds_list_size"'), "ds_exists before any ds_list_size")
+        self.assertLess(resolve.index("SigListHandle(sub, id, step)"), resolve.index('"ds_list_size"'),
+                        "SigListHandle's ds_exists before any ds_list_size")
         self.assertIn("SignatureListShape(list, index, sub, id, size, counts, why, kSigListMinSize)", resolve)
         self.assertNotIn('"array_length", { list }).ToDouble() : -1', resolve, "no flat length read")
         shape = body(self.code, "static bool SignatureListShape(")
         self.assertIn('"array_get", { outer, RValue((double)index) }', shape)
-        self.assertIn('"ds_exists", { sub, RValue(2.0) }', shape, "2 is ds_type_list")
-        self.assertLess(shape.index('"ds_exists"'), shape.index('"ds_list_size"'))
-        self.assertLess(shape.index("SigListHandle(sub, id)"), shape.index('"ds_exists"'),
-                        "only a value that can be a handle is handed to ds_exists")
+        self.assertLess(shape.index("SigListHandle(sub, id, step)"), shape.index('"ds_list_size"'),
+                        "SigListHandle's ds_exists before any ds_list_size")
         self.assertIn("SigEntry(sub, i, e)", shape)
         # Each refusal names its step (delta 1's reasons).
-        for reason in ('"is not an array"', '" elements, none at "', '" is not a ds_list (kind="', '" entries, fewer than "',
+        for reason in ('"is not an array"', '" elements, none at "', '" is not a ds_list ("', '" entries, fewer than "',
                        '" is not three numbers"'):
             with self.subTest(reason=reason):
                 self.assertIn(reason, shape)
-        self.assertIn("std::to_string((int)sub.m_Kind)", shape, "the ds_list refusal names the kind it got")
         entry = body(self.code, "static bool SigEntry(")
         self.assertIn('"ds_list_find_value", { sub, RValue((double)i) }', entry)
         self.assertIn("!= 3", entry, "an entry is exactly three numbers")
-        # A ds_list handle may arrive as a number or a reference: a set of kinds, not one.
+        # The live-list gate: ds_exists (2 is ds_type_list) asked of the value as read, after
+        # ToDouble refused an unreadable handle; a refusal names the kind it got and the step.
         handle = body(self.code, "static bool SigListHandle(")
+        self.assertIn('"ds_exists", { v, RValue(2.0) }', handle, "2 is ds_type_list")
+        self.assertLess(handle.index("v.ToDouble()"), handle.index('"ds_exists"'),
+                        "only a value that can be a handle is handed to ds_exists")
+        self.assertIn('why = "kind=" + kind + ", " + step;', handle, "the ds_list refusal names the kind it got")
+        # A ds_list handle may arrive as a number or a reference: a set of kinds, not one.
         for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64", "VALUE_REF"):
             self.assertIn(kind, handle)
 
@@ -614,7 +618,8 @@ class AngelicHitSourceContractTests(unittest.TestCase):
             self.assertIn(token, dump)
         self.assertIn("i < len && i < 32", dump)
         self.assertIn("size < 2000 ? size : 2000", dump)
-        self.assertLess(dump.index("SigListHandle(e, id)"), dump.index('"ds_exists", { e, RValue(2.0) }'))
+        self.assertLess(dump.index("SigListHandle(e, id, step)"), dump.index('"ds_list_size", { e }'),
+                        "SigListHandle's ds_exists before any ds_list_size")
         for write in ("ds_list_add", "ds_list_delete", "array_set", "array_push", "array_resize", "variable_instance_set"):
             self.assertNotIn(write, dump, "the dump writes nothing")
 
