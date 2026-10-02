@@ -7809,15 +7809,78 @@ static void TyrantStatus()
 // `bossprobe`: one line per live boss (an Enemy_Parent_obj instance that
 // RarInstanceIsBoss accepts): its name, rarity, forceRarity, affixes and
 // health bar (RarState), then every instance variable whose name carries one
-// of the words below. A real is also handed to the game's own
-// PC_GetVariableGMLWrapper and printed as `<name>=<key>-><value>`: a boss's
-// health is a protected key (`oget <Boss_obj> enemy_hp`), and whether the
-// getter takes the key and answers the value is what Live 1 settles - the
-// probe prints whatever comes back, never a guess.
+// of the words below. A number that could be a protected-store handle is read
+// through the getter the control line proved and printed as
+// `<name>=<key>-><value>`.
+//
+// Three guards, because a handle carries no tag that says it is one:
+// - Range. The store holds 262,144 records and a -1 handle passed into it
+//   faulted the game (docs/RUNTIME_DATA_MODELS.md 5.8). The plugin builds
+//   with /EHsc, so catch (...) does not catch that access violation: only a
+//   finite whole number in [0, 262144) is ever handed to a getter, anything
+//   else prints `->not-key` and is not read.
+// - Control. Before any boss, both PC_GetVariableGMLWrapper and the proven
+//   GPV (gatestats, the Shadow Realm gate) read gDataProtected[177], a slot
+//   whose key equals its index and whose value is the heroic chance (28
+//   unmodded). The wrapper is used only when it answers the same non-zero
+//   number GPV does; GPV is used when only it answers; with neither, every
+//   key prints `->unread`, so a failed read names the call shape, not "no key".
+// - Identity. Only `enemy_hp` is a proven key (the kill route in
+//   tools/boss_drop_trial.py zeroes the record it names and the boss dies). Any other in-range number may be a bar width or a
+//   chance, and the record it names is someone else's: its read prints as
+//   `->?<value>`, which is what that record holds IF the number is a key.
 static const char* const kBossProbeWords[] = { "hp", "health", "damage", "dmg", "exp", "slots", "chance", "dropmult", "droptable" };
+static const char* const kBossProbeProvenKeys[] = { "enemy_hp" };
+static const double kProtStoreRecords = 262144.0;
+static const double kBossProbeControlSlot = 177.0;
+enum class BossProbeGetter { None, Wrapper, Gpv };
+static bool BossProbeIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+static bool BossProbeKeyInRange(const RValue& v)
+{
+    if (!BossProbeIsNumber(v)) return false;
+    const double d = v.ToDouble();
+    return std::isfinite(d) && d >= 0.0 && d < kProtStoreRecords && d == std::floor(d);
+}
+static BossProbeGetter BossProbeGetterControl()
+{
+    std::string line = "bossprobe control: gDataProtected[177]=";
+    BossProbeGetter route = BossProbeGetter::None;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= (int)kBossProbeControlSlot) {
+            line += "missing (len=" + std::to_string(len) + ") getter=unproven";
+        } else {
+            RValue h = g_Yytk->CallBuiltin("array_get", { arr, RValue(kBossProbeControlSlot) });
+            line += Describe(h);
+            if (!BossProbeKeyInRange(h)) {
+                line += " not-key getter=unproven";
+            } else {
+                RValue gpv, wrap; bool gpvOk = false, wrapOk = false;
+                try { gpv = g_Yytk->CallGameScript("gml_Script_GPV", { h }); gpvOk = BossProbeIsNumber(gpv); line += " GPV->" + Describe(gpv); }
+                catch (...) { line += " GPV->EXC"; }
+                try { wrap = g_Yytk->CallGameScript("gml_Script_PC_GetVariableGMLWrapper", { h }); wrapOk = BossProbeIsNumber(wrap); line += " PC_GetVariableGMLWrapper->" + Describe(wrap); }
+                catch (...) { line += " PC_GetVariableGMLWrapper->EXC"; }
+                if (gpvOk && wrapOk && wrap.ToDouble() == gpv.ToDouble() && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Wrapper; line += " getter=PC_GetVariableGMLWrapper (agrees with GPV)";
+                } else if (gpvOk && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Gpv; line += " getter=GPV (wrapper did not agree)";
+                } else {
+                    line += " getter=unproven";
+                }
+            }
+        }
+    } catch (...) { line += " EXC getter=unproven"; route = BossProbeGetter::None; }
+    Out(line);
+    return route;
+}
 static void BossProbeCommand()
 {
     try {
+        const BossProbeGetter getter = BossProbeGetterControl();
         const RValue eobj((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
         const int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
         int bosses = 0;
@@ -7838,13 +7901,17 @@ static void BossProbeCommand()
                     RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
                     std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
                     vars += " " + s + "=" + d;
-                    if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
-                        try {
-                            RValue got = g_Yytk->CallGameScript("gml_Script_PC_GetVariableGMLWrapper", { RValue(v.ToDouble()) });
-                            std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
-                            vars += "->" + g;
-                        } catch (...) { vars += "->EXC"; }
-                    }
+                    if (!BossProbeIsNumber(v)) continue;
+                    if (!BossProbeKeyInRange(v)) { vars += "->not-key"; continue; }
+                    if (getter == BossProbeGetter::None) { vars += "->unread"; continue; }
+                    bool proven = false;
+                    for (const char* k : kBossProbeProvenKeys) if (s == k) { proven = true; break; }
+                    try {
+                        RValue got = g_Yytk->CallGameScript(getter == BossProbeGetter::Wrapper ? "gml_Script_PC_GetVariableGMLWrapper" : "gml_Script_GPV",
+                                                            { RValue(v.ToDouble()) });
+                        std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
+                        vars += std::string(proven ? "->" : "->?") + g;
+                    } catch (...) { vars += "->EXC"; }
                 }
                 line += vars.empty() ? std::string(" (no matching vars)") : vars;
             } catch (...) { line += " (vars exc)"; }
