@@ -486,6 +486,24 @@ static void TargetModOnAsksAndCounts()
           " stat='" + stat + "'");
 }
 
+static void TargetNotLootDropsOnSight()
+{
+    // Live 2 (2026-10-02): the pet's lootTarget can hold a stale instance id
+    // the game reused for something that is not loot at all (measured: a
+    // zone's decoration object), and the watch - a 160 px, 90-frame count -
+    // is the wrong tool for it. The routing question is pure, and this pins
+    // its whole truth table: both loot families feed the watch, a readable
+    // kind from neither is dropped on sight, and an unreadable kind is not
+    // evidence of a wrong id, so it keeps the watch route too.
+    const bool ground = ForgePact::PetLootRoute(true, true, false) == ForgePact::PetLootTargetRoute::Watch;
+    const bool coin = ForgePact::PetLootRoute(true, false, true) == ForgePact::PetLootTargetRoute::Watch;
+    const bool other = ForgePact::PetLootRoute(true, false, false) == ForgePact::PetLootTargetRoute::DropOnSight;
+    const bool unreadable = ForgePact::PetLootRoute(false, false, false) == ForgePact::PetLootTargetRoute::Watch;
+    Check("target/not_loot_target_drops_on_sight", ground && coin && other && unreadable,
+          "ground=" + std::to_string(ground) + " coin=" + std::to_string(coin) +
+          " other=" + std::to_string(other) + " unreadable=" + std::to_string(unreadable));
+}
+
 int main()
 {
     BaselineGameKeepsASurvivingTarget();
@@ -502,6 +520,7 @@ int main()
     TargetRepickCountedOncePerGiveUp();
     TargetVanishedTargetAsksNothing();
     TargetModOnAsksAndCounts();
+    TargetNotLootDropsOnSight();
     std::cout << (g_Failures ? "RESULT FAIL " + std::to_string(g_Failures) : std::string("RESULT OK")) << "\n";
     return g_Failures ? 1 : 0;
 }

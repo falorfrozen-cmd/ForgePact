@@ -115,6 +115,44 @@ def repick_decision_on_every_live_target(tick: str, note: str) -> bool:
     return not any(SAME_TARGET_RETURN.search(body) for body in (tick, note))
 
 
+# The tick's routing guard (Live 2): the watch call sits inside the braced
+# block of `if (PetLootRoute(...) == PetLootTargetRoute::Watch)`.
+ROUTE_CALL = re.compile(
+    r"if\s*\(\s*ForgePact::PetLootRoute\([^)]*\)\s*==\s*ForgePact::PetLootTargetRoute::Watch\s*\)\s*\{")
+
+
+def timer_write_is_inside_the_ground_block(tick: str) -> bool:
+    """True iff the `itemCompanionTimer` write sits inside the braced block of
+    `if (isGround)`, and `isGround` is bound from the ground family above it.
+    Live 2 hoisted the family reading to the top of the tick, so this is the
+    guard the write now lives behind. Fails closed: no binding, no block, or a
+    write outside the block is False.
+    """
+    bound = re.search(
+        r"isGround\s*=\s*kindRead\s*&&\s*PetLootIsOf\(oi,\s*g_PetLootGroundObjIdx\)", tick)
+    guard = re.search(r"if\s*\(\s*isGround\s*\)\s*\{", tick)
+    if not bound or not guard:
+        return False
+    start, end = braced_block(tick, guard.end() - 1)
+    return '"itemCompanionTimer"' in tick[start:end]
+
+
+def watch_is_behind_the_route(tick: str) -> bool:
+    """True iff the tick's `Observe(` call sits inside the braced block of the
+    header's route guard, and runs nowhere before that guard. Fails closed: no
+    guard, no call, or a call outside the block is False. Without the guard a
+    live target from neither loot family would be fed to the watch and the pet
+    would grind at it for kPetLootStuckFrames anyway (Live 2, 2026-10-02: a
+    zone decoration the reused id named).
+    """
+    guard = ROUTE_CALL.search(tick)
+    if not guard:
+        return False
+    start, end = braced_block(tick, guard.end() - 1)
+    call = tick.find("Observe(")
+    return call >= 0 and start < call < end and "Observe(" not in tick[:guard.start()]
+
+
 def definition_body(source: str, name: str) -> str | None:
     """The body of a `std::string <name>()` definition, or None."""
     found = re.search(rf"std::string\s+{re.escape(name)}\(\)\s*(?:const\s*)?\{{", source)
@@ -213,12 +251,22 @@ class PetLootUnstickTargetTests(unittest.TestCase):
     def test_timer_is_written_only_on_a_ground_item(self):
         # A coin has no itemCompanionTimer; writing one would leave a stray
         # variable and make the held-back count lie.
-        timer_at = self.tick.index('"itemCompanionTimer"')
-        before = self.tick[:timer_at]
-        self.assertIn("g_PetLootGroundObjIdx", before[before.rindex("if ("):])
+        tick = strip_comments(self.tick)
+        self.assertTrue(timer_write_is_inside_the_ground_block(tick), tick)
         self.assertIn("NoteHeldBack()", self.tick)
         self.assertIn("NoteCoinReleased()", self.tick)
         self.assertIn("g_PetLootCoinObjIdx", self.tick)
+
+    def test_timer_ground_block_check_fails_without_the_guard(self):
+        # Negative controls: the same assertion fails with the block's guard
+        # replaced by `if (true)` (the write is no longer bound to a ground
+        # item) and with the family binding replaced by a constant.
+        tick = strip_comments(self.tick)
+        self.assertFalse(timer_write_is_inside_the_ground_block(
+            tick.replace("if (isGround) {", "if (true) {", 1)))
+        self.assertFalse(timer_write_is_inside_the_ground_block(
+            re.sub(r"isGround\s*=\s*kindRead\s*&&\s*PetLootIsOf\(oi,\s*g_PetLootGroundObjIdx\)",
+                   "isGround = true", tick)))
 
     def test_timer_write_is_gated_on_the_name_existing(self):
         # fix-1: the name itemCompanionTimer comes from a static reading, so
@@ -322,6 +370,27 @@ class PetLootUnstickTargetTests(unittest.TestCase):
         self.assertNotIn("VALUE_OBJECT", self.tick)
         self.assertNotIn("VALUE_REF", self.tick)
 
+    def test_watch_only_runs_for_a_loot_target(self):
+        # Live 2: a live target from neither loot family is given up on the
+        # tick that sees it, so the watch call must sit behind the header's
+        # route guard; such a target must never reach the 90-frame count.
+        tick = strip_comments(self.tick)
+        self.assertTrue(watch_is_behind_the_route(tick), tick)
+
+    def test_route_guard_check_fails_without_the_gate(self):
+        # Negative controls: the same assertion fails on the real tick body
+        # with the route guard replaced by a plain `if (true)` (the route never
+        # asked) and with an Observe call added before the guard.
+        tick = strip_comments(self.tick)
+        guard = ROUTE_CALL.search(tick)
+        self.assertIsNotNone(guard, tick)
+        no_route = tick[:guard.start()] + "if (true) {" + tick[guard.end():]
+        self.assertFalse(watch_is_behind_the_route(no_route))
+        call = "if (!mod.Observe((int64_t)g_RuntimeFrame, targetId, distancePx)) return;\n"
+        moved = tick[:guard.start()] + call + tick[guard.start():]
+        self.assertNotEqual(moved, tick)
+        self.assertFalse(watch_is_behind_the_route(moved))
+
     def test_header_declares_the_constants_and_the_classes(self):
         for name in ("kPetLootStuckFrames", "kPetLootStuckRadiusPx", "kPetLootHoldFrames"):
             self.assertRegex(self.header, rf"inline constexpr \w+ {name} = ")
@@ -330,6 +399,12 @@ class PetLootUnstickTargetTests(unittest.TestCase):
         # Replan 1: the re-pick decision and its kinds are header code the
         # harness compiles, and the watch no longer latches a given-up target.
         self.assertIn("enum class PetLootKind { Other, Ground, Coin };", self.header)
+        # Live 2: the routing question and its two answers are header code the
+        # harness compiles; the tick asks it before it feeds the watch.
+        self.assertIn("enum class PetLootTargetRoute { Watch, DropOnSight };", self.header)
+        self.assertIn(
+            "inline PetLootTargetRoute PetLootRoute(bool kindRead, bool isGround, bool isCoin)",
+            strip_comments(self.header))
         self.assertIn("struct PetLootRepick", self.header)
         self.assertIn("class PetLootRepickRing", self.header)
         self.assertIn("PetLootRepickRing m_Repicks;", self.header)
