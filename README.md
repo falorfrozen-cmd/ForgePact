@@ -55,7 +55,7 @@ none of these diagnostic hooks or the recorder. See
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
-| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or has a significant FPS drop, ForgePact tells you (a Windows notification while the panel is open, a message box for a freeze or crash without it) and saves a report folder under `bp_ipc\reports\`: which ForgePact hook or mod was running or busy, how much frame time ForgePact's mods took, plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists them and can turn the FPS-drop notifications off; reports are always saved ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
+| **Incident reports** | Always on, nothing to switch on. When the game crashes or freezes, ForgePact tells you (a Windows notification while the panel is open, a message box without it) and saves a report folder under `bp_ipc\reports\`: which ForgePact hook or mod was running or busy, how much frame time ForgePact's mods took, plus your settings and system. A significant FPS drop's report is saved without a notification, and there is no switch for it. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -1067,14 +1067,13 @@ none`, `CRASH
 previous session ended without a clean shutdown | exit 0xC0000005 | module
 ...` and `incident: report written <folder>`.
 
-Telling you: while the panel is open, a Windows notification says a report was
-saved. Without the panel, a freeze or a crash shows a message box (the crash
-one when the game next starts); an FPS drop never does. The panel's Setup tab
-has an **Incident reports** card: the latest reports, how the game last
-closed, a button that opens the reports folder, and **Tell me about FPS drops
-(reports are always saved)**, on by default. Turning it off silences only the
-FPS-drop notifications; freezes and crashes are still shown and every report
-is still written. The plugin limits itself to 50 episodes and 10 report
+Telling you: while the panel is open, a Windows notification says a crash or
+freeze report was saved. Without the panel, a freeze or a crash shows a message
+box (the crash one when the game next starts). An FPS drop's report is saved
+without a notification, with or without the panel, and there is no switch for
+it. The panel's Setup tab has an **Incident reports** card: the latest
+reports, FPS drops included, how the game last closed, and a button that opens
+the reports folder. The plugin limits itself to 50 episodes and 10 report
 folders a session, at most one folder every 5 minutes.
 
 `incident stat` (send it with `tools/ipc.ps1`) prints what the monitor sees

@@ -12,8 +12,9 @@ section.
 A player's "the game crashed" or "it got laggy" arrives with no evidence, and
 the first question, whether ForgePact had anything to do with it, could only be
 answered by asking for `out.txt` and guessing. The player build now notices a
-crash, a freeze or a significant FPS drop on its own, says so, and writes a
-folder the player can attach as it is. Each folder answers three questions:
+crash, a freeze or a significant FPS drop on its own, says so for a crash or a
+freeze (an FPS drop is recorded silently), and writes a folder the player can
+attach as it is. Each folder answers three questions:
 which of our hooks the game was inside, which mod was on or busy, and how much
 frame time our hooks were taking. The first answer has limits (a crash cannot
 know it, and a few hooks are untagged; see "Known limits"), so `none` is a
@@ -67,10 +68,13 @@ narrow statement, not an exoneration.
   `bp_ipc\exit.json`; the plugin folds it into the crash report at the next
   load and deletes it. A non-zero exit after a clean shutdown is logged at
   the next load, with no report folder and no toast.
-- **Notifications**: the panel shows a Windows toast for each new report folder
-  (PERF only while `notify_lag` is on). Without a live panel (`bp_ipc\panel.json`
-  names no running pid), the plugin shows a `MessageBoxW` for a freeze and for
-  a crash found at load, never for an FPS drop.
+- **Notifications**: the panel shows a Windows toast for each new FREEZE or
+  CRASH report folder. Without a live panel (`bp_ipc\panel.json` names no
+  running pid), the plugin shows a `MessageBoxW` for a freeze and for a crash
+  found at load. A PERF (FPS drop) report is written without a notification
+  from either side: the panel lists it on the Incident reports card and never
+  toasts it, the plugin never calls `MessageBoxW` for it, and no setting
+  changes that.
 - **The `incident stat` command** prints the monitor's current view and the
   per-mod table; it is the live control that the monitor is counting. Its
   first line starts `incident: frames ` and carries the worst frame overall
@@ -103,8 +107,13 @@ that fails to write is counted, and the `incident: report written` line says
   behaviour (the installer's thunk only names it; its one detour is on
   Windows' `ExitProcess`, to write the marker). A report missing because
   a switch was off is the outcome the feature exists to prevent, so there is
-  no switch for the monitor. The one setting, the panel's `notify_lag`
-  (default on), silences PERF notifications only.
+  no switch for the monitor, and none for its notices either. An FPS drop is
+  recorded without a notice of any kind: after Live 1, where the PERF toast
+  had landed in Windows' notification center while the game ran fullscreen,
+  the owner decided on 2026-10-02 that a PERF report is written but the
+  player is not told, so the panel's FPS-drop switch that 2.2.0's
+  development builds carried was removed. Crash and freeze notices are
+  unchanged.
 - **One writer for the report folder: the plugin.** The panel contributes
   `exit.json` and `panel.json` and reads `reports\`; two writers of one format
   in two languages would drift, and a plugin-only install would get no crash
@@ -169,9 +178,10 @@ that fails to write is counted, and the `incident: report written` line says
 - **The panel's routes leave a trace.** `/api/state`'s `incidents` carries
   `exitWatch` (`pidHeld`, `exitsSeen`, `lastCode`) and `toasts` (`sent`,
   `failed`, `lastError`), so "the game exited cleanly" is told apart from "no
-  exit was watched", and a missing toast from a failed one. When `out.txt`'s
-  last session already ends in a clean-shutdown line, a non-zero exit is
-  written to `exit.json` with `after_clean_shutdown: true` for the plugin to
+  exit was watched", and a missing toast from a failed one (`toasts` counts
+  crash, freeze and exit-with-error toasts; a PERF report sends none). When
+  `out.txt`'s last session already ends in a clean-shutdown line, a non-zero
+  exit is written to `exit.json` with `after_clean_shutdown: true` for the plugin to
   note, and no toast is shown: item 25's abort would otherwise toast "closed
   with an error" at every exit. The Setup card's last-exit line says the exit
   came after ForgePact's clean shutdown.
@@ -292,8 +302,10 @@ that fails to write is counted, and the `incident: report written` line says
 - **Without the panel**, a crash's report has no exit code or faulting module,
   only the missing clean-shutdown line, and an exit-time abort after the
   marker goes unrecorded.
-- **The toast is not tested automatically** beyond its command builder; it
-  is checked by eye in Live 1.
+- **The toast is not tested automatically** beyond its command builder and
+  the tests that a new FREEZE or CRASH folder sends one and a new PERF folder
+  sends none; it is shown for a crash or a freeze only, and a toast's actual
+  appearance on screen is checked by eye in a live session.
 
 ## Live results
 
