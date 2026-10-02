@@ -44,9 +44,11 @@ namespace ForgePact {
 // (by-arg0, by-arg1, by-self), how many pointers became ids inside the call
 // (reduced) and how many did not (dropped), and the last call's kinds as
 // passed. DurableText splits reduced and dropped per value and per outcome
-// (instance_exists false, true with no numeric `id`, a read that threw):
-// whether instance_exists answers false for the item struct on argument 1
-// is read there, never from the sums, which `self` fills on its own. A
+// (arrived as an object, instance_exists false, true with a numeric `id`,
+// true with no numeric `id`, a read that threw): whether instance_exists
+// answers false for the item struct on argument 1 is read there, never from
+// the sums, which `self` fills on its own. That is not established until a
+// live session prints those per-value counts (Stats::objBy). A
 // handle whose instance is gone by the frame's end answers false to
 // instance_exists and is passed over.
 //
@@ -101,7 +103,13 @@ public:
         // noIdBy: it answered true but `id` did not read as a number, the
         // runner taking for an instance something that has no id. threwBy: a
         // read threw (also counted in `errors`, which counts more than this).
-        uint64_t reducedBy[3] = {}, notInstanceBy[3] = {}, noIdBy[3] = {}, threwBy[3] = {};
+        // objBy: how many arrived as VALUE_OBJECT and so reached
+        // instance_exists at all; per value, the four outcomes add up to it.
+        // Struct safety on argument 1 is shown only by obj-a1 > 0 with every
+        // one of them in not-instance-a1, beside a non-zero reduced-self from
+        // the same session (the instrument working); it is not established
+        // until a live session has printed that.
+        uint64_t objBy[3] = {}, reducedBy[3] = {}, notInstanceBy[3] = {}, noIdBy[3] = {}, threwBy[3] = {};
         // The last call's argument 0, argument 1 and `self`, as passed (before
         // Durable): num, ref, obj, undef or other; "-" before the first call.
         const char* kinds[3] = { "-", "-", "-" };
@@ -129,10 +137,11 @@ public:
     int CallsThisFrame() const { return m_Calls; }
 
     // What Durable made of each value, per value and outcome, for the stat
-    // line: `reduced-a0=` ... `threw-self=`, twelve fields.
+    // line: `obj-a0=` ... `threw-self=`, fifteen fields, each its own token.
     std::string DurableText() const {
         static const char* const kSlots[3] = { "a0", "a1", "self" };
-        const struct { const char* name; const uint64_t* by; } rows[4] = {
+        const struct { const char* name; const uint64_t* by; } rows[5] = {
+            { "obj", m_Stats.objBy },
             { "reduced", m_Stats.reducedBy }, { "not-instance", m_Stats.notInstanceBy },
             { "no-id", m_Stats.noIdBy }, { "threw", m_Stats.threwBy } };
         std::string text;
@@ -318,6 +327,7 @@ private:
     // instance shows as its own count (noIdBy, or reducedBy on argument 1)
     // instead of hiding in a sum another value fills.
     void CountOutcome(int slot) {
+        if (m_Outcome != Outcome::Kept) ++m_Stats.objBy[slot];
         switch (m_Outcome) {
         case Outcome::Reduced: ++m_Stats.reducedBy[slot]; break;
         case Outcome::NotInstance: ++m_Stats.notInstanceBy[slot]; break;
