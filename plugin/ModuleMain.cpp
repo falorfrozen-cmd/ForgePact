@@ -515,6 +515,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/IncarnationGemsMod.hpp>
 #include <ForgePact/PetQuestCollectorMod.hpp>
 #include <ForgePact/PetLootUnstickMod.hpp>
+#include <ForgePact/PetRelicCollectorMod.hpp>
 #include <ForgePact/DensityManager.hpp>
 #include <ForgePact/DropManager.hpp>
 #include <ForgePact/IpcServer.hpp>
@@ -9224,7 +9225,75 @@ static ForgePact::PetQuestOutcome PetQuestCollectOne(const RValue& inst)
 static void PetQuestEndTravel(ForgePact::PetQuestOutcome outcome)
 {
     g_PetQuestSelector.Note(outcome, g_PetQuestFrame);
+    // One pet, one fetch (#124): the travel is free for Pet Collects Relics
+    // again. A release when this collector holds nothing does nothing.
+    ForgePact::PetFetchArbiter::Instance().Release(ForgePact::PetFetcher::Quest);
     g_PetQuestPhase = PetQuestPhase::Idle;
+}
+
+// ---- the pet's walk, shared by both collectors (#124) ----------------------
+// One Travel frame, for the Pet Quest Collector and Pet Collects Relics
+// alike: the owner asked for the relic collector to share the quest
+// collector's targeting, and a second copy of this walk is a second place for
+// a fix to miss. Moved here unchanged from PetQuestCollectorTick's Travel
+// phase; each collector hands in its own state and its own collect and
+// end-of-travel callbacks, and counts a lost target or a timeout from what
+// this returns.
+enum class PetTravelResult { Moving, Lost, TimedOut, Arrived, Abandoned };
+using PetCollectFn = ForgePact::PetQuestOutcome (*)(const RValue& target);
+using PetEndTravelFn = void (*)(ForgePact::PetQuestOutcome outcome);
+
+static PetTravelResult PetTravelStep(const RValue& petInst, double targetId, int& travelFrames, int& cooldown,
+                                     PetCollectFn collect, PetEndTravelFn endTravel)
+{
+    RValue target = RValue(targetId);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); } catch (...) {}
+    if (!alive) {
+        // These items despawn on their own (deleteTimer), so losing one
+        // mid-walk is ordinary, not an error.
+        endTravel(ForgePact::PetQuestOutcome::Lost);
+        return PetTravelResult::Lost;
+    }
+    try {
+        const double tx = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("x") }).ToDouble();
+        const double ty = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("y") }).ToDouble();
+        const double px = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("x") }).ToDouble();
+        const double py = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
+        const double dx = tx - px, dy = ty - py;
+        const double d2 = dx * dx + dy * dy;
+        const bool arrived = (d2 <= kPetQuestArriveR * kPetQuestArriveR);
+        if (++travelFrames > kPetQuestTravelMax) {
+            // Straight-line movement should always arrive, so a timeout
+            // means something is holding the pet (its own AI winning the
+            // x/y tug-of-war, a teleport, a room change). Collect anyway:
+            // the fetch animation is cosmetic, the credit is the point.
+            // Unless that collect removed the item, the timeout holds it
+            // back: re-picking an item the pet cannot reach is #94's loop.
+            const ForgePact::PetQuestOutcome r = collect(target);
+            endTravel(r == ForgePact::PetQuestOutcome::Collected ? r : ForgePact::PetQuestOutcome::Timeout);
+            cooldown = kPetQuestCooldownFrames;
+            return PetTravelResult::TimedOut;
+        }
+        if (!arrived) {
+            const double d = std::sqrt(d2);
+            const double t = (kPetQuestSpeed >= d) ? 1.0 : (kPetQuestSpeed / d);
+            g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("x"), RValue(px + dx * t) });
+            g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("y"), RValue(py + dy * t) });
+            return PetTravelResult::Moving;
+        }
+        endTravel(collect(target));
+        // An arrival falls through to the cooldown below; the Abandoned
+        // there is a no-op for the selector after the Note just made.
+        endTravel(ForgePact::PetQuestOutcome::Abandoned);
+        cooldown = kPetQuestCooldownFrames;
+        return PetTravelResult::Arrived;
+    } catch (...) {}
+    // A position read that threw closes the travel without holding the
+    // item; after a Note this is a no-op for the selector.
+    endTravel(ForgePact::PetQuestOutcome::Abandoned);
+    cooldown = kPetQuestCooldownFrames;
+    return PetTravelResult::Abandoned;
 }
 
 static void PetQuestCollectorTick()
@@ -9265,53 +9334,21 @@ static void PetQuestCollectorTick()
     } catch (...) { InterlockedIncrement(&g_PetQuestNoCam); return; }
 
     // --- Travel: the pet is already on its way somewhere -------------------
+    // The walk both collectors share (PetTravelStep, above): on arrival, or
+    // on timeout, it calls PetQuestCollectOne and closes the travel through
+    // PetQuestEndTravel, so the selector always hears how it went.
     if (g_PetQuestPhase == PetQuestPhase::Travel) {
-        RValue target = RValue(g_PetQuestTargetId);
-        bool alive = false;
-        try { alive = g_Yytk->CallBuiltin("instance_exists", { target }).ToBoolean(); } catch (...) {}
-        if (!alive) {
-            // These items despawn on their own (deleteTimer), so losing one
-            // mid-walk is ordinary, not an error.
-            InterlockedIncrement(&g_PetQuestTargetLost);
-            PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost);
-            return;
-        }
-        try {
-            const double tx = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("x") }).ToDouble();
-            const double ty = g_Yytk->CallBuiltin("variable_instance_get", { target, RValue("y") }).ToDouble();
-            const double px = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("x") }).ToDouble();
-            const double py = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
-            const double dx = tx - px, dy = ty - py;
-            const double d2 = dx * dx + dy * dy;
-            const bool arrived = (d2 <= kPetQuestArriveR * kPetQuestArriveR);
-            if (++g_PetQuestTravelFrames > kPetQuestTravelMax) {
-                // Straight-line movement should always arrive, so a timeout
-                // means something is holding the pet (its own AI winning the
-                // x/y tug-of-war, a teleport, a room change). Collect anyway:
-                // the fetch animation is cosmetic, the credit is the point.
-                // Unless that collect removed the item, the timeout holds it
-                // back: re-picking an item the pet cannot reach is #94's loop.
-                InterlockedIncrement(&g_PetQuestTravelTimeouts);
-                const ForgePact::PetQuestOutcome r = PetQuestCollectOne(target);
-                PetQuestEndTravel(r == ForgePact::PetQuestOutcome::Collected ? r : ForgePact::PetQuestOutcome::Timeout);
-                g_PetQuestCooldown = kPetQuestCooldownFrames;
-                return;
-            }
-            if (!arrived) {
-                const double d = std::sqrt(d2);
-                const double t = (kPetQuestSpeed >= d) ? 1.0 : (kPetQuestSpeed / d);
-                g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("x"), RValue(px + dx * t) });
-                g_Yytk->CallBuiltin("variable_instance_set", { petInst, RValue("y"), RValue(py + dy * t) });
-                return;
-            }
-            PetQuestEndTravel(PetQuestCollectOne(target));
-        } catch (...) {}
-        // A position read that threw closes the travel without holding the
-        // item; after a Note this is a no-op for the selector.
-        PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
-        g_PetQuestCooldown = kPetQuestCooldownFrames;
+        const PetTravelResult r = PetTravelStep(petInst, g_PetQuestTargetId, g_PetQuestTravelFrames, g_PetQuestCooldown,
+                                                PetQuestCollectOne, PetQuestEndTravel);
+        if (r == PetTravelResult::Lost) InterlockedIncrement(&g_PetQuestTargetLost);
+        else if (r == PetTravelResult::TimedOut) InterlockedIncrement(&g_PetQuestTravelTimeouts);
         return;
     }
+
+    // One pet, one fetch (#124): while Pet Collects Relics walks the pet,
+    // this tick picks nothing. With that switch off it never holds the pet,
+    // so the quest collector behaves exactly as before.
+    if (!ForgePact::PetFetchArbiter::Instance().MayPick(ForgePact::PetFetcher::Quest)) return;
 
     // --- Idle: choose the nearest eligible item on screen not held back -----
     // The walk reads at most kBudget family instances per tick (a runaway
@@ -9354,6 +9391,7 @@ static void PetQuestCollectorTick()
     // hold to expire rather than walking back to an item that just failed.
     const std::optional<double> pick = g_PetQuestSelector.Pick(candidates, g_PetQuestFrame);
     if (!pick) return;
+    ForgePact::PetFetchArbiter::Instance().Claim(ForgePact::PetFetcher::Quest);
     g_PetQuestTargetId = *pick;
     g_PetQuestTravelFrames = 0;
     g_PetQuestPhase = PetQuestPhase::Travel;
@@ -9396,6 +9434,647 @@ static void PetQuestCollectorStats()
         Out(d);
     }
 }
+
+// ---- pet collects relics (#124, PetRelicCollectorMod.hpp) ------------------
+// While `petrelic 1` is on and the pet is out, the pet walks to a relic on
+// screen and picks it up through the game's own loot pickup, one at a time,
+// with the quest collector's walk (PetTravelStep) and selector rule. The
+// call is the one the companion's own Step makes for its loot, read in
+// ForgePact/docs/pet-relic-collector-research.md § The mechanism:
+//
+//   PickupLoot(global.mplr, <ground item>.itemInstance, true, true,
+//              GetVariable(<ground item>.isPlayerDrop))
+//   with self = the ground item, other = the pet (Companion_obj),
+//
+// by name, through CallGameScriptEx, like `sigdrop`'s LootGroundCreateFromItem
+// call. Neither PickupLoot nor PickupRelic destroys the ground item; every
+// caller the reading found destroys it itself after a true return, so the
+// plugin does the same - but a true return alone is not a pickup: PickupRelic
+// also returns true for a relic-tab copy already at 10/10, raising nothing.
+// So the collect reads the owned level before and after the call and
+// destroys the relic only when that level rose.
+//
+// A relic the player already owns at 10/10 is never a candidate: the maxed
+// set (the owned levels from HeroSiege::Player::GetOwnedRelicLevels, never
+// RelicFilterMod's own scan, which answers nothing while the relic filter is
+// off) drops it before the selector sees it, and the collect reads the owned
+// level again. Every one of those reads passes both of the SDK's scan
+// reports and counts only when both scans ran to the end: a walk that stops
+// early returns a smaller, plausible set, not a failure, and the relic-tab
+// 10/10 id it leaves out is exactly the one a pickup would consume for
+// nothing.
+static int g_LootGroundObjIdx = -1;
+static bool g_PetRelicAssetsResolved = false;
+
+static void ResolvePetRelicAssets()
+{
+    if (g_PetRelicAssetsResolved) return;
+    g_PetRelicAssetsResolved = true;
+    // Companion_obj (the pet, and `other` for the collect), by name with the
+    // SDK constant as fallback - the quest collector's own resolve.
+    ResolvePetQuestAssets();
+    g_LootGroundObjIdx = (int)HeroSiege::Objects::GameObject::Loot_Ground_obj;
+    try {
+        const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string("Loot_Ground_obj")) }).ToDouble();
+        if (i >= 0) g_LootGroundObjIdx = i;
+    } catch (...) {}
+}
+
+// The Loot_Ground_obj instance behind `value`. A handle passes through; a plain
+// number (an instance id: what PetTravelStep hands a collect, and what
+// LootGroundCreateFromItem can return) is matched against the Loot_Ground_obj
+// instances by their `id`. The SDK's ground read takes a handle and refuses a
+// number as NoHandle, so a number read directly would make every ground relic
+// look like "not a relic". False when no Loot_Ground_obj carries the id.
+static bool LootGroundHandle(const RValue& value, RValue& inst)
+{
+    if (HeroSiege::Player::IsInstanceHandle(value)) { inst = value; return true; }
+    if (value.m_Kind != VALUE_REAL && value.m_Kind != VALUE_INT32 && value.m_Kind != VALUE_INT64) return false;
+    if (g_LootGroundObjIdx < 0) return false;
+    const double want = value.ToDouble();
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); }
+    catch (...) { return false; }
+    for (int i = 0; i < total; ++i) {
+        RValue cand = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
+        if (!HeroSiege::Player::IsInstanceHandle(cand)) continue;
+        if (g_Yytk->CallBuiltin("variable_instance_get", { cand, RValue("id") }).ToDouble() == want) { inst = cand; return true; }
+    }
+    return false;
+}
+
+enum class PetRelicPhase { Idle, Travel };
+static PetRelicPhase g_PetRelicPhase = PetRelicPhase::Idle;
+static double g_PetRelicTargetId = -4.0;
+static int    g_PetRelicTravelFrames = 0;
+static int    g_PetRelicCooldown = 0;
+// The relic tick's own selector (nearest not held back, the family cursor):
+// the quest collector's rule, not its state.
+static ForgePact::PetQuestSelector g_PetRelicSelector;
+static int64_t g_PetRelicFrame = 0;
+// Whether the maxed cache holds a set read with both scans complete, and the
+// frame before which an incomplete read is not retried.
+static bool    g_PetRelicMaxedComplete = false;
+static int64_t g_PetRelicMaxedRetryFrame = 0;
+// Ground relics whose pickup returned true without a raise and destroy both
+// confirmed (no raise seen, the after-read stopped early, the destroy did not
+// take, or a throw after the true return). The selector's hold lapses after
+// kPetQuestHoldFrames (about 10 s); this does not: the Idle walk leaves these
+// ids out for as long as the instance exists, because a raise the read missed
+// would be raised again by a second pickup. An id is pruned once
+// `instance_exists` says it is gone. `never-retried=` counts the ids added.
+static std::unordered_set<double> g_PetRelicNeverRetry;
+static std::atomic<long> g_PetRelicNeverRetried{ 0 };
+static void PetRelicNeverRetry(double id)
+{
+    if (g_PetRelicNeverRetry.insert(id).second) g_PetRelicNeverRetried.fetch_add(1);
+}
+
+static void PetRelicEndTravel(ForgePact::PetQuestOutcome outcome)
+{
+    g_PetRelicSelector.Note(outcome, g_PetRelicFrame);
+    ForgePact::PetFetchArbiter::Instance().Release(ForgePact::PetFetcher::Relic);
+    g_PetRelicPhase = PetRelicPhase::Idle;
+}
+
+// The ground item's own `itemActive` (hub RUNTIME_DATA_MODELS § 10.6: the
+// companion's own pickup requires it). An instance without the name is
+// counted as such, not treated as false.
+enum class PetRelicActive { Yes, No, Missing };
+static PetRelicActive PetRelicItemActive(const RValue& inst)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("itemActive") }).ToBoolean())
+            return PetRelicActive::Missing;
+        return g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemActive") }).ToBoolean()
+            ? PetRelicActive::Yes : PetRelicActive::No;
+    } catch (...) { return PetRelicActive::No; }
+}
+
+// The fifth argument, as the companion passes it: the ground item's
+// `isPlayerDrop` through the game's protected-value read `GetVariable`,
+// called by name. Undefined when the instance has no such variable or the
+// call does not resolve. The reading did not record the value of the game's
+// "not set" sentinel, so a result is passed on as GetVariable returned it;
+// PickupLoot's relic branch never reads this argument (research doc §
+// Static reading), and `petrelic trace` shows what the player's own pickup
+// passes.
+static RValue PetRelicPlayerDropArg(const RValue& inst)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue("isPlayerDrop") }).ToBoolean()) return RValue();
+        const RValue raw = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("isPlayerDrop") });
+        return g_Yytk->CallBuiltin("GetVariable", { raw });
+    } catch (...) { return RValue(); }
+}
+
+static std::string PetRelicObjectName(CInstance* inst)
+{
+    const int oi = CallerObjectIndex(inst);
+    if (oi < 0) return "?";
+    try { return g_Yytk->CallBuiltin("object_get_name", { RValue((double)oi) }).ToString(); } catch (...) { return "?"; }
+}
+
+// What a call was handed, for a refusal line: a rejected call shape is only
+// evidence alongside what was supplied (AGENTS.md, "Never Call an Address
+// You Resolved by Hand", last paragraph).
+static std::string PetRelicSupplied(const char* script, CInstance* self, CInstance* other, const std::vector<RValue>& args)
+{
+    std::string s = std::string(" supplied: ") + script + " self=" + PetRelicObjectName(self)
+        + " other=" + PetRelicObjectName(other) + " argc=" + std::to_string(args.size()) + " args=[";
+    for (size_t i = 0; i < args.size(); ++i) s += (i ? ", " : "") + Describe(args[i]);
+    return s + "]";
+}
+
+// Every refusal is counted, with its reason kept for `petrelic 0`'s
+// `(last <why>)`; the first few also log one line each, in both builds, so
+// the player's own out.txt says what went wrong.
+static volatile long g_PetRelicRefusalLines = 0;
+static void PetRelicRefuse(const char* why, const std::string& supplied = std::string())
+{
+    ForgePact::PetRelicCollectorMod::Instance().Refuse(why);
+    if (InterlockedIncrement(&g_PetRelicRefusalLines) <= 8)
+        Out(std::string("petrelic: collect refused (") + why + ")" + supplied + ". Nothing was destroyed.");
+}
+
+// A reason for PetRelicCollectorMod::Refuse, which keeps the pointer: built
+// strings are kept here, once each, so the pointer outlives the call. The
+// set stays small (one entry per scan and stage that ever stopped).
+static const char* PetRelicReason(const std::string& why)
+{
+    static std::set<std::string> s_Reasons;
+    return s_Reasons.insert(why).first->c_str();
+}
+
+// The owned relic levels (relic id -> the owned copy's level), read through
+// hs-game-sdk with both scan reports. True only when the equipped-slot scan
+// and the relic-tab scan both report `stopped == nullptr`; otherwise
+// `stopped` names the first one that stopped and its stage, as
+// "<equipped|tab>:<stage>", and `levels` must not be used: a walk that stops
+// early returns fewer relics, not an error.
+static bool PetRelicReadOwned(const RValue& player, std::unordered_map<int, int>& levels, std::string& stopped)
+{
+    HeroSiege::Player::EquippedSlotScanReport equipped;
+    HeroSiege::Player::RelicTabScanReport tab;
+    try { levels = HeroSiege::Player::GetOwnedRelicLevels(g_Yytk, player, &equipped, &tab); }
+    catch (...) { stopped = "scan:exception"; return false; }
+    if (equipped.stopped) { stopped = std::string("equipped:") + equipped.stopped; return false; }
+    if (tab.stopped) { stopped = std::string("tab:") + tab.stopped; return false; }
+    return true;
+}
+
+// A true return after which the relic is still on the ground: no raise was
+// seen (`true-but-nothing-raised=`, with its reason as `(last <why>)`), or
+// the plugin's destroy did not take (`destroy-failed=`); both counted by the
+// caller. The first few also log one line each, naming which.
+static volatile long g_PetRelicRemainedLines = 0;
+static void PetRelicRemained(const std::string& why)
+{
+    if (InterlockedIncrement(&g_PetRelicRemainedLines) <= 8)
+        Out("petrelic: pickup returned true, relic left on the ground (" + why + "); held back.");
+}
+
+// Returns how the collect went, for the selector: Collected when the pickup
+// returned true, the owned level rose by one (or the id is newly owned at
+// level 1) and the relic is gone; NoEffect when it returned true but no
+// raise was seen (nothing destroyed, `true-but-nothing-raised=`), or the
+// plugin's destroy left it there (`destroy-failed=`); Gate when eligibility
+// failed at arrival;
+// Refused when the call could not be made, threw, the game answered false,
+// or the owned levels could not be read whole before the call. Only a true
+// return followed by a seen raise ever destroys anything. A true return that
+// does not end in Collected also puts the id in g_PetRelicNeverRetry.
+static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& target)
+{
+    using ForgePact::PetQuestOutcome;
+    auto& mod = ForgePact::PetRelicCollectorMod::Instance();
+    // PetTravelStep hands the target over as its instance id, a plain number.
+    const double targetId = target.ToDouble();
+    bool returnedTrue = false;
+    try {
+        // Everything below works on the ground item's own instance handle:
+        // the SDK's ground read refuses a number, which would count every
+        // relic the pet reached as "not a relic" and pick nothing up.
+        RValue inst;
+        if (!LootGroundHandle(target, inst)) { PetRelicRefuse("no ground handle"); return PetQuestOutcome::Refused; }
+        // Eligibility, re-read now and never cached from selection: the
+        // instance is a relic with an id, the id is not maxed, and the item is
+        // active. (The travel already checked that it exists.) The cached
+        // set is a cheap first look; the owned level read just before the
+        // call below is what decides.
+        HeroSiege::Player::GroundRelicRead read;
+        if (!HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read)) {
+            mod.skippedNotRelic.fetch_add(1);
+            return PetQuestOutcome::Gate;
+        }
+        if (mod.Maxed().IsMaxed(read.relicId)) { mod.skippedMaxed.fetch_add(1); return PetQuestOutcome::Gate; }
+        const PetRelicActive active = PetRelicItemActive(inst);
+        if (active == PetRelicActive::No) { mod.skippedGate.fetch_add(1); return PetQuestOutcome::Gate; }
+        if (active == PetRelicActive::Missing) mod.itemActiveMissing.fetch_add(1);
+
+        RValue petInst;
+        try {
+            if ((int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_CompanionObjIdx) }).ToDouble() > 0)
+                petInst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_CompanionObjIdx), RValue(0.0) });
+        } catch (...) {}
+        CInstance* pet = HhResolveInstance(petInst);
+        if (!pet) { PetRelicRefuse("no pet"); return PetQuestOutcome::Refused; }
+        CInstance* item = HhResolveInstance(inst);
+        if (!item) { PetRelicRefuse("no item"); return PetQuestOutcome::Refused; }
+        const RValue mplr = g_Yytk->CallBuiltin("variable_global_get", { RValue("mplr") });
+        if (mplr.m_Kind == VALUE_UNDEFINED) { PetRelicRefuse("no player"); return PetQuestOutcome::Refused; }
+        // Passed straight through as an argument, so either kind the runner
+        // hands back will do; only a non-instance is refused.
+        const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemInstance") });
+        if (!HeroSiege::Player::IsInstanceHandle(itemStruct)) { PetRelicRefuse("no itemInstance"); return PetQuestOutcome::Refused; }
+
+        // The owned level of this relic, read fresh and whole. An incomplete
+        // read could be missing exactly the relic-tab 10/10 copy whose pickup
+        // returns true and raises nothing, so it refuses the collect.
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) { PetRelicRefuse("no player"); return PetQuestOutcome::Refused; }
+        std::unordered_map<int, int> before;
+        std::string stopped;
+        if (!PetRelicReadOwned(player, before, stopped)) {
+            PetRelicRefuse(PetRelicReason("maxed-scan-incomplete(" + stopped + ")"));
+            return PetQuestOutcome::Refused;
+        }
+        const auto ownedBefore = before.find(read.relicId);
+        const bool wasOwned = ownedBefore != before.end();
+        const int levelBefore = wasOwned ? ownedBefore->second : 0;
+        // `relicfilter testmaxed` (research build) counts here too, so Live 1
+        // can prove the skip at arrival as well as at the pick.
+        if (levelBefore >= HeroSiege::Player::kMaxedRelicLevel
+            || ForgePact::RelicFilterMod::Instance().TestMaxed().count(read.relicId)) {
+            mod.skippedMaxed.fetch_add(1);
+            mod.Maxed().MarkStale();   // the cached set missed it
+            return PetQuestOutcome::Gate;
+        }
+
+        // Route A, what ships: the companion's own PickupLoot shape.
+        const char* script = "gml_Script_PickupLoot";
+        std::vector<RValue> args{ mplr, itemStruct, RValue(true), RValue(true), PetRelicPlayerDropArg(inst) };
+#ifndef FORGEPACT_RELEASE
+        // Route B, research build only (`petrelic route b`): PickupRelic
+        // directly, with the same self and other.
+        if (mod.Route() == ForgePact::PetRelicRoute::PickupRelic) {
+            script = "gml_Script_PickupRelic";
+            args = { mplr, itemStruct };
+        }
+#endif
+        RValue result;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(result, script, item, pet, args); }
+        catch (...) { PetRelicRefuse("call threw", PetRelicSupplied(script, item, pet, args)); return PetQuestOutcome::Refused; }
+        if (!AurieSuccess(st)) { PetRelicRefuse("no callable", PetRelicSupplied(script, item, pet, args)); return PetQuestOutcome::Refused; }
+        if (!result.ToBoolean()) {
+            // The game refused the pickup (an equipped copy at 10/10 answers
+            // false). The relic stays where it is, and is held back.
+            PetRelicRefuse("returned false", PetRelicSupplied(script, item, pet, args));
+            return PetQuestOutcome::Refused;
+        }
+        returnedTrue = true;
+        // A pickup can take the owned copy to 10/10: read the maxed set again
+        // before the next pick.
+        mod.Maxed().MarkStale();
+        // A true return is not a pickup by itself (a relic-tab copy at 10/10
+        // also answers true and raises nothing). The pickup counts only when
+        // the owned level is exactly one higher, or the id was not owned and
+        // now is at level 1 (relics drop at level 1), read whole again.
+        // Otherwise nothing is destroyed, and the relic is never picked again
+        // while it exists (g_PetRelicNeverRetry, not only the selector's
+        // timed hold): a raise the read missed would be raised again by a
+        // second pickup.
+        std::unordered_map<int, int> after;
+        if (!PetRelicReadOwned(player, after, stopped)) {
+            const std::string why = "after-scan-incomplete(" + stopped + ")";
+            mod.NothingRaised(PetRelicReason(why));
+            PetRelicRemained(why);
+            PetRelicNeverRetry(targetId);
+            return PetQuestOutcome::NoEffect;
+        }
+        const auto ownedAfter = after.find(read.relicId);
+        const bool nowOwned = ownedAfter != after.end();
+        const int levelAfter = nowOwned ? ownedAfter->second : 0;
+        const bool raised = nowOwned && (wasOwned ? levelAfter == levelBefore + 1 : levelAfter == 1);
+        if (!raised) {
+            const std::string why = "no-raise(" + std::string(wasOwned ? std::to_string(levelBefore) : "none") + "->"
+                                    + (nowOwned ? std::to_string(levelAfter) : "none") + ")";
+            mod.NothingRaised(PetRelicReason(why));
+            PetRelicRemained(why);
+            PetRelicNeverRetry(targetId);
+            return PetQuestOutcome::NoEffect;
+        }
+        mod.collected.fetch_add(1);
+        // PickupLoot does not destroy the ground item; its callers do, after a
+        // true return. So the relic is expected to still be here, and the
+        // plugin destroys it - unless something else already removed it.
+        if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
+            g_Yytk->CallBuiltin("instance_destroy", { inst });
+            mod.destroyedByPlugin.fetch_add(1);
+            if (g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
+                mod.destroyFailed.fetch_add(1);
+                PetRelicRemained("destroy-failed");
+                PetRelicNeverRetry(targetId);
+                return PetQuestOutcome::NoEffect;
+            }
+        }
+        return PetQuestOutcome::Collected;
+    } catch (...) {
+        PetRelicRefuse("call threw");
+        // After a true return the raise may have happened: never again.
+        if (returnedTrue) PetRelicNeverRetry(targetId);
+        return PetQuestOutcome::Refused;
+    }
+}
+
+// Called once per frame from FrameCallback while `petrelic 1` is on, right
+// after the quest collector's tick. The same state machine as
+// PetQuestCollectorTick: Idle chooses through the selector, Travel is the
+// shared walk, and the collect runs on arrival or timeout.
+static void PetRelicCollectorTick()
+{
+    ResolvePetRelicAssets();
+    if (g_LootGroundObjIdx < 0 || g_CompanionObjIdx < 0) return;
+    ++g_PetRelicFrame;
+    auto& mod = ForgePact::PetRelicCollectorMod::Instance();
+
+    RValue petInst;
+    try {
+        int n = 0;
+        try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_CompanionObjIdx) }).ToDouble(); }
+        catch (...) { n = 0; }
+        if (n > 0) petInst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_CompanionObjIdx), RValue(0.0) });
+    } catch (...) {}
+    // No pet out, no fetching - which also keeps the tick out of menus.
+    if (petInst.m_Kind == VALUE_UNDEFINED) {
+        if (g_PetRelicPhase == PetRelicPhase::Travel) PetRelicEndTravel(ForgePact::PetQuestOutcome::Abandoned);
+        return;
+    }
+    // Counted before anything else can return, so `pet-seen ticks=0` in the
+    // stat line means no pet was out, not that a later read failed.
+    mod.petSeen.fetch_add(1);
+
+    if (g_PetRelicCooldown > 0) { --g_PetRelicCooldown; return; }
+
+    if (g_PetRelicPhase == PetRelicPhase::Travel) {
+        const PetTravelResult r = PetTravelStep(petInst, g_PetRelicTargetId, g_PetRelicTravelFrames, g_PetRelicCooldown,
+                                                PetRelicCollectOne, PetRelicEndTravel);
+        if (r == PetTravelResult::Lost) mod.targetLost.fetch_add(1);
+        else if (r == PetTravelResult::TimedOut) mod.travelTimeouts.fetch_add(1);
+        return;
+    }
+
+    // One pet, one fetch: while the quest collector walks the pet, pick
+    // nothing.
+    if (!ForgePact::PetFetchArbiter::Instance().MayPick(ForgePact::PetFetcher::Relic)) return;
+
+    // The maxed set, read again when the cache says so: once per
+    // kPetRelicMaxedRefreshTicks, and straight after a collect returned true.
+    // Through hs-game-sdk on the local player, never through RelicFilterMod's
+    // scan (empty while the relic filter is off; the two switches are
+    // independent). Without a player the tick cannot tell a maxed relic from
+    // a collectable one, so it picks nothing. A read that did not run both
+    // scans to the end is not stored: the last complete set stays, the next
+    // try waits kPetRelicMaxedRefreshTicks, and with no complete set yet the
+    // tick picks nothing and says why in `refused=`.
+    if (mod.Maxed().Due(g_PetRelicFrame) && g_PetRelicFrame >= g_PetRelicMaxedRetryFrame) {
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) { mod.Refuse("no player"); return; }
+        std::unordered_map<int, int> owned;
+        std::string stopped;
+        if (PetRelicReadOwned(player, owned, stopped)) {
+            std::unordered_set<int> ids = HeroSiege::Player::MaxedRelicIdsOf(owned);
+            // `relicfilter testmaxed <ids>` (research build) marks relics maxed
+            // without a real 10/10 copy, so Live 1 can prove the skip; empty
+            // otherwise, in both builds.
+            for (int id : ForgePact::RelicFilterMod::Instance().TestMaxed()) ids.insert(id);
+            mod.Maxed().Store(std::move(ids), g_PetRelicFrame);
+            g_PetRelicMaxedComplete = true;
+        } else {
+            g_PetRelicMaxedRetryFrame = g_PetRelicFrame + ForgePact::kPetRelicMaxedRefreshTicks;
+            if (!g_PetRelicMaxedComplete) mod.Refuse(PetRelicReason("maxed-scan-incomplete(" + stopped + ")"));
+        }
+    }
+    if (!g_PetRelicMaxedComplete) return;
+
+    double vx = 0, vy = 0, vw = 0, vh = 0;
+    try {
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
+        vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
+        vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
+        vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
+        if (vw <= 0 || vh <= 0) return;
+    } catch (...) { return; }
+
+    // --- Idle: the nearest relic on screen that is not maxed or held back ---
+    // The ground family is walked under the quest tick's budget, from the
+    // selector's cursor, wrapping.
+    constexpr int kBudget = 64;
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); }
+    catch (...) { return; }
+
+    double petX = 0, petY = 0;
+    try {
+        petX = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("x") }).ToDouble();
+        petY = g_Yytk->CallBuiltin("variable_instance_get", { petInst, RValue("y") }).ToDouble();
+    } catch (...) { return; }
+
+    // A never-retry id leaves the set once its instance is gone; a read that
+    // throws keeps it, so the exclusion fails closed.
+    for (auto it = g_PetRelicNeverRetry.begin(); it != g_PetRelicNeverRetry.end();) {
+        bool gone = false;
+        try { gone = !g_Yytk->CallBuiltin("instance_exists", { RValue(*it) }).ToBoolean(); } catch (...) {}
+        if (gone) it = g_PetRelicNeverRetry.erase(it);
+        else ++it;
+    }
+
+    const int start = g_PetRelicSelector.NextStart(total, kBudget);
+    const int walk = (std::min)(total, kBudget);
+    std::vector<ForgePact::PetRelicCandidate> relics;
+    for (int k = 0; k < walk; ++k) {
+        const int i = (start + k) % total;
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
+            if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            // A true return already went to this relic without a confirmed
+            // raise and destroy: never a candidate again while it exists.
+            if (!g_PetRelicNeverRetry.empty()
+                && g_PetRelicNeverRetry.count(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble()))
+                continue;
+            const double ix = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            const double iy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            if (ix < vx || ix > vx + vw || iy < vy || iy > vy + vh) continue;
+            // A relic by what it is (the SDK's ground read: the relic class
+            // and a definition id), never by a level- or id-shaped field.
+            HeroSiege::Player::GroundRelicRead read;
+            if (!HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read)) { mod.skippedNotRelic.fetch_add(1); continue; }
+            // An inactive item is not one the companion would take either.
+            if (PetRelicItemActive(inst) == PetRelicActive::No) continue;
+            const double dx = ix - petX, dy = iy - petY;
+            const double id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble();
+            relics.push_back({ id, dx * dx + dy * dy, read.relicId });
+        } catch (...) {}
+    }
+    // Maxed relics leave before the pick. With only maxed relics on screen
+    // the list is empty, Pick returns none and the pet stays idle.
+    long dropped = 0;
+    const std::vector<ForgePact::PetQuestCandidate> candidates =
+        ForgePact::FilterRelicCandidates(relics, mod.Maxed().Ids(), dropped);
+    if (dropped) mod.skippedMaxed.fetch_add(dropped);
+    const std::optional<double> pick = g_PetRelicSelector.Pick(candidates, g_PetRelicFrame);
+    if (!pick) return;
+    ForgePact::PetFetchArbiter::Instance().Claim(ForgePact::PetFetcher::Relic);
+    g_PetRelicTargetId = *pick;
+    g_PetRelicTravelFrames = 0;
+    g_PetRelicPhase = PetRelicPhase::Travel;
+}
+
+// `petrelic 0` (both builds) and `petrelic stat` (research build): one line.
+static void PetRelicCollectorStats()
+{
+    Out(ForgePact::PetRelicCollectorMod::Instance().StatLine(g_PetRelicSelector.HeldBack(),
+                                                             g_PetRelicPhase == PetRelicPhase::Travel)
+        + " never-retried=" + std::to_string(g_PetRelicNeverRetried.load()));
+}
+
+#ifndef FORGEPACT_RELEASE
+// ---- petrelic research instruments (research build only) -----------------
+// `petrelic census`: one line per ground relic on screen - instance id, relic
+// id, the owned copy's level, maxed or not, itemActive - plus how many ground
+// items the read refused at each stage, and the variable names of the first
+// relic (or, with none read as a relic, of the first ground item and its
+// itemInstance struct), so a renamed variable shows up in one command.
+static std::string PetRelicVarNames(const RValue& v, bool isStruct)
+{
+    std::string line;
+    try {
+        RValue names = g_Yytk->CallBuiltin(isStruct ? "variable_struct_get_names" : "variable_instance_get_names", { v });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n; ++i)
+            line += (i ? " " : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+    } catch (...) { line += " (exc)"; }
+    return line;
+}
+
+static void PetRelicCensus()
+{
+    ResolvePetRelicAssets();
+    if (g_LootGroundObjIdx < 0) { Out("petrelic census: Loot_Ground_obj did not resolve"); return; }
+    std::unordered_map<int, int> owned;
+    RValue player;
+    const bool havePlayer = HhResolveLocalPlayer(player);
+    if (havePlayer) { try { owned = HeroSiege::Player::GetOwnedRelicLevels(g_Yytk, player); } catch (...) {} }
+    std::unordered_set<int> maxed;
+    if (havePlayer) { try { maxed = HeroSiege::Player::GetMaxedRelicIds(g_Yytk, player); } catch (...) {} }
+    for (int id : ForgePact::RelicFilterMod::Instance().TestMaxed()) maxed.insert(id);
+
+    double vx = 0, vy = 0, vw = 0, vh = 0;
+    try {
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
+        vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
+        vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
+        vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
+    } catch (...) {}
+    int total = 0;
+    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); } catch (...) {}
+    Out("petrelic census: ground items=" + std::to_string(total) + " player=" + (havePlayer ? "yes" : "no")
+        + " owned relics=" + std::to_string(owned.size()) + " maxed=" + std::to_string(maxed.size()));
+
+    std::unordered_map<std::string, int> stages;
+    RValue firstRelic, firstItem;
+    int onScreen = 0;
+    for (int i = 0; i < total && i < 512; ++i) {
+        try {
+            RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
+            if (inst.m_Kind == VALUE_UNDEFINED) continue;
+            const double ix = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }).ToDouble();
+            const double iy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }).ToDouble();
+            if (vw > 0 && vh > 0 && (ix < vx || ix > vx + vw || iy < vy || iy > vy + vh)) continue;
+            ++onScreen;
+            if (firstItem.m_Kind == VALUE_UNDEFINED) firstItem = inst;
+            HeroSiege::Player::GroundRelicRead read;
+            HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read);
+            stages[HeroSiege::Player::GroundRelicStageName(read.stage)]++;
+            if (read.stage != HeroSiege::Player::GroundRelicStage::Ok) continue;
+            if (firstRelic.m_Kind == VALUE_UNDEFINED) firstRelic = inst;
+            const auto lvl = owned.find(read.relicId);
+            const PetRelicActive active = PetRelicItemActive(inst);
+            char b[256];
+            sprintf_s(b, "  relic inst=%.0f relic=%d owned=%s maxed=%s itemActive=%s",
+                      g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }).ToDouble(), read.relicId,
+                      lvl == owned.end() ? "none" : std::to_string(lvl->second).c_str(),
+                      maxed.count(read.relicId) ? "yes" : "no",
+                      active == PetRelicActive::Yes ? "1" : (active == PetRelicActive::No ? "0" : "missing"));
+            Out(b);
+        } catch (...) {}
+    }
+    std::string summary = "  on screen=" + std::to_string(onScreen) + " read stages:";
+    for (const auto& s : stages) summary += " " + s.first + "=" + std::to_string(s.second);
+    Out(summary);
+    const RValue& named = firstRelic.m_Kind != VALUE_UNDEFINED ? firstRelic : firstItem;
+    if (named.m_Kind == VALUE_UNDEFINED) return;
+    Out(std::string("  ") + (firstRelic.m_Kind != VALUE_UNDEFINED ? "first relic" : "first ground item (none read as a relic)")
+        + " vars: " + PetRelicVarNames(named, false));
+    try {
+        const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { named, RValue("itemInstance") });
+        if (HeroSiege::Player::IsInstanceHandle(itemStruct))
+            Out("  its itemInstance (" + Describe(itemStruct) + ") vars: "
+                + PetRelicVarNames(itemStruct, itemStruct.m_Kind == VALUE_OBJECT));
+        else Out("  its itemInstance: " + Describe(itemStruct));
+    } catch (...) {}
+}
+
+// `petrelic trace 1|0`: a detour on PickupLoot that logs each call's self and
+// other, argc, every argument's kind and value, the return, and whether self
+// still exists after the original returned. The positive control for the
+// call shape: the player's own click pickup of any item must log before a
+// mod collect is trusted. Installed through HookOneScript (table swap plus
+// the inline detour compiled GML's direct calls need) only once the runner
+// has settled and a player exists, the relicfilter pattern; a table-only
+// install is reported as such.
+static PFUNC_YYGMLScript g_Orig_PetRelicPickupLoot = nullptr;
+static std::atomic<bool> g_PetRelicTraceOn{ false };
+static bool g_PetRelicTracePending = false;
+static bool g_PetRelicTraceNative = false;
+static volatile long g_PetRelicTraceCalls = 0;
+static constexpr long kPetRelicTraceLinesMax = 64;
+
+static RValue& Hook_PetRelicPickupLoot(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& res = g_Orig_PetRelicPickupLoot ? g_Orig_PetRelicPickupLoot(S, O, R, argc, A) : R;
+    if (!g_PetRelicTraceOn.load()) return res;
+    const long n = InterlockedIncrement(&g_PetRelicTraceCalls);
+    if (n > kPetRelicTraceLinesMax) return res;
+    try {
+        std::string line = "petrelic trace #" + std::to_string(n) + ": PickupLoot self=" + PetRelicObjectName(S)
+            + " other=" + PetRelicObjectName(O) + " argc=" + std::to_string(argc) + " args=[";
+        for (int i = 0; i < argc; ++i) line += (i ? ", " : "") + (A && A[i] ? Describe(*A[i]) : std::string("null"));
+        bool selfExists = false;
+        try { selfExists = S && g_Yytk->CallBuiltin("instance_exists", { RValue(S) }).ToBoolean(); } catch (...) {}
+        line += "] -> " + Describe(res) + " self-exists-after=" + (selfExists ? "yes" : "no");
+        Out(line);
+    } catch (...) { Out("petrelic trace: line failed"); }
+    return res;
+}
+
+static void PetRelicTraceInstall()
+{
+    RValue player;
+    if (!HhResolveLocalPlayer(player)) return;
+    g_PetRelicTracePending = false;
+    if (!g_Orig_PetRelicPickupLoot) {
+        bool native = false;
+        HookOneScript("PickupLoot", "bp_petrelic_trace", (PVOID)Hook_PetRelicPickupLoot, &g_Orig_PetRelicPickupLoot, &native);
+        g_PetRelicTraceNative = native;
+    }
+    Out(std::string("petrelic trace: hook on PickupLoot -> ")
+        + (!g_Orig_PetRelicPickupLoot ? "NOT INSTALLED" : (g_PetRelicTraceNative ? "native detour + table" : "TABLE-ONLY (direct compiled-GML calls will not log)")));
+}
+#endif
 
 // ---- pet moves on from loot it cannot pick up (#94, PetLootUnstickMod.hpp) --
 // The game's own companion loot pickup, not the quest collector above. Static
@@ -21479,34 +22158,206 @@ static void SpawnByName(const std::string& name)
     } catch (...) { Out("SpawnByName EXCEPTION"); }
 }
 
-// Force a relic to drop at the player on demand. DropRelic has NO internal Satanic-Zone
-// gate (the restriction lives in its callers); it reads the drop x/y from argv[0]/argv[1]
-// and spawns via LootGroundCreate. So we call the original trampoline with the player's
-// coords as args and the player instance as self.
+// ---- forcerelic: relics on the ground for a test (#124, research command) ----
+// `forcerelic` puts relics at the player so a live session has something for the pet
+// to collect. It is not in kPlayerCommands, so the player build refuses it.
+//   forcerelic <n>              n relics (1..200), ids drawn from 0..140
+//   forcerelic ids <id,id,...>  one relic per listed id (0..155, at most 200)
+//   forcerelic drop <n>         n DropRelic calls with the force flag (the fallback)
+// Why the first two do not call DropRelic (static reading, 2026-10-02; the research
+// doc's "Placing a relic for a test"): DropRelic skips its chance roll only when its
+// fifth argument is true. Called with x and y alone, as this command did until replan 1,
+// it rolls against an absent fourth argument, fails, and returns false before it builds
+// anything - #124's Live 1 (session 2) printed 91 calls and had no relic on the ground.
+// So each relic is built through the game's own loader and placed the way `sigdrop` and
+// `angelicdrop` place theirs (InitItemFromJson -> LootGroundCreateFromItem, measured on
+// the ground 30/30 and 17/17 on 2026-09-18), and read back before it counts. That is a
+// test route, not how the game drops relics. Measured `self` for the placement was always
+// the dying enemy; here it is the player, and the read-back shows a wrong one.
+static constexpr int kForceRelicMax = 200;            // relics (or DropRelic calls) per command
+static constexpr int kForceRelicDroppableTop = 140;   // ids 0..140 drop; 141..155 are quest relics (hub docs/models/relic-pick-spec.md)
+static constexpr int kForceRelicIdTop = 155;          // the highest relic id the game draws
+
+// The player is resolved the way the relic tick resolves it (HhResolveLocalPlayer,
+// then HhResolveInstance for the CInstance*). The old instance_find ->
+// GetInstanceObject path printed "cannot resolve player CInstance" on every call
+// in #124's Live 1 (session 1) while `petrelic census` saw the player; this
+// runner hands instance_find back a VALUE_REF, the suspected (not measured) cause.
+static bool ForceRelicResolvePlayer(RValue& player, CInstance*& self, double& x, double& y)
+{
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) {
+        Out("forcerelic: no local player (how=" + how + "; be in a level)"); return false;
+    }
+    self = HhResolveInstance(player);
+    if (!self) { Out("forcerelic: local player (" + how + ") resolves to no CInstance"); return false; }
+    x = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+    y = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+    return true;
+}
+
+// Loot_Ground_obj instances in the room, resolved by name as `petrelic census` does; -1 unread.
+static int ForceRelicGroundItems()
+{
+    ResolvePetRelicAssets();
+    if (g_LootGroundObjIdx < 0) return -1;
+    try { return (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); }
+    catch (...) { return -1; }
+}
+
+// Builds relic `id` and places it at (x, y) with the player as `self`. Returns "" when a
+// relic with that id is on the ground, otherwise the stage that failed and what was
+// supplied and returned, for the command's "not placed" line.
+static std::string ForceRelicPlaceOne(int id, long long stamp, CInstance* g, CInstance* self, double x, double y)
+{
+    const char* stage = "json_parse";
+    try {
+        // A relic tab entry's fields (b = id, a = seed, a relic's c is 0; hub
+        // docs/RUNTIME_DATA_MODELS.md), the shape SpawnSignatureItem hands the loader.
+        const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
+        const std::string json = "{\"b\":" + std::to_string(id) + ",\"a\":" + std::to_string(seed) + ",\"j\":0,\"c\":0}";
+        RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (parsed.m_Kind != VALUE_OBJECT) return "json_parse (" + json + " gave " + Describe(parsed) + ")";
+        // The key's last field is the item class: class 14 from "-14" is measured (hub
+        // § 16.2), class 16 from "-16" is not, which is what the read-back below checks.
+        stage = "InitItemFromJson";
+        const std::string key = "0-0-" + std::to_string(stamp) + "-" + std::to_string(HeroSiege::Player::kRelicItemClass);
+        RValue item; const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) });
+        if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT)
+            return "InitItemFromJson (key " + key + ": st=" + std::to_string((int)st) + " gave " + Describe(item) + ")";
+        stage = "LootGroundCreateFromItem";
+        RValue res; const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, "gml_Script_LootGroundCreateFromItem", self, self, { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2))
+            return "LootGroundCreateFromItem (st=" + std::to_string((int)st2) + " returned " + Describe(res) + ")";
+        stage = "no-instance";
+        // LootGroundCreateFromItem returns the new Loot_Ground_obj instance, or a negative
+        // number when none exists (static reading); a number becomes its handle here.
+        RValue inst;
+        const bool exists = g_Yytk->CallBuiltin("instance_exists", { res }).ToBoolean();
+        if (!exists || !LootGroundHandle(res, inst))
+            return "no-instance (returned " + Describe(res) + (exists ? "; it exists but no Loot_Ground_obj carries that id" : "") + ")";
+        stage = "not-a-relic";
+        HeroSiege::Player::GroundRelicRead read;
+        if (!HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read) || read.relicId != id)
+            return "not-a-relic (returned " + Describe(res) + "; ReadGroundRelic "
+                + HeroSiege::Player::GroundRelicStageName(read.stage) + " class=" + std::to_string(read.itemClass)
+                + " id=" + std::to_string(read.relicId) + ")";
+        return "";
+    } catch (...) { return std::string(stage) + " (exception)"; }
+}
+
+// `forcerelic <n>` and `forcerelic ids`: one line for the command, one per relic not
+// placed (the first 8).
+static void ForceRelicPlace(const std::vector<int>& ids)
+{
+    try {
+        RValue player; CInstance* self = nullptr; double x = 0, y = 0;
+        if (!ForceRelicResolvePlayer(player, self, x, y)) return;
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        if (!g) { Out("forcerelic: no global instance"); return; }
+        const int before = ForceRelicGroundItems();
+        // One key per relic: the millisecond clock, stepped per relic so no two collide.
+        const long long stamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        int placed = 0, reported = 0;
+        std::string list;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            list += (i ? "," : "") + std::to_string(ids[i]);
+            const std::string why = ForceRelicPlaceOne(ids[i], stamp + (long long)i, g, self, x, y);
+            if (why.empty()) { ++placed; continue; }
+            if (reported++ < 8) Out("forcerelic: relic " + std::to_string(ids[i]) + " not placed at " + why);
+        }
+        if (reported > 8) Out("forcerelic: " + std::to_string(reported - 8) + " more relic(s) not placed");
+        char b[256];
+        sprintf_s(b, "forcerelic: placed %d/%d relic(s) via LootGroundCreateFromItem at player (%.0f, %.0f); ground items %d -> %d; ids ",
+                  placed, (int)ids.size(), x, y, before, ForceRelicGroundItems());
+        Out(std::string(b) + list);
+    } catch (...) { Out("forcerelic: EXCEPTION"); }
+}
+
+// `forcerelic <n>` (and F11, n = 1): n ids drawn uniformly from the droppable range.
 static void ForceRelicDrop(int n)
 {
     if (n < 1) n = 1;
-    if (n > 200) n = 200;
+    if (n > kForceRelicMax) n = kForceRelicMax;
+    std::uniform_int_distribution<int> pick(0, kForceRelicDroppableTop);
+    std::vector<int> ids;
+    for (int i = 0; i < n; i++) ids.push_back(pick(TyRng()));
+    ForceRelicPlace(ids);
+}
+
+// `forcerelic drop <n>`: the game's DropRelic with the force flag (x, y, 0, 0, true; the
+// sixth, which DropRelic hands on to LootGroundCreate, left out), as #125's
+// `callnum DropRelic <x> <y> 0 0 1 0` did. It returns true only after its
+// LootGroundCreate call (static reading); #125 measured relics built and no ground item,
+// so the return and the ground count are printed rather than assumed. The call goes to
+// the original, not through Hook_DropRelic.
+static void ForceRelicDropRoute(int n)
+{
+    if (n < 1) n = 1;
+    if (n > kForceRelicMax) n = kForceRelicMax;
     if (!g_Orig_DropRelic) { Out("forcerelic: DropRelic not hooked yet"); return; }
     try {
-        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
-        RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue(0.0) });
-        if (id.ToDouble() < 0) { Out("forcerelic: no Player_obj instance (be in a level)"); return; }
-        RValue px = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") });
-        RValue py = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("y") });
-        CInstance* self = nullptr;
-        g_Yytk->GetInstanceObject((int32_t)id.ToDouble(), self);
-        if (!self) { Out("forcerelic: cannot resolve player CInstance"); return; }
+        RValue player; CInstance* self = nullptr; double x = 0, y = 0;
+        if (!ForceRelicResolvePlayer(player, self, x, y)) return;
+        const int before = ForceRelicGroundItems();
+        int yes = 0, no = 0, other = 0;
         for (int i = 0; i < n; i++) {
-            RValue ax = px; RValue ay = py;
-            RValue* argv[2] = { &ax, &ay };
+            RValue ax(x), ay(y);
+            RValue a2(0.0), a3(0.0);
+            RValue force(true);
+            RValue* argv[5] = { &ax, &ay, &a2, &a3, &force };
             RValue tmp;
-            try { g_Orig_DropRelic(self, self, tmp, 2, argv); } catch (...) {}
+            try {
+                RValue r = g_Orig_DropRelic(self, self, tmp, 5, argv);
+                if (r.m_Kind == VALUE_BOOL) (r.ToBoolean() ? yes : no)++;
+                else if (r.m_Kind == VALUE_REAL || r.m_Kind == VALUE_INT32 || r.m_Kind == VALUE_INT64) {
+                    const double v = r.ToDouble();
+                    if (v == 1.0) ++yes; else if (v == 0.0) ++no; else ++other;
+                } else ++other;
+            } catch (...) { ++other; }
         }
-        char b[128];
-        sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
+        char b[320];
+        sprintf_s(b, "forcerelic drop: %d DropRelic call(s) with the force flag (x, y, 0, 0, true) at player (%.0f, %.0f): "
+                     "returned true=%d false=%d other=%d; ground items %d -> %d",
+                  n, x, y, yes, no, other, before, ForceRelicGroundItems());
         Out(b);
-    } catch (...) { Out("forcerelic EXCEPTION"); }
+    } catch (...) { Out("forcerelic: EXCEPTION"); }
+}
+
+static void ForceRelicCommand(const std::string& rest)
+{
+    std::string arg;
+    const std::string form = Lower(FirstToken(rest, arg));
+    if (form == "drop") {
+        int n = 1; try { n = std::stoi(arg); } catch (...) {}
+        ForceRelicDropRoute(n);
+        return;
+    }
+    if (form == "ids") {
+        std::vector<int> ids;
+        std::string tok;
+        for (size_t i = 0; i <= arg.size(); ++i) {
+            if (i < arg.size() && arg[i] != ',' && !std::isspace((unsigned char)arg[i])) { tok += arg[i]; continue; }
+            if (tok.empty()) continue;
+            int id = -1; size_t used = 0;
+            try { id = std::stoi(tok, &used); } catch (...) { used = 0; }
+            if (used != tok.size() || id < 0 || id > kForceRelicIdTop) {
+                Out("forcerelic: ids takes relic ids 0.." + std::to_string(kForceRelicIdTop) + ", comma-separated (bad '" + tok + "')");
+                return;
+            }
+            ids.push_back(id);
+            tok.clear();
+        }
+        if (ids.empty()) { Out("forcerelic: ids needs at least one id (e.g. forcerelic ids 3,17,140)"); return; }
+        if (ids.size() > (size_t)kForceRelicMax) {
+            Out("forcerelic: ids takes at most " + std::to_string(kForceRelicMax) + " ids (got " + std::to_string(ids.size()) + ")");
+            return;
+        }
+        ForceRelicPlace(ids);
+        return;
+    }
+    int n = 1; try { n = std::stoi(rest); } catch (...) {}
+    ForceRelicDrop(n);
 }
 
 // ===== Relic gate: KALDIRILDI ===============================================
@@ -43155,7 +44006,7 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick", "petrelic",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
@@ -43180,6 +44031,57 @@ static void RunCommand(const std::string& line)
         // SetEnabled prints the `petunstick -> ON|OFF` line itself; off adds
         // what the mod did, where its ticks went and how each give-up ended.
         if (!enable) Out(ForgePact::PetLootUnstickMod::Instance().FullStatLine() + PetLootLocalStatSuffix());
+        return;
+    }
+    // `petrelic 1` / `petrelic 0` (#124), Pet Collects Relics: a standalone
+    // early return for the same reason. Anything but 1/on/true turns it off
+    // and prints the stat line, the `petquest` shape; the research build adds
+    // `stat`, `census`, `route a|b` and `trace 1|0`.
+    if (lc == "petrelic") {
+        std::string pv = Lower(rest);
+        while (!pv.empty() && std::isspace((unsigned char)pv.back())) pv.pop_back();
+#ifndef FORGEPACT_RELEASE
+        if (pv == "stat") { PetRelicCollectorStats(); return; }
+        if (pv == "census") { PetRelicCensus(); return; }
+        if (pv.rfind("route", 0) == 0) {
+            std::string r = pv.substr(5);
+            while (!r.empty() && std::isspace((unsigned char)r.front())) r.erase(r.begin());
+            if (r == "a") ForgePact::PetRelicCollectorMod::Instance().SetRoute(ForgePact::PetRelicRoute::PickupLoot);
+            else if (r == "b") ForgePact::PetRelicCollectorMod::Instance().SetRoute(ForgePact::PetRelicRoute::PickupRelic);
+            else if (!r.empty()) { Out("petrelic route: usage -> petrelic route a|b"); return; }
+            Out(std::string("petrelic route = ") + ForgePact::PetRelicCollectorMod::Instance().RouteName()
+                + (ForgePact::PetRelicCollectorMod::Instance().Route() == ForgePact::PetRelicRoute::PickupRelic
+                       ? " (PickupRelic(mplr, itemInstance) directly)" : " (PickupLoot, the companion's call shape)"));
+            return;
+        }
+        if (pv.rfind("trace", 0) == 0) {
+            std::string t = pv.substr(5);
+            while (!t.empty() && std::isspace((unsigned char)t.front())) t.erase(t.begin());
+            const bool on = (t == "1" || t == "on" || t == "true");
+            g_PetRelicTraceOn.store(on);
+            if (on) {
+                InterlockedExchange(&g_PetRelicTraceCalls, 0);
+                if (!g_Orig_PetRelicPickupLoot) g_PetRelicTracePending = true;
+                Out(std::string("petrelic trace -> ON (logs the first ") + std::to_string(kPetRelicTraceLinesMax)
+                    + " PickupLoot calls; " + (g_Orig_PetRelicPickupLoot ? "hook already in" : "hook installs once a player exists") + ")");
+            } else {
+                Out("petrelic trace -> OFF (" + std::to_string(g_PetRelicTraceCalls) + " PickupLoot calls seen)");
+            }
+            return;
+        }
+#else
+        // The player build has no research instruments. Its first-word gate
+        // lets `petrelic` through, so name the absent subcommand here instead
+        // of letting it fall through to "anything else turns the mod off".
+        static const std::unordered_set<std::string> kPetRelicResearchOnly = { "stat", "census", "route", "trace" };
+        if (kPetRelicResearchOnly.count(pv.substr(0, pv.find(' '))) != 0) {
+            Out("command unavailable in player build: petrelic " + pv);
+            return;
+        }
+#endif
+        const bool enable = (pv == "1" || pv == "true" || pv == "on");
+        ForgePact::PetRelicCollectorMod::Instance().SetEnabled(enable);
+        if (!enable) PetRelicCollectorStats();
         return;
     }
     if (HandleHeadhunterCommand(lc, rest)) return;
@@ -43798,8 +44700,7 @@ static void RunCommand(const std::string& line)
         std::string nm, num; nm = FirstToken(rest, num);
         try { SetDropMult(nm, std::stoi(num)); } catch (...) { Out("dropmult: bad args (e.g. dropmult relic 5)"); }
     } else if (lc == "forcerelic") {
-        int n = 1; try { n = std::stoi(rest); } catch (...) {}
-        ForceRelicDrop(n);
+        ForceRelicCommand(rest);
     } else if (lc == "relicgate") {
         SetRelicGate(rest == "1" || rest == "on" || rest == "true");
     // NOTE: `relicfilter` is handled at the top of RunCommand.  A second branch
@@ -44518,7 +45419,27 @@ void FrameCallback(FWFrame& FrameContext)
     // relicfilter this needs no arm/defer lifecycle.
     if (ForgePact::PetQuestCollectorMod::Instance().IsEnabled()) {
         PetQuestCollectorTick();
+    } else if (g_PetQuestPhase == PetQuestPhase::Travel) {
+        // Switched off mid-walk: close the travel, so the pet is free for
+        // Pet Collects Relics (PetFetchArbiter) rather than held by a
+        // collector that no longer runs.
+        PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned);
     }
+
+    // Pet collects relics, toggled by `petrelic 1` (#124): right after the
+    // quest collector, sharing its walk and its rule for picking a target,
+    // with PetFetchArbiter keeping the two from walking one pet two ways
+    // (see PetRelicCollectorMod.hpp). No hook in the player build.
+    if (ForgePact::PetRelicCollectorMod::Instance().IsEnabled()) {
+        PetRelicCollectorTick();
+    } else if (g_PetRelicPhase == PetRelicPhase::Travel) {
+        PetRelicEndTravel(ForgePact::PetQuestOutcome::Abandoned);
+    }
+#ifndef FORGEPACT_RELEASE
+    // `petrelic trace 1`: the PickupLoot detour goes in only once the runner
+    // has settled and a player exists (the relicfilter pattern below).
+    if (g_PetRelicTracePending && g_Setup && (fc % 60) == 0) PetRelicTraceInstall();
+#endif
 
     // Pet moves on from loot it cannot pick up, toggled by `petunstick 1`
     // (#94): gives the game's own companion loot pickup a nudge when the pet

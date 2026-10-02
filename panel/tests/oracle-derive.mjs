@@ -36,10 +36,10 @@
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
 // sleep, the Pet moves on switch of forgepact-pet-loot-stuck, Move all into
-// the stash, Extra packs as you approach, and Sleep loot your filter hides,
-// whose show-key select is derived after them): the same on, off, on and Turn
-// off shape the legacy recording holds for #mod_pet_quest_pickup, but nothing
-// recorded stands for them, so their
+// the stash, Extra packs as you approach, Pet collects relics (#124), and Sleep
+// loot your filter hides, whose show-key select is derived after them, so it
+// stays last): the same on, off, on and Turn off shape the legacy recording
+// holds for #mod_pet_quest_pickup, but nothing recorded stands for them, so their
 // contract is written out here as literals - on posts the mod's key with true and sends its plugin
 // verb with 1, off posts false and sends the verb with 0, on again repeats the
 // first, and its Turn off button repeats the off - entered on the tab and Mods
@@ -110,6 +110,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
   { key: 'mod_stash_move_all', tab: 'tab:mods', sub: 'subtab:qol', verb: 'stashmoveall' },
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
+  { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'

@@ -81,6 +81,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # The pet moves on from loot it cannot pick up (#94, workorder
     # forgepact-pet-loot-stuck; test_pet_loot_unstick_contract.py pins it).
     "petunstick",
+    # Pet Collects Relics (#124, workorder forgepact-124-pet-relics;
+    # test_pet_relic_collector_contract.py pins it).
+    "petrelic",
     # The frame profiler: measures, changes nothing in the game
     # (test_frame_profiler.py pins it).
     "frameprof",

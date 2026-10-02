@@ -6,9 +6,11 @@ A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
-shows it again while you hold a key. And when the game crashes, freezes or
-drops frames badly, ForgePact now saves a report you can attach to a bug
-report, without a notification: you find it on the panel's Setup tab.
+shows it again while you hold a key. A new **Pet collects relics** switch,
+also off by default, has your pet pick up the relics lying around you. And
+when the game crashes, freezes or drops frames badly, ForgePact now saves a
+report you can attach to a bug report, without a notification: you find it on
+the panel's Setup tab.
 
 ## New
 
@@ -96,14 +98,32 @@ report, without a notification: you find it on the panel's Setup tab.
   any kind, comes with a notification or a message box, and there is no
   setting for one. The last ten reports are kept. This is always on and
   changes nothing in the game.
+- **Pet collects relics (#124).** A new switch on the Mods tab, under Quality
+  of Life, right after Pet collects quest items. Until now a relic on the
+  ground waited for you to click it: the game's own pet never takes relics.
+  With this on, while your pet is out it walks to the relics lying on screen
+  and picks them up for you, one at a time, through the game's own pickup, so
+  each one raises the relic you own by one level, the same as picking it up
+  yourself. A relic you already have at 10/10 is left where it is, since
+  picking it up cannot raise it any further: with a 10/10 relic and a lower
+  one on the ground the pet takes the lower one, and with only 10/10 relics
+  around it stays put instead of going back and forth. If the game turns a
+  pickup down,
+  the relic stays on the ground and the pet moves on to the next one. It is
+  separate from Pet collects quest items; with both on, the pet fetches one
+  thing at a time. It is off by default: turn it on in the panel. Checked in
+  play on 2026-10-02: the pet picked up 31 relics, each one raising the owned
+  relic by one level, left 10/10 relics alone and stayed put when only those
+  were on screen. The relics in that check were placed by a test command, so
+  a relic the game itself drops has not been watched being collected yet.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, a switch and an Incident reports card, so updating only the
-plugin leaves them out. Your existing settings are retained. Source users can
-run `Prepare-Plugin.bat` if plugin files are missing before using **Install Mod
-Plugin**. The plugin changed too, so press **Install Mod Plugin** once after
-updating - updating only the panel leaves the old plugin in place.
+gained a slider, two switches and an Incident reports card, so updating only
+the plugin leaves them out. Your existing settings are retained. Source users
+can run `Prepare-Plugin.bat` if plugin files are missing before using **Install
+Mod Plugin**. The plugin changed too, so press **Install Mod Plugin** once
+after updating - updating only the panel leaves the old plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
