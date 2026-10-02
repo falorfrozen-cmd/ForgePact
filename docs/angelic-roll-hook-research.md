@@ -731,7 +731,10 @@ judged from the growth of the counters between two status reads instead.
 - **`list-scope`** (research) - not observed in either scope (no positive
   control on the same instance or the global scope). `angelicprobe list`
   found no global `lootListUnique` and no `lootListUnique` instance variable on
-  `Loot_Manager_obj`, and read nothing.
+  `Loot_Manager_obj`, and read nothing. **Re-labelled by Session 3: this
+  negative asked the wrong scopes.** The static reading of 2026-10-02 puts
+  the list on `Controller_obj`, which the probe did not ask, so the result
+  says nothing about the list itself.
 
 Two further readings came out of the session:
 
@@ -763,5 +766,337 @@ What this settles of the static reading above:
 - **The list's scope is still not identified.** The list was not observed in
   either scope (no positive control on the same instance or the global scope):
   `angelicprobe list` found neither a `lootListUnique` global nor a
-  `Loot_Manager_obj` instance variable; which scope the roll reads remains
-  unresolved.
+  `Loot_Manager_obj` instance variable; which scope the roll reads remained
+  unresolved at the end of this session. Session 3 re-labels this negative as
+  one that asked the wrong scopes: the roll reads a variable of
+  `Controller_obj` (static reading, `## Session 3: list injection (issue #74)`
+  below).
+
+## Session 3: list injection (issue #74)
+
+Session 2's design dropped a signature item beside the game's own Angelic or
+Unholy item. On 2026-10-02 the owner replaced it: Headhunter and Tyrant's
+Crown are to join the game's own Angelic unique list, so that the game's
+picker chooses them, its die decides, and on a hit the game itself builds and
+places the item - one item per hit, in place of what the roll would otherwise
+have dropped, never beside it. The owner's words in #74: if the game draws
+from a lookup of items, pass that lookup plus our items, so its own choice can
+land on ours naturally. Gate: each item's panel switch only; with both off the
+roll is vanilla. The fallback, only if that proves infeasible, is replacing
+the game's item at the hit. The static reading below is what the design rests
+on; `### Live procedure 3` is the session that measures it, and `### Results`
+is where that session's replies go.
+
+### Static reading (2026-10-02, list injection)
+
+Read locally on 2026-10-02 in the named Ghidra project: the roll's reference
+to its list, the sites that load the same variable slot, `GetUniqueRepoStruct`,
+`CreateDefaultParams`, `LootGroundCreate` and its callees `CreateLootInFreePos`
+and `LootGroundInit`. Each claim below is labelled: **static reading** (what
+the game's code was read to do, in our own words), **measured** (with the
+session that measured it), **source reading** (ForgePact's own code) or **not
+established**. Nothing of this design has been seen live yet.
+
+- **The list's scope (static reading).** The roll reads its unique list as a
+  variable of an object-scoped reference whose constant names object index
+  984, which the SDK calls `Controller_obj`
+  (`HeroSiege::Objects::GameObject::Controller_obj`). In GameMaker terms the
+  roll reads that variable off the first active `Controller_obj` instance.
+  This is why both earlier negatives came back empty: session 1's
+  instance-variable check on `Loot_Manager_obj` and Session 2's `list-scope`
+  both asked the global scope or `Loot_Manager_obj`, and neither is the scope
+  the roll reads. They asked the wrong scopes; they are not evidence about the
+  list. Not measured yet: Live procedure 3's `list-scope` check is the first
+  look at that instance.
+- **The variable's name (not established statically).** The slot the roll
+  loads is filled at startup in a shape the slot-name recovery script
+  `FindSlotNames` does not match (it recovered 23,971 name pairs, none of them
+  this slot). The three follow-up searches run in planning came back empty
+  too: `SlotRefs` found no site that stores to the slot or takes its address,
+  `FindPointers` no initialised pointer to it, and `FindRvaTable` no table
+  entry for it, 0 hits each for the four slot globals involved. With the
+  scripts at hand the static search for the name is exhausted. So the name is
+  read live: the first `Controller_obj` instance's variable names, filtered by
+  shape (an array of at least 100 entries, each an array of three numbers).
+  The player build resolves the list by the name Live procedure 3 measures,
+  and refuses (gate off, one log line naming the variable) when that variable
+  is missing or not of that shape. Until then the research build finds it by
+  shape through the probe and takes the name through a lever.
+- **Who else reads the list (static reading).** The same slot is loaded by
+  `DropUniqueItems`, `DropItemHeroic`, `DropItemDebug`, the roll's caller
+  `DropItem`, other drop routines around `DropExclusive`,
+  `PopulateTravelingMerchantGrid`, `PopulateBlackMarketGrid`,
+  `ReturnRandomSatanic`, `CreateShrineEffect`, `DoCraftResult` and several
+  unnamed object events. None of them is the roll. That is why the injection
+  is scoped to the roll call: an entry left in the list between rolls would be
+  seen by merchants, shrines, crafting and the other drop routines too. **Not
+  established:** who builds the list, and whether it is rebuilt per zone or
+  per load; its writers are among the unnamed object events, whose bodies
+  were not read. The scoped design does not depend on it, because a rebuilt
+  list is simply what the next roll injects into. Live procedure 3 measures
+  the list's length at load, after a zone change and at the end.
+- **The repository's shape and bounds (static reading).** A list entry is
+  three numbers, type, sub and b. `GetUniqueRepoStruct` looks the definition
+  up in a global three-level array indexed by type, then sub, then b (type 3
+  takes a separate branch; the global's own slot name is also unresolved),
+  using GameMaker's own bounds checks. An entry whose indices fall outside the
+  array therefore raises the runtime's array error rather than missing
+  quietly, so **an injected entry must be a triple that resolves**. ForgePact's
+  own pool table `kAngelicBases` is exactly such triples (source reading):
+  Liquor Holster is type 8, sub 0, b 51 and Lucifer's Crown type 0, sub 0,
+  b 85, where sub 0 is the unique repository and b the unique's own index.
+  The picker's filters are Session 2's: a definition flagged hidden, or whose
+  rarity is neither Angelic (7) nor Unholy (10), is skipped and the pick runs
+  again; the die is then rolled against the picked definition's rate.
+- **What the placement chain does not read (static reading).**
+  `CreateDefaultParams` builds the parameter struct from its three arguments
+  and the result of one builtin that takes none; it reads no repository. The
+  roll then hands that struct straight to `LootGroundCreate`, and neither it
+  nor its callees `CreateLootInFreePos` and `LootGroundInit` refer to
+  `GetUniqueRepoStruct` or the repository global at all. After the pick, then,
+  the parameter struct is the only thing that says which item is built.
+- **`CreateItemNew` (not established).** The game's own item constructor is
+  missing from the Ghidra import, so whether it looks a unique up by its c and
+  b fields was not read; it must, for c = 1. The built item carries the
+  parameters as its `itemDefinitionStruct` with the fields w, j, b, a and c
+  (hub `docs/RUNTIME_DATA_MODELS.md` § 13.4): c = 1 selects the unique
+  repository and b the unique; c = 0 selects the normal repository, b the base
+  item and a the seed or affix id. **Headhunter and Tyrant's Crown are c = 0
+  items** (source reading of `SpawnSignatureItem`: the belt is a 777002, b 2,
+  the crown a 777001, b 7), and an item built from those values through the
+  game's constructor comes out dressed - **measured** with `sigdrop`, 30 of 30
+  and 17 of 17 on 2026-09-18, and again in Session 2's `sigdrop-still-forces`.
+- **How the forge hook recognises them (source reading).**
+  `CustomForgeMatches` compares every field of a selector: t against the
+  created item's `itemType`, and a, b, c and j against its
+  `itemDefinitionStruct`. The two built-in entries are Headhunter (t 8,
+  a 777002, b 2, c 0, j 0, keeping its native behaviour) and Tyrant's Crown
+  (t 0, a 777001, b 7, c 0, j 0). The hook sits on `CreateItemNew`, installed
+  by `InstallCustomForgeItemHooks` through `HookOneScript`, so it has the
+  inline detour. An item the game builds from a 777002, b 2, c 0, j 0 under
+  item type 8 is therefore recognised exactly as a `sigdrop` belt is. A
+  game-built one has not been observed yet.
+- **Why a stand-in (static reading).** The roll passes the picked entry's
+  type to the placement itself, not through the parameter struct, so the
+  entry we add must already carry the mod item's type. And the picker needs a
+  definition its filters accept and a rate to roll against. So each mod item
+  enters the list as a **stand-in**: a real Angelic unique of the same type,
+  taken from `kAngelicBases` by name and validated by ForgePact's own pool
+  build. Headhunter's stand-in is Liquor Holster (the owner's choice in #74).
+  Tyrant's Crown needs a helmet (type 0); which one is the owner's call, and
+  until they make it the plugin takes the validated type 0 entry with the
+  lowest `droprate.base` and names it in the switch-on log line. The
+  stand-in's rate becomes the item's.
+
+What #74 builds on this reading (the design as the plugin implements it; none
+of it measured yet):
+
+- **Scoped injection.** When a switch is on and the list resolved, the
+  Angelic roll hook pushes one stand-in entry per enabled item onto the
+  game's list before its first call to the original roll and removes them
+  after the last one, ForgePact's extra rolls included, under a scope guard so
+  a throw removes them too. It remembers the length before the push and
+  removes only when the tail still holds exactly the pushed entries;
+  otherwise it leaves the list as found, logs one line saying the list changed
+  during the roll, and counts an anomaly. Between rolls the list is byte for
+  byte vanilla: nothing is saved with it, the other readers above never see
+  the entries, and switching off needs no cleanup. `injected=` counts the
+  entries pushed.
+- **Attribution, one in n + 1.** The picker cannot tell our entry from the
+  vanilla stand-in, because they are the same triple. When a hit's parameters
+  name a stand-in's sub and b while the roll is in progress, the hit is ours
+  with probability 1 / (n + 1), where n is how many times the vanilla list
+  already holds that triple (counted when the list resolves and whenever its
+  length changes; 1 when the stand-in is listed once). The stand-in keeps
+  exactly one entry's share and our item gets one entry's share, the same as
+  every other entry. Two enabled items sharing one stand-in split the extra
+  share evenly. `ourHits=` counts them.
+- **What "Liquor Holster's share" means now.** In Session 2 the share was
+  one pool entry of ForgePact's own validated pool, k / (47 + k), rolled on
+  top of the game's hit. Now it is literal: Headhunter is one more entry in
+  the game's own list, carrying Liquor Holster's definition and rate, so it
+  is picked as often as one Liquor Holster entry is, and its hit replaces the
+  item that entry would have dropped.
+- **The game builds our item.** On our hit the `CreateDefaultParams` detour
+  calls the original, then rewrites the returned struct's a, b, c and j to
+  the mod item's own values and reads them back. A missing field is a
+  refusal: the struct stays vanilla and its JSON is logged. The game's own
+  placement then builds a Heavy Belt or Great Helm with that seed, the forge
+  hook dresses it, and the game places it where the roll said. No
+  `SpawnSignatureItem` runs on this path. `built=`, `crown=` and `belt=`
+  count what the game built, and each hit logs one `angelic hit:` line saying
+  vanilla or naming our item, its stand-in and the one-in-n+1 odds.
+- **Gate.** As in Session 2: the item's panel switch and a detoured
+  `CreateDefaultParams` detection, plus the list resolved (`list=` names it
+  and its length), else the gate stays off and the switch-on logs one refusal
+  naming the variable. Both switches off: no entry pushed, no rewrite, the
+  roll untouched, and with neither ever on no hook installed. Forging an item
+  turns its mechanic on, never the drop.
+
+Alternatives set aside:
+
+- **Registering our own definition in the game's unique repository**, so the
+  picker has a real definition for our item and no stand-in is needed. It
+  would mutate the global three-level array every other item routine indexes
+  (merchants, the codex, `GetUniqueRandomItemID`, the `DefineItemUnique*`
+  scripts); the built item would come out as a c = 1 unique and still need
+  relabelling to c = 0 for the forge hook; and the constructor's argument list
+  is unresolved. It is the only way to remove the one-in-n+1 coin, and it is
+  the research route if injection is not observed.
+- **A stand-in no vanilla entry shares**, so every hit on it is ours. Not
+  available: the list appears to hold every unique (about one entry in eight
+  passes the Angelic/Unholy filter), and a triple outside the repository's
+  bounds raises the array error. The design already handles n = 0 without a
+  coin.
+- **Persistent membership**, pushing on switch-on and removing on switch-off.
+  The same list feeds merchants, shrines, crafting and the other drop
+  routines; a rebuilt list would drop or duplicate the entries; and a save
+  mid-session would have to be shown never to write the list. The scoped form
+  meets "off removes it, never left behind" and "all off is vanilla" by
+  construction.
+- **Rewriting the picked entry's type.** Not possible: the type comes from the
+  list entry, not from the parameter struct.
+- **Suppressing the game's placement and spawning ours beside it** (the
+  fallback as the owner first worded it). No name-resolved way to make
+  `LootGroundCreate` place nothing was found: the player build's hook on it is
+  table-only and blind to the roll's direct call, and an undefined parameter
+  struct would reach `CreateItemNew`. The fallback that can be measured is
+  **replace by removal**: let the game place the stand-in, destroy the one
+  `Loot_Ground_obj` instance the roll created (present after the original
+  call and not before), and spawn ours at the roll's position through
+  `SpawnSignatureItem`. Its risk is a loot registry still listing the destroyed
+  instance; it is measured only if injection fails, with pickups of other
+  items as the control.
+- **Detecting the hit any other way** (counting ground loot around the call,
+  hooking `LootGroundCreate` natively, a rate-weighted share): set aside in
+  Session 2's planning for reasons that still hold.
+
+The decision between injection and replacement is mechanical, from Live
+procedure 3's verdicts:
+
+- `inject-build` pass (every hit of ours built exactly one item, the game's
+  own ground-loot count rose by one per hit, the forge hook dressed it, no
+  vanilla item for that hit, no crash): **route inject**. The design above
+  ships; the replace mode stays research-only.
+- `inject-build` fail or not observed, and `replace-remove` (run only then)
+  pass: **route replace**. On a hit of ours the game places the stand-in, the
+  plugin removes it and spawns ours.
+- Neither passes: **route not-observed**. The work stops and the owner
+  decides; registering a definition in the repository is the research route
+  left.
+
+`inject-build` and `replace-remove` are never pass conditions of the session:
+their verdict is the finding. `off-removes` and `list-restored` check
+behaviour that ships, and must pass whichever route is taken.
+
+### Live procedure 3
+
+Session 3 runs the research build (`plugin_build\BloodPactPlugin_rel.dll`,
+built with the literal `dev`) through the drive tool, with the owner doing the
+killing, on save slot 14 (Sorak), selected on the back end and in town at
+load. The step-by-step procedure (the exact commands, the standing steps and
+the four short kill batches) is `### Live procedure 1` in the workorder's
+context file, `.claude/workorders/forgepact-74-angelic-list-injection-context.md`,
+which stays on the owner's machine; it is this document's third live
+procedure, hence the heading here. Hygiene is Session 2's: a fresh session; no
+`citrace nativetrace`, `raredrop ceiling`, `scount`, `zonegenlog` or
+`angelicwatch`; and no `angelicprobe on`, whose `default-params` row would
+take the `CreateDefaultParams` detour this feature needs. The one people step
+before the kill block is a portal or waypoint to an ordinary zone, so the
+owner can leave once the kills are done.
+
+The research build's levers stay under `angelicprobe`, because the command
+dispatcher's branch count and the `angelicprobe` literal are both pinned by
+`test_angelic_probe_contract.py`:
+
+- `angelicprobe list` (rewritten) finds `Controller_obj` by name, counts its
+  instances, reads the first instance's variable names, and for every variable
+  shaped as an array of three-number arrays prints its name, length, first
+  three entries and how many entries equal each stand-in's triple. The global
+  scope and `Loot_Manager_obj` keep one line each, both expected empty. It
+  ends with one summary line naming the number of candidates and the best one
+  with its length.
+- `angelicprobe inject` takes `name` (a variable, or `auto` for the probe's
+  best candidate), `mode` (`inject`, the default, or `replace`, the fallback)
+  and `status`, which prints the mode, the list's name and length, each
+  item's stand-in with its count n, and the `injected=`, `ourHits=`,
+  `built=`, `removed=` and anomaly counters.
+- `angelicprobe hit` keeps its chance, rate, off and status levers. Each hit's
+  `angelic hit:` line in this build also carries `lootDelta=` (ground-loot
+  instances after the original call minus before) and, for the first three
+  hits of ours, the parameter struct's JSON before and after the rewrite.
+- `sigdrop status`, in both builds, reports the force, then `gameRolls=`,
+  `gameHits=`, `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`, `list=`
+  (`none` until a switch resolves it, then the name and length, or `missing`
+  after a failed resolution) and `gate=` per item, and ends with
+  `cdpCalls=<n> detect=<route>`.
+
+Each check is recorded as pass, fail, not-observed or not-run (and
+`force-hit` also as instrument-blind), with the replies quoted in the session
+record:
+
+- **`dll-hash`** - the installed DLL's SHA-256 equals the research build's,
+  recorded when it was built. Fail: nothing after it counts.
+- **`marker`** - `angelicprobe hit status` names every lever off and ends
+  `detect=off`. A player build answers that the command is unavailable, and
+  the session ends there.
+- **`control`** - `sigdrop status` shows the force off, every counter at
+  zero, `list=none`, both gates off, and ends `cdpCalls=0 detect=off`.
+- **`list-scope`** (research) - `angelicprobe list` finds one
+  `Controller_obj` instance, at least one candidate, and a best candidate of
+  length 100 or more whose shown entries are three numbers each, with n for
+  each stand-in (expected 1). The name and the global and `Loot_Manager_obj`
+  lines are recorded as printed. No candidate is not-observed: every variable
+  name printed is recorded, and the session stops after the baseline, since no
+  injection is possible.
+- **`repo-standin`** (research) - `angelicprobe inject name auto`, then its
+  status, names the list with its length and each item's stand-in with n = 1:
+  Headhunter with Liquor Holster, Tyrant's Crown with the chosen helmet. A
+  stand-in the pool rejected reads not validated, and that item's switch
+  cannot arm.
+- **`list-stable`** (research) - after the owner takes a portal or waypoint to
+  an ordinary zone, `angelicprobe list` names the same best variable with the
+  same length. A different length is the finding, and both are recorded.
+- **`baseline-off-vanilla`** - with the Angelic gate opened through
+  `raredrop angelic 2` and the chance lever at 1000000000, ten kills. First
+  the detection's own positive control: `detect=detoured` and `cdpCalls`
+  above zero (otherwise `force-hit` is instrument-blind and the checks that
+  need a hit do not run). Then at least ten `gameRolls` and one `gameHits`
+  pass `force-hit`; with both switches off, `injected=0`, `ourHits=0`,
+  `built=0`, the list's length equal to `list-scope`'s and no injection line
+  in the log pass `baseline-off-vanilla`. Only the game's own Angelic and
+  Unholy items lie on the ground.
+- **`inject-build`** (the route's first branch) - `headhunter force` turns
+  Headhunter on and logs one line naming the list and Liquor Holster; the gate
+  reads Headhunter on, Tyrant's Crown off. Ten kills, or until three hits end
+  built by the game (one more batch of ten allowed; with the chance lever every
+  roll hits, so about one roll in 48 is ours). Pass: `injected=` grew by the
+  growth of `gameRolls=` (one push per roll), `ourHits=` at least 3,
+  `built=` equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`, every
+  hit of ours with `lootDelta=1`, no `sigdrop:` line, and the owner names a
+  Headhunter on the ground. Fail: a crash, fewer built than hits, a
+  `lootDelta=` other than 1 on a hit of ours, a struct missing a field, or a
+  ground item that is not Headhunter. Not-observed: no hit of ours after 20
+  kills.
+- **`on-both`** (not run unless `inject-build` passed) - Tyrant's Crown on as
+  well; ten to twenty kills. `built=` grew by the growth of `ourHits=`,
+  `crown=` reached at least 1 and `belt=` grew, and both items are seen on the
+  ground.
+- **`off-removes`** - both switches off; the gate reads both off and the list's
+  length equals `list-scope`'s. Five kills: `injected=` and `ourHits=`
+  unchanged, no mod item, no injection line.
+- **`replace-remove`** (research fallback, run only if `inject-build` failed or
+  was not observed) - replace mode and Headhunter on; ten to twenty kills.
+  Pass: every hit of ours says it removed the stand-in and spawned Headhunter,
+  `removed=` equals `ourHits=`, `lootDelta=1` after the swap, another ground
+  item picks up without an error, and `lootcensus` runs. Headhunter off and
+  inject mode again afterwards.
+- **`sigdrop-still-forces`** - `sigdrop crown` and one kill drop a Tyrant's
+  Crown, then `sigdrop off`. The last people step.
+- **`list-restored`** - every lever off and the Angelic gate vanilla again;
+  `angelicprobe list` names the same variable with `list-scope`'s length, and
+  no stand-in triple appears more often than its vanilla n.
+
+### Results
+
+Session 3: not yet run.
