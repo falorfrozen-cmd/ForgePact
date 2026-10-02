@@ -146,7 +146,8 @@ class AngelicHitSourceContractTests(unittest.TestCase):
     # ---- the list: Controller_obj's variable, by name ------------------------------------
 
     def test_the_list_is_resolved_by_name_on_controller_obj(self):
-        self.assertRegex(self.shipped_code, r'static const char\* kAngelicListVar = "[^"]*";')
+        # The name Live 2's reach check passed on (2026-10-02); the player build reads only it.
+        self.assertIn('static const char* kAngelicListVar = "lootListUnique";', self.shipped_code)
         self.assertIn("static std::string g_SigListName = kAngelicListVar;", self.shipped_code)
         self.assertEqual(len(re.findall(r"\bg_SigListName\s*=[^=]", self.shipped_code)), 1,
                          "only the research build's inject lever may name another variable")
@@ -195,8 +196,8 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertLess(handle.index("v.ToDouble()"), handle.index('"ds_exists"'),
                         "only a value that can be a handle is handed to ds_exists")
         self.assertIn('why = "kind=" + kind + ", " + step;', handle, "the ds_list refusal names the kind it got")
-        # The gate is kind-free: a ds_list handle may arrive as a number or a reference, and
-        # lootListUnique[5]'s kind is not measured, so the kind is only named in the refusal.
+        # The gate is kind-free: a ds_list handle may arrive as a number or a reference (Live 2
+        # read lootListUnique[5] as a ref), so the kind is only named in the refusal.
         # Outside `refuse`'s diagnostic the function reads no m_Kind at all.
         diag = handle.index("const auto refuse")
         diag_end = handle.index("\n    };", diag)

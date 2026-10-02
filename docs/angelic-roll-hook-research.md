@@ -1739,4 +1739,124 @@ its validity step first.
 
 ### Results
 
-Session 4: not yet run.
+Session 4 ran once, as Live 2, on 2026-10-02 (the drive tool's lease taken
+at 18:47 UTC), on the research dll `e30981d5…e3bcbade` (SHA-256
+e30981d596bbddbad1cf4569ae0b802b0ba50453e67624e8fc796352e3bcbade, built with
+`build.bat dev` from ForgePact `eb46209`, tag `forgepact-74-live2-base`, and
+kept as `plugin_build/live2/BloodPactPlugin_rel.dll`), save slot 14, plugin
+banner v2.1.0, the kills in Outskirts of Inoya (Hell). The drive tool's
+self-check passed 6 of 6; the saves were copied before launch and restored at
+teardown with nothing left changed. Measured in that session, every verdict
+below; the replies are quoted in its capture
+(`forgepact-74-list-injection-live2-live-1.md`), which stays with the hub's
+workorder and is not tracked. One deviation from the procedure's order: the
+arming of step 7 was done before step 6's zone change, to batch the owner's
+asks, so `list-stable`'s second dump was taken after the first kill batch
+with both switches off.
+
+- **`dll-hash`: pass.** The lease's DLL hash was the research dll's.
+- **`marker`: pass.** `angelicprobe hit status` answered a line beginning
+  `angelicprobe hit:`, detection not installed, ending `detect=off`.
+- **`control`: pass.** `sigdrop status` read exactly the fresh-session line,
+  ending `list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`.
+- **`layout`: pass.** `angelicprobe list dump lootListUnique` printed
+  `Controller_obj.lootListUnique kind=array array_length=6` and six element
+  lines. All six elements are ref ds_lists whose every entry is a triple:
+  `[0]` 50 entries, `[1]` 61, `[2]` 79, `[3]` 152, `[4]` 221 and `[5]` 380,
+  each line reading `kind=ref ds_list=yes:<size> triples=<size>/<size>`. The
+  sixth is the one the static reading named:
+  `[5] kind=ref ds_list=yes:380 triples=380/380 first=[0,0,1][0,0,15][0,0,29]`,
+  with the stand-ins `Headhunter:Liquor Holster(n=1)` and
+  `Tyrant's Crown:Mask of the Celestial(n=1)`; elements 0-4 hold neither
+  stand-in (n = 0 each), and their first entries are all `[0,0,<b>]` too. The
+  summary read `elements=6 ds_lists=6 triple-lists=6` and the scan
+  `candidates=1 best=lootListUnique[5]:380`. So element 5 arrives as a ref
+  value, the kind-free gate accepted it, and the sub-list holds 380 entries.
+  What elements 0-4 mean, and who builds the six, is still not established.
+  `lootListNormal` on the same instance (not read by this roll) dumped as five
+  ref ds_lists of 70, 70, 73, 76 and 74 triples.
+- **`repo-standin`: pass.** `angelicprobe inject auto` answered
+  `list lootListUnique[5]:380 stand-ins Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1)`,
+  and the inject status line read `mode=inject copies=1
+  list=lootListUnique[5]:380` with no `(not validated)`.
+- **`list-stable`: pass.** In Outskirts of Inoya the dump read the same six
+  sizes (50, 61, 79, 152, 221, 380) and the same stand-in counts.
+- **`force-hit`: pass.** With `raredrop angelic 2` and the chance lever at
+  1e9, one batch gave 46 hits over 49 rolls (`gameRolls=49 gameHits=46`),
+  `cdpCalls=47`, `detect=detoured`.
+- **`baseline-off-vanilla`: pass.** Both switches off over those 46 hits:
+  `injected=0`, `ourHits=0`, `built=0`, `list=lootListUnique[5]:380`, no
+  `inject:` line, every hit line `-> vanilla` with `lootDelta=1`.
+  `standinPicks=2`, so the baseline share p0 is 2/46 (0.043).
+- **`typing`: pass.** The positive control first: all 46 vanilla hit lines
+  carried a `builtType=` number (none `?`), for example
+  `angelic hit: picked 7/0/57 at 4176,3856 gate=tyrant:off,headhunter:off lootDelta=1 builtType=7 -> vanilla`.
+  Then `untyped=0`, `typeAgree=46`, `typeDisagree=0`; at the end of the
+  session `typeAgree=211` (215 hits by the last read), still
+  `typeDisagree=0` and `untyped=0`.
+- **`reach`: pass.** `angelicprobe inject copies 200`, `headhunter force`,
+  `gate=tyrant:off,headhunter:on`. Over the batch the hits grew from 46 to 126
+  (+80) and `standinPicks=` from 2 to 67 (+65), so p1 = 65/80 = 0.81 against
+  p0 = 2/46, with `heldMiss=0` and `injected=22800` (200 entries on each of
+  114 rolls). The roll's picker draws the entries the plugin pushes onto
+  `lootListUnique[5]`. The `at` fallback was not needed.
+- **`inject-build`: fail.** `ourHits=` grew from 0 to 65 while `built=` and
+  `belt=` stayed 0, and the ground held Liquor Holsters. Every one of the 65
+  our-hit lines read `angelic hit: picked 8/0/51 at <x,y> gate=tyrant:off,headhunter:on lootDelta=1 builtType=8 -> Headhunter (stand-in Liquor Holster, 200 in 201) refused (no field a), the game placed its own stand-in`,
+  each beside the refusal
+  `inject: Headhunter refused (no field a), the parameters left vanilla: {"b":51.0,"j":0.0,"c":1.0}`.
+  What this measures is the plugin, not the game: the rewrite's first step
+  asks whether `CreateDefaultParams`' returned struct has a field `a`, and the
+  struct has exactly three fields, `b` (the unique's index, 51), `j` (the
+  sub, 0) and `c` (1, the unique repository). There is no `a` to rewrite, so
+  nothing was written and the game was never handed our parameters. Whether
+  the game would build Headhunter from parameters that carry its `a` is not
+  observed; where the built item's `a` comes from is Session 5's question.
+- **`on-both`: not-run** (`inject-build` did not pass).
+- **`replace-remove`: pass.** `angelicprobe inject mode replace`, copies
+  200, Headhunter forced: `ourHits=` grew from 65 to 107 (+42) and `removed=`
+  from 0 to 42 (+42), 42 lines
+  `... -> Headhunter (stand-in Liquor Holster, 200 in 201) removed stand-in, spawned Headhunter`,
+  every one `lootDelta=1`, each followed by
+  `sigdrop: Headhunter dropped at <x,y> kind=15`; no refusal and no error in
+  the log slice, `anomalies=0`, and `lootcensus` answered
+  (`ground=205 hidden=25 invisible=157 coins=0 walked=205`). The ground
+  screenshot after the batch shows many Headhunter labels. The pick-up part
+  rests on the owner's report, not on an observation: "previously picked up
+  and identified liqor holter, no problems" (gold and the log showed no
+  pick-up).
+- **`off-removes`: pass.** Copies back to 1, both switches off; another
+  batch gave 30 more hits (181 to 211), every hit line `-> vanilla`,
+  `injected=36400` and `ourHits=107` unchanged, `built=`, `belt=` and
+  `removed=` unchanged, no `inject:` line, `list=lootListUnique[5]:380`
+  equal to `layout`'s. This time the removal path was exercised: 36400
+  entries had been pushed and cut before it.
+- **`sigdrop-still-forces`: pass.** `sigdrop crown`, then more than one
+  kill: three lines `sigdrop: Tyrant's Crown dropped at <x,y> kind=15`
+  (`rolls=3`, `drops=` 42 to 45).
+- **`list-restored`: pass.** After `angelicprobe hit off` and
+  `raredrop angelic 1` the dump read the same six sizes, n = 0 for
+  `[0]`-`[4]` and n = 1 for both stand-ins at `[5]`, and the inject status
+  line `list=lootListUnique[5]:380`, all equal to `layout`'s.
+
+Without a verdict: the runner's YYError summary read `total=1` before step 4
+and `total=37` (`distinct=5`, `top=report#2 x30`) after the first kill batch,
+and did not move again through the end of the session. That is 30 repeats of
+one report over a batch of 49 rolls, with the chance lever on and both
+switches off. Its cause is not established and its message text was not
+recorded; Session 5's procedure records it.
+
+**Route:** `route: pending (owner: one more round for inject)`. Session 3's
+decision rule, step 5 (`typing` pass, `reach` pass, `inject-build` fail,
+`replace-remove` pass), would have given `route: replace`. The owner set that
+aside on 2026-10-02 ("One more round for inject"), because the inject-build
+fail is the plugin's rewrite assuming a field the struct does not carry, not
+the game refusing the item: replace stays the measured fallback (42 of 42),
+research build only, and the next session re-runs inject-build once the
+rewrite writes where the built item's `a` is set. What Live 2 established:
+`lootListUnique[5]` is a ref ds_list of 380 triples that the roll draws from,
+stable across a zone change and restored exactly after the switches go off;
+the hit is typed on every hit; the pushed entries are drawn (p1 0.81 at
+copies 200, against p0 0.043 with nothing pushed; the player build's share
+with one copy is arithmetic on that, not measured); and
+`CreateDefaultParams`' struct is `{b, j, c}`, with no field a.

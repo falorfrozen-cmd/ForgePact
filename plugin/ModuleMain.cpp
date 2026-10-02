@@ -10941,9 +10941,10 @@ static bool g_SigStandInsResolved = false;
 // The game's list, by name and index.  The roll draws from one element of a Controller_obj array
 // variable - the constant index 5, the sixth element (static reading, replan 2: lootListUnique[5])
 // - and that element is a ds_list whose entries are [type, sub, b] arrays; the outer array is
-// never the list.  Until the variable's name is written here (by the name and index Live 2's
-// `reach` proves) the player build refuses with `list=missing` and nothing is injected.
-static const char* kAngelicListVar = "";
+// never the list.  The name and index are the ones Live 2's `reach` proved (2026-10-02:
+// lootListUnique[5], a ref ds_list of 380 triples, p1 = 65/80 at copies 200); a variable the
+// instance lacks, or an element that fails the gate, still refuses with `list=missing`.
+static const char* kAngelicListVar = "lootListUnique";
 static std::string g_SigListName = kAngelicListVar;   // the research build's inject lever may name another
 static const int kAngelicListIndex = 5;               // the element the roll reads (static reading)
 #ifdef FORGEPACT_RELEASE
