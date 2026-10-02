@@ -18,7 +18,8 @@ mechanism](#the-mechanism) were written before anything about the pickup was
 measured; Live 1 of the workorder `forgepact-124-pet-relics` (2026-10-02)
 checked the call shape and the ground-relic read on the running game, and
 [Live 1 results](#live-1-results-2026-10-02) says which readings it confirmed
-and which stay open.
+and which stay open. Live 2 the same day ran the player build through the
+panel ([Live 2 results](#live-2-results-2026-10-02)).
 
 The game facts are also recorded in the hub's `docs/RUNTIME_DATA_MODELS.md`
 § 10.7, the shared record every module reads. § 10.6 there (the companion's own
@@ -585,3 +586,51 @@ Every relic was placed at the player's position, so the step 9 screenshot shows
 the pet against the player with the relic labels stacked above the same spot.
 That `only-maxed-idle` passed rests on the stat lines (`phase=idle`, nothing
 collected, no travel timeout across three reads), not on the picture.
+
+## Live 2 results (2026-10-02)
+
+The player build (`BloodPactPlugin_ship.dll`, sha256
+`1db502603bd93432ed5badb027489113c102b0c50a1ec7a03c1054e74c762ee8`, built
+from ForgePact `fc797dc`) on Sorak, slot 14, driven through hs-drive,
+2026-10-02T18:39Z. The capture is the workorder's
+`forgepact-124-pet-relics-live-2.md` (kept with the workorder, outside the
+repository). Everything in this section is **measured** unless it says
+otherwise. This session checked the switch end to end on the build players
+get, through the panel; it did not collect relics again (Live 1 did that, on
+the research build, and the pickup code is the same in both builds).
+
+The panel was this branch's `src/forgepact.py`, run headless (its HTTP server
+and its watcher, without the window) on `127.0.0.1:8780`. The switch was
+turned on and off by posting `{"key":"mod_pet_relic_pickup","value":...}` to
+`/api/set`, the same request the Mods-tab row sends; nobody clicked. All 7
+checks passed:
+
+| check | verdict | what it showed |
+|---|---|---|
+| `dll-hash` | pass | the lease hashed the installed DLL as the ship build above, byte-identical to `plugin_build/BloodPactPlugin_ship.dll` |
+| `marker` | pass | `petrelic 0` printed `petrelic -> OFF` and then the `petrelic stat:` line, all counters 0, `route=a phase=idle` |
+| `control` | pass | `ping` -> `pong (YYTK 4.0.1)`; `relicfilter status: OFF \| skipped 0 maxed relic(s) since armed \| stands down: no` |
+| `panel-on` | pass | 3 s after the switch went on, `petrelic -> ON (pet fetches relics on screen and picks them up; a relic owned at 10/10 is left alone)` |
+| `research-only` | pass | `petrelic stat` -> `command unavailable in player build: petrelic stat`, and the switch stayed on (no `petrelic -> OFF` followed, the panel still had it on) |
+| `panel-off` | pass | `petrelic -> OFF` and the stat line, which read `maxed scans=67` and `pet-seen ticks=4020` from the 31 s the switch was on |
+| `panel-launch` | pass | with the plugin switched off by `petrelic 0` and the panel's saved setting on, a restarted panel sent `petrelic 1` (`petrelic -> ON (...)` in the same batch as `petquest -> ON` and `petunstick -> ON`) with no click and no API call |
+
+- **The panel starts with the switch off.** The panel config the session found
+  had no `mod_pet_relic_pickup` key, and the watcher's first apply sent no
+  `petrelic` command, so the default off holds on a real config, not only in
+  `DEFAULTS`.
+- **The player build refuses the research subcommands without switching the
+  mod off.** Before the fix in ForgePact `fc797dc`, the player build read
+  `petrelic stat` as "off". Live 2 shows the refusal line and the switch still
+  on.
+- **The stat line works in the player build** (`petrelic 0`), with the maxed
+  scan running while the pet was out (`maxed scans=67`). No relic was on the
+  ground, so `collected=0` here says nothing about the collect.
+- **`panel-launch` was a panel restart against the running game**, as the
+  procedure words it, not a game relaunch. That a fresh game start with the
+  panel already running sends `petrelic 1` is not observed live. By our own
+  code (`watcher` in `src/forgepact.py`), a game process the watcher sees start
+  goes through the same `apply_all` the restart ran; that is a reading, not a
+  measurement.
+
+Saves and the panel config were restored byte-identical after the session.
