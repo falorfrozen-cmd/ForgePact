@@ -260,7 +260,14 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         tick = self._tick()
         self.assertIn("g_PetQuestCooldown", tick)
         self.assertIn("PetQuestPhase::Travel", tick)
-        self.assertEqual(tick.count("PetQuestCollectOne("), 2)  # arrival + timeout, no sweep
+        # The Travel phase is the walk both collectors share (#124): the tick
+        # hands PetQuestCollectOne to PetTravelStep, which calls it on
+        # arrival and on timeout only - still no sweep.
+        self.assertNotIn("PetQuestCollectOne(", tick)
+        self.assertIn("PetQuestCollectOne, PetQuestEndTravel)", tick)
+        travel = self._function_body("PetTravelStep")
+        self.assertEqual(travel.count("collect(target)"), 2)  # arrival + timeout, no sweep
+        self.assertIn("cooldown = kPetQuestCooldownFrames;", travel)
 
     def test_pet_must_be_out_for_the_mod_to_collect(self):
         # It is "the pet collects quest items". No pet, no collecting - which
@@ -319,10 +326,16 @@ class TestPetQuestCollectorContract(unittest.TestCase):
         end = self._function_body("PetQuestEndTravel")
         self.assertIn("g_PetQuestSelector.Note(outcome, g_PetQuestFrame)", end)
         self.assertIn("g_PetQuestPhase = PetQuestPhase::Idle", end)
-        self.assertIn("PetQuestEndTravel(PetQuestCollectOne(target))", tick)
-        self.assertIn("PetQuestEndTravel(ForgePact::PetQuestOutcome::Lost)", tick)
-        self.assertIn("ForgePact::PetQuestOutcome::Timeout", tick)
-        self.assertIn("PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned)", tick)
+        # The travel ends in PetTravelStep (#124), with PetQuestEndTravel as
+        # its end-of-travel callback, so each of these still closes through it.
+        self.assertIn("PetQuestCollectOne, PetQuestEndTravel)", tick)
+        travel = self._function_body("PetTravelStep")
+        self.assertNotIn("g_PetQuestPhase", travel)
+        self.assertIn("endTravel(collect(target))", travel)
+        self.assertIn("endTravel(ForgePact::PetQuestOutcome::Lost)", travel)
+        self.assertIn("ForgePact::PetQuestOutcome::Timeout", travel)
+        self.assertIn("endTravel(ForgePact::PetQuestOutcome::Abandoned)", travel)
+        self.assertIn("PetQuestEndTravel(ForgePact::PetQuestOutcome::Abandoned)", tick)   # no pet out
 
     def test_collect_reports_no_effect_only_when_the_item_remained(self):
         # The hold for "dispatched, item remained" rests on the same
