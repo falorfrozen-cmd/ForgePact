@@ -52,6 +52,16 @@ class KeyIconTests(unittest.TestCase):
     def test_prime_evil_parts_has_its_own_icon(self):
         self.assertEqual(key_icons(self.source)["primeevil"], "prime-evil-part")
 
+    def test_mining_ore_rolls_has_its_own_icon(self):
+        # Extra Rolls once borrowed the Drops card heading's chest; it reads as
+        # mining (a rock), apart from the heading and the multiplier's gem.
+        drops = dict(re.findall(r"'([a-z_]+)': '([a-z0-9-]+)'",
+                                re.search(r"'drops': \{(.*?)\}", self.source).group(1)))
+        heading = re.search(r"'dropsCard': '([a-z0-9-]+)'", self.source).group(1)
+        self.assertEqual(drops["mining_ore_rolls"], "boulder")
+        self.assertIn(drops["mining_ore_rolls"], icon_names(self.source))
+        self.assertNotIn(drops["mining_ore_rolls"], {heading, drops["mining_ore"]})
+
 
 if __name__ == "__main__":
     unittest.main()

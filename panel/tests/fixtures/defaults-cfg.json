@@ -43,7 +43,8 @@
  },
  "drops": {
   "gold": 1,
-  "mining_ore": 1
+  "mining_ore": 1,
+  "mining_ore_rolls": 1
  },
  "keys": {
   "dungeon": 1,

@@ -1095,27 +1095,24 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("Socketable", section)
         # #131: a stash stack holds up to 999, a stackable starts a new stack
         # when none of its kind has room, and a socketable stack now joins its
-        # kind's one stack: README and notes both say so, and neither keeps
-        # the old skip. The README is checked before the notes, which
-        # forgepact-notes-cleanup.yml deletes from main once published.
-        def says_the_stack_rules(text):
+        # kind's one stack: both say so, and neither keeps the old skip.
+        texts = [section]
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            notes = NOTES.read_text(encoding="utf-8")
+            self.assertIn("\n## New\n", notes)
+            new = notes[notes.index("\n## New\n"):]
+            self.assertIn("Move all", new)
+            self.assertIn("F4", new)
+            self.assertRegex(new, r"fill|full|room")
+            self.assertRegex(new, SPILL)
+            self.assertIn("Socketable", new)
+            texts.append(new[:new.find("\n## ", 1)])
+            self.assertIn("\n## How to update\n", notes)
+        for text in texts:
             self.assertIn("999", text)
             self.assertRegex(text, r"new stack")
             self.assertNotIn("A stack of more than one socketable stays", text)
             self.assertNotIn("a socketable merge of more than one unit is not measured", text)
-        says_the_stack_rules(section)
-        if not NOTES.is_file():
-            self.skipTest("release notes already published and removed from main")
-        notes = NOTES.read_text(encoding="utf-8")
-        self.assertIn("\n## New\n", notes)
-        new = notes[notes.index("\n## New\n"):]
-        self.assertIn("Move all", new)
-        self.assertIn("F4", new)
-        self.assertRegex(new, r"fill|full|room")
-        self.assertRegex(new, SPILL)
-        self.assertIn("Socketable", new)
-        says_the_stack_rules(new[:new.find("\n## ", 1)])
-        self.assertIn("\n## How to update\n", notes)
 
     def test_readme_notes_and_panel_name_the_button(self):
         # The button, where it is, that F4 does the same, and what the
@@ -1130,19 +1127,18 @@ class StashMoveAllContractTests(unittest.TestCase):
         for word in ("**Move All** button", "**Sort**", "F4", "a new kind stays in the bag", "stashmoveall: button - "):
             self.assertIn(word, section, word)
         self.assertRegex(section, r"switch off takes it\s+away")
+        if NOTES.is_file():   # published notes leave main (forgepact-notes-cleanup.yml)
+            notes = NOTES.read_text(encoding="utf-8")
+            new = notes[notes.index("\n## New\n"):]
+            new = new[:new.find("\n## ", 1)]
+            self.assertRegex(new, r"Move All\*\* button")
+            for word in ("**Sort**", "F4", "Socketable", "stays in your backpack"):
+                self.assertIn(word, new, word)
         mods = panel_file("tabs/Mods.svelte")
         m = re.search(r'Move all into the stash<br><span class="feature-description">([^<]*)</span>', mods)
         self.assertIsNotNone(m)
         for word in ("Move all button", "Sort", "F4"):
             self.assertIn(word, m.group(1), word)
-        if not NOTES.is_file():
-            self.skipTest("release notes already published and removed from main")
-        notes = NOTES.read_text(encoding="utf-8")
-        new = notes[notes.index("\n## New\n"):]
-        new = new[:new.find("\n## ", 1)]
-        self.assertRegex(new, r"Move All\*\* button")
-        for word in ("**Sort**", "F4", "Socketable", "stays in your backpack"):
-            self.assertIn(word, new, word)
 
     def test_research_doc_has_ship_design_and_live_results(self):
         doc = DOC.read_text(encoding="utf-8")

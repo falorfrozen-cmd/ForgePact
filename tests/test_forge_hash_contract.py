@@ -94,6 +94,9 @@ EXPECTED_PLAYER_COMMANDS = {
     "densityroll",
     # Hidden loot sleep, the Mods tab's switch (test_hidden_loot_mod_contract.py).
     "hiddenloot",
+    # Mining Ore Extra Rolls, the Loot tab's second mining row (ForgePact
+    # #36; test_mining_ore_behavior.py and test_mining_ore_panel.py pin it).
+    "miningrolls",
 }
 
 

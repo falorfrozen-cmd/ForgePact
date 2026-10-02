@@ -22,7 +22,7 @@
 // The last line is `e2e-finish: <n>/<n> checks passed`.
 
 import { readFileSync } from 'node:fs';
-import { VIEWPORTS, launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
+import { VIEWPORTS, launchBrowser, openPanel, parseArgs, postSet, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { THEMES } from '../src/theme.js';
 
 const args = parseArgs(process.argv.slice(2));
@@ -60,7 +60,8 @@ const frames = (page) => $(page, () => new Promise((r) => requestAnimationFrame(
 const tab = async (page, name) => { await $(page, (n) => document.querySelector(`.tabbtn[data-tab="${n}"]`).click(), name); await frames(page); };
 async function settled(page) { await wait(30); await waitSaved(page); await wait(60); await frames(page); }
 async function reload(page) { await page.reload(); await waitBooted(page); await frames(page); }
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes go to the sandbox from this process, not the page (lib/browser.mjs postSet).
+const post = postSet;
 const isOpen = (page) => $(page, (s) => document.querySelector(s).checkVisibility(), list);
 const focused = (page) => $(page, () => document.activeElement?.className || document.activeElement?.tagName);
 

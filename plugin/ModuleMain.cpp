@@ -662,6 +662,18 @@ static int64_t CurrentRoomKey()
     } catch (...) { return INT64_MIN; }
 }
 
+// The current room's name, read through the same built-in, for log lines.
+// Never `variable_global_get("room")`: that answers undefined, and converting
+// it raised `REAL argument incorrect type undefined` on every call (#144).
+static std::string CurrentRoomName()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        return g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
+    } catch (...) { return "(unreadable)"; }
+}
+
 // Called every frame from FrameCallback, and the reason it is not a flat
 // throttle is the whole design.
 //
@@ -9795,7 +9807,8 @@ static int CiGetProfileManagerObjIdx();
 using CiSnapshot = std::unordered_map<std::string, std::string>;
 static CiSnapshot g_CiSnapGlobalsBefore, g_CiSnapPlayerBefore, g_CiSnapPmBefore, g_CiSnapItemBefore;
 static bool g_CiSnapTaken = false;
-static double g_CiSnapRoomBefore = -1.0;   // MEASURED 2026-09-10: a room/zone change (or death/respawn)
+static std::string g_CiSnapRoomNameBefore;   // for the ROOM CHANGED line; the key above decides it
+static int64_t g_CiSnapRoomBefore = INT64_MIN; // MEASURED 2026-09-10: a room/zone change (or death/respawn)
                                             // between snap1 and snap2 recreates the player and every
                                             // per-zone instance - a real, observed confound, not a guess.
                                             // Checked so "item vanished" can be told apart from "the whole
@@ -11183,7 +11196,8 @@ static void CiSnapTake()
 {
     ResolveCiProfileManagerIdx();
     ResolveCiPlayerId();
-    try { g_CiSnapRoomBefore = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") }).ToDouble(); } catch (...) { g_CiSnapRoomBefore = -1.0; }
+    g_CiSnapRoomBefore = CurrentRoomKey();
+    g_CiSnapRoomNameBefore = CurrentRoomName();
     CiSnapshotGlobals(g_CiSnapGlobalsBefore);
     try {
         RValue player;
@@ -11227,9 +11241,9 @@ static void CiSnapDiff()
 {
     if (!g_CiSnapTaken) { Out("citrace snap2: no snap1 taken yet"); return; }
     try {
-        double roomNow = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") }).ToDouble();
-        if (g_CiSnapRoomBefore >= 0.0 && roomNow != g_CiSnapRoomBefore) {
-            Out("citrace snap2: ROOM CHANGED (" + std::to_string((long)g_CiSnapRoomBefore) + " -> " + std::to_string((long)roomNow)
+        const int64_t roomNow = CurrentRoomKey();
+        if (g_CiSnapRoomBefore != INT64_MIN && roomNow != INT64_MIN && roomNow != g_CiSnapRoomBefore) {
+            Out("citrace snap2: ROOM CHANGED (" + g_CiSnapRoomNameBefore + " -> " + CurrentRoomName()
                 + ") - everything below is contaminated by the room/zone transition, not the collect itself. Retake snap1 without changing rooms.");
         }
     } catch (...) {}
@@ -19183,6 +19197,13 @@ static void InstallHook()
     InstallBuffHooks();
     InstallEnemyHooks();
     InstallChaosTowerHooks();
+    // The mining pair first: InstallItemInspectHooks table-hooks
+    // LootGroundCreate, after which the table entry is this module's code and
+    // the mining adapter's own install would come up table-only (the Mining
+    // Ore mod unavailable in the research build). Installed first, the mining
+    // detours hold the native route and the inspect hook chains to them. They
+    // are pass-through while every mining lever is off.
+    ForgePact::MiningOre::Install();
     InstallItemInspectHooks();
 #endif
 }
@@ -21319,7 +21340,7 @@ static void SpawnAtPlayer(int objIdx)
 // kullanmiyor; kuleyi biz koyuyoruz.  Dogal yol ZoneGenChaosTower'i oyunun
 // kendisine cagirtmaktan geciyor ama onu tetikleyen sart henuz bulunamadi.
 static bool g_CtOto = false;          // her bolgede bir kule
-static double g_CtSonOda = -1.0;      // bolge degisimini yakalamak icin
+static int64_t g_CtSonOda = INT64_MIN;      // bolge degisimini yakalamak icin
 static int  g_CtGecikme = 0;          // oyuncu yerlesene kadar bekle (kare)
 
 static void ChaosTowerKur(bool sessiz)
@@ -21343,8 +21364,8 @@ static void ChaosTowerTick()
 {
     if (!g_CtOto || !g_Yytk) return;
     try {
-        RValue oda = g_Yytk->CallBuiltin("variable_global_get", { RValue("room") });
-        double o = oda.ToDouble();
+        const int64_t o = CurrentRoomKey();   // `room` is a built-in, not a global (#144)
+        if (o == INT64_MIN) return;
         if (o != g_CtSonOda) {
             g_CtSonOda = o;
             g_CtGecikme = 90;   // ~1.5 sn: oyuncu ve zemin yerlessin
@@ -23235,6 +23256,12 @@ static void FlushModState(uint32_t frame)
         body += ",\"unavailable\":"; body += ForgePact::MiningOre::unavailable ? "true" : "false";
         body += ",\"stepObserved\":"; body += ForgePact::MiningOre::stepObserved ? "true" : "false";
         body += ",\"oreObserved\":"; body += ForgePact::MiningOre::oreObserved ? "true" : "false";
+        body += ",\"rolls\":" + std::to_string(ForgePact::MiningOre::rolls);
+        body += ",\"rollsReady\":"; body += ForgePact::MiningOre::rollsReady ? "true" : "false";
+        body += ",\"rollsUnavailable\":"; body += ForgePact::MiningOre::rollsUnavailable ? "true" : "false";
+        body += ",\"extraRuns\":" + std::to_string(ForgePact::MiningOre::extraRuns);
+        body += ",\"extraRunsUnpaid\":" + std::to_string(ForgePact::MiningOre::extraRunsUnpaid);
+        body += ",\"silencedCalls\":" + std::to_string(ForgePact::MiningOre::SilencedCalls());
         body += "},\"minerHelmet\":{\"available\":true,\"enabled\":";
         body += ForgePact::MinerHelmet::enabled ? "true" : "false";
         body += ",\"worn\":"; body += ForgePact::MinerHelmet::worn ? "true" : "false";
@@ -29825,6 +29852,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         auto num = [&](const char* fn, std::vector<RValue> a) -> std::string {
             try { RValue v = g_Yytk->CallBuiltin(fn, a); return Describe(v); } catch (...) { return "EXC"; }
         };
+        // room_width/room_height are built-ins, which variable_global_get cannot see (#144).
+        auto builtinNum = [&](const char* nm) -> std::string {
+            try { RValue v; return AurieSuccess(g_Yytk->GetBuiltin(nm, nullptr, NULL_INDEX, v)) ? Describe(v) : std::string("FAILED"); } catch (...) { return "EXC"; }
+        };
         std::string s = "hhlabelprobe: playerId=" + std::to_string(g_HhLabelPlayerId);
         if (g_HhLabelPlayerId >= 0) {
             RValue id((double)g_HhLabelPlayerId);
@@ -29846,7 +29877,7 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
                 Out("    viewmat:" + ms); Out("    projmat:" + ps);
             } catch (...) { Out("    matrices: EXC"); }
         }
-        Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + num("variable_global_get", { RValue("room_width") }) + "x" + num("variable_global_get", { RValue("room_height") }) + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
+        Out("  gui=" + num("display_get_gui_width", {}) + "x" + num("display_get_gui_height", {}) + " window=" + num("window_get_width", {}) + "x" + num("window_get_height", {}) + " room=" + builtinNum("room_width") + "x" + builtinNum("room_height") + " view_wport0=" + num("view_get_wport", { RValue(0.0) }) + " view_hport0=" + num("view_get_hport", { RValue(0.0) }) + " view_visible0=" + num("view_get_visible", { RValue(0.0) }));
         Out("  active labels=" + std::to_string(g_HhStolen.size()) + " lastErr=" + g_HhLabelLastErr);
 #ifndef FORGEPACT_RELEASE
     } else if (lc == "roomprobe") {
@@ -42480,7 +42511,7 @@ static void RunCommand(const std::string& line)
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
         "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick",
-        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "minerhelm", "packmarks",
+        "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot"
@@ -42577,6 +42608,9 @@ static void RunCommand(const std::string& line)
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
+    // Mining Ore Extra Rolls: a separate option beside the multiplier (the two
+    // work independently and multiply when both are on), same adapter.
+    if (lc == "miningrolls") { ForgePact::MiningOre::RollsCommand(rest); return; }
     if (lc == "gemmythic" || lc == "gemmaxroll" || lc == "gemfilter" || lc == "gems") { GemsCommand(lc, rest); return; }
     if (lc == "minerhelm") { ForgePact::MinerHelmet::Command(rest); return; }
     // Toggle-skill re-cast guard (issue #11, Track A). A standalone early
@@ -43760,6 +43794,9 @@ void FrameCallback(FWFrame& FrameContext)
     if (g_Setup) GemsTick(fc);   // Gems of Incarnation: the tables, a little each frame
     FlushModState(fc);
     if (g_Setup) { FP_POP_SCOPE(MinerTick); ForgePact::MinerHelmet::Tick(); }
+#ifndef FORGEPACT_RELEASE
+    if (g_Setup) ForgePact::MiningOre::DigTick();   // `miningrolls dig`'s release
+#endif
     if (fc == 1) Trace("0-framecallback-running");
 
     // Special Content uses the game's eSt gates.  The helper is also safe in
