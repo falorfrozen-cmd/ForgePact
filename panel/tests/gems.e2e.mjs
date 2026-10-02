@@ -150,7 +150,7 @@ async function switches(ctx) {
 
   await page.click('.tabbtn[data-tab="mods"]');
   await settled(page);
-  const onMods = await $(page, () => ['qolCard', 'itemsCard'].map((id) => {
+  const onMods = await $(page, () => ['qolCard', 'itemsCard', 'gameplayCard'].map((id) => {
     const card = document.getElementById(id);
     return {
       id,

@@ -44,6 +44,7 @@ const EXPECTED = [
   'Character and Loot search/Modified filters, empty results, no value mutation',
   'Dependent switches, readable disabled text and arrow-key tabs',
   'Mods sub-tabs: default, click, arrow-key wrap and focus',
+  'Mods Gameplay sub-tab shows the Bosses select',
   'Sequential cross-setting saves, failure rollback, lost-response recovery and retry',
   'All six Setup/header actions route correctly (intercepted; no game or installation)',
   '3/2 minimum blocks mouse changes before HTTP',
@@ -336,6 +337,17 @@ async function panelUi(ctx) {
   }), 'Sub-tab arrow key returns to Quality of Life');
   await $(page, () => document.getElementById('subtab-items').click());
   passed.push('Mods sub-tabs: default, click, arrow-key wrap and focus');
+
+  // The third sub-tab (issue #44): Gameplay holds only the Bosses select.
+  assert(await $(page, () => {
+    document.getElementById('subtab-gameplay').click();
+    const active = [...document.querySelectorAll('.tab-card[data-tab="mods"]')].filter((c) => c.classList.contains('active')).map((c) => c.id);
+    const select = document.getElementById('boss_rarity');
+    return JSON.stringify(active) === '["gameplayCard"]' && select.checkVisibility() &&
+      document.getElementById('subtab-gameplay').getAttribute('aria-selected') === 'true';
+  }), 'Gameplay sub-tab click shows only #gameplayCard with a visible #boss_rarity');
+  await $(page, () => document.getElementById('subtab-items').click());
+  passed.push('Mods Gameplay sub-tab shows the Bosses select');
 
   await tab('mods');
   net.delay = 100;

@@ -59,6 +59,7 @@ export function enabledControls(cfg) {
   const out = [];
   for (const key of BOOLEAN_MODS) if (cfg[key]) out.push(key);
   if ((cfg.mod_skill_timer_style || 'off') !== 'off') out.push('mod_skill_timer_style');
+  if ((cfg.boss_rarity || 'off') !== 'off') out.push('boss_rarity');
   if (cfg.density_on && Number(cfg.density) > 1) out.push('den_on');
   for (const id of sliderSwitchIds(cfg)) {
     if (switchOn(cfg, id) && sliderValue(cfg, id) > sliderDefault(id)) out.push(switchControlId(id));

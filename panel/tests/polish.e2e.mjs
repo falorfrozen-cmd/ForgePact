@@ -63,6 +63,7 @@ const EXPECTED = [
   'mods-no-repeated-heading',
   'mods-one-card-per-mod-qol',
   'mods-one-card-per-mod-items',
+  'mods-one-card-per-mod-gameplay',
   'mods-columns-balanced',
   'theme-on-setup',
   'footer-credit',
@@ -473,10 +474,10 @@ async function miningStatus({ page }) {
 
 async function modsHeading({ page }) {
   await tab(page, 'mods');
-  for (const [sub, label] of [['subtab-qol', 'Quality of Life'], ['subtab-items', 'Items']]) {
+  for (const [sub, label] of [['subtab-qol', 'Quality of Life'], ['subtab-items', 'Items'], ['subtab-gameplay', 'Gameplay']]) {
     await subtab(page, sub);
     const got = await $(page, (l) => ({
-      h2: document.querySelectorAll('#qolCard h2, #itemsCard h2').length,
+      h2: document.querySelectorAll('#qolCard h2, #itemsCard h2, #gameplayCard h2').length,
       count: document.getElementById('workspace').innerText.split('\n').filter((line) => line.trim() === l).length,
     }), label);
     assert(got.h2 === 0, `${label}: a Mods panel still has ${got.h2} heading(s)`);
@@ -531,9 +532,19 @@ async function modsCardsItems({ page }) {
   assert(got.perCard.filter((p) => p.id !== 'minerHelmetCard').every((p) => p.controls.length === 1), 'An Items card does not hold exactly one mod: ' + JSON.stringify(got.perCard));
 }
 
+async function modsCardsGameplay({ page }) {
+  await tab(page, 'mods');
+  await subtab(page, 'subtab-gameplay');
+  const got = await $(page, modCards, ['gameplayCard', []]);
+  assert(got.transparent, `#gameplayCard is still drawn as a card (${got.wrapper})`);
+  assert(got.top === 1 && got.raised === 1, `Gameplay: ${got.top} top-level cards (${got.raised} raised), not 1`);
+  assert(got.unitsAreTops, `Gameplay: the cards are not the column's ${got.units} mods`);
+  assert(JSON.stringify(got.perCard.map((p) => p.controls)) === '[["boss_rarity"]]', 'The Gameplay card is not the Bosses select alone: ' + JSON.stringify(got.perCard));
+}
+
 async function modsColumns({ page }) {
   await tab(page, 'mods');
-  for (const [sub, id] of [['subtab-qol', 'qolCard'], ['subtab-items', 'itemsCard']]) {
+  for (const [sub, id] of [['subtab-qol', 'qolCard'], ['subtab-items', 'itemsCard'], ['subtab-gameplay', 'gameplayCard']]) {
     await subtab(page, sub);
     await wait(50);
     await frames(page);
@@ -1061,6 +1072,7 @@ const CHECKS = [
   ['mods-no-repeated-heading', modsHeading],
   ['mods-one-card-per-mod-qol', modsCardsQol],
   ['mods-one-card-per-mod-items', modsCardsItems],
+  ['mods-one-card-per-mod-gameplay', modsCardsGameplay],
   ['mods-columns-balanced', modsColumns],
   ['theme-on-setup', themeOnSetup],
   ['footer-credit', footerCredit],

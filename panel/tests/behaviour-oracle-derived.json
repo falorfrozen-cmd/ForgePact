@@ -55,7 +55,8 @@
   "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
   "#sw_percent_stats_allskills",
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
-  "#sw_drops_mining_ore_rolls"
+  "#sw_drops_mining_ore_rolls",
+  "#boss_rarity"
  ],
  "steps": [
   {
@@ -5475,6 +5476,91 @@
     },
     "cmds": {
      "same": 444
+    }
+   }
+  },
+  {
+   "step": 451,
+   "control": "tab:mods",
+   "action": "click"
+  },
+  {
+   "step": 452,
+   "control": "subtab:gameplay",
+   "action": "click"
+  },
+  {
+   "step": 453,
+   "control": "#boss_rarity",
+   "action": "select",
+   "value": "ancient",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "boss_rarity",
+        "value": "ancient"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "bossrarity ancient"
+     ]
+    }
+   }
+  },
+  {
+   "step": 454,
+   "control": "#boss_rarity",
+   "action": "select",
+   "value": "off",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "boss_rarity",
+        "value": "off"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "bossrarity off"
+     ]
+    }
+   }
+  },
+  {
+   "step": 455,
+   "control": "#boss_rarity",
+   "action": "select",
+   "value": "ancient",
+   "expect": {
+    "posts": {
+     "same": 453
+    },
+    "cmds": {
+     "same": 453
+    }
+   }
+  },
+  {
+   "step": 456,
+   "control": "#enabledMods .quick-disable[data-for=\"boss_rarity\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 454
+    },
+    "cmds": {
+     "same": 454
     }
    }
   }

@@ -99,7 +99,7 @@ try {
     ['mod_pet_quest_pickup', 'qolCard'], ['mod_auto_prospect', 'qolCard'], ['mod_auto_prospect_bag', 'qolCard'],
     ['mod_craft_mats', 'qolCard'], ['mod_stash_move_all', 'qolCard'], ['mod_toggle_indicator', 'qolCard'], ['mod_toggle_guard', 'qolCard'],
     ['mod_restart_anytime', 'qolCard'], ['mod_far_sleep', 'qolCard'], ['density_rolling', 'qolCard'], ['mod_orb_pickup_radius', 'qolCard'], ['mod_filter_max_relics', 'qolCard'],
-    ['mod_skill_timer_style', 'qolCard'], ['headhunter', 'itemsCard'], ['tyrant', 'itemsCard'], ['beacon', 'itemsCard'],
+    ['mod_skill_timer_style', 'qolCard'], ['headhunter', 'itemsCard'], ['tyrant', 'itemsCard'], ['beacon', 'itemsCard'], ['boss_rarity', 'gameplayCard'],
     ['mod_gem_mythic', 'gemsCard'], ['mod_gem_maxroll', 'gemsCard'], ['den_on', 'densityCard'], ['enemyspeed_ct', 'speedCard'],
   ];
   for (const [id, card] of missingBefore) {

@@ -7,12 +7,13 @@
 // Evil Parts), entered on the Loot tab, then the boolean mods no recording
 // has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, and last the
 // switched sliders no recording has (NATIVE_SLIDERS), entered on Modifiers,
-// and the Loot tab's after them.
+// and the Loot tab's after them, and last of all the selects no recording has
+// (NATIVE_SELECTS, the Bosses select), entered on Mods › Gameplay.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { NATIVE_BOOLEANS, NATIVE_SLIDERS, derive, derivedFromPath, quickDisable, serialise, switchIdOf, tableRange } from './oracle-derive.mjs';
+import { NATIVE_BOOLEANS, NATIVE_SELECTS, NATIVE_SLIDERS, derive, derivedFromPath, quickDisable, serialise, switchIdOf, tableRange } from './oracle-derive.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { THEMES } from '../src/theme.js';
 
@@ -32,8 +33,12 @@ const NATIVE_STEPS = 2 + 4 * NATIVE_BOOLEANS.length;
 // then Loot), then a slider's eight steps each.
 const NATIVE_SLIDER_TABS = NATIVE_SLIDERS.filter((n, i) => i === 0 || n.tab !== NATIVE_SLIDERS[i - 1].tab).length;
 const NATIVE_SLIDER_STEPS = NATIVE_SLIDER_TABS + 8 * NATIVE_SLIDERS.length;
+// Then the native selects': the Mods tab and its Gameplay sub-tab once (the
+// native sliders left the Loot tab open), then raised, off, raised and Turn
+// off for each.
+const NATIVE_SELECT_STEPS = 2 + 4 * NATIVE_SELECTS.length;
 // Everything after the key supplement's slider.
-const TAIL = NATIVE_STEPS + NATIVE_SLIDER_STEPS;
+const TAIL = NATIVE_STEPS + NATIVE_SLIDER_STEPS + NATIVE_SELECT_STEPS;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -97,15 +102,15 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 64 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 65 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
   const theme = steps.filter((s) => s.control === '#theme');
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
-  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2);
+  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2 + NATIVE_SELECTS.length);
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 64);
+  assert.equal(quick.length, 65);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -176,10 +181,11 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, then each native slider and its switch', () => {
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, each native slider and its switch, then the native selects', () => {
   assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil',
     ...NATIVE_BOOLEANS.map((n) => '#' + n.key),
-    ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`])]);
+    ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`]),
+    ...NATIVE_SELECTS.map((n) => '#' + n.key)]);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
@@ -244,7 +250,7 @@ test('a native slider\'s contract is literal and last: each end posts its value 
   assert.deepEqual(NATIVE_SLIDERS.map((n) => `${n.section}.${n.key}`),
     ['percent_stats.skillhaste', 'percent_stats.allskills', 'drops.mining_ore_rolls']);
   const steps = DERIVED.steps;
-  const at = steps.length - NATIVE_SLIDER_STEPS;
+  const at = steps.length - NATIVE_SLIDER_STEPS - NATIVE_SELECT_STEPS;
   for (const n of NATIVE_SLIDERS) {
     for (const c of [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`]) {
       assert.ok(!LEGACY.controls.includes(c) && !SUPPLEMENT.controls.includes(c) && !KEY_SUPPLEMENT.controls.includes(c),
@@ -287,14 +293,43 @@ test('a native slider\'s contract is literal and last: each end posts its value 
     assert.deepEqual(steps[first + 7].expect, { posts: { same: first + 1 }, cmds: { same: first + 1 } });
     first += 8;
   }
-  assert.equal(first, steps.length);
+  assert.equal(first, steps.length - NATIVE_SELECT_STEPS);
   // Mining Ore Extra Rolls: max sends `miningrolls 10`, min (its default, 1)
   // `miningrolls 1`.
   const rolls = NATIVE_SLIDERS.find((n) => n.key === 'mining_ore_rolls');
   assert.deepEqual([rolls.tab, rolls.min, rolls.max, rolls.atMin, rolls.atMax], ['tab:loot', 1, 10, 'miningrolls 1', 'miningrolls 10']);
-  // The last control listed is the last native slider's switch, and the last
-  // step is its slider back at its minimum.
+  // The last native slider's switch is listed just before the native selects,
+  // and its slider back at its minimum is the step before theirs.
   const last = NATIVE_SLIDERS.at(-1);
-  assert.equal(DERIVED.controls.at(-1), `#sw_${last.section}_${last.key}`);
-  assert.equal(steps.at(-1).control, tableRange(last.section, last.key));
+  assert.equal(DERIVED.controls.at(-1 - NATIVE_SELECTS.length), `#sw_${last.section}_${last.key}`);
+  assert.equal(steps.at(-1 - NATIVE_SELECT_STEPS).control, tableRange(last.section, last.key));
+});
+
+test('a native select\'s contract is literal and last: raised and off post the value and send the verb with it, its Turn off repeats the off', () => {
+  assert.deepEqual(NATIVE_SELECTS, [{ key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' }]);
+  const steps = DERIVED.steps;
+  const at = steps.length - NATIVE_SELECT_STEPS;
+  for (const n of NATIVE_SELECTS) {
+    const sel = '#' + n.key;
+    assert.ok(!LEGACY.controls.includes(sel) && !SUPPLEMENT.controls.includes(sel) && !KEY_SUPPLEMENT.controls.includes(sel),
+      `${sel}: a recording lists it: derive it from there instead`);
+    assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), `${sel} appears before the native selects`);
+  }
+  // The native sliders' last step comes first, so none of their indexes moved.
+  const lastSlider = NATIVE_SLIDERS.at(-1);
+  assert.equal(steps[at - 1].control, tableRange(lastSlider.section, lastSlider.key));
+  assert.deepEqual(steps.slice(at, at + 2), [
+    { step: at, control: 'tab:mods', action: 'click' }, { step: at + 1, control: 'subtab:gameplay', action: 'click' }]);
+  NATIVE_SELECTS.forEach(({ key, on: raised, verb }, i) => {
+    const first = at + 2 + 4 * i;
+    const sel = '#' + key;
+    assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action, s.value]),
+      [[sel, 'select', raised], [sel, 'select', 'off'], [sel, 'select', raised], [quickDisable(key), 'click', undefined]]);
+    assert.deepEqual(steps[first].expect, { posts: { is: [{ url: '/api/set', body: { key, value: raised } }] }, cmds: { is: [`${verb} ${raised}`] } });
+    assert.deepEqual(steps[first + 1].expect, { posts: { is: [{ url: '/api/set', body: { key, value: 'off' } }] }, cmds: { is: [`${verb} off`] } });
+    assert.deepEqual(steps[first + 2].expect, { posts: { same: first }, cmds: { same: first } });
+    assert.deepEqual(steps[first + 3].expect, { posts: { same: first + 1 }, cmds: { same: first + 1 } });
+  });
+  assert.equal(DERIVED.controls.at(-1), '#' + NATIVE_SELECTS.at(-1).key);
+  assert.equal(steps.at(-1).control, quickDisable(NATIVE_SELECTS.at(-1).key));
 });

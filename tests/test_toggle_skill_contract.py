@@ -841,6 +841,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Mining Ore Extra Rolls (ForgePact #36; test_mining_ore_behavior.py
             # and test_mining_ore_panel.py).
             "miningrolls",
+            # The Bosses control (ForgePact #44; test_boss_rarity_contract.py
+            # and test_boss_rarity_panel.py).
+            "bossrarity",
         }
         self.assertEqual(entries, expected)
 
@@ -1237,10 +1240,12 @@ class SkillTimerShipContractTests(unittest.TestCase):
 
     def test_html_has_one_select_with_five_styles_in_order(self):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
-        # control of record) is the page's only other <select>, so the skill
-        # timer is still the one select among the controls.
-        self.assertEqual(PANEL_PAGE.count("<select"), 2)
+        # control of record) and the Mods > Gameplay `#boss_rarity` select
+        # (ForgePact #44) are the page's only other <select>s, so the skill
+        # timer is still the one select of its kind among the controls.
+        self.assertEqual(PANEL_PAGE.count("<select"), 3)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="boss_rarity">'), 1)
         m = re.search(
             r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
             PANEL_PAGE, re.S)
@@ -2972,15 +2977,17 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `stashmoveall` and `stashmove` are Move all into the stash's
         # (ForgePact #68, test_stash_move_all_contract.py) and
         # `densityroll` rolling density copies'
-        # (test_rolling_density_contract.py), and `miningrolls` is Mining Ore
-        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py).
+        # (test_rolling_density_contract.py), `miningrolls` is Mining Ore
+        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py), and
+        # `bossrarity` is the Bosses control (ForgePact #44,
+        # test_boss_rarity_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll"})
+                                        "densityroll", "bossrarity"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

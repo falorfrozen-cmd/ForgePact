@@ -55,6 +55,11 @@
 // earlier step's index moves, and both the range and its switch are in
 // `controls`, since no recording lists the range either.
 //
+// NATIVE_SELECTS are selects no recorded page ever had (the Bosses select of
+// the Mods tab's Gameplay sub-tab, issue #44): raised, off, raised again and
+// Turn off, each post and line written out as a literal, entered on their tab
+// and Mods sub-tab. They come after the native sliders, last.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -109,6 +114,16 @@ export const NATIVE_SLIDERS = [
     atMin: 'statadd allskills 0', atMax: 'statadd allskills 100' },
   { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', min: 1, max: 10,
     atMin: 'miningrolls 1', atMax: 'miningrolls 10' },
+];
+// Selects no recorded page ever had (the Bosses select, issue #44, the only
+// control of the Mods tab's Gameplay sub-tab): the config key, where it sits,
+// the value it is raised to, and the plugin verb src/forgepact.py sends with
+// the chosen value. The legacy #mod_skill_timer_style branch above walks only
+// the recording's controls, so these are written out as literals - raised,
+// off, raised again, then the Turn off button, which sends what off sends -
+// after the native sliders, so no earlier step's index moves.
+export const NATIVE_SELECTS = [
+  { key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
@@ -253,6 +268,17 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
       expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
     });
     push(selector, 'min', { expect: { posts: { same: atMinStep }, cmds: { same: atMinStep } } });
+  }
+  // The selects no recording has: their literal contract, last of all.
+  for (const { key, tab, sub, on: raised, verb } of NATIVE_SELECTS) {
+    const selector = '#' + key;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+    const on = push(selector, 'select', { value: raised, expect: { posts: { is: setPost({ key, value: raised }) }, cmds: { is: [`${verb} ${raised}`] } } });
+    const off = push(selector, 'select', { value: 'off', expect: { posts: { is: setPost({ key, value: 'off' }) }, cmds: { is: [`${verb} off`] } } });
+    push(selector, 'select', { value: raised, expect: { posts: { same: on }, cmds: { same: on } } });
+    push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

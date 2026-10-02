@@ -99,9 +99,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # save) before it was ported here, plus 4 no legacy page had: the Pet
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
         # switch, Move all into the stash's switch and Extra packs as you
-        # approach's switch (all four the derived oracle's native booleans).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4)
+        # approach's switch (all four the derived oracle's native booleans),
+        # plus 1 for the Mods > Gameplay `#boss_rarity` select's handler
+        # (ForgePact #44).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 4 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 4 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
@@ -135,8 +137,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         self.assertEqual(world.count('id="den_on"'), 1)
         self.assertNotIn("sw_den", self.page)
         self.assertNotIn('data-switch="density"', self.page)
-        # Nothing new is a tab card.
-        self.assertEqual(self.page.count('data-tab="mods"'), 3)
+        # Nothing new is a tab card: the nav button and the three Mods cards,
+        # the third being `#gameplayCard` (ForgePact #44), not a switch or
+        # slider row.
+        self.assertEqual(self.page.count('data-tab="mods"'), 4)
+        self.assertEqual(self.page.count('id="gameplayCard"'), 1)
         for tag in (_opening_tag(self.app, 'id="enabledMods"'), _opening_tag(self.setup, 'id="theme"')):
             self.assertNotIn("data-tab", tag)
 

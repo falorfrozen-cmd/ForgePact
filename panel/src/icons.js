@@ -175,6 +175,7 @@ export const STATIC_ICONS = {
   'map_reveal': 'map', 'map_reveal_packs': 'density', 'mod_filter_max_relics': 'relic-filter',
   'mod_orb_pickup_radius': 'pickup-orbs', 'mod_pet_quest_pickup': 'pet', 'mod_pet_loot_unstick': 'pet',
   'headhunter': 'headhunter', 'tyrant': 'tyrant', 'beacon': 'beacon',
+  'boss_rarity': 'ancient',
 };
 // Card id -> the icon beside its heading. Every Mods card needs an entry
 // (tests/test_mods_categories.py reads this literal as text).
@@ -182,6 +183,7 @@ export const SECTION_ICONS = {
   'setupCard': 'settings', 'densityCard': 'density', 'speedCard': 'boots',
   'spawnsCard': 'rift', 'dropsCard': 'chest', 'angelicCard': 'angelic',
   'rarityCard': 'rare', 'satanicMods': 'cursed-orb', 'qolCard': 'settings', 'itemsCard': 'relic',
+  'gameplayCard': 'ancient',
 };
 export const ACTION_ICONS = {
   'exebrowse': 'folder', 'exesave': 'save', 'installmod': 'install',

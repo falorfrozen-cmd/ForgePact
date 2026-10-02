@@ -154,8 +154,12 @@ async function planSteps(page) {
   const groups = [];
   for (const tab of TABS) {
     if (tab === 'mods') {
-      for (const sub of ['qol', 'items']) {
-        groups.push({ tab, sub, controls: await page.evaluate(enumerateIn, `#${sub}Card`) });
+      for (const sub of ['qol', 'items', 'gameplay']) {
+        const controls = await page.evaluate(enumerateIn, `#${sub}Card`);
+        // Gameplay (issue #44) is newer than every recorded page: a page
+        // without it walks exactly as it always did.
+        if (sub === 'gameplay' && !controls.length) continue;
+        groups.push({ tab, sub, controls });
       }
     } else {
       groups.push({ tab, controls: await page.evaluate(enumerateIn, `.tab-card[data-tab="${tab}"]`) });
