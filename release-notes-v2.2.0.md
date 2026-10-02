@@ -9,8 +9,9 @@ loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key.
 
 A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
-tab, is built to make every boss come as a Rare ("uber") or Ancient ("uber
-uber") boss; that has not yet been confirmed in a live game.
+tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
+Measured in a live game: a boss set to Ancient had about five times its usual
+health, about twice its damage and 6.25 times its experience.
 
 ## New
 
@@ -68,9 +69,19 @@ uber") boss; that has not yet been confirmed in a live game.
   not affected, and the Monster Rarity sliders on the World tab still leave
   bosses alone. If the plugin cannot set it up on your game,
   `bossrarity status` in the log says so (`hook=failed` or `hook=table-only`).
-  Not yet confirmed in a live game: that every boss really comes out raised,
-  that the extra affixes appear, and what the raise does to its health, damage,
-  experience, drops and look.
+  What was measured in a live game, on 2026-10-02: on the research build, a
+  Karp King set to Rare and to Ancient, and Damien, Uber Damien and Uber Anubis
+  set to Ancient, each came out at the rarity chosen with its extra affixes. On
+  an Ancient Karp King the game then built a stronger boss: about 4.7 to 5.7
+  times its usual health (two sessions), about 2.1 times its damage and 6.25
+  times its experience, and its death rolled its loot at the ancient rank
+  instead of the normal one. Not seen in those sessions: an ancient look (its
+  name bar looked the same), more or better loot (one kill at each rank, too
+  few to tell), or extra boss gems, runes or parts; and what Rare changes on a
+  boss beyond its rarity was not measured. On the release plugin, the panel
+  turned the setting on and off in a running game and the hook went in on
+  both routes; no boss was fought on that build, so the raise itself was
+  measured on the research build.
 
 ## How to update
 
