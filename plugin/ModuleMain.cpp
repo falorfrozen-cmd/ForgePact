@@ -42999,6 +42999,15 @@ static void RunCommand(const std::string& line)
             }
             return;
         }
+#else
+        // The player build has no research instruments. Its first-word gate
+        // lets `petrelic` through, so name the absent subcommand here instead
+        // of letting it fall through to "anything else turns the mod off".
+        static const std::unordered_set<std::string> kPetRelicResearchOnly = { "stat", "census", "route", "trace" };
+        if (kPetRelicResearchOnly.count(pv.substr(0, pv.find(' '))) != 0) {
+            Out("command unavailable in player build: petrelic " + pv);
+            return;
+        }
 #endif
         const bool enable = (pv == "1" || pv == "true" || pv == "on");
         ForgePact::PetRelicCollectorMod::Instance().SetEnabled(enable);

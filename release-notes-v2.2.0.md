@@ -38,10 +38,11 @@ pet pick up the relics lying around you.
   With this on, while your pet is out it walks to the relics lying on screen
   and picks them up for you, one at a time, through the game's own pickup, so
   each one raises the relic you own by one level, the same as picking it up
-  yourself. A relic you already have at 10/10 is left where it is, since the
-  game will not let it be picked up: with a 10/10 relic and a lower one on the
-  ground the pet takes the lower one, and with only 10/10 relics around it
-  stays put instead of going back and forth. If the game turns a pickup down,
+  yourself. A relic you already have at 10/10 is left where it is, since
+  picking it up cannot raise it any further: with a 10/10 relic and a lower
+  one on the ground the pet takes the lower one, and with only 10/10 relics
+  around it stays put instead of going back and forth. If the game turns a
+  pickup down,
   the relic stays on the ground and the pet moves on to the next one. It is
   separate from Pet collects quest items; with both on, the pet fetches one
   thing at a time. It is off by default: turn it on in the panel. It has not
