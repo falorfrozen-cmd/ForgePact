@@ -9591,8 +9591,10 @@ static ForgePact::PetQuestOutcome PetRelicCollectOne(const RValue& inst)
         if (!item) { PetRelicRefuse("no item"); return PetQuestOutcome::Refused; }
         const RValue mplr = g_Yytk->CallBuiltin("variable_global_get", { RValue("mplr") });
         if (mplr.m_Kind == VALUE_UNDEFINED) { PetRelicRefuse("no player"); return PetQuestOutcome::Refused; }
+        // Passed straight through as an argument, so either kind the runner
+        // hands back will do; only a non-instance is refused.
         const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("itemInstance") });
-        if (itemStruct.m_Kind != VALUE_OBJECT) { PetRelicRefuse("no itemInstance"); return PetQuestOutcome::Refused; }
+        if (!HeroSiege::Player::IsInstanceHandle(itemStruct)) { PetRelicRefuse("no itemInstance"); return PetQuestOutcome::Refused; }
 
         // The owned level of this relic, read fresh and whole. An incomplete
         // read could be missing exactly the relic-tab 10/10 copy whose pickup
@@ -9902,7 +9904,9 @@ static void PetRelicCensus()
         + " vars: " + PetRelicVarNames(named, false));
     try {
         const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { named, RValue("itemInstance") });
-        if (itemStruct.m_Kind == VALUE_OBJECT) Out("  its itemInstance vars: " + PetRelicVarNames(itemStruct, true));
+        if (HeroSiege::Player::IsInstanceHandle(itemStruct))
+            Out("  its itemInstance (" + Describe(itemStruct) + ") vars: "
+                + PetRelicVarNames(itemStruct, itemStruct.m_Kind == VALUE_OBJECT));
         else Out("  its itemInstance: " + Describe(itemStruct));
     } catch (...) {}
 }
