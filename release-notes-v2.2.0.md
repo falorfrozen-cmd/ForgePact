@@ -6,9 +6,9 @@ A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
-shows it again while you hold a key. And when the game crashes or freezes,
-ForgePact now tells you and saves a report you can attach to a bug report;
-when it drops frames badly, the report is saved too, without a notification.
+shows it again while you hold a key. And when the game crashes, freezes or
+drops frames badly, ForgePact now saves a report you can attach to a bug
+report, without a notification: you find it on the panel's Setup tab.
 
 ## New
 
@@ -54,15 +54,21 @@ when it drops frames badly, the report is saved too, without a notification.
   with them awake. This version of the switch has been tested both outside
   the game and in a live game.
 - **Incident reports (#76).** When the game crashes or freezes, ForgePact
-  tells you and saves a report folder under `bp_ipc\reports\` in the game's
-  `bin` folder. A significant FPS drop (a single frame that takes over a
-  quarter of a second, or play running two and a half times slower than
-  usual for a couple of seconds) is saved as a report too, without a
-  notification. A freeze report names the
+  saves a report folder under `bp_ipc\reports\` in the game's `bin` folder.
+  A significant FPS drop (a single frame that takes over a quarter of a
+  second, or play running two and a half times slower than usual for a
+  couple of seconds) is saved as a report too. Every report is saved
+  without a notification: nothing pops up while you play, and the reports
+  are listed on the panel's Incident reports card. A freeze report names the
   ForgePact hook the game was inside when it stopped, and the mod as well
-  when it is one of the mods that keep time for these reports; an FPS-drop
-  report shows which mods were on and how much of each frame those mods
-  took; both say which room you were in. Not every ForgePact hook can be
+  when it is one of the mods that keep time for these reports, including
+  when the mod had handed over to the game's own work; an FPS-drop report
+  shows which mods were on and how much of each frame each of them took;
+  both say which room you were in. A mod's time counts
+  only ForgePact's own code: when a mod's hook lets the game do its normal work (drawing the HUD,
+  dropping an item, spawning a monster, and the extra drops or monsters a
+  multiplier asks for), that game work is not added to the mod's time. Not
+  every ForgePact hook can be
   named, so a report that says `none` does not clear ForgePact: it means
   only that none of the hooks it can name was running. A crash report cannot say what was running, because the crash
   is found after the game has closed. A zone or character load that stops
@@ -71,22 +77,20 @@ when it drops frames badly, the report is saved too, without a notification.
   Windows, processor, graphics card and memory. Your Windows user name is
   replaced in every path. Nothing is uploaded: the report stays
   on your PC until you attach it to a bug report yourself. While the panel is
-  open, a Windows notification tells you a crash or freeze report was
-  saved, and a crash is noticed as soon as the game closes. A crash's report folder is saved the
-  next time the game starts with ForgePact, and holds what Windows recorded
-  about the crash when the panel was open to read it. Without the panel, a
-  freeze or a crash shows a message box instead, the crash one the next time
-  the game starts. If another mod file fails while the game is closing,
+  open, a crash is noticed as soon as the game closes and shown on the card.
+  A crash's report folder is saved the next time the game starts with
+  ForgePact, and holds what Windows recorded about the crash when the panel
+  was open to read it. If another mod file fails while the game is closing,
   after ForgePact has already shut down cleanly, ForgePact notes it in its
   log and on the card instead of reporting a crash. FPS drops
   are not reported in the first few seconds after a zone change, while the
   game window is in the background, and at most one FPS-drop report folder
   is saved every five minutes, ten a session. The
   new **Incident reports** card on the Setup tab lists the latest reports,
-  shows how the game last closed and opens the reports folder. An FPS drop's
-  report is saved without a notification of any kind and is listed on the
-  card with the others; there is no setting for it. The last ten reports are kept. This is always on and changes nothing in
-  the game.
+  shows how the game last closed and opens the reports folder. No report, of
+  any kind, comes with a notification or a message box, and there is no
+  setting for one. The last ten reports are kept. This is always on and
+  changes nothing in the game.
 
 ## How to update
 

@@ -55,7 +55,7 @@ none of these diagnostic hooks or the recorder. See
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
-| **Incident reports** | Always on, nothing to switch on. When the game crashes or freezes, ForgePact tells you (a Windows notification while the panel is open, a message box without it) and saves a report folder under `bp_ipc\reports\`: which ForgePact hook or mod was running or busy, how much frame time ForgePact's mods took, plus your settings and system. A significant FPS drop's report is saved without a notification, and there is no switch for it. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
+| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -1008,11 +1008,12 @@ measurements and limits: [`docs/frame-profiler.md`](docs/frame-profiler.md).
 
 ## Incident reports (crash, freeze and FPS-drop reports)
 
-When the game crashes, freezes or drops frames badly, ForgePact notices, tells
-you, and saves a report you can attach to a bug report as it is. It answers the
+When the game crashes, freezes or drops frames badly, ForgePact notices and
+saves a report you can attach to a bug report as it is, without a notification:
+the reports are listed on the panel's Setup tab. It answers the
 questions a bug report about a slow or crashing game needs: which ForgePact
 hook the game was inside, which of ForgePact's mods was on or busy at the
-time, and how much of each frame ForgePact's own hooks were taking. It is
+time, and how much of each frame ForgePact's own code was taking. It is
 always on, in both builds, because a report that is missing because a switch
 was off is the one outcome it exists to prevent. It changes nothing in the
 game: it puts a name tag around each ForgePact hook as the hook is installed,
@@ -1033,7 +1034,10 @@ What counts as an incident:
   frames come back (or after 15 seconds if they never do), and a gap that
   ends with a zone change is a load, not a freeze, so loading a zone or a
   character is never reported. The report names the ForgePact hook and the
-  ForgePact mod the game was inside when the frames stopped, or `none`.
+  ForgePact mod the game was inside when the frames stopped, or `none`. When
+  the mod's hook had handed over to the game's own work (the game function
+  the hook wraps), the mod is marked so, for example `in-mod hudlabels (game
+  original)`: the game stopped inside its own code, called from that hook.
   `none` also covers the few ForgePact hooks that cannot be tagged (the
   population hooks; `incident stat` counts them as `untagged`), so `none`
   does not clear ForgePact: it says only that none of the tagged hooks was
@@ -1067,13 +1071,11 @@ none`, `CRASH
 previous session ended without a clean shutdown | exit 0xC0000005 | module
 ...` and `incident: report written <folder>`.
 
-Telling you: while the panel is open, a Windows notification says a crash or
-freeze report was saved. Without the panel, a freeze or a crash shows a message
-box (the crash one when the game next starts). An FPS drop's report is saved
-without a notification, with or without the panel, and there is no switch for
-it. The panel's Setup tab has an **Incident reports** card: the latest
-reports, FPS drops included, how the game last closed, and a button that opens
-the reports folder. The plugin limits itself to 50 episodes and 10 report
+Finding them: every report, crash, freeze or FPS drop, is saved without a
+notification, with or without the panel: nothing pops up, no message box is
+shown, and there is no switch for one. The panel's Setup tab has an
+**Incident reports** card: the latest reports of every kind, how the game last
+closed, and a button that opens the reports folder. The plugin limits itself to 50 episodes and 10 report
 folders a session, at most one folder every 5 minutes.
 
 `incident stat` (send it with `tools/ipc.ps1`) prints what the monitor sees
@@ -1087,6 +1089,14 @@ game has focus, which hook the frame thread is in, episodes and reports so
 far, how many hooks are tagged and how many are not, how many report files
 failed to write, and each mod's average and worst milliseconds a frame over
 the last minute.
+
+What a mod's time counts: only ForgePact's own code. When a mod's hook calls
+the game function it wraps (drawing the HUD, dropping an item, creating a
+monster, and the extra drops or monsters a multiplier asks for), the mod's
+clock is paused for that call, so the game's own work is never charged to the
+mod. Each row is that mod's own time, and the `frame` row is the frame
+callback's own code outside the named mods, so the rows add up to ForgePact's
+total.
 
 How it works: the game's frame thread only reads the clock and stores numbers
 (a few readings a frame); a background thread in the plugin wakes four times a

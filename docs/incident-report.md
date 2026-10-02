@@ -3,8 +3,10 @@
 Status (2026-10-02): **built for 2.2.0 and verified against a stand-in frame
 thread** (`tests/incident_monitor_harness.cpp`, `tests/incident_shutdown_probe.cpp`)
 and by contract tests, and **run in the game in Live 1** (see "Live
-results": crash and freeze notices and a freeze at a zone load were not
-observed live). The player-facing description is the README's
+results": density's row in a report and a freeze at a zone load were not
+observed live). Since the owner's two later decisions (2026-10-02),
+no report notifies anyone, and a mod's time counts only ForgePact's own code
+("Decisions"). The player-facing description is the README's
 [Incident reports](../README.md#incident-reports-crash-freeze-and-fps-drop-reports)
 section.
 
@@ -13,11 +15,12 @@ section.
 A player's "the game crashed" or "it got laggy" arrives with no evidence, and
 the first question, whether ForgePact had anything to do with it, could only be
 answered by asking for `out.txt` and guessing. The player build now notices a
-crash, a freeze or a significant FPS drop on its own, says so for a crash or a
-freeze (an FPS drop is recorded silently), and writes a folder the player can
-attach as it is. Each folder answers three questions:
-which of our hooks the game was inside, which mod was on or busy, and how much
-frame time our hooks were taking. The first answer has limits (a crash cannot
+crash, a freeze or a significant FPS drop on its own and writes a folder the
+player can attach as it is, without a notification of any kind: the panel
+lists every report on its Incident reports card. Each folder answers three
+questions: which of our hooks the game was inside, which mod was on or busy,
+and how much frame time our own code was taking (never the game work a hook
+wraps). The first answer has limits (a crash cannot
 know it, and a few hooks are untagged; see "Known limits"), so `none` is a
 narrow statement, not an exoneration.
 
@@ -42,13 +45,21 @@ narrow statement, not an exoneration.
   detours are the untagged set, counted (`incident stat` prints `hooks tagged
   N, untagged M`).
 - **Per-mod accounting, set by named scopes**: an `IncidentScope` at the top
-  of each mod's hook body takes the clock on entry and exit, adds the
-  difference to that mod's per-frame counter, and sets the in-mod tag for the
+  of each mod's hook body takes the clock on entry and exit, adds that mod's
+  own time to its per-frame counter, and sets the in-mod tag for the
   duration (restoring the previous one on exit). Mods: `density`,
   `mapreveal`, `drops`, `autoprospect`, `hudlabels`, `farsleep`, `gems`,
-  `miner`, `stashmoveall`, `ipc`, and `frame` for the whole `FrameCallback`
-  body. The density hook on every created instance is sampled one call in 16
-  and scaled by 16.
+  `miner`, `stashmoveall`, `ipc`, and `frame` for `FrameCallback`'s own code
+  outside the named mods. The density hook on every created instance is
+  sampled one call in 16 and scaled by 16. Every row is self time: each call
+  a scoped body makes into the game's original (`g_Orig_DrawHudBuffs`,
+  `g_Orig_DropRelic`, the `DropManager.hpp` drop hooks' `m_Orig_*`,
+  `DoMultiCreate`'s `orig`) sits inside a
+  guard in `IncidentMonitor.hpp` that pauses whichever ForgePact clock is
+  running on the frame thread and restarts it after, and a scope nested in
+  another mod's scope pauses the outer clock while it runs. Inside the
+  guard the in-mod tag carries a game-original mark, so a freeze there reads
+  `in-mod hudlabels (game original)`.
 - **On the monitor thread** (an `ExitSafeThread` inside the plugin, woken every
   250 ms): the analysis, rate limiting, report building and every file write.
   It reads only ForgePact's own atomics and ring, and the Win32 focus state of
@@ -68,14 +79,14 @@ narrow statement, not an exoneration.
   ends in a clean-shutdown line (`after_clean_shutdown`), and writes
   `bp_ipc\exit.json`; the plugin folds it into the crash report at the next
   load and deletes it. A non-zero exit after a clean shutdown is logged at
-  the next load, with no report folder and no toast.
-- **Notifications**: the panel shows a Windows toast for each new FREEZE or
-  CRASH report folder. Without a live panel (`bp_ipc\panel.json` names no
-  running pid), the plugin shows a `MessageBoxW` for a freeze and for a crash
-  found at load. A PERF (FPS drop) report is written without a notification
-  from either side: the panel lists it on the Incident reports card and never
-  toasts it, the plugin never calls `MessageBoxW` for it, and no setting
-  changes that.
+  the next load, with no report folder.
+- **No notice**: every report, PERF, FREEZE or CRASH, is written without a
+  notification from either side (the owner's decision of 2026-10-02, "No
+  notice at all"). The panel lists every report folder on the Incident
+  reports card and starts no process to tell anyone; the plugin shows no
+  window and calls no message-box API; no setting changes that. The panel
+  still writes `bp_ipc\panel.json`, now only so a report's `panelVersion`
+  can name the running panel.
 - **The `incident stat` command** prints the monitor's current view and the
   per-mod table; it is the live control that the monitor is counting. Its
   first line starts `incident: frames ` and carries the worst frame overall
@@ -108,13 +119,59 @@ that fails to write is counted, and the `incident: report written` line says
   behaviour (the installer's thunk only names it; its one detour is on
   Windows' `ExitProcess`, to write the marker). A report missing because
   a switch was off is the outcome the feature exists to prevent, so there is
-  no switch for the monitor, and none for its notices either. An FPS drop is
-  recorded without a notice of any kind: after Live 1, where the PERF toast
-  had landed in Windows' notification center while the game ran fullscreen,
-  the owner decided on 2026-10-02 that a PERF report is written but the
-  player is not told, so the panel's FPS-drop switch that 2.2.0's
-  development builds carried was removed. Crash and freeze notices are
-  unchanged.
+  no switch for the monitor.
+- **No report notifies anyone** (owner decisions, 2026-10-02). After Live 1,
+  where the panel's FPS-drop notification had landed in Windows'
+  notification center while the game ran fullscreen, the owner first decided
+  that a PERF report is written without a notification, and the panel's
+  FPS-drop switch that 2.2.0's development builds carried was removed. After
+  the next code review the owner widened that to "No notice at all": a freeze or
+  crash report, like an FPS drop's, is written and listed in the panel, with
+  no toast and no message box of any kind. So the panel's toast path, its
+  counters and the plugin's message-box thread are gone, and there is no
+  setting for a notice. Keeping the crash and freeze notices for a windowed
+  player was rejected: the owner said no notice at all.
+- **A mod is charged only for its own code** (owner decision, 2026-10-02:
+  "Only our own work"). Until then each `IncidentScope` started its clock
+  before the hook called the game's original, so the original's time was
+  charged to the mod, and `frame` was inclusive, so it always ranked first
+  and could not be compared with the rows below it (Live 1's per-mod table
+  started with `frame`). Now:
+  - every game-original call in a scoped body (`Hook_DrawHudBuffs`,
+    `DoMultiCreate`, `Hook_DropRelic`, `DropManager.hpp`'s `FP_DROP_HOOK`
+    bodies, `Hook_DropGold`, `Hook_DropMonsterGold`, `Hook_DropKeys`) runs
+    inside a guard that pauses whatever ForgePact clock is running on the
+    frame thread, whichever scope started it, and restarts it after; it reads
+    the clock only when one is running, so `DoMultiCreate`'s untimed calls
+    stay at a couple of relaxed stores. `DropManager.hpp` has a guard macro
+    beside `FP_DROP_INCIDENT_SCOPE` that compiles to the bare call where
+    `IncidentMonitor.hpp` is absent. The tick scopes (`DensityCopiesTick`,
+    `GemsTick`, `AutoProspectTick`, `StashMoveAllTick`, `FarSleepTick`,
+    miner, mapreveal, ipc, frame) wrap no original and have no guard: the
+    built-ins and scripts they call are their own work.
+    `test_every_scoped_original_call_is_guarded` finds every scoped body and
+    fails on an original call outside the guard;
+  - every row is self time: a scope nested in another mod's scope pauses the
+    outer clock while it runs, so `frame` is `FrameCallback`'s own code
+    outside the named mods, the rows add up to ForgePact's total, and
+    `TopMod` ranks `frame` like any other row;
+  - same-mod nesting is counted once while that mod's clock runs; a paused
+    clock is not running, so a hook the game calls from inside a wrapped
+    original (a drop hook inside `DropRelic`'s original) times its own code;
+  - a sampled scope's untimed call still pauses another mod's running
+    clock, and its own time counts only when sampled, times `kSampleEvery`;
+  - the extra originals a multiplier calls (the drop loops, density's extra
+    copies) are game work too and are excluded, since the owner asked that a
+    mod count "only ForgePact's own code";
+  - inside the guard the in-mod channel names the mod with the mark
+    `(game original)`: `FreezeLine` and `StatLines` print, for example,
+    `in-mod hudlabels (game original)`, and a freeze's `report.json` says the
+    same; the mark is gone after the guard. `none` and a crash's `unknown`
+    are unchanged, and the installer's in-hook channel still names the hook
+    inside the original.
+
+  Timing the original as a separate `game` row was rejected: it would bring
+  back the reading the decision removes.
 - **One writer for the report folder: the plugin.** The panel contributes
   `exit.json` and `panel.json` and reads `reports\`; two writers of one format
   in two languages would drift, and a plugin-only install would get no crash
@@ -126,7 +183,7 @@ that fails to write is counted, and the `incident: report written` line says
   most game exits from its own exit-time destructors (the guide's Known
   Limitations item 25), and DLLs detach in reverse load order: if our
   destructor ran after that abort, every exit on a tracker user's machine
-  would read as a crash, with a report and a message box at every launch. So
+  would read as a crash, with a crash report at every launch. So
   the adapter installs, by name (`GetModuleHandleW(L"kernelbase.dll")` then
   `GetProcAddress`, `kernel32.dll` as the fallback; `MmCreateHook`, id
   `fp_exit_marker`), an inline detour on `ExitProcess` whose body writes the
@@ -177,16 +234,14 @@ that fails to write is counted, and the `incident: report written` line says
   is emitted then, with the gap as its length. A freeze that never ends is
   emitted once the gap reaches `kFreezeHoldMs` (15 s): a 15 s load is worth a
   report, and the exit save never reaches it because the process is gone.
-- **The panel's routes leave a trace.** `/api/state`'s `incidents` carries
-  `exitWatch` (`pidHeld`, `exitsSeen`, `lastCode`) and `toasts` (`sent`,
-  `failed`, `lastError`), so "the game exited cleanly" is told apart from "no
-  exit was watched", and a missing toast from a failed one (`toasts` counts
-  crash, freeze and exit-with-error toasts; a PERF report sends none). When
-  `out.txt`'s last session already ends in a clean-shutdown line, a non-zero
-  exit is written to `exit.json` with `after_clean_shutdown: true` for the plugin to
-  note, and no toast is shown: item 25's abort would otherwise toast "closed
-  with an error" at every exit. The Setup card's last-exit line says the exit
-  came after ForgePact's clean shutdown.
+- **The panel's route leaves a trace.** `/api/state`'s `incidents` carries
+  `reports`, `lastExit` and `exitWatch` (`pidHeld`, `exitsSeen`,
+  `lastCode`), so "the game exited cleanly" is told apart from "no exit was
+  watched". When `out.txt`'s last session already ends in a clean-shutdown
+  line, a non-zero exit is written to `exit.json` with
+  `after_clean_shutdown: true` for the plugin to note rather than report:
+  item 25's abort would otherwise read as a crash at every exit. The Setup
+  card's last-exit line says the exit came after ForgePact's clean shutdown.
 - **The instrument reports what it did.** `incident stat`'s first line is the
   live marker and starts `incident: frames ` (the thread's start line,
   `incident: monitor running`, stays separate, because the crash check reads
@@ -225,10 +280,6 @@ that fails to write is counted, and the `incident: report written` line says
 - **The panel reads the exit code from a handle it holds**, opened when it
   first sees the game running, so a crash is read even when the panel started
   after the game. An exit code of 0 writes nothing.
-- **Panel toasts go through PowerShell's own app identity** with the message
-  passed as an argument, never interpolated into the script, and every failure
-  swallowed; the toast carries no button (the Open folder button is in the
-  panel). The plugin's message box appears only when no panel is running.
 - **The PDB comes from the release workflow's environment, not from
   `build.bat`.** `forgepact-release.yml`'s compile step sets `CL=/Zi` and
   `_LINK_=/DEBUG:FULL /OPT:REF /OPT:ICF /PDBALTPATH:BloodPactPlugin.pdb`, so
@@ -250,7 +301,13 @@ that fails to write is counted, and the `incident: report written` line says
   none`, and `incident stat` prints their number as `untagged`. A hook table
   that ran out of its 128 slots would add to the same count. So `none` means
   "not inside a tagged hook", never "not ForgePact". The per-mod table covers
-  only the named mods; any other hook's time shows under `frame` at most.
+  only the named mods; any other hook's time shows under `frame` only when it
+  runs inside `FrameCallback`'s own code, and in no row otherwise.
+- **A mod is not charged for the game work it causes.** The guard excludes
+  every call into a game original, the extra ones a multiplier makes
+  included, so a drop or density multiplier that makes the game do ten times
+  the work shows only its own bookkeeping in its row. A freeze inside that
+  work still names the mod, as `in-mod <mod> (game original)`.
 - **A crash report cannot say what was running.** It is written at the next
   load, so its `inHook` and `inMod` are `"unknown"`, and its room and counts
   are empty.
@@ -261,11 +318,11 @@ that fails to write is counted, and the `incident: report written` line says
   order and Live 1 observed, the session reads as clean: the panel records the non-zero exit with
   `after_clean_shutdown: true`, the next load logs that the previous session
   shut down cleanly and that the panel recorded the exit after it, and no
-  report folder or toast follows. Before any marker: if the game's close did
+  report folder follows. Before any marker: if the game's close did
   not pass through the hooked `ExitProcess` export and the producer's
   destructors aborted before ours ran, no marker would be written and every
-  exit would read as a crash, so a tracker user would get a crash report,
-  and without the panel a message box, at every launch. The `ExitProcess`
+  exit would read as a crash, so a tracker user would get a crash report at
+  every launch. The `ExitProcess`
   route is there to prevent exactly that; this order is not observed live
   (in Live 1 the `ExitProcess` route fired and the producer's abort came
   after the marker).
@@ -274,7 +331,7 @@ that fails to write is counted, and the `incident: report written` line says
   taken as a load and never reported, so a real freeze that happens to end in
   a zone change is missed. A freeze that never ends is reported after 15 s;
   one that the process does not survive for 15 s leaves only the crash path.
-  A frozen game's message box therefore appears at 15 s, not at 3 s.
+  A frozen game's report is therefore written at 15 s, not at 3 s.
 - **No function names without the PDB, and the PDB needs renaming first.** A
   report records the faulting module and offset only. Mapping an offset
   inside `BloodPactPlugin.dll` to one of our functions is a maintainer step
@@ -305,10 +362,10 @@ that fails to write is counted, and the `incident: report written` line says
 - **Without the panel**, a crash's report has no exit code or faulting module,
   only the missing clean-shutdown line, and an exit-time abort after the
   marker goes unrecorded.
-- **The toast is not tested automatically** beyond its command builder and
-  the tests that a new FREEZE or CRASH folder sends one and a new PERF folder
-  sends none; it is shown for a crash or a freeze only, and a toast's actual
-  appearance on screen is checked by eye in a live session.
+- **Nobody is told a report was written.** The player finds a report only on
+  the panel's Incident reports card or in the `reports\` folder; a player
+  who never opens either does not know one exists. That is the owner's
+  choice (see "Decisions"), not an oversight.
 
 ## Live results
 
@@ -317,7 +374,10 @@ Live 1, 2026-10-02 (capture: the workorder's
 files). The 2.2.0 shipping DLL (SHA-256 `0c208d37...b61b9`) ran in the game
 with the tracker producer (`HSOfflineTrackerProducer.dll`) installed beside
 it, and the panel running. The panel was the build from before the FPS-drop
-toast was removed. Ten of the thirteen checks passed; the other three are
+toast was removed, and both were from before the owner's later decisions
+(no notice of any kind; a mod's time is its own code only): this session's
+per-mod rows were inclusive, game originals and `frame`'s nested mods
+included. Ten of the thirteen checks passed; the other three are
 recorded below as the owner accepted them.
 
 - **Installed and answering.** The log showed `HOOK INSTALLED on
@@ -376,7 +436,8 @@ recorded below as the owner accepted them.
   counted one toast sent and none failed (`lastError` null). Windows
   delivered it to its notification center but held it there while the game
   ran fullscreen, so the owner did not see it in the game. The owner then
-  decided that an FPS drop's report is saved without a notification (see
-  "Decisions"), so 2.2.0 shows no notice for an FPS drop, and a crash's or
-  a freeze's toast, which this session did not produce, was not observed
-  live either.
+  decided that an FPS drop's report is saved without a notification, and
+  later the same day that no report of any kind notifies anyone (see
+  "Decisions"), so 2.2.0 shows no notice at all. The crash and freeze
+  notices this session did not produce were removed before any session
+  could observe them.
