@@ -9712,6 +9712,9 @@ static void PetRelicCollectorTick()
         if (g_PetRelicPhase == PetRelicPhase::Travel) PetRelicEndTravel(ForgePact::PetQuestOutcome::Abandoned);
         return;
     }
+    // Counted before anything else can return, so `pet-seen ticks=0` in the
+    // stat line means no pet was out, not that a later read failed.
+    mod.petSeen.fetch_add(1);
 
     if (g_PetRelicCooldown > 0) { --g_PetRelicCooldown; return; }
 
