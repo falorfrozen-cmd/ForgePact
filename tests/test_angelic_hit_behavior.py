@@ -25,8 +25,17 @@ entry (type, sub, b) the roll read through `GetUniqueRepoStruct` is the
 stand-in's, a hit with no agreeing read is untyped and stays the game's, the
 coin is m·k in n + m·k with k copies, and a push that a fresh read of the list
 does not show is taken off again before the roll can carry it.
+`test_layout` is replan 2's change, and fails by its own assertions against
+`forgepact-74-replan2-base` (round 1's plugin, which took the Controller_obj
+variable itself for a flat array of triples): the variable is an array of six
+`ds_list` ids and the roll draws from element 5, so the push lands in that
+`ds_list` alone and comes off it again, `n` counts that element only, every
+step of the nested resolution refuses with its own reason, a fresh read whose
+element 5 is another list is a held miss, and `list=` reads `<name>[5]:<size>`.
+The model's fixture is that nested layout for every test, so the earlier
+tests' scenarios now run on it too.
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
-harness compiles against either source.
+harness compiles against any of these sources.
 """
 import os
 from pathlib import Path
@@ -52,12 +61,13 @@ PRODUCTION = (
     'static double SignatureShare(',              # the beside design only
     'static void SignatureDropOnAngelicHit(',     # the beside design only
     'static bool SigNumber(',
+    'static bool SigListHandle(',                 # replan 2: a ds_list handle, number or reference
     'static bool SigEntry(',
     'static bool SignatureController(',
     'static bool SignatureListShape(',
     'static std::string SignatureStandInsText(',
-    'static std::string SignatureListLine(',
     'static std::string SignatureListText(',
+    'static std::string SignatureListLine(',
     'static bool SignatureListResolve(',
     'static bool SignatureTailHolds(',
     'static bool SignatureHeldReadBack(',
@@ -78,6 +88,9 @@ PRODUCTION = (
     'static RValue& HookAngelicChance(',
     'static void InstallSignatureAngelicHooks(',
     'static void AngelicHitStatus(',
+    'static std::string ApRollKindName(',        # the research dump's kind names
+    'static void SigListDump(',                   # replan 2, research build: `angelicprobe list dump`
+    'static void SigInjectStatus(',               # research build: `angelicprobe inject status`, for its list=
 )
 
 
@@ -212,6 +225,20 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'copied_list_held_read_back', 'value_ref_and_value_object_resolve_alike',
             'wrong_shape_still_refuses', 'typing_hook_installed_once_by_name',
             'typing_hook_not_detoured_never_arms',
+        ))
+
+    def test_layout(self):
+        # Replan 2: the list is element 5 of the Controller_obj variable, a ds_list of triples.
+        # The push lands in that ds_list alone and comes off it again (same entries, same order),
+        # n counts it alone, each nested step refuses with its own reason and leaves the variable
+        # as found, a fresh read holding another list there is a held miss, list= names the index,
+        # a hit on a pushed entry is ours at k in n + k, a handle held as a reference works the
+        # same, and the research dump reads the layout two levels down without writing.
+        self.run_scenarios((
+            'layout_push_lands_in_element_five_only', 'layout_n_counts_element_five_only',
+            'layout_refusals', 'layout_held_miss_on_another_id', 'layout_status_tokens',
+            'layout_hit_on_pushed_entry_k_in_n_plus_k', 'layout_handle_as_reference',
+            'layout_dump_two_levels',
         ))
 
     def test_detection(self):

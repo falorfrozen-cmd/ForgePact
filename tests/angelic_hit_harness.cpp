@@ -15,6 +15,12 @@
 // the parameters', is what the roll passes on to the placement. The runtime may hand back the
 // Controller_obj instance as VALUE_REF or VALUE_OBJECT, and a switch makes variable_instance_get
 // return a copy of the list, so a push onto what it returned is not visible on a fresh read.
+//
+// The list's layout is replan 2's static reading (Session 4): the Controller_obj variable is an
+// array of six ds_list ids, the roll reads element 5 - ds_list_size, an index drawn up to it,
+// ds_list_find_value, and a fresh draw unless is_array - and each entry of that ds_list is an
+// array [type, sub, b]. The ds_lists live in a model store (id -> entries) that the stub runtime's
+// ds_exists / ds_list_size / ds_list_find_value / ds_list_add / ds_list_delete read and write.
 #define FORGEPACT_RELEASE
 #include <algorithm>
 #include <array>
@@ -33,7 +39,8 @@
 #include <string_view>
 #include <vector>
 
-enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_UNSET, VALUE_ARRAY };
+enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_UNSET, VALUE_ARRAY,
+       VALUE_BOOL, VALUE_PTR, VALUE_NULL };
 struct CInstance;
 // An array and a struct are references, as in GameMaker: a copy of the RValue shares them.
 struct RValue {
@@ -108,7 +115,8 @@ static int linesEndingWith(const char* prefix, const std::string& tail) {
 
 // ---- the game's data: the Controller_obj list, the unique repository ------------------------
 static constexpr double kControllerId = 100001;
-static const char* const kModelListName = "uniqueLoot";   // the model's name; the real one is Live 1's
+static const char* const kModelListName = "uniqueLoot";   // the model's name; the real one is lootListUnique
+static constexpr size_t kModelIndex = 5;                   // the element the roll reads (static reading)
 static int controllerCount = 1;
 static std::map<std::string, RValue> controllerVars;
 // How instance_find hands back the Controller_obj instance: a VALUE_REF (this runner's usual
@@ -120,17 +128,57 @@ static bool isController(const RValue& v) {
     if (v.m_Kind == VALUE_REF) return v.number == kControllerId;
     return v.m_Kind == VALUE_OBJECT && v.instance == &controllerInstance;
 }
-// variable_instance_get hands back a copy of the list instead of the list itself: a push onto
-// what it returned never reaches the array the roll reads.
+// The runtime's ds_list store: id -> entries. Ids are handed out from 40 up, so a small number
+// such as 7 is never a live list. `dsIdKind` is how the outer array holds each id: a number, or
+// a reference (a live data-structure handle may arrive as VALUE_REF on current runners).
+static std::map<double, std::vector<RValue>> dsLists;
+static double nextDsId = 40;
+static int dsIdKind = VALUE_REAL;
+static RValue dsHandle(double id) { RValue r(id); r.m_Kind = dsIdKind; return r; }
+static double dsCreate(std::vector<RValue> entries) { const double id = nextDsId++; dsLists[id] = std::move(entries); return id; }
+static std::vector<RValue>* dsFind(const RValue& v) {
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_REF) return nullptr;
+    const auto it = dsLists.find(v.number);
+    return it == dsLists.end() ? nullptr : &it->second;
+}
+static std::vector<RValue>& dsList(const RValue& v) {
+    auto* l = dsFind(v);
+    if (!l) throw std::runtime_error("not a live ds_list");
+    return *l;
+}
+static std::vector<RValue> entriesOf(const std::vector<Triple>& triples) {
+    std::vector<RValue> entries;
+    for (const Triple& t : triples) entries.push_back(makeEntry(t));
+    return entries;
+}
+static std::vector<Triple> triplesOf(const std::vector<RValue>& entries) {
+    std::vector<Triple> out;
+    for (const RValue& e : entries) out.push_back(tripleOf(e));
+    return out;
+}
+// variable_instance_get hands back a copy of the variable instead of the variable itself, and
+// the copy holds another ds_list (a fresh id, the same entries) at the roll's index: a push onto
+// what it returned never reaches the list the roll reads. `copiedIds` are those lists, in order.
 static bool getReturnsCopy = false;
+static std::vector<double> copiedIds;
 static RValue copyOf(const RValue& v) {
     if (v.m_Kind != VALUE_ARRAY || !v.array) return v;
     RValue c = v;
-    c.array = std::make_shared<std::vector<RValue>>();
-    for (const RValue& e : *v.array) c.array->push_back(copyOf(e));
+    c.array = std::make_shared<std::vector<RValue>>(*v.array);
+    if (c.array->size() > kModelIndex) {
+        if (auto* l = dsFind((*c.array)[kModelIndex])) {
+            std::vector<RValue> entries;
+            for (const RValue& e : *l) entries.push_back(e.m_Kind == VALUE_ARRAY ? makeArray(*e.array) : e);
+            const double id = dsCreate(std::move(entries));
+            copiedIds.push_back(id);
+            (*c.array)[kModelIndex] = dsHandle(id);
+        }
+    }
     return c;
 }
-static std::vector<Triple> vanilla;                       // the list as the game built it
+static std::vector<Triple> vanilla;                       // element 5's list as the game built it
+static std::vector<double> vanillaIds;                    // the outer array's ids as the game built it
+static std::vector<std::vector<Triple>> vanillaLayout;    // every element's list as the game built it
 // The vanilla list: 117 ordinary uniques plus Liquor Holster (8/0/51), Lucifer's Crown (0/0/85)
 // and Mask of the Celestial (0/0/86), each once, so every stand-in's n is 1.
 static std::vector<Triple> vanillaTriples(bool withLiquorHolster = true) {
@@ -141,21 +189,69 @@ static std::vector<Triple> vanillaTriples(bool withLiquorHolster = true) {
     v.push_back({ 0, 0, 86 });
     return v;
 }
-static void setList(const std::vector<Triple>& triples) {
-    std::vector<RValue> entries;
-    for (const Triple& t : triples) entries.push_back(makeEntry(t));
-    controllerVars[kModelListName] = makeArray(std::move(entries));
-    vanilla = triples;
+// Elements 0-4: small lists of other triples. Element 1 holds Liquor Holster too, so a count of
+// the stand-in over the wrong element (or over every element) is not element 5's n.
+static std::vector<std::vector<Triple>> otherElements() {
+    return { { { 3, 2, 0 }, { 3, 2, 1 } }, { { 8, 0, 51 }, { 3, 2, 2 } }, { { 5, 1, 0 } }, { { 5, 1, 1 } }, { { 5, 1, 2 } } };
 }
-static std::vector<RValue>* listVector() {
+static RValue* listVariable() {
     auto it = controllerVars.find(kModelListName);
-    return it == controllerVars.end() || it->second.m_Kind != VALUE_ARRAY ? nullptr : it->second.array.get();
+    return it == controllerVars.end() ? nullptr : &it->second;
+}
+// The outer array's elements as numbers (-1 for one that is not a number), and each element's
+// list as triples (empty for one that is not a live ds_list): what "untouched" is checked on.
+static std::vector<double> idsNow() {
+    std::vector<double> out;
+    if (RValue* v = listVariable(); v && v->m_Kind == VALUE_ARRAY)
+        for (const RValue& e : *v->array) out.push_back(dsFind(e) || e.m_Kind == VALUE_REAL ? e.number : -1);
+    return out;
+}
+static std::vector<std::vector<Triple>> layoutNow() {
+    std::vector<std::vector<Triple>> out;
+    if (RValue* v = listVariable(); v && v->m_Kind == VALUE_ARRAY)
+        for (const RValue& e : *v->array) { auto* l = dsFind(e); out.push_back(l ? triplesOf(*l) : std::vector<Triple>{}); }
+    return out;
+}
+static void setList(const std::vector<Triple>& triples) {
+    dsLists.clear(); nextDsId = 40;
+    std::vector<RValue> ids;
+    for (const auto& other : otherElements()) ids.push_back(dsHandle(dsCreate(entriesOf(other))));
+    ids.push_back(dsHandle(dsCreate(entriesOf(triples))));
+    controllerVars[kModelListName] = makeArray(std::move(ids));
+    vanilla = triples;
+    vanillaIds = idsNow();
+    vanillaLayout = layoutNow();
+}
+// The old fixture, the layout the plan had before Live 1: one flat array of triples.
+static void setFlatList(const std::vector<Triple>& triples) {
+    controllerVars[kModelListName] = makeArray(entriesOf(triples));
+    vanilla.clear(); vanillaIds.clear(); vanillaLayout.clear();
+}
+// Element 5's list as the roll reads it, off the variable itself (never a copy).
+static std::vector<RValue>* listVector() {
+    RValue* v = listVariable();
+    if (!v || v->m_Kind != VALUE_ARRAY || v->array->size() <= kModelIndex) return nullptr;
+    return dsFind((*v->array)[kModelIndex]);
 }
 static std::vector<Triple> listTriples() {
     std::vector<Triple> out;
-    if (auto* l = listVector()) for (const RValue& e : *l) out.push_back(tripleOf(e));
+    if (auto* l = listVector()) out = triplesOf(*l);
     return out;
 }
+// The variable two levels down, as text: for a refusal's "left as found" check, whatever shape it has.
+static std::string shapeOf(const RValue& v, int depth = 0) {
+    char b[64];
+    if (v.m_Kind == VALUE_ARRAY) {
+        std::string s = "[";
+        for (const RValue& e : *v.array) s += shapeOf(e, depth + 1) + ",";
+        return s + "]";
+    }
+    std::snprintf(b, sizeof b, "%d:%g", v.m_Kind, v.number);
+    std::string s = b;
+    if (depth < 2) if (auto* l = dsFind(v)) { s += "{"; for (const RValue& e : *l) s += shapeOf(e, 2) + ","; s += "}"; }
+    return s;
+}
+static std::string variableShape() { RValue* v = listVariable(); return v ? shapeOf(*v) : std::string("absent"); }
 static std::vector<Triple> plus(std::vector<Triple> v, std::initializer_list<Triple> extra) { v.insert(v.end(), extra.begin(), extra.end()); return v; }
 // droprate.base per (type, sub, b); the crown's default stand-in is the type-0 one with the lowest.
 static std::map<Triple, double> repoBase;
@@ -198,6 +294,22 @@ struct FakeYytk {
         if (n == "array_push") { arr(a[0]).push_back(a[1]); return RValue(); }
         if (n == "array_resize") { arr(a[0]).resize((size_t)num(a[1]), RValue(0.0)); return RValue(); }
         if (n == "array_create") return makeArray(std::vector<RValue>((size_t)num(a[0]), a.size() > 1 ? a[1] : RValue(0.0)));
+        // The ds_list builtins: ds_exists takes a number (an array or a struct handed to it is an
+        // error, as in GameMaker) and answers for type 2, ds_type_list; the others need a live list.
+        if (n == "ds_exists") { num(a[0]); return RValue(num(a[1]) == 2.0 && dsFind(a[0]) ? 1.0 : 0.0); }
+        if (n == "ds_list_size") return RValue((double)dsList(a[0]).size());
+        if (n == "ds_list_find_value") {
+            auto& l = dsList(a[0]);
+            const double i = num(a[1]);
+            return i >= 0 && i < (double)l.size() ? l[(size_t)i] : RValue();
+        }
+        if (n == "ds_list_add") { dsList(a[0]).push_back(a[1]); return RValue(); }
+        if (n == "ds_list_delete") {
+            auto& l = dsList(a[0]);
+            const double i = num(a[1]);
+            if (i >= 0 && i < (double)l.size()) l.erase(l.begin() + (std::ptrdiff_t)i);
+            return RValue();
+        }
         if (n == "variable_struct_exists") return RValue(obj(a[0]).count(a[1].text) ? 1.0 : 0.0);
         if (n == "variable_struct_get") { auto& f = obj(a[0]); auto it = f.find(a[1].text); return it == f.end() ? RValue() : it->second; }
         if (n == "variable_struct_set") { obj(a[0])[a[1].text] = a[2]; return RValue(); }
@@ -297,15 +409,27 @@ static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
 static int g_SigDropForce = -1;
 // The list, the injection and the current hit (ModuleMain.cpp's own globals, same names).
 static bool g_SigStandInsResolved = false;
+// Every name under both its old and its new spelling, so the harness compiles against
+// forgepact-74-replan1-base and forgepact-74-replan2-base (the flat list, kSigListMinLength) and
+// the replan-2 source (the sub-list at kAngelicListIndex, kSigListMinSize, the roll's ds_list).
 static const char* kAngelicListVar = "";
 static std::string g_SigListName = kAngelicListVar;
 static const int kSigListMinLength = 100;
+static const int kSigListMinSize = 10;
+static const int kAngelicListIndex = 5;
+static int g_SigListIndex = kAngelicListIndex;
 static bool g_SigListOk = false, g_SigListTried = false, g_SigListRecount = true;
 static int g_SigListLen = -1;
+static double g_SigListId = -1.0;
 static std::string g_SigListWhy;
 static double g_SigControllerIdx = -2.0;
 static RValue g_SigRollList;
+static RValue g_SigRollListId;
+static int g_SigRollIndex = -1;
 static int g_SigRollBefore = -1, g_SigRollPushed = 0;
+// `angelicprobe inject status` (research build) reads these; the harness compiles it for its `list=`.
+static bool g_SigReplaceMode = false;
+static volatile long g_SigRemoved = 0, g_SigStandinPicks = 0, g_SigHeldMiss = 0, g_SigTypeAgree = 0, g_SigTypeDisagree = 0;
 static bool g_SigRollItem[2] = { false, false };
 static int g_SigInjectDepth = 0;
 static int g_SigHitItem = -1, g_SigHitCoin = 0, g_SigHitStandIn = -1;
@@ -408,23 +532,32 @@ static int originalCalls = 0;
 static bool originalThrows = false;
 static bool gamePushesDuringRoll = false;  // the game itself appends to the list mid-roll
 static double lastChanceSeen = -1;
-static std::vector<std::vector<Triple>> listDuringCall;
+static std::vector<std::vector<Triple>> listDuringCall;                 // element 5, per original call
+static std::vector<std::vector<std::vector<Triple>>> layoutDuringCall;  // every element, per original call
+static std::vector<std::vector<double>> idsDuringCall;                  // the outer array, per original call
 static RValue originalReturn;              // what the game's roll hands back: undefined, always
 static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int argc, RValue** A) {
     ++originalCalls;
     lastChanceSeen = (argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) ? A[2]->number : -1;
     listDuringCall.push_back(listTriples());
+    layoutDuringCall.push_back(layoutNow());
+    idsDuringCall.push_back(idsNow());
     if (originalThrows) throw std::runtime_error("the game's roll threw");
-    // Pick an entry and read its definition before the die; only a hit builds the params, by a
-    // direct call, then places the item under the picked entry's type.
+    // Read element 5 of the variable (the ds_list, never the outer array): an index drawn up to
+    // ds_list_size, the entry at it (ds_list_find_value), drawn again unless is_array - the
+    // picker below chooses among the entries is_array accepts. Then read the picked entry's
+    // definition before the die; only a hit builds the params, by a direct call, then places
+    // the item under the picked entry's type.
     std::vector<RValue>* list = listVector();
     Triple picked{ 3, 1, 15 };
-    if (list && !list->empty()) {
-        size_t index = 0;
-        if (pickPolicy == Pick::Last) index = list->size() - 1;
+    std::vector<size_t> arrays;
+    if (list) for (size_t i = 0; i < list->size(); ++i) if ((*list)[i].m_Kind == VALUE_ARRAY) arrays.push_back(i);
+    if (!arrays.empty()) {
+        size_t index = arrays.front();
+        if (pickPolicy == Pick::Last) index = arrays.back();
         else if (pickPolicy == Pick::Among) {
             std::vector<size_t> candidates;
-            for (size_t i = 0; i < list->size(); ++i)
+            for (size_t i : arrays)
                 if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[i])) != pickTriples.end()) candidates.push_back(i);
             if (!candidates.empty()) index = candidates[std::uniform_int_distribution<size_t>(0, candidates.size() - 1)(pickRng)];
         }
@@ -495,8 +628,8 @@ static void reset() {
     g_HhEnabled = false; g_TyEnabled = false; g_HhForced = false; g_TyForced = false;
     g_AngelicPool.clear(); poolExtras.clear(); poolBuilds = 0;
     spawns.clear(); builds.clear(); builtinCalls = 0;
-    controllerCount = 1; controllerVars.clear(); setList(vanillaTriples());
-    controllerKind = VALUE_REF; getReturnsCopy = false;
+    controllerCount = 1; controllerVars.clear(); dsIdKind = VALUE_REAL; setList(vanillaTriples());
+    controllerKind = VALUE_REF; getReturnsCopy = false; copiedIds.clear();
     repoBase = { { { 8, 0, 51 }, 5000000.0 }, { { 0, 0, 85 }, 111111111.0 }, { { 0, 0, 86 }, 30000000.0 } };
     gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams; paramsLackJ = false;
     gameRepoCalls = 0; repoEntry = gameGetUniqueRepoStruct; repoRead = RepoRead::Picked;
@@ -505,7 +638,7 @@ static void reset() {
     g_SigCopies = 1; g_SigRollCopies[0] = g_SigRollCopies[1] = 0; g_SigHitShare = 0; g_SigHeldMissLogged = false;
     pickPolicy = Pick::First; pickTriples.clear();
     outcomes.clear(); originalCalls = 0; originalThrows = false; gamePushesDuringRoll = false; lastChanceSeen = -1;
-    listDuringCall.clear();
+    listDuringCall.clear(); layoutDuringCall.clear(); idsDuringCall.clear();
     installs.clear(); tableOnlyHook.clear(); missingHook.clear(); gameImage.clear();
     g_SigDetectNative = false;
     g_OrigAngChance = gameAngelicChance;   // as if `raredrop angelic` (or the switch) had installed it, detoured
@@ -519,7 +652,10 @@ static void reset() {
     // The list's name as Live 1 (or the research build's inject lever) gives it.
     g_SigStandInsResolved = false; g_SigListName = kModelListName;
     g_SigListOk = false; g_SigListTried = false; g_SigListRecount = true; g_SigListLen = -1; g_SigListWhy.clear();
+    g_SigListIndex = kAngelicListIndex; g_SigListId = -1.0;
     g_SigControllerIdx = -2.0; g_SigRollList = RValue(); g_SigRollBefore = -1; g_SigRollPushed = 0;
+    g_SigRollListId = RValue(); g_SigRollIndex = -1;
+    g_SigReplaceMode = false; g_SigRemoved = 0; g_SigStandinPicks = 0; g_SigHeldMiss = 0; g_SigTypeAgree = 0; g_SigTypeDisagree = 0;
     g_SigRollItem[0] = g_SigRollItem[1] = false; g_SigInjectDepth = 0;
     g_SigHitItem = -1; g_SigHitCoin = 0; g_SigHitStandIn = -1; g_SigHitRewritten = false; g_SigHitWhy.clear();
     g_SigPending[0] = g_SigPending[1] = 0;
@@ -568,6 +704,15 @@ static std::string sigdropStatusLine() {
 #ifdef HAS_SIGDROPSTATUS
     SigDropStatus();
     return lastLine("sigdrop:");
+#else
+    return std::string();
+#endif
+}
+// `angelicprobe inject status`, the research build's line (compiled here for its `list=` token).
+static std::string injectStatusLine() {
+#ifdef HAS_SIGINJECTSTATUS
+    SigInjectStatus();
+    return lastLine("angelicprobe inject:");
 #else
     return std::string();
 #endif
@@ -737,26 +882,34 @@ int main(int argc, char** argv) {
             require(g_SigBuiltCrown == countBuilds(0) && g_SigBuiltBelt == countBuilds(1), "crown=/belt= do not match what the game built");
             for (const auto& b : builds) if (b.forged == 0) require(b.t == 0 && b.a == 777001 && b.b == 7, "a crown was built from the wrong definition");
         } else if (test == "list_refusals") {
-            // The player build before Live 1 (no name), a name the instance lacks, a wrong shape, a
-            // short list, no Controller_obj: no push, the gate off, one refusal line each.
+            // The player build before Live 2 (no name), a name the instance lacks, a wrong entry, a
+            // short sub-list, no Controller_obj, and the nested layout's own steps (replan 2): a
+            // flat array of triples, an outer array without element 5, an element that is no live
+            // ds_list. No push, the gate off, one refusal line each.
             struct Case { const char* name; void (*arrange)(); const char* why; };
             const Case cases[] = {
                 { "no name", [] { g_SigListName = ""; }, "no list variable named yet" },
                 { "absent", [] { g_SigListName = "notTheList"; }, "has no variable notTheList" },
-                { "shape", [] { auto v = vanillaTriples(); setList(v); (*listVector())[5] = makeArray({ RValue(1.0), RValue(2.0) }); }, "entry 5 is not three numbers" },
-                { "short", [] { const auto all = vanillaTriples(); setList(std::vector<Triple>(all.end() - 50, all.end())); }, "fewer than 100" },
+                { "shape", [] { auto v = vanillaTriples(); setList(v); (*listVector())[5] = makeArray({ RValue(1.0), RValue(2.0) }); }, "uniqueLoot[5] entry 5 is not three numbers" },
+                { "short", [] { const auto all = vanillaTriples(); setList(std::vector<Triple>(all.end() - 5, all.end())); }, "uniqueLoot[5] has 5 entries, fewer than 10" },
                 { "no controller", [] { controllerCount = 0; }, "no live Controller_obj instance" },
+                { "flat", [] { setFlatList(vanillaTriples()); }, "uniqueLoot[5] is not a ds_list" },
+                { "five elements", [] { listVariable()->array->resize(5); }, "uniqueLoot has 5 elements, none at [5]" },
+                { "dangling id", [] { (*listVariable()->array)[5] = RValue(7.0); }, "uniqueLoot[5] is not a ds_list" },
             };
             for (const Case& c : cases) {
                 reset();
                 c.arrange();
                 const auto before = listTriples();
+                const std::string shape = variableShape();
                 g_HhForced = true;
                 installDetection();
                 for (int i = 0; i < 5; ++i) roll(monster, { false });
-                require(anyLineHas("signature drops: list missing", c.why), std::string(c.name) + ": the switch-on did not refuse naming why");
+                require(anyLineHas("signature drops: list missing", c.why), std::string(c.name) + ": the switch-on did not refuse naming why: "
+                        + lastLine("signature drops: list missing"));
                 require(linesStartingWith("signature drops: list missing") == 1, std::string(c.name) + ": not exactly one refusal line");
-                require(g_SigInjected == 0 && listTriples() == before, std::string(c.name) + ": an entry was pushed onto a list that did not resolve");
+                require(g_SigInjected == 0 && listTriples() == before && variableShape() == shape,
+                        std::string(c.name) + ": an entry was pushed onto a list that did not resolve");
                 require(!switchOn(1), std::string(c.name) + ": the gate armed without the list");
                 require(sigdropStatusLine().find(" list=missing gate=tyrant:off,headhunter:off ") != std::string::npos,
                         std::string(c.name) + ": `sigdrop status` does not say list=missing with the gate off");
@@ -800,7 +953,7 @@ int main(int argc, char** argv) {
             require(line == banner, "`sigdrop status` is not the fresh-session banner: " + line);
             g_HhForced = true;
             installDetection();
-            require(sigdropStatusLine().find(" list=uniqueLoot:120 gate=tyrant:off,headhunter:on ") != std::string::npos, "`list=` does not name the resolved list");
+            require(sigdropStatusLine().find(" list=uniqueLoot[5]:120 gate=tyrant:off,headhunter:on ") != std::string::npos, "`list=` does not name the resolved list");
         // ---- identity (replan 1): every scenario but the controls fails against forgepact-74-replan1-base ----
         } else if (test == "other_type_same_pair_never_attributed") {
             // Supreme Elemelon's shape: type 10 with Liquor Holster's sub 0 / b 51. Its hits name the
@@ -969,6 +1122,152 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < 20; ++i) roll(monster, { true });
                 require(g_SigInjected == 0 && g_SigOurHits == 0, std::string(c.name) + ": entries were pushed or a hit taken without typing");
             }
+        // ---- layout (replan 2): every scenario fails against forgepact-74-replan2-base ----
+        } else if (test == "layout_push_lands_in_element_five_only") {
+            g_HhForced = true;
+            installDetection();
+            std::vector<const void*> entries;   // element 5's own entries, to see they are the same ones after
+            for (const RValue& e : *listVector()) entries.push_back(e.array.get());
+            roll(monster, { false });
+            require(layoutDuringCall.size() == 1, "the game's roll did not run once");
+            require(idsDuringCall[0] == vanillaIds, "while the roll ran, the outer array was not the game's own");
+            for (size_t e = 0; e < kModelIndex; ++e)
+                require(layoutDuringCall[0][e] == vanillaLayout[e], "while the roll ran, element " + std::to_string(e) + " changed");
+            require(layoutDuringCall[0][kModelIndex] == plus(vanilla, { kBeltStandIn }),
+                    "while the roll ran, element 5's ds_list was not the game's own plus Liquor Holster once: " + describe(layoutDuringCall[0][kModelIndex]));
+            require(layoutNow() == vanillaLayout && idsNow() == vanillaIds, "after the roll the layout is not the game's own again");
+            require(listVector()->size() == entries.size(), "after the roll element 5's size is not the size before");
+            for (size_t i = 0; i < entries.size(); ++i)
+                require((*listVector())[i].array.get() == entries[i], "after the roll element 5 does not hold the same entries in the same order");
+            // Both on, three copies each: six entries on element 5 only, all six off again.
+            g_TyForced = true; g_SigCopies = 3;
+            roll(monster, { false });
+            require(layoutDuringCall[1][kModelIndex].size() == vanilla.size() + 6
+                    && layoutDuringCall[1][kModelIndex] == plus(vanilla, { kCrownStandIn, kCrownStandIn, kCrownStandIn, kBeltStandIn, kBeltStandIn, kBeltStandIn }),
+                    "both on with copies 3, element 5 did not carry three of each: " + describe(layoutDuringCall[1][kModelIndex]));
+            for (size_t e = 0; e < kModelIndex; ++e) require(layoutDuringCall[1][e] == vanillaLayout[e], "both on, element " + std::to_string(e) + " changed");
+            require(layoutNow() == vanillaLayout && idsNow() == vanillaIds && g_SigAnomalies == 0 && g_SigInjected == 7,
+                    "both on with copies 3, the layout was not restored or the pushes not counted");
+        } else if (test == "layout_n_counts_element_five_only") {
+            // Element 1 holds Liquor Holster as well: n is element 5's count, 1, not 2.
+            g_HhForced = true;
+            installDetection();
+            require(anyLineHas("signature drops: list uniqueLoot[5]:120", "Headhunter:Liquor Holster(n=1)"),
+                    "n is not element 5's count of the stand-in: " + lastLine("signature drops: list"));
+            reset();
+            setList(vanillaTriples(false));   // only element 1 holds it now
+            g_HhForced = true;
+            installDetection();
+            require(anyLineHas("signature drops: list uniqueLoot[5]:119", "Headhunter:Liquor Holster(n=0)"),
+                    "a stand-in triple in another element was counted: " + lastLine("signature drops: list"));
+            require(switchOn(1), "n = 0 refused the gate");
+        } else if (test == "layout_refusals") {
+            // Every step of the nested resolution refuses with its own reason, and the variable is
+            // left exactly as found: the old fixture (a flat array of triples), an outer array of
+            // five elements, an element 5 that is a number with no live ds_list, a ds_list with a
+            // non-triple entry, a variable that is no array, a sub-list shorter than the minimum.
+            struct Case { const char* name; void (*arrange)(); const char* why; };
+            const Case cases[] = {
+                { "flat array of triples", [] { setFlatList(vanillaTriples()); }, "Controller_obj.uniqueLoot[5] is not a ds_list" },
+                { "five elements", [] { listVariable()->array->resize(5); }, "Controller_obj.uniqueLoot has 5 elements, none at [5]" },
+                { "number with no ds_list", [] { (*listVariable()->array)[5] = RValue(7.0); }, "Controller_obj.uniqueLoot[5] is not a ds_list" },
+                { "non-triple entry", [] { (*listVector())[3] = makeArray({ RValue(1.0), RValue(2.0) }); }, "Controller_obj.uniqueLoot[5] entry 3 is not three numbers" },
+                { "not an array", [] { controllerVars[kModelListName] = RValue(3.0); }, "Controller_obj.uniqueLoot is not an array" },
+                { "short", [] { setList({ { 3, 1, 0 }, { 3, 1, 1 }, { 8, 0, 51 } }); }, "Controller_obj.uniqueLoot[5] has 3 entries, fewer than 10" },
+            };
+            for (const Case& c : cases) {
+                reset();
+                c.arrange();
+                const std::string shape = variableShape();
+                g_HhForced = true;
+                installDetection();
+                for (int i = 0; i < 3; ++i) roll(monster, { false });
+                require(anyLineHas("signature drops: list missing", c.why),
+                        std::string(c.name) + ": no refusal naming `" + c.why + "`: " + lastLine("signature drops: list missing"));
+                require(linesStartingWith("signature drops: list missing") == 1, std::string(c.name) + ": not exactly one refusal line");
+                require(g_SigInjected == 0 && !switchOn(1), std::string(c.name) + ": entries were pushed or the gate armed");
+                require(variableShape() == shape, std::string(c.name) + ": the variable was not left as found");
+                require(sigdropStatusLine().find(" list=missing ") != std::string::npos, std::string(c.name) + ": `sigdrop status` does not say list=missing");
+            }
+        } else if (test == "layout_held_miss_on_another_id") {
+            // A fresh read whose element 5 is another ds_list (a copying runtime): a held miss.
+            // The entries come off the ds_list they went onto, nothing is attributed, and the roll
+            // reads the game's own list throughout.
+            getReturnsCopy = true;
+            g_HhForced = true;
+            installDetection();
+            require(switchOn(1), "a list that resolves by name and layout did not arm the gate");
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 50; ++i) roll(monster, { true });
+            for (const auto& seen : listDuringCall) require(seen == vanilla, "the roll saw an entry the read-back did not");
+            require(g_SigOurHits == 0 && countBuilds(1) == 0 && g_SigInjected == 0, "a roll whose push was not visible attributed a hit or counted entries");
+            require(g_SigAnomalies == 50, "anomalies= did not count every held miss: " + std::to_string(g_SigAnomalies));
+            require(linesStartingWith("inject: push not visible through Controller_obj.uniqueLoot[5] (a fresh read holds another value at [5]") == 1,
+                    "the held miss was not logged once, naming the index and the other list: " + lastLine("inject: push not visible"));
+            require(!copiedIds.empty(), "the model made no copy");
+            for (double id : copiedIds)
+                require(triplesOf(dsLists[id]) == vanilla, "entries were left on the ds_list " + std::to_string(id) + " they were pushed onto");
+            require(layoutNow() == vanillaLayout && idsNow() == vanillaIds, "the game's own layout changed");
+            // Positive control: the same list comes back, the push is held and the roll carries it.
+            getReturnsCopy = false;
+            listDuringCall.clear();
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn }) && g_SigInjected == 1 && g_SigAnomalies == 50, "a held push was refused");
+            require(layoutNow() == vanillaLayout, "the held push was not removed");
+        } else if (test == "layout_status_tokens") {
+            g_HhForced = true;
+            installDetection();
+            require(sigdropStatusLine().find(" list=uniqueLoot[5]:120 ") != std::string::npos, "`sigdrop status` does not read list=<name>[5]:<size>: " + sigdropStatusLine());
+            const std::string inject = injectStatusLine();
+            require(inject.find(" list=uniqueLoot[5]:120 ") != std::string::npos, "`angelicprobe inject status` does not read list=<name>[5]:<size>: " + inject);
+            reset();
+            require(injectStatusLine().find(" list=none ") != std::string::npos, "`angelicprobe inject status` before any resolution is not list=none");
+        } else if (test == "layout_hit_on_pushed_entry_k_in_n_plus_k") {
+            // n = 1 on element 5 (element 1's Liquor Holster is not drawn from), k = 3: 3 in 4.
+            g_SigCopies = 3;
+            g_HhForced = true;
+            installDetection();
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 2000; ++i) roll(monster, { true });
+            require(g_SigOurHits >= 1350 && g_SigOurHits <= 1650, "a Liquor Holster hit was not ours about 3 in 4: " + std::to_string(g_SigOurHits));
+            require(linesEndingWith("angelic hit:", "Headhunter (stand-in Liquor Holster, 3 in 4) built by the game") == (int)g_SigOurHits,
+                    "an our-hit line does not say 3 in 4");
+            require(countBuilds(1) == (int)g_SigOurHits && layoutNow() == vanillaLayout, "the hits were not built, or the layout not restored");
+        } else if (test == "layout_handle_as_reference") {
+            // The outer array may hold each ds_list id as a reference: the same list, the same work.
+            dsIdKind = VALUE_REF;
+            setList(vanillaTriples());
+            g_HhForced = true;
+            installDetection();
+            require(switchOn(1), "ds_list ids held as VALUE_REF did not arm the gate");
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn }), "ids held as VALUE_REF: the roll did not see the stand-in");
+            require(layoutNow() == vanillaLayout && g_SigAnomalies == 0 && g_SigInjected == 1, "ids held as VALUE_REF: the layout was not restored or the push not held");
+        } else if (test == "layout_dump_two_levels") {
+#ifdef HAS_SIGLISTDUMP
+            // The research dump reads the variable two levels down and writes nothing.
+            (*listVariable()->array)[2] = RValue(7.0);                                  // a number with no live ds_list
+            dsList((*listVariable()->array)[3]).push_back(RValue(9.0));                 // a ds_list with a non-triple entry
+            const std::string shape = variableShape();
+            SigListDump(kModelListName);
+            const std::string h = "angelicprobe list dump: ";
+            require(anyLineHas((h + "Controller_obj.uniqueLoot kind=array array_length=6").c_str(), ""), "no first line naming the variable and its length");
+            require(anyLineHas((h + "[1] kind=real ds_list=yes:2 triples=2/2 first=[8,0,51][3,2,2] standins=Headhunter:Liquor Holster(n=1),").c_str(), ""),
+                    "element 1 was not printed with its own count");
+            require(anyLineHas((h + "[2] kind=real ds_list=no").c_str(), ""), "a number with no ds_list was not printed as ds_list=no");
+            require(anyLineHas((h + "[3] kind=real ds_list=yes:2 triples=1/2 first=[5,1,1]entry1=real").c_str(), ""), "a non-triple entry was not printed by its kind");
+            require(anyLineHas((h + "[5] kind=real ds_list=yes:120 triples=120/120 first=[3,1,0][3,1,1][3,1,2] standins=Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1)").c_str(), ""),
+                    "element 5 was not printed whole");
+            require(lastLine("angelicprobe list dump:") == h + "uniqueLoot elements=6 ds_lists=5 triple-lists=4", "the summary is not the last line: " + lastLine("angelicprobe list dump:"));
+            require(variableShape() == shape && g_SigInjected == 0, "the dump wrote to the list");
+            SigListDump("");   // lootListUnique by default; the model has none
+            require(lastLine("angelicprobe list dump:") == h + "Controller_obj has no variable lootListUnique", "the default name is not lootListUnique");
+            controllerVars["notAList"] = RValue(3.0);
+            SigListDump("notAList");
+            require(lastLine("angelicprobe list dump:") == h + "Controller_obj.notAList kind=real, not an array", "a non-array was not reported and stopped");
+#else
+            require(false, "no `angelicprobe list dump` to read the layout with");
+#endif
         // ---- detection: the beside design's install and gate, kept ----
         } else if (test == "install_is_idempotent") {
             g_OrigAngChance = nullptr;

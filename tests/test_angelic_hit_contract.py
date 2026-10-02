@@ -157,11 +157,42 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         resolve = body(self.code, "static bool SignatureListResolve(")
         self.assertIn('"variable_instance_exists", { instance, RValue(g_SigListName) }', resolve)
         self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', resolve)
-        self.assertIn("SignatureListShape(list, len, counts, why, kSigListMinLength)", resolve)
-        self.assertIn("static const int kSigListMinLength = 100;", self.shipped_code)
+
+    def test_the_list_is_the_ds_list_at_the_index(self):
+        # Replan 2: the variable is an array of six ds_list ids and the roll draws from element 5
+        # (static reading); the outer array is never the list. The player build reads the
+        # constant index, the research build the `at` lever's variable.
+        self.assertIn("static const int kAngelicListIndex = 5;", self.shipped_code)
+        self.assertIn("static constexpr int g_SigListIndex = kAngelicListIndex;", self.shipped_code)
+        self.assertEqual(len(re.findall(r"\bg_SigListIndex\s*=(?!=)", self.shipped_code)), 1,
+                         "only the research build's `at` lever moves the index")
+        self.assertIn("static const int kSigListMinSize = 10;", self.shipped_code)
+        self.assertNotIn("kSigListMinLength", SOURCE)
+        resolve = body(self.code, "static bool SignatureListResolve(")
+        self.assertIn('"array_get", { list, RValue((double)index) }', resolve)
+        self.assertIn("const int index = g_SigListIndex;", resolve)
+        self.assertLess(resolve.index('"ds_exists"'), resolve.index('"ds_list_size"'), "ds_exists before any ds_list_size")
+        self.assertIn("SignatureListShape(list, index, sub, id, size, counts, why, kSigListMinSize)", resolve)
+        self.assertNotIn('"array_length", { list }).ToDouble() : -1', resolve, "no flat length read")
         shape = body(self.code, "static bool SignatureListShape(")
-        self.assertIn("SigEntry(list, i, e)", shape)
-        self.assertIn("!= 3", body(self.code, "static bool SigEntry("), "an entry is exactly three numbers")
+        self.assertIn('"array_get", { outer, RValue((double)index) }', shape)
+        self.assertIn('"ds_exists", { sub, RValue(2.0) }', shape, "2 is ds_type_list")
+        self.assertLess(shape.index('"ds_exists"'), shape.index('"ds_list_size"'))
+        self.assertLess(shape.index("SigListHandle(sub, id)"), shape.index('"ds_exists"'),
+                        "only a value that can be a handle is handed to ds_exists")
+        self.assertIn("SigEntry(sub, i, e)", shape)
+        # Each refusal names its step (delta 1's reasons).
+        for reason in ('"is not an array"', '" elements, none at "', '" is not a ds_list"', '" entries, fewer than "',
+                       '" is not three numbers"'):
+            with self.subTest(reason=reason):
+                self.assertIn(reason, shape)
+        entry = body(self.code, "static bool SigEntry(")
+        self.assertIn('"ds_list_find_value", { sub, RValue((double)i) }', entry)
+        self.assertIn("!= 3", entry, "an entry is exactly three numbers")
+        # A ds_list handle may arrive as a number or a reference: a set of kinds, not one.
+        handle = body(self.code, "static bool SigListHandle(")
+        for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64", "VALUE_REF"):
+            self.assertIn(kind, handle)
 
     # ---- the injection: per roll, under a scope guard inside the roll's hook ------------
 
@@ -185,7 +216,14 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         gate = push.index("if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;")
         for later in ("g_Yytk", "SignatureListResolve(", "SignatureResolveStandIns("):
             self.assertLess(gate, push.index(later), later)
-        self.assertIn('"array_push", { list, entry }', push)
+        # The entry (array_create and its three array_set), then onto the ds_list, never the outer array.
+        add = push.index('"ds_list_add", { sub, entry }')
+        self.assertEqual(push.count('"array_set", { entry,'), 3)
+        self.assertLess(push.rindex('"array_set", { entry,'), add)
+        self.assertNotIn("array_push", push)
+        self.assertIn("SignatureListResolve(list, false, false, &sub)", push)
+        self.assertIn("g_SigRollListId = sub;", push)
+        self.assertIn("g_SigRollIndex = g_SigListIndex;", push)
         self.assertIn("SignatureSwitchOn(w)", push)
         self.assertIn("InterlockedIncrement(&g_SigInjected)", push)
         self.assertRegex(push, r"for \(int c = 0; c < g_SigCopies\b", "each enabled item pushes g_SigCopies entries")
@@ -202,23 +240,28 @@ class AngelicHitSourceContractTests(unittest.TestCase):
 
     def test_the_held_read_back_comes_before_any_attribution(self):
         push = body(self.code, "static void SignatureInjectPush(")
-        held = push.index("SignatureHeldReadBack(g_SigRollBefore, g_SigRollPushed, heldLen)")
-        self.assertLess(push.rindex('"array_push", { list, entry }'), held)
+        held = push.index("SignatureHeldReadBack(g_SigRollListId, g_SigRollIndex, g_SigRollBefore, g_SigRollPushed, seen)")
+        self.assertLess(push.rindex('"ds_list_add", { sub, entry }'), held)
         self.assertLess(held, push.index("InterlockedIncrement(&g_SigInjected)"),
                         "injected= counts only pushes the fresh read showed")
         refusal = push[held:]
         self.assertIn("inject: push not visible through Controller_obj.", refusal)
         self.assertIn("InterlockedIncrement(&g_SigAnomalies)", refusal)
         self.assertIn("g_SigRollPushed = 0;", refusal, "a roll whose push was not visible carries nothing")
-        self.assertIn('"array_resize", { g_SigRollList, RValue((double)g_SigRollBefore) }', refusal,
-                      "the entries come off the handle they went onto")
+        # The entries come off the ds_list they went onto, under the tail rule, never by resize.
+        cut = refusal.index("SignatureTailHolds(g_SigRollListId, g_SigRollBefore, g_SigRollPushed, len)")
+        self.assertLess(cut, refusal.index('"ds_list_delete", { g_SigRollListId,'))
+        self.assertNotIn("array_resize", push)
         self.assertIn("g_SigHeldMissLogged", refusal, "logged once per change, not once per roll")
-        # A fresh read by name off the instance, never the handle just pushed onto, and light:
-        # length and tail only, never the full shape walk.
+        # A fresh read by name off the instance, never the handle just pushed onto: the element
+        # at the same index must be the same ds_list id, and that list hold the tail. Light: never
+        # the full shape walk.
         read_back = body(self.code, "static bool SignatureHeldReadBack(")
         self.assertIn("SignatureController(instance, why)", read_back)
         self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', read_back)
-        self.assertIn("SignatureTailHolds(held, before, pushed, heldLen)", read_back)
+        self.assertIn('"array_get", { held, RValue((double)index) }', read_back)
+        self.assertIn("got != want", read_back, "the same ds_list id, or a held miss")
+        self.assertLess(read_back.index("got != want"), read_back.index("SignatureTailHolds(sub, before, pushed, len)"))
         self.assertNotIn("SignatureListShape", read_back)
         self.assertNotIn("g_SigRollList", read_back)
         # Attribution needs the roll to carry entries, which a refused read-back clears.
@@ -226,15 +269,21 @@ class AngelicHitSourceContractTests(unittest.TestCase):
 
     def test_the_removal_cuts_only_its_own_tail(self):
         remove = body(self.code, "static void SignatureInjectRemove(")
-        self.assertLess(remove.index("SignatureTailHolds(list, before, pushed, len)"), remove.index('"array_resize"'))
-        self.assertIn('"array_resize", { list, RValue((double)before) }', remove)
+        self.assertIn("const RValue sub = g_SigRollListId;", remove, "off the ds_list the entries went onto")
+        self.assertLess(remove.index("SignatureTailHolds(sub, before, pushed, len)"), remove.index('"ds_list_delete"'))
+        self.assertIn('"ds_list_delete", { sub, RValue((double)(len - 1 - i)) }', remove, "the last entry, once per pushed entry")
+        self.assertIn("for (int i = 0; i < pushed; ++i)", remove)
+        self.assertLess(remove.index('"ds_list_delete"'), remove.rindex('"ds_list_size", { sub }'), "the size is read back after")
+        self.assertIn("if (len == before) return;", remove)
+        self.assertNotIn("array_resize", remove)
         self.assertIn("inject: list changed during the roll, left as found", remove)
         self.assertIn("InterlockedIncrement(&g_SigAnomalies)", remove)
-        # The tail check covers every copy of every enabled item, in push order.
+        # The tail check covers every copy of every enabled item, in push order, on the ds_list.
         tail = body(self.code, "static bool SignatureTailHolds(")
+        self.assertLess(tail.index('"ds_exists", { sub, RValue(2.0) }'), tail.index('"ds_list_size", { sub }'))
         self.assertIn("len != before + pushed", tail)
         self.assertIn("c < g_SigRollCopies[w]", tail)
-        self.assertIn("SigEntry(list, at++, e)", tail)
+        self.assertIn("SigEntry(sub, at++, e)", tail)
         self.assertIn("e[0] != (double)kSignatureItems[w].t", tail, "the tail is matched on the whole triple")
 
     # ---- typing the hit, attribution and the rewrite -----------------------------------
@@ -430,6 +479,10 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         text = body(self.code, "static std::string SignatureListText(")
         for value in ('"none"', '"missing"'):
             self.assertIn(value, text)
+        # `<name>[<index>]:<size>` (replan 2): the index rides inside list=, on both status lines.
+        self.assertIn('g_SigListName + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(g_SigListLen)', text)
+        self.assertIn('" list=" + (g_SigListOk ? SignatureListText() : std::string("none"))', body(self.code, "static void SigInjectStatus("))
+        self.assertIn("SignatureListText()", body(self.code, "static std::string SignatureListLine("))
 
     def test_the_research_tokens_stay_out_of_the_player_build(self):
         # Design steps 7-8: the reach and typing controls, the copies and the built type are
@@ -504,17 +557,27 @@ class AngelicHitSourceContractTests(unittest.TestCase):
 
     def test_the_inject_levers_are_research_build_only(self):
         for token in ('"angelicprobe inject', "lootDelta=", "g_SigReplaceMode", "SigReplaceStandIn", "SigInjectCommand",
-                      "SigListScan", "g_SigRemoved"):
+                      "SigListScan", "g_SigRemoved", "SigListDump", "angelicprobe list dump"):
             with self.subTest(token=token):
                 self.assertIn(token, SOURCE)
                 self.assertNotIn(token, self.shipped)
         command = body(self.code, "static void SigInjectCommand(")
-        for lever in ('"name"', '"auto"', '"copies"', '"mode"', '"inject"', '"replace"', '"status"'):
+        for lever in ('"name"', '"auto"', '"at"', '"copies"', '"mode"', '"inject"', '"replace"', '"status"'):
             self.assertIn(lever, command)
         # One spelling of the scan: `angelicprobe inject auto`. The usage line is exact (the
         # research doc's procedure quotes it), and `name auto` is refused, naming the right
         # spelling, before anything is assigned - a slip can never set the literal name "auto".
-        self.assertIn('"angelicprobe inject: name <var> | auto | copies <k> | mode inject|replace | status"', command)
+        usage = "angelicprobe inject: name <var> | auto | at <k> | copies <k> | mode inject|replace | status"
+        self.assertIn('"%s"' % usage, command)
+        self.assertEqual(SOURCE.count(usage), 1)
+        self.assertEqual(SOURCE.count("angelicprobe inject: name <var>"), 1)
+        # `at <k>` (replan 2) sets the sub-list index, 0..31 only, and resolves again.
+        start = command.index('lever == "at"')
+        branch = command[start:command.index("} else if", start)]
+        self.assertIn("k < 0 || k > 31", branch)
+        self.assertLess(branch.index("k < 0 || k > 31"), branch.index("g_SigListIndex = k;"))
+        self.assertIn("nothing changed", branch)
+        self.assertIn("SignatureListResolve(list, true, true)", branch)
         refusal = command.index('if (lever == "name" && Lower(value) == "auto")')
         self.assertLess(refusal, command.index("g_SigListName = name;"))
         branch = command[refusal:command.index("} else if", refusal)]
@@ -528,6 +591,31 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         # The replace mode is the only path from the roll to SpawnSignatureItem, and it is research-only.
         self.assertIn("SpawnSignatureItem(which, x, y, S)", body(self.code, "static std::string SigReplaceStandIn("))
         self.assertIn('"instance_destroy"', body(self.code, "static std::string SigReplaceStandIn("))
+
+    def test_the_scan_and_the_dump_read_the_layout(self):
+        # Replan 2, delta 4: a candidate is an array whose element at the index is a live
+        # ds_list of triples (the gate's own shape check), lootListUnique preferred.
+        scan = body(self.code, "static std::string SigListScan(")
+        self.assertIn("SignatureListShape(value, g_SigListIndex, sub, id, size, counts, shape, kSigListMinSize)", scan)
+        for token in ('" at="', '" ds_list_size="', '" first="', '" standins="', '"angelicprobe list: rejected "', '" why="'):
+            self.assertIn(token, scan)
+        self.assertIn('name == "lootListUnique"', scan, "best is lootListUnique when it is a candidate")
+        self.assertIn('best + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(bestN)', scan)
+        # Delta 5: `angelicprobe list dump [<var>]`, dispatched from the `list` subcommand, the
+        # name keeping its case; read-only, two levels down.
+        listing = body(self.code, "static void ApRollList(")
+        self.assertIn('== "dump"', listing)
+        self.assertIn("SigListDump(", listing)
+        dump = body(self.code, "static void SigListDump(")
+        self.assertIn('std::string("lootListUnique")', dump, "lootListUnique when no name is given")
+        for token in ('" kind=array array_length="', '", not an array"', '" ds_list=no"', '" ds_list=yes:"', '" triples="',
+                      '" first="', '" standins="', '" elements="', '" ds_lists="', '" triple-lists="', '"EXCEPTION at ["'):
+            self.assertIn(token, dump)
+        self.assertIn("i < len && i < 32", dump)
+        self.assertIn("size < 2000 ? size : 2000", dump)
+        self.assertLess(dump.index("SigListHandle(e, id)"), dump.index('"ds_exists", { e, RValue(2.0) }'))
+        for write in ("ds_list_add", "ds_list_delete", "array_set", "array_push", "array_resize", "variable_instance_set"):
+            self.assertNotIn(write, dump, "the dump writes nothing")
 
     def test_no_new_player_command(self):
         allowlist = re.search(r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};", SOURCE, re.S)

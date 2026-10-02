@@ -216,12 +216,23 @@ class AngelicProbeSourceTests(unittest.TestCase):
         line = [l for l in usage.split("\n") if '"  angelicprobe inject' in l]
         self.assertEqual(len(line), 1)
         inject = function_body(self.plugin, "static void SigInjectCommand(")
-        for lever in ("auto", "name", "copies", "mode", "status"):
+        for lever in ("auto", "name", "at", "copies", "mode", "status"):
             with self.subTest(inject=lever):
                 self.assertIn(lever, line[0])
                 self.assertIn('"%s"' % lever, inject)
         self.assertIn("copies <k>", line[0])
+        self.assertIn("at <k>", line[0])
         self.assertNotIn("name auto", line[0])
+        # The handler's own usage line, exact and in one place (replan 2 added `at <k>`).
+        exact = "angelicprobe inject: name <var> | auto | at <k> | copies <k> | mode inject|replace | status"
+        self.assertIn('"%s"' % exact, inject)
+        self.assertEqual(self.plugin.count("angelicprobe inject: name <var>"), 1)
+        # `list` takes `dump [<var>]` (replan 2), as a subcommand of `list`, so the verb's
+        # subcommands stay the six above; its own row in the usage names it.
+        self.assertIn('"  angelicprobe list dump [<var>]', usage)
+        self.assertIn('sub.rfind("list ", 0) == 0', command)
+        self.assertIn("ApRollList(TrimCopy(rest).substr(4))", command, "a variable name keeps its case")
+        self.assertIn('== "dump"', function_body(self.plugin, "static void ApRollList("))
 
     def test_no_new_top_level_else_if_in_run_command(self):
         # C1061: the chain is at MSVC's nesting limit; see test_menu_probe_contract.

@@ -10938,14 +10938,24 @@ static_assert(kSignatureItems[0].which == 0 && kSignatureItems[1].which == 1, "r
 struct SignatureStandIn { bool ok = false; int sub = 0, b = 0, n = 0; double base = 0.0; std::string name, why; };
 static SignatureStandIn g_SigStandIn[2];
 static bool g_SigStandInsResolved = false;
-// The game's list, by name.  The variable is read live by shape (Live 1 measures it); until its
-// name is written here the player build refuses with `list=missing` and nothing is injected.
+// The game's list, by name and index.  The roll draws from one element of a Controller_obj array
+// variable - the constant index 5, the sixth element (static reading, replan 2: lootListUnique[5])
+// - and that element is a ds_list whose entries are [type, sub, b] arrays; the outer array is
+// never the list.  Until the variable's name is written here (by the name and index Live 2's
+// `reach` proves) the player build refuses with `list=missing` and nothing is injected.
 static const char* kAngelicListVar = "";
 static std::string g_SigListName = kAngelicListVar;   // the research build's inject lever may name another
-static const int kSigListMinLength = 100;            // a real list holds every unique; fewer is not it
+static const int kAngelicListIndex = 5;               // the element the roll reads (static reading)
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_SigListIndex = kAngelicListIndex;
+#else
+static int g_SigListIndex = kAngelicListIndex;        // `angelicprobe inject at <k>` (0..31) moves it
+#endif
+static const int kSigListMinSize = 10;               // a sub-list of fewer entries is not the unique list
 static bool g_SigListOk = false;
 static bool g_SigListTried = false;
-static int g_SigListLen = -1;                        // the vanilla length at the last full check
+static int g_SigListLen = -1;                        // the sub-list's vanilla size at the last full check
+static double g_SigListId = -1.0;                    // the sub-list's ds_list id at the last full check
 static std::string g_SigListWhy;                     // why the last resolution refused
 static double g_SigControllerIdx = -2.0;             // Controller_obj's index; -2 not asked yet
 // How many copies of its stand-in each enabled item pushes per roll: the constant 1 in the player
@@ -10956,10 +10966,13 @@ static constexpr int g_SigCopies = 1;
 #else
 static int g_SigCopies = 1;
 #endif
-// The current roll's injection: the list the entries went onto, its length before, how many, and
-// how many copies of whose.  Set by SignatureInjectPush, cleared by SignatureInjectRemove (or by
-// the push itself when the held read-back refuses); game thread only.
+// The current roll's injection: the outer variable as read, the ds_list the entries went onto
+// (its handle as read) and its index, the sub-list's size before, how many, and how many copies
+// of whose.  Set by SignatureInjectPush, cleared by SignatureInjectRemove (or by the push itself
+// when the held read-back refuses); game thread only.
 static RValue g_SigRollList;
+static RValue g_SigRollListId;
+static int g_SigRollIndex = -1;
 static int g_SigRollBefore = -1, g_SigRollPushed = 0;
 static int g_SigRollCopies[2] = { 0, 0 };
 static int g_SigInjectDepth = 0;
@@ -11288,11 +11301,22 @@ static bool SigNumber(const RValue& v, double& out)
     try { out = v.ToDouble(); } catch (...) { return false; }
     return std::isfinite(out);
 }
-// Entry i of a list as [type, sub, b]: an array of exactly three numbers, else false.
-static bool SigEntry(const RValue& list, int i, double out[3])
+// A ds_list handle as the runtime stored it - a number, or a reference (a live data-structure
+// handle can arrive as VALUE_REF on current runners) - and its number in `id`, for the "same
+// list" checks.  A set of kinds, so no one kind decides: ds_exists on the value itself is the
+// gate, and only a value that can be a handle is ever handed to it.
+static bool SigListHandle(const RValue& v, double& id)
+{
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_REF) return false;
+    try { id = v.ToDouble(); } catch (...) { return false; }
+    return std::isfinite(id) && id >= 0.0;
+}
+// Entry i of a ds_list as [type, sub, b]: an array of exactly three numbers, else false.  The
+// shape check, the tail check, the scan and the dump all read the entries through it.
+static bool SigEntry(const RValue& sub, int i, double out[3])
 {
     try {
-        const RValue e = g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) });
+        const RValue e = g_Yytk->CallBuiltin("ds_list_find_value", { sub, RValue((double)i) });
         if (e.m_Kind != VALUE_ARRAY) return false;
         if ((int)g_Yytk->CallBuiltin("array_length", { e }).ToDouble() != 3) return false;
         for (int k = 0; k < 3; ++k)
@@ -11318,18 +11342,35 @@ static bool SignatureController(RValue& instance, std::string& why)
     catch (...) { why = "instance_find threw for Controller_obj"; return false; }
     return true;
 }
-// Whether `list` is shaped like the game's Angelic list - an array of at least `minLength`
-// [type, sub, b] entries - and how many entries equal each resolved stand-in (counts[which]).
-static bool SignatureListShape(const RValue& list, int& len, int counts[2], std::string& why, int minLength)
+// Whether `outer` is shaped like the game's Angelic list - an array whose element at `index` is
+// a live ds_list of at least `minSize` [type, sub, b] entries - and, when it is, that element
+// (`sub`, its number in `id`), its size, and how many of its entries equal each resolved stand-in
+// (counts[which], over that element only).  `why` names the first step that failed, worded to
+// follow `Controller_obj.<name>`: `is not an array`, `has <L> elements, none at [<i>]`,
+// `[<i>] is not a ds_list`, `[<i>] has <s> entries, fewer than <min>`, `[<i>] entry <k> is not
+// three numbers`.
+static bool SignatureListShape(const RValue& outer, int index, RValue& sub, double& id, int& size, int counts[2],
+                               std::string& why, int minSize)
 {
     counts[0] = counts[1] = 0;
-    len = -1;
-    if (list.m_Kind != VALUE_ARRAY) { why = "not an array"; return false; }
-    try { len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble(); } catch (...) { why = "array_length threw"; return false; }
-    if (len < minLength) { why = std::to_string(len) + " entries, fewer than " + std::to_string(minLength); return false; }
-    for (int i = 0; i < len; ++i) {
+    size = -1;
+    id = -1.0;
+    const std::string at = "[" + std::to_string(index) + "]";
+    if (outer.m_Kind != VALUE_ARRAY) { why = "is not an array"; return false; }
+    int len = -1;
+    try { len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble(); } catch (...) { why = "array_length threw"; return false; }
+    if (index < 0 || index >= len) { why = "has " + std::to_string(len) + " elements, none at " + at; return false; }
+    bool live = false;
+    try {
+        sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) });
+        live = SigListHandle(sub, id) && g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean();   // 2 = ds_type_list
+    } catch (...) { live = false; }
+    if (!live) { why = at + " is not a ds_list"; return false; }
+    try { size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble(); } catch (...) { why = at + " ds_list_size threw"; return false; }
+    if (size < minSize) { why = at + " has " + std::to_string(size) + " entries, fewer than " + std::to_string(minSize); return false; }
+    for (int i = 0; i < size; ++i) {
         double e[3] = { 0.0, 0.0, 0.0 };
-        if (!SigEntry(list, i, e)) { why = "entry " + std::to_string(i) + " is not three numbers"; return false; }
+        if (!SigEntry(sub, i, e)) { why = at + " entry " + std::to_string(i) + " is not three numbers"; return false; }
         for (int w = 0; w < 2; ++w) {
             const SignatureStandIn& s = g_SigStandIn[w];
             if (s.ok && e[0] == (double)kSignatureItems[w].t && e[1] == (double)s.sub && e[2] == (double)s.b) ++counts[w];
@@ -11350,33 +11391,38 @@ static std::string SignatureStandInsText(bool reasons)
     }
     return s;
 }
-// One line naming the list and the stand-ins, or why the drop stays off.
-static std::string SignatureListLine()
-{
-    if (g_SigListOk)
-        return "list " + g_SigListName + ":" + std::to_string(g_SigListLen) + " stand-ins " + SignatureStandInsText(true);
-    return "list missing (" + g_SigListWhy + ") - Headhunter / Tyrant's Crown stay off the game's Angelic roll; stand-ins "
-        + SignatureStandInsText(true);
-}
-// `list=` on `sigdrop status`: `none` until a switch (or the research build's inject lever) has
-// asked for the game's list, then `<name>:<len>`, or `missing` after a refusal.
+// `list=` on `sigdrop status` (and the research build's inject status): `none` until a switch (or the
+// research build's inject lever) has asked for the game's list, then `<name>[<index>]:<size>`
+// (`lootListUnique[5]:58`, the sub-list's size), or `missing` after a refusal.
 static std::string SignatureListText()
 {
     if (!g_SigListTried) return "none";
     if (!g_SigListOk) return "missing";
-    return g_SigListName + ":" + std::to_string(g_SigListLen);
+    return g_SigListName + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(g_SigListLen);
+}
+// One line naming the list and the stand-ins, or why the drop stays off.
+static std::string SignatureListLine()
+{
+    if (g_SigListOk)
+        return "list " + SignatureListText() + " stand-ins " + SignatureStandInsText(true);
+    return "list missing (" + g_SigListWhy + ") - Headhunter / Tyrant's Crown stay off the game's Angelic roll; stand-ins "
+        + SignatureStandInsText(true);
 }
 static bool g_SigListRecount = true;   // the stand-ins changed: count n again on the next resolution
-// Resolves the game's list by name - g_SigListName on the first Controller_obj instance - into
-// `list`, shape-checked in full (and n counted) whenever its length differs from the last check,
-// the stand-ins changed, or `full` asks; never by shape alone.  Records the outcome for the gate
-// and `list=`; unless `quiet`, logs one line when the outcome changes, never one per roll.
-static bool SignatureListResolve(RValue& list, bool full, bool quiet)
+// Resolves the game's list by name and index - element g_SigListIndex of g_SigListName on the
+// first Controller_obj instance - into `list` (the outer array) and `subOut` (the element, a
+// ds_list handle), shape-checked in full (and n counted, over that element only) whenever the
+// element's id or size differs from the last check, the stand-ins changed, or `full` asks; never
+// by shape alone.  Records the outcome for the gate and `list=`; unless `quiet`, logs one line
+// when the outcome changes, never one per roll.
+static bool SignatureListResolve(RValue& list, bool full, bool quiet, RValue* subOut = nullptr)
 {
     std::string why;
-    int len = -1;
+    int size = -1;
+    double id = -1.0;
     bool ok = false;
-    RValue instance;
+    RValue instance, sub;
+    const int index = g_SigListIndex;
     if (g_SigListName.empty()) why = "no list variable named yet";
     else if (SignatureController(instance, why)) {
         bool has = false;
@@ -11386,38 +11432,50 @@ static bool SignatureListResolve(RValue& list, bool full, bool quiet)
             try { list = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) }); ok = true; }
             catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; }
             if (ok) {
-                try { len = list.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble() : -1; } catch (...) { len = -1; }
-                if (full || g_SigListRecount || !g_SigListOk || len != g_SigListLen) {
+                // Every roll: the element at the index, asked whether it is a live ds_list
+                // (ds_exists, before any ds_list_size), and that list's size.
+                try {
+                    if (list.m_Kind == VALUE_ARRAY && index < (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble()) {
+                        sub = g_Yytk->CallBuiltin("array_get", { list, RValue((double)index) });
+                        if (SigListHandle(sub, id) && g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean())
+                            size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+                    }
+                } catch (...) { size = -1; }
+                if (full || g_SigListRecount || !g_SigListOk || size < 0 || size != g_SigListLen || id != g_SigListId) {
                     int counts[2] = { 0, 0 };
-                    ok = SignatureListShape(list, len, counts, why, kSigListMinLength);
+                    ok = SignatureListShape(list, index, sub, id, size, counts, why, kSigListMinSize);
                     if (ok) { g_SigStandIn[0].n = counts[0]; g_SigStandIn[1].n = counts[1]; g_SigListRecount = false; }
-                    else why = "Controller_obj." + g_SigListName + ": " + why;
+                    else why = "Controller_obj." + g_SigListName + (!why.empty() && why[0] == '[' ? "" : " ") + why;
                 }
             }
         }
     }
-    const bool changed = !g_SigListTried || ok != g_SigListOk || (ok && len != g_SigListLen);
+    const bool changed = !g_SigListTried || ok != g_SigListOk || (ok && (size != g_SigListLen || id != g_SigListId));
     g_SigListTried = true;
     g_SigListOk = ok;
-    g_SigListLen = ok ? len : -1;
+    g_SigListLen = ok ? size : -1;
+    g_SigListId = ok ? id : -1.0;
     g_SigListWhy = ok ? std::string() : why;
+    if (ok && subOut) *subOut = sub;
     if (changed && !quiet) Out("signature drops: " + SignatureListLine());
     return ok;
 }
-// Whether `list` ends with exactly this roll's entries: `before + pushed` entries in all, the last
-// `pushed` of them each enabled item's stand-in [t, sub, b], g_SigRollCopies[w] times, in push
-// order.  `len` is the length read.  The removal and the held read-back both ask it.
-static bool SignatureTailHolds(const RValue& list, int before, int pushed, int& len)
+// Whether the ds_list `sub` ends with exactly this roll's entries: `before + pushed` entries in
+// all, the last `pushed` of them each enabled item's stand-in [t, sub, b], g_SigRollCopies[w]
+// times, in push order.  `len` is the size read.  The removal and the held read-back both ask it.
+static bool SignatureTailHolds(const RValue& sub, int before, int pushed, int& len)
 {
     len = -1;
-    if (list.m_Kind != VALUE_ARRAY) return false;
-    try { len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble(); } catch (...) { return false; }
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { return false; }
     if (len != before + pushed) return false;
     int at = before;
     for (int w = 0; w < 2; ++w) {
         for (int c = 0; c < g_SigRollCopies[w]; ++c) {
             double e[3] = { 0.0, 0.0, 0.0 };
-            if (!SigEntry(list, at++, e) || e[0] != (double)kSignatureItems[w].t
+            if (!SigEntry(sub, at++, e) || e[0] != (double)kSignatureItems[w].t
                 || e[1] != (double)g_SigStandIn[w].sub || e[2] != (double)g_SigStandIn[w].b) return false;
         }
     }
@@ -11425,18 +11483,32 @@ static bool SignatureTailHolds(const RValue& list, int before, int pushed, int& 
 }
 // The held read-back, right after the push: the variable read again by name off the first
 // Controller_obj instance - a fresh variable_instance_get, never the handle just pushed onto -
-// must hold the push, length and tail.  A runtime that handed back a copy (or another array)
-// fails it.  Light on purpose: the length and the pushed tail only, never SignatureListResolve's
-// full walk.  It catches a copy; it cannot show that the roll reads this variable (Live 1's
-// `reach`).  `heldLen` is the length the fresh read gave, -1 when there was none.
-static bool SignatureHeldReadBack(int before, int pushed, int& heldLen)
+// must hold, at the same index, the same ds_list id, and that list the push (size and tail).  A
+// ds_list id is a handle into the runtime's own store, so a copy cannot hide the push inside the
+// list itself; what this catches is an outer array that a fresh read hands back with another
+// element there.  Light on purpose: the id, the size and the pushed tail only, never
+// SignatureListResolve's full walk.  It cannot show that the roll reads this list (`reach`).
+// `seen` says what the fresh read held.
+static bool SignatureHeldReadBack(const RValue& pushedOnto, int index, int before, int pushed, std::string& seen)
 {
-    heldLen = -1;
+    seen = "nothing";
     RValue instance, held;
     std::string why;
-    if (!SignatureController(instance, why)) return false;
-    try { held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) }); } catch (...) { return false; }
-    return SignatureTailHolds(held, before, pushed, heldLen);
+    double want = -1.0, got = -1.0;
+    if (!SigListHandle(pushedOnto, want) || !SignatureController(instance, why)) return false;
+    try {
+        held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (held.m_Kind != VALUE_ARRAY || index >= (int)g_Yytk->CallBuiltin("array_length", { held }).ToDouble()) {
+            seen = "no element [" + std::to_string(index) + "]";
+            return false;
+        }
+        const RValue sub = g_Yytk->CallBuiltin("array_get", { held, RValue((double)index) });
+        if (!SigListHandle(sub, got) || got != want) { seen = "another value at [" + std::to_string(index) + "]"; return false; }
+        int len = -1;
+        const bool tail = SignatureTailHolds(sub, before, pushed, len);
+        seen = len < 0 ? std::string("no ds_list") : std::to_string(len) + " entries";
+        return tail;
+    } catch (...) { seen = "a read that threw"; return false; }
 }
 // A pool unique's droprate.base, read off its repository definition by name (the rate the
 // research build's `hit rate` lever overrides).  False when the definition carries no number.
@@ -11485,19 +11557,22 @@ static void SignatureResolveStandIns()
 }
 // Before the game's roll (from SignatureInjectGuard): with a panel switch on, push g_SigCopies
 // stand-in entries [t, sub, b] per enabled item (one in the player build) onto the end of the
-// game's own list, then read the list back by name (SignatureHeldReadBack).  A push the fresh
-// read does not show comes off the handle it went onto again, is logged once per change and
-// counted (`anomalies=`), and the roll carries nothing, so no hit is attributed.  With both
-// switches off it makes no call at all, so the roll is the game's own.
+// game's own list - the ds_list at the list's index, never the outer array - then read the list
+// back by name (SignatureHeldReadBack).  A push the fresh read does not show comes off the
+// ds_list it went onto again, is logged once per change and counted (`anomalies=`), and the roll
+// carries nothing, so no hit is attributed.  With both switches off it makes no call at all, so
+// the roll is the game's own.
 static void SignatureInjectPush()
 {
     g_SigRollPushed = 0;
     g_SigRollCopies[0] = g_SigRollCopies[1] = 0;
     if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;
     SignatureResolveStandIns();
-    RValue list;
-    if (!SignatureListResolve(list, false, false)) return;
+    RValue list, sub;
+    if (!SignatureListResolve(list, false, false, &sub)) return;
     g_SigRollList = list;
+    g_SigRollListId = sub;
+    g_SigRollIndex = g_SigListIndex;
     g_SigRollBefore = g_SigListLen;
     bool threw = false;
     for (int w = 0; w < 2 && !threw; ++w) {
@@ -11508,25 +11583,26 @@ static void SignatureInjectPush()
                 g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)kSignatureItems[w].t) });
                 g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)g_SigStandIn[w].sub) });
                 g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)g_SigStandIn[w].b) });
-                g_Yytk->CallBuiltin("array_push", { list, entry });
+                g_Yytk->CallBuiltin("ds_list_add", { sub, entry });
             } catch (...) { Out(std::string("inject: pushing ") + kSignatureItems[w].name + "'s stand-in threw"); threw = true; continue; }
             ++g_SigRollPushed;
             ++g_SigRollCopies[w];
         }
     }
-    if (g_SigRollPushed == 0) { g_SigRollList = RValue(); return; }
-    int heldLen = -1;
-    if (SignatureHeldReadBack(g_SigRollBefore, g_SigRollPushed, heldLen)) {
+    if (g_SigRollPushed == 0) { g_SigRollList = RValue(); g_SigRollListId = RValue(); return; }
+    std::string seen;
+    if (SignatureHeldReadBack(g_SigRollListId, g_SigRollIndex, g_SigRollBefore, g_SigRollPushed, seen)) {
         g_SigHeldMissLogged = false;
         for (int i = 0; i < g_SigRollPushed; ++i) InterlockedIncrement(&g_SigInjected);
         return;
     }
-    // Not visible through Controller_obj.<name>: off the handle again (only while its tail is
-    // still ours), and this roll carries nothing.
+    // Not visible through Controller_obj.<name>[<index>]: off the ds_list it went onto again
+    // (only while its tail is still ours), and this roll carries nothing.
     int len = -1;
     try {
-        if (SignatureTailHolds(g_SigRollList, g_SigRollBefore, g_SigRollPushed, len))
-            g_Yytk->CallBuiltin("array_resize", { g_SigRollList, RValue((double)g_SigRollBefore) });
+        if (SignatureTailHolds(g_SigRollListId, g_SigRollBefore, g_SigRollPushed, len))
+            for (int i = 0; i < g_SigRollPushed; ++i)
+                g_Yytk->CallBuiltin("ds_list_delete", { g_SigRollListId, RValue((double)(len - 1 - i)) });
     } catch (...) {}
     InterlockedIncrement(&g_SigAnomalies);
 #ifndef FORGEPACT_RELEASE
@@ -11534,39 +11610,43 @@ static void SignatureInjectPush()
 #endif
     if (!g_SigHeldMissLogged) {
         g_SigHeldMissLogged = true;
-        Out("inject: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds "
-            + (heldLen < 0 ? std::string("no array") : std::to_string(heldLen) + " entries") + ", expected "
-            + std::to_string(g_SigRollBefore + g_SigRollPushed) + " ending in the " + std::to_string(g_SigRollPushed)
+        Out("inject: push not visible through Controller_obj." + g_SigListName + "[" + std::to_string(g_SigRollIndex)
+            + "] (a fresh read holds " + seen + ", expected the same ds_list with "
+            + std::to_string(g_SigRollBefore + g_SigRollPushed) + " entries ending in the " + std::to_string(g_SigRollPushed)
             + " pushed) - taken off again; rolls carry nothing until a push reads back");
     }
     g_SigRollPushed = 0;
     g_SigRollCopies[0] = g_SigRollCopies[1] = 0;
     g_SigRollList = RValue();
+    g_SigRollListId = RValue();
 }
-// After the game's roll, extra rolls included, and on a throw too: take the entries off again -
-// but only while the list's tail still holds exactly them (every copy, SignatureTailHolds), else
-// leave it as found, say so once and count it (`anomalies=`), since an entry the game itself
-// added must never be cut off.
+// After the game's roll, extra rolls included, and on a throw too: take the entries off the
+// ds_list they went onto again, one ds_list_delete of its last entry per pushed entry - but only
+// while its tail still holds exactly them (every copy, SignatureTailHolds), else leave it as
+// found, say so once and count it (`anomalies=`), since an entry the game itself added must
+// never be cut off.
 static void SignatureInjectRemove()
 {
     if (g_SigRollPushed <= 0) return;
     const int pushed = g_SigRollPushed, before = g_SigRollBefore;
-    RValue list = g_SigRollList;
+    const RValue sub = g_SigRollListId;
     g_SigRollPushed = 0;
     g_SigRollList = RValue();
+    g_SigRollListId = RValue();
     int len = -1;
     bool tail = false;
     try {
-        tail = SignatureTailHolds(list, before, pushed, len);
+        tail = SignatureTailHolds(sub, before, pushed, len);
         if (tail) {
-            g_Yytk->CallBuiltin("array_resize", { list, RValue((double)before) });
-            len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+            for (int i = 0; i < pushed; ++i)
+                g_Yytk->CallBuiltin("ds_list_delete", { sub, RValue((double)(len - 1 - i)) });
+            len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
             if (len == before) return;
         }
     } catch (...) {}
     InterlockedIncrement(&g_SigAnomalies);
-    Out(tail ? "inject: removing the entries did not take - list length " + std::to_string(len) + ", expected " + std::to_string(before)
-             : "inject: list changed during the roll, left as found (length " + std::to_string(before) + " + "
+    Out(tail ? "inject: removing the entries did not take - list size " + std::to_string(len) + ", expected " + std::to_string(before)
+             : "inject: list changed during the roll, left as found (size " + std::to_string(before) + " + "
                + std::to_string(pushed) + " pushed, now " + std::to_string(len) + ")");
 }
 // HookAngelicChance holds the injection with this guard, declared before its first original call
@@ -20955,15 +21035,17 @@ static void AngelicHitCommand(const std::string& args)
 // #74 list-injection research (research build only; the probe verb's `list` and `inject`
 // subcommands, so RunCommand gains no branch).
 //
-// Every variable of the first Controller_obj instance shaped like the game's Angelic list (an
-// array of [type, sub, b] entries), printed with its length, its first three entries and how
-// many entries equal each stand-in when `print`; returns the longest one of at least
-// kSigListMinLength entries (its length in bestLen), or "" - what `inject auto` names.  When
-// printing it also says how many names the instance read gave (`names=`, the positive control
-// on that read: 0 means the read failed, not that no list exists), one `rejected` line per array
-// that failed the shape (its length and why), and the other variables counted by kind.  The
-// instance may come back VALUE_REF or VALUE_OBJECT and the numbers VALUE_REAL, VALUE_INT32 or
-// VALUE_INT64 (SigNumber); none of them makes the read empty.
+// Every array variable of the first Controller_obj instance shaped like the game's Angelic list
+// (an array whose element at the current index, g_SigListIndex, is a live ds_list of at least
+// kSigListMinSize [type, sub, b] entries; SignatureListShape), printed with its outer length, the
+// index, the sub-list's size, its first three entries and how many entries of it equal each
+// stand-in when `print`; returns lootListUnique when that is a candidate, else the candidate with
+// the largest sub-list (its size in bestLen), or "" - what `inject auto` names.  When printing it
+// also says how many names the instance read gave (`names=`, the positive control on that read:
+// 0 means the read failed, not that no list exists), one `rejected` line per array that failed
+// the shape (its outer length and the reason, as the gate words it), and the other variables
+// counted by kind.  The instance may come back VALUE_REF or VALUE_OBJECT and the numbers
+// VALUE_REAL, VALUE_INT32 or VALUE_INT64 (SigNumber); none of them makes the read empty.
 static std::string ApRollKindName(int kind);   // the probe's kind names, defined with its rows
 static std::string SigListScan(bool print, int* bestLen)
 {
@@ -20996,46 +21078,123 @@ static std::string SigListScan(bool print, int* bestLen)
                 value = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(name) });
             } catch (...) { ++byKind["unreadable"]; continue; }
             if (value.m_Kind != VALUE_ARRAY) { ++byKind[ApRollKindName((int)value.m_Kind)]; continue; }
-            int len = -1, counts[2] = { 0, 0 };
+            int outer = -1, size = -1, counts[2] = { 0, 0 };
+            double id = -1.0;
+            RValue sub;
             std::string shape;
-            if (!SignatureListShape(value, len, counts, shape, 1)) {
-                if (print) Out("angelicprobe list: rejected " + name + " array_length=" + std::to_string(len) + " why=" + shape);
+            try { outer = (int)g_Yytk->CallBuiltin("array_length", { value }).ToDouble(); } catch (...) { outer = -1; }
+            if (!SignatureListShape(value, g_SigListIndex, sub, id, size, counts, shape, kSigListMinSize)) {
+                if (print) Out("angelicprobe list: rejected " + name + " array_length=" + std::to_string(outer) + " why=" + shape);
                 continue;
             }
             ++candidates;
-            if (len >= kSigListMinLength && len > bestN) { best = name; bestN = len; }
+            const bool named = name == "lootListUnique";
+            if (best != "lootListUnique" && (named || size > bestN)) { best = name; bestN = size; }
             if (!print) continue;
             std::string first;
-            for (int k = 0; k < 3 && k < len; ++k) {
+            for (int k = 0; k < 3 && k < size; ++k) {
                 double e[3] = { 0.0, 0.0, 0.0 };
-                SigEntry(value, k, e);
+                SigEntry(sub, k, e);
                 first += "[" + AngelicHitNumber(e[0]) + "," + AngelicHitNumber(e[1]) + "," + AngelicHitNumber(e[2]) + "]";
             }
             std::string standIns;
             for (int w = 1; w >= 0; --w)
                 standIns += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + g_SigStandIn[w].name
                     + (g_SigStandIn[w].ok ? "(n=" + std::to_string(counts[w]) + ")" : std::string("(not validated)"));
-            Out("angelicprobe list: candidate " + name + " array_length=" + std::to_string(len) + " first=" + first + " standins=" + standIns);
+            Out("angelicprobe list: candidate " + name + " array_length=" + std::to_string(outer) + " at=" + std::to_string(g_SigListIndex)
+                + " ds_list_size=" + std::to_string(size) + " first=" + first + " standins=" + standIns);
         }
     }
     if (print) {
         std::string kinds;
         for (const auto& kv : byKind) kinds += " " + kv.first + "=" + std::to_string(kv.second);
         Out("angelicprobe list: other variables by kind:" + (kinds.empty() ? std::string(" none") : kinds));
-        Out("angelicprobe list: candidates=" + std::to_string(candidates) + " best=" + (best.empty() ? std::string("none") : best + ":" + std::to_string(bestN)));
+        Out("angelicprobe list: candidates=" + std::to_string(candidates) + " best="
+            + (best.empty() ? std::string("none") : best + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(bestN)));
     }
     if (bestLen) *bestLen = bestN;
     return best;
 }
 
-// Design step 7's line, the counters Live 1 reads: copies=, the list, each stand-in's n, then
-// the pushes, our hits, the untyped hits, the reach and typing controls, what was built and
-// removed, and the anomalies.
+// `angelicprobe list dump [<var>]` (replan 2; Live 2's positive control on the layout): reads
+// Controller_obj.<var> (lootListUnique when no name is given) and prints its shape two levels
+// down - no injection and no shape rule.  The first line names the variable, its kind and its
+// array_length (or says it is not an array, and stops); then, per element up to 32, its kind,
+// whether it is a live ds_list and its size, how many of its entries are [type, sub, b] arrays,
+// its first three entries (a non-triple one by its kind) and how many entries of that element
+// equal each stand-in's whole triple; a ds_list is read up to 2000 entries.  The last line counts
+// the elements, the ds_lists and the lists whose every entry is a triple.  A throw ends it.
+static void SigListDump(const std::string& var)
+{
+    SignatureResolveStandIns();
+    const std::string name = var.empty() ? std::string("lootListUnique") : var;
+    const std::string head = "angelicprobe list dump: ";
+    RValue instance, outer;
+    std::string why;
+    if (!SignatureController(instance, why)) { Out(head + "Controller_obj." + name + " not read (" + why + ")"); return; }
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(name) }).ToBoolean()) {
+            Out(head + "Controller_obj has no variable " + name);
+            return;
+        }
+        outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(name) });
+    } catch (...) { Out(head + "EXCEPTION reading Controller_obj." + name); return; }
+    if (outer.m_Kind != VALUE_ARRAY) {
+        Out(head + "Controller_obj." + name + " kind=" + ApRollKindName((int)outer.m_Kind) + ", not an array");
+        return;
+    }
+    int len = 0, lists = 0, tripleLists = 0, i = 0;
+    try {
+        len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        Out(head + "Controller_obj." + name + " kind=array array_length=" + std::to_string(len));
+        for (i = 0; i < len && i < 32; ++i) {
+            const RValue e = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)i) });
+            const std::string line = head + "[" + std::to_string(i) + "] kind=" + ApRollKindName((int)e.m_Kind);
+            double id = -1.0;
+            if (!SigListHandle(e, id) || !g_Yytk->CallBuiltin("ds_exists", { e, RValue(2.0) }).ToBoolean()) {
+                Out(line + " ds_list=no");
+                continue;
+            }
+            ++lists;
+            const int size = (int)g_Yytk->CallBuiltin("ds_list_size", { e }).ToDouble();
+            const int read = size < 2000 ? size : 2000;
+            int triples = 0, n[2] = { 0, 0 };
+            std::string first;
+            for (int k = 0; k < read; ++k) {
+                double t[3] = { 0.0, 0.0, 0.0 };
+                if (SigEntry(e, k, t)) {
+                    ++triples;
+                    for (int w = 0; w < 2; ++w) {
+                        const SignatureStandIn& s = g_SigStandIn[w];
+                        if (s.ok && t[0] == (double)kSignatureItems[w].t && t[1] == (double)s.sub && t[2] == (double)s.b) ++n[w];
+                    }
+                    if (k < 3) first += "[" + AngelicHitNumber(t[0]) + "," + AngelicHitNumber(t[1]) + "," + AngelicHitNumber(t[2]) + "]";
+                } else if (k < 3) {
+                    first += "entry" + std::to_string(k) + "="
+                        + ApRollKindName((int)g_Yytk->CallBuiltin("ds_list_find_value", { e, RValue((double)k) }).m_Kind);
+                }
+            }
+            if (read > 0 && triples == read) ++tripleLists;
+            std::string standIns;
+            for (int w = 1; w >= 0; --w)
+                standIns += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + g_SigStandIn[w].name
+                    + (g_SigStandIn[w].ok ? "(n=" + std::to_string(n[w]) + ")" : std::string("(not validated)"));
+            Out(line + " ds_list=yes:" + std::to_string(size) + " triples=" + std::to_string(triples) + "/" + std::to_string(size)
+                + " first=" + first + " standins=" + standIns);
+        }
+    } catch (...) { Out(head + "EXCEPTION at [" + std::to_string(i) + "]"); return; }
+    Out(head + name + " elements=" + std::to_string(len) + " ds_lists=" + std::to_string(lists)
+        + " triple-lists=" + std::to_string(tripleLists));
+}
+
+// Design step 7's line, the counters Live 1 reads: copies=, the list (`<name>[<index>]:<size>`),
+// each stand-in's n, then the pushes, our hits, the untyped hits, the reach and typing controls,
+// what was built and removed, and the anomalies.
 static void SigInjectStatus()
 {
     Out(std::string("angelicprobe inject: mode=") + (g_SigReplaceMode ? "replace" : "inject")
         + " copies=" + std::to_string(g_SigCopies)
-        + " list=" + (g_SigListOk ? g_SigListName + ":" + std::to_string(g_SigListLen) : std::string("none"))
+        + " list=" + (g_SigListOk ? SignatureListText() : std::string("none"))
         + " standins=" + SignatureStandInsText(false)
         + " injected=" + std::to_string(g_SigInjected) + " ourHits=" + std::to_string(g_SigOurHits)
         + " untyped=" + std::to_string(g_SigUntyped)
@@ -21045,10 +21204,12 @@ static void SigInjectStatus()
         + " anomalies=" + std::to_string(g_SigAnomalies));
 }
 
-// `angelicprobe inject auto | name <var> | copies <k> | mode inject|replace | status`: `auto`
-// names the scan's best candidate (SigListScan); `name` sets the Controller_obj variable the
-// plugin resolves the list by (case kept) and refuses the value `auto`, so a slip can never set
-// the literal name "auto"; `copies` sets how many stand-in entries each enabled item pushes per
+// `angelicprobe inject auto | name <var> | at <k> | copies <k> | mode inject|replace | status`:
+// `auto` names the scan's best candidate (SigListScan); `name` sets the Controller_obj variable
+// the plugin resolves the list by (case kept) and refuses the value `auto`, so a slip can never
+// set the literal name "auto"; `at` sets the index of the element the list is (0..31, default
+// kAngelicListIndex, the player build's constant) and resolves again;
+// `copies` sets how many stand-in entries each enabled item pushes per
 // roll (1..400, default 1; the player build pushes exactly one); `mode` picks the shipped path
 // (inject, default) or the measured fallback (replace: the game places the stand-in, which is
 // removed and the item spawned in its place).
@@ -21073,6 +21234,18 @@ static void SigInjectCommand(const std::string& args)
             SignatureListResolve(list, true, true);
             Out("angelicprobe inject " + lever + ": " + SignatureListLine());
         }
+    } else if (lever == "at") {
+        int k = -1;
+        try { size_t used = 0; k = std::stoi(value, &used); if (used != value.size()) k = -1; } catch (...) { k = -1; }
+        if (k < 0 || k > 31) {
+            Out("angelicprobe inject at: needs a whole number 0..31 - nothing changed");
+        } else {
+            g_SigListIndex = k;
+            SignatureResolveStandIns();
+            RValue list;
+            SignatureListResolve(list, true, true);
+            Out("angelicprobe inject at: " + SignatureListLine());
+        }
     } else if (lever == "mode") {
         const std::string m = Lower(value);
         if (m == "inject" || m == "replace") {
@@ -21094,7 +21267,7 @@ static void SigInjectCommand(const std::string& args)
                 + " per enabled item per roll (the player build pushes 1)");
         }
     } else if (lever != "status" && !lever.empty()) {
-        Out("angelicprobe inject: name <var> | auto | copies <k> | mode inject|replace | status");
+        Out("angelicprobe inject: name <var> | auto | at <k> | copies <k> | mode inject|replace | status");
     }
     SigInjectStatus();
 }
@@ -21584,15 +21757,24 @@ static std::string ApRollShape(const RValue& v)
 }
 
 // `angelicprobe list`: the game's own unique loot list, read-only. The roll
-// reads it as a variable of the first Controller_obj instance (static reading,
-// #74 Session 3), whose name is not recoverable statically, so the
-// Controller_obj half (SigListScan) prints every variable shaped like the list
-// and the best candidate. The two scopes the first live session asked - the
-// global scope and the Loot_Manager_obj instance, both by the name
-// lootListUnique - are reported first, one line each when absent, so the
-// Controller_obj summary (`candidates=<k> best=<name>:<len>`) is the last line.
-static void ApRollList()
+// reads one element of a variable of the first Controller_obj instance
+// (static reading, #74 Sessions 3 and 4: lootListUnique, element 5, a
+// ds_list), so the Controller_obj half (SigListScan) prints every variable
+// shaped like that and the best candidate. The two scopes the first live
+// session asked - the global scope and the Loot_Manager_obj instance, both by
+// the name lootListUnique - are reported first, one line each when absent, so
+// the Controller_obj summary (`candidates=<k> best=<name>[<i>]:<size>`) is the
+// last line. `angelicprobe list dump [<var>]` prints one variable's layout
+// two levels down instead (SigListDump).
+static void ApRollList(const std::string& args)
 {
+    const std::string a = TrimCopy(args);
+    const size_t space = a.find(' ');
+    if (Lower(a.substr(0, space)) == "dump") {
+        SigListDump(space == std::string::npos ? std::string() : TrimCopy(a.substr(space + 1)));   // the name keeps its case
+        return;
+    }
+    if (!a.empty()) { Out("angelicprobe list: list | list dump [<var>] - nothing read"); return; }
     // One list's kind, then its length and the first eight entries' shape.
     auto show = [](const RValue& list, const std::string& scope) {
         Out("angelicprobe list: scope=" + scope + " lootListUnique kind=" + ApRollKindName((int)list.m_Kind));
@@ -21662,9 +21844,10 @@ static void ApRollUsage()
     Out("  angelicprobe on    - attach every candidate row once (and the kill control), print each row's route");
     Out("  angelicprobe show  - per row: route, calls=, insideDropItem=, insideAngelicChance= (calls=n/a when the row has no route)");
     Out("  angelicprobe reset - zero the counters; routes stay attached");
-    Out("  angelicprobe list  - read-only: lootListUnique in the global scope and on Loot_Manager_obj, then every Controller_obj variable: names=, each one shaped like the Angelic list (length, first three entries, stand-in counts), each array rejected and why, the rest by kind, and the best candidate last");
+    Out("  angelicprobe list  - read-only: lootListUnique in the global scope and on Loot_Manager_obj, then every Controller_obj variable: names=, each one whose element at the inject index is a ds_list shaped like the Angelic list (outer length, index, ds_list size, first three entries, stand-in counts), each array rejected and why, the rest by kind, and the best candidate last");
+    Out("  angelicprobe list dump [<var>] - read-only: Controller_obj.<var> (lootListUnique by default) two levels down: each element's kind, ds_list size, triple count, first entries and stand-in counts");
     Out("  angelicprobe hit chance <n> | rate <n> | share (no-op) | off | status - the #74 levers that make a game Angelic hit observable");
-    Out("  angelicprobe inject auto | name <var> | copies <k> | mode inject|replace | status - the #74 list the stand-ins are injected into, how many copies each item pushes, and the path an our-hit takes");
+    Out("  angelicprobe inject auto | name <var> | at <k> | copies <k> | mode inject|replace | status - the #74 list the stand-ins are injected into (variable and element index), how many copies each item pushes, and the path an our-hit takes");
 }
 
 static void ApRollCommand(const std::string& rest)
@@ -21673,7 +21856,7 @@ static void ApRollCommand(const std::string& rest)
     if (sub == "on") ApRollOn();
     else if (sub == "show") ApRollShow();
     else if (sub == "reset") { ApRollReset(); Out("angelicprobe reset: counters zeroed, routes kept"); }
-    else if (sub == "list") ApRollList();
+    else if (sub == "list" || sub.rfind("list ", 0) == 0) ApRollList(TrimCopy(rest).substr(4));   // a variable name keeps its case
     else if (sub == "hit" || sub.rfind("hit ", 0) == 0) AngelicHitCommand(sub.substr(3));
     else if (sub == "inject" || sub.rfind("inject ", 0) == 0) SigInjectCommand(TrimCopy(rest).substr(6));   // a variable name keeps its case
     else ApRollUsage();
