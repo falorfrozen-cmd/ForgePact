@@ -64,6 +64,7 @@ const EXPECTED = [
   'mods-one-card-per-mod-qol',
   'mods-one-card-per-mod-items',
   'mods-columns-balanced',
+  'mods-disabled-select',
   'theme-on-setup',
   'footer-credit',
   'plugin-warning-indicator-placement',
@@ -545,6 +546,44 @@ async function modsColumns({ page }) {
     assert(got.n === 2, `${id}: ${got.n} columns`);
     assert(got.h[0] >= got.h[1] - 0.5, `${id}: the left column (${got.h[0]}) is shorter than the right (${got.h[1]})`);
   }
+}
+
+// The hidden-loot key is the one select that can be disabled. While its
+// switch is off it takes the disabled state buttons and switches have (45%),
+// refuses the pointer, and hovering it leaves its fill alone. The switch on is
+// the control: the same select at full opacity, a pointer, and a hover fill.
+async function selectLook(page, id) {
+  const select = page.locator('#' + id);
+  await select.scrollIntoViewIfNeeded();
+  const read = () => select.evaluate(async (el) => {
+    await Promise.all(el.getAnimations().map((a) => a.finished));
+    const s = getComputedStyle(el);
+    return { disabled: el.disabled, opacity: s.opacity, cursor: s.cursor, bg: s.backgroundColor };
+  });
+  await away(page);
+  const idle = await read();
+  const box = await select.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await frames(page);
+  const hover = await read();
+  await away(page);
+  return { ...idle, hoverBg: hover.bg };
+}
+
+async function modsDisabledSelect({ page }) {
+  await tab(page, 'mods');
+  await subtab(page, 'subtab-qol');
+  const off = await selectLook(page, 'mod_hidden_loot_key');
+  assert(off.disabled, 'The hidden-loot key is not disabled with its switch off: ' + JSON.stringify(off));
+  assert(off.opacity === '0.45', `The disabled key select is at opacity ${off.opacity}, not 0.45`);
+  assert(off.cursor === 'not-allowed', `The disabled key select shows the ${off.cursor} cursor`);
+  assert(off.hoverBg === off.bg, `Hovering the disabled key select changes its fill: ${off.bg} -> ${off.hoverBg}`);
+  await $(page, () => document.getElementById('mod_hidden_loot').click());
+  await settled(page);
+  const on = await selectLook(page, 'mod_hidden_loot_key');
+  assert(!on.disabled && on.opacity === '1' && on.cursor === 'pointer', 'The enabled key select (control): ' + JSON.stringify(on));
+  assert(on.hoverBg !== on.bg, `Hovering the enabled key select (control) leaves its fill at ${on.bg}`);
+  return `off ${off.opacity}/${off.cursor}, on ${on.bg} -> ${on.hoverBg}`;
 }
 
 async function themeOnSetup({ page }) {
@@ -1063,6 +1102,7 @@ const CHECKS = [
   ['mods-one-card-per-mod-qol', modsCardsQol],
   ['mods-one-card-per-mod-items', modsCardsItems],
   ['mods-columns-balanced', modsColumns],
+  ['mods-disabled-select', modsDisabledSelect],
   ['theme-on-setup', themeOnSetup],
   ['footer-credit', footerCredit],
   ['plugin-warning-indicator-placement', indicatorPlacement],

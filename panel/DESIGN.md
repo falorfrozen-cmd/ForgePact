@@ -433,7 +433,8 @@ The components are tactile but restrained. Every control is a flat fill or a bar
 ### Inputs / Fields
 - **Style:** a Well Umber fill, a 1px strong edge and a 6px radius, 32px tall. The search fields carry a 16px masked search glyph inset 12px. The executable path field is 38px tall and set in mono.
 - **Focus:** the global 2px focus-colour outline at a 3px offset. The caret is the accent.
-- **Selects:** 28px, a Hover Umber fill, no edge, a 4px radius (the Mods tab's skill timer style).
+- **Selects:** 28px, a Hover Umber fill, no edge, a 4px radius (the Mods tab's skill timer style). Hover turns the fill Subtle Edge.
+- **Disabled select:** 45% opacity, a not-allowed cursor, and no hover fill, in every theme. Only a child select whose parent switch is off is disabled (the hidden-loot key).
 
 ### Theme picker
 - **Trigger:** a compact, quiet button on Setup's Appearance card: the palette's name and a small muted chevron, 28px, a Hover Umber fill, no edge, a 4px radius, turning Subtle Edge on hover. It is named by the row's "Theme" label and its own value ("Theme Ledger") and carries `aria-haspopup="listbox"` and `aria-expanded`.
