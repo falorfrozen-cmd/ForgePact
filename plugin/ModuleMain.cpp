@@ -7897,45 +7897,88 @@ static BossProbeGetter BossProbeGetterControl()
     Out(line);
     return route;
 }
-static void BossProbeCommand()
+// One probe line for one live instance: `bossprobe #<n> <Obj>#<id> <RarState> |`
+// then the matching variables under the read rules above. Both forms of the
+// command print through it, so a boss and an ordinary monster are read the
+// same way.
+static std::string BossProbeLine(int n, const RValue& id, BossProbeGetter getter)
 {
+    std::string line = "bossprobe #" + std::to_string(n) + " " + TyInstName(id) + RarState(id) + " |";
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+        const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string vars;
+        for (int i = 0; i < count; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string s = nm.ToString(), ls = Lower(s);
+            bool hit = false;
+            for (const char* w : kBossProbeWords) if (ls.find(w) != std::string::npos) { hit = true; break; }
+            if (!hit) continue;
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
+            std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
+            vars += " " + s + "=" + d;
+            if (!BossProbeIsNumber(v)) continue;
+            if (!BossProbeKeyInRange(v)) { vars += "->not-key"; continue; }
+            if (getter == BossProbeGetter::None) { vars += "->unread"; continue; }
+            bool proven = false;
+            for (const char* k : kBossProbeProvenKeys) if (s == k) { proven = true; break; }
+            try {
+                RValue got = g_Yytk->CallGameScript(getter == BossProbeGetter::Wrapper ? "gml_Script_PC_GetVariableGMLWrapper" : "gml_Script_GPV",
+                                                    { RValue(v.ToDouble()) });
+                std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
+                vars += std::string(proven ? "->" : "->?") + g;
+            } catch (...) { vars += "->EXC"; }
+        }
+        line += vars.empty() ? std::string(" (no matching vars)") : vars;
+    } catch (...) { line += " (vars exc)"; }
+    return line;
+}
+// `bossprobe <object index>`: the argument is a non-negative whole number,
+// digits only (at most 9, so it fits an int). Anything else is refused.
+static bool BossProbeParseObjectIndex(const std::string& arg, int& objIdx)
+{
+    if (arg.empty() || arg.size() > 9) return false;
+    for (char c : arg) if (c < '0' || c > '9') return false;
+    objIdx = std::atoi(arg.c_str());
+    return true;
+}
+// `bossprobe` reads every live boss. `bossprobe <object index>` reads every
+// live enemy whose own object_index is that number, boss or not, through the
+// same control line, line and read rules: Live procedure 1b's identity control
+// reads an ordinary monster this way before a boss's damage or XP counts.
+static void BossProbeCommand(const std::string& rest)
+{
+    const std::string arg = TrimCopy(rest);
+    int objIdx = -1;
+    const bool byObject = !arg.empty();
+    if (byObject && !BossProbeParseObjectIndex(arg, objIdx)) {
+        Out("bossprobe: usage: bossprobe [<object index>] - a non-negative whole number; nothing probed");
+        return;
+    }
     try {
         const BossProbeGetter getter = BossProbeGetterControl();
         const RValue eobj((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
         const int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+        if (byObject) {
+            std::string objName = "?";
+            try { objName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString(); } catch (...) {}
+            int found = 0;
+            for (int n = 0; n < total && n < 2000; ++n) {
+                RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+                RValue oi;
+                try { oi = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("object_index") }); } catch (...) { continue; }
+                if (!IsNumericInstanceRead(oi)) continue;   // a ToDouble on `undefined` raises a runner error
+                if ((int)oi.ToDouble() != objIdx) continue;
+                Out(BossProbeLine(found++, id, getter));
+            }
+            Out("bossprobe: " + std::to_string(found) + " instance(s) of " + objName + " among " + std::to_string(total) + " enemies");
+            return;
+        }
         int bosses = 0;
         for (int n = 0; n < total && n < 2000; ++n) {
             RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
             if (!RarInstanceIsBoss(id)) continue;
-            std::string line = "bossprobe #" + std::to_string(bosses++) + " " + TyInstName(id) + RarState(id) + " |";
-            try {
-                RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
-                const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
-                std::string vars;
-                for (int i = 0; i < count; ++i) {
-                    RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
-                    const std::string s = nm.ToString(), ls = Lower(s);
-                    bool hit = false;
-                    for (const char* w : kBossProbeWords) if (ls.find(w) != std::string::npos) { hit = true; break; }
-                    if (!hit) continue;
-                    RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
-                    std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
-                    vars += " " + s + "=" + d;
-                    if (!BossProbeIsNumber(v)) continue;
-                    if (!BossProbeKeyInRange(v)) { vars += "->not-key"; continue; }
-                    if (getter == BossProbeGetter::None) { vars += "->unread"; continue; }
-                    bool proven = false;
-                    for (const char* k : kBossProbeProvenKeys) if (s == k) { proven = true; break; }
-                    try {
-                        RValue got = g_Yytk->CallGameScript(getter == BossProbeGetter::Wrapper ? "gml_Script_PC_GetVariableGMLWrapper" : "gml_Script_GPV",
-                                                            { RValue(v.ToDouble()) });
-                        std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
-                        vars += std::string(proven ? "->" : "->?") + g;
-                    } catch (...) { vars += "->EXC"; }
-                }
-                line += vars.empty() ? std::string(" (no matching vars)") : vars;
-            } catch (...) { line += " (vars exc)"; }
-            Out(line);
+            Out(BossProbeLine(bosses++, id, getter));
         }
         Out("bossprobe: " + std::to_string(bosses) + " boss(es) among " + std::to_string(total) + " enemies");
     } catch (...) { Out("bossprobe: EXC"); }
@@ -42795,7 +42838,7 @@ static void RunCommand(const std::string& line)
     if (lc == "zonecensus") { ZoneCensusCommand(rest); return; }
     if (lc == "evcount") { EvCountCommand(rest); return; }
     // Bosses control research (issue #44): the same standalone early returns.
-    if (lc == "bossprobe") { BossProbeCommand(); return; }
+    if (lc == "bossprobe") { BossProbeCommand(rest); return; }
     if (lc == "droptrace") { DropTraceCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same

@@ -76,6 +76,23 @@ decompiler output stays on the reader's machine.
   out, then `ForgePact/tools/ghidra/ImportSymbols.java` again, which would give
   `EnemyRaritySettings` its own function boundary. Both stay local.
 
+**Which variables hold a monster's damage and its XP: not established by
+static reading** (read 2026-10-02 for Live procedure 1b, same project). Static
+reading: on a kill, `EnemyDestroyExperience` hands the work to two methods,
+`EnemyCalculateExperience` and `EnemyGiveExperience`, and the first of those
+calls `ReturnSpecificStat`. Both were decompiled locally. Every instance
+variable these bodies (and `ReturnEnemyStats`) touch is reached through a
+slot number the runtime hands out at startup, and the local slot-name map
+(recovered from the startup code that registers each variable's name) names
+only one slot across all four bodies, none of them a damage or XP variable.
+The rank setup's own body, `EnemyRaritySettings`, is the one the decompiler
+refused above. So this reading does not say which variable the rank setup
+scales for damage or XP. The Live 1 rerun's probe printed `damage`,
+`killExperience` and `experience` on a Karp King; the probe's word filter
+(`damage`, `exp`) already prints all three, so the filter is unchanged, and
+which of them holds the quantity is left to Live procedure 1b's identity
+control (`bossprobe <object index>`, § "The instrument").
+
 Rejected routes, from the same search: a hook on a boss-only script
 (`CA_createBoss`, the boss portal and shrine objects) would miss bosses a room
 places and duplicate the sliders' route; writing `forceRarity` instead of
@@ -116,6 +133,16 @@ pinned by `tests/test_boss_rarity_contract.py`).
     `enemy_hp=<key>-><value>`. Every other in-range number prints `->?<value>`:
     what that record holds if the number is a key, and an unrelated record if
     it is not. A `->?` value is never counted as evidence.
+  - `bossprobe <object index>` (added for Live procedure 1b, pinned by
+    `tests/test_bossprobe_object_contract.py`) prints the same control line,
+    then the same line for every live enemy whose own `object_index` is that
+    number, boss or not, then `bossprobe: <k> instance(s) of <object name>
+    among <m> enemies`. Anything but a non-negative whole number prints one
+    usage line and reads nothing. It is how an ordinary monster raised by the
+    sliders is read through the boss's own instrument: a variable counts as
+    damage or XP only when its rank-3/rank-1 and rank-4/rank-1 ratios on that
+    monster match the measured rank table, and only then does a boss's ratio
+    of the same variable count.
 - `droptrace <n>` (default 20, at most 500, `off` or `0` stops it) prints the
   next n `DropItem` / `DropItemBoss` calls that pass ForgePact's drop hooks, one
   `droptrace: <script> self=<instance> argc=<n> <arguments>` line each.
