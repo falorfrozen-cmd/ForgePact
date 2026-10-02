@@ -85,6 +85,30 @@ function setText(el,v){const s=v==null?'':String(v);if(el&&el.textContent!==s)el
 function setClass(el,v){if(el&&el.className!==v)el.className=v}
 function setTitle(el,v){if(el&&el.title!==v)el.title=v}
 function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
+// A mining note is a polite live region only while it holds the plugin's
+// status, i.e. while the game runs (already when empty, so the first status
+// is announced). With the game closed it holds the slider's own explanation,
+// which the range reads through aria-describedby: live, every slider step
+// would announce it again (review of ForgePact #141). Paint through paintNote.
+function setNoteLive(el,live){
+  if(!el||(el.getAttribute('aria-live')==='polite')===live)return;
+  if(live){el.setAttribute('role','status');el.setAttribute('aria-live','polite')}
+  else{el.removeAttribute('role');el.removeAttribute('aria-live')}
+}
+// A region that turns live in the same update as its text is often not
+// announced, so when a note turns live its first status waits until a frame
+// has rendered with the live attributes in it (review of ForgePact #141).
+// Every later write goes out at once; one that arrives while a status is
+// waiting replaces the text the wait will write.
+const notePending=new WeakMap();
+function paintNote(el,live,text){
+  if(!el)return;
+  const turning=live&&!!text&&el.getAttribute('aria-live')!=='polite';
+  setNoteLive(el,live);
+  if(!turning&&!notePending.has(el)){setText(el,text);return}
+  if(!notePending.has(el))requestAnimationFrame(()=>setTimeout(()=>{const t=notePending.get(el);notePending.delete(el);setText(el,t)}));
+  notePending.set(el,text);
+}
 // Move all into the stash turns itself off for the rest of a session after a
 // move it could not confirm; the plugin's last `stashmoveall: state=` line
 // says so (`stash_move_all_session`), and the value beside the switch shows
@@ -141,8 +165,9 @@ function applyPluginModState(pm){
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
     // Only the live status: the note is empty (and hidden) while there is none.
-    setText(miningNote,status.trim());
+    paintNote(miningNote,!!ST?.gameRunning,status.trim());
   }
+  paintRollsNote(pm);
   const ap=(pm&&pm.autoprospect)||null;
   const parentVal=document.getElementById("autoprospval");
   const bagVal=document.getElementById("apbagval");
@@ -170,6 +195,31 @@ function applyPluginModState(pm){
   }else if(!ap.hookBlind){
     syncProspectBag(parentOn,wantsBag);   // repaints the label and the disabled state
   }
+}
+// The drops rows with their own plugin command and a ceiling of 10: the Mining
+// Ore Multiplier and Mining Ore Extra Rolls, a separate option beside it; the
+// two work independently and multiply when both are on (src/forgepact.py's
+// MINING_DROP_COMMANDS). Every other drops row goes to 100.
+const MINING_DROPS=['mining_ore','mining_ore_rolls'];
+// Mining Ore Extra Rolls' note, from the row itself: the range's value and its
+// switch, so a drag or a switch click repaints it before the next save or poll.
+// It runs on its own plugin counters (the helmet replaces the multiplier, never
+// the rolls). With the game closed a value above one says what it does for the
+// player; while it runs, the plugin's own status; at one, nothing.
+function paintRollsNote(pm){
+  const note=document.querySelector('.note[data-note="mining_ore_rolls"]');
+  const range=document.querySelector('input[type=range][data-sec="drops"][data-key="mining_ore_rolls"]');
+  if(!note||!range)return;
+  const rolls=switchedOff('drops.mining_ore_rolls')?1:Math.max(1,Math.round(Number(range.value)||1)), mining=pm?.miningOre;
+  let status='';
+  if(rolls>1&&!ST?.gameRunning){
+    status='Each mining node you finish pays out '+rolls+' times.';
+  }else if(rolls>1){
+    if(mining?.rollsUnavailable)status='Plugin could not enable extra rolls; each node pays out once.';
+    else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
+    else status='Waiting for the matching mining plugin to confirm the setting.';
+  }
+  paintNote(note,!!ST?.gameRunning,status);
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 // All Skills adds whole skill levels, not a percentage.
@@ -202,6 +252,8 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   // still write into it. Rows passed no note (drops, spawners) get none.
   // The note's id carries the section (data-note is the key alone), and the
   // range names it in aria-describedby, so a screen reader reads the note.
+  // The two mining notes become polite live regions while the game runs and
+  // they carry the plugin's status (paintNote, from their painters).
   const noteId=`note-${sec}-${key}`;
   const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
@@ -420,11 +472,15 @@ async function boot(){
     const v=(c.keys&&c.keys[k])||1;
     return row('keys',k,l,v,'',100,keyNote(k,t,v));
   }).join('');
-  // The mining row keeps an empty note: applyPluginModState() writes the
-  // plugin's live mining status into it while the game runs. row() writes it
-  // (an empty note), so it gets its id and the range's aria-describedby too.
-  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>
-    row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',k==='mining_ore'?10:100,k==='mining_ore'?'':null)).join('');
+  // The two mining rows (the multiplier and Extra Rolls, separate options that
+  // work independently) go to 10
+  // and keep an empty note: applyPluginModState() writes the plugin's live
+  // mining status into it while the game runs. row() writes it (an empty
+  // note), so it gets its id and the range's aria-describedby too.
+  document.getElementById('drops').innerHTML=ST.drops.map(([k,l,h])=>{
+    const mining=MINING_DROPS.includes(k);
+    return row('drops',k,l,(c.drops&&c.drops[k])||1,h?` <span class="tag">${h}</span>`:'',mining?10:100,mining?'':null);
+  }).join('');
   document.getElementById('stats').innerHTML=(ST.stats||[]).map(([k,l,mx,step])=>{
     const v=(c.stats&&c.stats[k])||1;
     return row('stats',k,l,v,'',mx,statNote(k,v),step);
@@ -510,6 +566,7 @@ function bind(){
       if(noteEl&&r.dataset.sec==='keys')noteEl.textContent=keyNote(r.dataset.key,tipOf(r.dataset.key),v);
       if(noteEl&&r.dataset.sec==='stats')noteEl.textContent=statNote(r.dataset.key,v);
       if(noteEl&&r.dataset.sec==='percent_stats')noteEl.textContent=percentStatNote(r.dataset.key,v);
+      if(noteEl&&r.dataset.sec==='drops'&&r.dataset.key==='mining_ore_rolls')paintRollsNote(ST?.pluginMods);
     };
     r.onchange=async()=>{
       const v=sliderVal(r);

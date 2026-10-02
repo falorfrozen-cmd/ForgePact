@@ -44,6 +44,17 @@
 // sub-tab they sit on. They come last, so no earlier step's index moves, and
 // each is in `controls`, so the replay's coverage check counts it.
 //
+// NATIVE_SLIDERS are switched table sliders no recorded page ever had (Skill
+// Haste and All Skills, #114; Mining Ore Extra Rolls, issue #36): the same
+// eight steps a legacy slider gets (max, min, max, switch off, on, Turn off,
+// on, min), entered on the tab they sit on (one tab step whenever the tab
+// changes), but with nothing recorded to compare the slider's own moves against,
+// so its maximum and minimum carry literal expectations - each end posts the
+// section, key and value and sends the line written out for it - and the switch steps compare with those
+// the way a legacy slider's do. They come after the native booleans, so no
+// earlier step's index moves, and both the range and its switch are in
+// `controls`, since no recording lists the range either.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -84,16 +95,20 @@ export const NATIVE_BOOLEANS = [
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
 ];
 // Switched sliders no recorded page ever had (Skill Haste and All Skills,
-// ForgePact#114): the section and key, the tab they sit on (their neighbour
-// Faster Cast Rate's, which the legacy walk reached on the Modifiers tab),
-// their range, and the line src/forgepact.py sends at each end. Their
-// contract is written out as literals, as NATIVE_BOOLEANS' is, and they come
-// after everything else, so no earlier step's index moves.
+// ForgePact#114; Mining Ore Extra Rolls, #36): the section and key, the tab
+// they sit on (Skill Haste and All Skills: their neighbour Faster Cast Rate's,
+// which the legacy walk reached on the Modifiers tab; Mining Ore Extra Rolls:
+// the Loot tab), their range, and the line src/forgepact.py sends at each end.
+// Their contract is written out as literals, as NATIVE_BOOLEANS' is, and they
+// come after everything else, a newer one after an older one, so no earlier
+// step's index moves.
 export const NATIVE_SLIDERS = [
   { section: 'percent_stats', key: 'skillhaste', tab: 'tab:modifiers', min: 0, max: 200,
     atMin: 'statadd skillhaste 0', atMax: 'statadd skillhaste 200' },
   { section: 'percent_stats', key: 'allskills', tab: 'tab:modifiers', min: 0, max: 100,
     atMin: 'statadd allskills 0', atMax: 'statadd allskills 100' },
+  { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', min: 1, max: 10,
+    atMin: 'miningrolls 1', atMax: 'miningrolls 10' },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];

@@ -24,7 +24,7 @@
 // rebuilt list), a pointer's Turn off next to the keyboard's. Every check runs on its own sandbox and
 // page. The last line is `e2e-motion: <n>/<n> checks passed`.
 
-import { launchBrowser, openPanel, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
+import { launchBrowser, openPanel, parseArgs, postSet, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
 import { OPEN_DELAY_MS } from '../src/lib/slider-note.js';
 import { INSTANT_MS } from '../src/lib/plugin-warning.js';
@@ -62,7 +62,8 @@ function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
 const frames = (page) => $(page, () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const tab = async (page, name) => { await $(page, (n) => document.querySelector(`.tabbtn[data-tab="${n}"]`).click(), name); await frames(page); };
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes go to the sandbox from this process, not the page (lib/browser.mjs postSet).
+const post = postSet;
 const away = async (page) => {
   await page.mouse.move(1, (page.viewportSize()?.height || 800) - 60);
   await $(page, () => document.activeElement?.blur?.());

@@ -137,21 +137,31 @@ KEYS = [
 DROPS = [
     ("gold", "Gold", ""),
     ("mining_ore", "Mining Ore Multiplier", ""),
+    # A separate option beside Mining Ore Multiplier (issue #36): the game's own
+    # dig completion runs this many times per node. The two work independently
+    # and multiply when both are on. The plugin caps it at 10 too
+    # (MiningOreMod.hpp's kMaxRolls).
+    ("mining_ore_rolls", "Mining Ore Extra Rolls", ""),
 ]
+
+# The drops rows with their own plugin command and a ceiling of 10; every other
+# drops row is a `dropmult` up to 100.
+MINING_DROP_COMMANDS = {"mining_ore": "miningore", "mining_ore_rolls": "miningrolls"}
 
 
 def drop_multiplier(key, value) -> int:
     if key not in {k for k, *_ in DROPS}:
         raise ValueError("unknown drop setting")
     try:
-        return max(1, min(10 if key == "mining_ore" else 100, int(float(value))))
+        return max(1, min(10 if key in MINING_DROP_COMMANDS else 100, int(float(value))))
     except (TypeError, ValueError, OverflowError):
         return 1
 
 
 def drop_command(key, value) -> str:
     amount = drop_multiplier(key, value)
-    return f"miningore {amount}" if key == "mining_ore" else f"dropmult {key} {amount}"
+    verb = MINING_DROP_COMMANDS.get(key)
+    return f"{verb} {amount}" if verb else f"dropmult {key} {amount}"
 
 # Satanic Zone buff/debuff pool.  Names/ids/descriptions come from
 # hs-game-sdk (hand-verified game knowledge, not mechanically extracted --

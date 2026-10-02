@@ -312,6 +312,88 @@ class ReleaseHookContractTests(unittest.TestCase):
         ):
             self.assertNotIn(eager, release)
 
+    def test_research_build_installs_mining_before_item_inspect(self):
+        # InstallItemInspectHooks table-hooks LootGroundCreate. After it, the
+        # table entry is this module's code, so the Mining Ore adapter's own
+        # HookOneScript on it would come up table-only and the mod report
+        # unavailable in the research build - the build Live procedure 1 of
+        # issue #36 runs, where every rolls check would then have measured
+        # the instrument. The mining pair is installed first.
+        body = strip_comments(function_body(self.plugin, "static void InstallHook()"))
+        release, research = body.split("#ifdef FORGEPACT_RELEASE", 1)[1].split("#else", 1)
+        research = research.split("#endif", 1)[0]
+        self.assertIn("ForgePact::MiningOre::Install();", research)
+        self.assertIn("InstallItemInspectHooks();", research)
+        self.assertLess(research.index("ForgePact::MiningOre::Install();"),
+                        research.index("InstallItemInspectHooks();"))
+        # The player build's all-off start still installs nothing.
+        self.assertNotIn("MiningOre::Install", release)
+
+    def test_combat_text_has_one_native_detour_site(self):
+        # HookOneScript detours natively only on the first install of a
+        # script; a second install from another function finds this module's
+        # hook in the table and comes up table-only, blind to the dig's direct
+        # calls. The Experience slider's "N XP" rescale and Mining Ore Extra
+        # Rolls' silence both need CombatText, so there is one detour
+        # (CombatTextHook.hpp) and both go through its shared install.
+        hook_call = re.compile(r"\bHookOneScript(?:Table)?\s*\(")
+
+        def combat_text_hook_calls(source):
+            calls = []
+            for match in hook_call.finditer(source):
+                depth, end = 0, match.end() - 1
+                for index in range(match.end() - 1, len(source)):
+                    if source[index] == "(":
+                        depth += 1
+                    elif source[index] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            end = index
+                            break
+                call = source[match.start():end + 1]
+                if "CombatText" in call:
+                    calls.append(call)
+            return calls
+
+        # The scanner's own control: it finds the spelling StatsManager.hpp
+        # used before the detour was shared, and ignores another script.
+        self.assertEqual(len(combat_text_hook_calls(
+            'HookOneScript("CombatText", "fp_ctext", (void*)Hook_CombatText, &m_OrigCombatText);')), 1)
+        self.assertEqual(combat_text_hook_calls('HookOneScript("ExperienceUpdate", "x", (PVOID)f, &o);'), [])
+
+        sources = {"ModuleMain.cpp": strip_comments(self.plugin)}
+        for header in sorted(PLUGIN_HEADER_DIR.glob("*.hpp")):
+            sources[header.name] = strip_comments(header.read_text(encoding="utf-8", errors="replace"))
+        sites = {name: combat_text_hook_calls(text) for name, text in sources.items()}
+        sites = {name: calls for name, calls in sites.items() if calls}
+        self.assertEqual(list(sites), ["CombatTextHook.hpp"], sites)
+        self.assertEqual(len(sites["CombatTextHook.hpp"]), 1, sites)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_CombatText)",
+                      sites["CombatTextHook.hpp"][0])
+        self.assertIn('"fp_ctext"', sites["CombatTextHook.hpp"][0])
+
+        # The install is made at most once a session and remembers its answer.
+        shared = sources["CombatTextHook.hpp"]
+        install = function_body(shared, "inline bool Install()")
+        self.assertIn("if (!installTried)", install)
+        self.assertIn("return installed && native;", install)
+
+        # StatsManager reaches CombatText only through the shared install.
+        stats = strip_comments(self.stats_header)
+        self.assertIn('#include "CombatTextHook.hpp"', self.stats_header)
+        self.assertIn("ForgePact::CombatText::Install();", function_body(stats, "void HandleStatCommand(const std::string& rest)"))
+        self.assertNotIn("Hook_CombatText", stats)
+        self.assertNotIn("m_OrigCombatText", stats)
+        # ...and the rolls, the other user, through the same one.
+        mining = sources["MiningOreMod.hpp"]
+        self.assertIn("CombatText::Install()", function_body(mining, "inline bool InstallRolls()"))
+
+        # The mining harness compiles the shared header with fake game types:
+        # nothing it includes may pull in <windows.h>.
+        includes = re.findall(r'#include\s*[<"]([^>"]+)[>"]', shared)
+        for banned in ("windows.h", "reward_scope.hpp", "Common.hpp"):
+            self.assertFalse(any(banned in name for name in includes), (banned, includes))
+
     def test_release_build_still_loads_custom_forge_and_auto_arms_items(self):
         # A prior edit moved the `#ifdef FORGEPACT_RELEASE ... return;` early
         # exit above these calls, so a shipped build skipped the Item Editor

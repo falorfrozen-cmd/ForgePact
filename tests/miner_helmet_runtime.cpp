@@ -184,6 +184,8 @@ struct Runtime {
     }
 };
 static Runtime runtime;static Runtime* g_Yytk=&runtime;
+// The shared CombatText detour precedes the mining adapter, as in ModuleMain.cpp.
+#include <ForgePact/CombatTextHook.hpp>
 #include <ForgePact/MiningOreMod.hpp>
 #include <ForgePact/MinerHelmetState.hpp>
 #include <ForgePact/MinerHelmetMod.hpp>
