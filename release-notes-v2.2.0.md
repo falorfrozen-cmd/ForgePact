@@ -24,8 +24,7 @@ shows it again while you hold a key.
   research build, which put hidden items to sleep with the same call before
   this switch existed: with about 2,700 hidden items lying around one spot,
   the game took about 7.5 ms a frame with them asleep, against 14 to 18 ms
-  with them awake. The switch itself was checked in a live game on
-  2026-09-28.
+  with them awake.
 
 ## How to update
 
