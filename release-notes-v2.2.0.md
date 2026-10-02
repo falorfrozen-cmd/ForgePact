@@ -14,14 +14,18 @@ shows it again while you hold a key.
   With this on, an item your filter hides is put to sleep as soon as it
   drops, so the game stops updating it. Items your filter shows, and gold,
   are never touched. Hold **Left Alt** to see the hidden items
-  and pick them up; let go and the rest are hidden and asleep again. You can
-  pick another key or mouse button, or none, under **Show hidden loot while
-  held**. Turning the switch on also puts to sleep the hidden items already
-  on the ground, and turning it off wakes them all. If you loosen your filter
-  later, items already asleep stay hidden: hold the key, or turn the switch
-  off. In a test with about 2,700 hidden items lying around one spot, the
-  game took about 7.5 ms a frame with them asleep, against 14 to 18 ms with
-  them awake.
+  and pick them up; let go and the rest are hidden and asleep again. Under
+  **Show hidden loot while held** you can pick another key, the middle mouse
+  button, mouse button 4 or 5, or none; the left and right mouse buttons
+  can't be used. Turning the switch on also puts to sleep the hidden items
+  already on the ground, and turning it off wakes them all. If you loosen
+  your filter later, items already asleep stay hidden: hold the key, or turn
+  the switch off. How much it saves comes from a research session on the
+  research build, which put hidden items to sleep with the same call before
+  this switch existed: with about 2,700 hidden items lying around one spot,
+  the game took about 7.5 ms a frame with them asleep, against 14 to 18 ms
+  with them awake. The switch itself was checked in a live game on
+  2026-09-28.
 
 ## How to update
 
