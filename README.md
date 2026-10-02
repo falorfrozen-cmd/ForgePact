@@ -40,6 +40,7 @@ none of these diagnostic hooks or the recorder. See
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect, and moves on from an item it cannot collect. Pick-up items only; activate/break/talk objectives are left alone |
+| **Pet Collects Relics** | Off by default (plugin command `petrelic 1` / `petrelic 0`). While your pet is out it walks to relics lying on screen and picks them up for you one at a time, through the game's own pickup, raising the relic you own by one level as picking it up yourself does. A relic you already own at 10/10 is never targeted, so with only 10/10 relics on screen the pet stays idle. Separate from Pet Collects Quest Items; with both on, the pet fetches one thing at a time ([details](#pet-collects-relics)). Collect checked in a live game on the research build; relics were placed by a test command, not natural drops |
 | **Pet Moves On From Loot It Cannot Pick Up** | Off by default. With a lot of loot on the ground the game's own pet can stay on one item, hopping around it without taking it (#94). With this on, the pet moves on from loot it cannot pick up: an item it has stayed on for about 1.5 s is left alone for about 10 s and the pet goes for the rest. That hold is for items on the ground: a coin (gold) the pet gives up is only turned away from, not held back, so the pet may try it again sooner. A target that is not loot at all - an old item id the game reused for something else on the map - is given up the moment it is seen instead. It picks nothing up itself and does not change what the pet collects. Not yet confirmed in a live game |
 | **Mark A Running Toggle Skill** | For a fixed set of toggle skills measured in-game, each either with its toggle sub-talent allocated or a toggle on its own: a soft red outline appears around that skill's skill-bar slot the whole time the toggle is running, and disappears when it stops. A skill outside that set is not covered, and a plain cast lights nothing (off by default) |
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
@@ -750,6 +751,59 @@ itself.
 How the game's own move was measured, over six research sessions, is in
 [`docs/stash-move-research.md`](docs/stash-move-research.md); its
 `## Ship design` describes this mod and what has not been observed in play.
+
+## Pet collects relics
+
+Mods → Quality of Life → **Pet collects relics** (plugin command `petrelic 1` /
+`petrelic 0`, issue #124). Off by default, and a switch of its own, separate
+from Pet collects quest items.
+
+The game's own pet never takes relics (its pickup leaves the relic class out),
+and nothing picks a relic up when you walk over it, so a dropped relic waits
+for your click. With this on, while your pet is out it walks to the relics
+lying on screen and picks them up for you, one at a time, through `PickupLoot`,
+the pickup script the game's own pet and your own click both call. Each pickup
+raises the relic you own by one level, exactly as picking it up by hand does
+(a relic you do not own yet goes into the relic tab).
+
+- **10/10 relics are left alone.** Whether a relic can be picked up depends on
+  the copy you already own, in the relic tab or equipped: a dropped relic is
+  always level 1. The plugin reads the levels of the relics you own through
+  `hs-game-sdk` (the same scans Remove owned relics uses, but it works with
+  that switch off), refreshes them about once a second and straight after
+  every pickup, and never sends the pet to a relic you own at 10/10. It reads
+  them again just before each pickup. A read that could not see the whole
+  relic tab and every equipped slot does not count: the pet then fetches
+  nothing rather than guess. With a 10/10 relic and a lower one on the ground
+  the pet takes the lower one; with only 10/10 relics on screen it stays idle.
+- **One fetch at a time.** With Pet collects quest items on as well, both
+  share the one pet: whichever picked a target first walks it, and the other
+  waits until that walk ends.
+- **When the game says no.** A pickup the game turns down destroys nothing:
+  the relic stays on the ground, and the pet holds it back for a while and
+  goes for the next one, the way Pet collects quest items does. The pickup
+  script leaves removing the picked-up relic from the ground to its caller,
+  and it can answer "done" without raising anything, so the plugin removes
+  the relic itself only once it sees your relic's level go up by one (or the
+  relic newly in your relic tab); a pickup that raised nothing leaves the
+  relic where it is.
+- **What it did.** `petrelic 0` turns it off and prints one `petrelic stat:`
+  line: relics collected, candidates skipped (maxed, not a relic, inactive),
+  pickups refused with the last reason, pickups that answered "done" and left
+  the relic on the ground, ground relics the plugin removed,
+  lost targets and travel timeouts, how many are held back, the maxed relic
+  ids it last read, the route and whether the pet is travelling. The research
+  build (`build.bat dev`) adds `petrelic stat` (the same line without turning
+  it off), `petrelic census` (one line per ground relic on screen: its id, your
+  owned level, maxed or not), `petrelic route a|b` (try `PickupRelic` directly
+  instead of `PickupLoot`) and `petrelic trace 1|0` (logs every `PickupLoot`
+  call, your own clicks included).
+
+Checked in a live game on 2026-10-02 (the collect on the research build, the
+panel switch on the player build); a relic the game itself drops, collected by
+the pet, is not observed yet. The pickup call, what the game's code was read
+to do, what was measured and what is not established yet:
+[`docs/pet-relic-collector-research.md`](docs/pet-relic-collector-research.md).
 
 ## Gems of Incarnation
 
