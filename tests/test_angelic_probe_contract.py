@@ -201,6 +201,17 @@ class AngelicProbeSourceTests(unittest.TestCase):
         self.assertEqual(run.count("HandleAngelicProbeCommand("), 1)
         self.assertNotIn('"angelicprobe"', run)
 
+    def test_the_subcommands_are_the_listed_ones(self):
+        # #74 added `inject` (the list the stand-ins go onto, and the inject/replace mode)
+        # beside `hit`; both are subcommands of the one verb, so RunCommand gains no branch.
+        command = function_body(self.plugin, "static void ApRollCommand(")
+        subcommands = re.findall(r'sub == "([a-z]+)"', command)
+        self.assertEqual(subcommands, ["on", "show", "reset", "list", "hit", "inject"])
+        usage = function_body(self.plugin, "static void ApRollUsage(")
+        for sub in subcommands:
+            with self.subTest(sub=sub):
+                self.assertIn('"  angelicprobe %s' % sub, usage)
+
     def test_no_new_top_level_else_if_in_run_command(self):
         # C1061: the chain is at MSVC's nesting limit; see test_menu_probe_contract.
         run = strip_comments(function_body(
@@ -418,9 +429,9 @@ class PlayerBuildUnchangedTests(unittest.TestCase):
         # changed both on purpose in the player build (the startup record of
         # DropItem's own code); test_angelic_gate_behavior covers them now.
         # HookAngelicChance left it with #74, which changed it on purpose in the
-        # player build (the roll-in-progress guard and the hit check that drop
-        # Headhunter / Tyrant's Crown beside a game hit); test_angelic_hit_behavior
-        # runs it natively now.
+        # player build (the roll-in-progress guard, and the guard that puts
+        # Headhunter's / Tyrant's Crown's stand-ins on the game's Angelic list for
+        # the length of the roll); test_angelic_hit_behavior runs it natively now.
         for signature in ("static bool OpenAngelicGate()",
                           "static void CloseAngelicGate()",
                           "static RValue& Hook_EnemyDestroyKillProc("):

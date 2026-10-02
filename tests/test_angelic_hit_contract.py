@@ -1,21 +1,25 @@
 """Source and text contract for Headhunter and Tyrant's Crown from the game's own Angelic roll (#74).
 
 #63 put both items into ForgePact's own Angelic/Unholy pool, so they dropped on the
-slider's die whatever their World switches said. #74 (owner-directed, 2026-10-02) takes
-them out of that pool again and moves them onto the game's own roll: a
-`CreateDefaultParams` call while `DropItemAngelicChance` runs is a hit (the roll returns
-undefined either way), and on each hit, while a panel switch is on, the switched-on items
-roll one pool entry's share and drop beside the game's own item. The owner's decision of
+slider's die whatever their World switches said. #74 (owner-directed, 2026-10-02) took
+them out of that pool again and, after a first "beside" design that spawned them next to
+the game's own item, moved them into the game's own roll by list injection ("list
+injection first"): for the length of each `DropItemAngelicChance` call the game's
+Angelic list (a variable of the first `Controller_obj` instance) carries one stand-in
+entry per switched-on item - a real Angelic unique of the item's own type, Liquor Holster
+for Headhunter - the game's picker and die decide, a hit on a stand-in is ours at one
+entry's share, and on ours the `CreateDefaultParams` result is rewritten so the game
+itself builds and places the item, one per hit, never beside. The owner's decision of
 2026-10-02 ("Panel switch only") makes the gate the panel switch (`force`), not the
 mechanic's enabled state, which a forged item's auto-arm also sets.
 
 `test_angelic_hit_behavior.py` runs the hook natively but skips without a C++ toolchain;
 this file pins the same shape on the source text, so it is checked everywhere the suite
-runs: the pool no longer carries the items, the detection is installed by name only from
-the switches' `force` paths and the research levers (never at startup, never by the
-auto-arm), the gate reads the panel switch, the roll-in-progress state is a scope guard, the status
-line carries the counters the live procedure reads, the research levers stay out of the
-player build, and the player-facing texts say what the items now do.
+runs: the item table, the list resolved by name, the push and removal held by a scope
+guard inside the roll's hook, the rewrite read back, no spawn on the roll path, the
+detection installed only from the switches' `force` paths and the research levers, the
+gate, the status tokens the live procedure reads, the research levers kept out of the
+player build, and the player-facing texts.
 """
 import importlib.util
 import os
@@ -56,6 +60,19 @@ def read(path):
     return pathlib.Path(path).read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
+# Every function the roll path runs through in the player build.
+ROLL_PATH = (
+    "static RValue& HookAngelicChance(",
+    "static RValue& Hook_CreateDefaultParams(",
+    "static void SignatureInjectPush(",
+    "static void SignatureInjectRemove(",
+    "static void SignatureAttributeHit(",
+    "static bool SignatureRewriteParams(",
+    "static void SignatureAfterHit(",
+    "static void SignatureNoteBuilt(",
+)
+
+
 class AngelicHitSourceContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -63,7 +80,7 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         cls.shipped = strip_research_blocks(SOURCE)
         cls.shipped_code = strip_comments(cls.shipped)
 
-    # ---- the pool no longer carries the two items --------------------------------------
+    # ---- the pool no longer carries the two items, and the beside design is gone -------
 
     def test_the_pool_append_is_gone(self):
         self.assertNotIn("AppendSignatureCandidates", self.code)
@@ -78,6 +95,143 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertNotIn("SpawnSignatureItem(", kill)
         self.assertIn("SpawnAngelicItem(", kill)
 
+    def test_the_beside_design_is_gone(self):
+        for name in ("SignatureShare", "SignatureDropOnAngelicHit", "g_SigShareRolls", "g_SigFromGame", "g_AngHitSharePct"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, self.code)
+        for token in ("shareRolls=", "sigFromGame="):
+            self.assertNotIn(token, SOURCE)
+
+    # ---- the mod items: one table, a stand-in each --------------------------------------
+
+    def test_the_table_holds_the_two_switched_items(self):
+        start = self.code.index("kSignatureItems[]")
+        table = self.code[start:self.code.index("\n};", start)]
+        rows = re.findall(r'\{\s*"([^"]+)",\s*(\d+),\s*(\d+),\s*([\d.]+),\s*([\d.]+),\s*(nullptr|"[^"]*")\s*\}', table)
+        self.assertEqual(len(rows), 2, table)
+        by_name = {row[0]: row[1:] for row in rows}
+        # Headhunter: switch 1, a Heavy Belt (type 8) with its own seed and base, Liquor Holster
+        # the stand-in (the owner's words in #74).
+        self.assertEqual(by_name["Headhunter"], ("1", "8", "777002.0", "2.0", '"Liquor Holster"'))
+        # Tyrant's Crown: switch 0, a Great Helm (type 0); its stand-in is the owner's default,
+        # the validated type-0 unique with the lowest droprate.base (reversible: one cell).
+        self.assertEqual(by_name["Tyrant's Crown"], ("0", "0", "777001.0", "7.0", "nullptr"))
+        self.assertNotIn("Miner", table, "Miner's Helmet has no panel switch and is not in the table")
+        resolve = body(self.code, "static void SignatureResolveStandIns(")
+        self.assertIn("BuildAngelicPool(false)", resolve)
+        self.assertIn("SigUniqueDropBase(", resolve)
+        self.assertIn("base < s.base", resolve, "the default stand-in is the lowest droprate.base")
+        self.assertIn("ambiguous", resolve, "a stand-in sharing sub/b with another validated unique is refused")
+        self.assertIn('"droprate"', body(self.code, "static bool SigUniqueDropBase("))
+
+    def test_the_switch_on_names_the_list_and_the_stand_ins(self):
+        install = body(self.code, "static void InstallSignatureAngelicHooks(")
+        self.assertIn("SignatureResolveStandIns();", install)
+        self.assertIn("SignatureListResolve(", install)
+        self.assertIn('Out("signature drops: " + SignatureListLine());', install)
+        line = body(self.code, "static std::string SignatureListLine(")
+        self.assertIn("list missing (", line)
+        self.assertIn("SignatureStandInsText(", line)
+        self.assertIn("(not validated)", body(self.code, "static std::string SignatureStandInsText("))
+
+    # ---- the list: Controller_obj's variable, by name ------------------------------------
+
+    def test_the_list_is_resolved_by_name_on_controller_obj(self):
+        self.assertRegex(self.shipped_code, r'static const char\* kAngelicListVar = "[^"]*";')
+        self.assertIn("static std::string g_SigListName = kAngelicListVar;", self.shipped_code)
+        self.assertEqual(len(re.findall(r"\bg_SigListName\s*=[^=]", self.shipped_code)), 1,
+                         "only the research build's inject lever may name another variable")
+        controller = body(self.code, "static bool SignatureController(")
+        self.assertIn("GameObject::Controller_obj", controller)
+        for builtin in ("asset_get_index", "instance_number", "instance_find"):
+            self.assertIn('"%s"' % builtin, controller)
+        resolve = body(self.code, "static bool SignatureListResolve(")
+        self.assertIn('"variable_instance_exists", { instance, RValue(g_SigListName) }', resolve)
+        self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', resolve)
+        self.assertIn("SignatureListShape(list, len, counts, why, kSigListMinLength)", resolve)
+        self.assertIn("static const int kSigListMinLength = 100;", self.shipped_code)
+        shape = body(self.code, "static bool SignatureListShape(")
+        self.assertIn("SigEntry(list, i, e)", shape)
+        self.assertIn("!= 3", body(self.code, "static bool SigEntry("), "an entry is exactly three numbers")
+
+    # ---- the injection: per roll, under a scope guard inside the roll's hook ------------
+
+    def test_the_push_and_removal_are_a_scope_guard_inside_the_roll_hook(self):
+        hook = strip_comments(body(self.shipped, "static RValue& HookAngelicChance("))
+        guard = re.search(r"\bSignatureInjectGuard\s+\w+\s*;", hook)
+        self.assertIsNotNone(guard, "HookAngelicChance holds the injection with SignatureInjectGuard")
+        self.assertLess(hook.index("SignatureRollScope"), guard.start())
+        self.assertLess(guard.start(), hook.index("g_OrigAngChance(S"),
+                        "the guard is raised before the first original call and, living to the "
+                        "end of the function, covers the extra-roll loop")
+        struct = body(self.shipped_code, "struct SignatureInjectGuard {")
+        self.assertRegex(struct, r"SignatureInjectGuard\(\)\s*\{[^}]*SignatureInjectPush\(\);")
+        self.assertRegex(struct, r"~SignatureInjectGuard\(\)\s*\{[^}]*SignatureInjectRemove\(\);")
+        # Nothing but the guard pushes or removes.
+        self.assertEqual(self.code.count("SignatureInjectPush("), 2)
+        self.assertEqual(self.code.count("SignatureInjectRemove("), 2)
+
+    def test_both_switches_off_make_no_call(self):
+        push = body(self.code, "static void SignatureInjectPush(")
+        gate = push.index("if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;")
+        for later in ("g_Yytk", "SignatureListResolve(", "SignatureResolveStandIns("):
+            self.assertLess(gate, push.index(later), later)
+        self.assertIn('"array_push", { list, entry }', push)
+        self.assertIn("SignatureSwitchOn(w)", push)
+        self.assertIn("InterlockedIncrement(&g_SigInjected)", push)
+
+    def test_the_removal_cuts_only_its_own_tail(self):
+        remove = body(self.code, "static void SignatureInjectRemove(")
+        self.assertIn("len == before + pushed", remove)
+        self.assertIn('"array_resize", { list, RValue((double)before) }', remove)
+        self.assertLess(remove.index("SigEntry(list, at++, e)"), remove.index('"array_resize"'))
+        self.assertIn("inject: list changed during the roll, left as found", remove)
+        self.assertIn("InterlockedIncrement(&g_SigAnomalies)", remove)
+
+    # ---- attribution and the rewrite ------------------------------------------------------
+
+    def test_a_hit_is_attributed_after_the_game_built_the_parameters(self):
+        hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
+        self.assertIn("RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;", hook)
+        self.assertLess(hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), hook.index("SignatureAttributeHit(r)"))
+        self.assertIn("g_SigRollPushed > 0", hook)
+        attribute = body(self.code, "static void SignatureAttributeHit(")
+        self.assertIn("std::uniform_int_distribution<int>(0, n + m - 1)", attribute, "one entry's share: m in n + m")
+        self.assertIn("InterlockedIncrement(&g_SigOurHits)", attribute)
+        self.assertIn("SignatureRewriteParams(params, kSignatureItems[which], g_SigHitWhy)", attribute)
+
+    def test_the_rewrite_reads_back_what_it_wrote(self):
+        rewrite = body(self.code, "static bool SignatureRewriteParams(")
+        self.assertIn('{ "a", "b", "c", "j" }', rewrite)
+        self.assertIn("{ item.a, item.b, 0.0, 0.0 }", rewrite)
+        exists = rewrite.index('"variable_struct_exists"')
+        write = rewrite.index('"variable_struct_set", { params, RValue(kFields[k]), RValue(want[k]) }')
+        read_back = rewrite.rindex('"variable_struct_get"')
+        self.assertLess(exists, write)
+        self.assertLess(write, read_back, "the fields are read back after the write")
+        self.assertIn("did not read back", rewrite)
+        self.assertIn("restore()", rewrite, "a refusal puts every field back")
+        self.assertIn("SigJson(params)", body(self.code, "static void SignatureAttributeHit("),
+                      "a refusal logs the struct's JSON")
+
+    def test_built_is_what_the_forge_hook_saw_the_game_build(self):
+        forge = body(self.code, "static bool TryApplyCustomForge(")
+        self.assertLess(forge.index("CustomForgeMatches(entry, *candidate, definition)"),
+                        forge.index("if (finalPass) SignatureNoteBuilt(entry.selector);"))
+        note = body(self.code, "static void SignatureNoteBuilt(")
+        self.assertIn("g_SigPending[w] <= 0", note)
+        self.assertIn("InterlockedIncrement(&g_SigBuilt)", note)
+
+    def test_nothing_on_the_roll_path_spawns(self):
+        # One hit, one item, placed by the game: in the player build SpawnSignatureItem is
+        # reached from `sigdrop`'s kill hook alone.
+        for signature in ROLL_PATH:
+            with self.subTest(function=signature):
+                self.assertNotIn("SpawnSignatureItem(", strip_comments(body(self.shipped, signature)))
+        callers = [m.start() for m in re.finditer(r"SpawnSignatureItem\(", self.shipped_code)]
+        self.assertEqual(len(callers), 2, "the definition and SignatureDropOnKill")
+        self.assertIn("SpawnSignatureItem(", body(self.shipped_code, "static void SignatureDropOnKill("))
+
     # ---- detection: CreateDefaultParams, by name, from the switches only ---------------
 
     def test_create_default_params_is_hooked_once_inside_the_installer(self):
@@ -87,8 +241,6 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn("&g_Orig_CreateDefaultParams", install)
         self.assertIn("(PVOID)HookAngelicChance, &g_OrigAngChance", install)
         self.assertRegex(install, r"if \(!g_OrigAngChance\)")
-        hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
-        self.assertIn("g_Orig_CreateDefaultParams(S, O, R, argc, A)", hook)
 
     def test_the_installer_is_in_the_player_build(self):
         self.assertIn("static void InstallSignatureAngelicHooks(", self.shipped_code)
@@ -99,7 +251,7 @@ class AngelicHitSourceContractTests(unittest.TestCase):
             with self.subTest(function=signature):
                 self.assertNotIn("InstallSignatureAngelicHooks", body(self.code, signature))
         frame = body(self.code, "void FrameCallback(FWFrame& FrameContext)")
-        for name in ("InstallSignatureAngelicHooks", "SignatureDropOnAngelicHit", "g_SigGame"):
+        for name in ("InstallSignatureAngelicHooks", "SignatureInject", "SignatureListResolve", "g_SigGame"):
             self.assertNotIn(name, frame, "nothing new runs every frame")
         # Owner, 2026-10-02 ("Panel switch only"): a forged item's auto-arm turns its mechanic
         # on at every launch but never the drop, so neither it nor the enable path it shares
@@ -123,12 +275,12 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         # The research levers install it too, so gameHits= counts with both switches off.
         self.assertIn("InstallSignatureAngelicHooks();", body(self.code, "static void AngelicHitCommand("))
 
-    def test_the_gate_reads_the_panel_switch(self):
+    def test_the_gate_reads_the_panel_switch_and_the_list(self):
         # The flags `tyrant force` / `headhunter force` set and `off` clears, which the panel
         # sends; the auto-arm from a forged item sets only g_TyEnabled / g_HhEnabled.
         gate = body(self.code, "static bool SignatureSwitchOn(")
-        self.assertIn("g_TyForced", gate)
-        self.assertIn("g_HhForced", gate)
+        for name in ("g_TyForced", "g_HhForced", "g_SigDetectNative", "g_SigListOk", "g_SigStandIn[which].ok"):
+            self.assertIn(name, gate)
         self.assertNotIn("Enabled", gate)
         # The auto-arm log lines say what the gate does, not what the mechanic does.
         self.assertIn("SignatureSwitchOn(0)", body(self.code, "static void TyrantAutoArm()"))
@@ -160,10 +312,13 @@ class AngelicHitSourceContractTests(unittest.TestCase):
 
     def test_sigdrop_status_carries_the_live_procedure_tokens(self):
         status = body(self.code, "static void SigDropStatus()")
-        for token in ("gameRolls=", "gameHits=", "shareRolls=", "sigFromGame=", "crown=", "belt=",
-                      "gate=tyrant:", ",headhunter:", "force ", " | rolls=", " drops=", " fails=",
-                      '" cdpCalls="', '" detect="'):
+        for token in ("gameRolls=", "gameHits=", '" injected="', '" ourHits="', '" built="', "crown=", "belt=",
+                      '" list=" + SignatureListText()', "gate=tyrant:", ",headhunter:", "force ", " | rolls=",
+                      " drops=", " fails=", '" cdpCalls="', '" detect="'):
             self.assertIn(token, status)
+        text = body(self.code, "static std::string SignatureListText(")
+        for value in ('"none"', '"missing"'):
+            self.assertIn(value, text)
 
     def test_both_status_lines_carry_the_detection_route(self):
         # The live procedure reads detect= and cdpCalls= before it trusts gameHits=0: an
@@ -179,52 +334,83 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn("g_SigDetectRoute = cdpRoute;", body(self.code, "static void InstallSignatureAngelicHooks("))
 
     def test_one_angelic_hit_line_per_hit(self):
-        hit = body(self.code, "static void SignatureDropOnAngelicHit(")
-        self.assertIn('"angelic hit:', hit)
-        self.assertIn("SpawnSignatureItem(", hit)
-        self.assertIn("SignatureShare(", hit)
-        self.assertIn("BuildAngelicPool(false)", hit)
-        self.assertIn("g_AngelicPool.size()", hit)
+        hook = body(self.code, "static RValue& HookAngelicChance(")
+        self.assertIn("SignatureAfterHit(S, x, y);", hook)
+        self.assertEqual(hook.count("SignatureHitReset();"), 2, "the hit state is cleared before each original call")
+        hit = body(self.code, "static void SignatureAfterHit(")
+        self.assertIn('"angelic hit: picked "', hit)
+        self.assertIn('" built by the game"', hit)
+        self.assertEqual(hit.count("Out("), 1)
 
     # ---- the research levers never reach a player -----------------------------------
 
     def test_the_hit_levers_are_research_build_only(self):
         self.assertIn('"angelicprobe hit', SOURCE)
         self.assertNotIn("angelicprobe hit", self.shipped)
+        command = body(self.code, "static void AngelicHitCommand(")
         for lever in ("chance", "rate", "share", "off", "status"):
-            self.assertIn('"%s"' % lever, body(self.code, "static void AngelicHitCommand("))
+            self.assertIn('"%s"' % lever, command)
         self.assertNotIn("AngelicHitCommand", self.shipped)
+
+    def test_hit_share_is_a_no_op(self):
+        # The beside design's share lever has nothing left to set: the game's picker gives each
+        # item one entry's share. It stays a subcommand that says so.
+        command = body(self.code, "static void AngelicHitCommand(")
+        start = command.index('if (lever == "share")')
+        branch = command[start:command.index("} else if", start)]
+        self.assertIn("no-op", branch)
+        self.assertNotIn("=", branch.replace("==", ""), "the share branch changes nothing")
+
+    def test_the_inject_levers_are_research_build_only(self):
+        for token in ('"angelicprobe inject', "lootDelta=", "g_SigReplaceMode", "SigReplaceStandIn", "SigInjectCommand",
+                      "SigListScan", "g_SigRemoved"):
+            with self.subTest(token=token):
+                self.assertIn(token, SOURCE)
+                self.assertNotIn(token, self.shipped)
+        command = body(self.code, "static void SigInjectCommand(")
+        for lever in ('"name"', '"auto"', '"mode"', '"inject"', '"replace"', '"status"'):
+            self.assertIn(lever, command)
+        probe = body(self.code, "static void ApRollCommand(")
+        self.assertIn('sub == "inject"', probe)
+        self.assertIn("SigInjectCommand(TrimCopy(rest).substr(6))", probe, "a variable name keeps its case")
+        # The replace mode is the only path from the roll to SpawnSignatureItem, and it is research-only.
+        self.assertIn("SpawnSignatureItem(which, x, y, S)", body(self.code, "static std::string SigReplaceStandIn("))
+        self.assertIn('"instance_destroy"', body(self.code, "static std::string SigReplaceStandIn("))
 
     def test_no_new_player_command(self):
         allowlist = re.search(r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};", SOURCE, re.S)
         self.assertIsNotNone(allowlist)
-        self.assertNotIn("angelichit", allowlist.group("body"))
-        self.assertNotIn("angelicprobe", allowlist.group("body"))
+        for verb in ("angelichit", "angelicprobe", "inject"):
+            self.assertNotIn(verb, allowlist.group("body"))
+        run = body(self.code, "static void RunCommand(const std::string& line)")
+        self.assertNotIn('lc == "inject"', run)
 
 
 class AngelicHitPlayerTextTests(unittest.TestCase):
-    """What the `player-text` item wrote, as assertions (the plan's three checks)."""
+    """What the `player-text` item wrote, as assertions (the plan's checks)."""
 
     def test_panel_text(self):
         loot = read(PANEL_SRC / "tabs" / "Loot.svelte")
         card = re.search(r'id="angelicCard".*?id="angelicnote"', loot, re.S)
         self.assertIsNotNone(card)
-        self.assertNotIn("Headhunter", card.group(0), "the slider no longer drops Headhunter")
-        self.assertNotIn("Tyrant", card.group(0), "the slider no longer drops Tyrant's Crown")
+        self.assertNotIn("Headhunter", card.group(0), "the slider does not drop Headhunter")
+        self.assertNotIn("Tyrant", card.group(0), "the slider does not drop Tyrant's Crown")
         mods = read(PANEL_SRC / "tabs" / "Mods.svelte")
-        headhunter = mods.index('id="headhunter"')
-        tyrant = mods.index('id="tyrant"')
-        self.assertIn("Angelic", mods[headhunter - 1500:headhunter])
-        self.assertIn("Angelic", mods[tyrant - 1500:tyrant])
+        for anchor in ('id="headhunter"', 'id="tyrant"'):
+            with self.subTest(switch=anchor):
+                at = mods.index(anchor)
+                self.assertIn("Angelic", mods[at - 1500:at])
+                self.assertNotIn("beside", mods[at - 1500:at], "one item per hit, never beside")
 
     def test_readme(self):
         text = read(ROOT / "README.md")
         start = text.index("\n### Signature drops\n")
         end = text.find("\n### ", start + 1)
         section = text[start:] if end < 0 else text[start:end]
-        for token in ("Angelic roll", "Headhunter", "Tyrant", "sigdrop"):
+        for token in ("Angelic roll", "Headhunter", "Tyrant", "sigdrop", "Liquor Holster"):
             self.assertIn(token, section)
         self.assertIn("switch", section.lower())
+        self.assertNotIn("beside", section)
         row = [line for line in text.splitlines() if line.startswith("| **Angelic / Unholy Drops")][0]
         self.assertNotIn("Headhunter", row)
         self.assertNotIn("Tyrant", row)
@@ -232,8 +418,9 @@ class AngelicHitPlayerTextTests(unittest.TestCase):
     def test_release_notes(self):
         notes = read(ROOT / "release-notes-v2.2.0.md")
         self.assertTrue(notes.startswith("# ForgePact 2.2.0"))
-        for token in ("Release date:", "Headhunter", "Tyrant's Crown", "Angelic", "## How to update"):
+        for token in ("Release date:", "Headhunter", "Tyrant's Crown", "Angelic", "Liquor Holster", "## How to update"):
             self.assertIn(token, notes)
+        self.assertNotIn("beside", notes)
 
 
 if __name__ == "__main__":

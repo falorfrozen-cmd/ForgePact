@@ -444,8 +444,13 @@ static void CaptureAngelicScriptCode();
 // Never the auto-arm from a forged item (owner, 2026-10-02). Defined after HookAngelicChance.
 static void InstallSignatureAngelicHooks();
 // #74: whether a signature item's panel switch has the drop on (0 = crown, 1 = belt); the
-// auto-arm log lines read it. Defined beside SignatureShare.
+// auto-arm log lines read it. Defined with the signature drops, as are the two below.
 static bool SignatureSwitchOn(int which);
+// #74: why SignatureSwitchOn says off while the switch itself is on, for those log lines.
+static std::string SignatureOffReason(int which);
+// #74: the Custom Forge hook reports each item it recognised on CreateItemNew's own return, so
+// `built=` counts what the game built from the rewritten parameters, not what was asked of it.
+static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
 // Set by InstallSignatureAngelicHooks: true only when both of its hooks are inline detours, the
 // one route the roll's direct calls reach. The signature gate (SignatureSwitchOn) reads it, so a
 // switch never reports these drops on while the detection cannot see a hit.
@@ -4339,6 +4344,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 
         for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
             if (!CustomForgeMatches(entry, *candidate, definition)) continue;
+            if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
                 if (names.m_Kind == VALUE_ARRAY) {
@@ -7749,13 +7755,13 @@ static void TyrantAutoArm()
     InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
     g_TyEnabled.store(g_TyHookInstalled);
     Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)"
-        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? "on" : g_TyForced.load() ? "off (detection not installed)" : "off (no 'force' received yet - the panel sends it at launch when the switch is on)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? std::string("on") : g_TyForced.load() ? "off (" + SignatureOffReason(0) + ")" : std::string("off (no 'force' received yet - the panel sends it at launch when the switch is on)")));
 }
 static void TyrantStatus()
 {
     Out(std::string("tyrant: ") + (g_TyEnabled.load() ? "ON" : "off") + (g_TyForced.load() ? " (forced)" : "")
         + " hook=" + (g_TyHookInstalled ? "yes" : "no") + " active=" + (TyrantActive() ? "yes" : "no")
-        + " angelicDrops=" + (g_TyForced.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
+        + " angelicDrops=" + (g_TyForced.load() ? (SignatureSwitchOn(0) ? "on" : g_SigDetectNative ? "not-resolved" : "no-detection") : "off")
         + " rarePct=" + std::to_string((int)g_TyRarePct) + " affixPct=" + std::to_string((int)g_TyAffixPct)
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
@@ -10862,24 +10868,76 @@ static void InstallEquipTraceHooks()
 // self = the DYING ENEMY and argument 2 = the killing Player_obj (the earlier reading had
 // the roles swapped, which is why no kill ever showed enemy data).
 // ---- signature drops ----------------------------------------------------------------------
-// Headhunter and Tyrant's Crown drop only from the game's own Angelic roll, and only while
-// their World switch is on (#74, owner-directed 2026-10-02): on each hit of that roll
-// (DropItemAngelicChance; HookAngelicChance and Hook_CreateDefaultParams below detect it) the
-// enabled items roll one pool entry's share and, on success, drop beside the game's own
-// Angelic/Unholy item (SignatureDropOnAngelicHit).  ForgePact adds no die of its own for them:
-// #63 had put them into the slider's pool, #74 took them out again.  SpawnSignatureItem builds
-// the item through the game's own loader (InitItemFromJson(json, "region-account-timestamp-type"))
-// and drops it at the given x, y (LootGroundCreateFromItem).  The forge hooks fire inside
-// InitItemFromJson -> CreateItemNew, so the built-in entry above dresses the item.
+// Headhunter and Tyrant's Crown come from the game's own Angelic roll, and only while their
+// panel switch is on (#74, owner-directed 2026-10-02: "list injection first").  For the length
+// of each roll (DropItemAngelicChance, HookAngelicChance below) the game's own Angelic list -
+// a variable of the first Controller_obj instance holding [type, sub, b] entries (static
+// reading, docs/angelic-roll-hook-research.md Session 3) - carries one more entry per enabled
+// item: a stand-in, a real Angelic unique of the item's own type taken from kAngelicBases, so
+// the game's picker and die decide exactly as for its own uniques.  A hit on a stand-in's
+// (sub, b) is ours with one entry's share, 1 in (n + 1) when the vanilla list holds the stand-in
+// n times; on ours the parameter struct CreateDefaultParams returned is rewritten to the item's
+// own definition, and the game itself builds and places it - one item per hit, in place of the
+// stand-in, never beside it.  The entries come off again when the roll returns, a throw
+// included (SignatureInjectGuard), so between rolls the list is the game's own and nothing else
+// that reads it (merchants, shrines, crafting, the other drop routines) ever sees them.
+// ForgePact adds no die of its own: #63 had put the items into the slider's pool, #74 took them
+// out again.  SpawnSignatureItem builds an item through the game's own loader
+// (InitItemFromJson(json, "region-account-timestamp-type")) and drops it at x, y
+// (LootGroundCreateFromItem); only `sigdrop` (and the research build's replace mode) uses it.
 static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
 static int g_SigDropForce = -1;   // -1 off (default); 0 force Tyrant's Crown, 1 force Headhunter
                                    // every monster kill - test command only (`sigdrop`); the
                                    // normal drop comes from the game's own Angelic roll.
 // The game-roll path's counters, printed by `sigdrop status` (the live procedure reads them):
-// every HookAngelicChance original call (extra rolls included), every detected hit, every share
-// roll made with a switch on, and every signature item that roll dropped, by item.
-static volatile long g_SigGameRolls = 0, g_SigGameHits = 0, g_SigShareRolls = 0;
-static volatile long g_SigFromGame = 0, g_SigFromGameCrown = 0, g_SigFromGameBelt = 0;
+// every HookAngelicChance original call (extra rolls included), every detected hit, every entry
+// pushed onto the list, every hit that fell to a mod item, every such item the game built (seen
+// by the Custom Forge hook while the roll ran), by item, and every list change the removal found.
+static volatile long g_SigGameRolls = 0, g_SigGameHits = 0, g_SigInjected = 0, g_SigOurHits = 0;
+static volatile long g_SigBuilt = 0, g_SigBuiltCrown = 0, g_SigBuiltBelt = 0, g_SigAnomalies = 0;
+// The mod items (#74): each joins the game's Angelic list while its panel switch is on.  The row
+// index is the switch (`which`: 0 = Tyrant's Crown, g_TyForced; 1 = Headhunter, g_HhForced); `t`
+// is the item's own itemType, which the stand-in has to share because the roll passes the picked
+// entry's type, not the parameters'; `a` and `b` are the item's own definition (c 0, j 0), the
+// selector its built-in Custom Forge entry recognises.  The stand-in is named by its kAngelicBases
+// name, or nullptr for the validated type-`t` entry with the lowest droprate.base (the owner's
+// default for the crown, 2026-10-02, reversible: one cell).  Miner's Helmet has no panel switch
+// and is not here; adding an item is one row.
+struct SignatureItem { const char* name; int which; int t; double a, b; const char* standIn; };
+static constexpr SignatureItem kSignatureItems[] = {
+    { "Tyrant's Crown", 0, 0, 777001.0, 7.0, nullptr },           // a Great Helm; stand-in: the default above
+    { "Headhunter",     1, 8, 777002.0, 2.0, "Liquor Holster" },  // a Heavy Belt; the owner's words in #74
+};
+static_assert(kSignatureItems[0].which == 0 && kSignatureItems[1].which == 1, "row index is the switch");
+// What each row's stand-in resolved to against the validated pool (SignatureResolveStandIns): its
+// sub and b (the pair CreateDefaultParams names on a hit), its name, and n, how many times the
+// game's own list holds its [t, sub, b] (counted whenever the list's length changes).
+struct SignatureStandIn { bool ok = false; int sub = 0, b = 0, n = 0; double base = 0.0; std::string name, why; };
+static SignatureStandIn g_SigStandIn[2];
+static bool g_SigStandInsResolved = false;
+// The game's list, by name.  The variable is read live by shape (Live 1 measures it); until its
+// name is written here the player build refuses with `list=missing` and nothing is injected.
+static const char* kAngelicListVar = "";
+static std::string g_SigListName = kAngelicListVar;   // the research build's inject lever may name another
+static const int kSigListMinLength = 100;            // a real list holds every unique; fewer is not it
+static bool g_SigListOk = false;
+static bool g_SigListTried = false;
+static int g_SigListLen = -1;                        // the vanilla length at the last full check
+static std::string g_SigListWhy;                     // why the last resolution refused
+static double g_SigControllerIdx = -2.0;             // Controller_obj's index; -2 not asked yet
+// The current roll's injection: the list the entries went onto, its length before, how many, and
+// whose.  Set by SignatureInjectPush, cleared by SignatureInjectRemove; game thread only.
+static RValue g_SigRollList;
+static int g_SigRollBefore = -1, g_SigRollPushed = 0;
+static bool g_SigRollItem[2] = { false, false };
+static int g_SigInjectDepth = 0;
+// The current hit, between Hook_CreateDefaultParams and the line HookAngelicChance logs after the
+// game's roll returned: which item it fell to (-1 none), the coin (n + m), whether the struct was
+// rewritten, why not, and how many rewritten items the Custom Forge hook has not yet seen built.
+static int g_SigHitItem = -1, g_SigHitCoin = 0, g_SigHitStandIn = -1;
+static bool g_SigHitRewritten = false;
+static std::string g_SigHitWhy;
+static int g_SigPending[2] = { 0, 0 };
 // Hit detection.  The game's Angelic roll returns undefined on a hit exactly as on a miss
 // (static reading, docs/angelic-roll-hook-research.md Session 2), so a hit cannot be read from
 // the return.  Only a hit calls CreateDefaultParams, and nothing else inside the roll does, so a
@@ -10904,29 +10962,36 @@ struct SignatureRollScope {
     SignatureRollScope& operator=(const SignatureRollScope&) = delete;
 };
 #ifndef FORGEPACT_RELEASE
-// Research levers for one live session (`angelicprobe hit`, defined beside HookAngelicChance):
-// a natural hit is about one in several thousand rolls, so these make one observable.
+// Research levers for one live session (`angelicprobe hit` / `angelicprobe inject`, defined beside
+// HookAngelicChance): a natural hit is about one in several thousand rolls, so these make one
+// observable, and the replace mode is the measured fallback if the game will not build our item.
 static double g_AngHitChance = -1.0;     // < 0 off; else every roll's chance argument (when real)
-static double g_AngHitSharePct = -1.0;   // < 0 the real share; else this percentage
+static bool g_SigReplaceMode = false;    // `inject mode replace`: remove the placed stand-in, spawn ours
+static volatile long g_SigRemoved = 0;   // stand-ins the replace mode removed
+static long g_SigParamsShown = 0;        // our-hits whose parameter struct was printed (the first three)
+static bool g_SigHitReplace = false;     // the current our-hit is left to the replace mode
+static int g_SigLootBefore = -1;         // Loot_Ground_obj instances before the current original call
+static std::vector<double> g_SigLootIds; // their ids, replace mode only
 #endif
 // Which signature item's panel switch (Mods -> Items -> Tyrant's Crown / Headhunter) is on:
 // 0 = Tyrant's Crown, 1 = Headhunter.  The panel sends `tyrant force` / `headhunter force` for an
 // ON switch and `off` clears it, so the forced flags are the switch.  Owner, 2026-10-02 ("Panel
 // switch only"): the enabled state does not count, because a forged item's auto-arm sets it at
 // every launch with the switch off - forging turns the mechanic on, never the drop.  Never on
-// while the detection is not both inline detours (g_SigDetectNative): a hit would be invisible.
+// while the detection is not both inline detours (g_SigDetectNative: a hit would be invisible),
+// while the game's list has not resolved by name, or while the item's stand-in is not validated.
 static bool SignatureSwitchOn(int which)
 {
-    if (!g_SigDetectNative) return false;
+    if (!g_SigDetectNative || !g_SigListOk) return false;
+    if (which < 0 || which > 1 || !g_SigStandIn[which].ok) return false;
     return which == 0 ? g_TyForced.load() : g_HhForced.load();
 }
-// One pool entry's share of a game hit: k enabled items among N validated pool uniques, so
-// k / (N + k) - about 1 in 48 with one switch on and 2 in 49 with both at the N = 47 measured
-// in #74 Live 1.  The reading #63's owner decision accepted for "Liquor Holster's share"; nothing when k or N is 0.
-static double SignatureShare(int k, size_t n)
+static std::string SignatureOffReason(int which)
 {
-    if (k <= 0 || n == 0) return 0.0;
-    return (double)k / ((double)n + (double)k);
+    if (!g_SigDetectNative) return "detection not installed";
+    if (!g_SigListOk) return "the game's Angelic list not resolved";
+    if (which < 0 || which > 1 || !g_SigStandIn[which].ok) return "stand-in not validated";
+    return "switch off";
 }
 static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 {
@@ -11158,62 +11223,467 @@ static void SignatureDropOnKill(CInstance* S)
         SpawnSignatureItem(g_SigDropForce, x, y, S);
     } catch (...) {}
 }
+// A number the game stored, whichever numeric kind the runner handed back.
+static bool SigNumber(const RValue& v, double& out)
+{
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    try { out = v.ToDouble(); } catch (...) { return false; }
+    return std::isfinite(out);
+}
+// Entry i of a list as [type, sub, b]: an array of exactly three numbers, else false.
+static bool SigEntry(const RValue& list, int i, double out[3])
+{
+    try {
+        const RValue e = g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) });
+        if (e.m_Kind != VALUE_ARRAY) return false;
+        if ((int)g_Yytk->CallBuiltin("array_length", { e }).ToDouble() != 3) return false;
+        for (int k = 0; k < 3; ++k)
+            if (!SigNumber(g_Yytk->CallBuiltin("array_get", { e, RValue((double)k) }), out[k])) return false;
+        return true;
+    } catch (...) { return false; }
+}
+// The first Controller_obj instance: the scope the roll reads its unique list from (static
+// reading, #74).  Resolved through the SDK's name for the object, never a number of our own.
+static bool SignatureController(RValue& instance, std::string& why)
+{
+    if (g_SigControllerIdx < 0.0) {
+        try {
+            g_SigControllerIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) }).ToDouble();
+        } catch (...) { g_SigControllerIdx = -1.0; }
+    }
+    if (g_SigControllerIdx < 0.0) { why = "Controller_obj not found (asset_get_index)"; return false; }
+    int count = 0;
+    try { count = (int)g_Yytk->CallBuiltin("instance_number", { RValue(g_SigControllerIdx) }).ToDouble(); } catch (...) { count = 0; }
+    if (count < 1) { why = "no live Controller_obj instance"; return false; }
+    try { instance = g_Yytk->CallBuiltin("instance_find", { RValue(g_SigControllerIdx), RValue(0.0) }); }
+    catch (...) { why = "instance_find threw for Controller_obj"; return false; }
+    return true;
+}
+// Whether `list` is shaped like the game's Angelic list - an array of at least `minLength`
+// [type, sub, b] entries - and how many entries equal each resolved stand-in (counts[which]).
+static bool SignatureListShape(const RValue& list, int& len, int counts[2], std::string& why, int minLength)
+{
+    counts[0] = counts[1] = 0;
+    len = -1;
+    if (list.m_Kind != VALUE_ARRAY) { why = "not an array"; return false; }
+    try { len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble(); } catch (...) { why = "array_length threw"; return false; }
+    if (len < minLength) { why = std::to_string(len) + " entries, fewer than " + std::to_string(minLength); return false; }
+    for (int i = 0; i < len; ++i) {
+        double e[3] = { 0.0, 0.0, 0.0 };
+        if (!SigEntry(list, i, e)) { why = "entry " + std::to_string(i) + " is not three numbers"; return false; }
+        for (int w = 0; w < 2; ++w) {
+            const SignatureStandIn& s = g_SigStandIn[w];
+            if (s.ok && e[0] == (double)kSignatureItems[w].t && e[1] == (double)s.sub && e[2] == (double)s.b) ++counts[w];
+        }
+    }
+    return true;
+}
+// Each item's stand-in as `<item>:<stand-in>(n=<count>)`, Headhunter first, `(not validated)` when
+// the pool did not accept it; `reasons` adds why.
+static std::string SignatureStandInsText(bool reasons)
+{
+    std::string s;
+    for (int w = 1; w >= 0; --w) {
+        const SignatureStandIn& st = g_SigStandIn[w];
+        s += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + (st.name.empty() ? std::string("?") : st.name);
+        if (st.ok) s += "(n=" + std::to_string(st.n) + ")";
+        else s += reasons && !st.why.empty() ? "(not validated: " + st.why + ")" : std::string("(not validated)");
+    }
+    return s;
+}
+// One line naming the list and the stand-ins, or why the drop stays off.
+static std::string SignatureListLine()
+{
+    if (g_SigListOk)
+        return "list " + g_SigListName + ":" + std::to_string(g_SigListLen) + " stand-ins " + SignatureStandInsText(true);
+    return "list missing (" + g_SigListWhy + ") - Headhunter / Tyrant's Crown stay off the game's Angelic roll; stand-ins "
+        + SignatureStandInsText(true);
+}
+// `list=` on `sigdrop status`: `none` until a switch (or the research build's inject lever) has
+// asked for the game's list, then `<name>:<len>`, or `missing` after a refusal.
+static std::string SignatureListText()
+{
+    if (!g_SigListTried) return "none";
+    if (!g_SigListOk) return "missing";
+    return g_SigListName + ":" + std::to_string(g_SigListLen);
+}
+static bool g_SigListRecount = true;   // the stand-ins changed: count n again on the next resolution
+// Resolves the game's list by name - g_SigListName on the first Controller_obj instance - into
+// `list`, shape-checked in full (and n counted) whenever its length differs from the last check,
+// the stand-ins changed, or `full` asks; never by shape alone.  Records the outcome for the gate
+// and `list=`; unless `quiet`, logs one line when the outcome changes, never one per roll.
+static bool SignatureListResolve(RValue& list, bool full, bool quiet)
+{
+    std::string why;
+    int len = -1;
+    bool ok = false;
+    RValue instance;
+    if (g_SigListName.empty()) why = "no list variable named yet";
+    else if (SignatureController(instance, why)) {
+        bool has = false;
+        try { has = g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(g_SigListName) }).ToBoolean(); } catch (...) { has = false; }
+        if (!has) why = "Controller_obj has no variable " + g_SigListName;
+        else {
+            try { list = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) }); ok = true; }
+            catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; }
+            if (ok) {
+                try { len = list.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble() : -1; } catch (...) { len = -1; }
+                if (full || g_SigListRecount || !g_SigListOk || len != g_SigListLen) {
+                    int counts[2] = { 0, 0 };
+                    ok = SignatureListShape(list, len, counts, why, kSigListMinLength);
+                    if (ok) { g_SigStandIn[0].n = counts[0]; g_SigStandIn[1].n = counts[1]; g_SigListRecount = false; }
+                    else why = "Controller_obj." + g_SigListName + ": " + why;
+                }
+            }
+        }
+    }
+    const bool changed = !g_SigListTried || ok != g_SigListOk || (ok && len != g_SigListLen);
+    g_SigListTried = true;
+    g_SigListOk = ok;
+    g_SigListLen = ok ? len : -1;
+    g_SigListWhy = ok ? std::string() : why;
+    if (changed && !quiet) Out("signature drops: " + SignatureListLine());
+    return ok;
+}
+// A pool unique's droprate.base, read off its repository definition by name (the rate the
+// research build's `hit rate` lever overrides).  False when the definition carries no number.
+static bool SigUniqueDropBase(const AngelicCandidate& c, double& base)
+{
+    try {
+        RValue def = g_Yytk->CallGameScript("gml_Script_GetUniqueRepoStruct",
+                                            { RValue((double)c.type), RValue((double)c.sub), RValue((double)c.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        RValue rate = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("droprate") });
+        if (rate.m_Kind != VALUE_OBJECT) return false;
+        return SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { rate, RValue("base") }), base);
+    } catch (...) { return false; }
+}
+// Resolves each row's stand-in against the validated pool (BuildAngelicPool) once - again only
+// while the pool is empty.  A stand-in that another validated unique of a different type shares
+// sub and b with is refused: CreateDefaultParams names only sub and b, so a hit on that other
+// unique would read as the stand-in's (Liquor Holster's 0/51 is shared only by the hidden
+// Supreme Elemelon, which the pool and the game's picker both skip).
+static void SignatureResolveStandIns()
+{
+    if (g_SigStandInsResolved) return;
+    BuildAngelicPool(false);
+    for (int w = 0; w < 2; ++w) {
+        const SignatureItem& item = kSignatureItems[w];
+        SignatureStandIn s;
+        s.name = item.standIn ? item.standIn : "";
+        const AngelicCandidate* pick = nullptr;
+        if (g_AngelicPool.empty()) s.why = "the Angelic pool is empty";
+        else if (item.standIn) {
+            for (const AngelicCandidate& c : g_AngelicPool) if (c.type == item.t && c.name == item.standIn) { pick = &c; break; }
+            if (!pick) s.why = "not in the validated pool";
+        } else {
+            for (const AngelicCandidate& c : g_AngelicPool) {
+                double base = 0.0;
+                if (c.type != item.t || !SigUniqueDropBase(c, base)) continue;
+                if (!pick || base < s.base) { pick = &c; s.base = base; }
+            }
+            if (!pick) s.why = "no validated type " + std::to_string(item.t) + " unique with a droprate.base";
+        }
+        if (pick) {
+            s.name = pick->name;
+            for (const AngelicCandidate& c : g_AngelicPool)
+                if (c.type != pick->type && c.sub == pick->sub && c.b == pick->b) { s.why = "ambiguous: " + c.name + " shares its sub/b"; pick = nullptr; break; }
+        }
+        if (pick) { s.ok = true; s.sub = pick->sub; s.b = pick->b; }
+        g_SigStandIn[w] = s;
+    }
+    g_SigStandInsResolved = !g_AngelicPool.empty();
+    g_SigListRecount = true;
+}
+// Before the game's roll (from SignatureInjectGuard): with a panel switch on, push one stand-in
+// entry [t, sub, b] per enabled item onto the end of the game's own list.  With both switches off
+// it makes no call at all, so the roll is the game's own.
+static void SignatureInjectPush()
+{
+    g_SigRollPushed = 0;
+    g_SigRollItem[0] = g_SigRollItem[1] = false;
+    if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;
+    SignatureResolveStandIns();
+    RValue list;
+    if (!SignatureListResolve(list, false, false)) return;
+    g_SigRollList = list;
+    g_SigRollBefore = g_SigListLen;
+    for (int w = 0; w < 2; ++w) {
+        if (!SignatureSwitchOn(w)) continue;
+        try {
+            RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+            g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)kSignatureItems[w].t) });
+            g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)g_SigStandIn[w].sub) });
+            g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)g_SigStandIn[w].b) });
+            g_Yytk->CallBuiltin("array_push", { list, entry });
+        } catch (...) { Out(std::string("inject: pushing ") + kSignatureItems[w].name + "'s stand-in threw"); break; }
+        ++g_SigRollPushed;
+        g_SigRollItem[w] = true;
+        InterlockedIncrement(&g_SigInjected);
+    }
+    if (g_SigRollPushed == 0) g_SigRollList = RValue();
+}
+// After the game's roll, extra rolls included, and on a throw too: take the entries off again -
+// but only while the list's tail still holds exactly them, else leave it as found, say so once
+// and count it (`anomalies=`), since an entry the game itself added must never be cut off.
+static void SignatureInjectRemove()
+{
+    if (g_SigRollPushed <= 0) return;
+    const int pushed = g_SigRollPushed, before = g_SigRollBefore;
+    RValue list = g_SigRollList;
+    g_SigRollPushed = 0;
+    g_SigRollList = RValue();
+    int len = -1;
+    bool tail = false;
+    try {
+        len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+        tail = len == before + pushed;
+        int at = before;
+        for (int w = 0; tail && w < 2; ++w) {
+            if (!g_SigRollItem[w]) continue;
+            double e[3] = { 0.0, 0.0, 0.0 };
+            tail = SigEntry(list, at++, e) && e[0] == (double)kSignatureItems[w].t
+                && e[1] == (double)g_SigStandIn[w].sub && e[2] == (double)g_SigStandIn[w].b;
+        }
+        if (tail) {
+            g_Yytk->CallBuiltin("array_resize", { list, RValue((double)before) });
+            len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+            if (len == before) return;
+        }
+    } catch (...) {}
+    InterlockedIncrement(&g_SigAnomalies);
+    Out(tail ? "inject: removing the entries did not take - list length " + std::to_string(len) + ", expected " + std::to_string(before)
+             : "inject: list changed during the roll, left as found (length " + std::to_string(before) + " + "
+               + std::to_string(pushed) + " pushed, now " + std::to_string(len) + ")");
+}
+// HookAngelicChance holds the injection with this guard, declared before its first original call
+// and living to the end of the function: the entries are on the list for every original call of
+// one invocation (extra rolls included) and come off on every way out, a throw from the game's
+// roll included.  An invocation nested inside another adds nothing.
+struct SignatureInjectGuard {
+    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} } }
+    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { SignatureInjectRemove(); } catch (...) {} } }
+    SignatureInjectGuard(const SignatureInjectGuard&) = delete;
+    SignatureInjectGuard& operator=(const SignatureInjectGuard&) = delete;
+};
+// A struct as the game's own JSON, bounded, for the refusal line.
+static std::string SigJson(const RValue& v)
+{
+    try {
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; if (g) g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { v });
+        if (js.m_Kind == VALUE_STRING) return js.ToString().substr(0, 420);
+    } catch (...) {}
+    return "<not printable>";
+}
+// Our hit: the parameter struct CreateDefaultParams just returned becomes the mod item's own
+// definition - a, b, c 0, j 0, the item record's fields (hub docs/RUNTIME_DATA_MODELS.md
+// § 13.4) - read back after the write.  A missing field, or a value that does not read back, is
+// a refusal: every field is put back and the game builds its own stand-in.
+static bool SignatureRewriteParams(RValue& params, const SignatureItem& item, std::string& why)
+{
+    static const char* const kFields[4] = { "a", "b", "c", "j" };
+    const double want[4] = { item.a, item.b, 0.0, 0.0 };
+    RValue old[4];
+    bool wrote = false;
+    auto restore = [&]() {
+        if (!wrote) return;
+        for (int k = 0; k < 4; ++k) { try { g_Yytk->CallBuiltin("variable_struct_set", { params, RValue(kFields[k]), old[k] }); } catch (...) {} }
+    };
+    try {
+        if (params.m_Kind != VALUE_OBJECT) { why = "the parameters are not a struct"; return false; }
+        for (int k = 0; k < 4; ++k) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { params, RValue(kFields[k]) }).ToBoolean()) {
+                why = std::string("no field ") + kFields[k];
+                return false;
+            }
+            old[k] = g_Yytk->CallBuiltin("variable_struct_get", { params, RValue(kFields[k]) });
+        }
+        wrote = true;
+        for (int k = 0; k < 4; ++k) g_Yytk->CallBuiltin("variable_struct_set", { params, RValue(kFields[k]), RValue(want[k]) });
+        for (int k = 0; k < 4; ++k) {
+            double v = 0.0;
+            if (SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue(kFields[k]) }), v) && v == want[k]) continue;
+            why = std::string("field ") + kFields[k] + " did not read back";
+            restore();
+            return false;
+        }
+        return true;
+    } catch (...) { why = "the rewrite threw"; restore(); return false; }
+}
+// A hit inside the roll (Hook_CreateDefaultParams, once the game's CreateDefaultParams returned).
+// When it names the (sub, b) of a stand-in this roll injected, the picker cannot have told our
+// entry from the vanilla ones: m of the stand-in's n + m entries are ours (m items sharing it),
+// so a uniform draw below m picks the item - one entry's share, 1 in (n + 1) for one item - and
+// anything else is the game's own stand-in.  Ours rewrites the parameters.
+static void SignatureAttributeHit(RValue& params)
+{
+    int match[2] = { -1, -1 }, m = 0, n = 0;
+    for (int w = 0; w < 2; ++w)
+        if (g_SigRollItem[w] && (double)g_SigStandIn[w].sub == g_SigLastSub && (double)g_SigStandIn[w].b == g_SigLastB) { match[m++] = w; n = g_SigStandIn[w].n; }
+    if (m == 0) return;   // a unique that is no stand-in: the game's own
+    g_SigHitStandIn = match[0];
+    g_SigHitCoin = n + m;
+    const int draw = std::uniform_int_distribution<int>(0, n + m - 1)(TyRng());
+    if (draw >= m) return;   // the game's own stand-in
+    const int which = match[draw];
+    g_SigHitItem = which;
+    InterlockedIncrement(&g_SigOurHits);
+#ifndef FORGEPACT_RELEASE
+    if (g_SigReplaceMode) { g_SigHitReplace = true; return; }   // the game places the stand-in; HookAngelicChance swaps it
+    const bool show = g_SigParamsShown < 3;
+    if (show) Out("angelic hit params: before " + SigJson(params));
+#endif
+    g_SigHitRewritten = SignatureRewriteParams(params, kSignatureItems[which], g_SigHitWhy);
+    if (g_SigHitRewritten) ++g_SigPending[which];
+    else Out(std::string("inject: ") + kSignatureItems[which].name + " refused (" + g_SigHitWhy + "), the parameters left vanilla: " + SigJson(params));
+#ifndef FORGEPACT_RELEASE
+    if (show) { ++g_SigParamsShown; Out("angelic hit params: after " + SigJson(params)); }
+#endif
+}
+// From the Custom Forge hook (TryApplyCustomForge on CreateItemNew's own return): an item that
+// matches a mod item's selector was built.  It counts as built by the game (`built=`) only while
+// that item's rewritten parameters are pending, i.e. inside the roll that rewrote them.
+static void SignatureNoteBuilt(const std::map<std::string, double>& selector)
+{
+    auto at = [&](const char* key) { const auto it = selector.find(key); return it == selector.end() ? -1.0 : it->second; };
+    for (int w = 0; w < 2; ++w) {
+        const SignatureItem& item = kSignatureItems[w];
+        if (g_SigPending[w] <= 0 || at("t") != (double)item.t || at("a") != item.a || at("b") != item.b) continue;
+        --g_SigPending[w];
+        InterlockedIncrement(&g_SigBuilt);
+        InterlockedIncrement(w == 0 ? &g_SigBuiltCrown : &g_SigBuiltBelt);
+    }
+}
+// Before each original call of the game's roll: no hit seen, nothing attributed, nothing pending.
+static void SignatureHitReset()
+{
+    g_SigHitSeen = false;
+    g_SigHitItem = -1; g_SigHitCoin = 0; g_SigHitStandIn = -1;
+    g_SigHitRewritten = false; g_SigHitWhy.clear();
+    g_SigPending[0] = g_SigPending[1] = 0;
+    g_SigLastSub = -1.0; g_SigLastB = -1.0;
+#ifndef FORGEPACT_RELEASE
+    g_SigHitReplace = false;
+#endif
+}
+#ifndef FORGEPACT_RELEASE
+// Research build: Loot_Ground_obj by its SDK name, for `lootDelta=` and the replace mode.
+static double SigLootIndex()
+{
+    static double idx = -1.0;
+    if (idx < 0.0) {
+        try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble(); }
+        catch (...) { idx = -1.0; }
+    }
+    return idx;
+}
+static int SigLootCount()
+{
+    const double idx = SigLootIndex();
+    if (idx < 0.0) return -1;
+    try { return (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { return -1; }
+}
+static double SigInstanceId(const RValue& handle)
+{
+    try { return g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }).ToDouble(); } catch (...) { return -1.0; }
+}
+// Before each original call: how many ground items there are (`lootDelta=`) and, in the replace
+// mode with entries pushed, which ones - the new one after our hit is the stand-in the roll placed.
+static void SigResearchBeforeCall()
+{
+    g_SigLootBefore = SigLootCount();
+    g_SigLootIds.clear();
+    if (!g_SigReplaceMode || g_SigRollPushed <= 0 || g_SigLootBefore <= 0) return;
+    const double idx = SigLootIndex();
+    for (int i = 0; i < g_SigLootBefore; ++i) {
+        try { g_SigLootIds.push_back(SigInstanceId(g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }))); } catch (...) {}
+    }
+}
+// The replace mode's swap (the measured fallback, research build only): destroy the one
+// Loot_Ground_obj instance the roll created - present now, absent before the call - and spawn
+// the mod item at the roll's x, y instead.
+static std::string SigReplaceStandIn(int which, double x, double y, CInstance* S)
+{
+    const double idx = SigLootIndex();
+    const int now = SigLootCount();
+    std::vector<RValue> fresh;
+    for (int i = 0; i < now; ++i) {
+        RValue h;
+        try { h = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }); } catch (...) { continue; }
+        const double id = SigInstanceId(h);
+        if (std::find(g_SigLootIds.begin(), g_SigLootIds.end(), id) == g_SigLootIds.end()) fresh.push_back(h);
+    }
+    if (fresh.size() != 1) return "not replaced (" + std::to_string(fresh.size()) + " new ground items, expected 1)";
+    try { g_Yytk->CallBuiltin("instance_destroy", { fresh[0] }); } catch (...) { return "not replaced (instance_destroy threw)"; }
+    InterlockedIncrement(&g_SigRemoved);
+    if (!SpawnSignatureItem(which, x, y, S)) return "removed stand-in, spawning FAILED";
+    return std::string("removed stand-in, spawned ") + kSignatureItems[which].name;
+}
+#endif
+// After the game's roll returned with a hit (HookAngelicChance): one `angelic hit:` line saying
+// where it went - vanilla, or our item and whether the Custom Forge hook saw the game build it.
+static void SignatureAfterHit(CInstance* S, double x, double y)
+{
+    auto whole = [](double v) { return std::isfinite(v) && std::fabs(v) < 1e9 ? std::to_string((long long)v) : std::string("?"); };
+    std::string line = "angelic hit: picked " + whole(g_SigLastSub) + "/" + whole(g_SigLastB)
+        + " at " + std::to_string((int)x) + "," + std::to_string((int)y)
+        + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off");
+    std::string outcome = "vanilla";
+    const int which = g_SigHitItem;
+    if (which < 0) {
+        if (g_SigHitStandIn >= 0)
+            outcome += " (stand-in " + g_SigStandIn[g_SigHitStandIn].name + ", ours 1 in " + std::to_string(g_SigHitCoin) + ", not this time)";
+    } else {
+        const std::string who = std::string(kSignatureItems[which].name) + " (stand-in " + g_SigStandIn[which].name
+            + ", 1 in " + std::to_string(g_SigHitCoin) + ")";
+        if (!g_SigHitRewritten) outcome = who + " refused (" + g_SigHitWhy + "), the game placed its own stand-in";
+        else if (g_SigPending[which] == 0) outcome = who + " built by the game";
+        else outcome = who + " handed to the game, not seen built during the roll";
+#ifndef FORGEPACT_RELEASE
+        if (g_SigHitReplace) outcome = who + " " + SigReplaceStandIn(which, x, y, S);
+#endif
+    }
+#ifndef FORGEPACT_RELEASE
+    line += " lootDelta=" + (g_SigLootBefore >= 0 ? std::to_string(SigLootCount() - g_SigLootBefore) : std::string("?"));
+#endif
+    g_SigPending[0] = g_SigPending[1] = 0;
+    (void)S;
+    Out(line + " -> " + outcome);
+}
 static void SigDropStatus()
 {
     const std::string force = g_SigDropForce < 0 ? std::string("off") : (g_SigDropForce == 0 ? std::string("crown") : std::string("belt"));
     Out("sigdrop: force " + force + " | rolls=" + std::to_string(g_SigDropRolls) + " drops=" + std::to_string(g_SigDropHits)
         + " fails=" + std::to_string(g_SigDropFails)
         + " | game roll: gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
-        + " shareRolls=" + std::to_string(g_SigShareRolls) + " sigFromGame=" + std::to_string(g_SigFromGame)
-        + " crown=" + std::to_string(g_SigFromGameCrown) + " belt=" + std::to_string(g_SigFromGameBelt)
+        + " injected=" + std::to_string(g_SigInjected) + " ourHits=" + std::to_string(g_SigOurHits)
+        + " built=" + std::to_string(g_SigBuilt) + " crown=" + std::to_string(g_SigBuiltCrown) + " belt=" + std::to_string(g_SigBuiltBelt)
+        + " list=" + SignatureListText()
         + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off")
         + " cdpCalls=" + std::to_string(g_SigCdpCalls) + " detect=" + g_SigDetectRoute);
 }
-// One game Angelic hit (#74), called from HookAngelicChance after the game's own roll returned,
-// so the game's Angelic/Unholy item is already placed: with k switches on, roll one pool entry's
-// share once and, on success, drop one enabled item (a coin when both are on) beside it, at the
-// roll's x, y, with the dying monster as self.  Logs exactly one `angelic hit:` line per hit.
-static void SignatureDropOnAngelicHit(CInstance* S, double x, double y)
-{
-    const bool crownOn = SignatureSwitchOn(0), beltOn = SignatureSwitchOn(1);
-    const int k = (crownOn ? 1 : 0) + (beltOn ? 1 : 0);
-    auto whole = [](double v) { return std::isfinite(v) && std::fabs(v) < 1e9 ? std::to_string((long long)v) : std::string("?"); };
-    std::string line = "angelic hit: picked " + whole(g_SigLastSub) + "/" + whole(g_SigLastB)
-        + " at " + std::to_string((int)x) + "," + std::to_string((int)y)
-        + " gate=tyrant:" + (crownOn ? "on" : "off") + ",headhunter:" + (beltOn ? "on" : "off");
-    try {
-        if (k == 0) { Out(line + " -> no switch on, nothing rolled"); return; }
-        BuildAngelicPool(false);
-        const size_t n = g_AngelicPool.size();
-        if (n == 0) { Out(line + " -> angelic pool empty, nothing rolled"); return; }
-        double share = SignatureShare(k, n);
-        line += " share=" + std::to_string(k) + "/" + std::to_string(n + (size_t)k);
-#ifndef FORGEPACT_RELEASE
-        if (g_AngHitSharePct >= 0.0) { share = g_AngHitSharePct / 100.0; line += " (research lever: " + std::to_string((int)g_AngHitSharePct) + " pct)"; }
-#endif
-        InterlockedIncrement(&g_SigShareRolls);
-        if (std::uniform_real_distribution<double>(0.0, 1.0)(TyRng()) >= share) { Out(line + " -> no signature item"); return; }
-        const int which = k == 2 ? std::uniform_int_distribution<int>(0, 1)(TyRng()) : (crownOn ? 0 : 1);
-        Out(line + " -> " + (which == 0 ? "Tyrant's Crown" : "Headhunter"));
-        if (!SpawnSignatureItem(which, x, y, S)) return;
-        InterlockedIncrement(&g_SigFromGame);
-        InterlockedIncrement(which == 0 ? &g_SigFromGameCrown : &g_SigFromGameBelt);
-    } catch (...) { Out(line + " -> EXCEPTION, nothing dropped"); }
-}
 // CreateDefaultParams, installed by name from InstallSignatureAngelicHooks: HookOneScript's first
 // install of it carries the inline detour, which sees the roll's direct call.  Always calls
-// through; marks a hit only while HookAngelicChance holds the roll-in-progress depth.
+// through; marks a hit only while HookAngelicChance holds the roll-in-progress depth, and while
+// that roll carries injected entries, attributes the hit and, on ours, rewrites what returned.
 static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     InterlockedIncrement(&g_SigCdpCalls);   // before the roll check: every call that reaches the hook
     if (g_SigRollDepth > 0) {
         g_SigHitSeen = true;
         try {
-            if (argc > 0 && A && A[0] && A[0]->m_Kind == VALUE_REAL) g_SigLastSub = A[0]->ToDouble();
-            if (argc > 1 && A && A[1] && A[1]->m_Kind == VALUE_REAL) g_SigLastB = A[1]->ToDouble();
+            double v = 0.0;
+            if (argc > 0 && A && A[0] && SigNumber(*A[0], v)) g_SigLastSub = v;
+            if (argc > 1 && A && A[1] && SigNumber(*A[1], v)) g_SigLastB = v;
         } catch (...) {}
     }
-    return g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
+    RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
+    if (g_SigRollDepth > 0 && g_SigRollPushed > 0) {
+        try { SignatureAttributeHit(r); } catch (...) {}
+    }
+    return r;
 }
 
 // Resolve through the runner rather than YYTK 4's version-dependent room layout.
@@ -17237,7 +17707,7 @@ static void HeadhunterAutoArm()
     if (!wanted) return;
     EnableHeadhunter();
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)"
-        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? "on" : g_HhForced.load() ? "off (detection not installed)" : "off (no 'force' received yet - the panel sends it at launch when the switch is on)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? std::string("on") : g_HhForced.load() ? "off (" + SignatureOffReason(1) + ")" : std::string("off (no 'force' received yet - the panel sends it at launch when the switch is on)")));
 }
 
 static void HeadhunterStatus(bool includeMap = true)
@@ -17246,7 +17716,7 @@ static void HeadhunterStatus(bool includeMap = true)
     if (includeMap) for (const auto& kv : g_HhMap) m += kv.first + "->" + std::to_string((long long)kv.second.id) + " ";
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "ON" : "off") + (g_HhForced.load() ? " (forced)" : "")
         + " hook=" + (g_HhHookInstalled ? "yes" : "no") + " dur=" + std::to_string(g_HhDurationSec) + "s"
-        + " angelicDrops=" + (g_HhForced.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
+        + " angelicDrops=" + (g_HhForced.load() ? (SignatureSwitchOn(1) ? "on" : g_SigDetectNative ? "not-resolved" : "no-detection") : "off")
         + " kills=" + std::to_string(g_HhKills) + " rare=" + std::to_string(g_HhRareKills)
         + " rarityFlag=" + std::to_string(g_HhRarityKills) + " withAffixData=" + std::to_string(g_HhAffixKills)
         + " buffs=" + std::to_string(g_HhBuffsApplied) + " skippedNoBelt=" + std::to_string(g_HhSkippedNotEquipped)
@@ -20051,8 +20521,12 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
     // so a CreateDefaultParams call inside any of the original calls below is a hit.  The guard
     // lowers the depth on every way out, a throw from the game's roll included.
     SignatureRollScope sigRoll;
-    // After each original call: a hit drops Headhunter / Tyrant's Crown beside the game's item
-    // while their switch is on.  At the roll's x, y (arguments 0 and 1, when real), else the
+    // #74: while a panel switch is on, the game's own Angelic list holds one stand-in entry per
+    // enabled item for every original call below, extra rolls included; the guard takes them off
+    // again on every way out.  With both switches off it does nothing at all.
+    SignatureInjectGuard sigInject;
+    // After each original call: one `angelic hit:` line per hit, saying whether it fell to a
+    // mod item the game built.  At the roll's x, y (arguments 0 and 1, when real), else the
     // monster's own.  Never lets a failure reach the game's roll.
     auto afterOriginal = [&]() {
         if (!g_SigHitSeen) return;
@@ -20066,14 +20540,17 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
                 RValue self = S->ToRValue();
                 x = HhReadNumber(self, "x", 0.0); y = HhReadNumber(self, "y", 0.0);
             }
-            SignatureDropOnAngelicHit(S, x, y);
+            SignatureAfterHit(S, x, y);
         } catch (...) {}
     };
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
     // drops, 2026-09-05).  Since 1.3.13 the multiplier is a number of ROLLS: every extra roll
     // is the game's own function with the game's own chance, so x2 really is two 1-in-N dice.
     InterlockedIncrement(&g_SigGameRolls);
-    g_SigHitSeen = false;
+    SignatureHitReset();
+#ifndef FORGEPACT_RELEASE
+    SigResearchBeforeCall();   // lootDelta=, and the replace mode's view of the ground
+#endif
     RValue& r = g_OrigAngChance ? g_OrigAngChance(S, O, R, argc, A) : R;
 #ifndef FORGEPACT_RELEASE
     ApRollNoteChanceReturn(r);   // the game's own roll's result: kind, and value if numeric
@@ -20085,7 +20562,10 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
         for (int i = 0; i < extra && i < 9; ++i) {
             RValue t;
             InterlockedIncrement(&g_SigGameRolls);
-            g_SigHitSeen = false;
+            SignatureHitReset();
+#ifndef FORGEPACT_RELEASE
+            SigResearchBeforeCall();
+#endif
             try { g_OrigAngChance(S, O, t, argc, A); } catch (...) {}
             afterOriginal();
         }
@@ -20143,6 +20623,13 @@ static void InstallSignatureAngelicHooks()
     Out(std::string("signature drops: game-roll detection ") + (g_SigDetectNative ? "ON" : "NOT installed")
         + " (CreateDefaultParams " + cdpRoute + ", DropItemAngelicChance " + rollRoute + ")"
         + (g_SigDetectNative ? "" : " - Headhunter / Tyrant's Crown will not drop from the game's Angelic roll"));
+    // The list and the stand-ins, checked in full, so the switch-on names what the drop will use
+    // (the crown's default stand-in included) or the one reason it stays off.  A list that is not
+    // there yet (no game loaded) is asked for again on every roll and logged when it resolves.
+    SignatureResolveStandIns();
+    RValue list;
+    SignatureListResolve(list, true, true);
+    Out("signature drops: " + SignatureListLine());
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -20155,7 +20642,8 @@ static void InstallSignatureAngelicHooks()
 //               note says scaling the chance in place broke the game's check, never understood;
 //   rate <n>    every validated pool definition's droprate.base becomes n (remembered; the
 //               plausible reading of the rate the die uses, unmeasured);
-//   share <pct> the signature share on a hit, so dispatch shows in a few kills;
+//   share       no longer a lever: with list injection the game's own picker gives the mod
+//               items one entry's share, so it says so and changes nothing;
 //   off         every remembered base restored, every override cleared;
 //   status      one line naming each lever and whether detection is installed.
 // Any lever turning on installs the detection, so gameHits= counts with both switches off.
@@ -20175,7 +20663,6 @@ static void AngelicHitStatus()
     const bool cdp = g_Orig_CreateDefaultParams != nullptr, roll = g_OrigAngChance != nullptr;
     Out("angelicprobe hit: chance " + (g_AngHitChance >= 0.0 ? AngelicHitNumber(g_AngHitChance) : std::string("off"))
         + " | rate " + (g_AngHitRate >= 0.0 ? AngelicHitNumber(g_AngHitRate) + " (" + std::to_string(g_AngHitBases.size()) + " bases held)" : std::string("off"))
-        + " | share " + (g_AngHitSharePct >= 0.0 ? AngelicHitNumber(g_AngHitSharePct) + " pct" : std::string("default"))
         + " | detection " + (g_SigDetectNative ? "installed" : (cdp && roll ? "not installed (not both detoured)" : "not installed"))
         + " (CreateDefaultParams " + (cdp ? "hooked" : "not hooked") + ", DropItemAngelicChance " + (roll ? "hooked" : "not hooked") + ")"
         + " | gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
@@ -20231,31 +20718,135 @@ static void AngelicHitCommand(const std::string& args)
     double n = -1.0;
     try { if (!value.empty()) n = std::stod(value); } catch (...) { n = -1.0; }
     const bool number = std::isfinite(n) && n >= 0.0;
-    if (lever == "chance" || lever == "rate" || lever == "share") {
+    if (lever == "share") {
+        Out("angelicprobe hit share: a no-op since list injection (#74) - the game's own picker gives each mod item one entry's share; nothing changed");
+    } else if (lever == "chance" || lever == "rate") {
         if (!number) { Out("angelicprobe hit " + lever + ": needs a number >= 0 - nothing changed"); AngelicHitStatus(); return; }
         InstallSignatureAngelicHooks();
         if (lever == "chance") {
             g_AngHitChance = n;
             Out("angelicprobe hit chance: override on - every game roll's chance argument (when real) set to " + AngelicHitNumber(n));
-        } else if (lever == "rate") {
-            AngelicHitSetRate(n);
         } else {
-            g_AngHitSharePct = n > 100.0 ? 100.0 : n;
-            Out("angelicprobe hit share: a hit with a switch on drops a signature item at " + AngelicHitNumber(g_AngHitSharePct) + " pct");
+            AngelicHitSetRate(n);
         }
     } else if (lever == "off") {
         size_t failed = 0;
         const size_t held = g_AngHitBases.size();
         const size_t restored = AngelicHitRestoreBases(failed);
         g_AngHitChance = -1.0;
-        g_AngHitSharePct = -1.0;
-        Out("angelicprobe hit off: chance off, share default, " + std::to_string(restored) + " of " + std::to_string(held)
+        Out("angelicprobe hit off: chance off, " + std::to_string(restored) + " of " + std::to_string(held)
             + " bases restored" + (failed ? " (" + std::to_string(failed) + " failed)" : std::string(" (every base restored)"))
             + "; detection stays installed and passes through");
     } else if (lever != "status" && !lever.empty()) {
-        Out("angelicprobe hit: chance <n> | rate <n> | share <pct> | off | status");
+        Out("angelicprobe hit: chance <n> | rate <n> | share (no-op) | off | status");
     }
     AngelicHitStatus();
+}
+
+// #74 list-injection research (research build only; the probe verb's `list` and `inject`
+// subcommands, so RunCommand gains no branch).
+//
+// Every variable of the first Controller_obj instance shaped like the game's Angelic list (an
+// array of [type, sub, b] entries), printed with its length, its first three entries and how
+// many entries equal each stand-in when `print`; returns the longest one of at least
+// kSigListMinLength entries (its length in bestLen), or "" - what `inject auto` names.
+static std::string SigListScan(bool print, int* bestLen)
+{
+    SignatureResolveStandIns();
+    RValue instance;
+    std::string why, best;
+    int bestN = -1, candidates = 0, instances = 0;
+    const bool found = SignatureController(instance, why);
+    if (g_SigControllerIdx >= 0.0) {
+        try { instances = (int)g_Yytk->CallBuiltin("instance_number", { RValue(g_SigControllerIdx) }).ToDouble(); } catch (...) { instances = 0; }
+    }
+    if (print) Out("angelicprobe list: Controller_obj instances=" + std::to_string(instances) + (found ? std::string() : " (" + why + ")"));
+    if (found) {
+        RValue names;
+        int count = 0;
+        try {
+            names = g_Yytk->CallBuiltin("variable_instance_get_names", { instance });
+            count = names.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble() : 0;
+        } catch (...) { count = 0; }
+        for (int i = 0; i < count; ++i) {
+            std::string name;
+            RValue value;
+            try {
+                name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                value = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(name) });
+            } catch (...) { continue; }
+            if (value.m_Kind != VALUE_ARRAY) continue;
+            int len = -1, counts[2] = { 0, 0 };
+            std::string shape;
+            if (!SignatureListShape(value, len, counts, shape, 1)) continue;
+            ++candidates;
+            if (len >= kSigListMinLength && len > bestN) { best = name; bestN = len; }
+            if (!print) continue;
+            std::string first;
+            for (int k = 0; k < 3 && k < len; ++k) {
+                double e[3] = { 0.0, 0.0, 0.0 };
+                SigEntry(value, k, e);
+                first += "[" + AngelicHitNumber(e[0]) + "," + AngelicHitNumber(e[1]) + "," + AngelicHitNumber(e[2]) + "]";
+            }
+            std::string standIns;
+            for (int w = 1; w >= 0; --w)
+                standIns += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + g_SigStandIn[w].name
+                    + (g_SigStandIn[w].ok ? "(n=" + std::to_string(counts[w]) + ")" : std::string("(not validated)"));
+            Out("angelicprobe list: candidate " + name + " array_length=" + std::to_string(len) + " first=" + first + " standins=" + standIns);
+        }
+    }
+    if (print) Out("angelicprobe list: candidates=" + std::to_string(candidates) + " best=" + (best.empty() ? std::string("none") : best + ":" + std::to_string(bestN)));
+    if (bestLen) *bestLen = bestN;
+    return best;
+}
+
+static void SigInjectStatus()
+{
+    Out(std::string("angelicprobe inject: mode=") + (g_SigReplaceMode ? "replace" : "inject")
+        + " list=" + (g_SigListOk ? g_SigListName + ":" + std::to_string(g_SigListLen) : std::string("none"))
+        + " standins=" + SignatureStandInsText(false)
+        + " injected=" + std::to_string(g_SigInjected) + " ourHits=" + std::to_string(g_SigOurHits)
+        + " built=" + std::to_string(g_SigBuilt) + " removed=" + std::to_string(g_SigRemoved)
+        + " anomalies=" + std::to_string(g_SigAnomalies));
+}
+
+// `angelicprobe inject name <var> | auto | mode inject|replace | status`: `name` sets the
+// Controller_obj variable the plugin resolves the list by (case kept), `auto` names the scan's
+// best candidate, `mode` picks the shipped path (inject, default) or the measured fallback
+// (replace: the game places the stand-in, which is removed and the item spawned in its place).
+static void SigInjectCommand(const std::string& args)
+{
+    const std::string a = TrimCopy(args);
+    const size_t space = a.find(' ');
+    const std::string lever = Lower(a.substr(0, space));
+    const std::string value = space == std::string::npos ? std::string() : TrimCopy(a.substr(space + 1));
+    if (lever == "name" || lever == "auto") {
+        std::string name = value;
+        if (lever == "auto") name = SigListScan(false, nullptr);
+        if (name.empty()) {
+            Out("angelicprobe inject " + lever + (lever == "auto" ? ": no Controller_obj variable shaped like the list" : ": needs a variable name")
+                + " - nothing changed");
+        } else {
+            g_SigListName = name;
+            SignatureResolveStandIns();
+            RValue list;
+            SignatureListResolve(list, true, true);
+            Out("angelicprobe inject " + lever + ": " + SignatureListLine());
+        }
+    } else if (lever == "mode") {
+        const std::string m = Lower(value);
+        if (m == "inject" || m == "replace") {
+            g_SigReplaceMode = m == "replace";
+            Out("angelicprobe inject mode: " + m + (g_SigReplaceMode
+                ? " - on our hit the game places the stand-in, which is removed and the item spawned in its place"
+                : " - on our hit the game builds the item from the rewritten parameters"));
+        } else {
+            Out("angelicprobe inject mode: inject | replace - nothing changed");
+        }
+    } else if (lever != "status" && !lever.empty()) {
+        Out("angelicprobe inject: name <var> | auto | mode inject|replace | status");
+    }
+    SigInjectStatus();
 }
 #endif
 
@@ -20725,14 +21316,16 @@ static std::string ApRollShape(const RValue& v)
     return ApRollKindName((int)v.m_Kind);
 }
 
-// `angelicprobe list`: the game's own unique loot list, read by name and
-// read-only. The roll reads it through a scope resolved at runtime that is not
-// a Loot_Manager_obj instance variable (static reading, #74), so the global
-// scope is asked first and the Loot_Manager_obj instance second; the output
-// names the scope that answered, or says neither did. A missing object,
-// instance or variable prints one refusal line.
+// `angelicprobe list`: the game's own unique loot list, read-only. The roll
+// reads it as a variable of the first Controller_obj instance (static reading,
+// #74 Session 3), whose name is not recoverable statically, so the
+// Controller_obj half (SigListScan) prints every variable shaped like the list
+// and the best candidate. The two scopes the first live session asked - the
+// global scope and the Loot_Manager_obj instance, both by the name
+// lootListUnique - are still reported after it, one line each when absent.
 static void ApRollList()
 {
+    SigListScan(true, nullptr);
     // One list's kind, then its length and the first eight entries' shape.
     auto show = [](const RValue& list, const std::string& scope) {
         Out("angelicprobe list: scope=" + scope + " lootListUnique kind=" + ApRollKindName((int)list.m_Kind));
@@ -20798,8 +21391,9 @@ static void ApRollUsage()
     Out("  angelicprobe on    - attach every candidate row once (and the kill control), print each row's route");
     Out("  angelicprobe show  - per row: route, calls=, insideDropItem=, insideAngelicChance= (calls=n/a when the row has no route)");
     Out("  angelicprobe reset - zero the counters; routes stay attached");
-    Out("  angelicprobe list  - read-only: lootListUnique from the global scope, else Loot_Manager_obj's; the scope that answered, kind, length and the first eight entries' shape");
-    Out("  angelicprobe hit chance <n> | rate <n> | share <pct> | off | status - the #74 levers that make a game Angelic hit observable");
+    Out("  angelicprobe list  - read-only: every Controller_obj variable shaped like the Angelic list (length, first three entries, stand-in counts, best candidate), then lootListUnique in the global scope and on Loot_Manager_obj");
+    Out("  angelicprobe hit chance <n> | rate <n> | share (no-op) | off | status - the #74 levers that make a game Angelic hit observable");
+    Out("  angelicprobe inject name <var> | auto | mode inject|replace | status - the #74 list the stand-ins are injected into, and the path an our-hit takes");
 }
 
 static void ApRollCommand(const std::string& rest)
@@ -20810,6 +21404,7 @@ static void ApRollCommand(const std::string& rest)
     else if (sub == "reset") { ApRollReset(); Out("angelicprobe reset: counters zeroed, routes kept"); }
     else if (sub == "list") ApRollList();
     else if (sub == "hit" || sub.rfind("hit ", 0) == 0) AngelicHitCommand(sub.substr(3));
+    else if (sub == "inject" || sub.rfind("inject ", 0) == 0) SigInjectCommand(TrimCopy(rest).substr(6));   // a variable name keeps its case
     else ApRollUsage();
 }
 #endif // FORGEPACT_RELEASE (angelicprobe)
@@ -30316,7 +30911,7 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         else if (v == "off" || v == "0") { g_SigDropForce = -1; SigDropStatus(); }
         else if (v == "crown") { g_SigDropForce = 0; InstallHeadhunterHook(); SigDropStatus(); }
         else if (v == "belt") { g_SigDropForce = 1; InstallHeadhunterHook(); SigDropStatus(); }
-        else Out("sigdrop: usage -> sigdrop crown | belt | off | status - the normal rate follows the Angelic / Unholy slider (angelicdrop)");
+        else Out("sigdrop: usage -> sigdrop crown | belt | off | status - a test command; the normal drop is the game's own Angelic roll while the item's panel switch is on");
     } else if (lc == "hhlabelmax") {
         try { long v = std::stol(TrimCopy(rest)); if (v >= 1 && v <= 40) g_HhLabelMax = (size_t)v; } catch (...) {}
         while (g_HhStolen.size() > g_HhLabelMax) g_HhStolen.erase(g_HhStolen.begin());

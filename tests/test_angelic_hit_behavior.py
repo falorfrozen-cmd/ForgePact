@@ -1,16 +1,25 @@
-"""Headhunter and Tyrant's Crown from the game's own Angelic roll (#74), run natively.
+"""Headhunter and Tyrant's Crown from the game's own Angelic roll (#74, list injection), run natively.
 
-The real hook functions are taken out of `plugin/ModuleMain.cpp` (or
-`FORGEPACT_TEST_PLUGIN_SOURCE`, so the same scenarios can be run against the
-pre-#74 source) and compiled, as the player build (`FORGEPACT_RELEASE`), into
-`angelic_hit_harness.cpp`, which models the game: the Angelic roll returns
-undefined on a hit as on a miss, and only a hit calls `CreateDefaultParams`,
-by a direct call that reaches ForgePact only through a hook on that function.
+The real types and hook functions are taken out of `plugin/ModuleMain.cpp` (or
+`FORGEPACT_TEST_PLUGIN_SOURCE`, so the same scenarios can be run against an
+older source) and compiled, as the player build (`FORGEPACT_RELEASE`), into
+`angelic_hit_harness.cpp`, which models the game: its Angelic list on the
+first `Controller_obj` instance, the builtins that read and write it, the roll
+picking an entry from it (returning undefined on a hit as on a miss),
+`CreateDefaultParams` (reached only through a hook on that function, since the
+roll calls it directly), the placement that builds one item from the
+parameters, and the Custom Forge hook that recognises a built Headhunter or
+Tyrant's Crown.
 
-`test_baseline` passes against the pre-#74 source too: with both switches off
-the roll is the game's own. `test_target` is the change; every scenario in it
-fails against the pre-#74 source. Each production function's presence is
-announced as `#define HAS_<NAME>`, so the harness compiles against either.
+`test_baseline` passes against `forgepact-74-inject-base` (the beside design)
+too: with both switches off the roll and its list are the game's own.
+`test_target` is the change, and every scenario in it fails against that
+source: for the length of a roll the list carries one stand-in entry per
+enabled item, a hit on it is ours at one entry's share, the game builds ours
+from rewritten parameters, and nothing is spawned beside. `test_detection`
+keeps the beside design's detection and gate scenarios, which still hold.
+Each production name's presence is announced as `#define HAS_<NAME>`, so the
+harness compiles against either source.
 """
 import os
 from pathlib import Path
@@ -22,21 +31,51 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-PRODUCTION = (
+# Inserted at `// PRODUCTION_TYPES`, ahead of the harness globals that use them.
+PRODUCTION_TYPES = (
     'struct SignatureRollScope {',
+    'struct SignatureItem {',
+    'static constexpr SignatureItem kSignatureItems[]',
+    'struct SignatureStandIn {',
+)
+
+# Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
+PRODUCTION = (
     'static bool SignatureSwitchOn(',
-    'static double SignatureShare(',
-    'static void SignatureDropOnAngelicHit(',
+    'static double SignatureShare(',              # the beside design only
+    'static void SignatureDropOnAngelicHit(',     # the beside design only
+    'static bool SigNumber(',
+    'static bool SigEntry(',
+    'static bool SignatureController(',
+    'static bool SignatureListShape(',
+    'static std::string SignatureStandInsText(',
+    'static std::string SignatureListLine(',
+    'static std::string SignatureListText(',
+    'static bool SignatureListResolve(',
+    'static bool SigUniqueDropBase(',
+    'static void SignatureResolveStandIns(',
+    'static void SignatureInjectPush(',
+    'static void SignatureInjectRemove(',
+    'struct SignatureInjectGuard {',
+    'static std::string SigJson(',
+    'static bool SignatureRewriteParams(',
+    'static void SignatureAttributeHit(',
+    'static void SignatureNoteBuilt(',
+    'static void SignatureHitReset(',
+    'static void SignatureAfterHit(',
+    'static void SigDropStatus(',
     'static RValue& Hook_CreateDefaultParams(',
     'static RValue& HookAngelicChance(',
     'static void InstallSignatureAngelicHooks(',
-    'static void SigDropStatus(',
     'static void AngelicHitStatus(',
 )
 
 
 def implementation(source, signature):
-    """Brace-matched definition; `rfind` so a forward declaration is skipped."""
+    """Brace-matched definition; `rfind` so a forward declaration is skipped.
+
+    A struct, or a table whose closing brace the source follows with `;`, keeps the `;`.
+    """
     start = source.rfind(signature)
     if start < 0:
         return ''
@@ -49,12 +88,13 @@ def implementation(source, signature):
             depth -= 1
             if depth == 0:
                 text = source[start:index + 1]
-                return text + ';' if signature.startswith('struct ') else text
+                closed = signature.startswith('struct ') or source[index + 1:index + 2] == ';'
+                return text + ';' if closed else text
     raise AssertionError(f'Unterminated definition: {signature}')
 
 
 def has_define(signature):
-    name = re.match(r'(?:static\s+\S+\s+|struct\s+)([A-Za-z_]\w*)', signature).group(1)
+    name = re.match(r'(?:static\s+(?:constexpr\s+|const\s+)?\S+\s+|struct\s+)([A-Za-z_]\w*)', signature).group(1)
     return '#define HAS_' + name.upper()
 
 
@@ -63,30 +103,33 @@ class AngelicHitBehaviorTests(unittest.TestCase):
     def setUpClass(cls):
         source_path = Path(os.environ.get('FORGEPACT_TEST_PLUGIN_SOURCE', ROOT / 'plugin/ModuleMain.cpp'))
         source = source_path.read_text(encoding='utf-8').replace('\r\n', '\n')
-        parts, defines = [], []
-        for signature in PRODUCTION:
-            body = implementation(source, signature)
-            if body:
-                parts.append(body)
-                defines.append(has_define(signature))
-        functions = '\n'.join(defines) + '\n\n' + '\n\n'.join(parts)
-        # One directory per run: the negative control compiles the pre-#74 source while the
+        defines, blocks = [], {}
+        for marker, signatures in (('types', PRODUCTION_TYPES), ('functions', PRODUCTION)):
+            parts = []
+            for signature in signatures:
+                body = implementation(source, signature)
+                if body:
+                    parts.append(body)
+                    defines.append(has_define(signature))
+            blocks[marker] = '\n\n'.join(parts)
+        types = '\n'.join(defines) + '\n\n' + blocks['types']
+        # One directory per run: the negative control compiles the beside source while the
         # current one may be compiling beside it (run_criteria --jobs), and a shared
         # directory let one run execute the other's binary.
         (ROOT / 'build').mkdir(exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix='angelic-hit-', dir=ROOT / 'build'))
         cls.output = output
         try:
-            cls.compile(output, functions)
+            cls.compile(output, types, blocks['functions'])
         except unittest.SkipTest:
             shutil.rmtree(output, ignore_errors=True)
             raise
 
     @classmethod
-    def compile(cls, output, functions):
+    def compile(cls, output, types, functions):
         code = (ROOT / 'tests/angelic_hit_harness.cpp').read_text(encoding='utf-8')
         cpp = output / 'angelic_hit.cpp'
-        cpp.write_text(code.replace('// PRODUCTION_FUNCTIONS', functions), encoding='utf-8')
+        cpp.write_text(code.replace('// PRODUCTION_TYPES', types).replace('// PRODUCTION_FUNCTIONS', functions), encoding='utf-8')
         cls.binary = output / ('angelic_hit.exe' if os.name == 'nt' else 'angelic_hit')
         if os.name == 'nt':
             vswhere = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -122,26 +165,36 @@ class AngelicHitBehaviorTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_baseline(self):
-        # Both switches off: the game's roll runs once per call (x3 extra rolls included),
-        # its chance untouched and its own return handed back, and nothing spawns.
+        # Both switches off: the game's roll runs once per call (x3 extra rolls included), its
+        # chance, its list and its return untouched, and only the game's own item is built.
         self.run_scenarios((
             'both_off_miss_passthrough', 'both_off_hit_passthrough',
             'default_params_outside_roll_not_a_hit', 'extra_rolls_still_run',
         ))
 
     def test_target(self):
-        # A hit is a CreateDefaultParams call while the roll runs; on each one the enabled
-        # items roll one pool entry's share, k / (N + k), and drop beside the game's item.
+        # For the length of a roll the game's list carries one stand-in entry per enabled item
+        # and is the game's own again after it, a throw included; a hit on a stand-in is ours at
+        # one entry's share; the game builds ours from rewritten parameters, one item per hit,
+        # and nothing is spawned beside it; a list that does not resolve, an ambiguous stand-in
+        # or a missing field refuses; a list the game changed mid-roll is left as found.
         self.run_scenarios((
-            'headhunter_on_hit_spawns_only_belt', 'tyrant_on_hit_spawns_only_crown',
-            'both_on_equal_share', 'miss_never_spawns',
-            'spawn_at_roll_position_with_monster_self', 'hit_in_extra_roll_counts',
-            'switch_off_after_on_passes_through', 'original_throw_lowers_roll_flag',
+            'switch_on_injects_for_the_call', 'original_throw_removes_entries',
+            'standin_hit_is_ours_one_entry_share', 'our_hit_rewrites_and_the_game_builds_once',
+            'roll_path_never_spawns', 'off_after_on_pushes_nothing',
+            'both_on_pushes_two_and_builds_both', 'list_refusals',
+            'list_changed_during_roll_left_as_found', 'extra_rolls_carry_the_entries',
+            'ambiguous_standin_never_arms', 'missing_field_refuses_and_leaves_vanilla',
+            'sigdrop_status_tokens',
+        ))
+
+    def test_detection(self):
+        # Kept from the beside design: the detection is installed once, by name, as two inline
+        # detours or not at all, both status lines end with its route, and the panel switch -
+        # not a forged item's auto-arm - is the gate (owner, 2026-10-02).
+        self.run_scenarios((
             'install_is_idempotent', 'detection_not_detoured_never_arms',
-            'status_reports_detect_route',
-            # The panel switch is the gate (owner, 2026-10-02): a forged item's auto-arm
-            # turns the mechanic on but never the drop.
-            'autoarm_enabled_not_forced_no_drop', 'forced_hit_spawns',
+            'status_reports_detect_route', 'autoarm_enabled_not_forced_no_drop',
         ))
 
 
