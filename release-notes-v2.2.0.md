@@ -1,6 +1,6 @@
-# ForgePact 2.1.0
+# ForgePact 2.2.0
 
-Release date: 2026-10-02
+Release date: 2026-10-09
 
 A new **Sleep loot your filter hides** switch, off by default, puts the loot
 your filter hides to sleep so the game stops updating it every frame, and
