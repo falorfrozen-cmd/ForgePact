@@ -31,7 +31,8 @@ narrow statement, not an exoneration.
   takes a `QueryPerformanceCounter` reading, writes the frame time into a
   600-frame ring and does atomic stores; nothing else. Once a second it also
   samples the room key and the context counts (room name, instance count,
-  monster count) the frame profiler's adapter already reads by name.
+  monster count) the frame profiler's adapter already reads by name, and
+  stores whether that room is a menu room (`IncidentIsMenuRoom`).
 - **The in-hook id, set by the installer**: `HookOneScript` and `HookBuiltin`
   hand both of their routes (the script-table swap and the inline detour) a
   per-slot thunk from `TaggedThunks<Fn>` instead of the caller's function.
@@ -49,8 +50,10 @@ narrow statement, not an exoneration.
   own time to its per-frame counter, and sets the in-mod tag for the
   duration (restoring the previous one on exit). Mods: `density`,
   `mapreveal`, `drops`, `autoprospect`, `hudlabels`, `farsleep`, `gems`,
-  `miner`, `stashmoveall`, `ipc`, and `frame` for `FrameCallback`'s own code
-  outside the named mods. The density hook on every created instance is
+  `miner`, `stashmoveall`, `ipc`, `setup` for the one-time setup at start-up
+  (`LoadConfig` and `InstallHook`, run once at frame 300; a 2-4 s frame on
+  the test machine in Live 1 and Live 2), and `frame` for `FrameCallback`'s
+  own code outside the named mods. The density hook on every created instance is
   sampled one call in 16 and scaled by 16. Every row is self time: each call
   a scoped body makes into the game's original (`g_Orig_DrawHudBuffs`,
   `g_Orig_DropRelic`, the `DropManager.hpp` drop hooks' `m_Orig_*`,
@@ -91,8 +94,9 @@ narrow statement, not an exoneration.
   per-mod table; it is the live control that the monitor is counting. Its
   first line starts `incident: frames ` and carries the worst frame overall
   (and whether it was judged), the worst judged frame, the count of judged
-  frames of 250 ms or more and `window yes|no`; a third line carries the
-  tagged and untagged hook counts and the report write errors.
+  frames of 250 ms or more, `window yes|no` and `menu yes|no` (whether the
+  room the frame thread last sampled is a menu room); a third line carries
+  the tagged and untagged hook counts and the report write errors.
 
 ## The report
 
@@ -234,6 +238,55 @@ that fails to write is counted, and the `incident: report written` line says
   is emitted then, with the gap as its length. A freeze that never ends is
   emitted once the gap reaches `kFreezeHoldMs` (15 s): a 15 s load is worth a
   report, and the exit save never reaches it because the process is gone.
+- **A gap that begins in a menu room is a load, never a freeze** (D17,
+  replan 5, after Live 2; the owner: "If it wasn't high then fix it"). Live
+  2 wrote a FREEZE report for a 3.53 s gap in `Chose_rm` right after the
+  character screen's slot click: the game loads the save there, and the
+  screen after the click is the character panel in the same room, so no
+  room change follows the gap and the room-change lead above has nothing to
+  see. So the frame thread's once-a-second context tick also stores whether
+  the room is a menu room, and the detector keeps that flag from the moment
+  a gap crosses 3 s. A gap that began in a menu room is a load on both
+  paths, when it ends and when it reaches `kFreezeHoldMs`: it is counted as
+  quiet, `FreezeEndedLine` logs `in a menu room: a load, not reported`, and
+  no episode is written. The menu rooms are a table in the adapter
+  (`ModuleMain.cpp`, beside `IncidentFrameTick`), each entry spelled from
+  the SDK's `HeroSiege::Rooms::GameRoom` enum through one macro, so a name
+  the SDK lacks fails the compile: `Init_rm`, `Game_Start_rm`, `Login_rm`,
+  `Login_Valhalla_rm`, `Main_Menu_rm`, `Main_Menu_Valhalla_rm`,
+  `Char_Select_rm` and `Chose_rm`. The string compared is the identifier
+  after the enum's prefix, which is what `room_get_name` answers; the
+  header stays game-independent and takes only the flag. `incident stat`'s
+  `menu yes|no` is the live control that the flag reads the room. Rejected:
+  comparing the room index (the plugin reads the room's name, never its
+  index); reporting a menu-room freeze at `kFreezeHoldMs` anyway (no
+  ForgePact mod runs menu code, so the report would name nothing, and a
+  save load or cloud sync at the character screen is the game's normal
+  work); a separate rule for "the first in-world room after character
+  select" (a gap that begins in `Chose_rm` and ends in town is a menu-room
+  gap whether or not the room change is seen in time). The harness pins it
+  with `freeze-menu-room` and `freeze-menu-room-never-ends`, each beside a
+  control with the flag off that reports the freeze as before.
+- **The one-time start-up setup is its own row, `setup`, and prints its
+  cost** (D18, replan 5, after Live 2). Live 2's bundle read `frame` at
+  4084.41 ms worst over the last minute beside a gap in which the frame
+  thread ran no ForgePact code, which reads as our code at the load. The
+  row was the one-time setup: `LoadConfig` and `InstallHook` run once, at
+  `fc > 300` in the main menu about 5-10 s after launch, inside
+  `FrameCallback`'s `frame` scope and with no scope of their own, so the
+  whole 2-4 s setup frame was `frame`'s self time, and for a minute after
+  it the row's worst named the wrong thing. So the setup block opens
+  `IncidentScope incidentSetup(IncidentMod::setup)` (a row like any mod's:
+  self time, ranked with the others) and prints one line, `incident: setup
+  <total> ms at frame <fc>: config <ms> ms, hooks <ms> ms (<the three
+  slowest installers, name and ms>)`, which lands in every later bundle's
+  `out-tail.txt`, so a report's reader sees what the row was. `InstallHook`
+  marks a lap after each installer of its normal path to supply the three
+  slowest (the shipping build's normal path stops after the custom-item,
+  item-truth, auto-arm and Headhunter installers; the development build's
+  continues through every research installer). The clock readings go
+  through `ForgePact::Incident::Qpc()`. Bounding or moving the setup is not
+  decided here; Live 3 measures which installer costs what first.
 - **The panel's route leaves a trace.** `/api/state`'s `incidents` carries
   `reports`, `lastExit` and `exitWatch` (`pidHeld`, `exitsSeen`,
   `lastCode`), so "the game exited cleanly" is told apart from "no exit was
@@ -331,7 +384,22 @@ that fails to write is counted, and the `incident: report written` line says
   taken as a load and never reported, so a real freeze that happens to end in
   a zone change is missed. A freeze that never ends is reported after 15 s;
   one that the process does not survive for 15 s leaves only the crash path.
-  A frozen game's report is therefore written at 15 s, not at 3 s.
+  A frozen game's report is therefore written at 15 s, not at 3 s. A gap
+  that begins in a menu room is never reported, at either point: a hang at
+  the main menu or the character screen (`Main_Menu_rm`, `Chose_rm` and the
+  other menu rooms) leaves no freeze report, only the log line
+  `in a menu room: a load, not reported` when it ends; a crash there is
+  still found at the next load. The menu rooms are a list of names, so a
+  menu room the list lacks is judged like any other room.
+- **The start-up setup frame is slow, and shows as `setup`.** The one-time
+  setup (`LoadConfig` and `InstallHook`, at frame 300 in the main menu)
+  takes one 2-4 s frame on the test machine (Live 1 and Live 2). It falls in
+  the room-change grace, so it is never judged or reported, but for a
+  minute after it the `setup` row's worst in `incident stat` and in any
+  report written in that minute is that frame; the `incident: setup` line
+  in the log says what it cost and names the three slowest installers.
+  Making it faster or spreading it over frames is open, waiting on Live 3's
+  measurement of the installers.
 - **No function names without the PDB, and the PDB needs renaming first.** A
   report records the faulting module and offset only. Mapping an offset
   inside `BloodPactPlugin.dll` to one of our functions is a maintainer step

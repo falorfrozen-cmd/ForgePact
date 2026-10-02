@@ -1033,7 +1033,10 @@ What counts as an incident:
 - **Freeze** (`freeze`): no frame for 3 seconds. The report is written once
   frames come back (or after 15 seconds if they never do), and a gap that
   ends with a zone change is a load, not a freeze, so loading a zone or a
-  character is never reported. The report names the ForgePact hook and the
+  character is never reported. A gap that begins in a menu room (the login,
+  main menu and character screens) is a load too, such as the save loading
+  when you click a character slot, so a hang on those screens leaves no
+  freeze report. The report names the ForgePact hook and the
   ForgePact mod the game was inside when the frames stopped, or `none`. When
   the mod's hook had handed over to the game's own work (the game function
   the hook wraps), the mod is marked so, for example `in-mod hudlabels (game
@@ -1083,7 +1086,8 @@ right now. Its first line starts `incident: frames ` and gives the frames
 seen, the median, the worst frame of the session and whether it was judged,
 the worst judged frame (a frame the monitor actually judged: not loading,
 not in the background), how many judged frames took 250 ms or more, and
-whether the game window was found (without it freezes cannot be noticed).
+whether the game window was found (without it freezes cannot be noticed),
+and whether the current room is a menu room (`menu yes|no`).
 Then whether the grace period after a room change is active, whether the
 game has focus, which hook the frame thread is in, episodes and reports so
 far, how many hooks are tagged and how many are not, how many report files
@@ -1094,9 +1098,11 @@ What a mod's time counts: only ForgePact's own code. When a mod's hook calls
 the game function it wraps (drawing the HUD, dropping an item, creating a
 monster, and the extra drops or monsters a multiplier asks for), the mod's
 clock is paused for that call, so the game's own work is never charged to the
-mod. Each row is that mod's own time, and the `frame` row is the frame
-callback's own code outside the named mods, so the rows add up to ForgePact's
-total.
+mod. Each row is that mod's own time, the `setup` row is the one-time setup
+ForgePact does a few seconds after the game starts (loading its settings and
+installing its hooks, one slow frame in the main menu, described in `out.txt`
+by an `incident: setup` line), and the `frame` row is the frame callback's
+own code outside the named mods, so the rows add up to ForgePact's total.
 
 How it works: the game's frame thread only reads the clock and stores numbers
 (a few readings a frame); a background thread in the plugin wakes four times a

@@ -67,7 +67,9 @@ report, without a notification: you find it on the panel's Setup tab.
   both say which room you were in. A mod's time counts
   only ForgePact's own code: when a mod's hook lets the game do its normal work (drawing the HUD,
   dropping an item, spawning a monster, and the extra drops or monsters a
-  multiplier asks for), that game work is not added to the mod's time. Not
+  multiplier asks for), that game work is not added to the mod's time, and
+  the setup ForgePact does once when the game starts shows as its own
+  `setup` row in the per-mod table. Not
   every ForgePact hook can be
   named, so a report that says `none` does not clear ForgePact: it means
   only that none of the hooks it can name was running. A crash report cannot say what was running, because the crash
