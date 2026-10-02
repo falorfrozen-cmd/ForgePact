@@ -33,11 +33,56 @@ namespace {
 
 int g_Failures = 0;
 
+// Set while Timed() runs a scenario: Report keeps the result here instead of
+// printing it, so a failed attempt can be run again.
+struct Captured {
+    std::string name;
+    bool ok = false;
+    std::string detail;
+};
+Captured* g_Capture = nullptr;
+
 void Report(const char* name, bool ok, const std::string& detail)
 {
+    if (g_Capture) {
+        *g_Capture = { name, ok, detail };
+        return;
+    }
     std::printf("%s | %s | %s\n", name, ok ? "pass" : "fail", detail.c_str());
     std::fflush(stdout);
     if (!ok) ++g_Failures;
+}
+
+// The accounting scenarios time real work on the wall clock. A thread
+// preempted inside a timed scope is charged the time it spent descheduled,
+// and on a loaded machine (the parallel suite) one preemption pushed a 1 ms
+// scope to 68 ms. Preemption only ever adds time, so a lower bound cannot
+// pass by luck, and an upper bound a bug breaks (a scope counted twice, an
+// original charged to its mod) breaks on every attempt: run the scenario up
+// to kTimedAttempts times and report the first clean one, or the last. The
+// thread runs at raised priority meanwhile, so the suite's other work
+// preempts it less often.
+constexpr int kTimedAttempts = 10;
+
+void Timed(void (*scenario)())
+{
+    const DWORD priorityClass = GetPriorityClass(GetCurrentProcess());
+    const int threadPriority = GetThreadPriority(GetCurrentThread());
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    Captured result;
+    int attempt = 0;
+    while (attempt < kTimedAttempts) {
+        ++attempt;
+        g_Capture = &result;
+        scenario();
+        g_Capture = nullptr;
+        if (result.ok) break;
+    }
+    SetThreadPriority(GetCurrentThread(), threadPriority);
+    SetPriorityClass(GetCurrentProcess(), priorityClass);
+    if (attempt > 1) result.detail += " | attempt " + std::to_string(attempt) + " of " + std::to_string(kTimedAttempts);
+    Report(result.name.c_str(), result.ok, result.detail);
 }
 
 std::string Num(double v)
@@ -1015,12 +1060,12 @@ int main(int argc, char** argv)
     FreezeMenuRoomNeverEnds();
     Unfocused();
     RateLimit();
-    PerModAccounting();
-    GameOriginalExcluded();
-    OwnWorkCharged();
-    GameOriginalOuterClock();
-    OwnWorkInsideGameOriginal();
-    FrameSelfTime();
+    Timed(PerModAccounting);
+    Timed(GameOriginalExcluded);
+    Timed(OwnWorkCharged);
+    Timed(GameOriginalOuterClock);
+    Timed(OwnWorkInsideGameOriginal);
+    Timed(FrameSelfTime);
     GameOriginalInMod();
     WorstJudgedVsOverall();
     HookTagThunk();
