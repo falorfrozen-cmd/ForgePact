@@ -1006,8 +1006,8 @@ Alternatives set aside:
   parameter struct together. The player build holds `LootGroundCreate`
   through the deliberately table-only inspection installer, so this needs a
   second, inline route on a function those hooks already own, and which
-  struct field carries sub is not established. It is the route if the
-  definition-read typing is not observed.
+  struct field carries sub is not established. It is the next research step
+  when `inject-build` reads `typing-not-observed` (below).
 - **Suppressing the game's placement and spawning ours beside it** (the
   fallback as the owner first worded it). No name-resolved way to make
   `LootGroundCreate` place nothing was found: the player build's hook on it is
@@ -1026,10 +1026,24 @@ Alternatives set aside:
 The decision between injection and replacement is mechanical, from Live
 procedure 3's verdicts:
 
-`inject-build` has two parts, and each ends pass, fail or not-observed with no
-fourth outcome: the **reach** control (does the picker draw the entries the
-plugin pushes) and the **build** check (does the game build and place our item
-from a rewritten struct).
+`inject-build` has two parts: the **reach** control (does the picker draw the
+entries the plugin pushes), which ends pass, fail or not-observed, and the
+**build** check (does the game build and place our item from a rewritten
+struct), which ends pass, fail, not-observed or **typing-not-observed**. There
+is no other outcome.
+
+- Any `untyped=` above zero across `inject-build`'s batches:
+  **`inject-build: typing-not-observed`**, whatever the other counters read.
+  The build check takes this verdict in place of pass, fail or not-observed,
+  because an untyped hit is left vanilla and never counted as ours, so the
+  static reading the typing rests on (the roll's last definition read before
+  a hit is the picked entry's, not measured) did not hold on that hit. Reach's
+  H and S are recorded as printed but close nothing, since a broken ordering
+  puts the typed hits' triples in doubt too. **No route**: `on-both` and
+  `replace-remove` are not run, the owner decides, and the next step is the
+  research into typing the hit at `LootGroundCreate` (the alternative above).
+  It is never read as build failed, so it never selects `route replace`.
+  This branch is checked first; the ones below apply only with `untyped=0`.
 
 - Reach pass and build pass (every hit of ours built exactly one item, the
   game's own ground-loot count rose by one per hit, the forge hook dressed it,
@@ -1201,9 +1215,11 @@ record:
     and `untyped=` stays 0. Fail: a crash, fewer built than hits, a
     `lootDelta=` other than 1 on a hit of ours, a struct missing a field, a
     ground item that is not Headhunter, or a hit of ours whose triple is not
-    Liquor Holster's. An `untyped=` above zero is recorded with its hit lines
-    and means the definition-read typing was not observed as read. One or
-    two hits of ours continue to the cap. Not-observed: fewer than 3 hits of
+    Liquor Holster's. Typing-not-observed: `untyped=` above zero at any
+    point, recorded with its hit lines; it is the build check's verdict in
+    place of pass, fail or not-observed, stops the route there, and sends the
+    next step to the `LootGroundCreate` typing research, per the decision
+    rule. One or two hits of ours continue to the cap. Not-observed: fewer than 3 hits of
     ours at the cap, recorded as not powered, never as replace evidence.
   - **The shipped count**, last: `angelicprobe inject copies 1` and five
     kills. `injected=` grew by the growth of `gameRolls=` (one push per
