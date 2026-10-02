@@ -13,10 +13,12 @@ compiled code (the Sep-17 `Hero_Siege.exe`) in a local decompiler and written
 here in our own words; no game code is quoted (`AGENTS.md` § Legal), and objects
 and scripts are named by their `hs-game-sdk` names. **Measured** means observed
 on the running game. A thing that was looked for and not seen is written "not
-observed", never "does not happen". As of this writing nothing about the pickup
-is measured (the measured lines below are about placing a relic for a test):
-Live 1 of the workorder `forgepact-124-pet-relics` is where the call shape and
-the ground-relic read are first checked on the running game.
+observed", never "does not happen". The sections up to [The
+mechanism](#the-mechanism) were written before anything about the pickup was
+measured; Live 1 of the workorder `forgepact-124-pet-relics` (2026-10-02)
+checked the call shape and the ground-relic read on the running game, and
+[Live 1 results](#live-1-results-2026-10-02) says which readings it confirmed
+and which stay open.
 
 The game facts are also recorded in the hub's `docs/RUNTIME_DATA_MODELS.md`
 § 10.7, the shared record every module reads. § 10.6 there (the companion's own
@@ -240,10 +242,13 @@ times (**measured**): every call printed success, `petrelic census` read
   was always the dying enemy; `forcerelic` passes the player, also a real
   instance, because the placement appears to read variables off `self` (which
   ones was not read) and a kill would need the owner. Class 14 from a `-14` key
-  is measured (hub `docs/RUNTIME_DATA_MODELS.md` § 16.2); class 16 from `-16` is
-  not. So the command reads every placed instance back with
+  is measured (hub `docs/RUNTIME_DATA_MODELS.md` § 16.2); class 16 from `-16` was
+  not, before Live 1. So the command reads every placed instance back with
   `HeroSiege::Player::ReadGroundRelic` and counts a relic as placed only when the
-  returned instance exists and reads as a relic with the requested id.
+  returned instance exists and reads as a relic with the requested id. Live 1
+  **measured** both: with the player as `self`, 49 of 49 relics placed this way
+  read back as relics with the requested ids, and `forcerelic drop` put 5 of 5
+  on the ground ([Live 1 results](#live-1-results-2026-10-02)).
 - **It is a test route, not how the game drops relics.** A relic placed this
   way reaches the pet's collect the way a dropped one does, because
   `PickupLoot` sends class 16 to `PickupRelic`, which reads only the item's
@@ -252,31 +257,48 @@ times (**measured**): every call printed success, `petrelic census` read
 
 ## Not established
 
-- **Whether `DropRelic` with the force flag leaves a relic on the ground.**
-  #125 saw relics built and none on the ground; `forcerelic drop <n>` logs what
-  each call returned and the `Loot_Ground_obj` count before and after, which
-  settles it for the player as `self`.
-- **Whether `LootGroundCreateFromItem` places a relic with the player as
-  `self`.** Every measured placement had the dying enemy as `self`, and every
-  placement was of an equipment item, never a relic. `forcerelic`'s
-  own line (`placed <k>/<n>`, the ground count before and after, and a stage for
-  each relic not placed) answers both.
+Live 1 settled two entries that stood here: `DropRelic` with the force flag
+does leave relics on the ground, and `LootGroundCreateFromItem` does place a
+relic with the player as `self` (both **measured**, [Live 1
+results](#live-1-results-2026-10-02)). What is still open:
 
+- **Why #125's `DropRelic` call placed nothing.** #125 (`callnum DropRelic <x>
+  <y> 0 0 1 0`, six arguments) saw relics built and none on the ground; Live 1's
+  `forcerelic drop` (five arguments, the sixth left out, the player as `self`
+  and `other`) put every relic on the ground. Which difference matters, the
+  sixth argument or the `self`, was not tested.
+- **A relic the game dropped by itself, under the pet mod.** Every relic the
+  pet collected in Live 1 was placed by `forcerelic`; none was a natural drop.
+  The reading says the pickup cannot tell the two apart (`PickupLoot` sends
+  class 16 to `PickupRelic`, which reads only the class and the id), but a
+  natural drop collected by the pet is not observed live.
 - **The relic-tab 10/10 outcome on the running game**: whether a ground relic
   whose owned copy sits at 10/10 in the relic tab really is consumed with
   nothing raised. The mod does not rely on it either way: it refuses to collect
   without a complete maxed scan, and it destroys a relic only when the owned
   level is seen to rise (`true-but-nothing-raised=` counts the true returns
-  that raised nothing, with the last reason).
-- **The companion's `other` on the running game.** By the reading it is the
-  `Companion_obj` instance, and neither `PickupLoot` nor `PickupRelic` reads
-  `other` directly, but no trace has shown the value. The research build's
-  `petrelic trace` logs `self`, `other`, `argc` and every argument of each
-  `PickupLoot` call; the player's own click pickup is its positive control.
+  that raised nothing, with the last reason). Live 1 never called the pickup
+  on a maxed relic, so neither 10/10 branch (equipped, false; relic tab, true)
+  was exercised.
+- **The `other` the game's own companion passes.** By the reading it is the
+  `Companion_obj` instance. Live 1's trace saw the plugin's calls with
+  `other` = `Companion_obj` succeed, and the player's own pickup pass
+  `Loot_Manager_obj`, but the game's companion never picks up a relic (its type
+  filter takes classes 11 to 15), so no call of its own was traced.
 - **Whether the ground instance also carries a top-level `itemType`.** Both
   readers seen go through `itemInstance`; `LootGroundInit` did not decompile
-  (timeout), so a copy it might make was not read. `petrelic census` (its
-  dump of the first ground relic's variable names) settles it.
+  (timeout), so a copy it might make was not read. `petrelic census` printed
+  its dump of the first ground relic's variable names in Live 1 (`first relic
+  vars:` and `its itemInstance (object/struct) vars:`), but the capture did not
+  record the names, so this stays open.
+- **Why the plugin's fifth argument was `undefined`.** The player's pickup
+  passed `real:0` there; the plugin, which reads `isPlayerDrop` and calls
+  `GetVariable` by name, passed `undefined` on all 31 of its calls, so either the
+  name did not resolve through the builtin call or the variable was absent on
+  the instance. The relic branch never reads that argument, and every one of
+  those calls raised the owned level.
+- **The `held back=1` of Live 1 step 9.** See [Live 1
+  results](#live-1-results-2026-10-02).
 - **`isRelic`.** It is set by the Create-defined function only while the item
   is visible; whether every ground relic carries it, and from when, was not
   read. The mod identifies a relic by its class (`itemInstance.itemType`), not
@@ -297,9 +319,11 @@ times (**measured**): every call printed success, `petrelic census` read
 - **The automated-player caller's object** and the network caller's shape
   (`CA_playerItemPickupAccept`); neither is on the mod's path.
 - **The names of `LootGroundRelicStep`'s two members.** They did not resolve.
-- **Every ground-instance variable name above on the running game.** They are
-  read from the binary's name table, which has matched live reads every time it
-  was checked, but none of these has been read live yet.
+- **The other ground-instance variable names on the running game.** Live 1
+  read `itemInstance`, its `itemType` and `itemDefinitionStruct.b`, and
+  `itemActive` on 42 relics at once. `lootFilterVisible`, `itemCompanionTimer`,
+  `isPlayerDrop`, `itemIsLocal` and `isRelic` are still the name table's
+  reading, which has matched live reads every time it was checked.
 
 ## The mechanism
 
@@ -396,9 +420,9 @@ when both report `stopped == nullptr`:
 minus `PickupLoot`'s top-of-script steps (the class read, the `Client_obj`
 `inventoryMapChanged` flag, and the not-local path that `args[2] = true`
 skips anyway). Its result goes through the same before/after level check. It
-exists so a refused route A costs a command, not a rebuild. Both routes are
-confirmed or refused by Live 1, through `petrelic trace` on the player's own
-click pickup first.
+exists so a refused route A costs a command, not a rebuild. Live 1 confirmed
+route A (`pickup-route: pickuploot`), so route A is the shipped call and route
+B stays research-only and was not exercised.
 
 ### What `petrelic 0` and `petrelic stat` count
 
@@ -430,3 +454,134 @@ mechanism defines:
 Live 1's `collects-relics` check therefore reads `collected=` above 0 together
 with `true-but-nothing-raised=0` and `destroy-failed=0`, which a working
 collect produces.
+
+## Live 1 results (2026-10-02)
+
+The research build (sha256 `a591ff14a32da319ab3bd4764cb2a423ce1d31d1f40778063ba4caca88239fd6`,
+hub `46f6358`, ForgePact `1c9eab7`) on Sorak, slot 14, in Town of Inoya (Hell),
+driven through hs-drive; the third sitting of the workorder's Live 1 procedure,
+2026-10-02T17:49Z. The capture is the workorder's
+`forgepact-124-pet-relics-live-1.md` (kept with the workorder, outside the
+repository). Everything in this section is **measured** unless it says
+otherwise. All 14 checks passed:
+
+| check | verdict | what it showed |
+|---|---|---|
+| `dll-hash` | pass | the lease hashed the installed DLL as the build above |
+| `marker` | pass | `petrelic stat:` with `route=a`, all counters 0 |
+| `control` | pass | `relicfilter` found 41 maxed relics, the same 41 as the second sitting |
+| `ground-placed` | pass | `forcerelic ids 1` placed 1/1 through `LootGroundCreateFromItem`, the census read `relic=1 owned=7 maxed=no`, and a screenshot showed the relic ("Demon Sheep") beside the player |
+| `pickuploot-shape` | pass | the player's own pickup, traced (below) |
+| `census-reads` | pass | 42 relics on screen, `read stages: ok=42` |
+| `collects-relics` | pass | `collected=27`, `true-but-nothing-raised=0`, `destroy-failed=0`, ground 42 -> 15 |
+| `level-raised` | pass | relics 73, 106 and 131 went 9 -> 10; relic 1 went 7 -> 8 by the hand pickup |
+| `pickup-route` | pass | `pickup-route: pickuploot` |
+| `real-maxed-untouched` | pass | all 12 maxed relics placed in step 5 still on the ground, `skipped(maxed)=104586` |
+| `testmaxed-skipped` | pass | ids 2 and 3 (`relicfilter testmaxed 2,3`) left on the ground, the other four of that batch collected (27 -> 31) |
+| `only-maxed-idle` | pass | three stats about 10 s apart: `collected=31 travel timeouts=0 held back=1 phase=idle` each time |
+| `droprelic-route` | pass | `forcerelic drop 5` put 5 relics on the ground (below) |
+| `stat-line` | pass | every field of [What `petrelic 0` and `petrelic stat` count](#what-petrelic-0-and-petrelic-stat-count) in the `petrelic 0` line |
+
+**Every relic the pet collected was placed by `forcerelic`**, built through
+`InitItemFromJson` and put down with `LootGroundCreateFromItem`; none was
+dropped by the game. So a natural relic drop collected by the pet is still not
+observed live (see [Not established](#not-established)).
+
+### The pickup shape (`pickuploot-shape`)
+
+The player's own pickup, an OS-level click on the relic sent by hs-drive's
+input tool with the `petrelic trace` hook installed on both routes
+(`hook on PickupLoot -> native detour + table`), logged, verbatim:
+
+```
+petrelic trace #1: PickupLoot self=Loot_Ground_obj other=Loot_Manager_obj argc=5 args=[real:1.000000, object/struct, real:1.000000, bool:true, real:0.000000] -> bool:true self-exists-after=yes
+```
+
+That confirms the reading of the player's call: `self` the ground item, `other`
+the `Loot_Manager_obj`, `argc` 5, `global.mplr` (1, offline) first, the
+`itemInstance` struct second, the fourth the literal `true`. The third and
+fifth (the reading's `itemIsLocal` and `isPlayerDrop` through `GetVariable`)
+arrived as reals, 1 and 0. The return was true and **the ground relic still
+existed when `PickupLoot` returned**, as the reading says: the script does not
+destroy it, the caller does. Relic 1's owned level went 7 -> 8, read by placing
+a second relic 1 and taking the census.
+
+**The route token is `pickup-route: pickuploot`.** The pet's 31 collects
+(trace `#2` to `#32`) all took route A, one shape:
+
+```
+PickupLoot self=Loot_Ground_obj other=Companion_obj argc=5 args=[real:1.000000, object/struct, bool:true, bool:true, undefined] -> bool:true self-exists-after=yes
+```
+
+Step 7 of the procedure (route B, `PickupRelic` directly) was not needed and
+not run, so route A ships unchanged and route B stays a research switch. The
+fifth argument the plugin passed was `undefined`, where the player's pickup
+passed `real:0`; the relic branch does not read it, and every one of those
+calls raised a level (see [Not established](#not-established)).
+
+### The census, before and after
+
+- **Before** (step 2): `petrelic census: ground items=0 player=yes owned relics=141 maxed=41`
+  and `on screen=0`.
+- **One relic** (step 3): `ground items=1`, `relic inst=262120 relic=1 owned=7
+  maxed=no itemActive=0`, `read stages: ok=1`. The census printed the
+  first relic's variable names (`first relic vars:`, then `its itemInstance
+  (object/struct) vars:`); the capture did not record them.
+- **42 relics** (step 5, after `forcerelic 40` and `forcerelic ids 0`):
+  `ground items=42 ... maxed=41`, `on screen=42 read stages: ok=42`, 30 not
+  maxed and 12 maxed (ids 0 twice, 36 twice, 43 twice, 62, 63, 66, 119, 124,
+  45), each line `relic inst=<n> relic=<id> owned=<level> maxed=<yes|no>
+  itemActive=<0|1>`.
+- **After the pet's 45 s** (step 6): `ground items=15 ... maxed=44`, every one
+  `maxed=yes itemActive=1`: the 12 maxed relics of step 5 and three copies of
+  relic 73, which the pet had raised from 9 to 10 by collecting its fourth copy.
+  Relics 106 and 131 also went 9 -> 10, so the maxed total rose 41 -> 44 by
+  exactly the three ids that were at 9.
+- **After the `testmaxed` round** (step 9): `ground items=17 ... maxed=46`, the
+  15 above plus relics 2 and 3, the `testmaxed` ids; 5, 7, 8 and 9 collected.
+- **After `forcerelic drop 5`** (step 10): `ground items=22`, five new relics.
+
+`refused=0` and `true-but-nothing-raised=0` held for the whole session, so no
+call was refused and there is no refusal to record with what was supplied.
+
+### What the session measured about placing a relic
+
+- **`LootGroundCreateFromItem` with the player as `self`** placed every class-16
+  item it was handed: 1/1, 1/1, 40/40, 1/1 and 6/6 (49 of 49), each ground
+  count one higher per relic, each read back by `ReadGroundRelic` as a relic
+  with the requested id. The items were built by `InitItemFromJson` from a
+  relic-tab entry's fields and a key ending in `-16`, so that key builds a
+  relic. They lay at the player's position, not spread out (the screenshot
+  shows every name label stacked above one spot). The two relics a census read
+  straight after placing them showed `itemActive=0`; every relic listed after
+  the pet's 45 s showed `itemActive=1`, so the flag turns on some time after
+  placement (when was not measured). Both the player's click and the pet's
+  `PickupLoot` picked them up and raised the owned level.
+- **`DropRelic` with the force flag** (x, y, 0, 0, `true`, the sixth argument
+  left out, the player as `self` and `other`): `forcerelic drop: 5 DropRelic
+  call(s) with the force flag (x, y, 0, 0, true) at player (969, 822): returned
+  true=5 false=0 other=0; ground items 17 -> 22`, and the census listed five new
+  relics (ids 134, 118, 31, 116 and 114, all `itemActive=1`). So with the fifth
+  argument true it skips the roll, as the static reading says, and it does
+  leave the relic on the ground. #125's six-argument call left none; why is
+  not established.
+
+### `held back=1`
+
+`held back=` was 0 through step 6 and read 1 from step 9 on, while
+`refused=`, `true-but-nothing-raised=` and `travel timeouts=` stayed 0 and all
+four non-`testmaxed` relics were collected. In the plugin's selector a travel
+is held back when it ends any way but a collect, a lost target or an abandoned
+travel, so the one hold that none of those counters accounts for is a collect
+the collect-time maxed check stopped (`skipped(maxed)=`, which includes the
+`testmaxed` ids). A likely case is a first pick made from the cached maxed set
+before its refresh took in ids 2 and 3; that is a reading of our own code, not
+a measurement. It did not stop the pet: the screen held only maxed relics after
+it, and the pet stayed idle.
+
+### What the screenshot could not separate
+
+Every relic was placed at the player's position, so the step 9 screenshot shows
+the pet against the player with the relic labels stacked above the same spot.
+That `only-maxed-idle` passed rests on the stat lines (`phase=idle`, nothing
+collected, no travel timeout across three reads), not on the picture.
