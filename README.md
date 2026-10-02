@@ -278,6 +278,16 @@ item and places it where the monster died: one item per hit, in place of what th
 otherwise have dropped. The plugin's Custom Forge hook recognises it the same way it recognises
 one from `sigdrop`.
 
+Verified in a live session (Live 3, 2026-10-02) on the research build, with the roll's chance
+raised so that hits came quickly and 200 entries added per roll so that they fell to the item:
+46 of 46 hits that fell to Headhunter's entry and 11 of 11 that fell to Tyrant's Crown's were built
+by the game as that item, one per hit (`ourHits=` and `built=` grew together, `refused=0`), and
+with both switches off every hit stayed the game's own and the list was left as it was. Not
+observed: a hit at the game's natural chance (about one in several thousand rolls), and the share
+the player build's single entry gets, which is arithmetic on that session, not a measurement.
+Record: [`docs/angelic-roll-hook-research.md`](docs/angelic-roll-hook-research.md) § "Session 5:
+the id on the built item (issue #74)".
+
 ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
 both switches off (the default), no entry is added, neither item drops, forged or not, and the
 game's roll is left alone. If the plugin cannot find the game's list on your game, the switch

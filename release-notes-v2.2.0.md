@@ -108,6 +108,16 @@ if you have forged it.
     game's Angelic chance. If the plugin cannot find the game's list on your
     game, turning a switch on says so in the log and the roll stays the game's
     own.
+  - Checked in a live session on 2026-10-02 (Live 3), on this release's
+    research build with the game's Angelic chance raised so that hits came
+    quickly: every hit that fell to an added entry became the item, 46 of 46
+    for Headhunter and 11 of 11 for Tyrant's Crown, each built by the game
+    where the monster died, one per hit, and with both switches off every hit
+    stayed the game's own. Not yet watched: a hit at the game's normal Angelic
+    chance, which is about one in several thousand rolls. How often the item
+    drops with the single entry a normal install adds is worked out from that
+    session, where the research build added 200 entries so that hits would
+    fall to it, not measured.
 - **The Angelic / Unholy Drops slider's pool is the game's real Angelic and
   Unholy uniques again**, with no signature items in it.
 - `sigdrop crown|belt|off|status` is still a test command that makes every kill

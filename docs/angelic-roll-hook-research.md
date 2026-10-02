@@ -1873,7 +1873,10 @@ read locally; this session's static reading is below.
 `### What the plugin does with it` lists the changes. Everything else in
 Sessions 3 and 4 stands - the list, the push and its removal, the typing, the
 attribution and the gate. `### Live procedure 5` is Live 3, and
-`### Results` is where that session's record goes.
+`### Results` is that session's record: every check passed, the game built
+the item from the record rewritten at `CreateItemNew`'s entry, and the route
+is `inject`. The predictions in the static reading below are labelled as
+such; the results say which held.
 
 ### Static reading (2026-10-02, the built item's id)
 
@@ -2222,4 +2225,130 @@ without the owner's word.
 
 ### Results
 
-Session 5: not yet run.
+Session 5 ran once, as Live 3, on 2026-10-02 (the drive tool's lease taken
+at 20:46 UTC), on the research dll `e0749368…5f4f9c` (SHA-256
+e0749368d198c63ce6ce2bed397051f958e3c362d3f73a417a1705311c3f4f9c, built with
+`build.bat dev` from ForgePact `df1f54b` and kept as
+`plugin_build/live3/BloodPactPlugin_rel.dll`), save slot 14, plugin banner
+v2.1.0, the kills in Outskirts of Inoya (Hell, zone level 243, read from the
+HUD). The drive tool's self-check passed 6 of 6; the saves were copied before
+launch and restored at teardown with nothing left changed. Measured in that
+session, every verdict below; the replies are quoted in its capture
+(`forgepact-74-list-injection-live2-live-2.md`), which stays with the hub's
+workorder and is not tracked. As in Live 2, the arming of check 5 was done
+before the zone change. The owner reported each batch as about 10 kills
+without an exact count, so every count below is hits, never kills.
+
+- **`dll-hash`: pass.** The lease's DLL hash was the research dll's.
+- **`marker`: pass.** `angelicprobe hit status` answered
+  `angelicprobe hit: chance off | rate off | show=0 | detection not installed (CreateDefaultParams not hooked, DropItemAngelicChance not hooked, GetUniqueRepoStruct not hooked, CreateItemNew hooked) | gameRolls=0 gameHits=0 cdpCalls=0 detect=off`.
+  `CreateItemNew` was already hooked at load (it carries the Custom Forge
+  final pass); the three roll hooks were not.
+- **`control`: pass.** `sigdrop status` read exactly the fresh-session line,
+  ending `list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`.
+- **`layout`: pass.** The dump read as in Live 2:
+  `Controller_obj.lootListUnique kind=array array_length=6`, all six elements
+  ref ds_lists of triples (50, 61, 79, 152, 221 and 380 entries), and
+  `[5] kind=ref ds_list=yes:380 triples=380/380 first=[0,0,1][0,0,15][0,0,29]`
+  with `Headhunter:Liquor Holster(n=1)` and
+  `Tyrant's Crown:Mask of the Celestial(n=1)`, n = 0 in `[0]`-`[4]`.
+  `angelicprobe inject auto` answered `list lootListUnique[5]:380`, and the
+  inject status line read `mode=inject copies=1 list=lootListUnique[5]:380`
+  with no `(not validated)`.
+- **`record`: pass.** `angelicprobe hit show 6` printed six vanilla hits,
+  each with both lines. The first:
+  `angelic hit record: vanilla {"b":9.0,"a":270500966.0,"j":6.0,"c":1.0}`
+  and
+  `angelic hit built: itemType=3 definition={"b":9.0,"a":270500966.0,"j":6.0,"c":1.0}`.
+  The record's field set, verbatim, is `b`, `a`, `j`, `c` on all six: at
+  `CreateItemNew`'s entry the record already carries `a`, a number (270500966,
+  41023733, 585711642, 244995739, 727960336 and 54011597 on the six), as the
+  static reading above predicted from `LootGroundCreate`'s store. Each
+  `built:` definition held the same four values as its record, `c` 1. No
+  record and no built definition on this path carried `w` (a `sigdrop` item,
+  built through `InitItemFromJson`, carries `w` and `o`; check 10 below).
+- **`force-hit`: pass.** With `raredrop angelic 2` and the chance lever at
+  1e9, one batch gave `gameRolls=52 gameHits=47`, `cdpCalls=49`,
+  `detect=detoured`.
+- **`baseline-off-vanilla`: pass.** Both switches off over those 47 hits:
+  `injected=0 ourHits=0 refused=0 built=0`, `list=lootListUnique[5]:380`, no
+  `inject:` line, every hit line `-> vanilla` with `lootDelta=1`.
+  `standinPicks=2`, so the baseline share p0 is 2/47 (0.043).
+- **`typing`: pass.** All 47 vanilla hit lines carried a `builtType=` number
+  (none `?`), for example
+  `angelic hit: picked 3/6/9 at 16000,4336 gate=tyrant:off,headhunter:off lootDelta=1 builtType=3 -> vanilla`;
+  `untyped=0`, `typeAgree=47`, `typeDisagree=0`. By the end of the session
+  `typeAgree=87`, still `typeDisagree=0` and `untyped=0`.
+- **`reach`: pass.** `angelicprobe inject copies 200`, `headhunter force`,
+  `gate=tyrant:off,headhunter:on`. Over the batch the hits grew from 47 to
+  109 (+62) and `standinPicks=` from 2 to 48 (+46), so p1 = 46/62 = 0.742
+  against p0 = 2/47, with `heldMiss=0` and `injected=18000` (200 entries on
+  each of 90 rolls). Live 2 measured 0.81 the same way.
+- **`inject-build`: pass.** Over the same batch `ourHits=`, `built=` and
+  `belt=` each grew from 0 to 46, with `crown=0`, `anomalies=0` and
+  `refused=0`. Each of the 46 our-hit lines read
+  `angelic hit: picked 8/0/51 at <x,y> gate=tyrant:off,headhunter:on lootDelta=1 builtType=8 -> Headhunter (stand-in Liquor Holster, 200 in 201) built by the game`,
+  and the other 16 hits `-> vanilla`; 62 of 62 hit lines `lootDelta=1`; no
+  refusal line and no `sigdrop:` line. The first our-hit printed
+  `angelic hit record: before {"b":51.0,"a":648002927.0,"j":0.0,"c":1.0}`,
+  `angelic hit record: after {"b":2.0,"a":777002.0,"j":0.0,"c":0.0}` and
+  `angelic hit built: itemType=8 definition={"b":2.0,"a":777002.0,"j":0.0,"c":0.0}`;
+  the other five shown printed the same `after` and `built` JSON, each
+  `before` with `b` 51, `c` 1, `j` 0 and its own `a`. So the `a` written at
+  `CreateItemNew`'s entry is the `a` the built definition carries: the
+  constructor does not overwrite it, and the game builds the item from a
+  `c` 0 record through `CreateItemNew`. The ground screenshot showed many
+  `Headhunter | SS` labels and no Liquor Holster label, and the owner,
+  hovering one: "tooltip reads correctly a headhunter" (no item type stated;
+  the item's identity rests on that report and the labels).
+- **`on-both`: pass.** `tyrant force`, copies still 200. Over one batch the
+  hits grew from 109 to 124 (+15), `ourHits=` and `built=` each +13,
+  `crown=` 0 to 11, `belt=` 46 to 48, `refused=0`, `anomalies=0`. The 15 hit
+  lines, all `lootDelta=1`: 11
+  `picked 0/0/86 ... builtType=0 -> Tyrant's Crown (stand-in Mask of the Celestial, 200 in 201) built by the game`,
+  2 Headhunter and 2 `-> vanilla`. The ground screenshot showed several
+  `Tyrant's Crown | SS` labels beside Headhunter ones.
+- **`off-removes`: pass.** Copies back to 1, both switches off. Over five
+  kills the hits grew from 124 to 146 (+22), every hit line `-> vanilla`,
+  `injected=27200` and `ourHits=59` unchanged, `built=`, `crown=` and `belt=`
+  unchanged, no `inject:` line, `list=lootListUnique[5]:380` equal to
+  `layout`'s. Two of those hits were the game's own picks of Liquor Holster
+  (`picked 8/0/51 ... builtType=8 -> vanilla`, `standinPicks=` 61 to 63) with
+  nothing pushed, and stayed Liquor Holsters.
+- **`sigdrop-still-forces`: pass.** `sigdrop crown`, then the one kill the
+  owner reported: eight lines `sigdrop: Tyrant's Crown dropped at <x,y> kind=15`
+  (the hits grew from 150 to 157 in that window), each item's definition
+  `{"w":1.0,"o":1.0,"a":777001.0,"b":7.0,"j":0.0,"c":0.0}`; `sigdrop off`
+  answered `rolls=8 drops=8 fails=0`.
+- **`list-restored`: pass.** After `angelicprobe hit off` and
+  `raredrop angelic 1` the dump read the same six sizes, n = 0 for
+  `[0]`-`[4]` and n = 1 for both stand-ins at `[5]`, and the inject status
+  line `list=lootListUnique[5]:380`, all equal to `layout`'s.
+
+Without a verdict: the runner's YYError summary read `total=1` before check 4
+and `total=19` (`distinct=5`, `top=report#2 x15`) after check 5's first
+kill batch, and did not move again through the end of the session, when 90
+more rolls had pushed entries and their our-hits had been built. The message
+line of `report#2`'s first-occurrence block is
+`REAL argument incorrect type array`. So it is a runner conversion of an
+array value to a number, raised between the read before check 4 and the end
+of the first batch: the window that holds the layout dump, the
+`angelicprobe inject auto` scan, the arming of the research levers and 52
+rolls with both switches off. Live 2 showed the same shape (1 to 37,
+`report#2` x30, in the same window). Which of those raises it is not
+established; that it is not raised by the push, the rewrite or a built
+our-hit is measured (the count held through checks 7 to 11).
+
+**Route:** `route: inject`. Session 3's decision rule, step 4 (`typing`
+pass, `reach` pass, `inject-build` pass), as the owner's decision after
+Live 2 amends it. The design ships: the player build pushes one entry per
+enabled item and rewrites the record at `CreateItemNew`'s entry; the replace
+mode stays research build only, unused. What Live 3 established on top of
+Live 2: at `CreateItemNew`'s entry the record already carries `LootGroundCreate`'s
+`a`; a record rewritten there to the item's `a`, `b`, `c` 0 and `j` 0 keeps
+those values through the build; and the game builds and places one
+Headhunter (46 of 46) or Tyrant's Crown (11 of 11) per hit that falls to it,
+in place of the stand-in. Still not observed: a hit at the game's natural
+chance (the chance lever was at 1e9 throughout, and a natural hit is about
+one in several thousand rolls), and the player build's one-entry share, which
+is arithmetic on a reach measured at copies 200, not a measurement.
