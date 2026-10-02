@@ -1509,9 +1509,12 @@ nothing of it is quoted here.
   `ds_exists` with the list type, 2, and never on its kind, then handing the
   `ds_list_*` builtins the value as it was read: the route the pet loot
   collector already takes on a pet's `lootList` (it takes `ToDouble` only to
-  refuse a non-finite or negative handle, asks `ds_exists` with the `RValue`
-  it read, because a live ds handle can arrive as a reference, and passes
-  that same `RValue` to `ds_list_clear`). Building an entry with
+  refuse a handle that is unreadable, non-finite or negative, asks
+  `ds_exists` with the `RValue` it read, because a live ds handle can arrive
+  as a reference, and passes that same `RValue` to `ds_list_clear`). A value
+  `ToDouble` cannot convert is refused as `id unreadable` before `ds_exists`
+  is asked; that is a failed conversion, not a rule about kinds, and the
+  plugin names the kind in its refusal without ever testing it. Building an entry with
   `array_create` and `array_set`, as Session 3's push does. New on a list the
   game owns are `ds_list_add` and `ds_list_delete`; their first live use is
   Live 2 (`reach`, `off-removes`, `list-restored`).
@@ -1525,10 +1528,13 @@ research.
    requires, in order: an array whose `array_length` exceeds the index; the
    element at the index (read with `array_get`) a value that `ds_exists`
    confirms is a live `ds_list` (type 2, as the plugin's other list checks
-   spell it). No kind is required first: a ds container reads as
-   `ref ds_list` on this runner (`VALUE_REF`, `docs/RUNTIME_DATA_MODELS.md`
-   §5.4), so a number-only gate such as `SigNumber` would refuse the real
-   list. The element is passed to `ds_exists` and to every `ds_list_*` call
+   spell it). No kind is required first, and none is predicted: the kind of
+   `[5]` is not established until Live 2's dump prints it, and a ds container
+   can read as `ref ds_list` on this runner (`VALUE_REF`,
+   `docs/RUNTIME_DATA_MODELS.md` §5.4), so a number-only gate such as
+   `SigNumber` could refuse the real list. `ToDouble` is taken only to refuse
+   a value that is unreadable (the conversion throws), non-finite or
+   negative. The element is passed to `ds_exists` and to every `ds_list_*` call
    as it was read, ref or real, and two ids are compared by handle value
    (`ToDouble`), never by kind. Then a `ds_list_size` of at least `kSigListMinSize`, 10 (the old
    minimum length of 100, `kSigListMinLength`, is gone); and every entry, read
@@ -1538,10 +1544,18 @@ research.
    build keeps it in a variable the `at` lever sets. A stand-in's n counts its
    whole triple over the sub-list only. Each refusal is one reason naming the
    step: `Controller_obj.<name> is not an array`,
-   `has <L> elements, none at [<i>]`, `[<i>] is not a ds_list (kind=<k>)`
-   (naming the kind it read, so a refusal of a live ref is visible as one),
+   `has <L> elements, none at [<i>]`, `[<i>] array_get threw`,
+   `[<i>] is not a ds_list (kind=<kind>, <step>)`,
    `[<i>] has <s> entries, fewer than <min>` and
-   `[<i>] entry <k> is not three numbers`.
+   `[<i>] entry <k> is not three numbers`. In the `ds_list` refusal, `<kind>`
+   names the kind the element was read as (`real`, `int32`, `int64`, `bool`,
+   `string`, `struct`, `array`, `ptr`, `undefined`, `null` or `ref`, else
+   `kind<N>`) and `<step>` the step that refused it: `id unreadable`,
+   `id non-finite`, `id <value>` (a negative handle), `ds_exists threw` or
+   `ds_exists false`. The kind is reported, never checked, so a refusal of a
+   live reference reads as one. The held read-back compares two reads by
+   handle value, whatever kind each arrived as, and the dump's `ds_list=`
+   uses the same gate.
 2. **Push and remove.** Per copy the entry is built as before and appended
    with `ds_list_add`. Removal runs only while the tail check, now over
    `ds_list_size` and `ds_list_find_value`, says the last pushed entries are

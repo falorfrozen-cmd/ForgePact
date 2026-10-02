@@ -893,9 +893,9 @@ int main(int argc, char** argv) {
                 { "shape", [] { auto v = vanillaTriples(); setList(v); (*listVector())[5] = makeArray({ RValue(1.0), RValue(2.0) }); }, "uniqueLoot[5] entry 5 is not three numbers" },
                 { "short", [] { const auto all = vanillaTriples(); setList(std::vector<Triple>(all.end() - 5, all.end())); }, "uniqueLoot[5] has 5 entries, fewer than 10" },
                 { "no controller", [] { controllerCount = 0; }, "no live Controller_obj instance" },
-                { "flat", [] { setFlatList(vanillaTriples()); }, "uniqueLoot[5] is not a ds_list" },
+                { "flat", [] { setFlatList(vanillaTriples()); }, "uniqueLoot[5] is not a ds_list (kind=array, id unreadable)" },
                 { "five elements", [] { listVariable()->array->resize(5); }, "uniqueLoot has 5 elements, none at [5]" },
-                { "dangling id", [] { (*listVariable()->array)[5] = RValue(7.0); }, "uniqueLoot[5] is not a ds_list" },
+                { "dangling id", [] { (*listVariable()->array)[5] = RValue(7.0); }, "uniqueLoot[5] is not a ds_list (kind=real, ds_exists false)" },
             };
             for (const Case& c : cases) {
                 reset();
@@ -1164,13 +1164,18 @@ int main(int argc, char** argv) {
         } else if (test == "layout_refusals") {
             // Every step of the nested resolution refuses with its own reason, and the variable is
             // left exactly as found: the old fixture (a flat array of triples), an outer array of
-            // five elements, an element 5 that is a number with no live ds_list, a ds_list with a
-            // non-triple entry, a variable that is no array, a sub-list shorter than the minimum.
+            // five elements, an element 5 that is a number with no live ds_list, a string, or a
+            // reference ds_exists turns away, a ds_list with a non-triple entry, a variable that is
+            // no array, a sub-list shorter than the minimum.  Each ds_list refusal names the kind
+            // the element arrived as and the step that refused it; the kind decides nothing.
             struct Case { const char* name; void (*arrange)(); const char* why; };
             const Case cases[] = {
-                { "flat array of triples", [] { setFlatList(vanillaTriples()); }, "Controller_obj.uniqueLoot[5] is not a ds_list" },
+                { "flat array of triples", [] { setFlatList(vanillaTriples()); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=array, id unreadable)" },
                 { "five elements", [] { listVariable()->array->resize(5); }, "Controller_obj.uniqueLoot has 5 elements, none at [5]" },
-                { "number with no ds_list", [] { (*listVariable()->array)[5] = RValue(7.0); }, "Controller_obj.uniqueLoot[5] is not a ds_list" },
+                { "number with no ds_list", [] { (*listVariable()->array)[5] = RValue(7.0); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=real, ds_exists false)" },
+                { "string", [] { (*listVariable()->array)[5] = RValue("7"); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=string, id unreadable)" },
+                { "reference with no ds_list", [] { RValue r(7.0); r.m_Kind = VALUE_REF; (*listVariable()->array)[5] = r; },
+                  "Controller_obj.uniqueLoot[5] is not a ds_list (kind=ref, ds_exists false)" },
                 { "non-triple entry", [] { (*listVector())[3] = makeArray({ RValue(1.0), RValue(2.0) }); }, "Controller_obj.uniqueLoot[5] entry 3 is not three numbers" },
                 { "not an array", [] { controllerVars[kModelListName] = RValue(3.0); }, "Controller_obj.uniqueLoot is not an array" },
                 { "short", [] { setList({ { 3, 1, 0 }, { 3, 1, 1 }, { 8, 0, 51 } }); }, "Controller_obj.uniqueLoot[5] has 3 entries, fewer than 10" },

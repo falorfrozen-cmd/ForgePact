@@ -159,7 +159,7 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', resolve)
 
     def test_the_list_is_the_ds_list_at_the_index(self):
-        # Replan 2: the variable is an array of six ds_list ids and the roll draws from element 5
+        # Replan 2: the variable is an array of six elements and the roll draws from element 5, a ds_list
         # (static reading); the outer array is never the list. The player build reads the
         # constant index, the research build the `at` lever's variable.
         self.assertIn("static const int kAngelicListIndex = 5;", self.shipped_code)
@@ -195,9 +195,13 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertLess(handle.index("v.ToDouble()"), handle.index('"ds_exists"'),
                         "only a value that can be a handle is handed to ds_exists")
         self.assertIn('why = "kind=" + kind + ", " + step;', handle, "the ds_list refusal names the kind it got")
-        # A ds_list handle may arrive as a number or a reference: a set of kinds, not one.
-        for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64", "VALUE_REF"):
-            self.assertIn(kind, handle)
+        # The gate is kind-free: a ds_list handle may arrive as a number or a reference, and
+        # lootListUnique[5]'s kind is not measured, so the kind is only named in the refusal.
+        # Outside `refuse`'s diagnostic the function reads no m_Kind at all.
+        diag = handle.index("const auto refuse")
+        diag_end = handle.index("\n    };", diag)
+        gate = strip_comments(handle[:diag] + handle[diag_end:])
+        self.assertNotIn("m_Kind", gate, "no kind check decides whether ds_exists is asked")
 
     # ---- the injection: per roll, under a scope guard inside the roll's hook ------------
 
