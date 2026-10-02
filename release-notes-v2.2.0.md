@@ -58,12 +58,12 @@ to a bug report.
   or play running two and a half times slower than usual for a couple of
   seconds), ForgePact notices and saves a report folder under
   `bp_ipc\reports\` in the game's `bin` folder. A freeze report names the
-  ForgePact hook and the ForgePact mod the game was inside when it stopped;
-  an FPS-drop report shows how much of each frame each ForgePact mod took and
-  which mods were on; both say which room you were in. A few of ForgePact's
-  low-level hooks cannot be named this way, so a report that says `none`
-  does not clear ForgePact: it means only that none of the hooks it can name
-  was running. A crash report cannot say what was running, because the crash
+  ForgePact hook the game was inside when it stopped, and the mod as well
+  when it is one of the mods that keep time for these reports; an FPS-drop
+  report shows which mods were on and how much of each frame those mods
+  took; both say which room you were in. Not every ForgePact hook can be
+  named, so a report that says `none` does not clear ForgePact: it means
+  only that none of the hooks it can name was running. A crash report cannot say what was running, because the crash
   is found after the game has closed. A zone or character load that stops
   the game for a few seconds is not reported as a freeze. Every report also
   holds your ForgePact settings, the list of installed mod files and your
