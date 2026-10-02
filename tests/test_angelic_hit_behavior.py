@@ -135,7 +135,7 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'both_on_equal_share', 'miss_never_spawns',
             'spawn_at_roll_position_with_monster_self', 'hit_in_extra_roll_counts',
             'switch_off_after_on_passes_through', 'original_throw_lowers_roll_flag',
-            'install_is_idempotent',
+            'install_is_idempotent', 'detection_not_detoured_never_arms',
         ))
 
 
