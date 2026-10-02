@@ -13,7 +13,10 @@
 //     does single-writer atomic stores: IncidentScope around each mod's hook
 //     body or tick adds its time to that mod's per-frame counter and marks it
 //     as the mod the frame thread is in; OnFrame, once a frame, moves the
-//     counters into a ring of the last kRingFrames frames.
+//     counters into a ring of the last kRingFrames frames. A mod is charged
+//     only for ForgePact's own code (the owner, 2026-10-02): a hook body's
+//     call into the game's original runs inside FP_GAME_ORIGINAL, which pauses
+//     whichever clock is running, and every row is self time.
 //   * Separately, the hook installers hand the game a TaggedThunks thunk
 //     instead of each hook body: it stores the hook's id as the hook the
 //     frame thread is in, calls the body and puts the previous id back. No
@@ -105,7 +108,7 @@ inline constexpr char kMonitorRunningLine[] = "incident: monitor running";
 
 enum class Mod : uint8_t {
     none,          // no ForgePact code on the frame thread
-    frame,         // FrameCallback's whole body, the mods it calls included
+    frame,         // FrameCallback's own code, outside the named mods it calls
     density,       // DensityCopiesTick, and DoMultiCreate (sampled)
     mapreveal,     // MapRevealManager::OnFrame and the pack markers
     drops,         // DropRelic and the dropmult hooks
@@ -128,6 +131,21 @@ inline const char* ModName(Mod m) noexcept
     };
     const size_t i = static_cast<size_t>(m);
     return i < kModCount ? names[i] : "none";
+}
+
+// The in-mod channel as one value: the innermost mod, and whether the frame
+// thread is inside a game original that mod's hook wraps.
+struct InModState {
+    Mod mod = Mod::none;
+    bool gameOriginal = false;
+};
+
+inline constexpr char kGameOriginalMark[] = " (game original)";
+
+// "hudlabels", or "hudlabels (game original)" inside the guard.
+inline std::string InModText(Mod m, bool gameOriginal)
+{
+    return std::string(ModName(m)) + (gameOriginal && m != Mod::none ? kGameOriginalMark : "");
 }
 
 // ---- clock ---------------------------------------------------------------------
@@ -178,15 +196,58 @@ public:
         a.store(a.load(std::memory_order_relaxed) + ticks, std::memory_order_relaxed);
     }
 
-    // Channel 2: the mod, set by the named scopes.
-    Mod Enter(Mod m) noexcept
+    // Channel 2: the mod, set by the named scopes, and the game-original mark,
+    // set by the guard. One byte, so the monitor reads both at once; a scope
+    // entered inside the guard is our own code again and clears the mark.
+    uint8_t Enter(Mod m) noexcept
     {
-        const Mod previous = m_InMod.load(std::memory_order_relaxed);
-        m_InMod.store(m, std::memory_order_relaxed);
+        const uint8_t previous = m_InMod.load(std::memory_order_relaxed);
+        m_InMod.store(static_cast<uint8_t>(m), std::memory_order_relaxed);
         return previous;
     }
 
-    void Leave(Mod previous) noexcept { m_InMod.store(previous, std::memory_order_relaxed); }
+    uint8_t EnterGameOriginal() noexcept
+    {
+        const uint8_t previous = m_InMod.load(std::memory_order_relaxed);
+        m_InMod.store(static_cast<uint8_t>(previous | kGameOriginalBit), std::memory_order_relaxed);
+        return previous;
+    }
+
+    void Leave(uint8_t previous) noexcept { m_InMod.store(previous, std::memory_order_relaxed); }
+
+    // The one ForgePact clock running on the frame thread: whose it is, when
+    // it last started, and how many calls each of its ticks stands for
+    // (kSampleEvery for a sampled call). `start` zero: none is running, as
+    // inside the guard or outside every scope.
+    struct Clock {
+        Mod mod = Mod::none;
+        int64_t start = 0;
+        int64_t weight = 1;
+    };
+
+    Clock RunningClock() const noexcept
+    {
+        return { m_ClockMod.load(std::memory_order_relaxed), m_ClockStart.load(std::memory_order_relaxed),
+                 m_ClockWeight.load(std::memory_order_relaxed) };
+    }
+
+    // Charges the running clock's mod up to `now` and stops it.
+    void StopClock(int64_t now) noexcept
+    {
+        const int64_t start = m_ClockStart.load(std::memory_order_relaxed);
+        if (!start) return;
+        Add(m_ClockMod.load(std::memory_order_relaxed), (now - start) * m_ClockWeight.load(std::memory_order_relaxed));
+        m_ClockStart.store(0, std::memory_order_relaxed);
+    }
+
+    // Starts `c`'s mod running from `now`; a clock that was not running stays stopped.
+    void StartClock(const Clock& c, int64_t now) noexcept
+    {
+        if (!c.start) return;
+        m_ClockMod.store(c.mod, std::memory_order_relaxed);
+        m_ClockWeight.store(c.weight, std::memory_order_relaxed);
+        m_ClockStart.store(now, std::memory_order_relaxed);
+    }
 
     // Channel 1: the hook, set by the installer's thunks. The id is a slot's
     // own buffer or a string literal, never a temporary, so the monitor
@@ -236,7 +297,12 @@ public:
     }
 
     // ---- any thread.
-    Mod InMod() const noexcept { return m_InMod.load(std::memory_order_relaxed); }
+    Mod InMod() const noexcept { return InModNow().mod; }
+    InModState InModNow() const noexcept
+    {
+        const uint8_t v = m_InMod.load(std::memory_order_relaxed);
+        return { static_cast<Mod>(v & ~kGameOriginalBit), (v & kGameOriginalBit) != 0 };
+    }
     const char* InHookId() const noexcept { return m_InHookId.load(std::memory_order_relaxed); }   // nullptr: none
     unsigned HooksTagged() const noexcept { return m_HooksTagged.load(std::memory_order_relaxed); }
     unsigned HooksUntagged() const noexcept { return m_HooksUntagged.load(std::memory_order_relaxed); }
@@ -284,9 +350,14 @@ private:
         std::atomic<int64_t> mod[kModCount]{};
     };
 
+    static constexpr uint8_t kGameOriginalBit = 0x80;
+
     std::atomic<int64_t> m_Mod[kModCount]{};
     std::atomic<uint32_t> m_Calls[kModCount]{};
-    std::atomic<Mod> m_InMod{ Mod::none };
+    std::atomic<uint8_t> m_InMod{ 0 };   // a Mod, with kGameOriginalBit inside the guard
+    std::atomic<Mod> m_ClockMod{ Mod::none };
+    std::atomic<int64_t> m_ClockStart{ 0 };
+    std::atomic<int64_t> m_ClockWeight{ 1 };
     std::atomic<const char*> m_InHookId{ nullptr };
     std::atomic<unsigned> m_HooksTagged{ 0 };
     std::atomic<unsigned> m_HooksUntagged{ 0 };
@@ -300,48 +371,116 @@ private:
 inline constinit Accounting g_Accounting;
 static_assert(std::is_trivially_destructible_v<Accounting>, "the accounting must have nothing to run at exit");
 
-// One mod's time on the frame thread. Same-mod nesting (a dropmult hook the
-// game calls from another) is counted once; `frame` contains the per-frame
-// mods it calls, so the table reads it as the total.
+// One mod's own time on the frame thread. Every row is self time: a scope
+// pauses the clock of the scope it runs in (another mod's, or `frame`'s) and
+// restarts it when it ends, so `frame` is FrameCallback's own code and the
+// rows add up to ForgePact's total. Same-mod nesting (a dropmult hook the game
+// calls from another) is counted once while that mod's clock runs; inside the
+// guard below no clock runs, so a hook the game calls from inside a wrapped
+// original times its own code.
 class IncidentScope {
 public:
     explicit IncidentScope(Mod m) noexcept
-        : m_Mod(m), m_Previous(g_Accounting.Enter(m)), m_Start(m_Previous == m ? 0 : Qpc()) {}
+        : m_Previous(g_Accounting.Enter(m)), m_Outer(g_Accounting.RunningClock())
+    {
+        if (m_Outer.start && m_Outer.mod == m) return;
+        const int64_t now = Qpc();
+        g_Accounting.StopClock(now);
+        g_Accounting.StartClock({ m, now, 1 }, now);
+        m_Timing = true;
+    }
     ~IncidentScope()
     {
-        if (m_Start) g_Accounting.Add(m_Mod, Qpc() - m_Start);
+        if (m_Timing) {
+            const int64_t now = Qpc();
+            g_Accounting.StopClock(now);
+            g_Accounting.StartClock(m_Outer, now);
+        }
         g_Accounting.Leave(m_Previous);
     }
     IncidentScope(const IncidentScope&) = delete;
     IncidentScope& operator=(const IncidentScope&) = delete;
 
 private:
-    Mod m_Mod;
-    Mod m_Previous;
-    int64_t m_Start;
+    uint8_t m_Previous;
+    Accounting::Clock m_Outer;
+    bool m_Timing = false;
 };
 
 // The same for a body called far more often than once a frame (DoMultiCreate):
 // one call in kSampleEvery is timed and counted kSampleEvery times. The mod
-// is set on every call.
+// is set on every call. An untimed call still pauses another mod's running
+// clock; outside every clock it reads no clock at all.
 class IncidentSampledScope {
 public:
     explicit IncidentSampledScope(Mod m) noexcept
-        : m_Mod(m), m_Previous(g_Accounting.Enter(m)),
-          m_Start(m_Previous != m && g_Accounting.TakeSample(m) ? Qpc() : 0) {}
+        : m_Previous(g_Accounting.Enter(m)), m_Outer(g_Accounting.RunningClock())
+    {
+        if (m_Outer.start && m_Outer.mod == m) return;
+        const bool sampled = g_Accounting.TakeSample(m);
+        if (!sampled && !m_Outer.start) return;
+        const int64_t now = Qpc();
+        g_Accounting.StopClock(now);
+        if (sampled) g_Accounting.StartClock({ m, now, static_cast<int64_t>(kSampleEvery) }, now);
+        m_Active = true;
+    }
     ~IncidentSampledScope()
     {
-        if (m_Start) g_Accounting.Add(m_Mod, (Qpc() - m_Start) * static_cast<int64_t>(kSampleEvery));
+        if (m_Active) {
+            const int64_t now = Qpc();
+            g_Accounting.StopClock(now);
+            g_Accounting.StartClock(m_Outer, now);
+        }
         g_Accounting.Leave(m_Previous);
     }
     IncidentSampledScope(const IncidentSampledScope&) = delete;
     IncidentSampledScope& operator=(const IncidentSampledScope&) = delete;
 
 private:
-    Mod m_Mod;
-    Mod m_Previous;
-    int64_t m_Start;
+    uint8_t m_Previous;
+    Accounting::Clock m_Outer;
+    bool m_Active = false;
 };
+
+// ---- the guard: the game's own work is not ours ------------------------------
+
+// Around one call into the game's original from a hook body (the trampoline,
+// the multiplier's extra calls, a density copy): pauses whichever ForgePact
+// clock is running on the frame thread, whichever scope started it, and
+// restarts it after, so the original's time is charged to no mod (the owner,
+// 2026-10-02). Reads the clock only when one is running. The in-mod channel
+// keeps the mod and carries the game-original mark meanwhile; a freeze there
+// reads "in-mod hudlabels (game original)".
+class GameOriginalGuard {
+public:
+    GameOriginalGuard() noexcept : m_Previous(g_Accounting.EnterGameOriginal()), m_Paused(g_Accounting.RunningClock())
+    {
+        if (m_Paused.start) g_Accounting.StopClock(Qpc());
+    }
+    ~GameOriginalGuard()
+    {
+        if (m_Paused.start) g_Accounting.StartClock(m_Paused, Qpc());
+        g_Accounting.Leave(m_Previous);
+    }
+    GameOriginalGuard(const GameOriginalGuard&) = delete;
+    GameOriginalGuard& operator=(const GameOriginalGuard&) = delete;
+
+private:
+    uint8_t m_Previous;
+    Accounting::Clock m_Paused;
+};
+
+template <typename Call>
+decltype(auto) GameOriginal(Call&& call)
+{
+    const GameOriginalGuard guard;
+    return call();
+}
+
+// What a scoped hook body wraps each call into the game's original in:
+// `RValue& r = FP_GAME_ORIGINAL(g_Orig_X(S, O, R, argc, A));`. The value and
+// its reference-ness are the call's own.
+#define FP_GAME_ORIGINAL(call) ::ForgePact::Incident::GameOriginal([&]() -> decltype(auto) { return call; })
 
 // ---- the in-hook id: which hook the frame thread is in ----------------------
 
@@ -484,9 +623,11 @@ struct Episode {
     double duringMs = 0.0;    // median frame during it
     double seconds = 0.0;     // how long it lasted when it was reported
     // Freeze: where the frame thread was when the gap crossed kFreezeMs - the
-    // innermost tagged hook (empty: none) and the innermost timed mod.
+    // innermost tagged hook (empty: none) and the innermost timed mod, and
+    // whether that mod was inside a game original its hook wraps.
     std::string inHook;
     Mod inMod = Mod::none;
+    bool inGameOriginal = false;
     std::vector<ModCost> cost;  // per mod over the episode's frames, costliest first
 };
 
@@ -500,7 +641,8 @@ struct Inputs {
     bool windowAlive = true;      // the game's window exists and is shown
     double roomChangeMs = -1.0;   // the newest room change the frame thread saw; below zero for none
     const char* inHookId = nullptr;   // Accounting::InHookId(): a literal or a slot's buffer
-    Mod inMod = Mod::none;
+    Mod inMod = Mod::none;            // Accounting::InModNow(), both halves
+    bool inGameOriginal = false;
 };
 
 namespace detail {
@@ -624,6 +766,7 @@ public:
                 m_Freeze.kind = Kind::freeze;
                 m_Freeze.inHook = in.inHookId ? in.inHookId : "";
                 m_Freeze.inMod = in.inMod;
+                m_Freeze.inGameOriginal = in.inGameOriginal;
                 m_Freeze.baselineMs = BaselineBefore(m_History.size(), 1);
             }
             if (m_InFreeze && !m_FreezeReported && in.nowMs - m_FreezeFromMs >= kFreezeHoldMs) {
@@ -1170,11 +1313,12 @@ inline std::vector<std::string> ReportsToRemove(std::vector<std::string> names, 
     return ours;
 }
 
-// The costliest mod, `frame` (the total) left out: "density 3.2 ms/frame".
+// The costliest mod: "density 3.2 ms/frame". Every row is self time, so
+// `frame` (FrameCallback's own code) is ranked like any other.
 inline std::string TopMod(const std::vector<ModCost>& cost)
 {
     for (const ModCost& c : cost)
-        if (c.mod != Mod::frame && c.mod != Mod::none) return std::string(ModName(c.mod)) + " " + Fixed(c.avgMs, 1) + " ms/frame";
+        if (c.mod != Mod::none) return std::string(ModName(c.mod)) + " " + Fixed(c.avgMs, 1) + " ms/frame";
     return "none";
 }
 
@@ -1197,7 +1341,7 @@ inline std::string PerfLine(const Episode& e, const std::string& room)
 inline std::string FreezeLine(const Episode& e)
 {
     return "FREEZE " + Fixed(e.seconds, 0) + " s without a frame | in-hook " + (e.inHook.empty() ? std::string("none") : e.inHook)
-           + " | in-mod " + ModName(e.inMod);
+           + " | in-mod " + InModText(e.inMod, e.inGameOriginal);
 }
 
 inline std::string FreezeEndedLine(double ms, bool load)
@@ -1260,7 +1404,7 @@ inline std::string ReportJson(const ReportFacts& f)
     std::string inHook = "null", inMod = "null";
     if (kind == Kind::freeze) {
         inHook = JsonString(e.inHook.empty() ? std::string("none") : e.inHook);
-        inMod = JsonString(ModName(e.inMod));
+        inMod = JsonString(InModText(e.inMod, e.inGameOriginal));
     } else if (kind == Kind::crash) {
         inHook = inMod = JsonString("unknown");
     }
@@ -1346,6 +1490,7 @@ struct StatFacts {
     bool window = false;           // the game's window was found: without it, no freeze is detected
     std::string inHook;            // empty: none
     Mod inMod = Mod::none;
+    bool inGameOriginal = false;   // inside a game original the mod's hook wraps
     unsigned episodes = 0;
     unsigned suppressed = 0;
     unsigned quiet = 0;
@@ -1371,7 +1516,8 @@ inline std::vector<std::string> StatLines(const StatFacts& s)
                     + " ms | slow judged frames " + std::to_string(s.slowJudged)
                     + " | watching " + (s.armed ? "yes" : "not yet (start-up)") + " | grace " + (s.grace ? "yes" : "no")
                     + " | focus " + (s.focused ? "yes" : "no") + " | window " + (s.window ? "yes" : "no")
-                    + " | in-hook " + (s.inHook.empty() ? std::string("none") : s.inHook) + " | in-mod " + ModName(s.inMod));
+                    + " | in-hook " + (s.inHook.empty() ? std::string("none") : s.inHook) + " | in-mod "
+                    + InModText(s.inMod, s.inGameOriginal));
     lines.push_back("incident: episodes " + std::to_string(s.episodes) + ", held back " + std::to_string(s.suppressed)
                     + ", ignored near a room change or unfocused " + std::to_string(s.quiet)
                     + " | reports written " + std::to_string(s.bundles)

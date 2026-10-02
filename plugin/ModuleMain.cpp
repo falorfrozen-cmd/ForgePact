@@ -1445,7 +1445,7 @@ static void DensityCopiesTick(){
         try{
             ForgePact::PopulationNativeScope measured(true);
             measured.SetObject(args[3].ToDouble());
-            RValue result;orig(result,self,other,4,args);
+            RValue result;FP_GAME_ORIGINAL(orig(result,self,other,4,args));
             ++g_DensityCopyCompleted;BP_DIAG_INCREMENT(g_ExtraCreators);g_DensityCopyReason.clear();
             // One copy at a time as the player walks: counted into its pack
             // marker family, so the markers' growth poll does not re-list
@@ -1633,7 +1633,7 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
                 if (isCreator)
                     RememberDensityPlacement(MakeDensityPlacementKey(objIdx, a.data(), argc));
                 RValue tmp;
-                orig(tmp, S, O, argc, a.data());
+                FP_GAME_ORIGINAL(orig(tmp, S, O, argc, a.data()));
                 if (isCreator) BP_DIAG_INCREMENT(g_ExtraCreators);
                 else BP_DIAG_INCREMENT(g_ExtraEnemies);
             } catch (...) {}
@@ -1641,7 +1641,7 @@ static void DoMultiCreate(TRoutine orig, RValue& Result, CInstance* S, CInstance
     }
     {
         SpecialCreateScope specialScope(ozelIcerik);
-        orig(Result, S, O, argc, Args);
+        FP_GAME_ORIGINAL(orig(Result, S, O, argc, Args));
     }
 #ifndef FORGEPACT_RELEASE
     PostCreateCheck(objIdx, Result, Args, argc);
@@ -7530,7 +7530,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
 #ifndef FORGEPACT_RELEASE
     TgProbeNoteDrawHudBuffs(S, O, argc, A);
 #endif
-    RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;
+    RValue& r = g_Orig_DrawHudBuffs ? FP_GAME_ORIGINAL(g_Orig_DrawHudBuffs(S, O, R, argc, A)) : R;
     ++g_HhHudCalls;
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
@@ -17361,14 +17361,14 @@ static int g_mult_DropRelic = 1;
 // DropRelic either. The filter is Hook_GetRelicQuest below.
 static RValue& Hook_DropRelic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
     IncidentScope incidentScope(IncidentMod::drops);
-    if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? g_Orig_DropRelic(S,O,R,argc,A) : R;
+    if (HeroSiege::RewardScope::Active()) return g_Orig_DropRelic ? FP_GAME_ORIGINAL(g_Orig_DropRelic(S,O,R,argc,A)) : R;
     BP_DIAG_INCREMENT(g_cnt_DropRelic);
 
     for (int i = 1; i < g_mult_DropRelic; i++) {
         RValue t;
-        if (g_Orig_DropRelic) g_Orig_DropRelic(S, O, t, argc, A);
+        if (g_Orig_DropRelic) FP_GAME_ORIGINAL(g_Orig_DropRelic(S, O, t, argc, A));
     }
-    RValue& _res = g_Orig_DropRelic ? g_Orig_DropRelic(S, O, R, argc, A) : R;
+    RValue& _res = g_Orig_DropRelic ? FP_GAME_ORIGINAL(g_Orig_DropRelic(S, O, R, argc, A)) : R;
 
     BP_LOGDROP("DropRelic", _res, argc, A);
     return _res;
@@ -42622,9 +42622,9 @@ static void FrameProfilerTick()
 // load: the previous session's part of out.txt lacks the line
 // ForgePact::Incident::g_ShutdownMarker writes on a normal exit (from the
 // ExitProcess hook below, or else its own destructor). The panel adds what it
-// saw (bp_ipc\exit.json) and is the one that shows a toast; without a live
-// panel, a freeze or crash gets a MessageBoxW from here instead. PERF never
-// does.
+// saw (bp_ipc\exit.json) and lists every report. Nothing here, or in the
+// panel, notifies the player of any report (the owner, 2026-10-02): no
+// message box, no toast.
 
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
@@ -42797,7 +42797,8 @@ static ForgePact::Incident::SystemFacts IncidentSystemFacts()
 }
 
 // The panel's bp_ipc\panel.json ({"version", "pid"}): its version when it
-// wrote one, and whether that panel is still running.
+// wrote one, for the report, and whether that panel is still running. Nothing
+// decides on a notice from it: no report notifies the player.
 static bool IncidentPanelLive(std::string* version)
 {
     bool found = false;
@@ -42812,31 +42813,6 @@ static bool IncidentPanelLive(std::string* version)
     const bool live = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
     CloseHandle(process);
     return live;
-}
-
-static DWORD WINAPI IncidentNotifyThread(LPVOID text)
-{
-    auto* message = static_cast<std::wstring*>(text);
-    MessageBoxW(nullptr, message->c_str(), L"ForgePact", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
-    delete message;
-    return 0;
-}
-
-// A freeze or a crash, when no panel is running to show its toast. On a
-// thread of its own, so the box waiting for a click never stops the monitor.
-static void IncidentNotify(const std::string& what, const std::string& dir)
-{
-    if (IncidentPanelLive(nullptr)) return;
-    const std::string text = what + "\n\nForgePact saved a report you can attach to a bug report:\n"
-                             + IPC_DIR + "\\" + dir + "\n\nNothing is uploaded.";
-    const int n = MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, nullptr, 0);
-    if (n <= 0) return;
-    auto* message = new std::wstring(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_ACP, 0, text.c_str(), -1, message->data(), n);
-    message->resize(static_cast<size_t>(n - 1));
-    const HANDLE thread = CreateThread(nullptr, 0, &IncidentNotifyThread, message, 0, nullptr);
-    if (thread) CloseHandle(thread);
-    else delete message;
 }
 
 // Writes one bundle, bp_ipc\reports\<utc>_<kind>\, and keeps the newest
@@ -42922,8 +42898,6 @@ static void IncidentOnEpisode(const ForgePact::Incident::Episode& e, double nowM
     monitor.bundles.Wrote(e.kind, nowMs);
     monitor.lastReport = dir;
     OutRaw(inc::ReportWrittenLine(dir, failed));
-    if (e.kind == inc::Kind::freeze)
-        IncidentNotify("Hero Siege stopped drawing frames for " + inc::Fixed(e.seconds, 0) + " seconds.", dir);
 }
 
 // D9: did the previous session end cleanly? Once, kCrashCheckDelayMs after
@@ -42973,7 +42947,6 @@ static void IncidentCrashCheck()
     monitor.bundles.Wrote(inc::Kind::crash, 0.0);
     monitor.lastReport = dir;
     OutRaw(inc::ReportWrittenLine(dir, failed));
-    IncidentNotify("Hero Siege did not close normally last time.", dir);
 }
 
 // The game's main window: visible, not owned, not a console.
@@ -43034,7 +43007,9 @@ static void IncidentMonitorRun() noexcept
                 in.windowAlive = window && IsWindowVisible(window);
                 in.roomChangeMs = monitor.RoomChangeMs();
                 in.inHookId = inc::g_Accounting.InHookId();
-                in.inMod = inc::g_Accounting.InMod();
+                const inc::InModState where = inc::g_Accounting.InModNow();
+                in.inMod = where.mod;
+                in.inGameOriginal = where.gameOriginal;
                 for (int i = 0; i < 4; ++i) {
                     const inc::Episode e = monitor.detector.Analyze(in);
                     if (e.kind == inc::Kind::none) break;
@@ -43061,6 +43036,7 @@ static void IncidentMonitorRun() noexcept
                 stat.window = window != nullptr;   // without it, no freeze is detected
                 stat.inHook = in.inHookId ? in.inHookId : "";
                 stat.inMod = in.inMod;
+                stat.inGameOriginal = in.inGameOriginal;
                 stat.episodes = monitor.detector.Episodes();
                 stat.suppressed = monitor.detector.Suppressed();
                 stat.quiet = monitor.detector.Quiet();

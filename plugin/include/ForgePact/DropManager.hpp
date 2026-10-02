@@ -8,11 +8,15 @@
 // counted as `drops`, one line at the top of each body. tests/
 // drop_gold_harness.cpp splices this header without its #include lines, and
 // so without IncidentMonitor.hpp: there the scope compiles to nothing. The
-// plugin always has the real one.
+// plugin always has the real one. Every call into the game's original runs
+// inside FP_DROP_GAME_ORIGINAL, so `drops` counts only our own code (the
+// owner, 2026-10-02); without the header it is the bare call.
 #ifdef FORGEPACT_INCIDENT_MONITOR_HPP
 #define FP_DROP_INCIDENT_SCOPE() ::ForgePact::Incident::IncidentScope incidentScope(::ForgePact::Incident::Mod::drops)
+#define FP_DROP_GAME_ORIGINAL(call) FP_GAME_ORIGINAL(call)
 #else
 #define FP_DROP_INCIDENT_SCOPE() ((void)0)
+#define FP_DROP_GAME_ORIGINAL(call) (call)
 #endif
 
 namespace ForgePact {
@@ -174,8 +178,8 @@ private:
         BP_ANGELIC_PROBE_SCOPE(#NAME, S, argc, A); \
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Cnt_##NAME); \
-        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_##NAME; i < n; i++) { RValue t; if (mgr.m_Orig_##NAME) mgr.m_Orig_##NAME(S, O, t, argc, A); } \
-        RValue& _res = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_##NAME; i < n; i++) { RValue t; if (mgr.m_Orig_##NAME) FP_DROP_GAME_ORIGINAL(mgr.m_Orig_##NAME(S, O, t, argc, A)); } \
+        RValue& _res = mgr.m_Orig_##NAME ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_##NAME(S, O, R, argc, A)) : R; \
         BP_LOGDROP(#NAME, _res, argc, A); \
         return _res; \
     }
@@ -269,7 +273,7 @@ private:
         const RValue* amount = (A && argc > kDropGoldAmountArg) ? A[kDropGoldAmountArg] : nullptr;
         if (mult <= 1 || !mgr.m_Orig_DropGold) {
             if (mgr.m_Orig_DropGold) LogGoldCoin(mgr, mult, argc, A, amount);
-            RValue& _res = mgr.m_Orig_DropGold ? mgr.m_Orig_DropGold(S, O, R, argc, A) : R;
+            RValue& _res = mgr.m_Orig_DropGold ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, A)) : R;
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
         }
@@ -288,7 +292,7 @@ private:
                     + "; the coin keeps the game's amount");
             }
             LogGoldCoin(mgr, mult, argc, A, amount);
-            RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, A);
+            RValue& _res = FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, A));
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
         }
@@ -308,7 +312,7 @@ private:
                 + GoldNum(value) + " -> " + GoldNum(scaled.ToDouble()));
         }
         LogGoldCoin(mgr, mult, argc, A, &scaled);
-        RValue& _res = mgr.m_Orig_DropGold(S, O, R, argc, args.data());
+        RValue& _res = FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, args.data()));
         BP_LOGDROP("DropGold", _res, argc, args.data());
         return _res;
     }
@@ -321,7 +325,7 @@ private:
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropMonsterGold);
         // Once, whatever the multiplier: its one coin is scaled in DropGold.
-        RValue& _res = mgr.m_Orig_DropMonsterGold ? mgr.m_Orig_DropMonsterGold(S, O, R, argc, A) : R;
+        RValue& _res = mgr.m_Orig_DropMonsterGold ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropMonsterGold(S, O, R, argc, A)) : R;
         BP_LOGDROP("DropMonsterGold", _res, argc, A);
         return _res;
     }
@@ -338,8 +342,8 @@ private:
         FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropKeys);
-        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropKeys; i < n; i++) { RValue t; if (mgr.m_Orig_DropKeys) mgr.m_Orig_DropKeys(S, O, t, argc, A); }
-        RValue& _res = mgr.m_Orig_DropKeys ? mgr.m_Orig_DropKeys(S, O, R, argc, A) : R;
+        for (int i = 1, n = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropKeys; i < n; i++) { RValue t; if (mgr.m_Orig_DropKeys) FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropKeys(S, O, t, argc, A)); }
+        RValue& _res = mgr.m_Orig_DropKeys ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropKeys(S, O, R, argc, A)) : R;
         BP_LOGDROP("DropKeys", _res, argc, A);
 #ifndef FORGEPACT_RELEASE
         // Hangi anahtar secildi, neden - kullanici gozlemi: yalnizca Chaos/Basic/Crystal dusuyor.

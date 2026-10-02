@@ -13,6 +13,8 @@ player-build hook installer tags its hook with the in-hook id (D8), and
 `incident stat` reports what the monitor judged and tagged (D16), whose first
 line the live checks look for. out.txt has one writer at a time. The keys the
 plugin reads from the panel's files are the shared fixture's and the panel's.
+Every call into the game's original from a timed body sits inside the guard,
+and the plugin shows the player no notice of any report.
 """
 import json
 import re
@@ -43,6 +45,70 @@ def read(path):
 
 def code_lines(body):
     return [line.strip() for line in strip_comments(body).splitlines() if line.strip()]
+
+
+# A call into the game's original from a hook body: the trampoline a hook
+# installer handed back (g_Orig_<Name>, DropManager's m_Orig_<Name> and the
+# macro's m_Orig_##NAME) or a routine passed in as `orig`.
+ORIGINAL_CALL = re.compile(r"\b(?:g_Orig_\w+|m_Orig_\w*(?:##\w+)?|orig)\s*\(")
+# The guard that pauses ForgePact's clock around one such call.
+GUARD_CALL = re.compile(r"\b(?:FP_GAME_ORIGINAL|FP_DROP_GAME_ORIGINAL)\s*\(")
+
+
+def matching_paren(code, open_index):
+    depth = 0
+    for index in range(open_index, len(code)):
+        if code[index] == "(":
+            depth += 1
+        elif code[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    raise AssertionError("unbalanced parenthesis at " + code[open_index:open_index + 80])
+
+
+def scoped_bodies(code, scope, header):
+    """{name: body} for every function body in `code` that opens `scope`.
+
+    The body is the brace block after the nearest line before the scope that
+    matches `header` (a function's first line), so a scope opened inside a
+    nested block (FrameCallback's) yields the whole function."""
+    bodies = {}
+    lines = list(re.finditer(r"[^\n]*\n?", code))
+    for found in re.finditer(scope, code):
+        start = None
+        for line in lines:
+            if line.start() > found.start():
+                break
+            if re.match(header, line.group(0)):
+                start = line.start()
+        if start is None:
+            raise AssertionError("no function encloses " + code[found.start():found.start() + 80])
+        brace = code.index("{", start)
+        depth = 0
+        for index in range(brace, len(code)):
+            if code[index] == "{":
+                depth += 1
+            elif code[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        if not brace < found.start() < index:
+            raise AssertionError("the scope is outside the body found for it: " + code[start:start + 80])
+        name = re.search(r"([A-Za-z_]\w*(?:##\w+)?)\s*\(", code[start:brace]).group(1)
+        bodies[name] = code[brace + 1:index]
+    return bodies
+
+
+def unguarded_original_calls(body):
+    """Each game-original call in `body` that no guard's parentheses enclose."""
+    code = strip_comments(body)
+    guarded = []
+    for guard in GUARD_CALL.finditer(code):
+        open_index = code.index("(", guard.start())
+        guarded.append((open_index, matching_paren(code, open_index)))
+    return [m.group(0) for m in ORIGINAL_CALL.finditer(code)
+            if not any(a < m.start() < b for a, b in guarded)]
 
 
 class IncidentMonitorContractTests(unittest.TestCase):
@@ -329,6 +395,54 @@ class IncidentMonitorContractTests(unittest.TestCase):
         self.assertNotIn("MmCreateHook", strip_comments(self.region(REGION_START, REGION_END)))
         self.assertLess(self.plugin.index("static void IncidentInstallExitHook()"),
                         self.plugin.index("// ===== Frame profiler (`frameprof`) ====="))
+
+    # ---- amendment 5 (the owner, 2026-10-02): only our own work, no notice
+
+    def test_every_scoped_original_call_is_guarded(self):
+        # A mod is charged only for its own code: every call into the game's
+        # original from a timed body sits inside the guard that pauses the clock.
+        bodies = scoped_bodies(strip_comments(self.plugin), r"\bIncident(?:Sampled)?Scope\s+\w+\s*\(",
+                               r"[A-Za-z_][^;\n]*\(")
+        drops = scoped_bodies(strip_comments(self.drops), r"\bFP_DROP_INCIDENT_SCOPE\(\);",
+                              r"\s*static RValue& Hook_")
+        # Positive control: the bodies that wrap an original are all found.
+        for name in ("Hook_DrawHudBuffs", "DoMultiCreate", "Hook_DropRelic", "DensityCopiesTick", "FrameCallback"):
+            self.assertIn(name, bodies, name)
+        for name in ("Hook_##NAME", "Hook_DropGold", "Hook_DropMonsterGold", "Hook_DropKeys"):
+            self.assertIn(name, drops, name)
+        calls = 0
+        for name, body in list(bodies.items()) + list(drops.items()):
+            self.assertEqual(unguarded_original_calls(body), [], name)
+            calls += len(ORIGINAL_CALL.findall(strip_comments(body)))
+        # Hook_DrawHudBuffs 1, DoMultiCreate 2, Hook_DropRelic 3,
+        # DensityCopiesTick 1, the macro 2, the three gold and key bodies 6.
+        self.assertGreaterEqual(calls, 15)
+        # The guard: a header macro, and DropManager's own that is the bare
+        # call where the header is absent (drop_gold_harness.cpp).
+        self.assertIn("#define FP_GAME_ORIGINAL(call) ::ForgePact::Incident::GameOriginal(", self.header)
+        self.assertIn("#define FP_DROP_GAME_ORIGINAL(call) FP_GAME_ORIGINAL(call)", self.drops)
+        self.assertIn("#define FP_DROP_GAME_ORIGINAL(call) (call)", self.drops)
+        # Negative control: the same checker on a body with one unguarded call.
+        snippet = (
+            "static RValue& Hook_Snippet(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)\n"
+            "{\n"
+            "    IncidentScope incidentScope(IncidentMod::drops);\n"
+            "    RValue t; FP_GAME_ORIGINAL(g_Orig_Snippet(S, O, t, argc, A));\n"
+            "    return g_Orig_Snippet(S, O, R, argc, A);\n"
+            "}\n")
+        found = scoped_bodies(snippet, r"\bIncident(?:Sampled)?Scope\s+\w+\s*\(", r"[A-Za-z_][^;\n]*\(")
+        self.assertEqual(list(found), ["Hook_Snippet"])
+        self.assertEqual(unguarded_original_calls(found["Hook_Snippet"]), ["g_Orig_Snippet("])
+
+    def test_the_plugin_shows_no_notice(self):
+        # The owner, 2026-10-02: every report is written and listed, and the
+        # player is told about none of them.
+        for notice in ("MessageBoxW", "IncidentNotify"):
+            self.assertEqual(self.plugin.count(notice), 0, notice)
+        # Positive control: the freeze and the crash still write their bundle,
+        # and the bundle still asks the panel for its version.
+        self.assertEqual(len(re.findall(r"= IncidentWriteBundle\(std::move\(facts\), failed\);", self.plugin)), 2)
+        self.assertIn("IncidentPanelLive(&facts.panelVersion);", self.plugin)
 
 
 if __name__ == "__main__":

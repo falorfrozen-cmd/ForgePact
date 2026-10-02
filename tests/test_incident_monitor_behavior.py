@@ -11,6 +11,9 @@ back: a gap the first frames after it explain with a room change is a load and
 produces nothing, and a gap that never ends is reported at 15 s. The per-mod
 accounting and the installer's tag thunks run for real against the clock, and
 the username scrub and the next-load crash check are pure functions over text.
+The accounting charges a mod only for ForgePact's own code (the owner,
+2026-10-02): the game original a hook wraps runs inside the guard and is
+charged to nobody, and every row, `frame` included, is self time.
 
 tests/incident_shutdown_probe.cpp is a DLL that arms the clean-shutdown marker
 and starts the monitor's thread, as the plugin does. The harness loads it in a
@@ -45,6 +48,12 @@ EXPECTED = (
     "unfocused-suppressed",
     "rate-limit-30s",
     "per-mod-accounting",
+    "game-original-excluded",
+    "own-work-charged",
+    "game-original-outer-clock",
+    "own-work-inside-game-original",
+    "frame-self-time",
+    "game-original-in-mod",
     "worst-judged-vs-overall",
     "hook-tag-thunk",
     "stat-line-prefix",
@@ -153,6 +162,27 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
 
     def test_the_per_mod_table_orders_by_cost_and_scales_the_sampled_scope(self):
         self.assertIn("top density", self.scenario("per-mod-accounting"))
+
+    # The owner, 2026-10-02: a mod is charged only for ForgePact's own code.
+    # Baseline: own work around the game's original is charged. Targets: the
+    # original is not, whichever clock it would have run on; a hook the game
+    # calls from inside it times its own code; every row is self time.
+    def test_baseline_a_hooks_own_work_is_charged(self):
+        self.scenario("own-work-charged")
+        self.scenario("per-mod-accounting")
+
+    def test_target_the_game_original_a_hook_wraps_is_not_charged(self):
+        self.scenario("game-original-excluded")
+        self.scenario("game-original-outer-clock")
+        self.scenario("own-work-inside-game-original")
+
+    def test_target_every_row_is_self_time_frame_included(self):
+        self.assertIn("| top frame 2.0", self.scenario("frame-self-time"))
+
+    def test_target_a_freeze_inside_a_game_original_says_so(self):
+        detail = self.scenario("game-original-in-mod")
+        self.assertIn("| in-mod hudlabels (game original)", detail)
+        self.assertIn("| after hudlabels | out none", detail)
 
     def test_the_installer_thunk_tags_the_hook_and_leaves_the_mod_alone(self):
         detail = self.scenario("hook-tag-thunk")

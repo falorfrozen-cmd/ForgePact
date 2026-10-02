@@ -399,6 +399,182 @@ void PerModAccounting()
     Report("per-mod-accounting", ok, detail + " | " + line);
 }
 
+// ---- only our own work (amendment 5) ---------------------------------------
+//
+// The owner, 2026-10-02: a mod is charged only for ForgePact's own code. The
+// guard (FP_GAME_ORIGINAL, what every hook body wraps its call into the game's
+// original in) pauses whichever ForgePact clock is running; every row is self
+// time, `frame` included.
+
+// Runs `work` as the whole of one frame of the real accounting, and returns it.
+template <typename Work>
+inc::FrameSample OneFrame(Work work)
+{
+    auto& acct = inc::g_Accounting;
+    acct.OnFrame(inc::Qpc());
+    uint64_t cursor = acct.Frames();
+    work();
+    acct.OnFrame(inc::Qpc());
+    std::vector<inc::FrameSample> frames;
+    uint64_t lost = 0;
+    acct.CopySince(cursor, frames, lost);
+    return frames.size() == 1 ? frames[0] : inc::FrameSample{};
+}
+
+double ModMs(const inc::FrameSample& f, inc::Mod m) { return f.modMs[static_cast<size_t>(m)]; }
+
+std::string FrameText(const inc::FrameSample& f, std::initializer_list<inc::Mod> mods)
+{
+    std::string s = "frame " + Num(f.frameMs) + " ms:";
+    for (inc::Mod m : mods) s += std::string(" ") + inc::ModName(m) + " " + Num(ModMs(f, m));
+    return s;
+}
+
+// Target: a hook whose only work is the game's original charges its mod nothing.
+void GameOriginalExcluded()
+{
+    const inc::FrameSample f = OneFrame([] {
+        inc::IncidentScope scope(inc::Mod::hudlabels);
+        FP_GAME_ORIGINAL(Spin(10.0));
+    });
+    const bool ok = f.frameMs >= 10.0 && ModMs(f, inc::Mod::hudlabels) < 1.0;
+    Report("game-original-excluded", ok, FrameText(f, { inc::Mod::hudlabels }));
+}
+
+// Baseline: the hook's own work around the same original is still charged.
+void OwnWorkCharged()
+{
+    const inc::FrameSample f = OneFrame([] {
+        inc::IncidentScope scope(inc::Mod::hudlabels);
+        Spin(5.0);
+        FP_GAME_ORIGINAL(Spin(10.0));
+    });
+    const double ms = ModMs(f, inc::Mod::hudlabels);
+    const bool ok = f.frameMs >= 15.0 && ms >= 4.5 && ms <= 6.5;
+    Report("own-work-charged", ok, FrameText(f, { inc::Mod::hudlabels }));
+}
+
+// The guard pauses whichever clock runs, not only its own scope's: an inner
+// same-mod scope does not time (DoMultiCreate under DensityCopiesTick), yet
+// the original inside it stops the outer density clock.
+void GameOriginalOuterClock()
+{
+    const inc::FrameSample f = OneFrame([] {
+        inc::IncidentScope tick(inc::Mod::density);
+        inc::IncidentScope create(inc::Mod::density);
+        FP_GAME_ORIGINAL(Spin(10.0));
+    });
+    const bool ok = f.frameMs >= 10.0 && ModMs(f, inc::Mod::density) < 1.0;
+    Report("game-original-outer-clock", ok, FrameText(f, { inc::Mod::density }));
+}
+
+// What the game runs inside DropRelic's original: 8 ms of its own, and a
+// dropmult hook of ours with 2 ms of its own work.
+void GameWorkCallingADropHook()
+{
+    Spin(4.0);
+    {
+        inc::IncidentScope nested(inc::Mod::drops);
+        Spin(2.0);
+    }
+    Spin(4.0);
+}
+
+// A paused clock is not running, so a hook the game calls from inside the
+// original times its own code, and only that.
+void OwnWorkInsideGameOriginal()
+{
+    const inc::FrameSample f = OneFrame([] {
+        inc::IncidentScope scope(inc::Mod::drops);
+        FP_GAME_ORIGINAL(GameWorkCallingADropHook());
+    });
+    const double ms = ModMs(f, inc::Mod::drops);
+    const bool ok = f.frameMs >= 10.0 && ms >= 1.5 && ms <= 3.0;
+    Report("own-work-inside-game-original", ok, FrameText(f, { inc::Mod::drops }));
+}
+
+// Self time: `frame` is FrameCallback's own code, not the total, and the
+// rows add up to no more than the frame.
+void FrameSelfTime()
+{
+    const inc::FrameSample f = OneFrame([] {
+        inc::IncidentScope frame(inc::Mod::frame);
+        Spin(2.0);
+        inc::IncidentScope density(inc::Mod::density);
+        Spin(4.0);
+    });
+    const double frameMs = ModMs(f, inc::Mod::frame);
+    const double densityMs = ModMs(f, inc::Mod::density);
+    // The rows are stored as float; the slack covers their rounding.
+    bool ok = frameMs >= 1.5 && frameMs <= 3.0 && densityMs >= 3.5 && densityMs <= 5.5
+              && frameMs + densityMs <= f.frameMs + 0.01;
+    // A sampled scope's untimed calls pause the frame's clock too: sixteen
+    // calls of 0.5 ms, one of them timed and counted sixteen times.
+    const inc::FrameSample s = OneFrame([] {
+        inc::IncidentScope frame(inc::Mod::frame);
+        Spin(2.0);
+        for (int call = 0; call < 16; ++call) { inc::IncidentSampledScope create(inc::Mod::density); Spin(0.5); }
+    });
+    const double sampledFrame = ModMs(s, inc::Mod::frame);
+    ok = ok && sampledFrame >= 1.5 && sampledFrame <= 3.0 && ModMs(s, inc::Mod::density) >= 6.0;
+    // The table ranks `frame` with the others.
+    const std::string top = inc::TopMod({ { inc::Mod::frame, 2.0, 2.0 }, { inc::Mod::density, 1.0, 1.0 } });
+    ok = ok && top.rfind("frame 2.0", 0) == 0;
+    Report("frame-self-time", ok, FrameText(f, { inc::Mod::frame, inc::Mod::density }) + " | sampled "
+           + FrameText(s, { inc::Mod::frame, inc::Mod::density }) + " | top " + top);
+}
+
+// Inside the guard the in-mod channel keeps the mod and adds the mark; a
+// freeze there says it was inside the game function the hook wraps.
+void StallInGameOriginal(Sim& sim, inc::InModState& seen)
+{
+    seen = inc::g_Accounting.InModNow();
+    sim.in.inMod = seen.mod;
+    sim.in.inGameOriginal = seen.gameOriginal;
+    sim.Stall(4000.0);
+}
+
+void GameOriginalInMod()
+{
+    Sim sim;
+    sim.Frames(5.0, 16.7);
+    inc::InModState inside, after, out;
+    {
+        inc::IncidentScope scope(inc::Mod::hudlabels);
+        FP_GAME_ORIGINAL(StallInGameOriginal(sim, inside));
+        after = inc::g_Accounting.InModNow();
+    }
+    out = inc::g_Accounting.InModNow();
+    sim.in.inMod = out.mod;
+    sim.in.inGameOriginal = out.gameOriginal;
+    sim.Frames(3.0, 16.7);
+    sim.Settle();
+    bool ok = inside.mod == inc::Mod::hudlabels && inside.gameOriginal
+              && after.mod == inc::Mod::hudlabels && !after.gameOriginal
+              && out.mod == inc::Mod::none && !out.gameOriginal && sim.Count(inc::Kind::freeze) == 1;
+    std::string line, json;
+    if (ok) {
+        line = inc::FreezeLine(sim.episodes[0]);
+        inc::ReportFacts facts;
+        facts.kind = inc::Kind::freeze;
+        facts.episode = sim.episodes[0];
+        json = inc::ReportJson(facts);
+        ok = line.find("| in-mod hudlabels (game original)") != std::string::npos
+             && json.find("\"inMod\": \"hudlabels (game original)\"") != std::string::npos;
+    }
+    // Control: a stat line outside the guard carries no mark.
+    inc::StatFacts stat;
+    stat.running = true;
+    stat.inMod = inc::Mod::hudlabels;
+    const std::string plain = inc::StatLines(stat)[0];
+    stat.inGameOriginal = true;
+    const std::string marked = inc::StatLines(stat)[0];
+    ok = ok && plain.find("(game original)") == std::string::npos
+         && marked.find("| in-mod hudlabels (game original)") != std::string::npos;
+    Report("game-original-in-mod", ok, line + " | inside " + inc::InModText(inside.mod, inside.gameOriginal) + " | after "
+           + inc::InModText(after.mod, after.gameOriginal) + " | out " + inc::InModText(out.mod, out.gameOriginal));
+}
+
 // D16: a slow frame inside a room change's grace is the worst frame, but not
 // a judged one; the judged worst and the slow judged count say what the
 // detector actually weighed.
@@ -776,6 +952,12 @@ int main(int argc, char** argv)
     Unfocused();
     RateLimit();
     PerModAccounting();
+    GameOriginalExcluded();
+    OwnWorkCharged();
+    GameOriginalOuterClock();
+    OwnWorkInsideGameOriginal();
+    FrameSelfTime();
+    GameOriginalInMod();
     WorstJudgedVsOverall();
     HookTagThunk();
     StatLinePrefix();

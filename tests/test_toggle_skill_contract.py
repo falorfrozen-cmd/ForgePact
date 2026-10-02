@@ -2488,6 +2488,10 @@ SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 # on the line straight after the countdown's; it is removed the same way.
 MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
 INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
+# ForgePact #76, amendment 5: the call into the game's original runs inside the
+# incident monitor's guard, so `hudlabels` counts only our own code.
+INCIDENT_HUD_ORIGINAL_LINE = "    RValue& r = g_Orig_DrawHudBuffs ? FP_GAME_ORIGINAL(g_Orig_DrawHudBuffs(S, O, R, argc, A)) : R;"
+INCIDENT_HUD_ORIGINAL_BEFORE = "    RValue& r = g_Orig_DrawHudBuffs ? g_Orig_DrawHudBuffs(S, O, R, argc, A) : R;"
 
 
 def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old_body):
@@ -2500,10 +2504,14 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
 
     NARROWED again for ForgePact #76: the incident monitor's per-mod timer
     (`IncidentScope`, test_incident_monitor_contract.py) is the body's first
-    statement. Exactly that one line is stripped, once, before the compare."""
+    statement. Exactly that one line is stripped, once, before the compare.
+    And once more (amendment 5): the original's call sits inside the monitor's
+    guard; exactly that line is put back to its unguarded form."""
     lines = new_body.split("\n")
     testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
     lines.remove(INCIDENT_HUD_SCOPE_LINE)
+    testcase.assertEqual(lines.count(INCIDENT_HUD_ORIGINAL_LINE), 1, new_body)
+    lines[lines.index(INCIDENT_HUD_ORIGINAL_LINE)] = INCIDENT_HUD_ORIGINAL_BEFORE
     testcase.assertEqual(lines.count(SKILL_TIMER_DRAW_CALL_LINE), 1, new_body)
     call_at = lines.index(SKILL_TIMER_DRAW_CALL_LINE)
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)

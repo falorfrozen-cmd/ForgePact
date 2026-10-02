@@ -136,9 +136,11 @@ inline bool Active() { return world.rewardScopeActive; }
 #define BP_LOGDROP(name, res, argc, argv) ((void)0)
 
 // The incident monitor's per-mod timer (ForgePact #76, IncidentMonitor.hpp)
-// opens Hook_DropRelic. It only measures, so a no-op stands in for it here.
+// opens Hook_DropRelic, and its guard wraps each call into the original. They
+// only measure, so a no-op scope and the bare call stand in for them here.
 enum class IncidentMod { drops };
 struct IncidentScope { explicit IncidentScope(IncidentMod) noexcept {} };
+#define FP_GAME_ORIGINAL(call) (call)
 
 using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
 

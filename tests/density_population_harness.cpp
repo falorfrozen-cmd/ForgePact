@@ -71,10 +71,12 @@ static bool g_KuyruktanYaratim=false,g_CallerIsEnemy=false;
 static unsigned g_SpecialCreateDepth=0;static int g_EnemyMultAll=1,specialMultiplier=1;
 static int g_ExtraCreators=0,g_ExtraEnemies=0,g_DensitySkippedEnemyBorn=0;
 static void InterlockedIncrement(int* value){++*value;}
-// ForgePact #76's incident monitor times DoMultiCreate and the density tick; it only measures, so no-ops stand in.
+// ForgePact #76's incident monitor times DoMultiCreate and the density tick, and its guard wraps each call into the
+// original; they only measure, so no-ops and the bare call stand in.
 enum class IncidentMod{density};
 struct IncidentScope{explicit IncidentScope(IncidentMod)noexcept{}};
 struct IncidentSampledScope{explicit IncidentSampledScope(IncidentMod)noexcept{}};
+#define FP_GAME_ORIGINAL(call) (call)
 struct SpecialCreateScope{bool active;explicit SpecialCreateScope(bool v):active(v){if(active)++g_SpecialCreateDepth;}~SpecialCreateScope(){if(active)--g_SpecialCreateDepth;}};
 static int ObjectMultiplier(int){return specialMultiplier;}
 static bool IsCachedCreatorObject(int obj){return obj==41;}
