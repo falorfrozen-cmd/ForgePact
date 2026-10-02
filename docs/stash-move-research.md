@@ -2399,11 +2399,13 @@ the text's.
 
 What it settled. **The tab row at 2560x1440** (`grid-read-bag`, `grid-read`):
 five `InventoryTab_1` to `InventoryTab_5`, `tabNumber` 0 to 4, text Main then
-Extra four times, all `visible=1`, each 192 wide, top 1196, bottom 1262, lefts
-1522, 1714, 1906, 2098 and 2290 (pitch 192, contiguous), with the stash open
-and with the bag on its own alike, so the earlier 2560x1368 reading (182.4
-wide, § Decision `buttonTarget`) holds as a relation at this GUI scale too:
-the row is Sort's width wide. **Sort sits under the last tab**
+Extra four times, each 192 wide, top 1196, bottom 1262, lefts 1522, 1714,
+1906, 2098 and 2290 (pitch 192, contiguous), the same in both states (the
+stash open and the bag on its own); all five read `visible=1` with the bag
+open on its own, and only `InventoryTab_4` and `InventoryTab_5` had their
+visibility quoted with the stash open, the first three being listed without
+it. So the earlier 2560x1368 reading (182.4 wide, § Decision `buttonTarget`)
+holds as a relation at this GUI scale too: the row is Sort's width wide. **Sort sits under the last tab**
 (`sort-under-tab5`): InventorySort read 2290,1262,2482,1328, its left and
 right `InventoryTab_5`'s and its top the row's bottom, the grid relation's
 positive control, so the slot left of Sort is under `InventoryTab_4`
@@ -2637,8 +2639,8 @@ was taken from (`none` unless `tab`), and `button_size=` is judged against
 the target's size (`its size <w>x<h> is not the Extra tab column's <w>x<h>`).
 The target's width is the tab's, so the copied sprite scale is scaled per
 axis by target over Sort (`ButtonScale`); at the recorded scale the tab is
-Sort's width, so the scale is 1. The place under the tab is not yet checked
-in play (Live procedure 7).
+Sort's width, so the scale is 1. The place under the tab was checked in play
+by Live 7 (§ Live 7 results), at one GUI scale (2560x1440).
 
 **Its look (owner scope, 2026-09-30, § Static reading 5):** after the label,
 the node is given the Sort Tab button's own look: `sprite_index`,
