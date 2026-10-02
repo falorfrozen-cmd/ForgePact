@@ -22033,40 +22033,221 @@ static void SpawnByName(const std::string& name)
     } catch (...) { Out("SpawnByName EXCEPTION"); }
 }
 
-// Force a relic to drop at the player on demand. DropRelic has NO internal Satanic-Zone
-// gate (the restriction lives in its callers); it reads the drop x/y from argv[0]/argv[1]
-// and spawns via LootGroundCreate. So we call the original trampoline with the player's
-// coords as args and the player instance as self.
+// ---- forcerelic: relics on the ground for a test (#124, research command) ----
+// `forcerelic` puts relics at the player so a live session has something for the pet
+// to collect. It is not in kPlayerCommands, so the player build refuses it.
+//   forcerelic <n>              n relics (1..200), ids drawn from 0..140
+//   forcerelic ids <id,id,...>  one relic per listed id (0..155, at most 200)
+//   forcerelic drop <n>         n DropRelic calls with the force flag (the fallback)
+// Why the first two do not call DropRelic (static reading, 2026-10-02; the research
+// doc's "Placing a relic for a test"): DropRelic skips its chance roll only when its
+// fifth argument is true. Called with x and y alone, as this command did until replan 1,
+// it rolls against an absent fourth argument, fails, and returns false before it builds
+// anything - #124's Live 1 (session 2) printed 91 calls and had no relic on the ground.
+// So each relic is built through the game's own loader and placed the way `sigdrop` and
+// `angelicdrop` place theirs (InitItemFromJson -> LootGroundCreateFromItem, measured on
+// the ground 30/30 and 17/17 on 2026-09-18), and read back before it counts. That is a
+// test route, not how the game drops relics. Measured `self` for the placement was always
+// the dying enemy; here it is the player, and the read-back shows a wrong one.
+static constexpr int kForceRelicMax = 200;            // relics (or DropRelic calls) per command
+static constexpr int kForceRelicDroppableTop = 140;   // ids 0..140 drop; 141..155 are quest relics (hub docs/models/relic-pick-spec.md)
+static constexpr int kForceRelicIdTop = 155;          // the highest relic id the game draws
+
 // The player is resolved the way the relic tick resolves it (HhResolveLocalPlayer,
 // then HhResolveInstance for the CInstance*). The old instance_find ->
 // GetInstanceObject path printed "cannot resolve player CInstance" on every call
 // in #124's Live 1 (session 1) while `petrelic census` saw the player; this
 // runner hands instance_find back a VALUE_REF, the suspected (not measured) cause.
+static bool ForceRelicResolvePlayer(RValue& player, CInstance*& self, double& x, double& y)
+{
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) {
+        Out("forcerelic: no local player (how=" + how + "; be in a level)"); return false;
+    }
+    self = HhResolveInstance(player);
+    if (!self) { Out("forcerelic: local player (" + how + ") resolves to no CInstance"); return false; }
+    x = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+    y = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+    return true;
+}
+
+// Loot_Ground_obj instances in the room, resolved by name as `petrelic census` does; -1 unread.
+static int ForceRelicGroundItems()
+{
+    ResolvePetRelicAssets();
+    if (g_LootGroundObjIdx < 0) return -1;
+    try { return (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_LootGroundObjIdx) }).ToDouble(); }
+    catch (...) { return -1; }
+}
+
+// LootGroundCreateFromItem returns the new Loot_Ground_obj instance, or a negative number
+// when none exists (static reading). ReadGroundRelic takes an instance handle, so a plain
+// number is matched against the Loot_Ground_obj instances by their `id`.
+static bool ForceRelicGroundHandle(const RValue& res, RValue& inst)
+{
+    if (HeroSiege::Player::IsInstanceHandle(res)) { inst = res; return true; }
+    if (res.m_Kind != VALUE_REAL && res.m_Kind != VALUE_INT32 && res.m_Kind != VALUE_INT64) return false;
+    const double want = res.ToDouble();
+    const int total = ForceRelicGroundItems();
+    for (int i = 0; i < total && i < 512; ++i) {
+        RValue cand = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_LootGroundObjIdx), RValue((double)i) });
+        if (!HeroSiege::Player::IsInstanceHandle(cand)) continue;
+        if (g_Yytk->CallBuiltin("variable_instance_get", { cand, RValue("id") }).ToDouble() == want) { inst = cand; return true; }
+    }
+    return false;
+}
+
+// Builds relic `id` and places it at (x, y) with the player as `self`. Returns "" when a
+// relic with that id is on the ground, otherwise the stage that failed and what was
+// supplied and returned, for the command's "not placed" line.
+static std::string ForceRelicPlaceOne(int id, long long stamp, CInstance* g, CInstance* self, double x, double y)
+{
+    const char* stage = "json_parse";
+    try {
+        // A relic tab entry's fields (b = id, a = seed, a relic's c is 0; hub
+        // docs/RUNTIME_DATA_MODELS.md), the shape SpawnSignatureItem hands the loader.
+        const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
+        const std::string json = "{\"b\":" + std::to_string(id) + ",\"a\":" + std::to_string(seed) + ",\"j\":0,\"c\":0}";
+        RValue parsed; g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (parsed.m_Kind != VALUE_OBJECT) return "json_parse (" + json + " gave " + Describe(parsed) + ")";
+        // The key's last field is the item class: class 14 from "-14" is measured (hub
+        // § 16.2), class 16 from "-16" is not, which is what the read-back below checks.
+        stage = "InitItemFromJson";
+        const std::string key = "0-0-" + std::to_string(stamp) + "-" + std::to_string(HeroSiege::Player::kRelicItemClass);
+        RValue item; const AurieStatus st = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) });
+        if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT)
+            return "InitItemFromJson (key " + key + ": st=" + std::to_string((int)st) + " gave " + Describe(item) + ")";
+        stage = "LootGroundCreateFromItem";
+        RValue res; const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, "gml_Script_LootGroundCreateFromItem", self, self, { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2))
+            return "LootGroundCreateFromItem (st=" + std::to_string((int)st2) + " returned " + Describe(res) + ")";
+        stage = "no-instance";
+        RValue inst;
+        const bool exists = g_Yytk->CallBuiltin("instance_exists", { res }).ToBoolean();
+        if (!exists || !ForceRelicGroundHandle(res, inst))
+            return "no-instance (returned " + Describe(res) + (exists ? "; it exists but no Loot_Ground_obj carries that id" : "") + ")";
+        stage = "not-a-relic";
+        HeroSiege::Player::GroundRelicRead read;
+        if (!HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read) || read.relicId != id)
+            return "not-a-relic (returned " + Describe(res) + "; ReadGroundRelic "
+                + HeroSiege::Player::GroundRelicStageName(read.stage) + " class=" + std::to_string(read.itemClass)
+                + " id=" + std::to_string(read.relicId) + ")";
+        return "";
+    } catch (...) { return std::string(stage) + " (exception)"; }
+}
+
+// `forcerelic <n>` and `forcerelic ids`: one line for the command, one per relic not
+// placed (the first 8).
+static void ForceRelicPlace(const std::vector<int>& ids)
+{
+    try {
+        RValue player; CInstance* self = nullptr; double x = 0, y = 0;
+        if (!ForceRelicResolvePlayer(player, self, x, y)) return;
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        if (!g) { Out("forcerelic: no global instance"); return; }
+        const int before = ForceRelicGroundItems();
+        // One key per relic: the millisecond clock, stepped per relic so no two collide.
+        const long long stamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        int placed = 0, reported = 0;
+        std::string list;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            list += (i ? "," : "") + std::to_string(ids[i]);
+            const std::string why = ForceRelicPlaceOne(ids[i], stamp + (long long)i, g, self, x, y);
+            if (why.empty()) { ++placed; continue; }
+            if (reported++ < 8) Out("forcerelic: relic " + std::to_string(ids[i]) + " not placed at " + why);
+        }
+        if (reported > 8) Out("forcerelic: " + std::to_string(reported - 8) + " more relic(s) not placed");
+        char b[256];
+        sprintf_s(b, "forcerelic: placed %d/%d relic(s) via LootGroundCreateFromItem at player (%.0f, %.0f); ground items %d -> %d; ids ",
+                  placed, (int)ids.size(), x, y, before, ForceRelicGroundItems());
+        Out(std::string(b) + list);
+    } catch (...) { Out("forcerelic: EXCEPTION"); }
+}
+
+// `forcerelic <n>` (and F11, n = 1): n ids drawn uniformly from the droppable range.
 static void ForceRelicDrop(int n)
 {
     if (n < 1) n = 1;
-    if (n > 200) n = 200;
+    if (n > kForceRelicMax) n = kForceRelicMax;
+    std::uniform_int_distribution<int> pick(0, kForceRelicDroppableTop);
+    std::vector<int> ids;
+    for (int i = 0; i < n; i++) ids.push_back(pick(TyRng()));
+    ForceRelicPlace(ids);
+}
+
+// `forcerelic drop <n>`: the game's DropRelic with the force flag (x, y, 0, 0, true; the
+// sixth, which DropRelic hands on to LootGroundCreate, left out), as #125's
+// `callnum DropRelic <x> <y> 0 0 1 0` did. It returns true only after its
+// LootGroundCreate call (static reading); #125 measured relics built and no ground item,
+// so the return and the ground count are printed rather than assumed. The call goes to
+// the original, not through Hook_DropRelic.
+static void ForceRelicDropRoute(int n)
+{
+    if (n < 1) n = 1;
+    if (n > kForceRelicMax) n = kForceRelicMax;
     if (!g_Orig_DropRelic) { Out("forcerelic: DropRelic not hooked yet"); return; }
     try {
-        RValue player;
-        std::string how;
-        if (!HhResolveLocalPlayer(player, &how)) {
-            Out("forcerelic: no local player (how=" + how + "; be in a level)"); return;
-        }
-        CInstance* self = HhResolveInstance(player);
-        if (!self) { Out("forcerelic: local player (" + how + ") resolves to no CInstance"); return; }
-        RValue px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") });
-        RValue py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") });
+        RValue player; CInstance* self = nullptr; double x = 0, y = 0;
+        if (!ForceRelicResolvePlayer(player, self, x, y)) return;
+        const int before = ForceRelicGroundItems();
+        int yes = 0, no = 0, other = 0;
         for (int i = 0; i < n; i++) {
-            RValue ax = px; RValue ay = py;
-            RValue* argv[2] = { &ax, &ay };
+            RValue ax(x), ay(y);
+            RValue a2(0.0), a3(0.0);
+            RValue force(true);
+            RValue* argv[5] = { &ax, &ay, &a2, &a3, &force };
             RValue tmp;
-            try { g_Orig_DropRelic(self, self, tmp, 2, argv); } catch (...) {}
+            try {
+                RValue r = g_Orig_DropRelic(self, self, tmp, 5, argv);
+                if (r.m_Kind == VALUE_BOOL) (r.ToBoolean() ? yes : no)++;
+                else if (r.m_Kind == VALUE_REAL || r.m_Kind == VALUE_INT32 || r.m_Kind == VALUE_INT64) {
+                    const double v = r.ToDouble();
+                    if (v == 1.0) ++yes; else if (v == 0.0) ++no; else ++other;
+                } else ++other;
+            } catch (...) { ++other; }
         }
-        char b[128];
-        sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
+        char b[320];
+        sprintf_s(b, "forcerelic drop: %d DropRelic call(s) with the force flag (x, y, 0, 0, true) at player (%.0f, %.0f): "
+                     "returned true=%d false=%d other=%d; ground items %d -> %d",
+                  n, x, y, yes, no, other, before, ForceRelicGroundItems());
         Out(b);
     } catch (...) { Out("forcerelic: EXCEPTION"); }
+}
+
+static void ForceRelicCommand(const std::string& rest)
+{
+    std::string arg;
+    const std::string form = Lower(FirstToken(rest, arg));
+    if (form == "drop") {
+        int n = 1; try { n = std::stoi(arg); } catch (...) {}
+        ForceRelicDropRoute(n);
+        return;
+    }
+    if (form == "ids") {
+        std::vector<int> ids;
+        std::string tok;
+        for (size_t i = 0; i <= arg.size(); ++i) {
+            if (i < arg.size() && arg[i] != ',' && !std::isspace((unsigned char)arg[i])) { tok += arg[i]; continue; }
+            if (tok.empty()) continue;
+            int id = -1; size_t used = 0;
+            try { id = std::stoi(tok, &used); } catch (...) { used = 0; }
+            if (used != tok.size() || id < 0 || id > kForceRelicIdTop) {
+                Out("forcerelic: ids takes relic ids 0.." + std::to_string(kForceRelicIdTop) + ", comma-separated (bad '" + tok + "')");
+                return;
+            }
+            ids.push_back(id);
+            tok.clear();
+        }
+        if (ids.empty()) { Out("forcerelic: ids needs at least one id (e.g. forcerelic ids 3,17,140)"); return; }
+        if (ids.size() > (size_t)kForceRelicMax) {
+            Out("forcerelic: ids takes at most " + std::to_string(kForceRelicMax) + " ids (got " + std::to_string(ids.size()) + ")");
+            return;
+        }
+        ForceRelicPlace(ids);
+        return;
+    }
+    int n = 1; try { n = std::stoi(rest); } catch (...) {}
+    ForceRelicDrop(n);
 }
 
 // ===== Relic gate: KALDIRILDI ===============================================
@@ -43421,8 +43602,7 @@ static void RunCommand(const std::string& line)
         std::string nm, num; nm = FirstToken(rest, num);
         try { SetDropMult(nm, std::stoi(num)); } catch (...) { Out("dropmult: bad args (e.g. dropmult relic 5)"); }
     } else if (lc == "forcerelic") {
-        int n = 1; try { n = std::stoi(rest); } catch (...) {}
-        ForceRelicDrop(n);
+        ForceRelicCommand(rest);
     } else if (lc == "relicgate") {
         SetRelicGate(rest == "1" || rest == "on" || rest == "true");
     // NOTE: `relicfilter` is handled at the top of RunCommand.  A second branch

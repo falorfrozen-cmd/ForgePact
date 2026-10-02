@@ -66,19 +66,53 @@ def destroy_only_after_true_return(collect):
 
 
 def forcerelic_resolves_like_the_tick(body):
-    """`ForceRelicDrop` finds the player through HhResolveLocalPlayer and its
+    """`forcerelic` finds the player through HhResolveLocalPlayer and its
     `self` through HhResolveInstance, as the relic tick does, with no raw
     instance_find/GetInstanceObject path or kind gate of its own (Live 1,
     session 1: that path printed `cannot resolve player CInstance` on every
-    call while `petrelic census` saw the player), and still drops through the
-    original DropRelic with its success line."""
+    call while `petrelic census` saw the player)."""
     local = body.find("HhResolveLocalPlayer(")
     instance = body.find("HhResolveInstance(")
     return (0 <= local < instance
             and not any(raw in body for raw in ("GetInstanceObject", "instance_find", "m_Kind"))
-            and "g_Orig_DropRelic(" in body
-            and "relic call(s) at player" in body
             and "cannot resolve player CInstance" not in body)
+
+
+def forcerelic_places_on_the_ground(place, one):
+    """`forcerelic <n>` and `forcerelic ids` build each relic by name
+    (InitItemFromJson, the global instance as `self`, a key ending in the relic
+    class) and place it with LootGroundCreateFromItem (x, y, item) at the
+    player's `self`; what comes back counts as placed only once instance_exists
+    and ReadGroundRelic with the requested id agree, and the command's line
+    carries the ground count before and after (Live 1, session 2: 91 two-argument
+    DropRelic calls printed success and placed nothing)."""
+    init = one.find('"gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) }')
+    create = one.find('"gml_Script_LootGroundCreateFromItem", self, self, { RValue(x), RValue(y), item }')
+    exists = one.find('"instance_exists", { res }')
+    read = one.find("HeroSiege::Player::ReadGroundRelic(g_Yytk, inst, read)")
+    return (0 <= init < create < exists < read
+            and "read.relicId != id" in one
+            and '"-" + std::to_string(HeroSiege::Player::kRelicItemClass)' in one
+            and "via LootGroundCreateFromItem at player (%.0f, %.0f); ground items %d -> %d; ids " in place
+            and "g_Yytk->GetGlobalInstance(&g);" in place
+            and "ForceRelicResolvePlayer(player, self, x, y)" in place
+            and "g_Orig_DropRelic" not in place + one)
+
+
+def forcerelic_drop_forces(drop):
+    """`forcerelic drop` calls the original DropRelic with five arguments, the
+    fifth true (it skips the chance roll), and counts what each call returned."""
+    return ("RValue* argv[5] = { &ax, &ay, &a2, &a3, &force };" in drop
+            and "RValue force(true);" in drop
+            and "RValue a2(0.0), a3(0.0);" in drop
+            and "g_Orig_DropRelic(self, self, tmp, 5, argv)" in drop
+            and "returned true=%d false=%d other=%d; ground items %d -> %d" in drop)
+
+
+def droprelic_call_argument_counts(source):
+    """The literal argument count of every direct g_Orig_DropRelic call."""
+    return [int(m.group(1)) for m in
+            re.finditer(r"g_Orig_DropRelic\(\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*(\d+)\s*,", source)]
 
 
 def refusal_after(body, guard):
@@ -99,6 +133,21 @@ FORCERELIC_INSTANCE_FIND_SHAPE = """
         for (int i = 0; i < n; i++) { try { g_Orig_DropRelic(self, self, tmp, 2, argv); } catch (...) {} }
         sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
     } catch (...) { Out("forcerelic EXCEPTION"); }
+"""
+
+# Live 1 (session 2)'s ForceRelicDrop body: the player resolved, then x and y
+# alone handed to DropRelic, which rolls against an absent fourth argument and
+# returns false (static reading). The new predicates must reject it.
+FORCERELIC_TWO_ARGUMENT_SHAPE = """
+        for (int i = 0; i < n; i++) {
+            RValue ax = px; RValue ay = py;
+            RValue* argv[2] = { &ax, &ay };
+            RValue tmp;
+            try { g_Orig_DropRelic(self, self, tmp, 2, argv); } catch (...) {}
+        }
+        char b[128];
+        sprintf_s(b, "forcerelic: %d relic call(s) at player (%.0f, %.0f)", n, px.ToDouble(), py.ToDouble());
+        Out(b);
 """
 
 
@@ -320,21 +369,37 @@ class TestPetRelicCollectorContract(unittest.TestCase):
 
     # ---- forcerelic finds the player the way the relic tick does ----------
 
+    def forcerelic_bodies(self):
+        return {name: function_body(self.plugin, signature) for name, signature in (
+            ("resolve", "static bool ForceRelicResolvePlayer(RValue& player, CInstance*& self, double& x, double& y)"),
+            ("one", "static std::string ForceRelicPlaceOne(int id, long long stamp, CInstance* g, CInstance* self, double x, double y)"),
+            ("place", "static void ForceRelicPlace(const std::vector<int>& ids)"),
+            ("default", "static void ForceRelicDrop(int n)"),
+            ("drop", "static void ForceRelicDropRoute(int n)"),
+            ("command", "static void ForceRelicCommand(const std::string& rest)"))}
+
     def test_forcerelic_resolves_the_player_like_the_relic_tick(self):
-        body = function_body(self.plugin, "static void ForceRelicDrop(int n)")
+        bodies = self.forcerelic_bodies()
+        body = bodies["resolve"]
         self.assertTrue(forcerelic_resolves_like_the_tick(body))
         self.assertIn("HhResolveLocalPlayer(player, &how)", body)
-        self.assertIn("HhResolveInstance(player)", body)
-        self.assertIn("g_Orig_DropRelic(self, self, tmp, 2, argv)", body)
+        self.assertIn("self = HhResolveInstance(player);", body)
+        # Both routes resolve through it and take x/y from the resolved player.
+        for route in ("place", "drop"):
+            self.assertIn("if (!ForceRelicResolvePlayer(player, self, x, y)) return;", bodies[route])
+            self.assertNotIn("instance_find", bodies[route])
+        self.assertIn('"variable_instance_get", { player, RValue("x") }', body)
         # Negative control: Live 1's instance_find -> GetInstanceObject shape fails.
         self.assertFalse(forcerelic_resolves_like_the_tick(strip_comments(FORCERELIC_INSTANCE_FIND_SHAPE)))
 
     def test_forcerelic_refusals_name_their_stage(self):
-        body = function_body(self.plugin, "static void ForceRelicDrop(int n)")
-        lines = re.findall(r'Out\(\s*(?:std::string\(\s*)?"([^"]*)"', body)
-        self.assertGreaterEqual(len(lines), 4, lines)
+        bodies = self.forcerelic_bodies()
+        every = "".join(bodies.values())
+        lines = re.findall(r'Out\(\s*(?:std::string\(\s*)?"([^"]*)"', every)
+        self.assertGreaterEqual(len(lines), 6, lines)
         for line in lines:
             self.assertTrue(line.startswith("forcerelic: "), line)
+        body = bodies["resolve"]
         no_player = refusal_after(body, "if (!HhResolveLocalPlayer(player, &how))")
         no_instance = refusal_after(body, "if (!self)")
         self.assertIn("forcerelic: ", no_player)
@@ -342,6 +407,71 @@ class TestPetRelicCollectorContract(unittest.TestCase):
         self.assertNotEqual(no_player, no_instance)
         self.assertIn("how", no_player)
         self.assertLess(body.index("HhResolveLocalPlayer(player, &how)"), body.index("if (!self)"))
+        # A relic not placed names its stage and what was supplied and returned,
+        # the first 8 per command.
+        for stage in ("json_parse", "InitItemFromJson", "LootGroundCreateFromItem", "no-instance", "not-a-relic"):
+            self.assertIn('"' + stage + " (", bodies["one"], stage)
+        self.assertIn("GroundRelicStageName(read.stage)", bodies["one"])
+        self.assertIn("Describe(res)", bodies["one"])
+        self.assertIn('Out("forcerelic: relic " + std::to_string(ids[i]) + " not placed at " + why);', bodies["place"])
+        self.assertIn("if (reported++ < 8)", bodies["place"])
+
+    def test_forcerelic_places_through_loot_ground_create_from_item(self):
+        bodies = self.forcerelic_bodies()
+        self.assertTrue(forcerelic_places_on_the_ground(bodies["place"], bodies["one"]))
+        one = bodies["one"]
+        # SpawnSignatureItem's shape: a relic tab entry's fields parsed, then
+        # the game's own loader with the global instance as self.
+        self.assertIn(r'"{\"b\":" + std::to_string(id) + ",\"a\":" + std::to_string(seed) + ",\"j\":0,\"c\":0}"', one)
+        self.assertIn('"json_parse", g, g, { RValue(json) }', one)
+        self.assertIn('const std::string key = "0-0-" + std::to_string(stamp) + "-"', one)
+        # ...so the key ends `-16`: the SDK's relic class is ItemType::Relic, 16.
+        sdk = REPO_ROOT / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk"
+        self.assertIn("kRelicItemClass = static_cast<int>(HeroSiege::Items::ItemType::Relic);",
+                      (sdk / "player.hpp").read_text(encoding="utf-8"))
+        self.assertRegex((sdk / "item_type.hpp").read_text(encoding="utf-8"), r"\bRelic = 16,")
+        # The default form draws n ids from the droppable range with the
+        # plugin's die; `ids` places what it is given; both go through one place.
+        default = bodies["default"]
+        self.assertIn("std::uniform_int_distribution<int> pick(0, kForceRelicDroppableTop);", default)
+        self.assertIn("pick(TyRng())", default)
+        self.assertIn("ForceRelicPlace(ids);", default)
+        self.assertIn("static constexpr int kForceRelicDroppableTop = 140;", self.plugin)
+        self.assertIn("static constexpr int kForceRelicIdTop = 155;", self.plugin)
+        self.assertIn("static constexpr int kForceRelicMax = 200;", self.plugin)
+        command = bodies["command"]
+        self.assertIn('form == "ids"', command)
+        self.assertIn('form == "drop"', command)
+        self.assertIn("id < 0 || id > kForceRelicIdTop", command)
+        self.assertIn("ids.size() > (size_t)kForceRelicMax", command)
+        self.assertIn("ForceRelicPlace(ids);", command)
+        self.assertIn("ForceRelicDropRoute(n);", command)
+        self.assertIn("ForceRelicDrop(n);", command)
+        branch = self.plugin.split('lc == "forcerelic"', 1)[1][:200]
+        self.assertIn("ForceRelicCommand(rest);", branch)
+        # The ground count is Loot_Ground_obj's, resolved by name.
+        count = function_body(self.plugin, "static int ForceRelicGroundItems()")
+        self.assertIn("ResolvePetRelicAssets();", count)
+        self.assertIn('"instance_number", { RValue((double)g_LootGroundObjIdx) }', count)
+        # Negative control: session 2's two-argument body fails the predicate.
+        shape = strip_comments(FORCERELIC_TWO_ARGUMENT_SHAPE)
+        self.assertFalse(forcerelic_places_on_the_ground(shape, shape))
+
+    def test_forcerelic_drop_route_sets_the_force_flag(self):
+        drop = self.forcerelic_bodies()["drop"]
+        self.assertTrue(forcerelic_drop_forces(drop))
+        self.assertIn('if (!g_Orig_DropRelic) { Out("forcerelic: DropRelic not hooked yet"); return; }', drop)
+        self.assertIn('"forcerelic drop: %d DropRelic call(s) with the force flag (x, y, 0, 0, true) at player', drop)
+        self.assertIn("RValue ax(x), ay(y);", drop)
+        # Negative control: session 2's two-argument body fails it.
+        self.assertFalse(forcerelic_drop_forces(strip_comments(FORCERELIC_TWO_ARGUMENT_SHAPE)))
+
+    def test_forcerelic_never_calls_droprelic_with_two_arguments(self):
+        counts = droprelic_call_argument_counts(self.plugin)
+        self.assertEqual(counts, [5])   # positive control: the drop route's call is seen
+        self.assertNotIn("relic call(s) at player", self.plugin)
+        # Negative control: session 2's call is seen, with its two arguments.
+        self.assertEqual(droprelic_call_argument_counts(strip_comments(FORCERELIC_TWO_ARGUMENT_SHAPE)), [2])
 
     def test_forcerelic_stays_a_research_command(self):
         start = self.plugin.index("kPlayerCommands = {")

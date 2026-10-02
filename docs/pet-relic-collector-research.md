@@ -13,7 +13,8 @@ compiled code (the Sep-17 `Hero_Siege.exe`) in a local decompiler and written
 here in our own words; no game code is quoted (`AGENTS.md` § Legal), and objects
 and scripts are named by their `hs-game-sdk` names. **Measured** means observed
 on the running game. A thing that was looked for and not seen is written "not
-observed", never "does not happen". As of this writing nothing here is measured:
+observed", never "does not happen". As of this writing nothing about the pickup
+is measured (the measured lines below are about placing a relic for a test):
 Live 1 of the workorder `forgepact-124-pet-relics` is where the call shape and
 the ground-relic read are first checked on the running game.
 
@@ -199,7 +200,67 @@ level), and only while that is below 10 calls `RelicSetLevel(owned, o + 1)` and
   (`GridAddItem`, `AddItemToMap`, `CreateItemSaveStruct`) and the script returns
   true.
 
+### Placing a relic for a test (`forcerelic`, replan 1)
+
+(Read 2026-10-02, after Live 1 session 2.) The research command `forcerelic`
+has to put relics on the ground so a live session has something for the pet to
+collect. Until replan 1 it called the original `DropRelic` with two arguments,
+the player's x and y, and threw the return away. Live 1 session 2 ran it 91
+times (**measured**): every call printed success, `petrelic census` read
+`ground items=0` each time, and no relic was on screen.
+
+- **Why the two-argument call placed nothing** (static reading). `DropRelic`
+  takes up to six arguments: x, y, two more, a fifth that, when true, skips the
+  drop's chance roll, and a sixth it hands on to `LootGroundCreate`. Without the
+  fifth it compares a roll against its fourth argument, and an absent fourth
+  makes that comparison fail every time, so it returns false before it builds
+  anything. It returns true only after its `LootGroundCreate` call. `DropRelic`
+  is not named in the local decompiler project (the symbol dump ran with
+  ForgePact's hook in the script table); it was found as the one caller of both
+  `ReturnRandomPlayerRelic` and `GetRelicQuest` outside the Satanic kill
+  routines.
+- **With the fifth argument true**, #125's Live 1 (2026-09-30,
+  `callnum DropRelic <x> <y> 0 0 1 0`) **measured** relics built (class 16) and
+  no `Loot_Ground_obj`. `LootGroundCreate` can place an item it is handed
+  directly, or queue a definition on `Loot_Manager_obj`'s create pool for a
+  later closure (static reading); which branch that call took is not
+  established. `forcerelic drop <n>` keeps this call, with the return counted,
+  as the same-build fallback.
+- **The route `forcerelic` uses now**: build the relic through the game's own
+  loader, `InitItemFromJson` with a relic tab entry's fields
+  (`{"b":<id>,"a":<seed>,"j":0,"c":0}`) and a key whose last field is the item
+  class, 16, then place it with `LootGroundCreateFromItem(x, y, item)`. By the
+  reading that script creates a `Loot_Ground_obj` in a free spot, sets its
+  `itemInstance` to the item, runs `LootGroundInit` and returns the new
+  instance, or a negative number when none exists; it has no create pool, no
+  online branch and no zone gate. It is the route `sigdrop` and `angelicdrop`
+  use, **measured** on the ground 30/30 and 17/17 on 2026-09-18
+  ([angelic-drop-research.md](angelic-drop-research.md)).
+- **What was measured for that route, and what was not.** Its measured `self`
+  was always the dying enemy; `forcerelic` passes the player, also a real
+  instance, because the placement appears to read variables off `self` (which
+  ones was not read) and a kill would need the owner. Class 14 from a `-14` key
+  is measured (hub `docs/RUNTIME_DATA_MODELS.md` § 16.2); class 16 from `-16` is
+  not. So the command reads every placed instance back with
+  `HeroSiege::Player::ReadGroundRelic` and counts a relic as placed only when the
+  returned instance exists and reads as a relic with the requested id.
+- **It is a test route, not how the game drops relics.** A relic placed this
+  way reaches the pet's collect the way a dropped one does, because
+  `PickupLoot` sends class 16 to `PickupRelic`, which reads only the item's
+  class and id (above). A natural relic drop stays not observed under the pet
+  mod.
+
 ## Not established
+
+- **Whether `DropRelic` with the force flag leaves a relic on the ground.**
+  #125 saw relics built and none on the ground; `forcerelic drop <n>` logs what
+  each call returned and the `Loot_Ground_obj` count before and after, which
+  settles it for the player as `self`.
+- **Whether `LootGroundCreateFromItem` places a relic with the player as
+  `self`.** Every measured placement had the dying enemy as `self`, and every
+  placement was of an equipment item, never a relic. `forcerelic`'s
+  own line (`placed <k>/<n>`, the ground count before and after, and a stage for
+  each relic not placed) answers both.
 
 - **The relic-tab 10/10 outcome on the running game**: whether a ground relic
   whose owned copy sits at 10/10 in the relic tab really is consumed with
