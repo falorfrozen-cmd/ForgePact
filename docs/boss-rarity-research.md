@@ -312,6 +312,138 @@ the health change only. Live procedure 1b, on the research build with the
 plugin's runner error fixed, is the next attempt at damage, XP, the look
 and the drops.
 
+## The plugin's runner error and the traced kills
+
+Two things in the Live 1 rerun pointed at ForgePact rather than the game, and
+the owner asked for both to be found and fixed before Live 2 ("Find and fix
+first", 2026-10-02). One is found and fixed; the other is narrowed to the
+game's side and left for Live procedure 1b to measure.
+
+**The report.** YYToolkit full report #2 carried the runner's text
+`REAL argument incorrect type undefined` with seven `BloodPactPlugin+` frames. It
+first appeared at the ancient Karp King's spawn; there was none for the
+control and visual-control spawns, when every mode was off, and the
+session's summary line `top=report#2 x<n>` then climbed by one per later
+spawn, to x7 (per-spawn attribution inferred from timing). Report #1
+(`Unable to find any instance for object index`, from `timer_system_update`)
+has only game frames and is the game's own background noise.
+
+**The frame mapping, and how it was made (measured).** `build.bat` writes no
+map or pdb, so the session's own objects (`plugin_build/obj_dev/*.obj`, the
+build of DLL `f85bc1d5...289cf`) were relinked with `link /DLL /MAP` into a
+scratch folder. The relinked `.text` section is byte-identical to the session
+DLL's (only `.rdata`'s export and debug bytes differ), so the map applies.
+The frames are return addresses, so each is looked up at `offset-1`.
+Outermost first: `FrameCallback` → `IpcServer::PollCommands` → `RunCommand`
+→ `CallBuiltinCmd` (the `cb` command) → two YYToolkit frames (its
+`CallBuiltin` dispatch into our builtin hook) → `HookICD` → the
+`EnemyBornScope` constructor → `CallerObjectIndex` → the runner's conversion
+routine, which raised. To repeat it on another commit, run the same `link`
+over a rebuilt `obj_dev`. `ModuleMain.cpp` had not changed in any of these
+functions between the session's build (`b230792`) and this fix.
+
+**The cause (static reading of our code).** `HookICD` (and `HookICL`) build
+an `EnemyBornScope` first, which asks `CallerObjectIndex` what object the
+creating `self` is. That read `object_index` with `variable_instance_get`
+and converted the answer with `RValue::ToDouble()`, which in YYToolkit is
+the runner's own `REAL_RValue`. On a value with no number in it that routine
+raises the runner's error and returns instead of throwing a C++ exception,
+so the `catch (...)` around it never saw anything. The `cb` command calls
+`instance_create_depth` with a `self` that is not a game instance, so its
+`object_index` came back undefined (inferred from the error's text). The
+guard reads the caller only while a rarity slider, Tyrant's Crown,
+`bossrarity` or Monster Density is on and the created object is a monster or
+a spawner, which is why the all-off spawns raised nothing. What the
+conversion returned after raising is **not established**; nothing visible
+changed (the ancient Karp King was still raised, `enemyBorn=0`).
+
+**The fix.** One named check, `IsNumericInstanceRead`, now stands before the
+conversion in `CallerObjectIndex` and `InstanceIdOf` (the `id` read the pack
+markers and map reveal's birth observation use), and in the research-only
+`TyInstName` (both its `object_index` read, before `object_get_name`, and its
+`id` read). It accepts every kind the runtime produces for these reads
+(REAL, INT32, INT64 and REF: an asset or instance reference converted before
+and still does) and reads anything else as unknown: -1, or `?` in a trace
+line. Nothing else in the guard or the create hooks changed.
+`tests/test_caller_kind_behavior.py` compiles the production
+`CallerObjectIndex` and `InstanceIdOf` against a stub whose conversion
+records a runner error for every kind it cannot convert, as the real one
+does: the numeric reads come back unchanged (baseline), an undefined
+`object_index` or `id` reads as -1 with no error recorded (targets, which
+failed against the unfixed source), and the old unchecked shape, compiled in
+the same harness, records the error (the negative control).
+
+**Reach into the player build: not established.** The guard is compiled in
+both builds, but the player build has no `cb`. Whether any game code path
+creates a monster or spawner with a `self` that has no `object_index` was
+not read and is not established, so the release notes do not list this as a
+player-facing fix.
+
+Other conversions on the `HookICD` / `HookICL` path that are still unchecked,
+listed and deliberately left alone: the created object's index
+(`Args[3].ToDouble()` in both hooks, in the `EnemyBornScope` constructor, in
+`PackMarkerBirth`, in `PopulationBirthScope` and in the Headhunter death
+effect's trigger) and the position arguments (`Args[0]`, `Args[1]`) inside
+`DoMultiCreate`. Those are the caller's own arguments to the create builtin,
+which the builtin itself converts; none was observed to raise. The
+research-only `density: late spawner multiplied` line now names an unknown
+caller through `object_get_name(-1)` instead of a raised conversion.
+
+**The traced kills (measured, capture `# RERUN`).** With `droptrace 20`
+armed, the rank-1 Karp King's and the ancient Karp King's deaths each printed
+no `droptrace:` line, added no line to `itemdrops.jsonl` and printed no
+`dropmult` gold line. Traced deaths that did drop: the rare Karp King
+(`droptrace: DropItem self=Karp_King_obj#306374 argc=12 a0=real:3.000000
+...`, a gold line and 20 item lines) and a slider-raised
+`Skeleton_Mage_Fire_obj` (`DropItem ... a0=real:4.000000`). Untraced deaths
+that dropped: the visual-control Karp King (20 lines and a gold line) and
+Damien (a gold line). Every kill took the same route: the boss's
+`enemy_hp` key from `oget`, `callnum PC_SetVariableGMLWrapper <key> 0`, then
+6 s.
+
+**Static reading of our code.** Every DropManager hook (`FP_DROP_HOOK` in
+`plugin/include/ForgePact/DropManager.hpp`) enters the probe scope first
+(which notes the trace) and then calls the original with its own `S, O, R,
+argc, A`; the trace only reads and returns nothing, and the scope's result
+only raises a depth counter. The gold hooks also call their original once
+each, and change only the coin amount, only under a `dropmult gold`
+multiplier. So an armed trace cannot skip a drop or change one, and a death
+that printed no trace line never entered the `DropItem` / `DropItemBoss`
+hook bodies at all. `tests/test_droptrace_contract.py` pins both halves:
+`test_drop_hook_calls_the_original_whatever_the_trace`, and
+`test_trace_name_read_checks_the_kind` (the trace's own name read, the one
+residual risk, never observed to fire, which failed before the fix). With no
+gold line either, the reading that fits is that those two deaths ran **no
+drop routine at all**: not established, and not caused by the trace (the
+traced rare and Skeleton kills dropped and printed).
+
+**What decides whether a boss's death runs its drop routine: not
+established.** Read locally in the named Ghidra project (output kept local,
+per the hub's Legal rule): the drop scripts (`DropItem`, `DropItemBoss`,
+`DropBossGems`, `DropBossRunes`) carry no name in this import, because the
+symbol dump recorded them pointing outside the game's module (they were
+hooked when it ran), so their callers could not be found by name. The named
+death-side functions that were read (`CA_setEnemyDeathState`,
+`EnemyDestroyKillProc`, `LoadEnemyDestroyFuncs`, `LoadBossDeath` (which the
+decompiler timed out on) and the six closures of `Enemy_Parent_obj`'s create
+event) reference no variable-name string the decompiler could resolve, and
+the callees it could name are skill, cooldown, animation, network and
+collision helpers, none of them a drop script. So none of them could be
+tied to a killer, a death state or a flag the health-write kill route might
+skip. The candidates the session itself cannot
+separate stay open: the kill route (health written to 0 through the
+protected store, outside combat), the boss's state when it was written (the
+visual-control boss that dropped was awake and casting), and timing. A
+re-import with a symbol dump taken with no ForgePact hooks installed would
+name the drop scripts and let their callers be read.
+
+**What Live procedure 1b does about it.** It pairs every kill with
+`dropstats` before and after. In the research build `BP_DIAG_INCREMENT`
+counts every DropManager hook entry (`Item c=`, `ItemBoss c=`, `Gold c=`,
+`MonsterGold c=`, `BossGems c=`, `BossRunes c=`), trace or not, so a death
+that runs no drop routine shows as unchanged counters whether or not
+`droptrace` is armed.
+
 ## Not verified
 
 Each of these is "not observed", not "does not happen":

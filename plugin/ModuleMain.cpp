@@ -1777,17 +1777,26 @@ static bool TyrantActive();
 static bool g_CreatingFromEnemy = false;             // true while a monster runs instance_create
 static std::unordered_set<int> g_EnemyBornIds;       // monsters created by a monster, by instance id
 static volatile LONG g_EnemyBornSeen = 0, g_RarSkippedEnemyBorn = 0;
+// The kinds the runtime produces for an instance's `object_index` or `id`: a number, or
+// an asset/instance reference. RValue::ToDouble() is the runner's REAL_RValue, which on
+// any other kind raises the runner's own error instead of throwing, so `catch (...)`
+// never sees it: a `cb` spawn (a `self` with no object_index) raised "REAL argument
+// incorrect type undefined" here in the Live 1 rerun (issue #44). Anything else is unknown.
+static bool IsNumericInstanceRead(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF;
+}
 static int CallerObjectIndex(CInstance* S)
 {
     if (!S) return -1;
-    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return (int)oi.ToDouble(); } catch (...) { return -1; }
+    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return IsNumericInstanceRead(oi) ? (int)oi.ToDouble() : -1; } catch (...) { return -1; }
 }
 static bool CallerIsEnemyInstance(CInstance* S) { return IsEnemyObject(CallerObjectIndex(S)); }
 // The built-in `id` is not a struct member: variable_struct_get gives undefined for it (the
 // enemy-born match was silently dead, 2026-09-07: 1261 births recorded, 0 matched).
 static double InstanceIdOf(const RValue& inst)
 {
-    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return v.ToDouble(); } catch (...) { return -1.0; }
+    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return IsNumericInstanceRead(v) ? v.ToDouble() : -1.0; } catch (...) { return -1.0; }
 }
 // Shared only by guards in one create-hook invocation, before native code runs.
 // Never cache an instance pointer or classification across native calls/frames.
@@ -7612,8 +7621,10 @@ static std::string TyInstName(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        if (!IsNumericInstanceRead(oi)) return "?";   // object_get_name would convert it
         RValue nm = g_Yytk->CallBuiltin("object_get_name", { oi });
         RValue id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        if (!IsNumericInstanceRead(id)) return nm.ToString() + "#?";
         return nm.ToString() + "#" + std::to_string((long long)id.ToDouble());
     } catch (...) { return "?"; }
 }
