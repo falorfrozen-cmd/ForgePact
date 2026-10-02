@@ -16,7 +16,7 @@ class ReviewBrowserTests(unittest.TestCase):
             self.skipTest(missing)
         code, out = _npm("e2e:ember")
         self.assertEqual(code, 0, out[-6000:])
-        self.assertRegex(out, r'"passed":\s*9')
+        self.assertRegex(out, r'"passed":\s*10\b')
 
     def test_review_regressions(self):
         missing = _missing()

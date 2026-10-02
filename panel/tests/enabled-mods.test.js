@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 19);
+  assert.equal(BOOLEAN_MODS.length, 20);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -72,6 +72,18 @@ test('pet collects relics is an entry while on, and off by default', () => {
   assert.deepEqual(enabledControls(cfg({ mod_pet_relic_pickup: true })), ['mod_pet_relic_pickup']);
   // Its own switch: Pet collects quest items on does not list it, nor the reverse.
   assert.deepEqual(enabledControls(cfg({ mod_pet_quest_pickup: true })), ['mod_pet_quest_pickup']);
+});
+
+test('sleep loot your filter hides is an entry while on, off by default, and its show key never is one', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_hidden_loot'));
+  assert.ok(!BOOLEAN_MODS.includes('mod_hidden_loot_key'));
+  assert.equal(DEFAULTS.mod_hidden_loot, false);
+  assert.equal(DEFAULTS.mod_hidden_loot_key, 164);
+  assert.deepEqual(enabledControls(cfg({ mod_hidden_loot: true })), ['mod_hidden_loot']);
+  // The key rides on the switch's entry: another key with the switch off is
+  // still nothing on, and with it on still one entry.
+  assert.deepEqual(enabledControls(cfg({ mod_hidden_loot_key: 17 })), []);
+  assert.deepEqual(enabledControls(cfg({ mod_hidden_loot_key: 0, mod_hidden_loot: true })), ['mod_hidden_loot']);
 });
 
 test('the skill timer is an entry for any style but off', () => {

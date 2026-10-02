@@ -350,7 +350,11 @@ class TestPetRelicCollectorContract(unittest.TestCase):
     def test_route_b_is_research_only(self):
         self.assertIn('"gml_Script_PickupRelic"', self.plugin)
         self.assertNotIn('"gml_Script_PickupRelic"', self.shipped)
-        self.assertNotIn("SetRoute(", self.shipped)
+        # The route switch is this mod's own: Sleep loot your filter hides
+        # sets its route in the shipped build too, so name the receiver.
+        route_switch = "PetRelicCollectorMod::Instance().SetRoute("
+        self.assertIn(route_switch, self.plugin)
+        self.assertNotIn(route_switch, self.shipped)
 
     # ---- the command -------------------------------------------------------
 

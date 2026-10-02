@@ -23,7 +23,7 @@ assertions pass on the pre-change panel and on the result.
 
 `ModsCategorySplitTests` pins the result: two Mods-tab cards named
 `qolCard`/`itemsCard`, in that order, neither repeating its sub-tab's name as
-a heading (the strip names them), `qolCard` holding exactly the twelve Quality
+a heading (the strip names them), `qolCard` holding exactly the fourteen Quality
 of Life controls in the assignment table's
 order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
 either source file.
@@ -76,6 +76,9 @@ QOL_CONTROL_IDS = [
     "mod_auto_prospect_bag",
     "mod_toggle_indicator",
     "mod_toggle_guard",
+    # Sleep loot your filter hides and its show key (forgepact-issue-95-mod).
+    "mod_hidden_loot",
+    "mod_hidden_loot_key",
     "mod_skill_timer_style",
 ]
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
@@ -85,6 +88,7 @@ ALL_CONTROL_IDS = QOL_CONTROL_IDS + ITEMS_CONTROL_IDS
 PARENT_CHILD_ROWS = [
     ("map_reveal", "map_reveal_packs_row"),
     ("mod_auto_prospect", "mod_auto_prospect_bag_row"),
+    ("mod_hidden_loot", "mod_hidden_loot_key_row"),
 ]
 
 FORGED_MECHANIC_TEXT = "forged with Mechanic:"
@@ -319,7 +323,7 @@ class ModsCategorySplitTests(unittest.TestCase):
             self.assertNotIn("<h2", body, f"{cid} still has a heading")
         self.assertNotIn("<h2>Quality of Life</h2>", HTML)
 
-    def test_qol_card_controls_are_exactly_the_twelve_qol_ids_in_order(self):
+    def test_qol_card_controls_are_exactly_the_fourteen_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")
         positions = []
         for control_id in QOL_CONTROL_IDS:

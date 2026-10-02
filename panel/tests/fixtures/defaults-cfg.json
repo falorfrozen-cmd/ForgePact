@@ -22,6 +22,8 @@
  "mod_stash_move_all": false,
  "mod_far_sleep": false,
  "density_rolling": false,
+ "mod_hidden_loot": false,
+ "mod_hidden_loot_key": 164,
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",
