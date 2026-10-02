@@ -89,11 +89,25 @@ function setHidden(el,v){if(el&&el.hidden!==v)el.hidden=v}
 // status, i.e. while the game runs (already when empty, so the first status
 // is announced). With the game closed it holds the slider's own explanation,
 // which the range reads through aria-describedby: live, every slider step
-// would announce it again (review of ForgePact #141). Call before setText.
+// would announce it again (review of ForgePact #141). Paint through paintNote.
 function setNoteLive(el,live){
   if(!el||(el.getAttribute('aria-live')==='polite')===live)return;
   if(live){el.setAttribute('role','status');el.setAttribute('aria-live','polite')}
   else{el.removeAttribute('role');el.removeAttribute('aria-live')}
+}
+// A region that turns live in the same update as its text is often not
+// announced, so when a note turns live its first status waits until a frame
+// has rendered with the live attributes in it (review of ForgePact #141).
+// Every later write goes out at once; one that arrives while a status is
+// waiting replaces the text the wait will write.
+const notePending=new WeakMap();
+function paintNote(el,live,text){
+  if(!el)return;
+  const turning=live&&!!text&&el.getAttribute('aria-live')!=='polite';
+  setNoteLive(el,live);
+  if(!turning&&!notePending.has(el)){setText(el,text);return}
+  if(!notePending.has(el))requestAnimationFrame(()=>setTimeout(()=>{const t=notePending.get(el);notePending.delete(el);setText(el,t)}));
+  notePending.set(el,text);
 }
 // Move all into the stash turns itself off for the rest of a session after a
 // move it could not confirm; the plugin's last `stashmoveall: state=` line
@@ -151,8 +165,7 @@ function applyPluginModState(pm){
       else status=' Waiting for the matching mining plugin to confirm the setting.';
     }
     // Only the live status: the note is empty (and hidden) while there is none.
-    setNoteLive(miningNote,!!ST?.gameRunning);
-    setText(miningNote,status.trim());
+    paintNote(miningNote,!!ST?.gameRunning,status.trim());
   }
   paintRollsNote(pm);
   const ap=(pm&&pm.autoprospect)||null;
@@ -206,8 +219,7 @@ function paintRollsNote(pm){
     else if(mining?.rollsReady&&mining.rolls===rolls)status='Plugin ready at x'+rolls+'.';
     else status='Waiting for the matching mining plugin to confirm the setting.';
   }
-  setNoteLive(note,!!ST?.gameRunning);
-  setText(note,status);
+  paintNote(note,!!ST?.gameRunning,status);
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 // All Skills adds whole skill levels, not a percentage.
@@ -241,7 +253,7 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   // The note's id carries the section (data-note is the key alone), and the
   // range names it in aria-describedby, so a screen reader reads the note.
   // The two mining notes become polite live regions while the game runs and
-  // they carry the plugin's status (setNoteLive, from their painters).
+  // they carry the plugin's status (paintNote, from their painters).
   const noteId=`note-${sec}-${key}`;
   const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}">${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>

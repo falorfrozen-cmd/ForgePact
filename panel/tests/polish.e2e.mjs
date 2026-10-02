@@ -409,10 +409,34 @@ async function miningNoteOffline({ page }) {
 
 // While the game runs both mining notes hold the plugin's status, and are polite
 // live regions already when empty, so the first status written is announced.
+// A region that turns live in the same update as its text is often not
+// announced, so the first status after the game starts has to land a rendered
+// frame after the live attributes (review of ForgePact #141).
 async function miningNoteLiveRunning({ page }) {
   await patchState(page, helmetOn);
+  await page.addInitScript(() => {
+    let frame = 0, batch = 0;
+    const tick = () => { frame++; requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    const log = window.__miningNoteLog = [];
+    new MutationObserver((records) => {
+      batch++;
+      for (const m of records) {
+        const note = (m.target.nodeType === 1 ? m.target : m.target.parentElement)?.closest?.('.note[data-note="mining_ore"]');
+        if (!note) continue;
+        log.push({ kind: m.type === 'attributes' ? 'live' : 'text', batch, frame, live: note.getAttribute('aria-live'), text: note.textContent });
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-live'] });
+  });
   await reload(page);
   await tab(page, 'loot');
+  const log = await $(page, () => window.__miningNoteLog);
+  const turnedLive = log.find((e) => e.kind === 'live' && e.live === 'polite');
+  const firstText = log.find((e) => e.kind === 'text' && e.text.trim() !== '');
+  assert(turnedLive && firstText, `The mining note never turned live or never got a status: ${JSON.stringify(log)}`);
+  assert(turnedLive.batch < firstText.batch && turnedLive.frame < firstText.frame,
+    `The mining note's first status landed with its live attributes (live at batch ${turnedLive.batch}/frame ${turnedLive.frame}, text at batch ${firstText.batch}/frame ${firstText.frame})`);
+  assert(firstText.live === 'polite', `The mining note's first status was written before it was live: aria-live "${firstText.live}"`);
   const live = (r) => r.role === 'status' && r.live === 'polite';
   let [ore, rolls] = await miningNotes(page);
   assert(ore.text.trim() === HELMET_STATUS && ore.visible, `The running mining note reads "${ore.text}"`);
