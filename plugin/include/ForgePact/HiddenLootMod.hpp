@@ -17,27 +17,35 @@ namespace ForgePact {
 //
 // Why (measured 2026-09-28, docs/hidden-loot-research.md, Live 1): a ground
 // item the filter hides is never drawn, but the runner still walks it every
-// frame, and the loot manager's own Begin Step looks at every one. 2,736
-// hidden items cost about 2.4-3.9 microseconds each per frame; asleep, the
-// cost went away, and woken it came back.
+// frame, and the loot manager's own Begin Step looks at every one. For that
+// pile, 2,736 hidden items, each cost about 2.4-5.6 microseconds of frame
+// time per frame; asleep, the cost went away, and woken it came back.
 //
 // What decides: the game, never this class. The game's LootGroundInit runs
 // the bound filter and leaves its verdict, `lootFilterVisible`, on the new
-// instance, on every drop path (a static reading: the three ground-drop entry
-// points all call it). ModuleMain hooks LootGroundInit; the hook calls the
-// game first and then hands this class what the call carried (argument 0,
-// argument 1, `self`) without a single runner call. At the frame's end
-// (EVENT_FRAME, after every step event) the class finds which of those is a
-// live Loot_Ground_obj, reads the verdict again there, and puts a hidden one
-// to sleep. Not inside the call: the rest of the entry point, and whoever
-// called it, may still address the new instance, and a deactivated instance
-// is absent to them.
+// instance. Monster drops (LootGroundCreateFromItem) and bag drops
+// (LootGroundDrop) call it (a static reading; LootGroundCreate names it as a
+// callee, but its own path was not traced). ModuleMain hooks LootGroundInit;
+// the hook calls the game first and then hands this class what the call
+// carried (argument 0, argument 1, `self`), still inside the call. The class
+// keeps only durable handles of them (Durable): a number or a reference as
+// it is; an instance pointer, asked instance_exists while the call still
+// holds it live, as its own `id`; anything else as undefined. Those two
+// reads are all it does inside the call, and no raw pointer outlives it:
+// `self` may be a monster that is dying, freed before the frame's end. At
+// the frame's end (EVENT_FRAME, after every step event) the class finds
+// which handle is a live Loot_Ground_obj, reads the verdict again there,
+// and puts a hidden one to sleep. Not inside the call: the rest of the entry
+// point, and whoever called it, may still address the new instance, and a
+// deactivated instance is absent to them.
 //
-// The candidates are tried in order and the first that is a ground item wins,
-// so when argument 0 is the item (the reading), argument 1 (the item struct)
-// and `self` (the caller, perhaps a monster that is dying) are never handed
-// to the runner. Its handle is then re-read as the instance's own `id`, which
-// stays safe to address after the instance is gone.
+// The handles are tried in order (argument 0, argument 1, `self`) and the
+// first that is a ground item wins; the stat line counts which slot it was
+// (by-arg0, by-arg1, by-self), how many pointers became ids inside the call
+// (reduced) and how many did not (dropped, an item struct each time if the
+// reading of the arguments holds), and the last call's kinds as passed. A
+// handle whose instance is gone by the frame's end answers false to
+// instance_exists and is passed over.
 //
 // Never touched: a verdict that reads visible (quest items, skipLootFilter
 // items, whatever the player's filter shows), anything without a verdict,
@@ -75,6 +83,14 @@ public:
         uint64_t inits = 0, slept = 0, visible = 0, noFilterVar = 0, unidentified = 0, gone = 0;
         uint64_t passes = 0, skippedPersistent = 0, errors = 0;
         uint64_t visibleUnwritten = 0;   // the built-in `visible` did not take a write (the verdict did)
+        // Which of the call's values identified the item at the frame's end.
+        uint64_t byArg0 = 0, byArg1 = 0, bySelf = 0;
+        // Instance pointers made an `id` inside the call, and those that were
+        // not (instance_exists false, an id that is not a number, a read that threw).
+        uint64_t reduced = 0, dropped = 0;
+        // The last call's argument 0, argument 1 and `self`, as passed (before
+        // Durable): num, ref, obj, undef or other; "-" before the first call.
+        const char* kinds[3] = { "-", "-", "-" };
     };
     struct WalkResult { long slept = 0, visible = 0, noFilterVar = 0; };
     struct OffResult { long woken = 0, existAfter = 0; };
@@ -154,13 +170,25 @@ public:
         return result;
     }
 
-    // From the LootGroundInit hook, after the game's own call returned: what
-    // the call carried, kept for the frame's end. No runner call here.
+    // From the LootGroundInit hook, after the game's own trampoline returned
+    // but still inside the call: what the call carried, reduced to durable
+    // handles (Durable) and kept for the frame's end. Reads only: nothing is
+    // deactivated or written here, and a read that throws is caught here,
+    // never left to unwind through the game's own call.
     void OnInit(const RValue& arg0, const RValue& arg1, const RValue& self) {
         if (!m_Enabled) return;
         ++m_Stats.inits;
+        m_Stats.kinds[0] = KindName(arg0);
+        m_Stats.kinds[1] = KindName(arg1);
+        m_Stats.kinds[2] = KindName(self);
         if (m_Pending.size() >= kPendingCap) { ++m_Stats.errors; return; }
-        m_Pending.push_back({ { arg0, arg1, self } });
+        try {
+            PendingCall call;
+            call.candidates[0] = Durable(arg0);
+            call.candidates[1] = Durable(arg1);
+            call.candidates[2] = Durable(self);
+            m_Pending.push_back(std::move(call));
+        } catch (...) { ++m_Stats.errors; }
     }
 
     // Per-frame work from the frame callback. `roomKey` changes on every room
@@ -211,6 +239,40 @@ private:
         return g_Yytk->CallBuiltin(name, args);
     }
     bool Exists(const RValue& handle) { return Call("instance_exists", { handle }).ToBoolean(); }
+
+    // A value's kind as the stat line names it.
+    static const char* KindName(const RValue& v) {
+        const uint32_t kind = Kind(v);
+        if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64) return "num";
+        if (kind == VALUE_REF) return "ref";
+        if (kind == VALUE_OBJECT) return "obj";
+        if (kind == VALUE_UNDEFINED) return "undef";
+        return "other";
+    }
+    // A value the drop call carried, made safe to keep past the call. A
+    // number or a reference names an instance by id and is kept as it is,
+    // with no read. An instance pointer is only valid while the call holds
+    // it (the caller may be freed before the frame's end), so it is asked
+    // instance_exists now and, if it is one, replaced by its own `id`, which
+    // this runner answers as a reference. Anything else (an item struct,
+    // which instance_exists answers false, an id that is not a number, a
+    // kind no instance has) is kept as undefined. The kind decides how a
+    // value is kept, never whether the frame's end looks at it: every kind
+    // an instance arrives as is kept or resolved. Two reads at most.
+    RValue Durable(const RValue& v) {
+        const uint32_t kind = Kind(v);
+        if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_REF) return v;
+        if (kind != VALUE_OBJECT) return RValue();
+        try {
+            if (Call("instance_exists", { v }).ToBoolean()) {
+                RValue own = Call("variable_instance_get", { v, RValue("id") });
+                double n = -1;
+                if (Number(own, n) && n >= 0) { ++m_Stats.reduced; return own; }
+            }
+        } catch (...) { ++m_Stats.errors; }
+        ++m_Stats.dropped;
+        return RValue();
+    }
 
     // Loot_Ground_obj's object index, by its SDK name; asked again until it
     // resolves.
@@ -326,10 +388,13 @@ private:
             RValue handle;
             int64_t id = -1;
             bool found = false;
+            int slot = 0;   // 0 argument 0, 1 argument 1, 2 `self`
             for (const RValue& candidate : call.candidates) {
                 if (Identify(candidate, handle, id)) { found = true; break; }
+                ++slot;
             }
             if (!found) { ++m_Stats.unidentified; continue; }
+            ++(slot == 0 ? m_Stats.byArg0 : slot == 1 ? m_Stats.byArg1 : m_Stats.bySelf);
             if (Known(id)) continue;   // the same item handed over twice
             try { Judge(handle, id, allows, nullptr); } catch (...) { ++m_Stats.errors; }
         }

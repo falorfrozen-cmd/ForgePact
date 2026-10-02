@@ -6,7 +6,8 @@ command with its own early return; the frame callback runs the tick only after
 setup and the tick costs nothing while the switch is off; the one hook goes on
 `LootGroundInit` by its SDK name through HookOneScript with `nativeOut`, calls
 the trampoline first, and a table-only or failed install is said out loud and
-falls back to the pass; no game address, no struct layout and no
+falls back to the pass; inside the call the class only reduces what the call
+carried to durable handles, with `instance_exists` and the `id` read; no game address, no struct layout and no
 instance_destroy anywhere in the mod; the builtins it calls are the documented
 ones; the object's kind never decides whether it is looked at; the key is read
 only while the game's own window is in front; the class starts off with Left
@@ -127,7 +128,8 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
         self.assertLess(hook.index("g_Orig_LootGroundInit(S, O, R, argc, A)"), hook.index(".OnInit("))
         self.assertIn(".Enabled()", hook)
         self.assertLess(hook.index(".Enabled()"), hook.index(".OnInit("))
-        # Inside the game's own call the hook makes no runner call.
+        # The hook body itself makes no runner call: the reads inside the
+        # game's call are the class's, in OnInit, where the harness runs them.
         self.assertNotIn("CallBuiltin", hook)
         self.assertNotIn("instance_deactivate_object", hook)
 
@@ -181,9 +183,13 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
         self.assertIn('"hiddenloot: usage hiddenloot 1 | 0 | stat | key <vk>"', a)
         # The stat fields, in the documented order, shared by `stat` and `0`.
         stat = _code(_body(self.plugin, "static std::string HiddenLootStatFields()"))
-        fields = re.findall(r'"\s?([a-z-]+)="', stat)
+        fields = re.findall(r'"\s?([a-z0-9-]+)="', stat)
         self.assertEqual(fields, ["on", "route", "key", "held", "inits", "slept", "asleep-now", "shown-now", "visible",
-                                  "no-filter-var", "unidentified", "gone", "passes", "skipped-persistent", "errors"])
+                                  "no-filter-var", "unidentified", "gone", "passes", "skipped-persistent", "errors",
+                                  "by-arg0", "by-arg1", "by-self", "reduced", "dropped", "kinds"])
+        # kinds=<arg0>/<arg1>/<self>, one slash between each.
+        kinds = stat[stat.index('" kinds="'):]
+        self.assertEqual(kinds.count('"/"'), 2, kinds)
         self.assertEqual(on.count("HiddenLootStatFields()"), 2)
         # A key is written as its code, or `none` for 0.
         self.assertIn('"none"', a)
@@ -226,11 +232,33 @@ class HiddenLootClassRulesTests(unittest.TestCase):
         pending = _body(self.code, "void ProcessPending(RoomProbe& roomInfo)")
         self.assertIn("for (const RValue& candidate : call.candidates)", pending)
 
-    def test_the_init_path_only_records(self):
+    def test_the_init_path_reduces_each_candidate_inside_the_call(self):
+        # Inside the game's LootGroundInit call the class turns each of the
+        # call's values into a durable handle (a number, a reference, or an
+        # instance pointer's own `id`), so no raw pointer outlives the call;
+        # identifying, the verdict and the sleep stay at the frame's end.
         init = _body(self.code, "void OnInit(const RValue& arg0, const RValue& arg1, const RValue& self)")
-        self.assertNotIn("Call(", init)
+        statements = [s.strip() for s in init.split("\n") if s.strip()]
+        self.assertEqual(statements[0], "if (!m_Enabled) return;")
+        push = init.index("m_Pending.push_back(")
+        for arg in ("arg0", "arg1", "self"):
+            self.assertIn(f"Durable({arg})", init, arg)
+            self.assertLess(init.index(f"Durable({arg})"), push, arg)
+        pushed = init[push:init.index(";", push)]
+        self.assertIsNone(re.search(r"\b(arg0|arg1|self)\b", pushed), pushed)
         self.assertNotIn("CallBuiltin", init)
-        self.assertIn("if (!m_Enabled) return;", init)
+        durable = _body(self.code, "RValue Durable(const RValue& v)")
+        self.assertEqual(set(re.findall(r'Call\("(\w+)"', durable)), {"instance_exists", "variable_instance_get"})
+        self.assertIn('RValue("id")', durable)
+        self.assertNotIn("CallBuiltin", durable)
+        for body, where in ((init, "OnInit"), (durable, "Durable")):
+            for forbidden in ("instance_deactivate_object", "variable_instance_set", "object_index", "kVerdict",
+                              "Identify(", "Verdict(", "WriteVerdict(", "Judge(", "Exists("):
+                self.assertNotIn(forbidden, body, f"{where}: {forbidden}")
+        # A number or a reference is kept as it is, with no read; an instance
+        # pointer is reduced; every kind is kept or resolved, never skipped.
+        for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64", "VALUE_REF", "VALUE_OBJECT"):
+            self.assertIn(kind, durable, kind)
 
     def test_the_verdict_is_read_only_after_it_is_known_to_exist(self):
         verdict = _body(self.code, "int Verdict(const RValue& handle)")

@@ -41862,8 +41862,10 @@ static void FarSleepCommand(const std::string& rest)
 // (MiningOre already hooks LootGroundCreate, and the research build's item
 // inspection table-swaps LootGroundCreate and LootGroundCreateFromItem, which
 // would leave a second hook there table-only). The hook calls the game first
-// and then only hands over what the call carried; the class acts at the end
-// of the frame, in HiddenLootTick.
+// and then hands the class what the call carried, which the class reduces
+// inside the call to durable handles (instance_exists and the `id` read, so
+// no raw pointer outlives the call); the class acts at the end of the frame,
+// in HiddenLootTick.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
@@ -41945,7 +41947,13 @@ static std::string HiddenLootStatFields()
         + " gone=" + std::to_string(st.gone)
         + " passes=" + std::to_string(st.passes)
         + " skipped-persistent=" + std::to_string(st.skippedPersistent)
-        + " errors=" + std::to_string(st.errors);
+        + " errors=" + std::to_string(st.errors)
+        + " by-arg0=" + std::to_string(st.byArg0)
+        + " by-arg1=" + std::to_string(st.byArg1)
+        + " by-self=" + std::to_string(st.bySelf)
+        + " reduced=" + std::to_string(st.reduced)
+        + " dropped=" + std::to_string(st.dropped)
+        + " kinds=" + st.kinds[0] + "/" + st.kinds[1] + "/" + st.kinds[2];
 }
 // `hiddenloot 1|0` (the panel's switch), `hiddenloot stat`, and
 // `hiddenloot key <vk>` (the show key: 0 for none, or 3-254; stored whether

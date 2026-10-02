@@ -37,14 +37,18 @@ facts established here are also recorded in the hub's
 | Whether hidden items outlive the zone | No. The zone's end ran Clean Up on 809 of 809 hidden items, and none were left | **Measured**, Live 1's `zone-end-cleanup` and `zone-change-gone` |
 | Whether hidden items reach the save | **Not observed.** `saves-diff`, read with 2,736 hidden items still on the ground and before any zone change, is the check that answers it; its control failed. `reload-none` landed in town | Live 1's `saves-diff` and `reload-none`, both `not-observed` |
 | A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **measured** live on real monster drops, through the hold and release of Left Alt, off, the switch-on walk and the zone's end, in Live 2 of `forgepact-issue-95-mod` (2026-09-28); `LootGroundDrop`, a pickup while shown and the table-only fallback **not observed live** ([Live 2 results](#live-2-results-2026-09-28)) |
-| That all three ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept` |
+| Which ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee, and no path through it was traced | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept` |
 | Whether a sleeping hidden item outlives the zone | No. With 1,495 items asleep, the zone's end ran Clean Up 1,495 times and Destroy 0 | **Measured**, Live 2's `zone-end-asleep` |
+| What the hook keeps of a drop call past the call | Durable handles only: inside the call a number or a reference is kept, an instance pointer is asked `instance_exists` and replaced by its own `id`, anything else becomes undefined; no raw pointer reaches the frame's end ([The mod](#the-mod)) | **Reading of our own code**; harness-verified 2026-10-02, with a runner that counts every builtin handed a dead instance pointer reading 0. Live 2 ran the earlier hook, which kept the pointers; whether `instance_exists` on an item struct is safe on this runtime, and which slot carries the item, are **not established** until Live 3 ([Not established](#not-established)) |
 | Whether the game's 0.3 s refresh re-hides an item whose verdict was written visible | No. 522 woken items read `hidden=0` 1 s and 2 s after the write. How many of them were also drawn is not established: 462 read `visible` false, which the on-screen half of Alarm 9 also causes | **Measured**, Live 2's `hold-shows`, its `hidden=` half ([What `hold-shows` measured](#what-hold-shows-measured)) |
 
 Live 1 of `forgepact-issue-95` ran on 2026-09-28; its results are in
 [Live 1 results](#live-1-results-2026-09-28). Live 2 of `forgepact-issue-95-mod`,
 the mod's own session, ran the same day; its results are in
-[Live 2 results](#live-2-results-2026-09-28). Part 1's own record stays in the
+[Live 2 results](#live-2-results-2026-09-28). After it the hook was changed to
+reduce what each drop call carries to durable handles inside the call
+(2026-10-02, [The mod](#the-mod)); Live 3, a short re-check of that hook on
+the research build, is pending. Part 1's own record stays in the
 [dev2 bug batch](dev2-bug-batch-research.md#95-part-1-what-a-hidden-ground-item-still-costs);
 this document is where it continues.
 
@@ -331,13 +335,36 @@ name with both routes, gets the inline detour on both builds. It is attempted
 once, on the first switch-on after setup.
 
 **Where the sleep happens, and why there.** The hook calls the game first and
-then only records what the call carried (argument 0, argument 1 and `self`),
-with no runner call. The arguments are read as `(instance, item)`, but that is
-a reading, not a measurement, so at the end of the frame (`EVENT_FRAME`, after
-every step event) the class takes the first of the three that is a live
-instance whose `object_index` is `Loot_Ground_obj`'s, whatever its value kind
-(a number, a reference or an instance pointer are all asked; the kind never
-decides, since an item struct is an object too). It then reads the verdict
+then hands the class what the call carried (argument 0, argument 1 and
+`self`), still inside the call, where the class reduces each value to a
+durable handle (`Durable`) with reads only. A number or a reference names an
+instance by id and is kept as it is, with no read. An instance pointer
+(`VALUE_OBJECT`) is valid only while the call holds it: `self` may be a
+monster that is dying, and its instance may be freed before the frame's end,
+when a builtin handed the old pointer would read freed memory, and nothing at
+the frame's end can test a pointer's lifetime without reading the runtime's
+instance layout. So it is asked `instance_exists` inside the call and, if it
+is an instance, replaced by its own `id` (`variable_instance_get(v, "id")`,
+a reference on this runner), the same route the creation hooks' `InstanceIdOf`
+and the Miner's Helmet already use. Anything else becomes undefined: an
+object that `instance_exists` answers false (an item struct, if the reading
+holds), an `id` that does not read as a number, a read that throws, a kind no
+instance has. Those two builtins are all the class calls inside the call: no
+`object_index` or verdict read, no deactivation and no write. The kind decides
+how a value is kept, never whether it is looked at. The stat line counts what
+happened, after `errors=`: `by-arg0=`, `by-arg1=` and `by-self=` (which slot
+identified the item at the frame's end), `reduced=` (pointers made an id
+inside the call), `dropped=` (pointers that were not), and `kinds=` (the last
+call's three values as passed, before the reduction: `num`, `ref`, `obj`,
+`undef` or `other`, and `-` before the first call). The arguments are read as
+`(instance, item)`, but that is a reading, not a measurement, so at the end of
+the frame (`EVENT_FRAME`, after every step event) the class takes the first of
+the three handles that is a live instance whose `object_index` is
+`Loot_Ground_obj`'s; a handle whose instance is gone by then answers false to
+`instance_exists` and is passed over. Whether `instance_exists` on an item
+struct answers false without an error on this runtime is **not established**:
+the harness assumes it, and Live 3 measures it (`struct-safe`; see
+[Not established](#not-established)). It then reads the verdict
 there, after `variable_instance_exists`, and deactivates the item only if the
 verdict reads hidden. It does not deactivate inside the call: the rest of the
 entry point, and whoever called `LootGroundCreateFromItem` with its return
@@ -398,8 +425,13 @@ targets it can pick up.
 
 **Verified.** The harness (`tests/hidden_loot_harness.cpp`, run by
 `tests/test_hidden_loot_behavior.py`) compiles the real class against a
-controlled runner: off asks the game nothing, not even the key; a hidden drop
-sleeps at the next frame's end and a visible one is never touched; the hold,
+controlled runner: off asks the game nothing, not even the key; inside the
+drop call the class makes only the reduction's reads (`instance_exists`, then
+the `id`) and never deactivates or writes; a runner that counts every builtin
+handed a pointer to an instance already gone (with a positive control that
+proves the count fires) reads 0 all run, including a `self` that dies before
+the frame's end; a hidden drop sleeps at the next frame's end and a visible
+one is never touched; the hold,
 the drop while held and the foreground guard; off, the switch-on walk, room
 changes and persistent rooms; and the fallback pass. The wiring and the rules
 are pinned by `tests/test_hidden_loot_mod_contract.py`, the panel by
@@ -512,6 +544,13 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
   [The mod](#the-mod)), but no path through its long body was traced, so which
   of the items it makes get their verdict from `LootGroundInit` is not
   established.
+- **Whether `instance_exists` on an item struct answers false without an
+  error on this runtime.** The hook's reduction asks it of every
+  object-kind value a drop call carries, argument 1 (the item struct, by the
+  reading) on every drop. The harness assumes it answers false; the plugin
+  had only ever handed instances to it, and Live 2 (`unidentified=0` over
+  1,502 calls, before the reduction) never ran the object-kind path. Live 3
+  measures it (`struct-safe`: `reduced` + `dropped` > 0 with `errors=0`).
 - **The guard in front of the filter call** inside `LootGroundInit` was not
   read; `skipLootFilter` is a candidate, not a finding.
 - **Whether ground items reach the save.** `SaveSlot`'s body was not read, and

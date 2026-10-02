@@ -10,6 +10,12 @@
 // instance_exists and variable_instance_get. object_index answers as a typed
 // reference with a flag bit above the kind, and `id` as a reference, as this
 // runner answers them.
+//
+// A drop call's `self` and its instance-pointer arguments live only as long
+// as their instances: once one is gone, any builtin handed the pointer would
+// read freed memory in the real runtime. This runner counts every such call
+// in `danglingPointerCalls` (a positive control proves it fires), and the
+// class must leave it at 0 for the whole run.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -62,6 +68,7 @@ struct World {
     long calls = 0;
     long callsOnMissing = 0;                     // activate/deactivate/set on an instance that is not there
     long readsOnMissing = 0;                     // variable_instance_get on an instance that is not there
+    long danglingPointerCalls = 0;               // a builtin handed an instance pointer whose instance is gone
     std::set<std::string> unexpected;            // builtins the class called that this world does not know
     bool throwOnDeactivate = false;
     bool refuseVisibleWrite = false;
@@ -81,6 +88,11 @@ struct Runner {
         ++world.calls;
         const std::string name(key);
         ++world.byName[name];
+        for (const RValue& arg : args) {
+            if ((arg.m_Kind & 0x0FFFFFFF) != VALUE_OBJECT || arg.isStruct) continue;
+            const Instance* i = anyId(idOf(arg));
+            if (!i || !i->exists) ++world.danglingPointerCalls;
+        }
         if (name == "asset_get_index") {
             if (args[0].text == "Loot_Ground_obj") return RValue((double)LootGround);
             return RValue(-1.0);
@@ -191,8 +203,9 @@ static uint64_t frame = 1000;
 static void tick(int frames, int64_t room, Room (*probe)() = zone) {
     for (int k = 0; k < frames; ++k) mod().OnFrame(frame++, room, probe);
 }
-// A drop: the game made the item and ran its filter, then our hook hands
-// over what the call carried.
+// A drop: the game made the item and ran its filter, then our hook hands the
+// class what the call carried, still inside the call, where the class reduces
+// it to durable handles.
 static void init(const RValue& a0, const RValue& a1, const RValue& self) { mod().OnInit(a0, a1, self); }
 static bool touchedBy(int64_t id, const std::string& builtin = "") {
     for (const auto& t : world.touched) if (t.first == id && (builtin.empty() || t.second == builtin)) return true;
@@ -248,27 +261,83 @@ int main() {
 
     // ---- A hidden drop sleeps at the end of its frame --------------------------
     {
+        // The instrument first: handed an instance pointer whose instance is
+        // gone, the runner counts it. Then back to 0 for the class's run.
+        const int64_t corpse = addMonster();
+        byId(corpse)->exists = false;
+        runner.CallBuiltin("instance_exists", { InstancePointer(corpse) });
+        check("drop/dangling_control_fires", world.danglingPointerCalls == 1, "dangling=" + n(world.danglingPointerCalls));
+        world.danglingPointerCalls = 0;
+
         const int64_t item = addItem(true);
+        const HiddenLootMod::Stats st0 = mod().StatsRef();
+        const bool noKindsYet = std::string(st0.kinds[0]) == "-" && std::string(st0.kinds[1]) == "-" && std::string(st0.kinds[2]) == "-";
         const long before = world.calls;
+        const long existsBefore = world.byName["instance_exists"], getsBefore = world.byName["variable_instance_get"];
+        const size_t touchesBefore = world.touched.size();
         const long deactBefore = world.byName["instance_deactivate_object"];
         init(Ref(item), ItemStruct(), InstancePointer(monster));
-        check("drop/no_call_inside_init", world.calls == before && byId(item)->active, "calls=" + n(world.calls - before));
+        // Inside the call: nothing deactivated or written, the item awake.
+        check("drop/no_deactivate_or_write_inside_init", world.touched.size() == touchesBefore && byId(item)->active
+            && world.byName["instance_deactivate_object"] == deactBefore,
+            "touched=" + n((long long)(world.touched.size() - touchesBefore)));
+        // Reads only: the reference is kept with no read, the item struct is
+        // asked instance_exists (false), the monster's pointer is asked
+        // instance_exists and then its `id`.
+        const long exists = world.byName["instance_exists"] - existsBefore, gets = world.byName["variable_instance_get"] - getsBefore;
+        check("drop/reads_only_inside_init", world.calls - before == 3 && exists == 2 && gets == 1,
+            "calls=" + n(world.calls - before) + " instance_exists=" + n(exists) + " variable_instance_get=" + n(gets));
+        // The kinds are the call's own, as passed, not what they became.
+        const HiddenLootMod::Stats& kinds = mod().StatsRef();
+        check("drop/kinds_as_passed", noKindsYet && std::string(kinds.kinds[0]) == "ref" && std::string(kinds.kinds[1]) == "obj"
+            && std::string(kinds.kinds[2]) == "obj",
+            std::string("kinds=") + kinds.kinds[0] + "/" + kinds.kinds[1] + "/" + kinds.kinds[2]);
         tick(1, 1);
         check("drop/one_deactivate_at_next_tick", !anyId(item)->active && world.byName["instance_deactivate_object"] - deactBefore == 1
-            && mod().StatsRef().inits == 1 && mod().StatsRef().slept == 6,
-            "deactivates=" + n(world.byName["instance_deactivate_object"] - deactBefore) + " slept=" + n(mod().StatsRef().slept));
+            && mod().StatsRef().inits == 1 && mod().StatsRef().slept == 6 && mod().StatsRef().byArg0 - st0.byArg0 == 1,
+            "deactivates=" + n(world.byName["instance_deactivate_object"] - deactBefore) + " slept=" + n(mod().StatsRef().slept)
+            + " by-arg0=" + n(mod().StatsRef().byArg0 - st0.byArg0));
         tick(5, 1);
         check("drop/never_twice", world.byName["instance_deactivate_object"] - deactBefore == 1);
         // The item found as a plain number, and as `self` (the arguments carry
         // nothing that is a ground item): the kind never decides.
+        const HiddenLootMod::Stats st1 = mod().StatsRef();
         const int64_t asNumber = addItem(true);
         init(Plain(asNumber), RValue(), InstancePointer(monster));
         const int64_t asSelf = addItem(true);
         init(RValue(12.0), ItemStruct(), InstancePointer(asSelf));
         tick(1, 1);
         check("drop/identified_from_number", !anyId(asNumber)->active);
-        check("drop/identified_from_self", !anyId(asSelf)->active && mod().StatsRef().unidentified == 0,
-            "unidentified=" + n(mod().StatsRef().unidentified));
+        check("drop/identified_from_self", !anyId(asSelf)->active && mod().StatsRef().unidentified == 0
+            && mod().StatsRef().bySelf - st1.bySelf == 1 && mod().StatsRef().byArg0 - st1.byArg0 == 1,
+            "unidentified=" + n(mod().StatsRef().unidentified) + " by-self=" + n(mod().StatsRef().bySelf - st1.bySelf));
+        // Argument 0 as an instance pointer: made its `id` inside the call,
+        // and that id identifies it at the tick. The item struct is dropped.
+        const HiddenLootMod::Stats st2 = mod().StatsRef();
+        const int64_t asPointer = addItem(true);
+        init(InstancePointer(asPointer), ItemStruct(), RValue());
+        const bool awakeInsideCall = byId(asPointer)->active;
+        tick(1, 1);
+        check("drop/reduced_inside_call", awakeInsideCall && !anyId(asPointer)->active
+            && mod().StatsRef().reduced - st2.reduced == 1 && mod().StatsRef().dropped - st2.dropped == 1
+            && mod().StatsRef().byArg0 - st2.byArg0 == 1,
+            "reduced=" + n(mod().StatsRef().reduced - st2.reduced) + " dropped=" + n(mod().StatsRef().dropped - st2.dropped)
+            + " by-arg0=" + n(mod().StatsRef().byArg0 - st2.byArg0));
+        // `self` a monster that dies before the frame's end: its pointer was
+        // made an id inside the call, so the tick asks the id, which answers
+        // not there, and never hands the runner the dead pointer.
+        const int64_t dying = addMonster();
+        const HiddenLootMod::Stats st3 = mod().StatsRef();
+        const long missing = world.callsOnMissing, missingReads = world.readsOnMissing;
+        const size_t touches3 = world.touched.size();
+        init(RValue(12.0), ItemStruct(), InstancePointer(dying));
+        byId(dying)->exists = false;
+        tick(1, 1);
+        check("drop/self_gone_before_tick_no_call", mod().StatsRef().unidentified - st3.unidentified == 1
+            && world.danglingPointerCalls == 0 && world.callsOnMissing == missing && world.readsOnMissing == missingReads
+            && world.touched.size() == touches3,
+            "unidentified=" + n(mod().StatsRef().unidentified - st3.unidentified) + " dangling=" + n(world.danglingPointerCalls)
+            + " missing=" + n(world.callsOnMissing - missing) + " reads=" + n(world.readsOnMissing - missingReads));
         // The same item handed over twice in one frame is slept once.
         const int64_t twice = addItem(true);
         const long d2 = world.byName["instance_deactivate_object"];
@@ -539,6 +608,8 @@ int main() {
     std::string odd;
     for (const auto& u : world.unexpected) odd += u + " ";
     check("calls/only_listed_builtins", world.unexpected.empty(), odd);
+    // No builtin the class called, all run, was handed a dead instance pointer.
+    check("calls/no_dangling_pointer", world.danglingPointerCalls == 0, "dangling=" + n(world.danglingPointerCalls));
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
     return failures ? 1 : 0;

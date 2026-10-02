@@ -3,12 +3,14 @@
 Hidden loot sleep puts a ground item the player's own loot filter hides to
 sleep (instance_deactivate_object) at the end of the frame it dropped in, and
 shows the slept items while a key is held. These scenarios pin what the class
-asks of the game (nothing while off, not even the key; nothing inside the
-game's own drop call), what it acts on (only a Loot_Ground_obj whose verdict
-reads hidden, found among the call's arguments and `self` whatever their
-kind), what it counts instead of acting on, the hold key and its foreground
-guard, switching off and on, room changes and persistent rooms, and the
-fallback pass that takes over when the drop hook is table-only.
+asks of the game (nothing while off, not even the key; inside the game's own
+drop call only `instance_exists` and the `id` read that turn an instance
+pointer into a durable id, and never a dead pointer to the runner), what it
+acts on (only a Loot_Ground_obj whose verdict reads hidden, found among the
+call's arguments and `self` whatever their kind), what it counts instead of
+acting on, the hold key and its foreground guard, switching off and on, room
+changes and persistent rooms, and the fallback pass that takes over when the
+drop hook is table-only.
 """
 import os
 import shutil
@@ -84,7 +86,8 @@ class HiddenLootBehaviorTests(unittest.TestCase):
         self.assertIn("RESULT OK", self.output, self.output)
         for label in ("nofilter/counted_not_acted", "unidentified/counted_not_acted",
                       "key/default_left_alt", "key/refuses_mouse_buttons", "key/range", "key/zero_accepted",
-                      "key/zero_polls_nothing", "errors/counted", "calls/only_listed_builtins"):
+                      "key/zero_polls_nothing", "errors/counted", "calls/only_listed_builtins",
+                      "calls/no_dangling_pointer"):
             self.assertScenario(label)
 
     def test_baseline_off_asks_the_game_nothing(self):
@@ -93,8 +96,10 @@ class HiddenLootBehaviorTests(unittest.TestCase):
             self.assertScenario(label)
 
     def test_hidden_drop_sleeps_at_the_end_of_its_frame(self):
-        for label in ("drop/no_call_inside_init", "drop/one_deactivate_at_next_tick", "drop/never_twice",
-                      "drop/identified_from_number", "drop/identified_from_self", "drop/same_item_once"):
+        for label in ("drop/dangling_control_fires", "drop/no_deactivate_or_write_inside_init",
+                      "drop/reads_only_inside_init", "drop/kinds_as_passed", "drop/one_deactivate_at_next_tick",
+                      "drop/never_twice", "drop/identified_from_number", "drop/identified_from_self",
+                      "drop/reduced_inside_call", "drop/self_gone_before_tick_no_call", "drop/same_item_once"):
             self.assertScenario(label)
 
     def test_visible_drop_is_never_touched(self):
