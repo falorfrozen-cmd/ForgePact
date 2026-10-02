@@ -2,8 +2,9 @@
 
 Status: **verified in play on 2026-09-23** (see "Live verification");
 the multiplier adapter described below is unchanged since. The extra rolls
-added on 2026-09-28 (issue #36) are **not yet confirmed in a live game**; see
-"Extra rolls" at the end.
+added on 2026-09-28 (issue #36) **paid out in a live game on the research
+build the same day** (Live procedure 1); the shipped build through the panel is
+still to be confirmed. See "Extra rolls" at the end.
 Based on ForgePact `eed66427bda39fcd4ea66096934528f5efb9a2b5`. Nothing has been
 published, and no EXE version has been changed for this experiment.
 
@@ -117,13 +118,17 @@ Do not report the feature as verified until these observations are recorded.
 
 ## Extra rolls
 
-Status (2026-09-28, issue #36): **built and covered by the harness, not yet
-confirmed in a live game.** The panel row is Mining Ore Extra Rolls
+Status (2026-09-28, issue #36): **built, covered by the harness, and paid out
+live on the research DLL** (Live procedure 1, below): every re-run of the
+completion paid ore, rolls 3 and 10 gave three and ten stacks, the multiplier
+scaled every run, and the XP the dig reached counted once. Bonus finds were
+**not observed live** (the character's bonus-find stats all read 0), and the
+Miner's Helmet case was not run. The shipped build through the panel is Live
+procedure 2, recorded separately. The panel row is Mining Ore Extra Rolls
 (`drops.mining_ore_rolls`, 1-10, default 1, off by default) and the plugin
-command is `miningrolls N`. Live procedure 1 of the workorder
-`forgepact-issue-36-extra-ore-rolls` is to be recorded here; until it is, every
-statement below about what the game does is a static reading, not a
-measurement.
+command is `miningrolls N`. The section "What the game does at a dig" is the
+static reading; what the session measured is under "Live procedure 1
+(2026-09-28)", and where the two disagree the measurement is said so there.
 
 ### What the game does at a dig (static reading)
 
@@ -151,6 +156,10 @@ and the facts every module needs are in the hub's
   `quest_exists`/`update_quest` pairs, `PlaySound3D`, a `Mining_Effect_obj`
   and `NetworkSendClient`; then the node's `hp` goes 1 -> 0 (that last part
   measured on 2026-09-23, `miner-helmet-prototype.md` § "Ownership fix").
+  Live procedure 1 measured `ExperienceUpdate` and `GuildExperienceAdd` once
+  per completion run, but saw no `MiningAdd`, `CombatText` or `update_quest`
+  call from a dig through native detours: not observed live, and unexplained
+  (see below).
 
 ### The mechanism
 
@@ -212,25 +221,89 @@ silenced during an extra roll. The alternative, letting the floating XP text
 repeat per roll, was rejected: the README promises it once per node, and each
 roll would show a fresh "N XP" with no XP behind it.
 
-### What Live procedure 1 must show
+### Live procedure 1 (2026-09-28)
 
-Run on the research DLL, with `miningore stat` reading `nativeReady=1` as the
-control and `miningrolls stat` as the marker, digging through `miningrolls dig`
-so the loop needs no one at the keyboard:
+The session the workorder `forgepact-issue-36-extra-ore-rolls` calls Live
+procedure 1 (its capture, `forgepact-issue-36-extra-ore-rolls-live-1.md`, stays
+on the researcher's machine). Date 2026-09-28, 17:38-18:12 UTC. Build: the
+research DLL from `plugin_build\build.bat dev` at ForgePact `98dbf53`, sha256
+`e1c5eb9911e37786072d13ba53a5a10fa7a336c663a1d049e97956807ccf414e`, matching
+the hash the session's lease read. Character: hero Suh (save slot 2), digging
+Copper Veins in The Highland Mines (zone level 33). `drops.mining_ore_rolls` was absent from
+`forgepact.json` before launch (so 1), and `stat exp 2` was the first command
+to install `CombatText`, so the Experience slider's detour came up first. The
+saves were backed up before launch and restored clean afterwards.
 
-- `miningrolls stats`: the ten stat queries (692-700, 703). If 693-700 all read
-  0, the bonus finds can only be recorded as not observed.
-- Rolls 1: no extra run, `hp=0` after (baseline).
-- The Experience slider set first (`stat exp 2`), then `miningrolls 3`: the
-  rolls still arm (the shared detour), and a dig pays three runs, with
-  `extraRunsUnpaid` 0, XP counters grown by exactly one dig's worth, and `hp=0`.
-  If a re-run pays nothing, the before/after node snapshots are the finding
-  (`rerun: no-reward`), not a defect.
-- Multiplier x5 with rolls 3: every stack of every run x5.
-- Rolls 10: ten paid runs, the game still answering, `hp=0`.
-- Bonus finds over those digs: seen, or not observed (never a failure).
-- With a Miner's Helmet worn, rolls 3: each stack x4, one pulse per dig.
+Route tokens: **`rerun: pays-out`** and **`bonus: not-observed`**. The
+numbers are in the hub's `hs-game-sdk/curated/mining_reward_measurements.json`
+(MR4-MR9), each reproduced by `tests/test_mining_reward_model.py` or saying
+why not.
 
-Not established until then: whether the completion pays again in the same
-frame, whether ten runs in one frame are harmless, and whether any of the
-owner's characters has a bonus-find stat above 0.
+| Check | Verdict | Line it rests on |
+|---|---|---|
+| dll-hash | pass | lease `dll_sha256 e1c5eb99...` equals the build's |
+| marker | pass | `miningrolls: rolls=1 rollsReady=0 steps=0 extraRuns=0 extraRunsUnpaid=0 xpPassed=0 xpSilenced=0 MiningAdd=0/0 ExperienceUpdate=0/0 GuildExperienceAdd=0/0 update_quest=0/0 CombatText=0/0 combatTextFirst=none snapshots=0` |
+| control | pass | `miningore: steps=0 scopedLoot=0 changed=0 multiplier=1 nativeReady=1` |
+| stats-read | pass | `miningrolls stats`: ten lines, `id=692..700,703 value=0` |
+| rolls1-baseline | pass | owner-confirmed ore reward; `extraRuns=0`; `scopedLoot=0` is the adapter's own pass-through at x1/rolls 1 |
+| rerun-pays-out | pass | `miningrolls: first extra roll paid 1 ore stacks`; `extraRuns=2 extraRunsUnpaid=0` |
+| rolls3-stacks | pass | `scopedLoot` 0 -> 3; the owner: "saw 3 drops this time" |
+| rolls3-x5-scaled | pass | `miningore: first reward dispatched 5 -> 25 (one native drop call)`; `changed` 0 -> 3; the owner: "3 stacks, much more than usual per stack" |
+| rolls10-completes | pass | `extraRuns` 4 -> 13 with `extraRunsUnpaid=0`, `scopedLoot` 6 -> 16, then `pong (YYTK 4.0.1)`; the owner: "10 stacks mined, didnt see anything unusual" |
+| node-depleted | pass | every `after extra roll k` snapshot reads `hp=0 miningQue=false` |
+| xp-once | pass | `ExperienceUpdate=3/2 GuildExperienceAdd=3/2` after the rolls-3 dig, from `2/0` |
+| bonus-finds | not observed | ids 693-700 read 0 at every read; no bonus find seen |
+| helmet-rolls3 | not run | `minerhelm status`: helmet not worn |
+| xp-slider-shared | pass | `combatTextFirst=experience` at every `miningrolls stat` of the session, and `miningrolls 3` armed (`rollsReady=1`) |
+
+What it established:
+
+- **Re-arming the node and calling the step again pays the completion again,
+  in the same Step.** 13 of 13 extra runs paid ore (`extraRunsUnpaid=0`
+  throughout). Each one's snapshots read the same shape, for example the
+  rolls-3 dig's first:
+  `node before extra roll 1: hp=1 miningQue=true miningActive=true stop=0 range=37.4818 miningPlayer=312664r sprite_index=5052r`
+  then
+  `node after extra roll 1: hp=0 miningQue=false miningActive=true stop=0 range=38.0439 miningPlayer=312664r sprite_index=5052r`.
+  Ten runs in one Step (rolls 10) left the game answering `ping`, and the owner
+  saw no hitch.
+- **The multiplier scales every run.** At x5 with rolls 3, `changed` grew by
+  3, one scaled stack per run.
+- **`ExperienceUpdate` and `GuildExperienceAdd` are called once per completion
+  run.** Their silenced counts grew by exactly the extra runs of each dig (2, 2
+  and 9), and the rolls-3 dig let exactly one call of each through (`2/0` ->
+  `3/2`). After the x5 and rolls-10 digs the passed counts also carry kill XP
+  from nearby combat under the x2 Experience slider, so only that first +1 is a
+  clean per-dig count.
+- **`MiningAdd`, `CombatText` and `update_quest`: not observed from a dig.**
+  The static reading above has the step call all three. Through native detours
+  (`rollsReady=1` needs all seven native), `MiningAdd` read `0/0` after all four
+  digs; `CombatText`'s silenced count stayed 0 over all 13 extra runs and its
+  passed count did not move across the whole rolls-3 dig (149 before and
+  after), while the same detour counted kill XP text all session (0, 149, 197,
+  215), which is its positive control. `update_quest` read `0/0`, most likely
+  because no quest was active, which is not established. Why the dig did not
+  reach `MiningAdd` and `CombatText` is not established: a branch of the step
+  this character does not take is one untested explanation. The plugin still
+  silences all five during an extra run; nothing in the mechanism depends on
+  the three being called.
+- **The node's `range` is a pulse, not dig progress.** With the character at
+  distance 0 and no dig completing, `minerhelm probe` read `range` cycling 0 ->
+  about 45-48 -> 0 while `hp` stayed 1; `miningQue` read false at every poll
+  (the step consumes it in the frame it is set); `stop` stayed 0.
+- **`miningPlayer` read as a reference to the player** (`312664r`) in every
+  snapshot of this session, where the 2026-09-23 reward log read `noone` (-4)
+  at payout. When the game sets it is not established.
+- **The research helper `miningrolls dig` never completed a dig.** About 13
+  tries over 5 nodes, including one after `playerwarp` to distance 0 and one
+  holding the interact key for 2000 ms, each ended `miningrolls: dig node <id>
+  did not complete; released` with `hp` at 1. The owner walked to the mining
+  zone and dug all four cases by hand. This is a gap in the research
+  automation, not in the extra rolls: the mechanism behaved as above on every
+  real dig.
+
+Still not established: a bonus find under extra rolls (no character with a
+bonus-find stat above 0 was available, so the bonus sites could not pass); the
+Miner's Helmet with rolls above 1 (x4 per stack, one pulse per dig); and
+whether an extra run can ever pay nothing (never observed; the plugin's stop
+and `hp` reset cover it).
