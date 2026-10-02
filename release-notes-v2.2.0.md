@@ -1,6 +1,6 @@
-# ForgePact 2.1.0
+# ForgePact 2.2.0
 
-Release date: 2026-10-02
+Release date: 2026-10-09
 
 A new **Mining Ore Extra Rolls** slider, off by default, lets one mining node
 pay out up to ten times, including more chances at the rare finds a dig can
