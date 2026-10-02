@@ -19,7 +19,9 @@
 // stat-gated bonus finds again. Before each extra run the node's `hp` goes back
 // to 1 and `miningQue` to true (the route Vein Resonance proved live); during
 // it mining XP, character and guild XP, quest progress and the floating text
-// are silenced, so they count once per node. A run that pays no ore ends the
+// are silenced, so that they are meant to count once per node (only character
+// and guild XP were measured so; docs/mining-ore-research.md, "Extra rolls").
+// A run that pays no ore ends the
 // loop, and the node is always left with `hp` 0.
 namespace ForgePact::MiningOre {
 inline constexpr int kMaxMultiplier = 10;

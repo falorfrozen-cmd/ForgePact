@@ -179,8 +179,12 @@ calls the step trampoline with the original arguments. During an extra run a
 thread-local flag makes five pass-through detours skip the game's call:
 `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest`, and the
 shared `CombatText` detour. So XP (mining, character, guild), quest progress
-and the floating XP text count once per node, while ore, bonus finds, sound and
-the hit effect happen once per roll. An extra run that pays no ore ends the
+and the floating XP text are meant to count once per node, while ore, bonus
+finds, sound and the hit effect happen once per roll. Of those five, only
+character and guild XP were measured once per node (Live procedure 1); no dig
+was observed calling `MiningAdd`, `update_quest` or `CombatText`, so mining XP,
+quest progress and the floating text may still come once per roll by a route
+these detours do not hold. An extra run that pays no ore ends the
 loop, and afterwards the node's `hp` is forced to 0, so a node is never left
 diggable twice. The multiplier (or the helmet's x4) scales every stack of every
 run; the helmet's pulse and Vein Resonance follow the original run only.
@@ -224,8 +228,8 @@ Experience slider moved) and blinded the XP text fix in the other. So there is
 one detour, in `plugin/include/ForgePact/CombatTextHook.hpp`, installed once by
 whichever asks first; it rescales the XP text for the Experience slider and is
 silenced during an extra roll. The alternative, letting the floating XP text
-repeat per roll, was rejected: the README promises it once per node, and each
-roll would show a fresh "N XP" with no XP behind it.
+repeat per roll, was rejected: the README says it is meant to come once per
+node, and each roll would show a fresh "N XP" with no XP behind it.
 
 ### Live procedure 1 (2026-09-28)
 
