@@ -570,6 +570,24 @@ installed until a switch is turned on, and with both switches off a hit
 passes straight through. The **Angelic / Unholy Drops** slider's pool no
 longer carries either item.
 
+Hit detection is only as good as that one hook, and a hook that came up
+table-only would see none of the game's direct calls (the blindness `##
+Instrument` describes). So the detection is not trusted on its own word:
+
+- The `CreateDefaultParams` hook counts every call it sees, roll in progress
+  or not, as `cdpCalls=`. Ordinary drops call it too (session 1's 14 and 49
+  inside `DropItem`), so after a few kills a working detour shows
+  `cdpCalls` above zero whether or not any roll hit.
+- The hook's install route is kept from `HookOneScript`'s own result and
+  printed as `detect=detoured`, `detect=TABLE-ONLY` or `detect=off` (not
+  installed), on `sigdrop status` and on `angelicprobe hit status`.
+- In the player build, a switch turning on whose `CreateDefaultParams` hook
+  did not get its detour does not arm the gate: the install logs one refusal
+  line naming `CreateDefaultParams` and the route it got, `detect=` reports
+  it, and `gate=` stays off for both items. A gate that reads on therefore
+  means a detoured detection, and `gameHits=0` beside `detect=detoured` and a
+  growing `cdpCalls` means no hit yet, not a blind hook.
+
 ### Live procedure 2
 
 Session 2 runs the research build (`plugin_build\BloodPactPlugin_rel.dll`,
@@ -592,29 +610,48 @@ share so dispatch shows in a few kills, `off` restores everything, and
 `status` reports each lever. Any lever turning on installs the detection, so
 hits are counted with both switches off. None of this is in the player build.
 
-Each check below is recorded as pass, fail or not-observed, with the replies
-quoted in the session record. `force-hit` and `list-scope` are research
-checks about the game; the others check behaviour that ships.
+Each check below is recorded as pass, fail, not-observed or (for
+`force-hit` only) instrument-blind, with the replies quoted in the session
+record. `force-hit` and `list-scope` are research checks about the game; the
+others check behaviour that ships.
+
+`gameRolls` is a control for the `DropItemAngelicChance` hook and `control`
+only shows the command channel is alive; neither says the
+`CreateDefaultParams` detection can see the game's direct calls. That route
+gets its own positive control: `detect=detoured` and `cdpCalls` above zero
+after the first kill batch, read before any `gameHits=0` is recorded.
 
 - **`dll-hash`** - the installed DLL's SHA-256 equals the one recorded when
   the research build was made. Pass: the session measures this build. Fail:
   another build is installed, and nothing after it counts.
 - **`marker`** - `angelicprobe hit status` names every lever off and the
-  detection not installed. Pass: the research build, from a clean start. Fail
-  (a player build answers `command unavailable in player build`): the session
-  ends there.
-- **`control`** - `sigdrop status` answers with the force off and every new
-  counter (`gameRolls=`, `gameHits=`, `shareRolls=`, `sigFromGame=`) at zero.
-  Pass: the command channel is alive and the counters start clean. Fail: no
-  counter read later in the session can be trusted.
+  detection not installed (`detect=off`, `cdpCalls=0`). Pass: the research
+  build, from a clean start. Fail (a player build answers `command
+  unavailable in player build`): the session ends there.
+- **`control`** - `sigdrop status` answers with the force off, `detect=off`,
+  and every new counter (`gameRolls=`, `gameHits=`, `cdpCalls=`,
+  `shareRolls=`, `sigFromGame=`) at zero. Pass: the command channel is alive
+  and the counters start clean. Fail: no counter read later in the session
+  can be trusted.
 - **`force-hit`** (research) - with both switches off and the chance lever
   set (the rate lever as the fallback), ten kills give at least one
-  `gameHits`. Pass: a lever makes the game's own roll hit, and the detection
-  sees it - the first hit of the game's roll seen live in this research.
-  Not-observed: neither lever produced a hit; that is a statement about the
-  levers as much as the detection, so both levers' replies are recorded, the
-  hit path rests on the harness and the static reading alone, and the two
-  checks that need a hit (`on-headhunter-only`, `on-both`) do not run.
+  `gameHits`. First, after that first batch of ten, `sigdrop status` must
+  show `detect=detoured` and `cdpCalls` above zero: the detection's own
+  positive control, on the route that counts hits. Pass: a lever makes the
+  game's own roll hit, and the detection sees it - the first hit of the
+  game's roll seen live in this research. Instrument-blind: `detect=` reads
+  `TABLE-ONLY` or `off` after a lever was set, or `cdpCalls` is still zero
+  after the batch; the detection could not have counted a hit, so
+  `gameHits=0` measures the hook, not the levers or the game. The session
+  records the `detect=` and `cdpCalls=` replies, does not try the rate
+  lever, and the two checks that need a hit (`on-headhunter-only`,
+  `on-both`) do not run; the result is a detection defect to fix before the
+  next session, not a finding about the roll. Not-observed (only with
+  `detect=detoured` and `cdpCalls` above zero): neither lever produced a
+  hit; the detection is shown to see the game's calls, so this is a
+  statement about the levers, both levers' replies are recorded, the hit
+  path rests on the harness and the static reading alone, and the two checks
+  that need a hit do not run.
 - **`baseline-off-no-signature`** - with both switches off, no signature item
   comes from the game's roll: `sigFromGame` stays at zero and no `sigdrop:`
   line appears, hits or not. Pass: off really is off. Fail: the switch gate
@@ -623,10 +660,12 @@ checks about the game; the others check behaviour that ships.
   to certain: every hit drops one Headhunter beside the game's item and no
   crown, with one `angelic hit:` line each. Pass: the gate and the dispatch
   work per item. Fail: a wrong item or a count that does not match the hits,
-  a shipping defect. Not run when `force-hit` is not-observed.
+  a shipping defect. Not run when `force-hit` is not-observed or
+  instrument-blind.
 - **`on-both`** - both switches on: `sigFromGame` grows by the hit count and
   both items appear. Pass: the even split between two enabled items works.
-  Fail: a shipping defect. Not run when `force-hit` is not-observed.
+  Fail: a shipping defect. Not run when `force-hit` is not-observed or
+  instrument-blind.
 - **`pool-without-signature`** - switches and levers off, the slider at one
   in one: every kill drops an Angelic item, `angeliclist` prints no signature
   line, and `sigFromGame` does not move. Pass: the slider's pool is the game's
