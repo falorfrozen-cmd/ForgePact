@@ -4,13 +4,16 @@
 slider's die whatever their World switches said. #74 (owner-directed, 2026-10-02) takes
 them out of that pool again and moves them onto the game's own roll: a
 `CreateDefaultParams` call while `DropItemAngelicChance` runs is a hit (the roll returns
-undefined either way), and on each hit, while a switch is on, the enabled items roll one
-pool entry's share and drop beside the game's own item.
+undefined either way), and on each hit, while a panel switch is on, the switched-on items
+roll one pool entry's share and drop beside the game's own item. The owner's decision of
+2026-10-02 ("Panel switch only") makes the gate the panel switch (`force`), not the
+mechanic's enabled state, which a forged item's auto-arm also sets.
 
 `test_angelic_hit_behavior.py` runs the hook natively but skips without a C++ toolchain;
 this file pins the same shape on the source text, so it is checked everywhere the suite
 runs: the pool no longer carries the items, the detection is installed by name only from
-the switches (never at startup), the roll-in-progress state is a scope guard, the status
+the switches' `force` paths and the research levers (never at startup, never by the
+auto-arm), the gate reads the panel switch, the roll-in-progress state is a scope guard, the status
 line carries the counters the live procedure reads, the research levers stay out of the
 player build, and the player-facing texts say what the items now do.
 """
@@ -98,21 +101,38 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         frame = body(self.code, "void FrameCallback(FWFrame& FrameContext)")
         for name in ("InstallSignatureAngelicHooks", "SignatureDropOnAngelicHit", "g_SigGame"):
             self.assertNotIn(name, frame, "nothing new runs every frame")
-        self.assertIn("InstallSignatureAngelicHooks();", body(self.code, "static void EnableHeadhunter()"))
-        self.assertIn("InstallSignatureAngelicHooks();", body(self.code, "static void TyrantAutoArm()"))
+        # Owner, 2026-10-02 ("Panel switch only"): a forged item's auto-arm turns its mechanic
+        # on at every launch but never the drop, so neither it nor the enable path it shares
+        # with `headhunter on` installs the detection.
+        for signature in ("static void EnableHeadhunter()", "static void HeadhunterAutoArm()", "static void TyrantAutoArm()"):
+            with self.subTest(function=signature):
+                self.assertNotIn("InstallSignatureAngelicHooks", body(self.code, signature))
+        # Only the panel switch's own command, `headhunter force` / `tyrant force`, installs it:
+        # every line of the command that does names the `force` value and no other.
         command = body(self.code, "static bool HandleHeadhunterCommand(")
-        start = command.index('lc == "tyrant"')
-        tyrant = command[start:command.index("} else if (", start)]
-        off = tyrant.index('if (v == "off")')
-        self.assertIn("InstallSignatureAngelicHooks();", tyrant[tyrant.index("\n", off):],
-                      "the tyrant command's on/force path installs the detection; off does not")
-        self.assertNotIn("InstallSignatureAngelicHooks", tyrant[off:tyrant.index("\n", off)])
+        for verb in ("headhunter", "tyrant"):
+            with self.subTest(command=verb):
+                start = command.index('lc == "%s"' % verb)
+                branch = command[start:command.index("} else if (lc ==", start)]
+                lines = [line for line in branch.splitlines() if "InstallSignatureAngelicHooks" in line]
+                self.assertTrue(lines, "the %s command's force path installs the detection" % verb)
+                for line in lines:
+                    self.assertIn('== "force"', line)
+                    for other in ('"on"', '"1"', '"off"', '"0"'):
+                        self.assertNotIn(other, line, "only `force` installs the detection, not on/1 or off")
+        # The research levers install it too, so gameHits= counts with both switches off.
+        self.assertIn("InstallSignatureAngelicHooks();", body(self.code, "static void AngelicHitCommand("))
 
-    def test_the_gate_reads_the_enabled_state(self):
+    def test_the_gate_reads_the_panel_switch(self):
+        # The flags `tyrant force` / `headhunter force` set and `off` clears, which the panel
+        # sends; the auto-arm from a forged item sets only g_TyEnabled / g_HhEnabled.
         gate = body(self.code, "static bool SignatureSwitchOn(")
-        self.assertIn("g_TyEnabled", gate)
-        self.assertIn("g_HhEnabled", gate)
-        self.assertNotIn("Forced", gate)
+        self.assertIn("g_TyForced", gate)
+        self.assertIn("g_HhForced", gate)
+        self.assertNotIn("Enabled", gate)
+        # The auto-arm log lines say what the gate does, not what the mechanic does.
+        self.assertIn("SignatureSwitchOn(0)", body(self.code, "static void TyrantAutoArm()"))
+        self.assertIn("SignatureSwitchOn(1)", body(self.code, "static void HeadhunterAutoArm()"))
 
     # ---- the roll-in-progress state is a scope guard ------------------------------------
 

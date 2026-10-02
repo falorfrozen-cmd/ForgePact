@@ -67,6 +67,10 @@ static bool anyLineHas(const char* prefix, const char* text) {
 // ---- what the production functions read ------------------------------------------------------
 static std::atomic<bool> g_HhEnabled{ false };
 static std::atomic<bool> g_TyEnabled{ false };
+// The panel switches: `headhunter force` / `tyrant force` set these, `off` clears them. A forged
+// item's auto-arm sets only the enabled flags above. The signature drop follows these alone.
+static std::atomic<bool> g_HhForced{ false };
+static std::atomic<bool> g_TyForced{ false };
 static std::mt19937& TyRng() { static std::mt19937 rng{ 7 }; return rng; }
 static double HhReadNumber(const RValue& value, const char* field, double fallback) {
     CInstance* instance = value.instance;
@@ -193,7 +197,7 @@ static std::string AngelicHitNumber(double v) { char b[48]; std::snprintf(b, siz
 
 static void reset() {
     outLines.clear();
-    g_HhEnabled = false; g_TyEnabled = false;
+    g_HhEnabled = false; g_TyEnabled = false; g_HhForced = false; g_TyForced = false;
     g_AngelicPool.clear(); poolSize = 49; poolBuilds = 0;
     spawns.clear(); originalReturns = 0;
     gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams;
@@ -279,7 +283,7 @@ int main(int argc, char** argv) {
             require(g_SigFromGame == 0, "a hit with both switches off counted a signature drop");
         } else if (test == "default_params_outside_roll_not_a_hit") {
 #ifdef HAS_HOOK_CREATEDEFAULTPARAMS
-            g_HhEnabled = true; g_TyEnabled = true;
+            g_HhEnabled = true; g_HhForced = true; g_TyEnabled = true; g_TyForced = true;
             installDetection();
             RValue sub(1.0), b(15.0), c(1.0), params;
             RValue* args[] = { &sub, &b, &c };
@@ -297,7 +301,7 @@ int main(int argc, char** argv) {
         // ---- target: every scenario fails against the pre-#74 source ----
         } else if (test == "headhunter_on_hit_spawns_only_belt") {
             // N = 1: the share is 1 in 2 (N = 0 rolls nothing), so 300 hits give a band of drops.
-            poolSize = 1; g_HhEnabled = true;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true;
             installDetection();
             for (int i = 0; i < 300; ++i) roll(monster, { true });
             require(g_SigGameHits == 300, "hits were not detected: gameHits=" + std::to_string(g_SigGameHits));
@@ -306,7 +310,7 @@ int main(int argc, char** argv) {
             require(countWhich(1) == (int)spawns.size() && countWhich(0) == 0, "Headhunter alone on dropped a Tyrant's Crown");
             require(g_SigFromGameBelt == (long)spawns.size() && g_SigFromGameCrown == 0 && g_SigFromGame == (long)spawns.size(), "counters do not match the spawns");
         } else if (test == "tyrant_on_hit_spawns_only_crown") {
-            poolSize = 1; g_TyEnabled = true;
+            poolSize = 1; g_TyEnabled = true; g_TyForced = true;
             installDetection();
             for (int i = 0; i < 300; ++i) roll(monster, { true });
             require(g_SigGameHits == 300, "hits were not detected: gameHits=" + std::to_string(g_SigGameHits));
@@ -314,7 +318,7 @@ int main(int argc, char** argv) {
             require(countWhich(0) == (int)spawns.size() && countWhich(1) == 0, "Tyrant's Crown alone on dropped a Headhunter");
             require(g_SigFromGameCrown == (long)spawns.size() && g_SigFromGameBelt == 0, "counters do not match the spawns");
         } else if (test == "both_on_equal_share") {
-            poolSize = 49; g_HhEnabled = true; g_TyEnabled = true;
+            poolSize = 49; g_HhEnabled = true; g_HhForced = true; g_TyEnabled = true; g_TyForced = true;
             installDetection();
             for (int i = 0; i < 51000; ++i) roll(monster, { true });
             const int crowns = countWhich(0), belts = countWhich(1);
@@ -323,7 +327,7 @@ int main(int argc, char** argv) {
             require(belts >= 850 && belts <= 1150, "Headhunter did not get half: " + std::to_string(belts));
             require(linesStartingWith("angelic hit:") == 51000, "not one `angelic hit:` line per hit");
         } else if (test == "miss_never_spawns") {
-            g_HhEnabled = true; g_TyEnabled = true;
+            g_HhEnabled = true; g_HhForced = true; g_TyEnabled = true; g_TyForced = true;
             installDetection();
             for (int i = 0; i < 1000; ++i) roll(monster, { false });
             require(g_SigGameRolls == 1000, "game rolls were not counted: gameRolls=" + std::to_string(g_SigGameRolls));
@@ -331,7 +335,7 @@ int main(int argc, char** argv) {
             require(spawns.empty() && gameCdpCalls == 0, "a miss spawned something");
             require(linesStartingWith("angelic hit:") == 0, "a miss logged a hit");
         } else if (test == "spawn_at_roll_position_with_monster_self") {
-            poolSize = 1; g_HhEnabled = true;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true;
             installDetection();
             for (int i = 0; i < 40 && spawns.empty(); ++i) roll(monster, { true }, 640.5, 320.25);
             require(spawns.size() == 1, "no spawn in 40 hits at a 1-in-2 share");
@@ -343,7 +347,7 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 40 && spawns.empty(); ++i) roll(monster, { true }, 0, 0, false);
             require(spawns.size() == 1 && spawns[0].x == 10 && spawns[0].y == 20, "without real x, y arguments the monster's own x, y was not used");
         } else if (test == "hit_in_extra_roll_counts") {
-            poolSize = 1; g_HhEnabled = true; g_AngelicRateMult = 2.0;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true; g_AngelicRateMult = 2.0;
             installDetection();
             for (int i = 0; i < 100; ++i) roll(monster, { false, true });
             require(originalCalls == 200, "rate x2 did not run the game's roll twice per kill");
@@ -351,19 +355,19 @@ int main(int argc, char** argv) {
             require(g_SigGameHits == 100, "a hit in the extra roll was not detected: gameHits=" + std::to_string(g_SigGameHits));
             require(!spawns.empty() && countWhich(1) == (int)spawns.size(), "a hit in the extra roll did not roll the share");
         } else if (test == "switch_off_after_on_passes_through") {
-            poolSize = 1; g_HhEnabled = true;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true;
             installDetection();
             for (int i = 0; i < 100; ++i) roll(monster, { true });
             require(!spawns.empty(), "switched on, 100 hits spawned nothing");
             const size_t before = spawns.size();
             const int installsBefore = installs["CreateDefaultParams"];
-            g_HhEnabled = false;
+            g_HhEnabled = false; g_HhForced = false;
             for (int i = 0; i < 100; ++i) roll(monster, { true });
             require(spawns.size() == before, "switched off, a hit still spawned a signature item");
             require(installs["CreateDefaultParams"] == installsBefore && cdpEntry != gameCreateDefaultParams, "switching off removed or reinstalled a hook");
             require(originalCalls == 200 && gameCdpCalls == 200, "switched off, the game's own roll did not run untouched");
         } else if (test == "original_throw_lowers_roll_flag") {
-            poolSize = 1; g_HhEnabled = true;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true;
             installDetection();
             originalThrows = true;
             bool threw = false;
@@ -398,7 +402,7 @@ int main(int argc, char** argv) {
             // CreateDefaultParams is direct). A detection that got less must say so and leave
             // the gate off, rather than report the switch armed while it never drops anything.
             // Positive control, through the same fake: both detoured, the gate arms.
-            g_HhEnabled = true; g_TyEnabled = true;
+            g_HhEnabled = true; g_HhForced = true; g_TyEnabled = true; g_TyForced = true;
             g_OrigAngChance = nullptr;
             installDetection();
             require(anyLineHas("signature drops:", "detection ON"), "a detoured detection did not log `detection ON`");
@@ -407,7 +411,7 @@ int main(int argc, char** argv) {
 #endif
             // 1. CreateDefaultParams gets only the table route: the roll's direct call bypasses it.
             reset();
-            poolSize = 1; g_HhEnabled = true; g_TyEnabled = true;
+            poolSize = 1; g_HhEnabled = true; g_HhForced = true; g_TyEnabled = true; g_TyForced = true;
             tableOnlyHook = "CreateDefaultParams";
             installDetection();
             require(anyLineHas("signature drops: game-roll detection NOT installed", "CreateDefaultParams TABLE-ONLY"),
@@ -423,7 +427,7 @@ int main(int argc, char** argv) {
             require(installs["CreateDefaultParams"] == 1, "a second switch-on hooked CreateDefaultParams again");
             // 2. The roll hook, first installed here, falls back to the table.
             reset();
-            g_HhEnabled = true;
+            g_HhEnabled = true; g_HhForced = true;
             g_OrigAngChance = nullptr;
             tableOnlyHook = "DropItemAngelicChance";
             installDetection();
@@ -434,7 +438,7 @@ int main(int argc, char** argv) {
 #endif
             // 3. The roll hook was already held table-only (`raredrop angelic` earlier this session).
             reset();
-            g_TyEnabled = true;
+            g_TyEnabled = true; g_TyForced = true;
             gameImage.push_back(reinterpret_cast<const void*>(gameAngelicChance));
             installDetection();
             require(anyLineHas("signature drops: game-roll detection NOT installed", "DropItemAngelicChance TABLE-ONLY"),
@@ -444,7 +448,7 @@ int main(int argc, char** argv) {
 #endif
             // 4. The runtime cannot resolve the roll by name.
             reset();
-            g_HhEnabled = true;
+            g_HhEnabled = true; g_HhForced = true;
             g_OrigAngChance = nullptr;
             missingHook = "DropItemAngelicChance";
             installDetection();
@@ -486,6 +490,43 @@ int main(int argc, char** argv) {
             missingHook = "CreateDefaultParams";
             installDetection();
             requireStatusTail(" cdpCalls=0 detect=not found", "not resolved");
+        } else if (test == "autoarm_enabled_not_forced_no_drop") {
+            // A forged Headhunter / Tyrant's Crown arms its mechanic at every launch: the auto-arm
+            // sets the enabled flags while the panel switch stays off. The owner's decision of
+            // 2026-10-02: the drop follows the panel switch only, so nothing drops here.
+            // Positive control in the same scenario: the detection is detoured and sees every hit.
+            poolSize = 1; g_HhEnabled = true; g_TyEnabled = true;   // as HeadhunterAutoArm / TyrantAutoArm leave them
+            installDetection();   // installed anyway (a research lever, or an earlier `force` this session)
+            require(anyLineHas("signature drops:", "detection ON"), "the detection did not install detoured");
+            for (int i = 0; i < 300; ++i) roll(monster, { true });
+            require(g_SigGameHits == 300, "hits were not detected: gameHits=" + std::to_string(g_SigGameHits));
+            require(spawns.empty() && g_SigFromGame == 0, "an auto-armed item with its panel switch off dropped from the game's roll: "
+                    + std::to_string(spawns.size()));
+            require(g_SigShareRolls == 0, "an auto-armed item with its panel switch off rolled the share");
+#ifdef HAS_SIGNATURESWITCHON
+            require(!SignatureSwitchOn(0) && !SignatureSwitchOn(1), "the gate read the enabled state, not the panel switch");
+#endif
+#ifdef HAS_SIGDROPSTATUS
+            SigDropStatus();
+            require(anyLineHas("sigdrop:", " gate=tyrant:off,headhunter:off "), "`sigdrop status` does not report the gate off for auto-armed items");
+#else
+            require(false, "no `sigdrop status` line reports the gate");
+#endif
+        } else if (test == "forced_hit_spawns") {
+            // The panel switch (`headhunter force`) is the gate on its own: it drops even where the
+            // mechanic's own hooks failed and left the enabled flag down.
+            poolSize = 1; g_HhForced = true;
+            installDetection();   // what the `force` path does
+            for (int i = 0; i < 300; ++i) roll(monster, { true });
+            require(g_SigGameHits == 300, "hits were not detected: gameHits=" + std::to_string(g_SigGameHits));
+            require(spawns.size() >= 110 && spawns.size() <= 190, "a forced switch at N=1 did not drop about 1 in 2: " + std::to_string(spawns.size()));
+            require(countWhich(1) == (int)spawns.size(), "the Headhunter switch alone dropped a Tyrant's Crown");
+#ifdef HAS_SIGDROPSTATUS
+            SigDropStatus();
+            require(anyLineHas("sigdrop:", " gate=tyrant:off,headhunter:on "), "`sigdrop status` does not report the forced switch's gate on");
+#else
+            require(false, "no `sigdrop status` line reports the gate");
+#endif
         } else return 2;
         std::cout << "PASS " << test << '\n';
         return 0;

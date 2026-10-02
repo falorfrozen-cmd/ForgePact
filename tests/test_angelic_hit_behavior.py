@@ -139,6 +139,9 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'switch_off_after_on_passes_through', 'original_throw_lowers_roll_flag',
             'install_is_idempotent', 'detection_not_detoured_never_arms',
             'status_reports_detect_route',
+            # The panel switch is the gate (owner, 2026-10-02): a forged item's auto-arm
+            # turns the mechanic on but never the drop.
+            'autoarm_enabled_not_forced_no_drop', 'forced_hit_spawns',
         ))
 
 

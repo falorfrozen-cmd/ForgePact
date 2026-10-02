@@ -439,9 +439,13 @@ static unsigned char* FindAngelicGate();
 // both builds, before any hook swaps their script-table entries; the Angelic
 // gate finder scans that record. Defined with FindAngelicGate.
 static void CaptureAngelicScriptCode();
-// #74: the game-roll detection Headhunter's and Tyrant's Crown's switches install
-// (EnableHeadhunter, TyrantAutoArm, the `tyrant` command). Defined after HookAngelicChance.
+// #74: the game-roll detection Headhunter's and Tyrant's Crown's panel switches install (the
+// `headhunter force` / `tyrant force` commands; the research build's hit levers too).
+// Never the auto-arm from a forged item (owner, 2026-10-02). Defined after HookAngelicChance.
 static void InstallSignatureAngelicHooks();
+// #74: whether a signature item's panel switch has the drop on (0 = crown, 1 = belt); the
+// auto-arm log lines read it. Defined beside SignatureShare.
+static bool SignatureSwitchOn(int which);
 // Set by InstallSignatureAngelicHooks: true only when both of its hooks are inline detours, the
 // one route the roll's direct calls reach. The signature gate (SignatureSwitchOn) reads it, so a
 // switch never reports these drops on while the detection cannot see a hit.
@@ -7731,16 +7735,15 @@ static void TyrantAutoArm()
     if (!wanted) return;
     InstallTyrantHook();
     InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
-    InstallSignatureAngelicHooks();   // #74: the crown can drop from the game's own Angelic roll
     g_TyEnabled.store(g_TyHookInstalled);
     Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)"
-        + "; drops from the game's Angelic roll " + (!g_TyEnabled.load() ? "off" : g_SigDetectNative ? "on" : "off (detection not installed)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? "on" : g_TyForced.load() ? "off (detection not installed)" : "off (its panel switch is off)"));
 }
 static void TyrantStatus()
 {
     Out(std::string("tyrant: ") + (g_TyEnabled.load() ? "ON" : "off") + (g_TyForced.load() ? " (forced)" : "")
         + " hook=" + (g_TyHookInstalled ? "yes" : "no") + " active=" + (TyrantActive() ? "yes" : "no")
-        + " angelicDrops=" + (g_TyEnabled.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
+        + " angelicDrops=" + (g_TyForced.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
         + " rarePct=" + std::to_string((int)g_TyRarePct) + " affixPct=" + std::to_string((int)g_TyAffixPct)
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
@@ -10893,14 +10896,16 @@ struct SignatureRollScope {
 static double g_AngHitChance = -1.0;     // < 0 off; else every roll's chance argument (when real)
 static double g_AngHitSharePct = -1.0;   // < 0 the real share; else this percentage
 #endif
-// Which signature item's World switch is on: 0 = Tyrant's Crown, 1 = Headhunter.  The enabled
-// state - what `tyrant status` / `headhunter status` print as ON - so the panel's `force`, the
-// console's `on` and the auto-arm from a forged item all count; `off` clears it.  Never on while
-// the detection is not both inline detours (g_SigDetectNative): a hit would be invisible.
+// Which signature item's panel switch (Mods -> Items -> Tyrant's Crown / Headhunter) is on:
+// 0 = Tyrant's Crown, 1 = Headhunter.  The panel sends `tyrant force` / `headhunter force` for an
+// ON switch and `off` clears it, so the forced flags are the switch.  Owner, 2026-10-02 ("Panel
+// switch only"): the enabled state does not count, because a forged item's auto-arm sets it at
+// every launch with the switch off - forging turns the mechanic on, never the drop.  Never on
+// while the detection is not both inline detours (g_SigDetectNative): a hit would be invisible.
 static bool SignatureSwitchOn(int which)
 {
     if (!g_SigDetectNative) return false;
-    return which == 0 ? g_TyEnabled.load() : g_HhEnabled.load();
+    return which == 0 ? g_TyForced.load() : g_HhForced.load();
 }
 // One pool entry's share of a game hit: k enabled items among N validated pool uniques, so
 // k / (N + k) - 1 in 50 with one switch on and 2 in 51 with both at the live N = 49.  The
@@ -17198,7 +17203,6 @@ static void EnableHeadhunter()
     // The effect fallback belongs to Headhunter itself. It must not depend on
     // Density, Tyrant's Crown or Special Content having installed these hooks.
     InstallCreateHooks();
-    InstallSignatureAngelicHooks();   // #74: the belt can drop from the game's own Angelic roll
     g_HhEnabled.store(g_HhHookInstalled || g_Orig_HhDeathEffects || g_OrigICD || g_OrigICL);
 }
 
@@ -17219,7 +17223,7 @@ static void HeadhunterAutoArm()
     if (!wanted) return;
     EnableHeadhunter();
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)"
-        + "; drops from the game's Angelic roll " + (!g_HhEnabled.load() ? "off" : g_SigDetectNative ? "on" : "off (detection not installed)"));
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? "on" : g_HhForced.load() ? "off (detection not installed)" : "off (its panel switch is off)"));
 }
 
 static void HeadhunterStatus(bool includeMap = true)
@@ -17228,7 +17232,7 @@ static void HeadhunterStatus(bool includeMap = true)
     if (includeMap) for (const auto& kv : g_HhMap) m += kv.first + "->" + std::to_string((long long)kv.second.id) + " ";
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "ON" : "off") + (g_HhForced.load() ? " (forced)" : "")
         + " hook=" + (g_HhHookInstalled ? "yes" : "no") + " dur=" + std::to_string(g_HhDurationSec) + "s"
-        + " angelicDrops=" + (g_HhEnabled.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
+        + " angelicDrops=" + (g_HhForced.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
         + " kills=" + std::to_string(g_HhKills) + " rare=" + std::to_string(g_HhRareKills)
         + " rarityFlag=" + std::to_string(g_HhRarityKills) + " withAffixData=" + std::to_string(g_HhAffixKills)
         + " buffs=" + std::to_string(g_HhBuffsApplied) + " skippedNoBelt=" + std::to_string(g_HhSkippedNotEquipped)
@@ -20073,9 +20077,11 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 // Installs what detects a game Angelic hit (#74): Hook_CreateDefaultParams by name (a first
 // install, so HookOneScript adds the inline detour that sees the roll's direct call), and
 // HookAngelicChance on DropItemAngelicChance unless `raredrop angelic` / `angelicwatch` already
-// hold it.  Called when Headhunter's or Tyrant's Crown's switch turns on (EnableHeadhunter, the
-// `tyrant` on/force path, TyrantAutoArm) - never at startup, so with both switches off the game's
-// roll is not touched.  Idempotent; switching off installs nothing and the hooks pass through.
+// hold it.  Called when Headhunter's or Tyrant's Crown's panel switch turns on (the `headhunter
+// force` / `tyrant force` paths) and by the research build's hit levers - never at startup and
+// never by the auto-arm from a forged item (owner, 2026-10-02: forging turns the mechanic on, not
+// the drop), so with both switches off the game's roll is not touched.  Idempotent; switching off
+// installs nothing and the hooks pass through.
 //
 // A hit is visible only when BOTH hooks are inline detours: the game reaches the roll and the
 // roll reaches CreateDefaultParams by direct calls, which a table-only hook never sees.  Each
@@ -29776,7 +29782,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
 {
     if (lc == "headhunter") {
         std::string on = Lower(TrimCopy(rest));
-        if (on == "on" || on == "1" || on == "force") { g_HhForced.store(on == "force"); EnableHeadhunter(); }
+        // `force` is the panel switch: only it turns on (and installs) the belt's drop from the
+        // game's Angelic roll (#74, owner 2026-10-02); `on` arms the mechanic alone.
+        if (on == "force") { g_HhForced.store(true); EnableHeadhunter(); InstallSignatureAngelicHooks(); }
+        else if (on == "on" || on == "1") { g_HhForced.store(false); EnableHeadhunter(); }
         else if (on == "off" || on == "0") { g_HhEnabled.store(false); g_HhForced.store(false); }
         HeadhunterStatus();
     } else if (lc == "hhdur") {
@@ -29895,8 +29904,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         std::string v = Lower(TrimCopy(rest));
         if (v == "status" || v.empty()) { TyrantStatus(); return true; }
         if (v == "off") { g_TyEnabled = false; g_TyForced = false; Out("tyrant: off"); return true; }
-        if (v == "force") g_TyForced = true;
-        InstallTyrantHook(); InstallBeaconHook(); InstallSignatureAngelicHooks(); g_TyEnabled.store(g_TyHookInstalled);
+        // `force` is the panel switch: only it turns on (and installs) the crown's drop from the
+        // game's Angelic roll (#74, owner 2026-10-02); `on` arms the mechanic alone.
+        if (v == "force") { g_TyForced = true; InstallSignatureAngelicHooks(); }
+        InstallTyrantHook(); InstallBeaconHook(); g_TyEnabled.store(g_TyHookInstalled);
         TyrantStatus();
     } else if (lc == "beacon") {
         std::string v = Lower(TrimCopy(rest));
