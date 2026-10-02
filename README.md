@@ -255,22 +255,37 @@ Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game'
 Angelic roll - the one a Blood Pact or dungeon "Angelic item drop chance" effect turns on - and only while
 that item's switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) is on. Forging the item in
 the Custom Forge turns its mechanic on, as before, but not this drop: with its switch off, a forged
-Headhunter or Tyrant's Crown never drops from the game's roll. Each time that roll hits
-and the game drops its own Angelic or Unholy item, ForgePact rolls the signature items' share: one
-pool entry's worth, about 1 hit in 48 with one switch on and 2 in 49 with both (ForgePact's Angelic
-pool held 47 real uniques when measured on 2026-10-02). On a success the item lands beside the game's
-own item, where the monster died; with both switches on, each success is one or the other at even
-odds. This hit path was verified in a live session on 2026-10-02, with a research build raising the
-game's Angelic chance so that hits came within a few kills. ForgePact adds no die
-of its own for them, and does not change the game's Angelic chance. With both switches off (the
-default), neither item drops, forged or not, and the game's roll is left alone. The **Angelic / Unholy
-Drops** slider never drops them: its pool is the real uniques only. They arrive as SS-tier
-Unholy items, fully set up, and the plugin recognises them on every load even without the Item
-Editor. `sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command
-that forces every kill to drop the named item (or turns that off); it does not change the normal
-drop rate. `sigdrop status` also counts the game's Angelic rolls and hits, the share rolls, and
-the signature items they dropped (`gameRolls=`, `gameHits=`, `sigFromGame=`), and shows which
-switch is on (`gate=`).
+Headhunter or Tyrant's Crown never drops from the game's roll.
+
+How it drops: the game's Angelic roll picks one entry from its own list of Angelic and Unholy
+uniques and then rolls that unique's own drop rate. For the length of each roll, ForgePact adds
+one entry to that list for each item whose switch is on, and takes it out again as soon as the
+roll is over, so between rolls the list is exactly the game's and nothing else that reads it
+(merchants, shrines, crafting, the other drop routines) ever sees the extra entry. The game's
+picker and the game's die decide. Each added entry stands in through a real Angelic unique of
+the same item type, and drops at that unique's rate: Headhunter through **Liquor Holster**, and
+Tyrant's Crown through the rarest Angelic helmet the plugin finds in the game's pool (**Lucifer's
+Crown** or **Mask of the Celestial**, whichever has the lower drop rate; the switch-on line in the
+log names the one chosen). So the item is exactly as rare as its stand-in, and the stand-in keeps
+its own share. When a hit falls to the added entry, the game itself builds the signature item and
+places it where the monster died: one item per hit, in place of what that roll would otherwise
+have dropped. The plugin's Custom Forge hook recognises it the same way it recognises one from
+`sigdrop`.
+
+ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
+both switches off (the default), no entry is added, neither item drops, forged or not, and the
+game's roll is left alone. If the plugin cannot find the game's list on your game, the switch
+logs one line saying so and the roll stays the game's own (`list=missing` below). The **Angelic /
+Unholy Drops** slider never drops them: its pool is the real uniques only.
+
+`sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command that
+forces every kill to drop the named item (or turns that off); it does not change the normal drop
+rate. `sigdrop status` also reports the game's Angelic roll: `gameRolls=` and `gameHits=` (the
+game's own rolls and hits), `injected=` (entries added, over all rolls), `ourHits=` (hits that
+fell to a signature item), `built=`, `crown=` and `belt=` (the signature items the game built),
+`list=` (the game's list by name and length; `none` before the first look, `missing` when it was
+not found), `gate=`
+(which switch is on), and `cdpCalls=` / `detect=` (whether the plugin can see the game's hits).
 
 ### Tier (Custom Forge)
 A forged item can carry a Tier letter (`tier=1` C … `tier=5` SS in the runtime file; the Item
