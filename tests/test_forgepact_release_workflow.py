@@ -31,6 +31,41 @@ def jobs() -> dict:
             for i, m in enumerate(heads)}
 
 
+COMPILE_STEP = "Compile the plugin (release)"
+
+
+def step_text(job_text: str, at: int) -> str:
+    """The whole step of `job_text` that contains offset `at`."""
+    start = job_text.rfind("\n      - ", 0, at)
+    end = job_text.find("\n      - ", at)
+    return job_text[start + 1 if start != -1 else 0:end if end != -1 else len(job_text)]
+
+
+def compile_step_env() -> dict:
+    """{name: value} of the `env:` block on build's compile step.
+
+    tests/test_release_pdb_symbols.py compiles its probe under exactly these
+    values, so what that test proves is about what this workflow sets.
+    """
+    build = jobs()["build"]
+    at = build.find(f"- name: {COMPILE_STEP}")
+    if at == -1:
+        raise AssertionError(f"{COMPILE_STEP!r} is missing from build")
+    step = step_text(build, at + 2)
+    env = {}
+    inside = False
+    for line in step.splitlines():
+        if re.match(r"^\s{8}env:\s*$", line):
+            inside = True
+            continue
+        if inside:
+            m = re.match(r"^\s{10}([\w-]+):\s*(.*?)\s*$", line)
+            if not m:
+                break
+            env[m.group(1)] = m.group(2).strip("'\"")
+    return env
+
+
 class TheWorkflowExists(unittest.TestCase):
     def test_it_is_there(self):
         self.assertTrue(WORKFLOW.exists(), f"{WORKFLOW} is missing")
@@ -343,6 +378,79 @@ class BuildInfoMetadataIsActuallyRead(unittest.TestCase):
 class Permissions(unittest.TestCase):
     def test_no_job_has_actions_write(self):
         self.assertNotIn("actions: write", workflow_text())
+
+
+class ThePluginSymbolsAreKeptBesideTheZip(unittest.TestCase):
+    """Issue #76: an incident report records a crash as a module and an
+    offset, and only that tag's PDB maps an offset inside BloodPactPlugin.dll
+    to one of our functions. build.bat's `cl ` line is the compile contract
+    (test_build_bat_contract.py, and release_ci.py compile-line refuses a tag
+    whose line differs from main's), so the symbols come from the compile
+    step's environment instead: cl prepends CL's options to its command line
+    and link appends _LINK_'s. test_release_pdb_symbols.py proves, on a probe
+    compiled under these exact values, that they change no code."""
+
+    def test_the_compile_step_asks_cl_and_link_for_symbols(self):
+        env = compile_step_env()
+        self.assertIn("/Zi", env.get("CL", "").split(), "cl writes no debug information without /Zi")
+        link = env.get("_LINK_", "").split()
+        # /DEBUG turns /OPT:REF and /OPT:ICF off unless they are named, which
+        # would change the shipped code; both stay explicit.
+        for option in ("/DEBUG:FULL", "/OPT:REF", "/OPT:ICF"):
+            self.assertIn(option, link)
+        alt = [option for option in link if option.startswith("/PDBALTPATH:")]
+        self.assertEqual(len(alt), 1, "the DLL must name its PDB without the runner's build path")
+        name = alt[0].split(":", 1)[1]
+        self.assertTrue(name.endswith(".pdb") and "\\" not in name and "/" not in name, alt[0])
+
+    def test_the_compile_line_itself_is_unchanged(self):
+        build = jobs()["build"]
+        step = step_text(build, build.find(f"- name: {COMPILE_STEP}") + 2)
+        self.assertEqual([line for line in code_lines(step)], ["plugin_build\\build.bat release"])
+
+    def test_only_the_compile_step_gets_the_symbol_options(self):
+        # The contract tests compile native harnesses of their own; they keep
+        # the compiler's defaults.
+        text = workflow_text()
+        self.assertEqual(len(re.findall(r"(?m)^\s+CL:", text)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^\s+_LINK_:", text)), 1)
+
+    def artifact_steps(self):
+        build = jobs()["build"]
+        found = [m.start() for m in re.finditer(r"uses: actions/upload-artifact@", build)]
+        return build, [step_text(build, at) for at in found], found
+
+    def test_the_pdb_is_a_second_artifact_after_the_zip(self):
+        build, steps, at = self.artifact_steps()
+        self.assertEqual(len(steps), 2, "build keeps the zip and the PDB, nothing else")
+        zip_step, pdb_step = steps
+        self.assertIn("name: forgepact-release-zip", zip_step)
+        self.assertNotIn(".pdb", zip_step)
+        self.assertIn("plugin_build/BloodPactPlugin_ship.pdb", pdb_step)
+        self.assertIn("name: forgepact-plugin-pdb-${{ steps.tag.outputs.tag }}", pdb_step)
+        self.assertRegex(pdb_step, r"(?m)^\s+retention-days: 90\s*$")
+        self.assertRegex(pdb_step, r"(?m)^\s+if-no-files-found: error\s*$")
+        self.assertLess(build.find(f"- name: {COMPILE_STEP}"), at[1])
+        self.assertLess(at[0], at[1])
+
+    def test_the_pdb_is_kept_on_every_run(self):
+        # A dry run is how a maintainer gets the symbols for a build that was
+        # never uploaded; the step carries no condition, as the zip's does not.
+        _, steps, _ = self.artifact_steps()
+        head = steps[1][:steps[1].find("uses:")]
+        self.assertNotIn("if:", head)
+
+    def test_the_draft_gets_only_the_zip_and_its_hash(self):
+        upload = jobs()["upload"]
+        at = upload.find("gh release upload")
+        self.assertNotEqual(at, -1)
+        call = upload[at:upload.find("--clobber", at)]
+        self.assertEqual(
+            re.findall(r'"([^"]+)"', call),
+            ["$TAG", "$RUNNER_TEMP/out/ForgePact-$VERSION.zip", "$RUNNER_TEMP/out/ForgePact-$VERSION.zip.sha256"],
+        )
+        self.assertNotIn(".pdb", upload)
+        self.assertNotIn("forgepact-plugin-pdb", upload)
 
 
 if __name__ == "__main__":

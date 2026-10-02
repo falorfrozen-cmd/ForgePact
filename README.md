@@ -55,6 +55,7 @@ none of these diagnostic hooks or the recorder. See
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
+| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or has a significant FPS drop, ForgePact tells you (a Windows notification while the panel is open, a message box for a freeze or crash without it) and saves a report folder under `bp_ipc\reports\`: was it ForgePact's code, which mod was busy, how much frame time ForgePact's mods took, plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists them and can turn the FPS-drop notifications off; reports are always saved ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -1004,6 +1005,73 @@ go; the rest of the work happens on another CPU core. The report states what
 the pauses cost (under about 2% of the frame thread's time on a quiet PC), and
 the profiler slows itself down whenever they add up to more than 3%. Design,
 measurements and limits: [`docs/frame-profiler.md`](docs/frame-profiler.md).
+
+## Incident reports (crash, freeze and FPS-drop reports)
+
+When the game crashes, freezes or drops frames badly, ForgePact notices, tells
+you, and saves a report you can attach to a bug report as it is. It answers the
+three questions a bug report about a slow or crashing game needs: was it
+ForgePact's code, which of its mods was on or busy at the time, and how much
+of each frame ForgePact's own hooks were taking. It is always on, in both
+builds, because a report that is missing because a switch was off is the one
+outcome it exists to prevent; it installs no hook and changes nothing in the
+game. Nothing is uploaded.
+
+What counts as an incident:
+
+- **FPS drop** (`perf`): one frame over 250 ms, or frames 2.5 times slower than
+  the usual median for 2 seconds. "Usual" is the median of the last 600 frames
+  before the drop. Not reported in the first 5 seconds after a room change
+  (loading a zone is slow by design), while the game window is in the
+  background or minimised, or more than once every 30 seconds.
+- **Freeze** (`freeze`): no frame for 3 seconds. The report names the
+  ForgePact hook the game was inside at that moment, or `none`.
+- **Crash** (`crash`): the previous session ended without a clean shutdown.
+  On a normal exit the plugin writes `==== clean shutdown ====` as the last
+  line of `out.txt`; a crash or a killed process leaves no such line, and the
+  next time the plugin loads it writes the crash report. While the panel is
+  open it also reads the game's exit code when the game closes, and what
+  Windows recorded about the crash in its Application log (the faulting module
+  and offset), and that goes into the same report.
+
+Each report is a folder, `bp_ipc\reports\<date>-<time>_<perf|freeze|crash>\`:
+`report.json` (the kind, the time, the plugin, panel and game versions, the
+frame summary with the room and monster and instance counts, and the per-mod
+table for the last minute and for the episode), the last 500 lines of
+`out.txt` and of `out.prev.txt`, your `forgepact.json` settings and the
+mods' state, `mods.txt` (every file in `mods\aurie\` and `AurieCore.dll` with
+its size, version and SHA-256) and `system.txt` (Windows build, CPU, graphics
+card and driver, memory). Your user folder in every path is replaced with
+`%USERPROFILE%`. The ten newest folders are kept. A line also lands in
+`out.txt`, for example `PERF hitch 412 ms frame | baseline 16.7 | room ... |
+top mapreveal 0.3/frame`, `FREEZE 4 s without a frame | in-hook none`, `CRASH
+previous session ended without a clean shutdown | exit 0xC0000005 | module
+...` and `incident: report written <folder>`.
+
+Telling you: while the panel is open, a Windows notification says a report was
+saved. Without the panel, a freeze or a crash shows a message box (the crash
+one when the game next starts); an FPS drop never does. The panel's Setup tab
+has an **Incident reports** card: the latest reports, how the game last
+closed, a button that opens the reports folder, and **Tell me about FPS drops
+(reports are always saved)**, on by default. Turning it off silences only the
+FPS-drop notifications; freezes and crashes are still shown and every report
+is still written. The plugin limits itself to 50 episodes and 10 report
+folders a session, at most one folder every 5 minutes.
+
+`incident stat` (send it with `tools/ipc.ps1`) prints what the monitor sees
+right now: frames seen, the median and worst frame, whether the grace period
+after a room change is active, whether the game has focus, which hook the
+frame thread is in, episodes and reports so far, and each mod's average and
+worst milliseconds a frame over the last minute.
+
+How it works: the game's frame thread only reads the clock and stores numbers
+(a few readings a frame); a background thread in the plugin wakes four times a
+second, reads only those numbers, and does every comparison and every file
+write. It never calls into the game or pauses it. A crash is caught after the
+fact rather than inside the crashing process. Each release keeps the plugin's
+symbol file (PDB) as a CI artifact, so a maintainer can map the crash offset
+in a report to one of ForgePact's functions. Design, decisions and limits:
+[`docs/incident-report.md`](docs/incident-report.md).
 
 ## Far scenery sleep (lighter frames in busy zones)
 
