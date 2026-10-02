@@ -17,7 +17,6 @@ Settings persist in %LOCALAPPDATA%/Hero_Siege/forgepact.json.
 # <version>` moves every site at once and `--check` fails if they disagree.
 __version__ = "2.1.0"
 
-import base64
 import copy
 import hashlib
 import json
@@ -1946,17 +1945,17 @@ def plugin_boot_generation(cfg=None):
 # (bp_ipc\reports\<yyyymmdd-HHMMSS>_<perf|freeze|crash>\): it notices FPS
 # drops and freezes while the game runs, and a crash at the next load, when
 # the previous session's log has no clean-shutdown line. The panel never
-# writes under reports\. It adds what only a process outside the game can
-# see, and says so to the player:
+# writes under reports\; it lists every report (Setup > Incident reports) and
+# tells nobody about any of them: no toast, no message box, no notice of any
+# kind, for an FPS drop, a freeze, a crash or an exit with an error (the
+# owner, 2026-10-02). It records what only a process outside the game can
+# see:
 # - exit.json: the exit code of a game that ended with anything but 0, read
 #   from a handle watcher() holds while the game runs, and the Windows
 #   Application log's crash record for it. The plugin folds the file into the
 #   next crash bundle and deletes it.
-# - panel.json: this panel's version and pid, so the plugin shows its own
-#   message box only when no panel is running to show a toast.
-# - a Windows toast for each new freeze or crash report and for a game that
-#   exited with an error. An FPS drop is recorded without a notice: its
-#   report is listed, nobody is told (the owner, 2026-10-02).
+# - panel.json: this panel's version and pid; the plugin records the version
+#   in a report.
 # The design and its limits: docs/incident-report.md.
 REPORTS_DIR = "reports"
 EXIT_JSON = "exit.json"
@@ -1970,42 +1969,16 @@ _REPORT_DIR = re.compile(r"^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)_(perf|freeze|
 # rights; on the machine this was written on it answered record 71576
 # (another program's crash) on 2026-10-02.
 APP_ERROR_QUERY = "*[System[Provider[@Name='Application Error'] and (EventID=1000)]]"
-# Toasts are shown under Windows PowerShell's own AppUserModelID, which every
-# Windows 10/11 install registers, so the panel needs no shortcut of its own.
-TOAST_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
-# The title and the message arrive as two single-quoted Base64 arguments, so
-# no text a toast carries is ever parsed as PowerShell; CreateTextNode keeps
-# it out of the toast's XML too.
-_TOAST_SCRIPT = (
-    "& { param([string]$t, [string]$m) "
-    "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($t)); "
-    "$m = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($m)); "
-    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
-    "$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
-    "[Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
-    "$n = $x.GetElementsByTagName('text'); "
-    "$n.Item(0).AppendChild($x.CreateTextNode($t)) | Out-Null; "
-    "$n.Item(1).AppendChild($x.CreateTextNode($m)) | Out-Null; "
-    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('" + TOAST_APP_ID + "')"
-    ".Show([Windows.UI.Notifications.ToastNotification]::new($x)) }"
-)
-_REPORTS_WHERE = "The report is in the game's bp_ipc\\reports folder (Setup > Incident reports > Open reports folder)."
-# No "perf" entry: an FPS drop is recorded without a notice.
-INCIDENT_TOASTS = {
-    "freeze": ("ForgePact: the game froze", "Hero Siege stopped drawing frames for several seconds. " + _REPORTS_WHERE),
-    "crash": ("ForgePact: crash report", "Hero Siege did not close normally last time. " + _REPORTS_WHERE),
-}
-# What the panel saw at the game's last exit: exit.json's facts for an exit
-# with an error, None after a clean exit or before any. /api/state shows it.
-# exitWatch and toasts count what the panel's two routes did (D15): the pid
-# whose handle is held, the exits read from a held handle and the last code;
-# the toasts shown and the ones that failed, with the last reason. Without
-# them "no exit was recorded" and "no toast appeared" could not be told from
-# "the panel never saw the game" and "PowerShell refused".
+# What the panel recorded, which is all /api/state's incidents carries beside
+# the report list; nothing here is ever shown to the player as a notice.
+# lastExit: exit.json's facts for an exit with an error, None after a clean
+# exit or before any. exitWatch counts what the exit watch did (D15): the pid
+# whose handle is held, the exits read from a held handle and the last code.
+# Without it "no exit was recorded" could not be told from "the panel never
+# saw the game".
 INCIDENTS = {
     "lastExit": None,
     "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None},
-    "toasts": {"sent": 0, "failed": 0, "lastError": None},
 }
 _INCIDENTS_LOCK = threading.Lock()
 _REPORT_UTC: dict = {}
@@ -2192,7 +2165,8 @@ def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
     An exit after ForgePact's clean-shutdown marker (a mod file aborting
     during exit, Known Limitations item 25) is still written, with
     after_clean_shutdown true, so the plugin can fold it into its next-load
-    note; it is not toasted, or every exit would read as an error."""
+    note rather than read it as a crash. Nobody is told about either kind
+    (the owner, 2026-10-02): the exit is recorded and shown in /api/state."""
     if code == 0:
         INCIDENTS["lastExit"] = None
         return None
@@ -2224,10 +2198,6 @@ def record_game_exit(cfg, code, pid=None, attempts: int = 3, wait: float = 2.0):
         except OSError:
             pass
     INCIDENTS["lastExit"] = facts
-    if not facts["after_clean_shutdown"]:
-        show_toast("ForgePact: Hero Siege closed with an error",
-                   f"Exit code {facts['exit_code']}. ForgePact adds it to the crash report it saves "
-                   "the next time the game starts.")
     return facts
 
 
@@ -2257,37 +2227,6 @@ def watch_game_exit(cfg, running: bool, hold: dict):
             with _INCIDENTS_LOCK:
                 INCIDENTS["exitWatch"]["pidHeld"] = pid
     return facts
-
-
-def toast_command(title: str, message: str) -> list:
-    """The powershell.exe command line that shows one toast. The text is only
-    ever an argument (see _TOAST_SCRIPT), never part of the script."""
-    def arg(text):
-        return "'" + base64.b64encode(str(text).encode("utf-8")).decode("ascii") + "'"
-    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _TOAST_SCRIPT, arg(title), arg(message)]
-
-
-def show_toast(title: str, message: str) -> bool:
-    """Show a Windows toast; False on any failure, which is never raised: a
-    notice that cannot be shown must not stop the watcher. Every attempt is
-    counted in INCIDENTS["toasts"], a failure with its reason."""
-    error = None
-    try:
-        result = subprocess.run(toast_command(title, message), capture_output=True, timeout=10,
-                                creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
-        if result.returncode != 0:
-            detail = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else ""
-            detail = " ".join(detail.split())[:200]
-            error = f"powershell.exe exit code {result.returncode}" + (f": {detail}" if detail else "")
-    except Exception as e:
-        error = f"{type(e).__name__}: {e}"
-    with _INCIDENTS_LOCK:
-        toasts = INCIDENTS["toasts"]
-        if error is None:
-            toasts["sent"] += 1
-        else:
-            toasts.update(failed=toasts["failed"] + 1, lastError=error)
-    return error is None
 
 
 def _report_utc(path: Path, match) -> str:
@@ -2328,23 +2267,8 @@ def incident_reports(cfg=None, limit=REPORT_LIST_MAX) -> list:
 def incidents_state(cfg) -> dict:
     """/api/state's "incidents", the counters copied under their lock."""
     with _INCIDENTS_LOCK:
-        exit_watch, toasts = dict(INCIDENTS["exitWatch"]), dict(INCIDENTS["toasts"])
-    return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"],
-            "exitWatch": exit_watch, "toasts": toasts}
-
-
-def notify_new_reports(cfg, seen):
-    """Toast each freeze or crash report folder not in `seen` and return the
-    folders now there. An FPS drop is recorded without a notice: its folder
-    is seen, never toasted. `seen` None is the first look: what is already
-    there is not news."""
-    kinds = {r["dir"]: r["kind"] for r in incident_reports(cfg, limit=None)}
-    if seen is not None:
-        for name in sorted(set(kinds) - set(seen)):
-            toast = INCIDENT_TOASTS.get(kinds[name])
-            if toast is not None:
-                show_toast(*toast)
-    return set(kinds)
+        exit_watch = dict(INCIDENTS["exitWatch"])
+    return {"reports": incident_reports(cfg), "lastExit": INCIDENTS["lastExit"], "exitWatch": exit_watch}
 
 
 def write_panel_json(cfg=None) -> bool:
@@ -2389,7 +2313,6 @@ def watcher():
     was_running = False
     last_state = None
     exit_hold = {"pid": None, "handle": None}
-    seen_reports = None
     while True:
         time.sleep(5)
         try:
@@ -2406,11 +2329,11 @@ def watcher():
         except Exception:
             pass
         # Incident reports (issue #76), in a try of their own, so nothing here
-        # can stop a launch from being noticed above.
+        # can stop a launch from being noticed above. Recording only: a new
+        # report is listed by /api/state and nobody is told.
         try:
             write_panel_json(cfg)
             watch_game_exit(cfg, now, exit_hold)
-            seen_reports = notify_new_reports(cfg, seen_reports)
         except Exception:
             pass
 

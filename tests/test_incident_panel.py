@@ -4,9 +4,10 @@
 The plugin writes every report bundle under `bp_ipc\\reports\\`; the panel only
 reads that directory, and contributes two small files of its own: `exit.json`
 (what it saw when the game exited with a non-zero code, folded into the next
-crash bundle by the plugin) and `panel.json` (its version and pid, so the
-plugin knows whether a panel is there to notify the player). What is pinned
-here:
+crash bundle by the plugin) and `panel.json` (its version and pid; the plugin
+records the version in a report). Every report is recorded and listed, and
+nobody is told about any of them: the panel starts no process to show a
+notice (the owner, 2026-10-02, "No notice at all"). What is pinned here:
 
 - the exit code is read from a handle held on the process, through a real
   child that exits with a signed `0xC0000005`;
@@ -14,19 +15,21 @@ here:
   like a real one, and the real `wevtutil` read is checked to answer at all
   (`queried`, `records_seen`), so "no record" can be told from "could not
   read" (a machine with no record skips, it never passes);
-- `exit.json` is written for a non-zero code and not for 0;
-- the toast's PowerShell script never has the message pasted into it;
-- an FPS-drop report is recorded with no notice of any kind and no setting
-  for one remains, while a freeze or a crash report still toasts (the
-  owner, 2026-10-02);
+- `exit.json` is written for a non-zero code and not for 0, and a crash exit
+  starts no process but the event-log read;
+- a new FPS-drop, freeze and crash report are all listed by `/api/state`,
+  and the watcher's incident pass starts no process for any of them;
+- no notice path remains on the module (no toast, no setting for one), and
+  `/api/state`'s `incidents` carries the reports, the last exit and the exit
+  watch only;
 - the reports listing, `panel.json`, `/api/set` and `/api/state`;
-- both of the panel's routes leave a trace (D15): the exit watch counts the
-  pid it holds, the exits it read and the last code, and the toast counts
-  what it sent and what failed, so "nothing happened" can be told from
-  "the panel could not tell";
+- the exit watch leaves a trace (D15): it counts the pid it holds, the exits
+  it read and the last code, so "no exit was recorded" can be told from "the
+  panel never saw the game";
 - an exit after ForgePact's clean-shutdown marker (a mod file aborting
-  during exit, Known Limitations item 25) is written for the plugin to fold
-  in, but not toasted as an error;
+  during exit, Known Limitations item 25) is written with
+  `after_clean_shutdown` true for the plugin to fold in, and the same exit
+  without the marker with it false;
 - the keys the panel writes match the shared fixture the plugin's harness
   reads (`tests/fixtures/incident/`).
 
@@ -34,7 +37,6 @@ Everything is written under `tempfile`; the only port bound is the sandbox's
 own (port 0).
 """
 
-import base64
 import json
 import os
 import subprocess
@@ -60,7 +62,38 @@ def reset_incidents():
     module globals, so a test that counts starts from zero."""
     forgepact.INCIDENTS["lastExit"] = None
     forgepact.INCIDENTS["exitWatch"] = {"pidHeld": None, "exitsSeen": 0, "lastCode": None}
-    forgepact.INCIDENTS["toasts"] = {"sent": 0, "failed": 0, "lastError": None}
+
+
+# Every name the panel's notice path had (the owner, 2026-10-02: no notice
+# of any kind). None of them may exist on the module.
+NOTICE_NAMES = ("ToastNotificationManager", "show_toast", "toast_command", "INCIDENT_TOASTS",
+                "TOAST_APP_ID", "notify_new_reports", "_TOAST_SCRIPT")
+
+
+class ProcessGuard:
+    """Patches every way the panel could start a process to tell someone
+    (subprocess.run, subprocess.Popen, os.startfile) with mocks, so a test can
+    see what was started. `run` answers like a `wevtutil` read that found
+    EVENT_XML, so the event-log read still goes through the real path."""
+
+    def __init__(self, test):
+        run = patch.object(forgepact.subprocess, "run")
+        popen = patch.object(forgepact.subprocess, "Popen")
+        startfile = patch.object(forgepact.os, "startfile", create=True)
+        self.run, self.popen, self.startfile = run.start(), popen.start(), startfile.start()
+        for p in (startfile, popen, run):
+            test.addCleanup(p.stop)
+        self.run.return_value.returncode = 0
+        self.run.return_value.stdout = EVENT_XML.encode("utf-8")
+        self.run.return_value.stderr = b""
+
+    def argvs(self):
+        return [list(c.args[0]) if c.args else list(c.kwargs.get("args", [])) for c in self.run.call_args_list]
+
+    def started_nothing(self, test):
+        test.assertEqual(self.argvs(), [])
+        self.popen.assert_not_called()
+        self.startfile.assert_not_called()
 
 
 def key_shape(value):
@@ -197,27 +230,40 @@ class ExitRecordTests(unittest.TestCase):
         (self.game.ipc / "out.txt").write_text("".join(line + "\n" for line in lines), encoding="utf-8")
 
     def _record(self, code, events=(), probe=None):
+        """record_game_exit() with the log read answered by `events`; every
+        process start is caught by a guard that this returns."""
         probe = probe or {"queried": True, "records_seen": len(events)}
-        with patch.object(forgepact, "query_app_errors", return_value=(list(events), probe)) as query, \
-                patch.object(forgepact, "show_toast") as toast:
+        guard = ProcessGuard(self)
+        with patch.object(forgepact, "query_app_errors", return_value=(list(events), probe)) as query:
             facts = forgepact.record_game_exit(self.game.cfg, code, pid=0x1234, attempts=1)
-        return facts, query, toast
+        return facts, query, guard
 
-    def test_a_crash_writes_exit_json_and_notifies(self):
-        events = forgepact.parse_app_error_events(EVENT_XML)
-        facts, _, toast = self._record(0xC0000005, events, {"queried": True, "records_seen": 2})
+    def test_a_crash_exit_is_recorded_without_any_notice(self):
+        # The owner, 2026-10-02: a crash exit is written for the plugin's next
+        # crash bundle and shown in /api/state, and nobody is told. The real
+        # log read runs through the guard: the only process started is
+        # wevtutil's.
+        guard = ProcessGuard(self)
+        facts = forgepact.record_game_exit(self.game.cfg, 0xC0000005, pid=0x1234, attempts=1)
         written = json.loads((self.game.ipc / "exit.json").read_text(encoding="utf-8"))
         self.assertEqual(written, facts)
+        self.assertEqual(forgepact.INCIDENTS["lastExit"], written)
         self.assertEqual(written["exit_code"], "0xC0000005")
         self.assertRegex(written["exit_utc"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
-        self.assertEqual(written["faulting_module"], "BloodPactPlugin.dll")
-        self.assertEqual(written["faulting_offset"], "0000000000012345")
-        self.assertEqual(written["exception_code"], "c0000005")
-        self.assertEqual(written["event_record_id"], 71590)
-        self.assertEqual(written["event_probe"], {"queried": True, "records_seen": 2})
-        self.assertEqual(forgepact.INCIDENTS["lastExit"], written)
-        toast.assert_called_once()
-        self.assertIn("0xC0000005", toast.call_args.args[1])
+        self.assertIs(written["after_clean_shutdown"], False)
+        argvs = guard.argvs()
+        self.assertTrue(all(argv and argv[0] == "wevtutil" for argv in argvs), argvs)
+        guard.popen.assert_not_called()
+        guard.startfile.assert_not_called()
+        if os.name == "nt":
+            # The positive control: the guard saw the event-log read, and its
+            # answer reached exit.json.
+            self.assertEqual(len(argvs), 1, argvs)
+            self.assertEqual(written["faulting_module"], "BloodPactPlugin.dll")
+            self.assertEqual(written["faulting_offset"], "0000000000012345")
+            self.assertEqual(written["exception_code"], "c0000005")
+            self.assertEqual(written["event_record_id"], 71590)
+            self.assertEqual(written["event_probe"], {"queried": True, "records_seen": 2})
 
     def test_no_record_and_no_read_are_told_apart(self):
         facts, _, _ = self._record(1, (), {"queried": True, "records_seen": 0})
@@ -230,12 +276,12 @@ class ExitRecordTests(unittest.TestCase):
 
     def test_a_clean_exit_writes_nothing_and_clears_the_last_exit(self):
         forgepact.INCIDENTS["lastExit"] = {"exit_code": "0xC0000005"}
-        facts, query, toast = self._record(0)
+        facts, query, guard = self._record(0)
         self.assertIsNone(facts)
         self.assertFalse((self.game.ipc / "exit.json").exists())
         self.assertIsNone(forgepact.INCIDENTS["lastExit"])
         query.assert_not_called()
-        toast.assert_not_called()
+        guard.started_nothing(self)
 
     def test_without_bp_ipc_nothing_is_created(self):
         (self.game.ipc).rmdir()
@@ -243,55 +289,55 @@ class ExitRecordTests(unittest.TestCase):
         self.assertEqual(facts["exit_code"], "0xC0000005")
         self.assertFalse(self.game.ipc.exists(), "the panel must not create bp_ipc")
 
-    def test_an_exit_after_a_clean_shutdown_is_recorded_but_not_toasted(self):
+    def test_an_exit_after_a_clean_shutdown_is_recorded(self):
         # A mod file aborting during exit (Known Limitations item 25) ends the
         # game with 0xC0000409 after ForgePact already wrote its marker: the
-        # exit is written for the plugin to fold in, but it is not an error
-        # the player is told about at every exit.
+        # exit is written for the plugin to fold into its next-load note,
+        # marked as coming after a clean shutdown.
         self._out(BANNER, "incident: monitor running", "==== clean shutdown ====")
-        facts, _, toast = self._record(0xC0000409)
+        facts, _, guard = self._record(0xC0000409)
         written = json.loads((self.game.ipc / "exit.json").read_text(encoding="utf-8"))
         self.assertIs(written["after_clean_shutdown"], True)
         self.assertEqual(written["exit_code"], "0xC0000409")
         self.assertEqual(forgepact.INCIDENTS["lastExit"], written)
         self.assertIs(forgepact.INCIDENTS["lastExit"]["after_clean_shutdown"], True)
-        toast.assert_not_called()
+        guard.started_nothing(self)
         # The plugin's unload fallback names its route; the prefix is what counts.
         self._out(BANNER, "==== clean shutdown (detach) ====")
-        facts, _, toast = self._record(0xC0000409)
+        facts, _, guard = self._record(0xC0000409)
         self.assertIs(facts["after_clean_shutdown"], True)
-        toast.assert_not_called()
+        guard.started_nothing(self)
 
-    def test_without_the_marker_the_same_exit_toasts(self):
+    def test_without_the_marker_the_same_exit_is_recorded_as_after_no_clean_shutdown(self):
         # The control for the test above: the same code with no marker in this
-        # session is an error the player hears about.
+        # session is written with after_clean_shutdown false, and still
+        # starts no process.
+        def recorded_without_a_clean_shutdown():
+            facts, _, guard = self._record(0xC0000409)
+            written = json.loads((self.game.ipc / "exit.json").read_text(encoding="utf-8"))
+            self.assertEqual(written, facts)
+            self.assertIs(written["after_clean_shutdown"], False)
+            self.assertEqual(forgepact.INCIDENTS["lastExit"], written)
+            guard.started_nothing(self)
         self._out(BANNER, "incident: monitor running")
-        facts, _, toast = self._record(0xC0000409)
-        self.assertIs(facts["after_clean_shutdown"], False)
-        toast.assert_called_once()
+        recorded_without_a_clean_shutdown()
         # A marker before the last banner is the previous session's.
         self._out(BANNER, "==== clean shutdown ====", BANNER, "incident: monitor running")
-        facts, _, toast = self._record(0xC0000409)
-        self.assertIs(facts["after_clean_shutdown"], False)
-        toast.assert_called_once()
+        recorded_without_a_clean_shutdown()
         # The prefix counts only at the start of a line.
         self._out(BANNER, "chat: said ==== clean shutdown ====")
-        facts, _, toast = self._record(0xC0000409)
-        self.assertIs(facts["after_clean_shutdown"], False)
-        toast.assert_called_once()
+        recorded_without_a_clean_shutdown()
         # No out.txt at all is not a clean shutdown.
         (self.game.ipc / "out.txt").unlink()
-        facts, _, toast = self._record(0xC0000409)
-        self.assertIs(facts["after_clean_shutdown"], False)
-        toast.assert_called_once()
+        recorded_without_a_clean_shutdown()
 
     def test_a_marker_beyond_the_read_tail_still_counts_after_its_banner(self):
         # Only out.txt's tail is read (it grows to megabytes): a banner far
         # above it still leaves the tail inside this session.
         self._out(BANNER, *["x" * 200] * 2000, "==== clean shutdown ====")
-        facts, _, toast = self._record(0xC0000409)
+        facts, _, guard = self._record(0xC0000409)
         self.assertIs(facts["after_clean_shutdown"], True)
-        toast.assert_not_called()
+        guard.started_nothing(self)
 
 
 class SharedFixtureTests(unittest.TestCase):
@@ -308,8 +354,7 @@ class SharedFixtureTests(unittest.TestCase):
         fixture_exit = json.loads((FIXTURES / "exit.json").read_text(encoding="utf-8"))
         fixture_panel = json.loads((FIXTURES / "panel.json").read_text(encoding="utf-8"))
         events = forgepact.parse_app_error_events(EVENT_XML)
-        with patch.object(forgepact, "query_app_errors", return_value=(events, {"queried": True, "records_seen": 2})), \
-                patch.object(forgepact, "show_toast"):
+        with patch.object(forgepact, "query_app_errors", return_value=(events, {"queried": True, "records_seen": 2})):
             facts = forgepact.record_game_exit(self.game.cfg, 0xC0000005, pid=0x1234, attempts=1)
         written_exit = json.loads((self.game.ipc / "exit.json").read_text(encoding="utf-8"))
         self.assertEqual(key_shape(facts), key_shape(fixture_exit))
@@ -325,7 +370,7 @@ class SharedFixtureTests(unittest.TestCase):
 
 
 class CounterTests(unittest.TestCase):
-    """Both routes the panel has to the player leave a count in /api/state."""
+    """The exit watch leaves a count in /api/state."""
 
     def setUp(self):
         self.game = GameDir(self)
@@ -333,7 +378,7 @@ class CounterTests(unittest.TestCase):
         self.addCleanup(reset_incidents)
 
     @unittest.skipUnless(os.name == "nt", "Win32 process handles")
-    def test_the_exit_watch_and_toasts_are_counted(self):
+    def test_the_exit_watch_is_counted(self):
         watch = forgepact.INCIDENTS["exitWatch"]
         hold = {"pid": None, "handle": None}
         proc = subprocess.Popen([sys.executable, "-c", "import os,time; time.sleep(0.5); os._exit(-1073741819)"])
@@ -350,32 +395,11 @@ class CounterTests(unittest.TestCase):
         record.assert_called_once_with(self.game.cfg, 0xC0000005, proc.pid)
         watch = forgepact.INCIDENTS["exitWatch"]
         self.assertEqual(watch, {"pidHeld": None, "exitsSeen": 1, "lastCode": "0xC0000005"})
-
-        toasts = forgepact.INCIDENTS["toasts"]
-        self.assertEqual(toasts, {"sent": 0, "failed": 0, "lastError": None})
-        with patch.object(forgepact.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            self.assertTrue(forgepact.show_toast("t", "m"))
-        self.assertEqual(forgepact.INCIDENTS["toasts"], {"sent": 1, "failed": 0, "lastError": None})
-        with patch.object(forgepact.subprocess, "run") as run:
-            run.return_value.returncode = 1
-            run.return_value.stderr = b"Cannot find type [Windows.UI.Notifications.ToastNotificationManager]"
-            self.assertFalse(forgepact.show_toast("t", "m"))
-        toasts = forgepact.INCIDENTS["toasts"]
-        self.assertEqual((toasts["sent"], toasts["failed"]), (1, 1))
-        self.assertIn("exit code 1", toasts["lastError"])
-        self.assertIn("ToastNotificationManager", toasts["lastError"])
-        with patch.object(forgepact.subprocess, "run", side_effect=OSError("no powershell")):
-            self.assertFalse(forgepact.show_toast("t", "m"))
-        toasts = forgepact.INCIDENTS["toasts"]
-        self.assertEqual((toasts["sent"], toasts["failed"]), (1, 2))
-        self.assertIn("no powershell", toasts["lastError"])
-        # Both blocks reach /api/state's incidents.
+        # The counts reach /api/state's incidents, as a copy.
         state = forgepact.incidents_state(self.game.cfg)
         self.assertEqual(state["exitWatch"], {"pidHeld": None, "exitsSeen": 1, "lastCode": "0xC0000005"})
-        self.assertEqual(state["toasts"]["failed"], 2)
-        state["toasts"]["failed"] = 99
-        self.assertEqual(forgepact.INCIDENTS["toasts"]["failed"], 2, "/api/state must get a copy")
+        state["exitWatch"]["exitsSeen"] = 99
+        self.assertEqual(forgepact.INCIDENTS["exitWatch"]["exitsSeen"], 1, "/api/state must get a copy")
 
 
 class ExitWatchTests(unittest.TestCase):
@@ -398,85 +422,6 @@ class ExitWatchTests(unittest.TestCase):
         closed.assert_called_once_with(99)
         record.assert_called_once_with(game.cfg, 0xC0000005, 4321)
         self.assertEqual(hold, {"pid": None, "handle": None})
-
-
-class ToastTests(unittest.TestCase):
-    def test_the_message_is_an_argument_never_part_of_the_script(self):
-        title = "ForgePact"
-        message = "it's $env:USERNAME's game; `whoami`"
-        argv = forgepact.toast_command(title, message)
-        self.assertEqual(argv[:4], ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"])
-        script = argv[4]
-        for fragment in ("it's", "$env:USERNAME", "whoami"):
-            self.assertNotIn(fragment, script)
-        self.assertIn("ToastNotificationManager", script)
-        self.assertIn(forgepact.TOAST_APP_ID, script)
-        # The text arrives as single-quoted Base64 arguments, which PowerShell
-        # cannot expand, and decodes back to exactly what was asked for.
-        decoded = []
-        for arg in argv[5:]:
-            self.assertRegex(arg, r"^'[A-Za-z0-9+/=]*'$")
-            decoded.append(base64.b64decode(arg[1:-1]).decode("utf-8"))
-        self.assertEqual(decoded, [title, message])
-
-    def test_a_failed_toast_is_swallowed(self):
-        with patch.object(forgepact.subprocess, "run", side_effect=OSError("no powershell")):
-            self.assertFalse(forgepact.show_toast("t", "m"))
-        with patch.object(forgepact.subprocess, "run", side_effect=subprocess.TimeoutExpired("powershell.exe", 10)):
-            self.assertFalse(forgepact.show_toast("t", "m"))
-
-    def test_the_toast_runs_hidden_and_bounded(self):
-        with patch.object(forgepact.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            self.assertTrue(forgepact.show_toast("t", "m"))
-        kwargs = run.call_args.kwargs
-        self.assertEqual(kwargs["timeout"], 10)
-        if os.name == "nt":
-            self.assertEqual(kwargs["creationflags"], forgepact.CREATE_NO_WINDOW)
-
-
-class ReportWatchTests(unittest.TestCase):
-    def setUp(self):
-        self.game = GameDir(self)
-
-    def _notify(self, cfg, seen):
-        with patch.object(forgepact.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            seen = forgepact.notify_new_reports(cfg, seen)
-        return seen, run
-
-    def test_the_first_look_is_not_news(self):
-        self.game.report("20261002-100000_perf")
-        seen, run = self._notify(self.game.cfg, None)
-        self.assertEqual(seen, {"20261002-100000_perf"})
-        run.assert_not_called()
-
-    def _toasts(self, cfg, seen):
-        with patch.object(forgepact, "show_toast", return_value=True) as toast:
-            seen = forgepact.notify_new_reports(cfg, seen)
-        return seen, [c.args[0] for c in toast.call_args_list]
-
-    def test_a_new_perf_report_is_recorded_without_any_notice(self):
-        # The owner, 2026-10-02: an FPS drop's report is written and nobody is
-        # told. It is still news to the watcher (seen), it just shows nothing,
-        # also under a forgepact.json that still carries the old switch.
-        seen, _ = self._toasts(self.game.cfg, None)
-        self.game.report("20261002-100000_perf")
-        for cfg in (self.game.cfg, {**self.game.cfg, "notify_lag": True}):
-            now, titles = self._toasts(cfg, set(seen))
-            self.assertEqual(now, {"20261002-100000_perf"})
-            self.assertEqual(titles, [])
-
-    def test_freeze_and_crash_reports_still_toast(self):
-        # The control beside the target above: the same watcher, the same
-        # patch, still toasts a freeze and a crash once each, titles unchanged.
-        seen, _ = self._toasts(self.game.cfg, None)
-        self.game.report("20261002-100000_freeze")
-        self.game.report("20261002-100500_crash")
-        seen, titles = self._toasts(self.game.cfg, seen)
-        self.assertEqual(titles, ["ForgePact: the game froze", "ForgePact: crash report"])
-        _, titles = self._toasts(self.game.cfg, seen)
-        self.assertEqual(titles, [])
 
 
 class ReportListingTests(unittest.TestCase):
@@ -539,19 +484,64 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(state["incidents"], {
             "reports": [], "lastExit": None,
-            "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None},
-            "toasts": {"sent": 0, "failed": 0, "lastError": None}})
+            "exitWatch": {"pidHeld": None, "exitsSeen": 0, "lastCode": None}})
 
     def test_no_fps_drop_setting_remains(self):
         # The Setup switch went with the FPS-drop notice: no default, no panel
-        # setting, no toast text, nothing in /api/state.
+        # setting, nothing in /api/state.
         self.assertNotIn("notify_lag", forgepact.DEFAULTS)
         self.assertEqual(forgepact.PANEL_SETTINGS, ("theme",))
-        self.assertNotIn("perf", forgepact.INCIDENT_TOASTS)
-        self.assertEqual(set(forgepact.INCIDENT_TOASTS), {"freeze", "crash"})
         _, state = self.sandbox.request()
         self.assertNotIn("notifyLag", state["incidents"])
         self.assertNotIn("notify_lag", state["cfg"])
+
+    def test_no_notice_path_remains(self):
+        # The owner, 2026-10-02 ("No notice at all"): nothing on the module
+        # can show a notice, and what is recorded is all /api/state carries.
+        # The control: the same lookup finds the names that do the recording.
+        for name in ("record_game_exit", "incident_reports", "incidents_state", "INCIDENTS"):
+            self.assertTrue(hasattr(forgepact, name), name)
+        for name in NOTICE_NAMES:
+            self.assertFalse(hasattr(forgepact, name), name)
+        self.assertEqual(set(forgepact.INCIDENTS), {"lastExit", "exitWatch"})
+        _, state = self.sandbox.request()
+        self.assertEqual(set(state["incidents"]), {"reports", "lastExit", "exitWatch"})
+
+    def test_new_reports_of_every_kind_are_listed_without_any_notice(self):
+        # Two passes of the real watcher(): the first sees no report, then an
+        # FPS-drop, a freeze and a crash report appear, and the second pass
+        # sees them. Nothing is started for any of them (the old watcher
+        # toasted the freeze and the crash through PowerShell here), and all
+        # three are listed by /api/state.
+        root = Path(self.sandbox.temp.name)
+        (root / "bp_ipc").mkdir()
+        reports = root / "bp_ipc" / "reports"
+        names = ("20261002-100000_perf", "20261002-100100_freeze", "20261002-100200_crash")
+
+        class StopWatcher(Exception):
+            pass
+
+        passes = []
+
+        def sleep(_seconds):
+            passes.append(_seconds)
+            if len(passes) == 2:
+                for name in names:
+                    (reports / name).mkdir(parents=True)
+            elif len(passes) == 3:
+                raise StopWatcher
+
+        guard = ProcessGuard(self)
+        with patch.object(forgepact.time, "sleep", side_effect=sleep):
+            with self.assertRaises(StopWatcher):
+                forgepact.watcher()
+        self.assertEqual(len(passes), 3)
+        # The positive control: the incident pass ran (it wrote panel.json).
+        self.assertTrue((root / "bp_ipc" / "panel.json").is_file(), "the watcher's incident pass never ran")
+        guard.started_nothing(self)
+        _, state = self.sandbox.request()
+        listed = {r["dir"]: r["kind"] for r in state["incidents"]["reports"]}
+        self.assertEqual(listed, {names[0]: "perf", names[1]: "freeze", names[2]: "crash"})
 
     def test_openreports_opens_the_reports_folder(self):
         reports = Path(self.sandbox.temp.name) / "bp_ipc" / "reports"
