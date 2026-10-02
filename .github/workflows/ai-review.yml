@@ -21,7 +21,9 @@ name: AI Code Review
 # The label carries no instructions, so it always requests a full review.
 #
 # Either one may be used again later for a fresh review after pushing changes;
-# the label alone does not re-run on later pushes.
+# the label alone does not re-run on later pushes. A bare `@claude review` is
+# enough for a re-review: every run is told that an earlier review is no
+# reason to stop, and to say what is new since it.
 #
 # Two gates beyond the triggers, both enforced by the action itself:
 #   - the requesting user must have write access to this repository, and
@@ -183,6 +185,19 @@ jobs:
             echo "small the change looks; only the eligibility agent decides that a pull request needs no review."
             echo "A later step of this job counts the agents in this run's transcript and fails the job when"
             echo "they are missing."
+            # Every run of this job is a request: the label was just added, or
+            # someone commented `@claude review`. The command's eligibility
+            # agent stops on a pull request Claude has already reviewed, so a
+            # bare re-request after fixes (hub #382, run 37051071633) and a
+            # rerun after an outage (hub #350) both stopped there, posted
+            # nothing and failed the gate below. So every run carries this
+            # note, not only one with instructions after the trigger.
+            echo
+            echo "This review was explicitly requested, so an earlier review on this pull request is not a reason"
+            echo "to stop: tell the eligibility agent that an existing Claude review does not make the pull request"
+            echo "ineligible (a closed or draft one still is). If Claude has reviewed it before, review the whole"
+            echo "pull request again, say in the comment which commits are new since that review, and say whether"
+            echo "each earlier finding is now resolved."
             echo
             echo "Read files with Read, Grep and Glob, and the change with \`git diff\` or \`git show\`. Of the"
             echo "shell's text tools only \`cat\`, \`head\`, \`tail\`, \`wc\` and \`sed -n\` are allowed; a compound"
@@ -210,8 +225,7 @@ jobs:
               echo
               echo "Pass these instructions verbatim to every agent you launch. When they narrow what to read,"
               echo "do not run \`gh pr diff\`, whose output is the whole pull request: list the changed files with"
-              echo "\`git diff --stat\` and read only the permitted ones with a git pathspec. A review was explicitly"
-              echo "requested, so an earlier review on this pull request is not a reason to stop. State the scope"
+              echo "\`git diff --stat\` and read only the permitted ones with a git pathspec. State the scope"
               echo "you reviewed in the final comment."
             fi
             echo "$delim"
@@ -448,9 +462,10 @@ jobs:
       # green with nothing on the PR. So the job checks the outcome itself:
       # if no comment or inline comment appeared on the PR after the review
       # started, it fails and prints the review's last message. A run whose
-      # eligibility check deliberately stopped (the PR is closed or a draft,
-      # or Claude has already commented) also goes red here, with that reason
-      # printed: a review was requested and none was posted.
+      # eligibility check deliberately stopped (the PR is closed or a draft;
+      # an earlier Claude review no longer counts, see "Read the request")
+      # also goes red here, with that reason printed: a review was requested
+      # and none was posted.
       - name: Fail if the review posted nothing
         env:
           GH_TOKEN: ${{ github.token }}
