@@ -35,3 +35,12 @@ export function syncProspectBag(parentOn,bagOn){
   val.textContent=parentOn?(bagOn?'on':'off'):'n/a';
   val.className='val '+(parentOn&&bagOn?'':'off');
 }
+// And the show key only does anything while Sleep loot your filter hides is
+// on. The key stays as picked: only its select is disabled.
+export function syncHiddenLootKey(parentOn){
+  const row=document.getElementById('mod_hidden_loot_key_row');
+  const box=document.getElementById('mod_hidden_loot_key');
+  if(!row||!box)return;
+  box.disabled=!parentOn;
+  row.title=parentOn?'':'Enable Sleep loot your filter hides first.';
+}

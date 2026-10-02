@@ -838,6 +838,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "stashmoveall", "stashmove",
             # Rolling density copies' switch (test_rolling_density_contract.py).
             "densityroll",
+            # Hidden loot sleep, the Mods tab's switch (test_hidden_loot_mod_contract.py).
+            "hiddenloot",
             # Mining Ore Extra Rolls (ForgePact #36; test_mining_ore_behavior.py
             # and test_mining_ore_panel.py).
             "miningrolls",
@@ -1240,14 +1242,20 @@ class SkillTimerShipContractTests(unittest.TestCase):
 
     def test_html_has_one_select_with_five_styles_in_order(self):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
-        # control of record) and the Mods > Gameplay `#boss_rarity` select
-        # (ForgePact #44) are the page's only other <select>s, so the skill
-        # timer is still the one select of its kind among the controls.
-        self.assertEqual(PANEL_PAGE.count("<select"), 3)
+        # control of record), hidden loot sleep's show key
+        # (`#mod_hidden_loot_key`, test_hidden_loot_panel_contract.py pins its
+        # options) and the Mods > Gameplay `#boss_rarity` select (ForgePact
+        # #44) are the page's only other <select>s, so the skill timer is
+        # still the one select with these styles.
+        self.assertEqual(PANEL_PAGE.count("<select"), 4)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
+                                          'aria-label="Show hidden loot while held">'), 1)
         self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="boss_rarity">'), 1)
+        # Named by its row's label, since the visible label is a <span>.
         m = re.search(
-            r'<select class="style-select" id="mod_skill_timer_style">(.*?)</select>',
+            r'<select class="style-select" id="mod_skill_timer_style" '
+            r'aria-label="Timed skill countdown">(.*?)</select>',
             PANEL_PAGE, re.S)
         self.assertIsNotNone(m)
         values = re.findall(r'<option value="(\w+)">', m.group(1))
@@ -2975,11 +2983,12 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `frameprof` the frame profiler (test_frame_profiler.py),
         # `farsleep` is far sleep's switch (test_far_sleep_contract.py),
         # `stashmoveall` and `stashmove` are Move all into the stash's
-        # (ForgePact #68, test_stash_move_all_contract.py) and
+        # (ForgePact #68, test_stash_move_all_contract.py),
         # `densityroll` rolling density copies'
-        # (test_rolling_density_contract.py), `miningrolls` is Mining Ore
-        # Extra Rolls (ForgePact #36, test_mining_ore_behavior.py), and
-        # `bossrarity` is the Bosses control (ForgePact #44,
+        # (test_rolling_density_contract.py), `hiddenloot` is hidden loot
+        # sleep's switch (test_hidden_loot_mod_contract.py), `miningrolls`
+        # is Mining Ore Extra Rolls (ForgePact #36, test_mining_ore_behavior.py),
+        # and `bossrarity` is the Bosses control (ForgePact #44,
         # test_boss_rarity_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
@@ -2987,7 +2996,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "bossrarity"})
+                                        "densityroll", "hiddenloot", "bossrarity"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

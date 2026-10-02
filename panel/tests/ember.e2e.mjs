@@ -71,6 +71,38 @@ try {
   assert.equal(await page.locator('#quick-packs').isDisabled(),true);
   checks.push('Density and map/pack dependent switches use native handlers');
 
+  // The hidden-loot key is the one select that can be disabled: off, it dims to
+  // 45%, refuses the pointer and keeps its fill on hover. On is the control.
+  async function selectLook(id) {
+    const select=page.locator('#'+id);
+    await select.scrollIntoViewIfNeeded();
+    const read=()=>select.evaluate(async el=>{
+      await Promise.all(el.getAnimations().map(a=>a.finished));
+      const s=getComputedStyle(el);
+      return {disabled:el.disabled,opacity:s.opacity,cursor:s.cursor,bg:s.backgroundColor};
+    });
+    await page.mouse.move(1,1);
+    const idle=await read();
+    const box=await select.boundingBox();
+    await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+    await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+    const hover=await read();
+    await page.mouse.move(1,1);
+    return {...idle,hoverBg:hover.bg};
+  }
+  await openTab(page,'mods');
+  if(await page.locator('#subtab-qol').isVisible()) await page.locator('#subtab-qol').click();
+  const keyOff=await selectLook('mod_hidden_loot_key');
+  assert.deepEqual({disabled:keyOff.disabled,opacity:keyOff.opacity,cursor:keyOff.cursor,hoverBg:keyOff.hoverBg},
+    {disabled:true,opacity:'0.45',cursor:'not-allowed',hoverBg:keyOff.bg});
+  await saved(()=>page.locator('#mod_hidden_loot').check());
+  const keyOn=await selectLook('mod_hidden_loot_key');
+  assert.deepEqual({disabled:keyOn.disabled,opacity:keyOn.opacity,cursor:keyOn.cursor},{disabled:false,opacity:'1',cursor:'pointer'});
+  assert.notEqual(keyOn.hoverBg,keyOn.bg,'Hovering the enabled key select (control) must change its fill');
+  await saved(()=>page.locator('#mod_hidden_loot').uncheck());
+  await openTab(page,'overview');
+  checks.push('The disabled hidden-loot key select dims to 45%, refuses the pointer and keeps its fill on hover');
+
   await page.locator('#customizeQuick').click();
   await page.locator('#emberQuickChoices input[value="movespeed"]').check();
   await page.locator('#saveQuickChoices').click();
@@ -98,7 +130,7 @@ try {
     ['map_reveal', 'qolCard'], ['map_reveal_packs', 'qolCard'], ['map_reveal_spawn', 'qolCard'],
     ['mod_pet_quest_pickup', 'qolCard'], ['mod_auto_prospect', 'qolCard'], ['mod_auto_prospect_bag', 'qolCard'],
     ['mod_craft_mats', 'qolCard'], ['mod_stash_move_all', 'qolCard'], ['mod_toggle_indicator', 'qolCard'], ['mod_toggle_guard', 'qolCard'],
-    ['mod_restart_anytime', 'qolCard'], ['mod_far_sleep', 'qolCard'], ['density_rolling', 'qolCard'], ['mod_orb_pickup_radius', 'qolCard'], ['mod_filter_max_relics', 'qolCard'],
+    ['mod_restart_anytime', 'qolCard'], ['mod_far_sleep', 'qolCard'], ['density_rolling', 'qolCard'], ['mod_hidden_loot', 'qolCard'], ['mod_hidden_loot_key', 'qolCard'], ['mod_orb_pickup_radius', 'qolCard'], ['mod_filter_max_relics', 'qolCard'],
     ['mod_skill_timer_style', 'qolCard'], ['headhunter', 'itemsCard'], ['tyrant', 'itemsCard'], ['beacon', 'itemsCard'], ['boss_rarity', 'gameplayCard'],
     ['mod_gem_mythic', 'gemsCard'], ['mod_gem_maxroll', 'gemsCard'], ['den_on', 'densityCard'], ['enemyspeed_ct', 'speedCard'],
   ];

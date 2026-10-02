@@ -1314,7 +1314,8 @@
 }
 :where(html[data-theme="ember"]) .feature-with-child > #map_reveal_packs_row,
 :where(html[data-theme="ember"]) .feature-with-child > #map_reveal_spawn_row,
-:where(html[data-theme="ember"]) .feature-with-child > #mod_auto_prospect_bag_row {
+:where(html[data-theme="ember"]) .feature-with-child > #mod_auto_prospect_bag_row,
+:where(html[data-theme="ember"]) .feature-with-child > #mod_hidden_loot_key_row {
   background: #171615;
 }
 :where(html[data-theme="ember"]) .subtabbar {

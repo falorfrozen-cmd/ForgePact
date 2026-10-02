@@ -35,9 +35,11 @@
 // sandbox after the legacy ones.
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
-// sleep, the Pet moves on switch of forgepact-pet-loot-stuck, and Move all into
-// the stash): the same on, off, on and Turn off shape the legacy recording
-// holds for #mod_pet_quest_pickup, but nothing recorded stands for them, so their
+// sleep, the Pet moves on switch of forgepact-pet-loot-stuck, Move all into
+// the stash, Extra packs as you approach, and Sleep loot your filter hides,
+// whose show-key select is derived after them): the same on, off, on and Turn
+// off shape the legacy recording holds for #mod_pet_quest_pickup, but nothing
+// recorded stands for them, so their
 // contract is written out here as literals - on posts the mod's key with true and sends its plugin
 // verb with 1, off posts false and sends the verb with 0, on again repeats the
 // first, and its Turn off button repeats the off - entered on the tab and Mods
@@ -51,8 +53,8 @@
 // changes), but with nothing recorded to compare the slider's own moves against,
 // so its maximum and minimum carry literal expectations - each end posts the
 // section, key and value and sends the line written out for it - and the switch steps compare with those
-// the way a legacy slider's do. They come after the native booleans, so no
-// earlier step's index moves, and both the range and its switch are in
+// the way a legacy slider's do. They come after the native booleans and the
+// show key's select, so no earlier step's index moves, and both the range and its switch are in
 // `controls`, since no recording lists the range either.
 //
 // NATIVE_SELECTS are selects no recorded page ever had (the Bosses select of
@@ -93,20 +95,34 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 
 // Boolean mods added after every recording (see the header): the config key,
 // where the switch sits, and the plugin verb src/forgepact.py sends for it.
+// `restate` is a line the backend sends before the verb's `1` when the switch
+// turns on (Sleep loot your filter hides restates its show key, at its
+// default in a fresh sandbox, as map reveal restates its child).
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
   { key: 'mod_stash_move_all', tab: 'tab:mods', sub: 'subtab:qol', verb: 'stashmoveall' },
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
+  { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
 ];
+// The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
+// child row), derived as #mod_skill_timer_style is but with literals, since no
+// recording has it: each code posts itself as an integer and sends
+// `hiddenloot key <code>`. Ctrl, None, then Left Alt, the default, again. The
+// select is disabled while its switch is off, and the native booleans leave
+// the switch off, so the switch is turned on around them (on repeats the
+// switch's first on, off its off).
+export const HIDDEN_LOOT_KEY_PARENT = 'mod_hidden_loot';
+export const HIDDEN_LOOT_KEY_CODES = [17, 0, 164];
 // Switched sliders no recorded page ever had (Skill Haste and All Skills,
 // ForgePact#114; Mining Ore Extra Rolls, #36): the section and key, the tab
 // they sit on (Skill Haste and All Skills: their neighbour Faster Cast Rate's,
 // which the legacy walk reached on the Modifiers tab; Mining Ore Extra Rolls:
 // the Loot tab), their range, and the line src/forgepact.py sends at each end.
 // Their contract is written out as literals, as NATIVE_BOOLEANS' is, and they
-// come after everything else, a newer one after an older one, so no earlier
-// step's index moves.
+// come after everything else (the show key's select included, which needs the
+// tab the native booleans left open), a newer one after an older one, so no
+// earlier step's index moves.
 export const NATIVE_SLIDERS = [
   { section: 'percent_stats', key: 'skillhaste', tab: 'tab:modifiers', min: 0, max: 200,
     atMin: 'statadd skillhaste 0', atMax: 'statadd skillhaste 200' },
@@ -235,16 +251,32 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     if (switchId) switchedSlider(selector, switchId, keySupplement.steps);
   }
   // The boolean mods no recording has: their literal contract, last.
-  for (const { key, tab, sub, verb } of NATIVE_BOOLEANS) {
+  const nativeAt = {};
+  for (const { key, tab, sub, verb, restate } of NATIVE_BOOLEANS) {
     const selector = '#' + key;
     controls.push(selector);
     if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
     if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
-    const on = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} 1`] } } });
+    const onCmds = [...(restate ? [restate] : []), `${verb} 1`];
+    const on = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: onCmds } } });
     const off = push(selector, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} 0`] } } });
     push(selector, 'click', { expect: { posts: { same: on }, cmds: { same: on } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    nativeAt[key] = { on, off };
   }
+  // The show key's select, after everything above, on the tab the native
+  // booleans left open (see HIDDEN_LOOT_KEY_CODES).
+  const parent = '#' + HIDDEN_LOOT_KEY_PARENT;
+  const { on: parentOn, off: parentOff } = nativeAt[HIDDEN_LOOT_KEY_PARENT];
+  controls.push('#mod_hidden_loot_key');
+  push(parent, 'click', { expect: { posts: { same: parentOn }, cmds: { same: parentOn } } });
+  for (const code of HIDDEN_LOOT_KEY_CODES) {
+    push('#mod_hidden_loot_key', 'select', {
+      value: String(code),
+      expect: { posts: { is: setPost({ key: 'mod_hidden_loot_key', value: code }) }, cmds: { is: [`hiddenloot key ${code}`] } },
+    });
+  }
+  push(parent, 'click', { expect: { posts: { same: parentOff }, cmds: { same: parentOff } } });
   // The switched sliders no recording has: a legacy slider's eight steps,
   // with the two ends' posts and lines written out, last. The range and its
   // switch are both controls here, since no recording lists the range.
