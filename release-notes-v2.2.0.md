@@ -59,17 +59,18 @@ uber") boss; that has not yet been confirmed in a live game.
   page, **Gameplay**, after Quality of Life and Items, with one setting:
   **Bosses**. Pick **Rare — "uber" boss** or **Ancient — "uber uber" boss** and
   the plugin asks the game, through the hook the Monster Rarity sliders already
-  use, to set every boss that spawns while it is set up as a rare or an ancient
+  use, to set up every boss that spawns while it is on as a rare or an ancient
   one, and asks for the same extra affixes the sliders give a monster they raise
-  (up to two on a rare, three on an ancient). It is off by default (**Normal (the game's own)**): choose a
-  setting to use it. Bosses the game itself already made champion, rare or
-  ancient are left alone, and so are the monsters and phases a boss creates
-  during its fight. Ordinary monsters are not affected, and the Monster Rarity
-  sliders on the World tab still leave bosses alone. If the plugin cannot set it
-  up on your game, `bossrarity status` in the log says so (`hook=failed` or
-  `hook=table-only`). Not yet confirmed in a live game: that every boss really
-  comes out raised, that the extra affixes appear, and what the raise does to
-  its health, damage, experience, drops and look.
+  (up to two on a rare, three on an ancient). It is off by default (**Normal
+  (the game's own)**): choose a setting to use it. Bosses the game itself
+  already made champion, rare or ancient are left alone, and so are the
+  monsters and phases a boss creates during its fight. Ordinary monsters are
+  not affected, and the Monster Rarity sliders on the World tab still leave
+  bosses alone. If the plugin cannot set it up on your game,
+  `bossrarity status` in the log says so (`hook=failed` or `hook=table-only`).
+  Not yet confirmed in a live game: that every boss really comes out raised,
+  that the extra affixes appear, and what the raise does to its health, damage,
+  experience, drops and look.
 
 ## How to update
 
