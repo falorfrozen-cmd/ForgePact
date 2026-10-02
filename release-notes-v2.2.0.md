@@ -45,9 +45,11 @@ pet pick up the relics lying around you.
   pickup down,
   the relic stays on the ground and the pet moves on to the next one. It is
   separate from Pet collects quest items; with both on, the pet fetches one
-  thing at a time. It is off by default: turn it on in the panel. It has not
-  been checked in play yet; the in-game check, when it runs, is recorded in
-  ForgePact's `docs/pet-relic-collector-research.md`.
+  thing at a time. It is off by default: turn it on in the panel. Checked in
+  play on 2026-10-02: the pet picked up 31 relics, each one raising the owned
+  relic by one level, left 10/10 relics alone and stayed put when only those
+  were on screen. The relics in that check were placed by a test command, so
+  a relic the game itself drops has not been watched being collected yet.
 
 ## How to update
 
