@@ -42,8 +42,11 @@ namespace ForgePact {
 // The handles are tried in order (argument 0, argument 1, `self`) and the
 // first that is a ground item wins; the stat line counts which slot it was
 // (by-arg0, by-arg1, by-self), how many pointers became ids inside the call
-// (reduced) and how many did not (dropped, an item struct each time if the
-// reading of the arguments holds), and the last call's kinds as passed. A
+// (reduced) and how many did not (dropped), and the last call's kinds as
+// passed. DurableText splits reduced and dropped per value and per outcome
+// (instance_exists false, true with no numeric `id`, a read that threw):
+// whether instance_exists answers false for the item struct on argument 1
+// is read there, never from the sums, which `self` fills on its own. A
 // handle whose instance is gone by the frame's end answers false to
 // instance_exists and is passed over.
 //
@@ -86,8 +89,19 @@ public:
         // Which of the call's values identified the item at the frame's end.
         uint64_t byArg0 = 0, byArg1 = 0, bySelf = 0;
         // Instance pointers made an `id` inside the call, and those that were
-        // not (instance_exists false, an id that is not a number, a read that threw).
+        // not (instance_exists false, an id that is not a number, a read that
+        // threw): the sums over the three values, of the counters below.
         uint64_t reduced = 0, dropped = 0;
+        // The same, per value (0 argument 0, 1 argument 1, 2 `self`) and per
+        // outcome, because the sums cannot answer what Live 3 asks: `self` is
+        // reduced on every monster drop, and `kinds=` prints `obj` for an
+        // instance pointer and a struct alike. reducedBy: instance_exists
+        // answered true and `id` read as a number. notInstanceBy: it answered
+        // false (an item struct, if the reading of the arguments holds).
+        // noIdBy: it answered true but `id` did not read as a number, the
+        // runner taking for an instance something that has no id. threwBy: a
+        // read threw (also counted in `errors`, which counts more than this).
+        uint64_t reducedBy[3] = {}, notInstanceBy[3] = {}, noIdBy[3] = {}, threwBy[3] = {};
         // The last call's argument 0, argument 1 and `self`, as passed (before
         // Durable): num, ref, obj, undef or other; "-" before the first call.
         const char* kinds[3] = { "-", "-", "-" };
@@ -113,6 +127,23 @@ public:
     size_t ShownNow() const { return m_ShownNow; }
     const Stats& StatsRef() const { return m_Stats; }
     int CallsThisFrame() const { return m_Calls; }
+
+    // What Durable made of each value, per value and outcome, for the stat
+    // line: `reduced-a0=` ... `threw-self=`, twelve fields.
+    std::string DurableText() const {
+        static const char* const kSlots[3] = { "a0", "a1", "self" };
+        const struct { const char* name; const uint64_t* by; } rows[4] = {
+            { "reduced", m_Stats.reducedBy }, { "not-instance", m_Stats.notInstanceBy },
+            { "no-id", m_Stats.noIdBy }, { "threw", m_Stats.threwBy } };
+        std::string text;
+        for (const auto& row : rows) {
+            for (int slot = 0; slot < 3; ++slot) {
+                if (!text.empty()) text += ' ';
+                text += std::string(row.name) + "-" + kSlots[slot] + "=" + std::to_string(row.by[slot]);
+            }
+        }
+        return text;
+    }
 
     // 0 means no key; 1 and 2 are the mouse buttons the game plays with.
     static bool KeyAllowed(int vk) { return vk == 0 || (vk >= 3 && vk <= 254); }
@@ -184,9 +215,9 @@ public:
         if (m_Pending.size() >= kPendingCap) { ++m_Stats.errors; return; }
         try {
             PendingCall call;
-            call.candidates[0] = Durable(arg0);
-            call.candidates[1] = Durable(arg1);
-            call.candidates[2] = Durable(self);
+            call.candidates[0] = Durable(arg0); CountOutcome(0);
+            call.candidates[1] = Durable(arg1); CountOutcome(1);
+            call.candidates[2] = Durable(self); CountOutcome(2);
             m_Pending.push_back(std::move(call));
         } catch (...) { ++m_Stats.errors; }
     }
@@ -223,6 +254,10 @@ private:
         bool everSlept = false;
     };
     struct PendingCall { RValue candidates[3]; };
+    // What Durable did with a value: kept it as it was (or as undefined,
+    // not being an instance kind), or, for an instance pointer, which way
+    // the two reads went.
+    enum class Outcome { Kept, Reduced, NotInstance, NoId, Threw };
 
     HiddenLootMod() = default;
 
@@ -258,8 +293,10 @@ private:
     // which instance_exists answers false, an id that is not a number, a
     // kind no instance has) is kept as undefined. The kind decides how a
     // value is kept, never whether the frame's end looks at it: every kind
-    // an instance arrives as is kept or resolved. Two reads at most.
+    // an instance arrives as is kept or resolved. Two reads at most. Which
+    // way an instance pointer went is left in m_Outcome, for CountOutcome.
     RValue Durable(const RValue& v) {
+        m_Outcome = Outcome::Kept;
         const uint32_t kind = Kind(v);
         if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_REF) return v;
         if (kind != VALUE_OBJECT) return RValue();
@@ -267,11 +304,27 @@ private:
             if (Call("instance_exists", { v }).ToBoolean()) {
                 RValue own = Call("variable_instance_get", { v, RValue("id") });
                 double n = -1;
-                if (Number(own, n) && n >= 0) { ++m_Stats.reduced; return own; }
+                if (Number(own, n) && n >= 0) { ++m_Stats.reduced; m_Outcome = Outcome::Reduced; return own; }
+                m_Outcome = Outcome::NoId;
+            } else {
+                m_Outcome = Outcome::NotInstance;
             }
-        } catch (...) { ++m_Stats.errors; }
+        } catch (...) { ++m_Stats.errors; m_Outcome = Outcome::Threw; }
         ++m_Stats.dropped;
         return RValue();
+    }
+    // The last Durable's outcome, counted under its value (0 argument 0, 1
+    // argument 1, 2 `self`), so a struct instance_exists took for an
+    // instance shows as its own count (noIdBy, or reducedBy on argument 1)
+    // instead of hiding in a sum another value fills.
+    void CountOutcome(int slot) {
+        switch (m_Outcome) {
+        case Outcome::Reduced: ++m_Stats.reducedBy[slot]; break;
+        case Outcome::NotInstance: ++m_Stats.notInstanceBy[slot]; break;
+        case Outcome::NoId: ++m_Stats.noIdBy[slot]; break;
+        case Outcome::Threw: ++m_Stats.threwBy[slot]; break;
+        case Outcome::Kept: break;
+        }
     }
 
     // Loot_Ground_obj's object index, by its SDK name; asked again until it
@@ -482,6 +535,7 @@ private:
     bool m_RoomAllows = false;
     uint64_t m_LastPass = 0;
     std::vector<PendingCall> m_Pending;
+    Outcome m_Outcome = Outcome::Kept;
     std::unordered_map<int64_t, Item> m_Items;   // what it slept or shows, by instance id
     std::unordered_set<int64_t> m_Judged;        // seen and left alone (visible, no verdict, persistent room)
     size_t m_AsleepNow = 0, m_ShownNow = 0;
