@@ -141,7 +141,7 @@
 <div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">
   <div class="hint">Change how the monsters you meet are made, in every zone. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Bosses<br><span class="feature-description">Every boss the game spawns while this is on comes as a Rare ("uber") or Ancient ("uber uber") boss, set up by the game the same way as its own rare monsters. Bosses the game already made rare or ancient are left alone. Off by default.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Bosses<br><span class="feature-description">While this is on, a boss the game spawns is given Rare ("uber") or Ancient ("uber uber") rarity as it is set up. What that rarity changes on a boss is still being measured. Bosses the game already made champion, rare or ancient, and bosses another monster creates (phases, clones), are left alone. Off by default.</span></span>
     <select class="style-select" id="boss_rarity">
       <option value="off">Normal (the game's own)</option>
       <option value="rare">Rare &mdash; "uber" boss</option>
