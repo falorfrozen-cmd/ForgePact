@@ -8,9 +8,13 @@
 // installed DLL or release asset is touched.
 //
 // The model follows the static reading (docs/angelic-roll-hook-research.md, Sessions 2 and 3):
-// the roll returns undefined on a hit exactly as on a miss; only a hit calls CreateDefaultParams
-// (sub, b, 1.0), by a direct call that reaches ForgePact only through a hook on that function;
-// the picked entry's type, not the parameters', is what the roll passes on to the placement.
+// the roll picks an entry and reads its definition through GetUniqueRepoStruct(type, sub, b)
+// before its die (a switch skips that read, or reads another entry last); it returns undefined
+// on a hit exactly as on a miss; only a hit calls CreateDefaultParams (sub, b, 1.0), by a direct
+// call that reaches ForgePact only through a hook on that function; the picked entry's type, not
+// the parameters', is what the roll passes on to the placement. The runtime may hand back the
+// Controller_obj instance as VALUE_REF or VALUE_OBJECT, and a switch makes variable_instance_get
+// return a copy of the list, so a push onto what it returned is not visible on a fresh read.
 #define FORGEPACT_RELEASE
 #include <algorithm>
 #include <array>
@@ -75,6 +79,7 @@ static long InterlockedIncrement(volatile long* value) { return ++*const_cast<lo
 namespace HeroSiege::Scripts {
 inline constexpr std::string_view gml_Script_DropItemAngelicChance = "gml_Script_DropItemAngelicChance";
 inline constexpr std::string_view gml_Script_CreateDefaultParams = "gml_Script_CreateDefaultParams";
+inline constexpr std::string_view gml_Script_GetUniqueRepoStruct = "gml_Script_GetUniqueRepoStruct";
 }
 namespace HeroSiege::Objects {
 enum class GameObject { Loot_Ground_obj = 902, Controller_obj = 984 };
@@ -106,6 +111,25 @@ static constexpr double kControllerId = 100001;
 static const char* const kModelListName = "uniqueLoot";   // the model's name; the real one is Live 1's
 static int controllerCount = 1;
 static std::map<std::string, RValue> controllerVars;
+// How instance_find hands back the Controller_obj instance: a VALUE_REF (this runner's usual
+// answer) or a VALUE_OBJECT; either one must reach the same variables.
+static int controllerKind = VALUE_REF;
+static CInstance controllerInstance;
+static bool isController(const RValue& v) {
+    if (controllerCount < 1) return false;
+    if (v.m_Kind == VALUE_REF) return v.number == kControllerId;
+    return v.m_Kind == VALUE_OBJECT && v.instance == &controllerInstance;
+}
+// variable_instance_get hands back a copy of the list instead of the list itself: a push onto
+// what it returned never reaches the array the roll reads.
+static bool getReturnsCopy = false;
+static RValue copyOf(const RValue& v) {
+    if (v.m_Kind != VALUE_ARRAY || !v.array) return v;
+    RValue c = v;
+    c.array = std::make_shared<std::vector<RValue>>();
+    for (const RValue& e : *v.array) c.array->push_back(copyOf(e));
+    return c;
+}
 static std::vector<Triple> vanilla;                       // the list as the game built it
 // The vanilla list: 117 ordinary uniques plus Liquor Holster (8/0/51), Lucifer's Crown (0/0/85)
 // and Mask of the Celestial (0/0/86), each once, so every stand-in's n is 1.
@@ -156,14 +180,17 @@ struct FakeYytk {
         if (n == "instance_number") return RValue(num(a[0]) == 984.0 ? (double)controllerCount : 0.0);
         if (n == "instance_find") {
             RValue r(-4.0);   // noone
-            if (num(a[0]) == 984.0 && num(a[1]) == 0.0 && controllerCount > 0) { r.m_Kind = VALUE_REF; r.number = kControllerId; }
+            if (num(a[0]) == 984.0 && num(a[1]) == 0.0 && controllerCount > 0) {
+                if (controllerKind == VALUE_OBJECT) return RValue(&controllerInstance);
+                r.m_Kind = VALUE_REF; r.number = kControllerId;
+            }
             return r;
         }
         if (n == "variable_instance_exists")
-            return RValue(a[0].number == kControllerId && controllerCount > 0 && controllerVars.count(a[1].text) ? 1.0 : 0.0);
+            return RValue(isController(a[0]) && controllerVars.count(a[1].text) ? 1.0 : 0.0);
         if (n == "variable_instance_get") {
-            if (a[0].number != kControllerId || !controllerVars.count(a[1].text)) return RValue();
-            return controllerVars[a[1].text];
+            if (!isController(a[0]) || !controllerVars.count(a[1].text)) return RValue();
+            return getReturnsCopy ? copyOf(controllerVars[a[1].text]) : controllerVars[a[1].text];
         }
         if (n == "array_length") return RValue((double)arr(a[0]).size());
         if (n == "array_get") return arr(a[0]).at((size_t)num(a[1]));
@@ -249,7 +276,22 @@ static bool g_SigDetectNative = false;
 // The detection's own positive control: every CreateDefaultParams call that reaches the hook,
 // and the route its install got ("off" before any install).
 static volatile long g_SigCdpCalls = 0;
-static const char* g_SigDetectRoute = "off";
+static std::string g_SigDetectRoute = "off";
+// Typing the hit (replan 1): the GetUniqueRepoStruct hook's roll-scoped record, the hit's typed
+// triple, and the hits that could not be typed.
+static PFUNC_YYGMLScript g_Orig_GetUniqueRepoStruct = nullptr;
+static bool g_SigRepoSeen = false;
+static double g_SigRepoType = -1.0, g_SigRepoSub = -1.0, g_SigRepoB = -1.0;
+static bool g_SigHitTyped = false;
+static double g_SigHitType = -1.0;
+static volatile long g_SigUntyped = 0;
+// The copies per enabled item (the constant 1 in the player build; settable here, as the research
+// lever `angelicprobe inject copies <k>` sets it), what this roll pushed of each, the share of
+// the current hit, and whether the held read-back's refusal has been logged since it last passed.
+static int g_SigCopies = 1;
+static int g_SigRollCopies[2] = { 0, 0 };
+static int g_SigHitShare = 0;
+static bool g_SigHeldMissLogged = false;
 // `sigdrop status` (both builds) reads the forced-drop counters too.
 static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
 static int g_SigDropForce = -1;
@@ -300,6 +342,31 @@ static RValue& gameCreateDefaultParams(CInstance*, CInstance*, RValue& result, i
 // Where the roll's direct call lands: the game's own function, or a hook installed on it.
 static PFUNC_YYGMLScript cdpEntry = gameCreateDefaultParams;
 
+// GetUniqueRepoStruct(type, sub, b): the unique's definition from the repository (a struct with
+// its droprate.base when the model knows the triple). The roll reads the picked entry's
+// definition through it before the die, by a direct call like the one to CreateDefaultParams.
+static int gameRepoCalls = 0;
+static RValue& gameGetUniqueRepoStruct(CInstance*, CInstance*, RValue& result, int argc, RValue** A) {
+    ++gameRepoCalls;
+    result = makeStruct({});
+    if (argc > 2) {
+        const auto it = repoBase.find({ A[0]->number, A[1]->number, A[2]->number });
+        if (it != repoBase.end()) result = makeStruct({ { "droprate", makeStruct({ { "base", RValue(it->second) } }) } });
+    }
+    return result;
+}
+static PFUNC_YYGMLScript repoEntry = gameGetUniqueRepoStruct;
+// Which definition reads the roll makes before its die: the picked entry's (the static reading),
+// none, or the picked entry's and then another one last.
+enum class RepoRead { Picked, Skip, PickedThenOther };
+static RepoRead repoRead = RepoRead::Picked;
+static const Triple kOtherRead{ 3, 1, 7 };
+static void readDefinition(CInstance* self, CInstance* other, const Triple& t) {
+    RValue type(t[0]), sub(t[1]), b(t[2]), result;
+    RValue* args[] = { &type, &sub, &b };
+    repoEntry(self, other, result, 3, args);
+}
+
 // LootGroundCreate -> CreateItemNew: one item per placement, built from the parameters it was
 // handed under the picked entry's type; the Custom Forge hook recognises the two built-in items
 // by their selector {t, a, b, c, j} and reports each to the plugin, as TryApplyCustomForge does.
@@ -348,22 +415,26 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
     lastChanceSeen = (argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) ? A[2]->number : -1;
     listDuringCall.push_back(listTriples());
     if (originalThrows) throw std::runtime_error("the game's roll threw");
+    // Pick an entry and read its definition before the die; only a hit builds the params, by a
+    // direct call, then places the item under the picked entry's type.
+    std::vector<RValue>* list = listVector();
+    Triple picked{ 3, 1, 15 };
+    if (list && !list->empty()) {
+        size_t index = 0;
+        if (pickPolicy == Pick::Last) index = list->size() - 1;
+        else if (pickPolicy == Pick::Among) {
+            std::vector<size_t> candidates;
+            for (size_t i = 0; i < list->size(); ++i)
+                if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[i])) != pickTriples.end()) candidates.push_back(i);
+            if (!candidates.empty()) index = candidates[std::uniform_int_distribution<size_t>(0, candidates.size() - 1)(pickRng)];
+        }
+        picked = tripleOf((*list)[index]);
+    }
+    if (repoRead != RepoRead::Skip) readDefinition(self, other, picked);
+    if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);
     const bool hit = !outcomes.empty() && outcomes.front();
     if (!outcomes.empty()) outcomes.pop_front();
-    if (hit) {   // pick an entry; only a hit builds the params, by a direct call, then places the item
-        std::vector<RValue>* list = listVector();
-        Triple picked{ 3, 1, 15 };
-        if (list && !list->empty()) {
-            size_t index = 0;
-            if (pickPolicy == Pick::Last) index = list->size() - 1;
-            else if (pickPolicy == Pick::Among) {
-                std::vector<size_t> candidates;
-                for (size_t i = 0; i < list->size(); ++i)
-                    if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[i])) != pickTriples.end()) candidates.push_back(i);
-                if (!candidates.empty()) index = candidates[std::uniform_int_distribution<size_t>(0, candidates.size() - 1)(pickRng)];
-            }
-            picked = tripleOf((*list)[index]);
-        }
+    if (hit) {
         RValue sub(picked[1]), b(picked[2]), c(1.0), params;
         RValue* args[] = { &sub, &b, &c };
         RValue& made = cdpEntry(self, other, params, 3, args);
@@ -400,6 +471,12 @@ static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest,
         if (!native) gameImage.push_back(reinterpret_cast<const void*>(gameAngelicChance));
         return true;
     }
+    if (name == "GetUniqueRepoStruct") {
+        *origOut = gameGetUniqueRepoStruct;
+        if (native) repoEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameGetUniqueRepoStruct));
+        return true;
+    }
     return false;
 }
 // The production test for "this saved original is the game's own code" (HookOneScript's
@@ -419,8 +496,13 @@ static void reset() {
     g_AngelicPool.clear(); poolExtras.clear(); poolBuilds = 0;
     spawns.clear(); builds.clear(); builtinCalls = 0;
     controllerCount = 1; controllerVars.clear(); setList(vanillaTriples());
+    controllerKind = VALUE_REF; getReturnsCopy = false;
     repoBase = { { { 8, 0, 51 }, 5000000.0 }, { { 0, 0, 85 }, 111111111.0 }, { { 0, 0, 86 }, 30000000.0 } };
     gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams; paramsLackJ = false;
+    gameRepoCalls = 0; repoEntry = gameGetUniqueRepoStruct; repoRead = RepoRead::Picked;
+    g_Orig_GetUniqueRepoStruct = nullptr; g_SigRepoSeen = false; g_SigRepoType = g_SigRepoSub = g_SigRepoB = -1.0;
+    g_SigHitTyped = false; g_SigHitType = -1.0; g_SigUntyped = 0;
+    g_SigCopies = 1; g_SigRollCopies[0] = g_SigRollCopies[1] = 0; g_SigHitShare = 0; g_SigHeldMissLogged = false;
     pickPolicy = Pick::First; pickTriples.clear();
     outcomes.clear(); originalCalls = 0; originalThrows = false; gamePushesDuringRoll = false; lastChanceSeen = -1;
     listDuringCall.clear();
@@ -698,16 +780,6 @@ int main(int argc, char** argv) {
             pickPolicy = Pick::Last;
             roll(monster, { false, true, false });
             require(g_SigOurHits == 1 && countBuilds(1) == 1, "a hit in an extra roll was not ours and built");
-        } else if (test == "ambiguous_standin_never_arms") {
-            // Another validated unique of a different type with Liquor Holster's sub/b: its hits
-            // would read as the stand-in's, so Headhunter refuses to arm.
-            poolExtras = { { 10, 0, 51, "Supreme Elemelon", true } };
-            g_HhForced = true;
-            installDetection();
-            require(anyLineHas("signature drops:", "not validated: ambiguous: Supreme Elemelon"), "the ambiguous stand-in was not refused by name");
-            require(!switchOn(1), "the gate armed on an ambiguous stand-in");
-            roll(monster, { false });
-            require(g_SigInjected == 0 && listDuringCall[0] == vanilla, "an ambiguous stand-in was injected");
         } else if (test == "missing_field_refuses_and_leaves_vanilla") {
             setList(vanillaTriples(false));
             paramsLackJ = true;
@@ -723,12 +795,180 @@ int main(int argc, char** argv) {
             require(anyLineHas("angelic hit:", "refused (no field j)"), "the hit line does not say it was refused");
         } else if (test == "sigdrop_status_tokens") {
             const std::string line = sigdropStatusLine();
-            const std::string head = "sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 built=0 crown=0 belt=0 list=none gate=tyrant:off,headhunter:off";
-            require(line.rfind(head, 0) == 0, "`sigdrop status` does not begin as the live procedure reads it: " + line);
-            require(line.size() >= 22 && line.compare(line.size() - 22, 22, " cdpCalls=0 detect=off") == 0, "`sigdrop status` does not end with the detection route: " + line);
+            // Exactly the fresh-session banner the live procedure's `control` step reads.
+            const std::string banner = "sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off";
+            require(line == banner, "`sigdrop status` is not the fresh-session banner: " + line);
             g_HhForced = true;
             installDetection();
             require(sigdropStatusLine().find(" list=uniqueLoot:120 gate=tyrant:off,headhunter:on ") != std::string::npos, "`list=` does not name the resolved list");
+        // ---- identity (replan 1): every scenario but the controls fails against forgepact-74-replan1-base ----
+        } else if (test == "other_type_same_pair_never_attributed") {
+            // Supreme Elemelon's shape: type 10 with Liquor Holster's sub 0 / b 51. Its hits name the
+            // stand-in's pair to CreateDefaultParams, but the definition the roll read is type 10's,
+            // so none of them is ours and none is rewritten - a wrong-type rewrite builds a
+            // malformed item.
+            const Triple elemelon{ 10, 0, 51 };
+            setList(plus(vanillaTriples(), { elemelon }));
+            g_HhForced = true;
+            installDetection();
+            require(switchOn(1), "a stand-in whose pair another type shares no longer refuses: the gate must arm");
+            pickPolicy = Pick::Among; pickTriples = { elemelon };
+            for (int i = 0; i < 400; ++i) roll(monster, { true });
+            require(g_SigGameHits == 400 && builds.size() == 400, "not one item built per hit");
+            require(g_SigOurHits == 0, "a hit on another type's same-pair entry was attributed: ourHits=" + std::to_string(g_SigOurHits));
+            for (const auto& b : builds)
+                require(b.t == 10 && b.b == 51 && b.c == 1.0 && b.a == 424242, "a hit on another type's same-pair entry was rewritten");
+            require(countBuilds(1) == 0 && g_SigBuilt == 0, "a Headhunter came from another type's entry");
+            require(g_SigUntyped == 0, "a hit whose definition the roll read was counted untyped");
+            require(anyLineHas("angelic hit: picked 10/0/51 ", "-> vanilla"), "the hit line does not name the typed triple 10/0/51");
+            // Positive control, same session: a hit on our own entry is ours.
+            setList(plus(vanillaTriples(false), { elemelon }));
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(g_SigOurHits == 1 && countBuilds(1) == 1, "a hit on the injected stand-in was not ours");
+        } else if (test == "no_agreeing_record_is_untyped") {
+            // n = 0: the injected entry is the only Liquor Holster, so every typed hit on it is ours.
+            setList(vanillaTriples(false));
+            g_HhForced = true;
+            installDetection();
+            pickPolicy = Pick::Last;
+            for (RepoRead read : { RepoRead::Skip, RepoRead::PickedThenOther }) {
+                repoRead = read;
+                const long untyped = g_SigUntyped;
+                const size_t built = builds.size();
+                roll(monster, { true });
+                const char* how = read == RepoRead::Skip ? "no definition read" : "another definition read last";
+                require(g_SigUntyped == untyped + 1, std::string(how) + ": the hit was not counted untyped");
+                require(g_SigOurHits == 0, std::string(how) + ": an untyped hit was attributed");
+                require(builds.size() == built + 1 && builds.back().t == 8 && builds.back().b == 51 && builds.back().c == 1.0 && builds.back().a == 424242,
+                        std::string(how) + ": an untyped hit did not build the game's own Liquor Holster from its own parameters");
+                require(lastLine("angelic hit:").find("picked untyped 0/51 ") != std::string::npos, std::string(how) + ": the hit line does not say untyped: " + lastLine("angelic hit:"));
+            }
+            require(sigdropStatusLine().find(" untyped=2 ") != std::string::npos, "`sigdrop status` does not count untyped=2");
+            // Positive control: the roll reads the picked entry's definition last, the hit is typed and ours.
+            repoRead = RepoRead::Picked;
+            roll(monster, { true });
+            require(g_SigOurHits == 1 && countBuilds(1) == 1 && g_SigUntyped == 2, "a typed hit on our entry was not ours");
+        } else if (test == "standin_listed_twice_coin_one_in_three") {
+            setList(plus(vanillaTriples(), { kBeltStandIn }));   // n = 2
+            g_HhForced = true;
+            installDetection();
+            require(anyLineHas("signature drops:", "Headhunter:Liquor Holster(n=2)"), "n does not count the stand-in triple twice");
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 3000; ++i) roll(monster, { true });
+            require(g_SigOurHits >= 850 && g_SigOurHits <= 1150, "a Liquor Holster hit was not ours about 1 in 3: " + std::to_string(g_SigOurHits));
+            require(linesEndingWith("angelic hit:", "Headhunter (stand-in Liquor Holster, 1 in 3) built by the game") == (int)g_SigOurHits,
+                    "an our-hit line does not say 1 in 3");
+        } else if (test == "copies_coin_and_tail") {
+            g_SigCopies = 5;
+            g_HhForced = true;
+            installDetection();
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn, kBeltStandIn, kBeltStandIn, kBeltStandIn, kBeltStandIn }),
+                    "with copies 5 the roll did not see Liquor Holster five more times: " + describe(listDuringCall[0]));
+            require(listTriples() == vanilla && g_SigInjected == 5, "the tail check did not take all five copies off, or injected= did not count them");
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 1200; ++i) roll(monster, { true });   // n = 1, k = 5: ours 5 in 6
+            require(g_SigOurHits >= 900 && g_SigOurHits <= 1100, "with copies 5 a Liquor Holster hit was not ours about 5 in 6: " + std::to_string(g_SigOurHits));
+            require(linesEndingWith("angelic hit:", "Headhunter (stand-in Liquor Holster, 5 in 6) built by the game") == (int)g_SigOurHits, "an our-hit line does not say 5 in 6");
+            require(listTriples() == vanilla, "copies were left on the list");
+            // Both on with copies 3: both items' copies, in push order, and all of them come off.
+            g_SigCopies = 3; g_TyForced = true;
+            listDuringCall.clear();
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kCrownStandIn, kCrownStandIn, kCrownStandIn, kBeltStandIn, kBeltStandIn, kBeltStandIn }),
+                    "both on with copies 3, the roll did not see three of each: " + describe(listDuringCall[0]));
+            require(listTriples() == vanilla && g_SigAnomalies == 0, "both on with copies 3, the list was not restored");
+            // A list the game changed mid-roll is still left as found with copies.
+            gamePushesDuringRoll = true;
+            roll(monster, { false });
+            require(g_SigAnomalies == 1 && linesStartingWith("inject: list changed during the roll, left as found") == 1, "a changed list was cut with copies on it");
+        } else if (test == "copied_list_held_read_back") {
+            // The runtime hands back a copy: the push lands on the copy, the roll reads the list
+            // itself. The held read-back sees it, takes the entries off again and the roll carries
+            // nothing, so a vanilla Liquor Holster hit is never taken for ours.
+            getReturnsCopy = true;
+            g_HhForced = true;
+            installDetection();
+            require(switchOn(1), "a list that resolves by name and shape did not arm the gate");
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+            for (int i = 0; i < 200; ++i) roll(monster, { true });
+            for (const auto& seen : listDuringCall) require(seen == vanilla, "the roll saw an entry the read-back did not");
+            require(g_SigOurHits == 0 && countBuilds(1) == 0, "a roll whose push was not visible attributed a hit: ourHits=" + std::to_string(g_SigOurHits));
+            require(g_SigInjected == 0, "injected= counted entries the list never held");
+            require(g_SigAnomalies == 200, "anomalies= did not count every invisible push: " + std::to_string(g_SigAnomalies));
+            require(linesStartingWith("inject: push not visible through Controller_obj.uniqueLoot") == 1, "the read-back's refusal was not logged exactly once");
+            require(listTriples() == vanilla, "something was left on the list");
+            // Positive control: the list itself comes back, the push is visible, the roll carries it.
+            getReturnsCopy = false;
+            listDuringCall.clear();
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn }) && g_SigInjected == 1 && g_SigAnomalies == 200, "a visible push was refused");
+            require(listTriples() == vanilla, "the visible push was not removed");
+            getReturnsCopy = true;   // once per change: a copy again logs again
+            roll(monster, { false });
+            require(linesStartingWith("inject: push not visible through Controller_obj.uniqueLoot") == 2, "the refusal was not logged again after the outcome changed");
+        } else if (test == "value_ref_and_value_object_resolve_alike") {
+            for (int kind : { VALUE_REF, VALUE_OBJECT }) {
+                reset();
+                controllerKind = kind;
+                g_HhForced = true;
+                installDetection();
+                const std::string what = kind == VALUE_REF ? "VALUE_REF" : "VALUE_OBJECT";
+                require(switchOn(1), what + ": the gate did not arm");
+                roll(monster, { false });
+                require(listDuringCall[0] == plus(vanilla, { kBeltStandIn }), what + ": the roll did not see the stand-in");
+                require(listTriples() == vanilla && g_SigAnomalies == 0, what + ": the list was not restored, or the read-back refused");
+            }
+        } else if (test == "wrong_shape_still_refuses") {
+            // Negative control for the widened instance kinds: a list of the wrong shape refuses.
+            for (int kind : { VALUE_REF, VALUE_OBJECT }) {
+                reset();
+                controllerKind = kind;
+                auto v = vanillaTriples();
+                setList(v);
+                (*listVector())[5] = makeArray({ RValue(1.0), RValue(2.0), RValue(3.0), RValue(4.0) });
+                const auto before = listTriples();
+                g_HhForced = true;
+                installDetection();
+                roll(monster, { false });
+                require(anyLineHas("signature drops: list missing", "entry 5 is not three numbers"), "a four-number entry did not refuse");
+                require(!switchOn(1) && g_SigInjected == 0 && listTriples() == before, "a list of the wrong shape was injected into");
+            }
+        } else if (test == "typing_hook_installed_once_by_name") {
+            g_OrigAngChance = nullptr;
+            installDetection();
+            installDetection();
+            require(installs["GetUniqueRepoStruct"] == 1, "GetUniqueRepoStruct was not hooked exactly once");
+            require(repoEntry != gameGetUniqueRepoStruct, "the roll's direct GetUniqueRepoStruct call does not reach the hook");
+            // Outside a roll the hook passes through and records nothing.
+            readDefinition(&monster, nullptr, kBeltStandIn);
+            require(gameRepoCalls == 1 && !g_SigRepoSeen, "a GetUniqueRepoStruct call outside the roll was recorded or not passed through");
+            require(sigdropStatusLine().find(" detect=detoured") != std::string::npos, "three detoured hooks do not read detect=detoured");
+        } else if (test == "typing_hook_not_detoured_never_arms") {
+            // Positive control: all three detoured, the gate arms.
+            g_HhForced = true;
+            installDetection();
+            require(switchOn(1), "three detoured hooks with the list resolved did not arm the gate");
+            struct Case { const char* name; bool table; const char* log; const char* detect; };
+            const Case cases[] = {
+                { "table-only", true, "GetUniqueRepoStruct TABLE-ONLY", " detect=GetUniqueRepoStruct:TABLE-ONLY" },
+                { "not found", false, "GetUniqueRepoStruct not found", " detect=GetUniqueRepoStruct:not found" },
+            };
+            for (const Case& c : cases) {
+                reset();
+                g_HhForced = true;
+                if (c.table) tableOnlyHook = "GetUniqueRepoStruct"; else missingHook = "GetUniqueRepoStruct";
+                installDetection();
+                require(anyLineHas("signature drops: game-roll detection NOT installed", c.log), std::string(c.name) + ": the typing hook's route was not logged");
+                require(!switchOn(1), std::string(c.name) + ": the gate armed without the typing hook");
+                const std::string status = sigdropStatusLine();
+                require(status.size() >= std::string(c.detect).size() && status.compare(status.size() - std::string(c.detect).size(), std::string::npos, c.detect) == 0,
+                        std::string(c.name) + ": `detect=` does not name the typing hook: " + status);
+                pickPolicy = Pick::Among; pickTriples = { kBeltStandIn };
+                for (int i = 0; i < 20; ++i) roll(monster, { true });
+                require(g_SigInjected == 0 && g_SigOurHits == 0, std::string(c.name) + ": entries were pushed or a hit taken without typing");
+            }
         // ---- detection: the beside design's install and gate, kept ----
         } else if (test == "install_is_idempotent") {
             g_OrigAngChance = nullptr;

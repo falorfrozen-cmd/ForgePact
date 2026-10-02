@@ -18,6 +18,13 @@ source: for the length of a roll the list carries one stand-in entry per
 enabled item, a hit on it is ours at one entry's share, the game builds ours
 from rewritten parameters, and nothing is spawned beside. `test_detection`
 keeps the beside design's detection and gate scenarios, which still hold.
+`test_identity` is replan 1's change, and fails by its own assertions against
+`forgepact-74-replan1-base` (round 0's plugin, which attributed a hit on the
+`CreateDefaultParams` pair alone): a hit is the item's only when the whole
+entry (type, sub, b) the roll read through `GetUniqueRepoStruct` is the
+stand-in's, a hit with no agreeing read is untyped and stays the game's, the
+coin is m·k in n + m·k with k copies, and a push that a fresh read of the list
+does not show is taken off again before the roll can carry it.
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against either source.
 """
@@ -52,6 +59,8 @@ PRODUCTION = (
     'static std::string SignatureListLine(',
     'static std::string SignatureListText(',
     'static bool SignatureListResolve(',
+    'static bool SignatureTailHolds(',
+    'static bool SignatureHeldReadBack(',
     'static bool SigUniqueDropBase(',
     'static void SignatureResolveStandIns(',
     'static void SignatureInjectPush(',
@@ -65,6 +74,7 @@ PRODUCTION = (
     'static void SignatureAfterHit(',
     'static void SigDropStatus(',
     'static RValue& Hook_CreateDefaultParams(',
+    'static RValue& Hook_GetUniqueRepoStruct(',
     'static RValue& HookAngelicChance(',
     'static void InstallSignatureAngelicHooks(',
     'static void AngelicHitStatus(',
@@ -176,16 +186,32 @@ class AngelicHitBehaviorTests(unittest.TestCase):
         # For the length of a roll the game's list carries one stand-in entry per enabled item
         # and is the game's own again after it, a throw included; a hit on a stand-in is ours at
         # one entry's share; the game builds ours from rewritten parameters, one item per hit,
-        # and nothing is spawned beside it; a list that does not resolve, an ambiguous stand-in
-        # or a missing field refuses; a list the game changed mid-roll is left as found.
+        # and nothing is spawned beside it; a list that does not resolve or a missing field
+        # refuses; a list the game changed mid-roll is left as found. (Round 0's
+        # `ambiguous_standin_never_arms` moved out: the pool-based refusal is gone, and
+        # test_identity's other-type scenario covers what it guarded.)
         self.run_scenarios((
             'switch_on_injects_for_the_call', 'original_throw_removes_entries',
             'standin_hit_is_ours_one_entry_share', 'our_hit_rewrites_and_the_game_builds_once',
             'roll_path_never_spawns', 'off_after_on_pushes_nothing',
             'both_on_pushes_two_and_builds_both', 'list_refusals',
             'list_changed_during_roll_left_as_found', 'extra_rolls_carry_the_entries',
-            'ambiguous_standin_never_arms', 'missing_field_refuses_and_leaves_vanilla',
-            'sigdrop_status_tokens',
+            'missing_field_refuses_and_leaves_vanilla', 'sigdrop_status_tokens',
+        ))
+
+    def test_identity(self):
+        # A hit is typed from the GetUniqueRepoStruct read the roll made before its die and is
+        # the item's only on the whole triple; an untyped hit is vanilla and counted; n counts
+        # the whole triple and k copies make the coin k in n + k, all of them removed again; a
+        # push a fresh read does not show is taken off and the roll carries nothing; the
+        # instance resolves as VALUE_REF or VALUE_OBJECT, and a wrong shape still refuses
+        # (negative control); the typing hook is the third by-name detour the gate needs.
+        self.run_scenarios((
+            'other_type_same_pair_never_attributed', 'no_agreeing_record_is_untyped',
+            'standin_listed_twice_coin_one_in_three', 'copies_coin_and_tail',
+            'copied_list_held_read_back', 'value_ref_and_value_object_resolve_alike',
+            'wrong_shape_still_refuses', 'typing_hook_installed_once_by_name',
+            'typing_hook_not_detoured_never_arms',
         ))
 
     def test_detection(self):

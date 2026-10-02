@@ -211,6 +211,17 @@ class AngelicProbeSourceTests(unittest.TestCase):
         for sub in subcommands:
             with self.subTest(sub=sub):
                 self.assertIn('"  angelicprobe %s' % sub, usage)
+        # `inject`'s own levers (replan 1 added `copies`; the scan is `inject auto`, never
+        # `inject name auto`), in the usage line and in the handler.
+        line = [l for l in usage.split("\n") if '"  angelicprobe inject' in l]
+        self.assertEqual(len(line), 1)
+        inject = function_body(self.plugin, "static void SigInjectCommand(")
+        for lever in ("auto", "name", "copies", "mode", "status"):
+            with self.subTest(inject=lever):
+                self.assertIn(lever, line[0])
+                self.assertIn('"%s"' % lever, inject)
+        self.assertIn("copies <k>", line[0])
+        self.assertNotIn("name auto", line[0])
 
     def test_no_new_top_level_else_if_in_run_command(self):
         # C1061: the chain is at MSVC's nesting limit; see test_menu_probe_contract.
@@ -225,6 +236,14 @@ class AngelicProbeSourceTests(unittest.TestCase):
                          "a probe that runs every frame is a mod, not a probe")
 
     # ---- every row, by name, on a route that can see direct calls -----------
+
+    def test_the_unique_repo_row_refuses_while_the_typing_hook_holds_the_script(self):
+        # #74 (replan 1): the typing hook and this row never both detour GetUniqueRepoStruct.
+        # The row keeps its shape (no holder named in the table); ApRollAttach refuses it first.
+        attach = function_body(self.code, "static void ApRollAttach(")
+        refusal = attach.index('std::string_view(r.id) == "unique-repo" && g_Orig_GetUniqueRepoStruct')
+        self.assertLess(refusal, attach.index("MmCreateHook("))
+        self.assertIn("ApRollHoldsUniqueRepo()", self.code)
 
     def test_the_table_has_exactly_the_candidate_rows(self):
         ids = re.findall(r'\{ "([a-z-]+)",', self.table())

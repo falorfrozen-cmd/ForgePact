@@ -7,9 +7,12 @@ the game's own item, moved them into the game's own roll by list injection ("lis
 injection first"): for the length of each `DropItemAngelicChance` call the game's
 Angelic list (a variable of the first `Controller_obj` instance) carries one stand-in
 entry per switched-on item - a real Angelic unique of the item's own type, Liquor Holster
-for Headhunter - the game's picker and die decide, a hit on a stand-in is ours at one
-entry's share, and on ours the `CreateDefaultParams` result is rewritten so the game
-itself builds and places the item, one per hit, never beside. The owner's decision of
+for Headhunter - the game's picker and die decide, a hit typed (replan 1) from the
+`GetUniqueRepoStruct` read the roll made for it as the stand-in's whole entry (type, sub,
+b) is ours at one entry's share, and on ours the `CreateDefaultParams` result is rewritten
+so the game itself builds and places the item, one per hit, never beside. A hit no read
+types stays the game's (`untyped=`), and a push a fresh read of the list does not show is
+taken off again before the roll can carry it (the held read-back). The owner's decision of
 2026-10-02 ("Panel switch only") makes the gate the panel switch (`force`), not the
 mechanic's enabled state, which a forged item's auto-arm also sets.
 
@@ -64,6 +67,9 @@ def read(path):
 ROLL_PATH = (
     "static RValue& HookAngelicChance(",
     "static RValue& Hook_CreateDefaultParams(",
+    "static RValue& Hook_GetUniqueRepoStruct(",
+    "static bool SignatureTailHolds(",
+    "static bool SignatureHeldReadBack(",
     "static void SignatureInjectPush(",
     "static void SignatureInjectRemove(",
     "static void SignatureAttributeHit(",
@@ -121,7 +127,10 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn("BuildAngelicPool(false)", resolve)
         self.assertIn("SigUniqueDropBase(", resolve)
         self.assertIn("base < s.base", resolve, "the default stand-in is the lowest droprate.base")
-        self.assertIn("ambiguous", resolve, "a stand-in sharing sub/b with another validated unique is refused")
+        # Replan 1: the pool-based ambiguity refusal is gone - it covered kAngelicBases only and
+        # left the hit untyped; a hit is typed on the whole triple instead.
+        self.assertNotIn("ambiguous", resolve)
+        self.assertNotIn("shares its sub/b", SOURCE)
         self.assertIn('"droprate"', body(self.code, "static bool SigUniqueDropBase("))
 
     def test_the_switch_on_names_the_list_and_the_stand_ins(self):
@@ -179,16 +188,89 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn('"array_push", { list, entry }', push)
         self.assertIn("SignatureSwitchOn(w)", push)
         self.assertIn("InterlockedIncrement(&g_SigInjected)", push)
+        self.assertRegex(push, r"for \(int c = 0; c < g_SigCopies\b", "each enabled item pushes g_SigCopies entries")
+
+    def test_the_player_build_pushes_one_copy(self):
+        # The copies variable is the constant 1 in the player build; only the research lever
+        # `angelicprobe inject copies <k>` (1..400) assigns it.
+        self.assertIn("static constexpr int g_SigCopies = 1;", self.shipped_code)
+        self.assertEqual(re.findall(r"\bg_SigCopies\s*=(?!=)\s*\w+", self.shipped_code), ["g_SigCopies = 1"],
+                         "nothing in the player build assigns the copies")
+        command = body(self.code, "static void SigInjectCommand(")
+        self.assertIn("g_SigCopies = k;", command)
+        self.assertIn("k < 1 || k > 400", command)
+
+    def test_the_held_read_back_comes_before_any_attribution(self):
+        push = body(self.code, "static void SignatureInjectPush(")
+        held = push.index("SignatureHeldReadBack(g_SigRollBefore, g_SigRollPushed, heldLen)")
+        self.assertLess(push.rindex('"array_push", { list, entry }'), held)
+        self.assertLess(held, push.index("InterlockedIncrement(&g_SigInjected)"),
+                        "injected= counts only pushes the fresh read showed")
+        refusal = push[held:]
+        self.assertIn("inject: push not visible through Controller_obj.", refusal)
+        self.assertIn("InterlockedIncrement(&g_SigAnomalies)", refusal)
+        self.assertIn("g_SigRollPushed = 0;", refusal, "a roll whose push was not visible carries nothing")
+        self.assertIn('"array_resize", { g_SigRollList, RValue((double)g_SigRollBefore) }', refusal,
+                      "the entries come off the handle they went onto")
+        self.assertIn("g_SigHeldMissLogged", refusal, "logged once per change, not once per roll")
+        # A fresh read by name off the instance, never the handle just pushed onto, and light:
+        # length and tail only, never the full shape walk.
+        read_back = body(self.code, "static bool SignatureHeldReadBack(")
+        self.assertIn("SignatureController(instance, why)", read_back)
+        self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', read_back)
+        self.assertIn("SignatureTailHolds(held, before, pushed, heldLen)", read_back)
+        self.assertNotIn("SignatureListShape", read_back)
+        self.assertNotIn("g_SigRollList", read_back)
+        # Attribution needs the roll to carry entries, which a refused read-back clears.
+        self.assertIn("g_SigRollPushed > 0", body(self.code, "static RValue& Hook_CreateDefaultParams("))
 
     def test_the_removal_cuts_only_its_own_tail(self):
         remove = body(self.code, "static void SignatureInjectRemove(")
-        self.assertIn("len == before + pushed", remove)
+        self.assertLess(remove.index("SignatureTailHolds(list, before, pushed, len)"), remove.index('"array_resize"'))
         self.assertIn('"array_resize", { list, RValue((double)before) }', remove)
-        self.assertLess(remove.index("SigEntry(list, at++, e)"), remove.index('"array_resize"'))
         self.assertIn("inject: list changed during the roll, left as found", remove)
         self.assertIn("InterlockedIncrement(&g_SigAnomalies)", remove)
+        # The tail check covers every copy of every enabled item, in push order.
+        tail = body(self.code, "static bool SignatureTailHolds(")
+        self.assertIn("len != before + pushed", tail)
+        self.assertIn("c < g_SigRollCopies[w]", tail)
+        self.assertIn("SigEntry(list, at++, e)", tail)
+        self.assertIn("e[0] != (double)kSignatureItems[w].t", tail, "the tail is matched on the whole triple")
 
-    # ---- attribution and the rewrite ------------------------------------------------------
+    # ---- typing the hit, attribution and the rewrite -----------------------------------
+
+    def test_the_typing_hook_is_installed_by_sdk_name_inside_the_installer(self):
+        install = body(self.code, "static void InstallSignatureAngelicHooks(")
+        self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct\),\s*"
+                                  r"\"fp_sig_urepo\",\s*\(PVOID\)Hook_GetUniqueRepoStruct,\s*&g_Orig_GetUniqueRepoStruct,\s*&native\)")
+        self.assertEqual(self.code.count("(PVOID)Hook_GetUniqueRepoStruct"), 1, "the typing hook is installed in one place")
+        self.assertGreaterEqual(install.count("HookOneScript("), 3)
+        self.assertIn("savedRoute(g_Orig_GetUniqueRepoStruct)", install)
+        self.assertIn('static void InstallSignatureAngelicHooks(', self.shipped_code)
+        self.assertIn("gml_Script_GetUniqueRepoStruct", body(self.shipped_code, "static void InstallSignatureAngelicHooks("),
+                      "the typing hook ships: the gate needs it")
+
+    def test_the_typing_hook_records_only_inside_the_roll(self):
+        hook = body(self.code, "static RValue& Hook_GetUniqueRepoStruct(")
+        guard = hook.index("if (g_SigRollDepth > 0)")
+        self.assertLess(guard, hook.index("g_SigRepoSeen ="))
+        self.assertIn("return g_Orig_GetUniqueRepoStruct ? g_Orig_GetUniqueRepoStruct(S, O, R, argc, A) : R;", hook,
+                      "it always calls through")
+        for k in ("SigNumber(*A[0], t)", "SigNumber(*A[1], s)", "SigNumber(*A[2], b)"):
+            self.assertIn(k, hook)
+        reset = body(self.code, "static void SignatureHitReset(")
+        for name in ("g_SigRepoSeen = false", "g_SigHitTyped = false"):
+            self.assertIn(name, reset, "the record is reset before each original call")
+
+    def test_a_hit_is_typed_or_untyped(self):
+        hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
+        self.assertIn("g_SigHitTyped = sub && b && g_SigRepoSeen && g_SigRepoSub == g_SigLastSub && g_SigRepoB == g_SigLastB;", hook)
+        self.assertIn("g_SigHitType = g_SigHitTyped ? g_SigRepoType : -1.0;", hook)
+        self.assertIn("if (!g_SigHitTyped) InterlockedIncrement(&g_SigUntyped);", hook)
+        self.assertIn("if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0)", hook,
+                      "an untyped hit is never attributed nor rewritten")
+        self.assertIn('"untyped "', body(self.code, "static void SignatureAfterHit("),
+                      "the hit line names the typed triple or says untyped")
 
     def test_a_hit_is_attributed_after_the_game_built_the_parameters(self):
         hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
@@ -196,7 +278,10 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertLess(hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), hook.index("SignatureAttributeHit(r)"))
         self.assertIn("g_SigRollPushed > 0", hook)
         attribute = body(self.code, "static void SignatureAttributeHit(")
-        self.assertIn("std::uniform_int_distribution<int>(0, n + m - 1)", attribute, "one entry's share: m in n + m")
+        self.assertIn("g_SigHitType != (double)kSignatureItems[w].t", attribute, "attribution compares the type")
+        self.assertIn("(double)g_SigStandIn[w].sub != g_SigLastSub || (double)g_SigStandIn[w].b != g_SigLastB", attribute)
+        self.assertIn("share += g_SigRollCopies[w];", attribute)
+        self.assertIn("std::uniform_int_distribution<int>(0, n + share - 1)", attribute, "m·k in n + m·k")
         self.assertIn("InterlockedIncrement(&g_SigOurHits)", attribute)
         self.assertIn("SignatureRewriteParams(params, kSignatureItems[which], g_SigHitWhy)", attribute)
 
@@ -242,6 +327,24 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         self.assertIn("(PVOID)HookAngelicChance, &g_OrigAngChance", install)
         self.assertRegex(install, r"if \(!g_OrigAngChance\)")
 
+    def test_the_probe_row_and_the_typing_hook_never_both_detour(self):
+        # Design step 3's coexistence rule, as chosen: whichever comes second refuses and says
+        # so. The typing hook second: route `held-by-angelicprobe`, the gate stays off. The
+        # probe's unique-repo row second: `blocked`, before any detour is attempted.
+        install = body(SOURCE, "static void InstallSignatureAngelicHooks(")
+        research = install[install.index("#ifndef FORGEPACT_RELEASE"):install.index("#endif", install.index("#ifndef FORGEPACT_RELEASE"))]
+        self.assertIn("probeHolds = !g_Orig_GetUniqueRepoStruct && ApRollHoldsUniqueRepo();", research)
+        self.assertIn('repoRoute = "held-by-angelicprobe";', install)
+        self.assertLess(install.index("if (probeHolds)"), install.index("(PVOID)Hook_GetUniqueRepoStruct"))
+        self.assertNotIn("ApRollHoldsUniqueRepo", self.shipped)
+        holds = body(self.code, "static bool ApRollHoldsUniqueRepo()")
+        self.assertIn('"unique-repo"', holds)
+        self.assertIn("r.tramp != nullptr", holds)
+        attach = body(self.code, "static void ApRollAttach(")
+        refusal = attach.index('std::string_view(r.id) == "unique-repo" && g_Orig_GetUniqueRepoStruct')
+        self.assertLess(refusal, attach.index("MmCreateHook("))
+        self.assertIn("kApRollBlocked", attach[refusal:attach.index("return;", refusal)])
+
     def test_the_installer_is_in_the_player_build(self):
         self.assertIn("static void InstallSignatureAngelicHooks(", self.shipped_code)
         self.assertIn('HookOneScript("CreateDefaultParams"', self.shipped_code)
@@ -282,6 +385,9 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         for name in ("g_TyForced", "g_HhForced", "g_SigDetectNative", "g_SigListOk", "g_SigStandIn[which].ok"):
             self.assertIn(name, gate)
         self.assertNotIn("Enabled", gate)
+        # g_SigDetectNative is all three routes: a hit the plugin cannot see or type never arms.
+        install = body(self.code, "static void InstallSignatureAngelicHooks(")
+        self.assertIn("g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute && detoured == repoRoute;", install)
         # The auto-arm log lines say what the gate does, not what the mechanic does.
         self.assertIn("SignatureSwitchOn(0)", body(self.code, "static void TyrantAutoArm()"))
         self.assertIn("SignatureSwitchOn(1)", body(self.code, "static void HeadhunterAutoArm()"))
@@ -312,13 +418,43 @@ class AngelicHitSourceContractTests(unittest.TestCase):
 
     def test_sigdrop_status_carries_the_live_procedure_tokens(self):
         status = body(self.code, "static void SigDropStatus()")
-        for token in ("gameRolls=", "gameHits=", '" injected="', '" ourHits="', '" built="', "crown=", "belt=",
-                      '" list=" + SignatureListText()', "gate=tyrant:", ",headhunter:", "force ", " | rolls=",
-                      " drops=", " fails=", '" cdpCalls="', '" detect="'):
+        # Design step 7's banner, in this order (the live procedure's `control` reads it whole).
+        ordered = ('" | game roll: gameRolls="', '" gameHits="', '" injected="', '" ourHits="', '" untyped="',
+                   '" built="', '" crown="', '" belt="', '" anomalies="', '" list=" + SignatureListText()',
+                   '" gate=tyrant:"', '",headhunter:"', '" cdpCalls="', '" detect="')
+        at = [status.index(token) for token in ordered]
+        self.assertEqual(at, sorted(at), "the banner's tokens are out of order")
+        for token in ("force ", " | rolls=", " drops=", " fails="):
             self.assertIn(token, status)
+        self.assertNotIn("#ifndef", status, "every banner token ships in both builds")
         text = body(self.code, "static std::string SignatureListText(")
         for value in ('"none"', '"missing"'):
             self.assertIn(value, text)
+
+    def test_the_research_tokens_stay_out_of_the_player_build(self):
+        # Design steps 7-8: the reach and typing controls, the copies and the built type are
+        # Live 1's instruments, research build only.
+        for token in ("standinPicks=", "heldMiss=", "typeAgree=", "typeDisagree=", "builtType=", " copies="):
+            with self.subTest(token=token):
+                self.assertIn(token, SOURCE)
+                self.assertNotIn(token, self.shipped)
+        status = body(self.code, "static void SigInjectStatus(")
+        ordered = ('"angelicprobe inject: mode="', '" copies="', '" list="', '" standins="', '" injected="', '" ourHits="',
+                   '" untyped="', '" standinPicks="', '" heldMiss="', '" typeAgree="', '" typeDisagree="',
+                   '" built="', '" removed="', '" anomalies="')
+        at = [status.index(token) for token in ordered]
+        self.assertEqual(at, sorted(at), "`angelicprobe inject status`'s tokens are out of order")
+        # standinPicks= counts the pair alone, before and whatever the typing said.
+        hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
+        self.assertIn("InterlockedIncrement(&g_SigStandinPicks)", hook)
+        self.assertLess(hook.index("g_SigStandinPicks"), hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"))
+        # typeAgree= / typeDisagree= come from the Custom Forge hook's final pass, the roll in progress.
+        forge = body(self.code, "static bool TryApplyCustomForge(")
+        self.assertIn("SignatureNoteBuiltType(*candidate);", forge)
+        note = body(self.code, "static void SignatureNoteBuiltType(")
+        self.assertIn("g_SigRollDepth <= 0", note)
+        self.assertIn('TryStructNumber(item, "itemType", t)', note)
+        self.assertIn("!g_SigHitTyped || g_SigHitRewritten", note, "only a typed hit that was not rewritten is compared")
 
     def test_both_status_lines_carry_the_detection_route(self):
         # The live procedure reads detect= and cdpCalls= before it trusts gameHits=0: an
@@ -330,8 +466,13 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         hook = body(self.code, "static RValue& Hook_CreateDefaultParams(")
         self.assertLess(hook.index("InterlockedIncrement(&g_SigCdpCalls)"), hook.index("g_SigRollDepth"),
                         "cdpCalls counts every call that reaches the hook, before the roll check")
-        self.assertIn('static const char* g_SigDetectRoute = "off";', self.shipped_code)
-        self.assertIn("g_SigDetectRoute = cdpRoute;", body(self.code, "static void InstallSignatureAngelicHooks("))
+        self.assertIn('static std::string g_SigDetectRoute = "off";', self.shipped_code)
+        # `detoured` only when all three are; otherwise the first that is not, by name.
+        install = strip_comments(body(self.code, "static void InstallSignatureAngelicHooks("))
+        self.assertRegex(install, r"g_SigDetectRoute = detoured != cdpRoute \? std::string\(cdpRoute\)\s*"
+                                  r": detoured != rollRoute \? std::string\(\"DropItemAngelicChance:\"\) \+ rollRoute\s*"
+                                  r": detoured != repoRoute \? std::string\(\"GetUniqueRepoStruct:\"\) \+ repoRoute\s*"
+                                  r": detoured;")
 
     def test_one_angelic_hit_line_per_hit(self):
         hook = body(self.code, "static RValue& HookAngelicChance(")
@@ -368,8 +509,19 @@ class AngelicHitSourceContractTests(unittest.TestCase):
                 self.assertIn(token, SOURCE)
                 self.assertNotIn(token, self.shipped)
         command = body(self.code, "static void SigInjectCommand(")
-        for lever in ('"name"', '"auto"', '"mode"', '"inject"', '"replace"', '"status"'):
+        for lever in ('"name"', '"auto"', '"copies"', '"mode"', '"inject"', '"replace"', '"status"'):
             self.assertIn(lever, command)
+        # One spelling of the scan: `angelicprobe inject auto`. The usage line is exact (the
+        # research doc's procedure quotes it), and `name auto` is refused, naming the right
+        # spelling, before anything is assigned - a slip can never set the literal name "auto".
+        self.assertIn('"angelicprobe inject: name <var> | auto | copies <k> | mode inject|replace | status"', command)
+        refusal = command.index('if (lever == "name" && Lower(value) == "auto")')
+        self.assertLess(refusal, command.index("g_SigListName = name;"))
+        branch = command[refusal:command.index("} else if", refusal)]
+        self.assertIn("angelicprobe inject auto", branch)
+        self.assertIn("nothing changed", branch)
+        self.assertNotIn("g_SigListName", branch)
+        self.assertNotIn("inject name auto", SOURCE)
         probe = body(self.code, "static void ApRollCommand(")
         self.assertIn('sub == "inject"', probe)
         self.assertIn("SigInjectCommand(TrimCopy(rest).substr(6))", probe, "a variable name keeps its case")
