@@ -442,6 +442,10 @@ static void CaptureAngelicScriptCode();
 // #74: the game-roll detection Headhunter's and Tyrant's Crown's switches install
 // (EnableHeadhunter, TyrantAutoArm, the `tyrant` command). Defined after HookAngelicChance.
 static void InstallSignatureAngelicHooks();
+// Set by InstallSignatureAngelicHooks: true only when both of its hooks are inline detours, the
+// one route the roll's direct calls reach. The signature gate (SignatureSwitchOn) reads it, so a
+// switch never reports these drops on while the detection cannot see a hit.
+static bool g_SigDetectNative = false;
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -7724,12 +7728,14 @@ static void TyrantAutoArm()
     InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
     InstallSignatureAngelicHooks();   // #74: the crown can drop from the game's own Angelic roll
     g_TyEnabled.store(g_TyHookInstalled);
-    Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)");
+    Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)"
+        + "; drops from the game's Angelic roll " + (!g_TyEnabled.load() ? "off" : g_SigDetectNative ? "on" : "off (detection not installed)"));
 }
 static void TyrantStatus()
 {
     Out(std::string("tyrant: ") + (g_TyEnabled.load() ? "ON" : "off") + (g_TyForced.load() ? " (forced)" : "")
         + " hook=" + (g_TyHookInstalled ? "yes" : "no") + " active=" + (TyrantActive() ? "yes" : "no")
+        + " angelicDrops=" + (g_TyEnabled.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
         + " rarePct=" + std::to_string((int)g_TyRarePct) + " affixPct=" + std::to_string((int)g_TyAffixPct)
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
@@ -10878,9 +10884,11 @@ static double g_AngHitSharePct = -1.0;   // < 0 the real share; else this percen
 #endif
 // Which signature item's World switch is on: 0 = Tyrant's Crown, 1 = Headhunter.  The enabled
 // state - what `tyrant status` / `headhunter status` print as ON - so the panel's `force`, the
-// console's `on` and the auto-arm from a forged item all count; `off` clears it.
+// console's `on` and the auto-arm from a forged item all count; `off` clears it.  Never on while
+// the detection is not both inline detours (g_SigDetectNative): a hit would be invisible.
 static bool SignatureSwitchOn(int which)
 {
+    if (!g_SigDetectNative) return false;
     return which == 0 ? g_TyEnabled.load() : g_HhEnabled.load();
 }
 // One pool entry's share of a game hit: k enabled items among N validated pool uniques, so
@@ -17197,7 +17205,8 @@ static void HeadhunterAutoArm()
     for (const CustomForgeEntry& e : g_CustomForgeEntries) if (!e.builtin && e.mechanic == "headhunter") { wanted = true; break; }
     if (!wanted) return;
     EnableHeadhunter();
-    Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)");
+    Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)"
+        + "; drops from the game's Angelic roll " + (!g_HhEnabled.load() ? "off" : g_SigDetectNative ? "on" : "off (detection not installed)"));
 }
 
 static void HeadhunterStatus(bool includeMap = true)
@@ -17206,6 +17215,7 @@ static void HeadhunterStatus(bool includeMap = true)
     if (includeMap) for (const auto& kv : g_HhMap) m += kv.first + "->" + std::to_string((long long)kv.second.id) + " ";
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "ON" : "off") + (g_HhForced.load() ? " (forced)" : "")
         + " hook=" + (g_HhHookInstalled ? "yes" : "no") + " dur=" + std::to_string(g_HhDurationSec) + "s"
+        + " angelicDrops=" + (g_HhEnabled.load() ? (g_SigDetectNative ? "on" : "no-detection") : "off")
         + " kills=" + std::to_string(g_HhKills) + " rare=" + std::to_string(g_HhRareKills)
         + " rarityFlag=" + std::to_string(g_HhRarityKills) + " withAffixData=" + std::to_string(g_HhAffixKills)
         + " buffs=" + std::to_string(g_HhBuffsApplied) + " skippedNoBelt=" + std::to_string(g_HhSkippedNotEquipped)
@@ -20053,13 +20063,45 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 // hold it.  Called when Headhunter's or Tyrant's Crown's switch turns on (EnableHeadhunter, the
 // `tyrant` on/force path, TyrantAutoArm) - never at startup, so with both switches off the game's
 // roll is not touched.  Idempotent; switching off installs nothing and the hooks pass through.
+//
+// A hit is visible only when BOTH hooks are inline detours: the game reaches the roll and the
+// roll reaches CreateDefaultParams by direct calls, which a table-only hook never sees.  Each
+// hook's route is read from HookOneScript's own `nativeOut` on a first install; a hook installed
+// earlier (by this function, `raredrop angelic` or `angelicwatch`) is detoured exactly when its
+// saved original is not the game's own code, since the table-only fallback saves the table entry.
+// The outcome goes into g_SigDetectNative, which the gate reads, and one line per switch-on names
+// it - so a switch never reports these drops on while nothing can see a hit.
 static void InstallSignatureAngelicHooks()
 {
-    if (!g_Orig_CreateDefaultParams)
-        HookOneScript("CreateDefaultParams", "fp_sig_cdparams", (PVOID)Hook_CreateDefaultParams, &g_Orig_CreateDefaultParams);
-    if (!g_OrigAngChance)
-        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance), "fp_angch",
-                      (PVOID)HookAngelicChance, &g_OrigAngChance);
+    auto savedRoute = [](PFUNC_YYGMLScript orig) {
+        return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig) ? "TABLE-ONLY" : "detoured";
+    };
+    const char* cdpRoute = "detoured";
+    const char* rollRoute = "detoured";
+    bool native = false;
+    if (!g_Orig_CreateDefaultParams) {
+        if (!HookOneScript("CreateDefaultParams", "fp_sig_cdparams", (PVOID)Hook_CreateDefaultParams, &g_Orig_CreateDefaultParams, &native))
+            cdpRoute = "not found";
+        else if (!native)
+            cdpRoute = "TABLE-ONLY";
+    } else {
+        cdpRoute = savedRoute(g_Orig_CreateDefaultParams);
+    }
+    native = false;
+    if (!g_OrigAngChance) {
+        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance), "fp_angch",
+                           (PVOID)HookAngelicChance, &g_OrigAngChance, &native))
+            rollRoute = "not found";
+        else if (!native)
+            rollRoute = "TABLE-ONLY";
+    } else {
+        rollRoute = savedRoute(g_OrigAngChance);
+    }
+    const std::string detoured = "detoured";
+    g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute;
+    Out(std::string("signature drops: game-roll detection ") + (g_SigDetectNative ? "ON" : "NOT installed")
+        + " (CreateDefaultParams " + cdpRoute + ", DropItemAngelicChance " + rollRoute + ")"
+        + (g_SigDetectNative ? "" : " - Headhunter / Tyrant's Crown will not drop from the game's Angelic roll"));
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -20093,7 +20135,7 @@ static void AngelicHitStatus()
     Out("angelicprobe hit: chance " + (g_AngHitChance >= 0.0 ? AngelicHitNumber(g_AngHitChance) : std::string("off"))
         + " | rate " + (g_AngHitRate >= 0.0 ? AngelicHitNumber(g_AngHitRate) + " (" + std::to_string(g_AngHitBases.size()) + " bases held)" : std::string("off"))
         + " | share " + (g_AngHitSharePct >= 0.0 ? AngelicHitNumber(g_AngHitSharePct) + " pct" : std::string("default"))
-        + " | detection " + (cdp && roll ? "installed" : "not installed")
+        + " | detection " + (g_SigDetectNative ? "installed" : (cdp && roll ? "not installed (not both detoured)" : "not installed"))
         + " (CreateDefaultParams " + (cdp ? "hooked" : "not hooked") + ", DropItemAngelicChance " + (roll ? "hooked" : "not hooked") + ")"
         + " | gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits));
 }

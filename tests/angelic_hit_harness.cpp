@@ -58,6 +58,10 @@ static int linesStartingWith(const char* prefix) {
     for (const auto& l : outLines) if (l.rfind(prefix, 0) == 0) ++n;
     return n;
 }
+static bool anyLineHas(const char* prefix, const char* text) {
+    for (const auto& l : outLines) if (l.rfind(prefix, 0) == 0 && l.find(text) != std::string::npos) return true;
+    return false;
+}
 
 // ---- what the production functions read ------------------------------------------------------
 static std::atomic<bool> g_HhEnabled{ false };
@@ -123,13 +127,39 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
 }
 
 // HookOneScript into a fake table: one install per name, a second call answers from the table.
+// By default every install is an inline detour (`*nativeOut = true`), so the roll's direct call
+// reaches the hook. `tableOnlyHook` names one hook whose detour fails, as HookOneScript's
+// fallback does: the saved original is the table entry (the game's own code) and a direct call
+// still lands on the game's function. `missingHook` names one the runtime cannot resolve.
 static std::map<std::string, int> installs;
+static std::string tableOnlyHook, missingHook;
+static std::vector<const void*> gameImage;   // saved originals that are the game's own code
 static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest, PFUNC_YYGMLScript* origOut, bool* nativeOut = nullptr) {
     const std::string name(shortName);
+    if (nativeOut) *nativeOut = false;
+    if (name == missingHook) return false;
     ++installs[name];
-    if (nativeOut) *nativeOut = true;
-    if (name == "CreateDefaultParams") { *origOut = gameCreateDefaultParams; cdpEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest); return true; }
-    if (name == "DropItemAngelicChance") { *origOut = gameAngelicChance; return true; }
+    const bool native = name != tableOnlyHook;
+    if (nativeOut) *nativeOut = native;
+    if (name == "CreateDefaultParams") {
+        *origOut = gameCreateDefaultParams;
+        if (native) cdpEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameCreateDefaultParams));
+        return true;
+    }
+    if (name == "DropItemAngelicChance") {
+        *origOut = gameAngelicChance;
+        if (!native) gameImage.push_back(reinterpret_cast<const void*>(gameAngelicChance));
+        return true;
+    }
+    return false;
+}
+// The production test for "this saved original is the game's own code" (HookOneScript's
+// table-only fallback), answered from what the fake above recorded.
+using HMODULE = void*;
+static HMODULE GetModuleHandleA(const char*) { return nullptr; }
+static bool AddrIsExecutableInModule(HMODULE, const void* address) {
+    for (const void* p : gameImage) if (p == address) return true;
     return false;
 }
 
@@ -144,6 +174,7 @@ static PFUNC_YYGMLScript g_Orig_CreateDefaultParams = nullptr;
 static thread_local int g_SigRollDepth = 0;
 static thread_local bool g_SigHitSeen = false;
 static double g_SigLastSub = -1.0, g_SigLastB = -1.0;
+static bool g_SigDetectNative = false;
 
 // PRODUCTION_FUNCTIONS
 
@@ -154,8 +185,9 @@ static void reset() {
     spawns.clear(); originalReturns = 0;
     gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams;
     outcomes.clear(); originalCalls = 0; originalThrows = false; lastChanceSeen = -1;
-    installs.clear();
-    g_OrigAngChance = gameAngelicChance;   // as if `raredrop angelic` (or the switch) had installed it
+    installs.clear(); tableOnlyHook.clear(); missingHook.clear(); gameImage.clear();
+    g_SigDetectNative = false;
+    g_OrigAngChance = gameAngelicChance;   // as if `raredrop angelic` (or the switch) had installed it, detoured
     g_AngelicRateMult = 1.0; g_InAngelicExtra = false; g_AngRateHits = 0;
     g_SigGameRolls = 0; g_SigGameHits = 0; g_SigShareRolls = 0;
     g_SigFromGame = 0; g_SigFromGameCrown = 0; g_SigFromGameBelt = 0;
@@ -325,6 +357,66 @@ int main(int argc, char** argv) {
             require(installs["DropItemAngelicChance"] == 0, "an already-held roll hook was installed again");
             RValue* r = roll(monster, { true });
             require(r == &originalReturn, "the return value is not the game's own");
+        } else if (test == "detection_not_detoured_never_arms") {
+            // A hit is visible only through inline detours on both hooks (the roll's call to
+            // CreateDefaultParams is direct). A detection that got less must say so and leave
+            // the gate off, rather than report the switch armed while it never drops anything.
+            // Positive control, through the same fake: both detoured, the gate arms.
+            g_HhEnabled = true; g_TyEnabled = true;
+            g_OrigAngChance = nullptr;
+            installDetection();
+            require(anyLineHas("signature drops:", "detection ON"), "a detoured detection did not log `detection ON`");
+#ifdef HAS_SIGNATURESWITCHON
+            require(SignatureSwitchOn(0) && SignatureSwitchOn(1), "a detoured detection did not arm the gate");
+#endif
+            // 1. CreateDefaultParams gets only the table route: the roll's direct call bypasses it.
+            reset();
+            poolSize = 1; g_HhEnabled = true; g_TyEnabled = true;
+            tableOnlyHook = "CreateDefaultParams";
+            installDetection();
+            require(anyLineHas("signature drops: game-roll detection NOT installed", "CreateDefaultParams TABLE-ONLY"),
+                    "a table-only CreateDefaultParams did not log the detection NOT installed");
+            require(!anyLineHas("signature drops:", "detection ON"), "a table-only CreateDefaultParams logged `detection ON`");
+#ifdef HAS_SIGNATURESWITCHON
+            require(!SignatureSwitchOn(0) && !SignatureSwitchOn(1), "a table-only CreateDefaultParams armed the gate");
+#endif
+            for (int i = 0; i < 100; ++i) roll(monster, { true });
+            require(gameCdpCalls == 100 && g_SigGameHits == 0 && spawns.empty(), "a table-only CreateDefaultParams saw a direct call");
+            installDetection();   // switching on again does not turn the table route into a detour
+            require(linesStartingWith("signature drops: game-roll detection NOT installed") == 2, "a second switch-on did not report the same route");
+            require(installs["CreateDefaultParams"] == 1, "a second switch-on hooked CreateDefaultParams again");
+            // 2. The roll hook, first installed here, falls back to the table.
+            reset();
+            g_HhEnabled = true;
+            g_OrigAngChance = nullptr;
+            tableOnlyHook = "DropItemAngelicChance";
+            installDetection();
+            require(anyLineHas("signature drops: game-roll detection NOT installed", "DropItemAngelicChance TABLE-ONLY"),
+                    "a table-only roll hook did not log the detection NOT installed");
+#ifdef HAS_SIGNATURESWITCHON
+            require(!SignatureSwitchOn(1), "a table-only roll hook armed the gate");
+#endif
+            // 3. The roll hook was already held table-only (`raredrop angelic` earlier this session).
+            reset();
+            g_TyEnabled = true;
+            gameImage.push_back(reinterpret_cast<const void*>(gameAngelicChance));
+            installDetection();
+            require(anyLineHas("signature drops: game-roll detection NOT installed", "DropItemAngelicChance TABLE-ONLY"),
+                    "an earlier table-only roll hook was reported as detection installed");
+#ifdef HAS_SIGNATURESWITCHON
+            require(!SignatureSwitchOn(0), "an earlier table-only roll hook armed the gate");
+#endif
+            // 4. The runtime cannot resolve the roll by name.
+            reset();
+            g_HhEnabled = true;
+            g_OrigAngChance = nullptr;
+            missingHook = "DropItemAngelicChance";
+            installDetection();
+            require(anyLineHas("signature drops: game-roll detection NOT installed", "DropItemAngelicChance not found"),
+                    "an unresolved roll hook did not log the detection NOT installed");
+#ifdef HAS_SIGNATURESWITCHON
+            require(!SignatureSwitchOn(1), "an unresolved roll hook armed the gate");
+#endif
         } else return 2;
         std::cout << "PASS " << test << '\n';
         return 0;
