@@ -887,6 +887,20 @@ established**. Nothing of this design has been seen live yet.
   until they make it the plugin takes the validated type 0 entry with the
   lowest `droprate.base` and names it in the switch-on log line. The
   stand-in's rate becomes the item's.
+- **Where a hit's type can be seen (measured and static reading).** A list
+  entry is the whole triple, and b is an index within a type, so a sub and b
+  pair alone names no entry: sub 0, b 51 is Liquor Holster under type 8 and
+  can equally be another type's unique. The parameter struct carries only sub
+  and b, and the type reaches `LootGroundCreate` as a separate argument. The
+  roll's own definition reads carry all three: `GetUniqueRepoStruct` takes
+  type, sub and b, and **measured** in Session 1 it is called from inside the
+  roll (1409 of 1708 calls in case A, about eight per roll, on its own
+  detour). That the last of those reads before a hit is the picked entry's
+  follows from the order the roll was read to run in (pick, read the
+  definition, skip and pick again on the filters, then roll the die against
+  the definition just read, then build the parameters): **static reading,
+  not measured**. Live procedure 3 checks it on every hit (`inject-build`
+  below).
 
 What #74 builds on this reading (the design as the plugin implements it; none
 of it measured yet):
@@ -902,15 +916,27 @@ of it measured yet):
   byte vanilla: nothing is saved with it, the other readers above never see
   the entries, and switching off needs no cleanup. `injected=` counts the
   entries pushed.
+- **The hit's triple.** While the roll is in progress a detour on
+  `GetUniqueRepoStruct`, installed by name through `HookOneScript`, records
+  the type, sub and b of the roll's latest definition read; nothing is
+  recorded outside the roll, where most of its calls come from. When the
+  roll's `CreateDefaultParams` call comes, the hit's triple is that record,
+  and only if the record's sub and b equal the call's own sub and b. With no
+  record, or a record that disagrees, the hit is not typed: it stays vanilla,
+  is never rewritten, and `untyped=` counts it. The type is never inferred
+  from sub and b.
 - **Attribution, one in n + 1.** The picker cannot tell our entry from the
-  vanilla stand-in, because they are the same triple. When a hit's parameters
-  name a stand-in's sub and b while the roll is in progress, the hit is ours
-  with probability 1 / (n + 1), where n is how many times the vanilla list
-  already holds that triple (counted when the list resolves and whenever its
-  length changes; 1 when the stand-in is listed once). The stand-in keeps
-  exactly one entry's share and our item gets one entry's share, the same as
-  every other entry. Two enabled items sharing one stand-in split the extra
-  share evenly. `ourHits=` counts them.
+  vanilla stand-in, because they are the same triple. A hit is a candidate of
+  ours only when its whole triple, type included, equals a stand-in's triple;
+  a hit that shares only the stand-in's sub and b under another type is
+  vanilla. A candidate is ours with probability 1 / (n + 1), where n is how
+  many times the vanilla list already holds that same triple, matched on all
+  three numbers (counted when the list resolves and whenever its length
+  changes; 1 when the stand-in is listed once). The match and the count
+  therefore read the same thing. The stand-in keeps exactly one entry's share
+  and our item gets one entry's share, the same as every other entry. Two
+  enabled items sharing one stand-in split the extra share evenly. `ourHits=`
+  counts them.
 - **What "Liquor Holster's share" means now.** In Session 2 the share was
   one pool entry of ForgePact's own validated pool, k / (47 + k), rolled on
   top of the game's hit. Now it is literal: Headhunter is one more entry in
@@ -924,12 +950,15 @@ of it measured yet):
   placement then builds a Heavy Belt or Great Helm with that seed, the forge
   hook dresses it, and the game places it where the roll said. No
   `SpawnSignatureItem` runs on this path. `built=`, `crown=` and `belt=`
-  count what the game built, and each hit logs one `angelic hit:` line saying
-  vanilla or naming our item, its stand-in and the one-in-n+1 odds.
+  count what the game built, and each hit logs one `angelic hit:` line naming
+  its triple and saying vanilla, untyped, or our item with its stand-in and
+  the one-in-n+1 odds.
 - **Gate.** As in Session 2: the item's panel switch and a detoured
-  `CreateDefaultParams` detection, plus the list resolved (`list=` names it
-  and its length), else the gate stays off and the switch-on logs one refusal
-  naming the variable. Both switches off: no entry pushed, no rewrite, the
+  `CreateDefaultParams` detection, plus a detoured `GetUniqueRepoStruct`
+  definition read (a table-only route cannot be shown to see the roll's
+  calls, and without it no hit can be typed) and the list resolved (`list=`
+  names it and its length), else the gate stays off and the switch-on logs
+  one refusal naming what is missing. Both switches off: no entry pushed, no rewrite, the
   roll untouched, and with neither ever on no hook installed. Forging an item
   turns its mechanic on, never the drop.
 
@@ -956,6 +985,17 @@ Alternatives set aside:
   construction.
 - **Rewriting the picked entry's type.** Not possible: the type comes from the
   list entry, not from the parameter struct.
+- **Recognising our hit by the parameter struct's sub and b.** That is the
+  part of the triple the struct happens to carry, not the entry's identity: it
+  would take another type's unique with the same sub and b for a stand-in,
+  rewrite it into a mod item built under the wrong type, and count n by a
+  triple the match never checked.
+- **Typing the hit at `LootGroundCreate`**, which receives the type and the
+  parameter struct together. The player build holds `LootGroundCreate`
+  through the deliberately table-only inspection installer, so this needs a
+  second, inline route on a function those hooks already own, and which
+  struct field carries sub is not established. It is the route if the
+  definition-read typing is not observed.
 - **Suppressing the game's placement and spawning ours beside it** (the
   fallback as the owner first worded it). No name-resolved way to make
   `LootGroundCreate` place nothing was found: the player build's hook on it is
@@ -1000,8 +1040,9 @@ context file, `.claude/workorders/forgepact-74-angelic-list-injection-context.md
 which stays on the owner's machine; it is this document's third live
 procedure, hence the heading here. Hygiene is Session 2's: a fresh session; no
 `citrace nativetrace`, `raredrop ceiling`, `scount`, `zonegenlog` or
-`angelicwatch`; and no `angelicprobe on`, whose `default-params` row would
-take the `CreateDefaultParams` detour this feature needs. The one people step
+`angelicwatch`; and no `angelicprobe on`, whose `default-params` and
+`unique-repo` rows would take the `CreateDefaultParams` and
+`GetUniqueRepoStruct` detours this feature needs. The one people step
 before the kill block is a portal or waypoint to an ordinary zone, so the
 owner can leave once the kills are done.
 
@@ -1026,7 +1067,8 @@ dispatcher's branch count and the `angelicprobe` literal are both pinned by
   instances after the original call minus before) and, for the first three
   hits of ours, the parameter struct's JSON before and after the rewrite.
 - `sigdrop status`, in both builds, reports the force, then `gameRolls=`,
-  `gameHits=`, `injected=`, `ourHits=`, `built=`, `crown=`, `belt=`, `list=`
+  `gameHits=`, `injected=`, `ourHits=`, `untyped=`, `built=`, `crown=`,
+  `belt=`, `list=`
   (`none` until a switch resolves it, then the name and length, or `missing`
   after a failed resolution) and `gate=` per item, and ends with
   `cdpCalls=<n> detect=<route>`.
@@ -1074,10 +1116,14 @@ record:
   growth of `gameRolls=` (one push per roll), `ourHits=` at least 3,
   `built=` equal to `ourHits=`, `belt=` equal to `built=`, `crown=0`, every
   hit of ours with `lootDelta=1`, no `sigdrop:` line, and the owner names a
-  Headhunter on the ground. Fail: a crash, fewer built than hits, a
-  `lootDelta=` other than 1 on a hit of ours, a struct missing a field, or a
-  ground item that is not Headhunter. Not-observed: no hit of ours after 20
-  kills.
+  Headhunter on the ground. Typing is checked on every hit: each `angelic
+  hit:` line names a triple whose sub and b equal its parameter struct's, and
+  `untyped=` stays 0. Fail: a crash, fewer built than hits, a `lootDelta=`
+  other than 1 on a hit of ours, a struct missing a field, a ground item that
+  is not Headhunter, or a hit of ours whose triple is not Liquor Holster's
+  (type 8, sub 0, b 51). An `untyped=` above zero is recorded with its hit
+  lines and means the definition-read typing was not observed as read.
+  Not-observed: no hit of ours after 20 kills.
 - **`on-both`** (not run unless `inject-build` passed) - Tyrant's Crown on as
   well; ten to twenty kills. `built=` grew by the growth of `ourHits=`,
   `crown=` reached at least 1 and `belt=` grew, and both items are seen on the
