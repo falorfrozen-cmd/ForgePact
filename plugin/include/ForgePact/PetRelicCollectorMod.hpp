@@ -199,7 +199,8 @@ public:
     const char* LastNothingRaised() const { return m_LastNothingRaised.load(); }
 
     // The counters. Every one is printed by StatLine.
-    std::atomic<long> collected{ 0 };            // a true return whose raise was seen: one level up, or newly owned at 1
+    std::atomic<long> petSeen{ 0 };              // relic ticks that found a Companion_obj out (0: no pet, so nothing else ran)
+    std::atomic<long> collected{ 0 };          // a true return whose raise was seen: one level up, or newly owned at 1
     std::atomic<long> skippedMaxed{ 0 };         // candidate reads left out as maxed, and collects refused as maxed
     std::atomic<long> skippedNotRelic{ 0 };      // ground items on screen the SDK read did not call a relic
     std::atomic<long> skippedGate{ 0 };          // the target's itemActive read false at collect time
@@ -232,7 +233,8 @@ public:
             + " maxed scans=" + std::to_string(m_Maxed.Scans())
             + " maxed ids=" + (ids.empty() ? std::string("none") : ids)
             + " route=" + RouteName()
-            + " phase=" + (travelling ? "travel" : "idle");
+            + " phase=" + (travelling ? "travel" : "idle")
+            + " pet-seen ticks=" + std::to_string(petSeen.load());
     }
 
 private:
