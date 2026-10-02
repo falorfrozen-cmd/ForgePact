@@ -228,8 +228,10 @@ function row(sec,key,label,val,tagHtml,max,note,step){
   // still write into it. Rows passed no note (drops, spawners) get none.
   // The note's id carries the section (data-note is the key alone), and the
   // range names it in aria-describedby, so a screen reader reads the note.
-  const noteId=`note-${sec}-${key}`;
-  const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}">${note}</div>`:'';
+  // The two mining notes carry the plugin's live status, which a poll changes,
+  // so they are polite live regions (setText writes only a changed status).
+  const noteId=`note-${sec}-${key}`, live=sec==='drops'&&MINING_DROPS.includes(key)?' role="status" aria-live="polite"':'';
+  const n=note!=null?`<div class="note" data-note="${key}" id="${noteId}"${live}>${note}</div>`:'';
   return `<div class="row"><span class="lbl">${label}${tagHtml||''}</span>
     ${switchMarkup(sec+'.'+key,label)}
     <input type="range" min="${mn}" max="${mx}" step="${step||1}" value="${val}" data-sec="${sec}" data-key="${key}"${n?` aria-describedby="${noteId}"`:''}>

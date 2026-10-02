@@ -159,7 +159,8 @@ const zip = (keys, values) => Object.fromEntries(keys.map((k, i) => [k, values[i
 const numbered = (names) => Object.fromEntries(names.map((name, i) => [i + 1, name]));
 
 export const CONTROL_ICONS = {
-  'drops': { 'gold': 'gold', 'mining_ore': 'gem', 'mining_ore_rolls': 'chest' },
+  // Extra Rolls is a rock (mining), not the Drops heading's chest.
+  'drops': { 'gold': 'gold', 'mining_ore': 'gem', 'mining_ore_rolls': 'boulder' },
   'spawners': zip(['rift', 'battlefield', 'cursedorb', 'summonportal', 'chaospillars', 'chaostower', 'shadowrealm'],
                   ['rift', 'battlefield', 'cursed-orb', 'summon-portal', 'chaos-pillar', 'chaos-tower', 'shadow-realm']),
   'keys': zip(['dungeon', 'angelic', 'chaos', 'bifrost', 'relic', 'rune', 'stone', 'bossgem', 'orb', 'scrollofra', 'dimshard', 'battlefrag', 'colosfrag', 'primeevil', 'ruby'],

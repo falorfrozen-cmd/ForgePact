@@ -391,6 +391,17 @@ async function miningNoteOffline({ page }) {
   assert(note, 'The mining row has no note element');
   assert(note.entry, 'The mining note is not in its row\'s entry');
   assert(note.text.trim() === '' && !note.visible, `The offline mining note is not empty: "${note.text}"`);
+  // Both mining notes are polite live regions, so a poll's status change is
+  // announced; at x1 offline the rolls note is as empty and hidden as this one.
+  const roles = await $(page, () => ['mining_ore', 'mining_ore_rolls'].map((k) => {
+    const n = document.querySelector(`.note[data-note="${k}"]`);
+    return n && { key: k, role: n.getAttribute('role'), text: n.textContent, visible: n.checkVisibility() };
+  }));
+  for (const r of roles) {
+    assert(r, 'A mining row has no note element');
+    assert(r.role === 'status', `The ${r.key} note's role is "${r.role}", not status`);
+    assert(r.text.trim() === '' && !r.visible, `The offline ${r.key} note is not empty: "${r.text}"`);
+  }
 }
 
 async function miningStatus({ page }) {
