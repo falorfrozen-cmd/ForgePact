@@ -796,6 +796,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # "Unstick the companion's loot" (#94, forgepact-pet-loot-stuck;
             # test_pet_loot_unstick_contract.py).
             "petunstick",
+            # Pet Collects Relics (#124, forgepact-124-pet-relics;
+            # test_pet_relic_collector_contract.py).
+            "petrelic",
             # ForgePact #9 Stage B, merged from main: auto-prospect's own
             # player command (test_auto_prospect_contract.py pins it). Added
             # here because this set is an exact match, so another feature
@@ -2967,6 +2970,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `bagtab`, `stashclose` and `giveitem` its stash and bag verbs
         # (test_stash_bag_layout_contract.py), `petunstick` is #94's
         # companion loot unstick (test_pet_loot_unstick_contract.py),
+        # `petrelic` is #124's Pet Collects Relics
+        # (test_pet_relic_collector_contract.py),
         # `frameprof` the frame profiler (test_frame_profiler.py),
         # `farsleep` is far sleep's switch (test_far_sleep_contract.py),
         # `stashmoveall` and `stashmove` are Move all into the stash's
@@ -2979,7 +2984,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
-                                        "petunstick", "frameprof", "farsleep", "stashmoveall", "stashmove",
+                                        "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll"})
         self.assertEqual(before - now, set())
 
