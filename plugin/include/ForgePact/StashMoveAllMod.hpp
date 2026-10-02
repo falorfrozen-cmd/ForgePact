@@ -78,17 +78,19 @@ namespace ForgePact {
 //   the shown tab has no room for (or whose room could not be read) is a skip
 //   that calls nothing, so it stays in the bag and every other stash tab is
 //   left as it was (MayCall);
-// - the in-game button's place: the Mercenary button's box (the owner,
-//   2026-09-30), which the game shows there with the bag open on its own and
-//   does not list while the stash is open (Live 5), so it is Sort's box moved
-//   and sized by the fractions Live 5 measured; the old rule (Sort-sized, its
-//   right edge 8 GUI units left of Sort, its vertical centre Sort's) only as
-//   the fallback, said once (ButtonTarget, RelationBox, SortRuleBox,
-//   NoteButtonRef); the origin from that box and the node's own extents,
-//   measured on it (TargetOrigin, OnTarget), checked on later ensure steps
+// - the in-game button's place: the column of the bag's page tab above the
+//   slot left of Sort, in Sort's row (the owner, 2026-10-02) - the left and
+//   right edges of InventoryTab_4 as the adapter read it by name, with Sort's
+//   top and bottom; when no such tab reads, the same column worked out from
+//   Sort's box by the tab grid's measured relation, said once; the old rule
+//   (Sort-sized, its right edge 8 GUI units left of Sort, its vertical centre
+//   Sort's) only as the last fallback, said once (ButtonTarget, GridBox,
+//   SortRuleBox, NoteButtonRef); the origin from that box and the node's own
+//   extents, measured on it (TargetOrigin, OnTarget), checked on later ensure steps
 //   once the node's box has settled, never in the frame it was made, with one
 //   remake when it is off (ButtonExtentsFor, NoteButtonMade, ButtonCheck), and
-//   what the check read on the state line, the target's route included;
+//   what the check read on the state line, the target's route and the tab's
+//   box it was taken from included;
 // - the button's look and size (owner scope, 2026-09-30): the Sort button's
 //   own, copied from the Sort node by the adapter (its label's place and font
 //   among them, Live 5), its sprite's scale per axis to the target's size, so
@@ -148,12 +150,13 @@ enum class StashMoveButtonCheck : int { Keep = 0, Remake };
 // could not be read or compared (StashMoveLookTally).
 enum class StashMoveButtonLook : int { None = 0, Sort, Differs, Unread };
 
-// Which box the node is made to and checked against (the owner, 2026-09-30:
-// the Mercenary button's): none while Sort's box has not read; mercenary, the
-// Mercenary button's own box as read (merc-route: live); relation, Sort's box
-// moved and sized by the fractions Live 5 measured (merc-route: relation);
-// sort, the old rule standing in when neither could be had.
-enum class StashMoveButtonRef : int { None = 0, Mercenary, Relation, Sort };
+// Which box the node is made to and checked against (the owner, 2026-10-02:
+// the column of the Extra tab above the slot, in Sort's row): none while
+// Sort's box has not read; tab, InventoryTab_4's left and right edges as read
+// with Sort's top and bottom; grid, the same column worked out from Sort's box
+// by the tab grid's measured relation, when no tab reads; sort, the old rule
+// standing in when neither could be had.
+enum class StashMoveButtonRef : int { None = 0, Tab, Grid, Sort };
 
 // One look member's value as the adapter read it, in plain terms (#131, the
 // review of fix2's round 2: a member's kind never stops the copy). Its kind,
@@ -510,28 +513,31 @@ public:
         return e;
     }
 
-    // ---- the target: the Mercenary button's box (the owner, 2026-09-30) ----
+    // ---- the target: the Extra tab's column, Sort's row (the owner, 2026-10-02) ----
     //
-    // With the bag open on its own the game draws its own Mercenary button
-    // (a UI_Button_Open_Mercenary_obj, uiNodeCallstack InventoryMercenary)
-    // where Move all should sit, and the owner asked for its box. Live 5
-    // measured it with the bag alone beside InventorySort, the same size, and
-    // found it not listed while the stash is open, and InventorySort's box the
-    // same in both states - so the target is Sort's box moved and sized by the
-    // measured relation, as fractions of Sort's width and height, which follow
-    // a GUI-scale change where GUI units would not (merc-route: relation,
-    // docs/stash-move-research.md § Decision buttonTarget). A box read off the
-    // Mercenary node itself (merc-route: live) would win, and the old rule is
-    // the fallback when neither can be had.
+    // The bag's page tabs (UI_Button_Inventory_Tab_obj, uiNodeCallstack
+    // InventoryTab_1..InventoryTab_5: Main, then four Extra) stand in a row
+    // directly above InventorySort's, and Sort sits under the last of them.
+    // Move all sits in the slot left of Sort, under InventoryTab_4, and the
+    // owner asked for that tab's left and right edges with Sort's top and
+    // bottom (docs/stash-move-research.md § Decision buttonTarget). The
+    // adapter reads that tab by name at each ensure step (route Tab); when no
+    // such tab reads, the target is the same column worked out from Sort's box
+    // by the grid's relation (Grid), as fractions of Sort's width and height,
+    // which follow a GUI-scale change where GUI units would not. The old rule
+    // is the fallback when neither can be had.
     //
-    // Live 5: the Mercenary button's left edge lies 196/192 of Sort's width
-    // left of Sort's left edge, its top level with Sort's, and it is Sort's
-    // width and height - so its right edge is 1/48 of Sort's width short of
-    // Sort's left edge.
-    static constexpr double kMercLeftOfSort = -1.0208333333333333;   // its left edge from Sort's, in Sort widths
-    static constexpr double kMercTopOfSort = 0.0;                    // its top edge from Sort's, in Sort heights
-    static constexpr double kMercWidthOfSort = 1.0;                  // its width, in Sort widths
-    static constexpr double kMercHeightOfSort = 1.0;                 // its height, in Sort heights
+    // The grid, two sessions at one GUI scale (2560x1368: the tabs in toolkit
+    // #147's stash-bag-layout live 2 with the stash open, Sort in #68's Live
+    // 1f and 1g): the five tabs are each Sort's width with no gap between
+    // them, their row's bottom is Sort's top, and InventorySort's left and
+    // right are InventoryTab_5's - so InventoryTab_4's column is one Sort
+    // width left of Sort's left edge, up to it, and the box under it in Sort's
+    // row is Sort's height.
+    static constexpr double kGridLeftOfSort = -1.0;    // its left edge from Sort's, in Sort widths
+    static constexpr double kGridTopOfSort = 0.0;      // its top edge from Sort's, in Sort heights
+    static constexpr double kGridWidthOfSort = 1.0;    // its width, in Sort widths
+    static constexpr double kGridHeightOfSort = 1.0;   // its height, in Sort heights
 
     // A box that reads and is not empty: a width and a height above 0.
     static bool BoxSized(const StashMoveBox& b) {
@@ -551,47 +557,53 @@ public:
         return b;
     }
 
-    // The Mercenary box from Sort's by Live 5's fractions. Unread when Sort's
-    // box did not read or has no width or height to scale by.
-    static StashMoveBox RelationBox(const StashMoveBox& sort) {
+    // The Extra tab's column in Sort's row, from Sort's box by the grid's
+    // fractions. Unread when Sort's box did not read or has no width or
+    // height to scale by.
+    static StashMoveBox GridBox(const StashMoveBox& sort) {
         StashMoveBox b;
         if (!BoxSized(sort)) return b;
         const double w = sort.right - sort.left, h = sort.bottom - sort.top;
-        b.left = sort.left + kMercLeftOfSort * w;
-        b.top = sort.top + kMercTopOfSort * h;
-        b.right = b.left + kMercWidthOfSort * w;
-        b.bottom = b.top + kMercHeightOfSort * h;
+        b.left = sort.left + kGridLeftOfSort * w;
+        b.top = sort.top + kGridTopOfSort * h;
+        b.right = b.left + kGridWidthOfSort * w;
+        b.bottom = b.top + kGridHeightOfSort * h;
         return b;
     }
 
     // The box to make the node to, and which it is. `route` is the one the
-    // adapter was built for: Mercenary takes `mercenary` (the box read off the
-    // Mercenary node) when it reads, Relation takes Sort's box by the
-    // fractions; either one that cannot be had falls back to the old rule
+    // adapter was built for: Tab takes `tab` (InventoryTab_4's box, read by
+    // the adapter) when it is sized - its left and right edges, with Sort's
+    // top and bottom - and otherwise, like Grid, the column from Sort's box by
+    // the grid's fractions; one that cannot be had falls back to the old rule
     // (Sort), and a Sort box that did not read gives none (None, `target`
-    // unread) - the adapter then makes no node.
-    static StashMoveButtonRef ButtonTarget(StashMoveButtonRef route, const StashMoveBox& sort, const StashMoveBox& mercenary,
+    // unread) - the adapter then makes no node. A tab box with no width or
+    // height, inside out, or with a side that did not read is never taken.
+    static StashMoveButtonRef ButtonTarget(StashMoveButtonRef route, const StashMoveBox& sort, const StashMoveBox& tab,
                                            double gap, StashMoveBox& target) {
         target = StashMoveBox();
         if (!BoxReads(sort)) return StashMoveButtonRef::None;
-        if (route == StashMoveButtonRef::Mercenary && BoxSized(mercenary)) {
-            target = mercenary;
-            return StashMoveButtonRef::Mercenary;
+        if (route == StashMoveButtonRef::Tab && BoxSized(tab)) {
+            target.left = tab.left;
+            target.right = tab.right;
+            target.top = sort.top;
+            target.bottom = sort.bottom;
+            return StashMoveButtonRef::Tab;
         }
-        if (route == StashMoveButtonRef::Relation) {
-            const StashMoveBox r = RelationBox(sort);
-            if (BoxReads(r)) {
-                target = r;
-                return StashMoveButtonRef::Relation;
+        if (route == StashMoveButtonRef::Tab || route == StashMoveButtonRef::Grid) {
+            const StashMoveBox g = GridBox(sort);
+            if (BoxReads(g)) {
+                target = g;
+                return StashMoveButtonRef::Grid;
             }
         }
         target = SortRuleBox(sort, gap);
         return BoxReads(target) ? StashMoveButtonRef::Sort : StashMoveButtonRef::None;
     }
 
-    // The node takes the target's size (the owner default: the Mercenary box
-    // wins): the scale copied from Sort, times the target's size over Sort's
-    // on each axis. False when either box has no size to divide.
+    // The node takes the target's size (the owner, 2026-10-02: the width is
+    // the tab's): the scale copied from Sort, times the target's size over
+    // Sort's on each axis. False when either box has no size to divide.
     static bool ButtonScale(const StashMoveBox& sort, const StashMoveBox& target, double& sx, double& sy) {
         if (!BoxSized(sort) || !BoxSized(target)) return false;
         sx = (target.right - target.left) / (sort.right - sort.left);
@@ -672,37 +684,46 @@ public:
     }
 
     // Where the lines say the node sits: beside Sort under the old rule, in
-    // the Mercenary button's place otherwise.
+    // the column of the Extra tab above it otherwise.
+    static bool InTabColumn(StashMoveButtonRef ref) {
+        return ref == StashMoveButtonRef::Tab || ref == StashMoveButtonRef::Grid;
+    }
+
     static std::string PlaceWords(StashMoveButtonRef ref) {
-        return ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
-            ? "in the Mercenary button's place" : "beside Sort";
+        return InTabColumn(ref) ? "in the column of the Extra tab above it" : "beside Sort";
     }
 
     static std::string OffWords(StashMoveButtonRef ref) {
-        return ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
-            ? "the Mercenary button's place" : "beside Sort";
+        return InTabColumn(ref) ? "the column of the Extra tab above it" : "beside Sort";
     }
 
     static const char* RefWord(StashMoveButtonRef ref) {
         switch (ref) {
-        case StashMoveButtonRef::Mercenary: return "mercenary";
-        case StashMoveButtonRef::Relation: return "relation";
+        case StashMoveButtonRef::Tab: return "tab";
+        case StashMoveButtonRef::Grid: return "grid";
         case StashMoveButtonRef::Sort: return "sort";
         default: return "none";
         }
     }
 
     // The target the adapter worked out for the node it is about to make (or
-    // check), for the state line's button_ref=. The old rule standing in is
-    // said once a session - empty otherwise - and never turns the mod off.
-    std::string NoteButtonRef(StashMoveButtonRef ref) {
+    // check), for the state line's button_ref=, and the tab box it was taken
+    // from, for button_tab= (none unless the target is Tab). The grid's
+    // column standing in for an unread tab, and the old rule standing in for
+    // both, are each said once a session - empty otherwise - and never turn
+    // the mod off.
+    std::string NoteButtonRef(StashMoveButtonRef ref, const StashMoveBox& tab = StashMoveBox()) {
         {
             std::lock_guard<std::mutex> lock(m_PlaceMutex);
             m_PlaceRef = ref;
+            m_PlaceTab = ref == StashMoveButtonRef::Tab ? tab : StashMoveBox();
         }
+        if (ref == StashMoveButtonRef::Grid)
+            return SayButtonOff(m_ButtonGridSaid, "the Extra tab above it did not read, so its column is worked out "
+                                "from the Sort button's box");
         if (ref != StashMoveButtonRef::Sort) return std::string();
-        return SayButtonOff(m_ButtonFallbackSaid, "the Mercenary button's place could not be worked out, so it sits "
-                            "beside Sort by the old rule");
+        return SayButtonOff(m_ButtonFallbackSaid, "the column of the Extra tab above it could not be worked out, so it "
+                            "sits beside Sort by the old rule");
     }
 
     // A check reads this many ensure steps after a make at most; a node whose
@@ -884,6 +905,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(m_PlaceMutex);
             m_PlaceRef = ref;
+            if (ref != StashMoveButtonRef::Tab) m_PlaceTab = StashMoveBox();   // no tab box behind this target
         }
         const bool reads = visible && BoxReads(box) && BoxReads(sort) && BoxReads(target);
         const bool settled = reads && m_ButtonHaveLast && SameBox(box, m_ButtonLast) && SameBox(sort, m_ButtonLastSort);
@@ -1011,9 +1033,10 @@ public:
     // check comparing menulayout's rows, can tell what the mod itself read.
     // Then the node's look as last read (none, sort, differs, unread) and
     // its size on the settled read (none until then), judged against the
-    // target; which target that is (RefWord: none, mercenary, relation,
-    // sort); last, how many of the look's members read the same over those
-    // listed, on that same read (none before one with members).
+    // target; which target that is (RefWord: none, tab, grid, sort) and the
+    // tab box it was taken from (none unless tab); last, how many of the
+    // look's members read the same over those listed, on that same read
+    // (none before one with members).
     std::string ButtonFields() const {
         std::string place;
         {
@@ -1024,7 +1047,7 @@ public:
                                                            : std::string("none"))
                 + " button_makes=" + std::to_string(m_PlaceMakes) + " button_step=" + std::to_string(m_PlaceStep)
                 + " button_look=" + LookWord(m_PlaceLook) + " button_size=" + SizeText(m_PlaceSize)
-                + " button_ref=" + RefWord(m_PlaceRef)
+                + " button_ref=" + RefWord(m_PlaceRef) + " button_tab=" + BoxText(m_PlaceTab)
                 + " button_look_same=" + LookSameText(m_PlaceLookEqual, m_PlaceLookListed);
         }
         return std::string(" button=") + (m_ButtonHeld.load() ? "held" : "none")
@@ -1496,7 +1519,7 @@ private:
 
     // The look and size of a kept node, on the settled read the place was
     // judged on (owner scope, 2026-09-30): its size against the target's
-    // (the Sort button's under the old rule, the Mercenary button's
+    // (the Sort button's under the old rule, the Extra tab column's
     // otherwise) and the look the adapter last read. Either one off is kept
     // as it is - a remake is for the place only - and said once a session on
     // a line of its own, added to `line`.
@@ -1512,8 +1535,7 @@ private:
             if (said.empty()) return;
             line += (line.empty() ? "" : "\n") + said;
         };
-        const char* whose = ref == StashMoveButtonRef::Mercenary || ref == StashMoveButtonRef::Relation
-            ? "the Mercenary button's " : "the Sort button's ";
+        const char* whose = InTabColumn(ref) ? "the Extra tab column's " : "the Sort button's ";
         if (!TargetSized(target, box))
             add(SayButtonOff(m_ButtonSizeSaid, "its size " + SizeText(box) + " is not " + whose
                              + SizeText(target) + ", so it is kept as it is"));
@@ -1553,6 +1575,7 @@ private:
     bool              m_ButtonLookSaid = false;  // the look-not-taken line already said this session
     bool              m_ButtonLookUnreadSaid = false; // the look-unread line already said this session
     bool              m_ButtonFallbackSaid = false; // the old-rule fallback line already said this session
+    bool              m_ButtonGridSaid = false;  // the grid-column fallback line already said this session
     StashMoveButtonLook m_ButtonLook = StashMoveButtonLook::None; // the node's look as last read
     StashMoveLookTally m_ButtonLookRead;          // the members behind it
     // The place check (ButtonCheck), on the frame tick's thread.
@@ -1578,6 +1601,7 @@ private:
     int               m_PlaceLookListed = 0;     // of those listed, 0 before a read with members
     StashMoveBox      m_PlaceSize;              // the settled box its size is read from
     StashMoveButtonRef m_PlaceRef = StashMoveButtonRef::None; // the target the last node was made or checked to
+    StashMoveBox      m_PlaceTab;               // the tab box that target was taken from, unread unless Tab
     std::string       m_OffReason;
 };
 

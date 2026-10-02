@@ -37690,12 +37690,13 @@ static bool HandleStashMoveCommand(const std::string& lc, const std::string& res
 //   name, with self = other = the UI_Stash_obj window on show (buttonOwner:
 //   the stash's own close destroys it, Live 1g), placed from the Sort node's
 //   row (found by its uiNodeCallstack InventorySort, never by its text, which
-//   reads Sort Tab: sortActivation) - on the Mercenary button's box, which the
-//   game shows there with the bag open on its own and does not list while the
-//   stash is open (Live 5), so the core works it out from Sort's box by the
-//   fractions Live 5 measured (merc-route: relation; the old rule, its right
-//   edge 8 GUI units left of Sort's, only as the fallback), from the extents
-//   measured on the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
+//   reads Sort Tab: sortActivation) - in the column of the bag's Extra tab
+//   above the slot (the owner, 2026-10-02): InventoryTab_4's left and right
+//   edges, that tab read by name at each ensure step, with Sort's top and
+//   bottom; the core works the same column out from Sort's box by the tab
+//   grid's measured relation when no such tab reads (the old rule, its right
+//   edge 8 GUI units left of Sort's, only as the last fallback), from the
+//   extents measured on the node itself (ForgePact #131) - its uiNodeCallstack ForgePactMoveAll,
 //   and its activation LEFT UNDEFINED - no UiSetActivationFunc, no script
 //   hooked for it. A node with no activation runs nothing of the game's when
 //   clicked (the static reading of the node's own click event; Live 1g's
@@ -37729,11 +37730,12 @@ static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";
 static constexpr const char* kSmaButtonText = "Move all";
 static constexpr const char* kSmaSortCallstack = "InventorySort";   // sortActivation (Live 1f and 1g)
 static constexpr double kSmaButtonGap = 8.0;                         // the old rule's GUI units between the node and Sort
-// merc-route: relation (docs/stash-move-research.md § Decision buttonTarget):
-// the Mercenary node is not listed while the stash is open (Live 5
-// merc-stash-listed), so none is read and the core takes Sort's box by the
-// measured fractions.
-static constexpr ForgePact::StashMoveButtonRef kSmaButtonRoute = ForgePact::StashMoveButtonRef::Relation;
+// buttonTarget: tab (docs/stash-move-research.md § Decision buttonTarget): the
+// target is the column of the bag's page tab above the slot left of Sort,
+// read by its uiNodeCallstack at each ensure step; the core takes the tab
+// grid's column from Sort's box when it does not read.
+static constexpr ForgePact::StashMoveButtonRef kSmaButtonRoute = ForgePact::StashMoveButtonRef::Tab;
+static constexpr const char* kSmaTabCallstack = "InventoryTab_4";    // the 4th of Main/Extra x4, above the slot (toolkit #147)
 static constexpr double kSmaMbLeft = 1.0;                            // mb_left
 
 static RValue g_SmaButton;               // the node the mod made, while it holds one
@@ -37799,6 +37801,25 @@ static ForgePact::StashMoveBox SmaBox(const RValue& inst)
     b.right = MenuLayoutRead(inst, "bbox_right");
     b.bottom = MenuLayoutRead(inst, "bbox_bottom");
     return b;
+}
+
+// The bag's page tab above the slot left of Sort, read now, by name: the
+// bbox of the first visible UI_Button_Inventory_Tab_obj whose uiNodeCallstack
+// is kSmaTabCallstack. Unread (every side NaN) when none is listed, none of
+// those listed is visible, or every read threw; the core then takes the tab
+// grid's column from Sort's box. Read at each ensure step that uses it,
+// never kept across steps or opens.
+static ForgePact::StashMoveBox SmaTabBox()
+{
+    for (const RValue& h : TalentAllocInstances(HeroSiege::Objects::GameObject::UI_Button_Inventory_Tab_obj)) {
+        try {
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("uiNodeCallstack") });
+            if (v.m_Kind != VALUE_STRING || v.ToString() != kSmaTabCallstack) continue;
+            if (!g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("visible") }).ToBoolean()) continue;
+            return SmaBox(h);
+        } catch (...) {}
+    }
+    return ForgePact::StashMoveBox();
 }
 
 // Make the node at x, y under the stash window, labelled; false with the
@@ -37978,9 +37999,11 @@ static SmaLookFrame SmaButtonLookFrame(const ForgePact::StashMoveBox& sortBox, c
 }
 
 // Make the node on its target; a refusal is reported once by the core's
-// line. The target is the Mercenary button's box, worked out by the core
-// from Sort's bbox (ButtonTarget; the old rule's box when it cannot be, said
-// once), and the node's right edge and vertical centre are put on the
+// line. The target is the column of the Extra tab above the slot, worked out
+// by the core from that tab's bbox and Sort's, both read now (ButtonTarget;
+// the tab grid's column from Sort's alone when the tab does not read, and the
+// old rule's box when neither can be had, each said once), and the node's
+// right edge and vertical centre are put on the
 // target's (the core's TargetOrigin, ForgePact #131: UiCreateNode's x, y are
 // the node's origin, which follows the sprite it wears). The extents are the
 // ones the core measured on a settled node this session, else Sort's own
@@ -38001,10 +38024,11 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
         refuse("the Sort button's bbox did not read; nothing was called");
         return;
     }
+    const ForgePact::StashMoveBox tabBox = SmaTabBox();
     ForgePact::StashMoveBox target;
     const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
-        ForgePact::StashMoveBox(), kSmaButtonGap, target);
-    const std::string fallback = mod.NoteButtonRef(ref);
+        tabBox, kSmaButtonGap, target);
+    const std::string fallback = mod.NoteButtonRef(ref, tabBox);
     if (!fallback.empty()) Out(fallback);
     double x = 0, y = 0;
     const ForgePact::StashMoveExtents extents = mod.ButtonExtentsFor(sortBox, target, MenuLayoutRead(sort, "x"),
@@ -38021,7 +38045,8 @@ static void SmaButtonCreate(CInstance* stash, const RValue& window, const RValue
 
 // The place check, each ensure step the node is held and wanted (the core's
 // ButtonCheck): what the node reads now - visible, its x, y and bbox - and
-// Sort's bbox, with the target the core works out from it this step. The
+// Sort's bbox and the Extra tab's, with the target the core works out from
+// them this step. The
 // core decides once the box has settled; an off-target node is taken away
 // with UiRemoveNode and made again, once, at the origin its measured extents
 // give - at most two UiCreateNode calls per Create step. One still off after
@@ -38033,12 +38058,13 @@ static void SmaButtonCheck(CInstance* stash, const RValue& window, const RValue&
     if (!g_SmaButtonHeld) return;
     auto& mod = ForgePact::StashMoveAllMod::Instance();
     const ForgePact::StashMoveBox sortBox = SmaBox(sort);
+    const ForgePact::StashMoveBox tabBox = SmaTabBox();
     ForgePact::StashMoveBox target;
     const ForgePact::StashMoveButtonRef ref = ForgePact::StashMoveAllMod::ButtonTarget(kSmaButtonRoute, sortBox,
-        ForgePact::StashMoveBox(), kSmaButtonGap, target);
-    // The old rule standing in is said when it first happens, on whichever
-    // step that is, not only at the make.
-    const std::string fallback = mod.NoteButtonRef(ref);
+        tabBox, kSmaButtonGap, target);
+    // The grid's column or the old rule standing in is said when it first
+    // happens, on whichever step that is, not only at the make.
+    const std::string fallback = mod.NoteButtonRef(ref, tabBox);
     if (!fallback.empty()) Out(fallback);
     const double nodeX = MenuLayoutRead(g_SmaButton, "x"), nodeY = MenuLayoutRead(g_SmaButton, "y");
     if (mod.ButtonLookWanted())

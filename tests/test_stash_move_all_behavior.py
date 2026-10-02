@@ -354,30 +354,56 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # took says nothing of it.
         self.assertScenario("target/button_look_not_taken_is_kept_and_said_once")
 
-    # ---- #131, owner 2026-09-30: the Mercenary button's box -------------------
+    # ---- #131, owner 2026-10-02: the column of the Extra tab above it --------
 
-    def test_baseline_sort_gap_box_is_not_the_mercenary_box(self):
-        # Live 5: the Sort rule's box, 2090,1262,2282,1328, is the one the
-        # node read and the old check calls on target; the Mercenary box,
-        # 2094,1262,2286,1328, is 4 further right, beyond the tolerance, and
-        # the same size. Positive control: the Mercenary box is on itself.
-        self.assertScenario("baseline/sort_gap_box_is_not_the_mercenary_box")
+    def test_baseline_live6_mercenary_box_is_off_the_tab_column(self):
+        # Live 6's node box, 2094,1262,2286,1328 (the Mercenary button's), is
+        # not on the column worked out from Live 6's Sort, 2290,1262,2482,1328:
+        # its right edge is 4 short, at the same width. The old Sort rule's
+        # box is 8 short. Positive control: the column is on itself.
+        self.assertScenario("baseline/live6_mercenary_box_is_off_the_tab_column")
 
-    def test_target_button_settles_on_the_mercenary_box(self):
-        # merc-route: relation. Sort's box and Live 5's fractions give the
-        # Mercenary box (and follow a GUI-scale change); made from Sort's
-        # extents the node settles on it with one make, button_ref=relation.
-        # Negative controls: a node on the old box is remade once to the
-        # Mercenary box's top-left, and one still off is said once; a target
-        # of another size scales the node and says a Sort-sized one; unread
-        # boxes give no scale and no target.
-        self.assertScenario("target/button_settles_on_the_mercenary_box")
+    def test_target_button_takes_the_tab_columns_sides_and_sorts_row(self):
+        # Route Tab with a sized InventoryTab_4: the tab's left and right with
+        # Sort's top and bottom. Made from Sort's extents the node settles
+        # there with one make; button_ref=tab and button_tab= the tab's box;
+        # the placed line names the tab's column, never the Mercenary button.
+        # Negative controls: Live 6's node is remade once onto the column, one
+        # still off is said once, and an unread Sort gives no target.
+        self.assertScenario("target/button_takes_the_tab_columns_sides_and_sorts_row")
+
+    def test_target_tab_column_matches_the_grid_at_the_measured_scale(self):
+        # The recorded 2560x1368 rows: Sort 2303.5,1198.9,2485.9,1261.6 and
+        # InventoryTab_4 2121.1,1136.2,2303.5,1198.9 give the Tab target
+        # 2121.1,1198.9,2303.5,1261.6, and the Grid target from Sort alone is
+        # the same box within 0.05 on each side. Sort under InventoryTab_5 is
+        # the relation's own positive control.
+        self.assertScenario("target/tab_column_matches_the_grid_at_the_measured_scale")
+
+    def test_target_button_falls_back_to_the_tab_grid_when_no_tab_reads(self):
+        # No tab read: Sort's left minus Sort's width up to Sort's left, in
+        # Sort's row (Grid), said once a session with the mod on, and the
+        # state reads button_ref=grid button_tab=none. With Sort unread as
+        # well, no target (None).
+        self.assertScenario("target/button_falls_back_to_the_tab_grid_when_no_tab_reads")
+
+    def test_target_a_tab_of_another_width_scales_the_node_to_it(self):
+        # A tab 200 wide gives a 200-wide target; ButtonScale is 200/192 by 1,
+        # TargetSized judges a Sort-sized node against the target, and the
+        # size line names the tab's column, not the Mercenary button.
+        self.assertScenario("target/a_tab_of_another_width_scales_the_node_to_it")
+
+    def test_target_an_unsized_tab_box_is_never_taken(self):
+        # Negative control: a tab box of no width or height, inside out, or
+        # with a NaN side is never the target - Grid with a readable Sort,
+        # None without one. Positive control: a sized tab is taken.
+        self.assertScenario("target/an_unsized_tab_box_is_never_taken")
 
     def test_target_unread_target_falls_back_to_the_sort_rule(self):
-        # No Mercenary box read, or a Sort box the fractions cannot scale:
-        # the old rule's box, said once, button_ref=sort, placed beside Sort.
-        # Negative controls: a route that gave its box says nothing; an
-        # unread Sort box gives no target.
+        # A Sort box the grid cannot scale, on route Tab or Grid, or the old
+        # rule's own route: the old rule's box, said once, button_ref=sort,
+        # placed beside Sort. Negative controls: a route that gave its box
+        # says nothing; an unread Sort box gives no target.
         self.assertScenario("target/unread_target_falls_back_to_the_sort_rule")
 
     # ---- #131, fix2's round 2: the look copy never stops on a member's kind ---
