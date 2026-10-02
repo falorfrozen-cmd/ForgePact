@@ -208,6 +208,20 @@ class AngelicHitSourceContractTests(unittest.TestCase):
         diag_end = handle.index("\n    };", diag)
         gate = strip_comments(handle[:diag] + handle[diag_end:])
         self.assertNotIn("m_Kind", gate, "no kind check decides whether ds_exists is asked")
+        # report#2 (#74): converting an array or a string raises a runner error that the catch
+        # after ToDouble does not take back, so the kinds that can never be a handle are refused
+        # first, through a named predicate. It is a deny-list: it names the five kinds and no kind
+        # a handle arrives as, so it cannot refuse a live list held as a number or a reference.
+        self.assertIn('if (SigNeverAHandle(v)) return refuse("never a handle");', gate)
+        self.assertLess(gate.index("SigNeverAHandle(v)"), gate.index("v.ToDouble()"),
+                        "the never-a-handle kinds are refused before any conversion")
+        never = strip_comments(body(self.code, "static bool SigNeverAHandle("))
+        for kind in ("VALUE_ARRAY", "VALUE_STRING", "VALUE_OBJECT", "VALUE_UNDEFINED", "VALUE_NULL"):
+            with self.subTest(refused=kind):
+                self.assertIn(kind, never)
+        for kind in ("VALUE_REAL", "VALUE_REF", "VALUE_INT32", "VALUE_INT64"):
+            with self.subTest(handle_kind=kind):
+                self.assertNotIn(kind, never, "a kind a handle arrives as is never refused by its kind")
 
     # ---- the injection: per roll, under a scope guard inside the roll's hook ------------
 

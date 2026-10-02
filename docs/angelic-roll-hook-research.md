@@ -1506,15 +1506,17 @@ nothing of it is quoted here.
 - **The proven routes the plugin reuses (source reading).** Reading a
   variable off the first `Controller_obj` instance by name, as Session 3's
   scan already does (measured in Live 1: `names=221`). Gating a value on
-  `ds_exists` with the list type, 2, and never on its kind, then handing the
+  `ds_exists` with the list type, 2, not on an allow-list of kinds, then handing the
   `ds_list_*` builtins the value as it was read: the route the pet loot
   collector already takes on a pet's `lootList` (it takes `ToDouble` only to
   refuse a handle that is unreadable, non-finite or negative, asks
   `ds_exists` with the `RValue` it read, because a live ds handle can arrive
   as a reference, and passes that same `RValue` to `ds_list_clear`). A value
   `ToDouble` cannot convert is refused as `id unreadable` before `ds_exists`
-  is asked; that is a failed conversion, not a rule about kinds, and the
-  plugin names the kind in its refusal without ever testing it. Building an entry with
+  is asked; that is a failed conversion, not a rule about kinds. (Session 6
+  adds one step in front of the conversion: a kind that can never be a
+  handle is refused as `never a handle` without being converted, because the
+  failed conversion itself raises a runner error.) Building an entry with
   `array_create` and `array_set`, as Session 3's push does. New on a list the
   game owns are `ds_list_add` and `ds_list_delete`; their first live use is
   Live 2 (`reach`, `off-removes`, `list-restored`).
@@ -1528,11 +1530,14 @@ research.
    requires, in order: an array whose `array_length` exceeds the index; the
    element at the index (read with `array_get`) a value that `ds_exists`
    confirms is a live `ds_list` (type 2, as the plugin's other list checks
-   spell it). No kind is required first, and none is predicted: the kind of
+   spell it). No handle kind is required first, and none is predicted: the kind of
    `[5]` is not established until Live 2's dump prints it, and a ds container
    can read as `ref ds_list` on this runner (`VALUE_REF`,
    `docs/RUNTIME_DATA_MODELS.md` §5.4), so a number-only gate such as
-   `SigNumber` could refuse the real list. `ToDouble` is taken only to refuse
+   `SigNumber` could refuse the real list. First, a value of a kind that can
+   never be a handle (an array, a string, a struct, an undefined or a null) is
+   refused before any conversion (Session 6, report#2); real, ref and every
+   other kind go on. `ToDouble` is then taken only to refuse
    a value that is unreadable (the conversion throws), non-finite or
    negative. The element is passed to `ds_exists` and to every `ds_list_*` call
    as it was read, ref or real, and two ids are compared by handle value
@@ -1550,10 +1555,12 @@ research.
    `[<i>] entry <k> is not three numbers`. In the `ds_list` refusal, `<kind>`
    names the kind the element was read as (`real`, `int32`, `int64`, `bool`,
    `string`, `struct`, `array`, `ptr`, `undefined`, `null` or `ref`, else
-   `kind<N>`) and `<step>` the step that refused it: `id unreadable`,
-   `id non-finite`, `id <value>` (a negative handle), `ds_exists threw` or
-   `ds_exists false`. The kind is reported, never checked, so a refusal of a
-   live reference reads as one. The held read-back compares two reads by
+   `kind<N>`) and `<step>` the step that refused it: `never a handle`
+   (array, string, struct, undefined or null, before any conversion),
+   `id unreadable`, `id non-finite`, `id <value>` (a negative handle),
+   `ds_exists threw` or `ds_exists false`. The kind is reported in every
+   refusal, and only the five never-a-handle kinds are refused by it, so a
+   refusal of a live reference reads as one. The held read-back compares two reads by
    handle value, whatever kind each arrived as, and the dump's `ds_list=`
    uses the same gate.
 2. **Push and remove.** Per copy the entry is built as before and appended
@@ -2336,8 +2343,9 @@ of the first batch: the window that holds the layout dump, the
 `angelicprobe inject auto` scan, the arming of the research levers and 52
 rolls with both switches off. Live 2 showed the same shape (1 to 37,
 `report#2` x30, in the same window). Which of those raises it is not
-established; that it is not raised by the push, the rewrite or a built
-our-hit is measured (the count held through checks 7 to 11).
+established. What was measured is that the count did not move through
+checks 7 to 11, while rolls pushed entries and their our-hits were built.
+Session 6 takes the cause up.
 
 **Route:** `route: inject`. Session 3's decision rule, step 4 (`typing`
 pass, `reach` pass, `inject-build` pass), as the owner's decision after
@@ -2347,8 +2355,205 @@ mode stays research build only, unused. What Live 3 established on top of
 Live 2: at `CreateItemNew`'s entry the record already carries `LootGroundCreate`'s
 `a`; a record rewritten there to the item's `a`, `b`, `c` 0 and `j` 0 keeps
 those values through the build; and the game builds and places one
-Headhunter (46 of 46) or Tyrant's Crown (11 of 11) per hit that falls to it,
+Headhunter (48 of 48: 46 in `inject-build`, 2 in `on-both`) or Tyrant's
+Crown (11 of 11) per hit that falls to it,
 in place of the stand-in. Still not observed: a hit at the game's natural
 chance (the chance lever was at 1e9 throughout, and a natural hit is about
 one in several thousand rolls), and the player build's one-entry share, which
 is arithmetic on a reach measured at copies 200, not a measurement.
+
+## Session 6: the scan and the runner errors (issue #74)
+
+Live 2 and Live 3 each saw the runner's YYError total rise once, early in the
+session, and then hold (Session 4 and Session 5, Results). Live 3 recorded
+the message of the report that rose most, `report#2`:
+`REAL argument incorrect type array`. The owner asked for it to be
+investigated, then for the fix and a short live confirmation (2026-10-02,
+"Fix + confirm live"). This section is what a read-only pass over the
+plugin, the runner's headers and the two sessions' own output established,
+the fix, and the session that confirms it.
+
+### The finding
+
+- **What raised it (an arithmetic fit on measured counts; the stack is not
+  established).** `bin\bp_ipc\out.txt` still holds Live 2's printed
+  `angelicprobe list` scan (measured). It rejected 15 `Controller_obj` array
+  variables with `[5] is not a ds_list (kind=array, id unreadable)`
+  (`buffAfterText`, `buffCalculate`, `buffDrawValue`, `questlogMaxProgress`,
+  `buffRoom`, `questlogObjectiveText`, `questlogProgress`, `buffValueText`,
+  `stashGuildTab`, `stashMaterialTab`, `stashPactTab`,
+  `stashSocketItemSlot`, `stashTab`, `stashUniqueItemSlot`, `merchantGrid`)
+  and 3 string variables with `kind=string, id unreadable`
+  (`questlogDescription`, `buffNameText`, `questlogName`). `id unreadable` is
+  the plugin's catch after the numeric conversion in `SigListHandle` (source
+  reading). Live 2 ran two scans (`angelicprobe list` and
+  `angelicprobe inject auto`) and its total went from 1 to 37, which is
+  1 + 2 x 18, with `report#2` x30, which is 2 x 15. Live 3 ran one scan
+  (`angelicprobe inject auto`) and went from 1 to 19, which is 1 + 18, with
+  `report#2` x15. That Live 3's scan, which prints no rejected lines, met the
+  same 18 elements is inferred, not measured. The text of reports #3 to #5 is
+  not established; the three string conversions are the likeliest source.
+- **Not per hit or per roll (measured).** Live 3's total held at 19 from its
+  step 6 to teardown, while `gameHits` went from 47 to 157, `injected` reached
+  27200 and 59 of our hits were built. Live 2's held at 37 through 215 hits.
+  The later `angelicprobe list dump` runs, which read only `lootListUnique`'s
+  own elements (all `kind=ref`), left it unchanged.
+- **Mechanism (source reading).** `RValue::ToDouble` is the runner's own REAL
+  conversion (`plugin_build/include/YYToolkit/YYTK_Shared_Types.cpp`). Given
+  an array or a string, the runner raises its error and the call then fails.
+  The plugin's C++ `try` turns the failure into `id unreadable`, but it does
+  not take back the runner's report, which the YYError hook has already
+  counted. The measured precedent is `REAL argument incorrect type undefined`
+  on the same kind of route (ForgePact #144, `docs/RUNTIME_DATA_MODELS.md`
+  in the hub, § 5.4).
+- **Who reaches it (source reading).** The scan over every array variable,
+  `SigListScan`, runs only in the research build (`angelicprobe inject auto`
+  and `angelicprobe list`), and it is the only caller that hands
+  `SigListHandle` arbitrary values. In both builds `SigListHandle` is also
+  called from the list resolution and the held read-back, which hand it only
+  `lootListUnique[5]`, a ref. So the player build carries a latent risk, not
+  a live error.
+- **The log's report#2 block is gone (measured).** A later session overwrote
+  `bin\YYToolkit.log`, so the message survives only in Live 3's session
+  record. Live 4 therefore keeps a copy of the log before and after it runs.
+
+### The fix
+
+Before any conversion, `SigListHandle` refuses a value whose kind can never
+be a data-structure handle: an array, a string, a struct (`VALUE_OBJECT`), an
+undefined, or a null, which YYToolkit's enum keeps as a kind of its own. The
+check is a named predicate, `SigNeverAHandle`, and the refusal goes through
+the gate's existing reason, so it reads
+`[<i>] is not a ds_list (kind=<kind>, never a handle)`. A real and a ref go on
+to the conversion and `ds_exists` as before, and so do the kinds the owner's
+list does not name (int32, int64, bool, ptr).
+
+This keeps Session 4's decision. That decision was against an allow-list:
+the runner hands a live handle back as a real or a ref, and a gate that lets
+only those two through would refuse whatever else a handle might arrive as.
+A deny-list of kinds that are never handles cannot refuse a handle. The
+contract tests still pin that the gate reads no kind outside its diagnostic,
+and that an allow-list put in front of the conversion fails them.
+
+The harness pins the behaviour (`test_kind_gate`, scenario
+`kind_gate_refuses_before_converting`). Its stand-in `ToDouble` counts each
+conversion it refuses, the way the runner counts a raised error. With an
+array, a string, a struct, an undefined or a null at `[5]`, the gate must
+refuse `never a handle` and the count must not move. A live list whose
+handle is a real, and one whose handle is a ref, must still be accepted.
+Against the plugin before the fix (tag `forgepact-74-kindgate-base`) the
+scenario fails by its own assertion: the array is refused as
+`id unreadable`, after a conversion.
+
+### Live procedure 6
+
+Live 4 asks one question: with the kind gate in place, does the scan still
+raise runner errors? It is a new session on a restored save, so every
+starting value is the state before Live 2: the counters at 0, and
+`lootListUnique[5]` at Live 3's 380 in town. There are no kills and no zone
+change. The session's capture is
+`forgepact-74-list-injection-live2-live-3.md`, kept with the hub's workorder
+and not tracked; its record goes under `### Results` below.
+
+- **Build.** `plugin_build\live4\BloodPactPlugin_rel.dll`, a frozen copy of
+  `plugin_build\build.bat dev` with this session's change; its SHA-256 is
+  recorded when it is built. The owner installs it when asked; until then
+  `dll-hash` fails and nothing else runs.
+- **Character.** Save slot 14 (Sorak), selected on the back end, in town at
+  load.
+- **People steps.** None in the session. The owner's only time is installing
+  the DLL when asked, about 5 minutes in all.
+- **Hygiene.** Before check 6, run nothing but the commands below: no
+  `angelicprobe list dump`, no `angelicprobe on`, and no `citrace`,
+  `raredrop`, `scount`, `zonegenlog` or `angelicwatch`.
+  `angelicprobe inject auto` is the only command between the two reads of
+  check 6.
+- **Reading the runner-error instrument.** `bin\YYToolkit.log` in the game
+  folder is read as a file (the drive tool's IPC tail returns the plugin's
+  `out.txt`, not this log). The summary line
+  `[hs] YYError summary: total=... distinct=...` is written from the frame
+  hook at most once per 30 s, and only when a counter moved. So each read
+  waits at least 35 s after the last command, and "no newer summary line"
+  means no counter moved. Each read records the newest summary line whole,
+  and the count of full-report headers
+  (`The runner raised an error through YYError (full report #N).`). For a new
+  header it records the line after `Runner-given error information:` (the
+  error text), never the frames.
+
+Each check is recorded as pass, fail or not-observed, with the replies quoted
+in the session record.
+
+1. Before launch, right after the lease: copy `bin\YYToolkit.log` as it
+   stands to the session scratch and record the path (no check). It is the
+   previous session's log, which the launch overwrites. Then the standing
+   steps: self-check, an independent save copy, the save backup, launch, and
+   save slot 14 selected on the back end.
+2. **`dll-hash`** (validity) - the lease's DLL SHA-256 equals the research
+   build's, the `live4` copy, and is not Live 3's.
+3. **`marker`** (validity) - `angelicprobe hit status` answers a line
+   beginning `angelicprobe hit:` and ending `detect=off`. A player build
+   answers that the command is unavailable, and the session ends there.
+4. **`control`** (validity) - `sigdrop status` reads exactly the
+   fresh-session line,
+   `sigdrop: force off | rolls=0 drops=0 fails=0 | game roll: gameRolls=0 gameHits=0 injected=0 ourHits=0 refused=0 untyped=0 built=0 crown=0 belt=0 anomalies=0 list=none gate=tyrant:off,headhunter:off cdpCalls=0 detect=off`.
+   Live 3 produced it on this build line.
+5. **`yyerror-control`** (research; the positive control on the instrument) -
+   at least 35 s after the character loaded, read the log (read T0, headers
+   H0).
+   - Pass: the log carries `[hs] YYError hook install: MmCreateHook => AURIE_SUCCESS`
+     and a summary line written this launch with `total=` of 1 or more, so the
+     instrument counted a raise in this launch. Live 2 and Live 3 both read
+     `total=1 ... top=report#1 x1` at this point. Not established: the hook
+     marker's exact text, which comes from the YYToolkit patch series' table
+     (patch 0005), not from a log this session has read.
+   - Not-observed: the hook line is there but there is no summary line yet
+     (installed, not shown to count).
+   - Fail: the log cannot be read, or it has no hook line.
+   - There is no stronger control: no research command is known to raise a
+     runner error on demand on this build. The static search found none, and
+     the one measured, this scan, is what the fix removes. So the control is
+     this launch's own count, plus the rise Live 2 and Live 3 measured on the
+     same command with the earlier DLLs: 18 per scan.
+6. **`scan-clean`** (acceptance of the fix) - `angelicprobe inject auto`
+   answers
+   `angelicprobe inject auto: list lootListUnique[5]:<n> stand-ins Headhunter:Liquor Holster(n=1),Tyrant's Crown:Mask of the Celestial(n=1)`
+   (Live 3: 380). Wait at least 35 s, then read T1 and H1.
+   - Pass: `yyerror-control` passed, the line names `lootListUnique[5]`, T1's
+     `total=` equals T0's (no newer summary line, or a newer one with the same
+     total), and H1 equals H0.
+   - Fail: the total rose or a new header appeared. Record the rise and each
+     new report's error text.
+   - Not-observed: `yyerror-control` did not pass, or `inject auto` named no
+     list. Record which.
+7. **`list-refusals`** (acceptance of the fix) - run `angelicprobe list` and
+   read every printed `angelicprobe list:` line. Then wait at least 35 s and
+   read T2 and H2.
+   - Pass, when all of these hold: a line
+     `angelicprobe list: candidate lootListUnique array_length=6 at=5 ds_list_size=<n> ...`
+     is printed (the gate still accepts the real list, a ref); every
+     `rejected` line whose `why=` names `kind=array` or `kind=string` ends
+     `never a handle)`; no `rejected` line reads `kind=array, id unreadable`
+     or `kind=string, id unreadable`; and T2's total equals T1's, with H2
+     equal to H1.
+   - Record the counts by kind and step, and any `rejected` line of another
+     kind as printed. Live 2 had 15 array and 3 string; a different count is
+     recorded, not a fail.
+   - Fail: an `id unreadable` line for an array or a string, no
+     `candidate lootListUnique` line, or a rise in the total. Record each new
+     report's error text.
+   - Not-observed: no `rejected` line of kind array or string at all.
+8. Stop the game normally. Copy this session's `bin\YYToolkit.log` to the
+   session scratch and record the path; it is the copy the record reads if a
+   report appeared. Then inspect the saves, restore the session's backup
+   (automatically, never asking), and release the lease.
+
+Expected checks, in this order: `dll-hash`, `marker`, `control`,
+`yyerror-control`, `scan-clean`, `list-refusals`. The session must pass
+`dll-hash`, `marker`, `control`, `scan-clean` and `list-refusals`.
+`yyerror-control` is research and never a pass condition; if `scan-clean` is
+not-observed because of it, the session showed nothing about the fix, and the
+record says so.
+
+### Results
+
+Not yet run.

@@ -12006,13 +12006,29 @@ static bool SigNumber(const RValue& v, double& out)
     try { out = v.ToDouble(); } catch (...) { return false; }
     return std::isfinite(out);
 }
+// A value of a kind that can never be a data-structure handle: an array, a string, a struct, an
+// undefined or a null.  A deny-list, never an allow-list: the runner hands a live handle back as a
+// real or a reference, and whatever else a handle may arrive as is not on this list, so no handle is
+// ever refused by it.  Asked before ToDouble because converting one of these is the runner's own
+// REAL conversion failing, which raises a runner error (`REAL argument incorrect type array`, the
+// YYError summary's report#2) even when a C++ catch then swallows the failure (#74).
+static bool SigNeverAHandle(const RValue& v)
+{
+    switch (v.m_Kind) {
+    case VALUE_ARRAY: case VALUE_STRING: case VALUE_OBJECT: case VALUE_UNDEFINED: case VALUE_NULL: return true;
+    default: return false;
+    }
+}
 // Whether `v` is a live ds_list, and its handle value in `id` for the "same list" checks.  The
-// route the pet loot collector proved on a pet's lootList: ToDouble only to refuse a handle value
-// that is unreadable, non-finite or negative, then ds_exists (2 = ds_type_list) asked of the value
-// as it was read - never its kind, since a live ds handle can arrive as VALUE_REF on current
-// runners and the kind of lootListUnique[5] is not measured.  On a refusal `why` names the value's
-// kind and the step that refused: `kind=<k>, id unreadable`, `kind=<k>, id <v>`,
-// `kind=<k>, ds_exists threw` or `kind=<k>, ds_exists false`.  The kind is named, never checked.
+// route the pet loot collector proved on a pet's lootList: first refuse a value SigNeverAHandle
+// names (array, string, struct, undefined, null), before any conversion, since converting one
+// raises a runner error a catch cannot take back (#74, report#2); then ToDouble only to refuse a
+// handle value that is unreadable, non-finite or negative, then ds_exists (2 = ds_type_list) asked
+// of the value as it was read.  Real and reference values, and every other kind, go on to those
+// steps: a live ds handle can arrive as VALUE_REF on current runners, so nothing here allows only
+// the kinds a handle is known to take.  On a refusal `why` names the value's kind and the step that
+// refused: `kind=<k>, never a handle`, `kind=<k>, id unreadable`, `kind=<k>, id <v>`,
+// `kind=<k>, ds_exists threw` or `kind=<k>, ds_exists false`.
 static bool SigListHandle(const RValue& v, double& id, std::string& why)
 {
     const auto refuse = [&](const std::string& step) {
@@ -12036,6 +12052,7 @@ static bool SigListHandle(const RValue& v, double& id, std::string& why)
     };
     id = -1.0;
     why.clear();
+    if (SigNeverAHandle(v)) return refuse("never a handle");
     double value = -1.0;
     try { value = v.ToDouble(); } catch (...) { return refuse("id unreadable"); }
     if (!std::isfinite(value)) return refuse("id non-finite");
@@ -12456,11 +12473,6 @@ static bool SignatureRewriteParams(RValue& params, const SignatureItem& item, st
         return true;
     } catch (...) { why = "the rewrite threw"; restore(); return false; }
 }
-// A typed hit inside the roll (Hook_CreateDefaultParams, once the game's CreateDefaultParams
-// returned).  When its whole entry [type, sub, b] is the stand-in of an item this roll pushed,
-// the picker cannot have told our entries from the vanilla ones: m items sharing that stand-in
-// with k copies each hold m·k of its n + m·k entries, so a uniform draw below m·k picks an item
-// (the copies it falls in) - one entry's share, 1 in (n + 1), in the player build - and anything
 // A refused rewrite of item `which` (SignatureBeforeCreate, or SignatureAfterHit when the hit never
 // reached the rewrite point): one `inject:` line with the reason and the record as it was left,
 // `refused=` counted, and the item latched off for the session - its copies are no longer pushed,

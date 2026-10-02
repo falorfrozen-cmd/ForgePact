@@ -52,6 +52,10 @@
 enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_UNSET, VALUE_ARRAY,
        VALUE_BOOL, VALUE_PTR, VALUE_NULL };
 struct CInstance;
+// Each conversion ToDouble refuses, counted the way the runner counts a raised error (the stand-in
+// for `[hs] YYError summary: total=`): on this runner the error is reported even when a C++ catch
+// then swallows the failure, so a gate that refuses a kind must do it before converting (#74).
+static long refusedConversions = 0;
 // An array and a struct are references, as in GameMaker: a copy of the RValue shares them.
 struct RValue {
     int m_Kind = VALUE_UNDEFINED;
@@ -66,7 +70,10 @@ struct RValue {
     RValue(const std::string& s) : m_Kind(VALUE_STRING), text(s) {}
     explicit RValue(CInstance* p) : m_Kind(VALUE_OBJECT), instance(p) {}
     double ToDouble() const {
-        if (m_Kind != VALUE_REAL && m_Kind != VALUE_INT32 && m_Kind != VALUE_INT64 && m_Kind != VALUE_REF) throw std::runtime_error("not a number");
+        if (m_Kind != VALUE_REAL && m_Kind != VALUE_INT32 && m_Kind != VALUE_INT64 && m_Kind != VALUE_REF) {
+            ++refusedConversions;
+            throw std::runtime_error("not a number");
+        }
         return number;
     }
     bool ToBoolean() const { return number != 0; }
@@ -977,7 +984,7 @@ int main(int argc, char** argv) {
                 { "shape", [] { auto v = vanillaTriples(); setList(v); (*listVector())[5] = makeArray({ RValue(1.0), RValue(2.0) }); }, "uniqueLoot[5] entry 5 is not three numbers" },
                 { "short", [] { const auto all = vanillaTriples(); setList(std::vector<Triple>(all.end() - 5, all.end())); }, "uniqueLoot[5] has 5 entries, fewer than 10" },
                 { "no controller", [] { controllerCount = 0; }, "no live Controller_obj instance" },
-                { "flat", [] { setFlatList(vanillaTriples()); }, "uniqueLoot[5] is not a ds_list (kind=array, id unreadable)" },
+                { "flat", [] { setFlatList(vanillaTriples()); }, "uniqueLoot[5] is not a ds_list (kind=array, never a handle)" },
                 { "five elements", [] { listVariable()->array->resize(5); }, "uniqueLoot has 5 elements, none at [5]" },
                 { "dangling id", [] { (*listVariable()->array)[5] = RValue(7.0); }, "uniqueLoot[5] is not a ds_list (kind=real, ds_exists false)" },
             };
@@ -1270,13 +1277,15 @@ int main(int argc, char** argv) {
             // five elements, an element 5 that is a number with no live ds_list, a string, or a
             // reference ds_exists turns away, a ds_list with a non-triple entry, a variable that is
             // no array, a sub-list shorter than the minimum.  Each ds_list refusal names the kind
-            // the element arrived as and the step that refused it; the kind decides nothing.
+            // the element arrived as and the step that refused it.  An array or a string is
+            // refused as never a handle, before any conversion; a number or a reference goes on to
+            // ds_exists, so no handle kind is ever turned away by its kind.
             struct Case { const char* name; void (*arrange)(); const char* why; };
             const Case cases[] = {
-                { "flat array of triples", [] { setFlatList(vanillaTriples()); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=array, id unreadable)" },
+                { "flat array of triples", [] { setFlatList(vanillaTriples()); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=array, never a handle)" },
                 { "five elements", [] { listVariable()->array->resize(5); }, "Controller_obj.uniqueLoot has 5 elements, none at [5]" },
                 { "number with no ds_list", [] { (*listVariable()->array)[5] = RValue(7.0); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=real, ds_exists false)" },
-                { "string", [] { (*listVariable()->array)[5] = RValue("7"); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=string, id unreadable)" },
+                { "string", [] { (*listVariable()->array)[5] = RValue("7"); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=string, never a handle)" },
                 { "reference with no ds_list", [] { RValue r(7.0); r.m_Kind = VALUE_REF; (*listVariable()->array)[5] = r; },
                   "Controller_obj.uniqueLoot[5] is not a ds_list (kind=ref, ds_exists false)" },
                 { "non-triple entry", [] { (*listVector())[3] = makeArray({ RValue(1.0), RValue(2.0) }); }, "Controller_obj.uniqueLoot[5] entry 3 is not three numbers" },
@@ -1296,6 +1305,55 @@ int main(int argc, char** argv) {
                 require(g_SigInjected == 0 && !switchOn(1), std::string(c.name) + ": entries were pushed or the gate armed");
                 require(variableShape() == shape, std::string(c.name) + ": the variable was not left as found");
                 require(sigdropStatusLine().find(" list=missing ") != std::string::npos, std::string(c.name) + ": `sigdrop status` does not say list=missing");
+            }
+        } else if (test == "kind_gate_refuses_before_converting") {
+            // report#2 (#74): converting an array or a string to a number raises a runner error
+            // that a C++ catch does not take back, so the gate refuses the kinds that can never be
+            // a handle - array, string, struct, undefined, null - before it converts anything, and
+            // the stub's count of refused conversions does not move.  A live list whose handle is
+            // a number or a reference is still accepted: the refusal is a deny-list, never an
+            // allow-list of handle kinds.
+            struct Case { const char* name; void (*arrange)(); const char* why; };
+            const Case refused[] = {
+                { "array", [] { (*listVariable()->array)[5] = makeArray({ RValue(8.0), RValue(0.0), RValue(51.0) }); },
+                  "Controller_obj.uniqueLoot[5] is not a ds_list (kind=array, never a handle)" },
+                { "string", [] { (*listVariable()->array)[5] = RValue("44"); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=string, never a handle)" },
+                { "struct", [] { (*listVariable()->array)[5] = makeStruct({ { "id", RValue(44.0) } }); },
+                  "Controller_obj.uniqueLoot[5] is not a ds_list (kind=struct, never a handle)" },
+                { "undefined", [] { (*listVariable()->array)[5] = RValue(); }, "Controller_obj.uniqueLoot[5] is not a ds_list (kind=undefined, never a handle)" },
+                { "null", [] { RValue r; r.m_Kind = VALUE_NULL; (*listVariable()->array)[5] = r; },
+                  "Controller_obj.uniqueLoot[5] is not a ds_list (kind=null, never a handle)" },
+            };
+            for (const Case& c : refused) {
+                reset();
+                c.arrange();
+                const std::string shape = variableShape();
+                const long conversions = refusedConversions;
+                g_HhForced = true;
+                installDetection();
+                for (int i = 0; i < 3; ++i) roll(monster, { false });
+                require(anyLineHas("signature drops: list missing", c.why),
+                        std::string(c.name) + ": no refusal naming `" + c.why + "`: " + lastLine("signature drops: list missing"));
+                require(refusedConversions == conversions, std::string(c.name) + ": the gate converted a value that can never be a handle ("
+                        + std::to_string(refusedConversions - conversions) + " refused conversions, each a runner error)");
+                require(g_SigInjected == 0 && !switchOn(1), std::string(c.name) + ": entries were pushed or the gate armed");
+                require(variableShape() == shape, std::string(c.name) + ": the variable was not left as found");
+            }
+            for (const int kind : { (int)VALUE_REAL, (int)VALUE_REF }) {
+                const std::string name = kind == VALUE_REAL ? "real handle" : "ref handle";
+                reset();
+                dsIdKind = kind;
+                setList(vanillaTriples());
+                const long conversions = refusedConversions;
+                g_HhForced = true;
+                installDetection();
+                require(switchOn(1), name + ": a live ds_list was refused: " + lastLine("signature drops: list"));
+                require(linesStartingWith("signature drops: list missing") == 0, name + ": a live ds_list was reported missing");
+                roll(monster, { false });
+                require(listDuringCall.size() == 1 && listDuringCall[0] == plus(vanilla, { kBeltStandIn }), name + ": the roll did not see the stand-in");
+                require(layoutNow() == vanillaLayout && g_SigInjected == 1, name + ": the layout was not restored or the push not held");
+                require(refusedConversions == conversions, name + ": a conversion was refused on a live list ("
+                        + std::to_string(refusedConversions - conversions) + ")");
             }
         } else if (test == "layout_held_miss_on_another_id") {
             // A fresh read whose element 5 is another ds_list (a copying runtime): a held miss.

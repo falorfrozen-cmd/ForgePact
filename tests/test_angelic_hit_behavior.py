@@ -42,6 +42,11 @@ that record and `CreateItemNew` builds from it, so the plugin writes the item's
 `a`, `b`, `c`, `j` at `CreateItemNew`'s entry, creating a field the record
 lacks. `test_refusal_latch` holds the refusal latch: a refused rewrite turns its
 item off for the session (`rewrite refused: <why>`, `refused=`).
+`test_kind_gate` is report#2's change, and fails by its own assertion against
+`forgepact-74-kindgate-base` (the plugin before the change, which converted every
+element to a number first): the list gate refuses an array, a string, a
+struct, an undefined or a null as `never a handle` before any conversion, and
+still accepts a live list whose handle is a real or a ref.
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -70,6 +75,7 @@ PRODUCTION = (
     'static double SignatureShare(',             # the beside design only
     'static void SignatureDropOnAngelicHit(',     # the beside design only
     'static bool SigNumber(',
+    'static bool SigNeverAHandle(',               # report#2: the kinds refused before any conversion
     'static bool SigListHandle(',                 # replan 2: a ds_list handle, number or reference
     'static bool SigEntry(',
     'static bool SignatureController(',
@@ -251,6 +257,14 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'layout_hit_on_pushed_entry_k_in_n_plus_k', 'layout_handle_as_reference',
             'layout_dump_two_levels',
         ))
+
+    def test_kind_gate(self):
+        # report#2: the list gate refuses an array, a string, a struct, an undefined or a null at
+        # [5] as `never a handle` before converting it (the stub counts each conversion it
+        # refuses, as the runner counts a raised error, and the count must not move), and a live
+        # list whose handle is a real or a ref is still accepted. Fails by its own assertion
+        # against forgepact-74-kindgate-base, which converted first and refused `id unreadable`.
+        self.run_scenarios(('kind_gate_refuses_before_converting',))
 
     def test_build_id(self):
         # Session 5: the game model is Live 2's measurement - CreateDefaultParams returns {j, b, c},
