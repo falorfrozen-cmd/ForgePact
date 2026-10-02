@@ -107,12 +107,12 @@
     </div>
   </div>
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span class="feature-description">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists. While on, Headhunter can also drop from the game's own Angelic roll, beside the game's Angelic item; while off, it never drops.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span class="feature-description">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists. While on (forging the item also turns it on at every launch), Headhunter can also drop from the game's own Angelic roll, beside the game's Angelic item.</span></span>
     <label class="switch"><input type="checkbox" id="headhunter"><span class="sl"></span></label>
     <span class="val" id="hhval">on</span>
   </div>
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Tyrant's Crown: more rares, richer rares<br><span class="feature-description">For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal. While on, Tyrant's Crown can also drop from the game's own Angelic roll, beside the game's Angelic item; while off, it never drops.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Tyrant's Crown: more rares, richer rares<br><span class="feature-description">For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal. While on (forging the item also turns it on at every launch), Tyrant's Crown can also drop from the game's own Angelic roll, beside the game's Angelic item.</span></span>
     <label class="switch"><input type="checkbox" id="tyrant"><span class="sl"></span></label>
     <span class="val" id="tyval">on</span>
   </div>
