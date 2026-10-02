@@ -687,4 +687,74 @@ after the first kill batch, read before any `gameHits=0` is recorded.
 
 ### Results
 
-results: not yet run
+Session 2 ran as Live 1 on 2026-10-02: the research build whose SHA-256
+begins `4534c0ff`, save slot 14 (Sorak), the owner doing the killing and the
+drive tool sending every command. All ten checks were recorded; the session
+record stays with the workorder on the owner's machine. Every value below is
+**Measured (Live 1, 2026-10-02, research dll 4534c0ff…)** unless it says
+otherwise. The owner killed more monsters than each batch asked for and the
+exact counts were not taken, so the checks that depend on a kill count were
+judged from the growth of the counters between two status reads instead.
+
+- **`dll-hash`** - pass. The installed DLL's hash matched the research build's.
+- **`marker`** - pass. `angelicprobe hit status` named every lever off and the
+  detection not installed, ending `cdpCalls=0 detect=off`.
+- **`control`** - pass. `sigdrop status` answered with the force off and every
+  counter at zero, ending `cdpCalls=0 detect=off`.
+- **`force-hit`** (research) - pass, under the chance lever alone; the rate
+  lever was not needed. After the first batch (more than ten kills) the
+  status read `detect=detoured`, `cdpCalls=47`, `gameRolls=47` and
+  `gameHits=44`. This is the first hit of the game's own Angelic roll seen in
+  this research, and it was seen through the `CreateDefaultParams` detection,
+  on the detoured route, with that route's own positive control (`cdpCalls`
+  above zero) read first. The ground filled with real Angelic and Unholy
+  uniques, none of them Headhunter or Tyrant's Crown.
+- **`baseline-off-no-signature`** - pass. With both switches off,
+  `sigFromGame` stayed at zero across those 44 hits, and each hit logged that
+  no switch was on and nothing was rolled; no `sigdrop:` line appeared.
+- **`on-headhunter-only`** - pass. With Headhunter on, Tyrant's Crown off and
+  the share forced to certain, the next batch added 14 hits and 14 to
+  `sigFromGame`, every one a belt (`belt=14`, `crown=0`), with 14 matching
+  `angelic hit:` lines and 14 Headhunter drop lines.
+- **`on-both`** - pass. With both switches on, the next batch added 40 hits
+  and 40 to `sigFromGame`: 20 crowns and 20 belts. Both items lay on the
+  ground beside the game's own items.
+- **`pool-without-signature`** - pass on the parts that do not depend on the
+  kill count. With switches and levers off and the slider at one in one,
+  `sigFromGame` stayed at 54, the forced-roll counter stayed at zero, no new
+  `sigdrop:` line appeared, the pool's nine drops were all real uniques, and
+  `angeliclist` printed no signature line. The procedure's `drops=3` was not
+  established: more than three kills were made, and the slider reported
+  `drops=9`.
+- **`sigdrop-still-forces`** - pass. `sigdrop crown` dropped ten Tyrant's
+  Crowns (the forced-roll counter went from 0 to 10) while `sigFromGame` stayed
+  at 54: the test command is unchanged and is counted apart from the game's
+  roll.
+- **`list-scope`** (research) - neither scope answered. `angelicprobe list`
+  found no global `lootListUnique` and no `lootListUnique` instance variable on
+  `Loot_Manager_obj`, and read nothing.
+
+Two further readings came out of the session:
+
+- **The pool's size.** `angeliclist` and the first hit's log line both read
+  47 candidates and 11 rejected, where the procedure expected 49 (the count
+  measured on 2026-09-23, when #63 still appended both signature items to the
+  pool; 47 plus those two is consistent with it, but not checked). The
+  share a hit rolls is therefore k / (47 + k) on this build: 1 in 48 with one
+  switch on, as the `angelic hit:` lines printed.
+- **Calls outside a roll pass through.** With the vanilla gate closed again
+  (step 7), `cdpCalls` rose from 113 to 118 while `gameRolls` stayed at 108:
+  ordinary drops still reach `CreateDefaultParams`, the detection counts them,
+  and since no roll was in progress none was taken for a hit.
+
+What this settles of the static reading above:
+
+- **A hit is detected, measured.** A call to `CreateDefaultParams` while the
+  roll is in progress is how a hit shows, and Live 1 counted 98 of them over
+  108 rolls under the chance lever, each one followed by the game's own item
+  on the ground. A hit at the natural chance (a chance in the low thousands)
+  has still not been observed; the lever replaced only the chance argument,
+  not the path a hit takes.
+- **The list's scope is still not identified.** It is neither the
+  `lootListUnique` global nor a `Loot_Manager_obj` instance variable, measured;
+  which scope the roll reads remains unresolved.

@@ -18,7 +18,7 @@
   <h2>Angelic / Unholy Drops (Experimental)</h2>
   <div class="hint">The game only rolls for Angelic or Unholy items while an "Angelic item drop chance"
   effect (a Blood Pact or dungeon modifier) is active, so this is ForgePact's own die: on every monster
-  kill it rolls, and on a hit the game itself builds one of its 49 real Angelic / Unholy uniques (no
+  kill it rolls, and on a hit the game itself builds one of its real Angelic / Unholy uniques (no
   developer or event pieces) and drops it where the monster died. The two signature items on
   Mods &rarr; Items are not in this pool: they drop only from the game's own Angelic roll, while their
   switch is on.<br>

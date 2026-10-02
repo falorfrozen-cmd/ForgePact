@@ -34,7 +34,7 @@ none of these diagnostic hooks or the recorder. See
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
-| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
+| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
@@ -232,12 +232,14 @@ that item's switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) is o
 the Custom Forge turns its mechanic on, as before, but not this drop: with its switch off, a forged
 Headhunter or Tyrant's Crown never drops from the game's roll. Each time that roll hits
 and the game drops its own Angelic or Unholy item, ForgePact rolls the signature items' share: one
-pool entry's worth, about 1 hit in 50 with one switch on and 2 in 51 with both (ForgePact's Angelic
-pool holds 49 real uniques). On a success the item lands beside the game's own item, where the monster
-died; with both switches on, each success is one or the other at even odds. ForgePact adds no die
+pool entry's worth, about 1 hit in 48 with one switch on and 2 in 49 with both (ForgePact's Angelic
+pool held 47 real uniques when measured on 2026-10-02). On a success the item lands beside the game's
+own item, where the monster died; with both switches on, each success is one or the other at even
+odds. This hit path was verified in a live session on 2026-10-02, with a research build raising the
+game's Angelic chance so that hits came within a few kills. ForgePact adds no die
 of its own for them, and does not change the game's Angelic chance. With both switches off (the
 default), neither item drops, forged or not, and the game's roll is left alone. The **Angelic / Unholy
-Drops** slider never drops them: its pool is the 49 real uniques only. They arrive as SS-tier
+Drops** slider never drops them: its pool is the real uniques only. They arrive as SS-tier
 Unholy items, fully set up, and the plugin recognises them on every load even without the Item
 Editor. `sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command
 that forces every kill to drop the named item (or turns that off); it does not change the normal
