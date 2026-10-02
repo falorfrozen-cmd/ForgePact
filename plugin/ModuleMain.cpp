@@ -37727,7 +37727,7 @@ static constexpr TalentAllocScript kSmaUiCreateNode{ HeroSiege::Scripts::gml_Scr
 static constexpr TalentAllocScript kSmaUiRemoveNode{ HeroSiege::Scripts::gml_Script_UiRemoveNode,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiRemoveNode) };
 static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";
-static constexpr const char* kSmaButtonText = "Move all";
+static constexpr const char* kSmaButtonText = "Move All";
 static constexpr const char* kSmaSortCallstack = "InventorySort";   // sortActivation (Live 1f and 1g)
 static constexpr double kSmaButtonGap = 8.0;                         // the old rule's GUI units between the node and Sort
 // buttonTarget: tab (docs/stash-move-research.md § Decision buttonTarget): the
@@ -38202,7 +38202,7 @@ static constexpr TalentAllocScript kSmaProbeRemove{ HeroSiege::Scripts::gml_Scri
 static constexpr TalentAllocScript kSmaProbeBind{ HeroSiege::Scripts::gml_Script_UiSetActivationFunc,
     SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiSetActivationFunc) };
 static constexpr const char* kSmaProbeCallstack = "ForgePactMoveAll";
-static constexpr const char* kSmaProbeText = "Move all";
+static constexpr const char* kSmaProbeText = "Move All";
 static constexpr double kSmaProbeGap = 8.0;    // GUI units between the node and Sort
 static constexpr double kSmaProbeMbLeft = 1.0; // mb_left
 

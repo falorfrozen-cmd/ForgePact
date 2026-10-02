@@ -19,21 +19,21 @@ to your own totals the way Faster Cast Rate does.
 ## New
 
 - **Move all into the stash** (Mods → Quality of Life, off by default). With the
-  stash open, click the new **Move all** button - it sits in the backpack's
+  stash open, click the new **Move All** button - it sits in the backpack's
   **Sort** button's row, just left of it, under the last-but-one **Extra** tab
   above it, as **Sort Tab** sits under the last, and looks like that **Sort
   Tab** button - or press **F4**, and every item on the backpack tab you are looking at
   moves into the stash tab you are looking at, one item at a time, by the
   game's own move for that item - the same one a Ctrl + click makes - so each
   item lands where a hand move would have put it.
-  - The **Move all** button is there only while the switch is on and the stash
+  - The **Move All** button is there only while the switch is on and the stash
     is open; switching off removes it. One click is one move-all, exactly like
     F4. If the button cannot be shown, F4 still works.
   - Its width follows that **Extra** tab's, whose place is read from the game
     each time the button appears.
   - The button is drawn with the backpack **Sort Tab** button's own sprite and
     scale, with every look setting copied from it reading back as the same,
-    and its **Move all** label centred inside it, checked at one interface
+    and its **Move All** label centred inside it, checked at one interface
     scale. It reads the same when you close the stash and open it again.
   - **When the stash tab fills up**, the items that fit move and the rest stay
     in your backpack. They never spill onto another stash tab or page, and

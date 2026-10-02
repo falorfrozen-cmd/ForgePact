@@ -872,7 +872,7 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("SmaCall(kSmaUiCreateNode, stash, stash,", create)
         self.assertIn("object, RValue(), RValue(std::string(kSmaButtonCallstack)) }, node);", create)
         self.assertIn('static constexpr const char* kSmaButtonCallstack = "ForgePactMoveAll";', block)
-        self.assertIn('static constexpr const char* kSmaButtonText = "Move all";', block)
+        self.assertIn('static constexpr const char* kSmaButtonText = "Move All";', block)
         # A refusal is the core's once-only line; the mod stays on.
         self.assertIn("mod.ButtonRefused(why)", self.body("static void SmaButtonCreate("))
         self.assertIn("mod.ButtonRefused(why)", self.body("static void SmaButtonCheck("))
@@ -1117,18 +1117,18 @@ class StashMoveAllContractTests(unittest.TestCase):
         # Socketable tab now does, in player words in all three places.
         readme = README.read_text(encoding="utf-8")
         row = next(l for l in readme.splitlines() if l.startswith("| **Move all into the stash** |"))
-        for word in ("**Move all** button", "Sort", "F4", "Socketable"):
+        for word in ("**Move All** button", "Sort", "F4", "Socketable"):
             self.assertIn(word, row, word)
         section = readme[readme.index("\n## Move all into the stash\n"):]
         nxt = section.find("\n## ", 1)
         section = section if nxt < 0 else section[:nxt]
-        for word in ("**Move all** button", "**Sort**", "F4", "a new kind stays in the bag", "stashmoveall: button - "):
+        for word in ("**Move All** button", "**Sort**", "F4", "a new kind stays in the bag", "stashmoveall: button - "):
             self.assertIn(word, section, word)
         self.assertRegex(section, r"switch off takes it\s+away")
         notes = NOTES.read_text(encoding="utf-8")
         new = notes[notes.index("\n## New\n"):]
         new = new[:new.find("\n## ", 1)]
-        self.assertRegex(new, r"Move all\*\* button")
+        self.assertRegex(new, r"Move All\*\* button")
         for word in ("**Sort**", "F4", "Socketable", "stays in your backpack"):
             self.assertIn(word, new, word)
         mods = panel_file("tabs/Mods.svelte")
