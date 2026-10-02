@@ -1032,7 +1032,12 @@ of it measured yet):
   Each `angelic hit:` line in this build also carries `lootDelta=`
   (ground-loot instances after the original call minus before) and, for the
   first three hits of ours, the parameter struct's JSON before and after the
-  rewrite.
+  rewrite. `lootDelta=` has the same blind spot as `builtType=`: it counts
+  only placement that happens while the roll is still in progress, and
+  Session 1 saw none there. An item placed later, in its own event, leaves
+  `lootDelta=0` on every hit, vanilla or ours, so a vanilla hit line's
+  `lootDelta=` is that counter's own positive control, read in the same
+  check as `builtType=`'s.
 - **Gate.** The item's panel switch, a validated stand-in, the list resolved
   by name (`list=` names it and its length), and all three hooks,
   `CreateDefaultParams`, `DropItemAngelicChance` and `GetUniqueRepoStruct`,
@@ -1270,6 +1275,10 @@ conditions of the session (the decision rule above):
      `typeAgree=` at least 10 and `typeDisagree=0` pass. `untyped=` or
      `typeDisagree=` above 0 fails, and those hit lines are recorded. Fewer
      than 10 agreements is not-observed.
+   - `lootDelta=` control (recorded; it decides no verdict of this check):
+     the `lootDelta=` field of every vanilla hit line is recorded. If none
+     reads 1, no placement was seen inside the roll either, and check 8
+     judges no hit on `lootDelta=` (below).
 8. **`reach`** (research) and **`inject-build`** (research; the route's
    input). `angelicprobe inject copies 200`, then `headhunter force`, which
    answers `headhunter: ON (forced)` and one `signature drops:` line naming
@@ -1304,7 +1313,14 @@ conditions of the session (the decision rule above):
      during the roll`): their growth and endings are recorded but are no
      criterion, so `built=` growing less than `ourHits=` is not a fail, and
      the check judges on `lootDelta=1` on every hit of ours plus the owner's
-     named Headhunter, with the other pass and fail criteria unchanged.
+     named Headhunter, with the other pass and fail criteria unchanged. When
+     no vanilla hit line in check 7 read `lootDelta=1`, the `lootDelta=`
+     criteria are blind the same way, in either form: each hit of ours'
+     `lootDelta=` is recorded, and a `lootDelta=` of 0 on a hit of ours is
+     not a fail. With both blind, the check judges only on `ourHits=`
+     growing by 3 or more, `crown=0`, `anomalies=0`, no refusal and no
+     `sigdrop:` line, and the owner's named Headhunter; a crash, a refusal
+     line or an item that is not Headhunter still fails.
 9. **`on-both`** (acceptance of the shipped pairing; not-run unless
    `inject-build` passed). `tyrant force`, copies still 200. **The owner
    kills in batches of ten** until `crown=` is at least 1, two batches at
