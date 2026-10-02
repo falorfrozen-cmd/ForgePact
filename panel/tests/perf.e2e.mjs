@@ -33,7 +33,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { PANEL_DIR, launchBrowser, parseArgs, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
+import { PANEL_DIR, launchBrowser, parseArgs, postSet, startSandbox, waitBooted, waitSaved } from './lib/browser.mjs';
 import { CAP_MS, fromRecord, installSampler, measureSample } from './lib/perf-page.mjs';
 import { HARD, TARGET, longestTasks, median, medianOfRuns, overHard, overTarget, p95, panelSrcDigest, round, traceBreakdown } from './lib/perf-stats.mjs';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
@@ -93,7 +93,8 @@ const expectedChecks = EXPECTED.filter((c) => {
 function assert(ok, message) { if (!ok) throw new Error(message); }
 const $ = (page, fn, arg) => page.evaluate(fn, arg);
 const frames = (page) => $(page, () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-const post = (page, body) => $(page, (b) => fetch('/api/set', { method: 'POST', body: JSON.stringify(b) }).then((r) => r.json()), body);
+// Setup writes go to the sandbox from this process, not the page (lib/browser.mjs postSet).
+const post = postSet;
 // After an unmeasured press: past the hold's deferred decide, and still.
 async function quiet(page) { await waitSaved(page); await wait(MIN_MS); await frames(page); }
 // Somewhere that hovers nothing: the status bar's empty middle.

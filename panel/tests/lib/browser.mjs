@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { get } from 'node:http';
+import { get, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -202,6 +202,40 @@ export function getJson(url) {
       res.on('data', (c) => { body += c; });
       res.on('end', () => { try { resolveJson(JSON.parse(body)); } catch (e) { reject(e); } });
     }).on('error', reject);
+  });
+}
+
+// A suite's setup write (`/api/set`, e.g. switching every mod but three off
+// before a check), sent from this process to the page's own sandbox rather
+// than by a fetch() inside the page. The setup is not what a check measures,
+// and through the page it rode the browser's network stack: a CI run's
+// motion-M6 (PR run 37003708332) and review's ledger/hold (36390046850) each
+// failed on one such write with nothing but "TypeError: Failed to fetch", the
+// sandbox printing no error and the rest of the suite passing, while 6 of 6
+// concurrent local review runs and 8 local workers' 34,560 page writes never
+// failed. Sent from here, a failure names its socket error (ECONNREFUSED,
+// ECONNRESET, ...) or the status and body the sandbox answered with. A fresh
+// connection per write (`agent: false`): the server answers HTTP/1.0 and
+// closes, so there is nothing to reuse. It is never retried.
+export function postSet(page, body) {
+  const url = new URL('/api/set', page.url()).href;
+  const what = `setup POST ${JSON.stringify(body)} to ${url}`;
+  const data = JSON.stringify(body);
+  return new Promise((resolveJson, reject) => {
+    const req = request(url, { method: 'POST', agent: false,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => {
+        try { resolveJson(JSON.parse(text)); } catch {
+          reject(new Error(`${what}: HTTP ${res.statusCode}, not JSON: ${text.slice(0, 200)}`));
+        }
+      });
+      res.on('error', (e) => reject(new Error(`${what}: response failed: ${e.code || e.message}`, { cause: e })));
+    });
+    req.on('error', (e) => reject(new Error(`${what} failed: ${e.code || e.message}`, { cause: e })));
+    req.end(data);
   });
 }
 
