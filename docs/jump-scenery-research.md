@@ -456,7 +456,10 @@ whose bar has no leap, dash, charge or blink skill.
 - J1 and J2 were one jump: the owner was already in front of the prop with
   the cursor beyond it, so there was no separate open-ground jump. Walking (the
   builtin control, L0) was driven by key input, not by the owner.
-- The edge in J5 was not named by the owner and the wall was not identified.
+- J5 was aimed north, over a building and prop area, from 355 px inside the
+  room's west side and about 390 px below its top, so the nearest room edge
+  was beyond the jump's reach (about 117 px). It was a second jump aimed into
+  scenery, not a map-edge test.
 
 | Check | Observed | Verdict |
 | --- | --- | --- |
@@ -470,7 +473,7 @@ whose bar has no leap, dash, charge or blink skill.
 | `lever-control` | `pass 1 104 all hold`, then a walk into the prop: `position_meeting` `passed=420`, `place_meeting` 1947, `collision_line` 2021 | pass |
 | `pass-crosses-prop` | `props` and `props scripts` stayed blocked with `passed=0` on every row; `all` crossed, 117 px | pass |
 | `invalid-landing` | with `all hold`, a jump aimed into a horse carriage did not start; nothing landed inside a prop | not-observed |
-| `boundary-wall` | with `all hold`, two jumps aimed outward from 355 px inside the room's west side did not move the player | pass |
+| `boundary-wall` | with `all hold`, two jumps aimed north into a building and prop area did not move the player; the nearest room edge was 355 to 390 px away, out of reach of the 117 px jump, so no edge was tested (the operator's capture reads `pass`; this record reads it as not observed) | not-observed |
 | `warp-restore` | nothing was stuck or out of bounds, so no restore was needed | not-observed |
 
 What the session established, each item **measured** unless it says
@@ -531,9 +534,13 @@ otherwise:
   something other than the player's answered queries. `instance_place` counted 1110 calls
   from other selves in that run and none from the player; whether one of
   those is the landing test is **not established**.
-- **Aimed outward near the room's west side, the jump did not start either**
-  (two runs, the lever answering). Whether a wall, a prop or the room's
-  bounds refused it is **not established**.
+- **J5, a second jump aimed into scenery, did not carry the player either**
+  (two runs, `all hold`: the per-frame rows ran, the player's x and y did
+  not change). The jump was aimed north into a building and prop area, and
+  the nearest room edge, 355 to 390 px away, was out of reach of the 117 px
+  jump, so it says nothing about a map edge. What refused it is **not
+  established**; the candidates are the same as J4's (what the lever does not
+  answer, or something unhooked).
 - **`skillsCharge` counted one player call** at some point after J4, with no
   charge skill on the bar. The cause is **not established**. Whether a leap or
   dash skill shares the jump's path is **not observed**: Sorak has none.
@@ -623,9 +630,11 @@ but runs through `skillsLeap` and `playerJumpGravity` per frame, that it lasts
   the instance a query returns, not from its object argument (§ Decision).
 - **What holds a walk** with the lever answering (`InstancePlaceTallest` or
   the out-of-family `place_meeting` queries, § Results).
-- **The map edge and zone gates.** J5's jumps near the room's west side did
-  not start, but the edge was not identified as an `Invisible_Wall_obj`, and no
-  zone gate was tried.
+- **The map edge and zone gates.** Map-edge behaviour is not established: J5
+  never reached an edge (it was aimed north into scenery, with the nearest
+  edge out of reach of the 117 px jump), and no zone gate was tried. Whether a
+  jump with the lever on stays inside the room or leaves it at an edge is not
+  observed.
 - **The outdoor zones.** Live 1 ran in `Town_01_rm`, not `Act_01_01`.
 - **The jump's state.** No instance variable named like a jump state moved
   (`bufferJump` and `slopeHeight` stayed 0). The array-valued variable the jump
