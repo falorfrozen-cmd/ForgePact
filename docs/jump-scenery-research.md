@@ -708,7 +708,8 @@ own instrument's output.
   frame. **Not established**: whether the walk runs inside `skillsLeap`'s
   first call or just before it in the same frame. That decides whether a
   window opened at `skillsLeap` entry covers the walk; the mod counts the
-  difference as `before-open=` (below), and the live session reads it.
+  difference as `walk-before-open=` and `walk-in-window=` (below), and the
+  live session reads it.
 - **measured** (J3): the "no collision" answers the game accepted from the
   research lever: real -4 (`noone`) for `instance_position`, `collision_line`
   and `collision_circle`, bool false for `position_meeting` and
@@ -801,10 +802,16 @@ them.
 bare `jumpscenery` or `stat` prints one line: `jumpscenery: on|off
 reach=<px|none> jumps=<n> granted=<n> answered=<n> refused-landing=<n>
 refused-room=<n> refused-no-reach=<n> no-direction=<n> landed-inside=<n>
-before-open=<n> excluded=<n> room=<w>x<h>|unknown`. `before-open=` counts
-really-blocked player-self family queries in a take-off frame that came
-before the window opened; above 0 with `answered=0` in a crossing test means
-the window opens too late. The modstate JSON carries
+before-open=<n> walk-before-open=<n> walk-in-window=<n> excluded=<n>
+room=<w>x<h>|unknown`. `before-open=` counts blocked player-self family
+queries before the window opened. Walking and standing collision checks land
+in it too, so it cannot say where the take-off walk ran. Read
+`walk-before-open=` (every family circle, blocked or not, before the window)
+with `walk-in-window=`: before above 0 and in-window at 0 on a crossing jump
+means the walk ran before the window opened and needs a different opener;
+in-window at 1 or more means it ran inside; both at 0 means no walk circle
+reached the mod as family, a failed family test and not a result. The
+modstate JSON carries
 `"jumpScenery":{"enabled":...}`. The panel switch sends `jumpscenery 1|0` and
 has a `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
 
@@ -822,7 +829,7 @@ has a `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
   session (slot 14 "Sorak", representative cases, a positive control and a
   room-edge case) is pending, and its result is added here.
 - **Not established**: whether the take-off walk runs inside `skillsLeap`'s
-  first call (`before-open=`); which of the five builtins decides the
+  first call (`walk-before-open=` with `walk-in-window=`); which of the five builtins decides the
   crossing; what refuses J4 and J5 (the mod cannot override it); whether the
   game ejects a landing inside a prop; what happens at a room edge; whether a
   Leap skill also runs `skillsLeap` (**not observed**: Sorak has none);
