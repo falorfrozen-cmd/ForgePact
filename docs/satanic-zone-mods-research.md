@@ -182,6 +182,76 @@ is kept only as a best-effort diagnostic (harmless if it never fires).
    correctly stayed at 2 (nothing to correct), confirming the mechanism only
    ever touches disabled ids and leaves everything else alone.
 
+## Live 3 (2026-10-03, issue #155): the re-probe, and the zone value is writable
+
+**The 2026-09-10 "LoadSatanicZone never fires" was instrument blindness.** That
+probe ran before `HookOneScript` gained its inline-detour route (2026-09-12,
+commit `40a7473`), so it could only see table-routed calls — the same class the
+Pet Quest research paid for. Re-run with the dual-route hook (the satmods
+diagnostic hook; `satmods buff <id>` installs it and the trace logs the first
+calls): the game calls `LoadSatanicZone` **about 150-160 times a second**, with
+one argument, all session long (120k+ calls over a few minutes), in town and
+behind the town's menus. Trace shape (dev build, `bp_ipc\out.txt`):
+
+```
+satmods TRACE: LoadSatanicZone call#1 argc=1 arg0=real:<room index> -> bool:false | before filter: ...
+```
+
+**The zone value, and how to write it.** `Controller_obj.satanicZone` is the
+*key* to a protected value (`162966.0` — the same number the 2026-09-10 session
+and HS-Offline-Tracker saw). `pcall GPV 162966` reads it; `pcall SPV 162966 <n>`
+writes it, and the write sticks (read back unchanged after 4 s). The value is a
+**room asset index**: `cb room_get_name <n>` maps it (20 = `Act_02_04`,
+44 = `Act_04_03`, 235 = `Town_01_rm`; act zones run sequentially ~1-117, towns
+235-243). It is a roll, not a constant: it moved 20 -> 4 on its own during one
+session, and `pcall GetSatanicZoneOffline 2` replaced it (4 -> 28). A mod that
+wants a chosen zone must therefore re-assert it — the same poll-and-correct
+shape the buff/debuff filter already uses.
+
+**What the bool still needs.** `LoadSatanicZone(<room>)` answers false for the
+resolved room while the player is elsewhere, and false for an ineligible room
+even when the player is in it (store = 235 = the town, player in the town:
+false). So the answer is not a plain "player room == store"; eligibility and/or
+more state are involved. Forcing the answer true everywhere (`satforce on`) in
+town changed nothing visible — `playerBuff` identical, HUD identical,
+before/after screenshots identical — so the zone's effects are event- or
+entry-driven, not a per-frame application of the answer. The strongest
+candidate consumer chain is the kill path (`ProjectileKill00Universal` ->
+`EnemyKillSatanicZoneRelic`/`Feast`, `docs/models/relic-pick-spec.md`).
+
+**`satforce` (new research command, dev build only).** `satforce 1|0|off`
+makes every `LoadSatanicZone` call return true/false to its caller; it force-
+installs the diagnostic hook if the filter never did. The forcing happens
+*after* the trace line, which keeps logging the game's own answer plus
+`| FORCING -> true|false`, so a session can tell the two apart. Live: with
+`satforce on` the game received true on every call (trace + the call counter,
+~160/s) and the session stayed stable. `satforce stat` reports the mode.
+
+**Not measured / open.**
+
+- The in-zone end-to-end: enter a real zone, set the store to it, see
+  `LoadSatanicZone` true and the zone's effects (HUD, mods, relic drops). The
+  town map's zone buttons did not travel under this session's blind-click probe
+  (one click was accepted, the room did not change; the map also closes on its
+  own and the first two clicks were refused as `invalid_input`), so the travel
+  route needs a better instrument.
+- Which callers consume the bool. A caller-address line in the trace (from the
+  hook) or a Ghidra reference pass would name them; the 2026-09-10 claims about
+  the callers are now suspect.
+- Whether `GetSatanicZoneOffline`'s argument is the act number (2 produced a
+  room in act 3 on a 0-indexed read) and whether the zone roll is per session,
+  per act or periodic; observed rolls: 20, then 4, then 28 (one session), 44
+  (next session, in the character's act 4).
+- `gpvlog` (table-only) saw only our own `GPV`/`SPV` calls; the game's own
+  reads of the store never appeared there, so its per-frame path does not go
+  through the script-table entry that tracer watches.
+
+**Commands used (all dev build):** `satmods buff <id>` (hook + trace),
+`satforce 1|0|off|stat`, `pcall GPV|SPV|LoadSatanicZone|GetSatanicZoneOffline`,
+`cb room_get_name <n>`, `cb asset_get_index <name>`, `gpvlog on` ->
+`bp_ipc\gpv.txt`, `ojson` / `gjson`, `roomprobe`; screenshots and input through
+the hs-drive MCP (`menulayout`, `input.inject`).
+
 ## Open questions (not blocking, follow-up only)
 
 - Exact roll cadence/trigger is still unknown (Section "Confirmed data
