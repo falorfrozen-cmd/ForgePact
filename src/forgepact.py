@@ -20,6 +20,7 @@ __version__ = "2.1.0"
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import socket
@@ -329,6 +330,13 @@ DEFAULTS = {
     # rarity setup; "off" leaves bosses as the game made them. One of
     # BOSS_RARITY_VALUES; the sliders above never touch a boss either way.
     "boss_rarity": "off",
+    # Dungeon chest opens early (issue #31, docs/dungeon-chest-research.md):
+    # while the switch is on, a key dungeon's end chest opens once this share
+    # of its monsters is dead instead of all of them. The density_on / density
+    # pair's shape: the switch decides, the percentage (an integer in
+    # DUNGEON_CHEST_PCT_RANGE) is kept while it is off and sends nothing.
+    "mod_dungeon_chest": False,
+    "dungeon_chest_pct": 75,
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
     # rate (1 in 7,500), every step above adds a die.
     "angelic_items": 1,
@@ -843,6 +851,34 @@ def boss_rarity_cmd(cfg: dict) -> str:
     return f"bossrarity {boss_rarity_value(cfg.get('boss_rarity', 'off'))}"
 
 
+# Dungeon chest opens early (issue #31): the percentage's allowed range, the
+# slider's 50..95 (it snaps to 5 when dragged; a typed value is kept).
+DUNGEON_CHEST_PCT_RANGE = (50, 95)
+DUNGEON_CHEST_PCT_DEFAULT = 75
+
+
+def dungeon_chest_pct_value(value):
+    """`value` as the integer it rounds to, or None when it is not a number
+    (a bool or a string is not) or rounds outside DUNGEON_CHEST_PCT_RANGE."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    pct = int(round(value))
+    lo, hi = DUNGEON_CHEST_PCT_RANGE
+    return pct if lo <= pct <= hi else None
+
+
+def dungeon_chest_cmd(cfg: dict) -> str:
+    """Plugin command for the dungeon chest pair: the percentage while the
+    switch is on, `off` otherwise. A hand-edited invalid percentage sends the
+    default."""
+    if not cfg.get("mod_dungeon_chest", False):
+        return "dungeonchest off"
+    pct = dungeon_chest_pct_value(cfg.get("dungeon_chest_pct", DUNGEON_CHEST_PCT_DEFAULT))
+    return f"dungeonchest {DUNGEON_CHEST_PCT_DEFAULT if pct is None else pct}"
+
+
 ENEMY_SPEED_MAX = 300   # percent; x4 is where ranged sprinters stop being fair
 ENEMY_SPEED_STEP = 5
 
@@ -1100,6 +1136,11 @@ def build_cmds(cfg: dict) -> list:
         # Only a raised mode is sent at launch: the plugin installs the shared
         # rarity hook for it, and "off" at defaults keeps the startup list empty.
         out.append(boss_rarity_cmd(cfg))
+    if cfg.get("mod_dungeon_chest", False):
+        # Only while the switch is on: a new game already opens its chests by
+        # its own rule. No `dungeonchest countdown` line: the plugin's default
+        # form applies until the owner picks the shipping one (plan D8).
+        out.append(dungeon_chest_cmd(cfg))
     if angelic_one_in(cfg.get("angelic_items", 1)) > 0:
         out.append(angelic_cmd(cfg))
     if enemy_speed_pct(cfg.get("enemy_speed", 0)) > 0:
@@ -2812,6 +2853,14 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid boss rarity"}, 400)
                         return
                     cfg[key] = mode
+                elif key == "mod_dungeon_chest":
+                    cfg[key] = bool(val)
+                elif key == "dungeon_chest_pct":
+                    pct = dungeon_chest_pct_value(val)
+                    if pct is None:
+                        self._json({"err": "invalid dungeon chest percentage"}, 400)
+                        return
+                    cfg[key] = pct
                 elif key == "theme":
                     if not isinstance(val, str) or not THEME_NAME.fullmatch(val):
                         self._json({"err": "invalid theme"}, 400)
@@ -2940,6 +2989,14 @@ class H(BaseHTTPRequestHandler):
                         # Always explicit, off included: a live hook returns
                         # bosses to the game's own rarity only when told.
                         send_cmds([boss_rarity_cmd(cfg)], cfg)
+                    elif key == "mod_dungeon_chest":
+                        # Always explicit, off included: `dungeonchest off`
+                        # returns a live game's chests to their own rule.
+                        send_cmds([dungeon_chest_cmd(cfg)], cfg)
+                    elif key == "dungeon_chest_pct":
+                        # Stored either way; sent only while the switch is on.
+                        if cfg.get("mod_dungeon_chest", False):
+                            send_cmds([dungeon_chest_cmd(cfg)], cfg)
                     elif key == "angelic_items":
                         send_cmds([angelic_cmd(eff)], cfg)
                     elif key in ("enemy_speed", "enemy_speed_ct"):

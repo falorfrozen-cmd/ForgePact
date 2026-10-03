@@ -31,6 +31,8 @@
  "rarity_rare": 0,
  "rarity_ancient": 0,
  "boss_rarity": "off",
+ "mod_dungeon_chest": false,
+ "dungeon_chest_pct": 75,
  "angelic_items": 1,
  "enemy_speed": 0,
  "enemy_speed_ct": true,

@@ -60,7 +60,9 @@
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
   "#sw_drops_mining_ore_rolls",
   "#openreports",
-  "#boss_rarity"
+  "#boss_rarity",
+  "#mod_dungeon_chest",
+  "#dungeon_chest_pct"
  ],
  "steps": [
   {
@@ -5831,6 +5833,179 @@
     },
     "cmds": {
      "same": 469
+    }
+   }
+  },
+  {
+   "step": 472,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 75"
+     ]
+    }
+   }
+  },
+  {
+   "step": 473,
+   "control": "#dungeon_chest_pct",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 95
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 95"
+     ]
+    }
+   }
+  },
+  {
+   "step": 474,
+   "control": "#dungeon_chest_pct",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 50
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 50"
+     ]
+    }
+   }
+  },
+  {
+   "step": 475,
+   "control": "#dungeon_chest_pct",
+   "action": "type",
+   "value": "80",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 80
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 80"
+     ]
+    }
+   }
+  },
+  {
+   "step": 476,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest off"
+     ]
+    }
+   }
+  },
+  {
+   "step": 477,
+   "control": "#dungeon_chest_pct",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 95
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 478,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 95"
+     ]
+    }
+   }
+  },
+  {
+   "step": 479,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_dungeon_chest\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 476
+    },
+    "cmds": {
+     "same": 476
     }
    }
   }

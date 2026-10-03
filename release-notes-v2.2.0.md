@@ -161,6 +161,14 @@ experience.
   relic by one level, left 10/10 relics alone and stayed put when only those
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
+- **Dungeon chest opens early (#31).** A new setting on the Mods tab, under
+  Gameplay, after Bosses: a switch and a slider from 50 to 95 %, or click the
+  number beside the slider and type it. With the switch on, the chest at the
+  end of a key dungeon opens once that share of the dungeon's monsters is
+  dead, instead of all of them, so you no longer hunt down the last few
+  stragglers. When 50 or fewer kills are left, a countdown tells you how many.
+  It is off by default: turn it on in the panel, and the slider rests at 75 %
+  until you move it.
 
 ## Changed
 

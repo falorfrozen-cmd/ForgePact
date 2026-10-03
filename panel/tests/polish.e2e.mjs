@@ -539,9 +539,12 @@ async function modsCardsGameplay({ page }) {
   await subtab(page, 'subtab-gameplay');
   const got = await $(page, modCards, ['gameplayCard', []]);
   assert(got.transparent, `#gameplayCard is still drawn as a card (${got.wrapper})`);
-  assert(got.top === 1 && got.raised === 1, `Gameplay: ${got.top} top-level cards (${got.raised} raised), not 1`);
+  assert(got.top === 2 && got.raised === 2, `Gameplay: ${got.top} top-level cards (${got.raised} raised), not 2`);
   assert(got.unitsAreTops, `Gameplay: the cards are not the column's ${got.units} mods`);
-  assert(JSON.stringify(got.perCard.map((p) => p.controls)) === '[["boss_rarity"]]', 'The Gameplay card is not the Bosses select alone: ' + JSON.stringify(got.perCard));
+  // Bosses' select, then Dungeon chest opens early's switch (its range is not
+  // a checkbox or select, so modCards does not list it).
+  assert(JSON.stringify(got.perCard.map((p) => p.controls)) === '[["boss_rarity"],["mod_dungeon_chest"]]',
+    'The Gameplay cards are not the Bosses select and the dungeon chest switch: ' + JSON.stringify(got.perCard));
 }
 
 async function modsColumns({ page }) {

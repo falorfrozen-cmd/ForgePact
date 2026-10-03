@@ -284,6 +284,12 @@ function sliderVal(r){
   if(r.step==='any'&&st>0){v=Math.round(v/st)*st;v=+v.toFixed(3);r.value=v;}
   return v;
 }
+// Dungeon chest opens early's value box: the percentage while its switch is
+// on, "off" while it is off (the percentage is kept either way).
+function dungeonChestPaint(v){
+  const on=document.getElementById('mod_dungeon_chest').checked,val=document.getElementById('dcpval');
+  val.textContent=on?v+'%':'off';val.className='val '+(on?'':'off');
+}
 function typable(r,valEl){
   if(!r||!valEl||valEl.dataset.typable)return;
   valEl.dataset.typable='1'; valEl.style.cursor='text'; valEl.title='Click to type a value';
@@ -475,6 +481,10 @@ async function boot(){
     }
     document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
     document.getElementById('boss_rarity').value=c.boss_rarity||'off';
+    const mdc=!!c.mod_dungeon_chest;
+    document.getElementById('mod_dungeon_chest').checked=mdc;
+    document.getElementById('dungeon_chest_pct').value=c.dungeon_chest_pct??75;
+    dungeonChestPaint(c.dungeon_chest_pct??75);
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -626,6 +636,18 @@ function bind(){
     document.getElementById('denval').textContent=e.target.checked?'x'+den.value:'off';
     document.getElementById('denval').className='val '+(e.target.checked?'':'off');
     toast('density '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  // Dungeon chest opens early: density's switch-plus-slider shape. The value
+  // follows the drag (input) and is posted on release (change); the switch
+  // repaints before its POST, so a lost server still leaves the box right.
+  const dcp=document.getElementById('dungeon_chest_pct');
+  dcp.oninput=()=>dungeonChestPaint(sliderVal(dcp));
+  dcp.onchange=async()=>{const v=sliderVal(dcp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'dungeon_chest_pct',value:v})});toast('Dungeon chest opens at '+v+'% - '+(res.ok||res.err))};
+  typable(dcp,document.getElementById('dcpval'));
+  document.getElementById('mod_dungeon_chest').onchange=async(e)=>{
+    dungeonChestPaint(+dcp.value);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_dungeon_chest',value:e.target.checked})});
+    toast('Dungeon chest opens early '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('autoapply').onchange=async(e)=>{
     await j('/api/set',{method:'POST',body:JSON.stringify({key:'auto_apply',value:e.target.checked})});
@@ -1024,7 +1046,9 @@ function preparePanelUI(){
   }
   document.querySelectorAll('input[type=range]').forEach((range,index)=>{
     const row=range.closest('.row');if(!row)return;
-    const label=row.querySelector('.lbl')?.textContent.trim()||'Density multiplier';
+    // A range whose markup names what it sets (Dungeon chest opens early's
+    // share) keeps that name; every other is named by its row's label.
+    const label=range.getAttribute('aria-label')||row.querySelector('.lbl')?.textContent.trim()||'Density multiplier';
     range.setAttribute('aria-label',label);
     if(!range.id)range.id='setting-'+(range.dataset.sec||'value')+'-'+(range.dataset.key||index);
     if(range.parentElement.classList.contains('range-control'))return;
@@ -1095,7 +1119,7 @@ function showHiddenLootKey(c){
 }
 export function refreshSavedControls(){
   if(!ST?.cfg||document.querySelector('.numedit'))return;
-  const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient'};
+  const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient',dungeon_chest_pct:'dungeon_chest_pct'};
   // Switches first: each range's oninput below reads its switch to paint "off".
   paintSwitches(c);
   const painted=[];
@@ -1110,7 +1134,7 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll',mod_dungeon_chest:'mod_dungeon_chest'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   document.getElementById('boss_rarity').value=c.boss_rarity||'off';
@@ -1120,6 +1144,8 @@ export function refreshSavedControls(){
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
   document.getElementById('denval').textContent=c.density_on?'x'+c.density:'off';
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
+  // After the booleans: the range's oninput above painted with the switch's old state.
+  dungeonChestPaint(c.dungeon_chest_pct??75);
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   showHiddenLootKey(c);

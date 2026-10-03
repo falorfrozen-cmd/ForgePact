@@ -55,6 +55,7 @@ none of these diagnostic hooks or the recorder. See
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
+| **Dungeon chest opens early** | Mods → Gameplay, off by default. A switch and a slider from 50 to 95 % (click the value to type it): in a key dungeon, the chest at the end opens once that share of the dungeon's monsters is dead instead of all of them. When 50 or fewer kills are left, a countdown tells you how many. Not yet measured in a live game ([details](#dungeon-chest-opens-early)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 | **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
@@ -167,7 +168,7 @@ taken from the test sandbox, which reports the game open without the mod plugin
 **Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
 ![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
-**Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made.
+**Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made, and [Dungeon chest opens early](#dungeon-chest-opens-early).
 
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
@@ -190,7 +191,8 @@ everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard and the timed skill countdown), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon), and **Gameplay**, which holds the Bosses setting. Quality of
+Crown, Beacon), and **Gameplay**, which holds the Bosses setting and Dungeon
+chest opens early. Quality of
 Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
@@ -296,6 +298,28 @@ rare, three on an ancient.
   code's direct calls are not raised. If the hook could not be installed at all, choosing
   Rare or Ancient is refused: the plugin answers `bossrarity: refused <mode> hook=failed`
   and the setting stays as it was.
+
+### Dungeon chest opens early
+**Mods › Gameplay → Dungeon chest opens early** is a switch and a slider. Off, the default,
+changes nothing: a key dungeon's end chest opens the way the game decides. On, the chest
+opens once the share of the dungeon's monsters the slider is set to is dead, instead of all
+of them. The slider runs from 50 to 95 % in steps of 5 and rests at 75; click the value
+beside it to type an exact whole number. Moving the slider while the switch is off keeps
+the value for later and changes nothing in the game.
+
+- **Progress:** the share is counted from the monsters killed since the chest was first
+  seen against those kills plus the monsters still alive, checked once a second. Monsters
+  the dungeon has not spawned yet are not counted.
+- **Countdown:** when 50 or fewer kills are left to go, a countdown tells you how many
+  ("Chest: 23 kills to go"). Where it shows is still being decided.
+- **Only the dungeon's end chest:** what the chest drops, how often and how good it is are
+  the game's own; world chests, Colossal and Abyss chests and the boss-room door are never
+  touched. Offline single player only, like every mod here.
+- **Not yet measured in a live game.** How the chest is unlocked is being established
+  ([research and test scope](docs/dungeon-chest-research.md)); until a live session
+  records it, nothing above is a measured result.
+- **Commands:** the panel sends `dungeonchest <percent>` (`dungeonchest 75`) while the
+  switch is on, and `dungeonchest off` when you turn it off.
 
 ### Signature drops
 Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game's own

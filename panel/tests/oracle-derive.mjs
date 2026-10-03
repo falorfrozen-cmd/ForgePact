@@ -73,8 +73,24 @@
 // the Mods tab's Gameplay sub-tab, issue #44): raised, off, raised again and
 // Turn off, each post and line written out as a literal, entered on their tab
 // and Mods sub-tab (Mods, then Gameplay, since the panel buttons leave Setup
-// open). They come after the panel controls, last of all, so no earlier
-// step's index moves.
+// open). They come after the panel controls, so no earlier step's index
+// moves.
+//
+// NATIVE_SWITCHED_RANGES are switch-plus-range pairs no recorded page ever
+// had (Dungeon chest opens early, issue #31, on Mods › Gameplay): a switch
+// of their own, as Monster Density's #den_on is density's, beside a
+// top-level range whose value box is typable. NATIVE_SLIDERS does not fit
+// them: a table slider's switch turned off sends what its slider sends at its
+// minimum, and this one sends `<verb> off`, a different line, while a range
+// moved with the switch off is saved and sends nothing. So each step's post
+// and line are literals: the switch on (the range at its resting value), the
+// range at its maximum, at its minimum, a typed value, the switch off, the
+// range at its maximum while off (posted, nothing sent), the switch on again
+// (it sends the saved maximum), and the Turn off button, which repeats the
+// switch's off. Entered on their tab and Mods sub-tab (the native selects
+// leave them open), they come after the native selects, last of all, so no
+// earlier step's index moves, and both the switch and the range are in
+// `controls`, since no recording lists either.
 //
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
@@ -160,9 +176,18 @@ export const PANEL_BUTTONS = [
 // the chosen value. The legacy #mod_skill_timer_style branch above walks only
 // the recording's controls, so these are written out as literals - raised,
 // off, raised again, then the Turn off button, which sends what off sends -
-// after the panel controls, last of all, so no earlier step's index moves.
+// after the panel controls, so no earlier step's index moves.
 export const NATIVE_SELECTS = [
   { key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' },
+];
+// Switch-plus-range pairs no recorded page ever had (Dungeon chest opens
+// early, issue #31; see the header): the switch's config key, the range's
+// config key (each control's id is its key), where they sit, the plugin verb
+// src/forgepact.py sends, the range's resting value in a fresh sandbox, its
+// ends, and the value typed into its number input. Last of all.
+export const NATIVE_SWITCHED_RANGES = [
+  { key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay', verb: 'dungeonchest',
+    rest: 75, min: 50, max: 95, typed: 80 },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
@@ -350,6 +375,24 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     const on = push(selector, 'select', { value: raised, expect: { posts: { is: setPost({ key, value: raised }) }, cmds: { is: [`${verb} ${raised}`] } } });
     const off = push(selector, 'select', { value: 'off', expect: { posts: { is: setPost({ key, value: 'off' }) }, cmds: { is: [`${verb} off`] } } });
     push(selector, 'select', { value: raised, expect: { posts: { same: on }, cmds: { same: on } } });
+    push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+  }
+  // The switch-plus-range pairs no recording has: their literal contract, last
+  // of all (Mods › Gameplay is still open from the native selects).
+  for (const { key, range, tab, sub, verb, rest, min, max, typed } of NATIVE_SWITCHED_RANGES) {
+    const sw = '#' + key;
+    const rg = '#' + range;
+    controls.push(sw, rg);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+    const sends = (value, cmds) => ({ posts: { is: setPost({ key: range, value }) }, cmds: { is: cmds } });
+    push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} ${rest}`] } } });
+    push(rg, 'max', { expect: sends(max, [`${verb} ${max}`]) });
+    push(rg, 'min', { expect: sends(min, [`${verb} ${min}`]) });
+    push(rg, 'type', { value: String(typed), expect: sends(typed, [`${verb} ${typed}`]) });
+    const off = push(sw, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} off`] } } });
+    push(rg, 'max', { expect: sends(max, []) });
+    push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} ${max}`] } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
   return {
