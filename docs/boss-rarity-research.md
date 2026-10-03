@@ -639,14 +639,16 @@ What the game built, on the Karp King the Bosses control raised to Ancient
   one sample's spread is not established.
 - `ancient-xp` **pass (6.2505)**: the record the key in `killExperience`
   names, 4,950 -> 30,940 (`experience`'s, 2,152 -> 13,452, ×6.2509), the
-  table's exact ×6.25: `boss_xp_follows_rank_table` is `True` for what was
-  measured, rank 4 on this one boss; the rank-3 row was not measured on a
-  boss.
+  table's exact ×6.25, measured at rank 4 on this one boss. But it is the
+  same spawn as the damage read, whose affixes (12, 20, 31) were not the
+  control's (5, 12, 18), so `boss_xp_follows_rank_table` stays `None`; the
+  rank-3 row was not measured on a boss.
 - `ancient-drop-rank` **pass**: the anchor `a0=int64:1` (step 3), then the
   ancient Karp King's death printed
   `droptrace: DropItem self=Karp_King_obj#310750 argc=12 a0=real:4.000000 a1=int64:2 a2=real:1960.455688 a3=real:4431.812988 a4=real:1.000000 a5=real:0.000000 a6=kind=15 str=ref ds_list 895 a7=kind=15 str=ref ds_list 896`.
-  The boss's drop rank followed the rank written:
-  `boss_drop_rank_reaches_dropitem` is `True`. No `DropItemBoss` line was
+  On this boss the drop rank was the rank written, measured; the spawn
+  carried the same unmatched affixes, so
+  `boss_drop_rank_reaches_dropitem` stays `None`. No `DropItemBoss` line was
   printed at either death.
 - `ancient-drops` **pass** (a record, never a verdict on drops): the rank-1
   traced kill added 10 lines to `itemdrops.jsonl`, the ancient traced kill
