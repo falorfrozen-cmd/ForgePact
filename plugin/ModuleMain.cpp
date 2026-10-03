@@ -12205,7 +12205,7 @@ static const AngelicBase kAngelicBases[] = {
 // Crown left it with #74 and drop from the game's own Angelic roll instead.
 struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
 static std::vector<AngelicCandidate> g_AngelicPool;
-static bool g_AngelicPoolBuilt = false;
+static bool g_AngelicPoolBuilt = false;   // set only by a build that found candidates (BuildAngelicPool)
 static double g_AngelicDropOneIn = 0.0;   // 0 = off; N = one angelic drop per N kills on average
 static volatile long g_AngelicDropRolls = 0, g_AngelicDropHits = 0, g_AngelicDropFails = 0;
 static std::string StructKey(const RValue& st, const char* field)
@@ -12213,10 +12213,21 @@ static std::string StructKey(const RValue& st, const char* field)
     try { RValue v = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue(field) }); if (v.m_Kind == VALUE_STRING) return v.ToString(); } catch (...) {}
     return std::string();
 }
+// Only a build that finds candidates is kept.  One that comes back empty - the game's unique data
+// not loaded yet, as when the panel applies a Headhunter / Tyrant's Crown switch at the main menu
+// (#74 review) - is tried again by the next caller (a roll, through SignatureResolveStandIns, or a
+// switch-on), but no sooner than kRetryMs after the last try, since a build makes about 58
+// InitItemFromJson calls; its line is logged once, not per retry.  `angeliclist` (verbose)
+// rebuilds at once, as before.
 static void BuildAngelicPool(bool verbose)
 {
+    static constexpr unsigned long long kRetryMs = 5000;
+    static unsigned long long nextTry = 0;
+    static bool emptyLogged = false;
     if (g_AngelicPoolBuilt) return;
-    g_AngelicPoolBuilt = true;
+    const unsigned long long now = GetTickCount64();
+    if (!verbose && now < nextTry) return;
+    nextTry = now + kRetryMs;
     g_AngelicPool.clear();
     int rejected = 0;
     for (const AngelicBase& base : kAngelicBases) {
@@ -12251,7 +12262,11 @@ static void BuildAngelicPool(bool verbose)
         else ++rejected;
         if (verbose) Out(std::string("angeliclist: ") + base.name + " (" + std::to_string(base.type) + "/" + std::to_string(base.sub) + "/" + std::to_string(base.b) + ") -> " + (why.empty() ? "ok" : why));
     }
-    Out("angelic pool: " + std::to_string(g_AngelicPool.size()) + " candidates, " + std::to_string(rejected) + " rejected");
+    g_AngelicPoolBuilt = !g_AngelicPool.empty();
+    if (g_AngelicPoolBuilt || verbose || !emptyLogged)
+        Out("angelic pool: " + std::to_string(g_AngelicPool.size()) + " candidates, " + std::to_string(rejected) + " rejected"
+            + (g_AngelicPoolBuilt ? std::string() : std::string(" - tried again, at most every 5 s, until the game's unique data is loaded")));
+    if (!g_AngelicPoolBuilt) emptyLogged = true;
 }
 static bool SpawnAngelicItem(const AngelicCandidate& c, double x, double y, CInstance* ctx)
 {
@@ -12607,7 +12622,7 @@ static bool SigUniqueDropBase(const AngelicCandidate& c, double& base)
     } catch (...) { return false; }
 }
 // Resolves each row's stand-in against the validated pool (BuildAngelicPool) once - again only
-// while the pool is empty.  Another unique sharing the stand-in's sub and b (Liquor Holster's
+// while the pool is empty, which BuildAngelicPool then retries at most every 5 s.  Another unique sharing the stand-in's sub and b (Liquor Holster's
 // 0/51 is also Supreme Elemelon's, type 10) is no reason to refuse: a hit is typed from the
 // whole [type, sub, b] the roll read for it (Hook_GetUniqueRepoStruct), so that other unique's
 // hits are never the stand-in's.
@@ -12650,7 +12665,17 @@ static void SignatureInjectPush()
     g_SigRollPushed = 0;
     g_SigRollCopies[0] = g_SigRollCopies[1] = 0;
     if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;
-    SignatureResolveStandIns();
+    {
+        // A pool build retried here (BuildAngelicPool, while the pool is empty) calls the game's
+        // GetUniqueRepoStruct and InitItemFromJson; it runs outside the roll's scope, so no call
+        // it makes is taken for the roll's read or a hit.
+        struct OutsideRoll {
+            int depth = g_SigRollDepth;
+            OutsideRoll() { g_SigRollDepth = 0; }
+            ~OutsideRoll() { g_SigRollDepth = depth; }
+        } outside;
+        SignatureResolveStandIns();
+    }
     RValue list, sub;
     if (!SignatureListResolve(list, false, false, &sub)) return;
     g_SigRollList = list;

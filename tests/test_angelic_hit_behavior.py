@@ -47,6 +47,11 @@ item off for the session (`rewrite refused: <why>`, `refused=`).
 element to a number first): the list gate refuses an array, a string, a
 struct, an undefined or a null as `never a handle` before any conversion, and
 still accepts a live list whose handle is a real or a ref.
+`test_pool_retry` is the PR review's change, and fails by its own assertions
+against the plugin before it (ForgePact `b1f7cce`, which latched the first pool
+build even when it came back empty): the plugin's own `BuildAngelicPool`, run
+against the model's unique data, keeps only a build that found candidates, so a
+later roll or switch-on resolves the stand-ins once the data is there.
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -62,6 +67,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Inserted at `// PRODUCTION_TYPES`, ahead of the harness globals that use them.
 PRODUCTION_TYPES = (
+    'struct AngelicBase {',                      # the pool's rows, the model's unique data
+    'static const AngelicBase kAngelicBases[]',
     'struct SignatureRollScope {',
     'struct SignatureItem {',
     'static constexpr SignatureItem kSignatureItems[]',
@@ -70,6 +77,8 @@ PRODUCTION_TYPES = (
 
 # Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
 PRODUCTION = (
+    'static bool TryStructNumber(',               # the pool build's reads
+    'static std::string StructKey(',
     'static bool SignatureSwitchOn(',
     'static std::string SignatureOffReason(',      # `rewrite refused: <why>` once an item is latched off
     'static double SignatureShare(',             # the beside design only
@@ -109,6 +118,11 @@ PRODUCTION = (
     'static void SigListDump(',                   # replan 2, research build: `angelicprobe list dump`
     'static void SigInjectStatus(',               # research build: `angelicprobe inject status`, for its list=
 )
+
+# The plugin's own pool build, appended to the functions under another name: the harness's
+# BuildAngelicPool keeps its fixed pool for every scenario but `test_pool_retry`'s, which hand
+# the call to this one against the model's unique data.
+POOL_BUILD = ('static void BuildAngelicPool(', 'static void ProductionBuildAngelicPool(')
 
 
 def implementation(source, signature):
@@ -152,7 +166,11 @@ class AngelicHitBehaviorTests(unittest.TestCase):
                     parts.append(body)
                     defines.append(has_define(signature))
             blocks[marker] = '\n\n'.join(parts)
-        types = '\n'.join(defines) + '\n\n' + blocks['types']
+        pool = implementation(source, POOL_BUILD[0])
+        if pool:
+            blocks['functions'] += '\n\n' + pool.replace(POOL_BUILD[0], POOL_BUILD[1], 1)
+            defines.append(has_define(POOL_BUILD[1]))
+        types ='\n'.join(defines) + '\n\n' + blocks['types']
         # One directory per run: the negative control compiles the beside source while the
         # current one may be compiling beside it (run_criteria --jobs), and a shared
         # directory let one run execute the other's binary.
@@ -282,6 +300,15 @@ class AngelicHitBehaviorTests(unittest.TestCase):
         # A refused rewrite latches its item off for the session: no more copies pushed, the gate
         # off with `rewrite refused: <why>`, `refused=` counting it, the other item still on.
         self.run_scenarios(('refusal_latches_item_off',))
+
+    def test_pool_retry(self):
+        # The #74 review: the plugin's own BuildAngelicPool runs against the model's unique data,
+        # absent at first (a switch applied at the main menu). An empty build is not kept: it is
+        # logged once and tried again, at most once per 5 s, by a later roll or switch-on, which
+        # then resolves the stand-ins and pushes them; a pool that found candidates is built once,
+        # and `angeliclist` still rebuilds at once. Both fail against the plugin before the fix,
+        # which latched the first, empty, build for the session.
+        self.run_scenarios(('empty_pool_retried_on_a_later_roll', 'empty_pool_retried_on_a_later_switch_on'))
 
     def test_detection(self):
         # Kept from the beside design: the detection is installed once, by name, as two inline

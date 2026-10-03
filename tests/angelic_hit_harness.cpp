@@ -38,6 +38,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <iostream>
 #include <iterator>
@@ -100,6 +102,9 @@ static Triple tripleOf(const RValue& entry) {
 using PVOID = void*;
 using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
 static long InterlockedIncrement(volatile long* value) { return ++*const_cast<long*>(value); }
+// The clock the pool build's retry throttle reads; a scenario moves it by hand.
+static unsigned long long fakeNowMs = 1000;
+static unsigned long long GetTickCount64() { return fakeNowMs; }
 namespace HeroSiege::Scripts {
 inline constexpr std::string_view gml_Script_DropItemAngelicChance = "gml_Script_DropItemAngelicChance";
 inline constexpr std::string_view gml_Script_CreateDefaultParams = "gml_Script_CreateDefaultParams";
@@ -273,6 +278,16 @@ static std::string variableShape() { RValue* v = listVariable(); return v ? shap
 static std::vector<Triple> plus(std::vector<Triple> v, std::initializer_list<Triple> extra) { v.insert(v.end(), extra.begin(), extra.end()); return v; }
 // droprate.base per (type, sub, b); the crown's default stand-in is the type-0 one with the lowest.
 static std::map<Triple, double> repoBase;
+// The unique data the plugin's own pool build reads (scenarios with `gamePool` only): each known
+// triple's name key (itemBaseInfoStruct "28"), and whether the game has it yet. Before it does -
+// the panel's auto-apply at the main menu - the model's GetUniqueRepoStruct gives no definition;
+// what the game really returns there is not established, only that the build can come back empty.
+static bool gamePool = false, uniqueDataReady = true;
+static std::map<Triple, std::string> uniqueKeys;
+static int poolRepoReads = 0;   // GetUniqueRepoStruct calls the pool build (and the stand-ins) made
+// A script InitItemFromJson also calls, set by a scenario: whether the real one calls any hooked
+// script is not established, so a scenario can give it the worst case, CreateDefaultParams.
+static void (*initItemAlsoCalls)() = nullptr;
 
 // ---- the runtime the plugin calls: builtins and game scripts ---------------------------------------
 static int builtinCalls = 0;
@@ -341,14 +356,41 @@ struct FakeYytk {
             for (const auto& kv : obj(a[0])) { char b[64]; std::snprintf(b, sizeof b, "%g", kv.second.number); s += (s.size() > 1 ? "," : "") + ("\"" + kv.first + "\":") + b; }
             return RValue(s + "}");
         }
+        if (n == "json_parse") {   // the pool build's probe item, {"w":1,"a":...,"j":<sub>,"b":<b>,"c":1}
+            std::map<std::string, RValue> f;
+            const std::string& s = a[0].text;
+            for (const char* key : { "w", "a", "j", "b", "c" }) {
+                const size_t at = s.find(std::string("\"") + key + "\":");
+                if (at != std::string::npos) f[key] = RValue(std::strtod(s.c_str() + at + std::strlen(key) + 3, nullptr));
+            }
+            return makeStruct(f);
+        }
         throw std::runtime_error("unmodelled builtin " + n);
     }
     void CallBuiltinEx(RValue& out, const char* functionName, CInstance*, CInstance*, std::vector<RValue> a) { out = CallBuiltin(functionName, std::move(a)); }
     RValue CallGameScript(std::string_view name, const std::vector<RValue>& a) {
         if (name != "gml_Script_GetUniqueRepoStruct") throw std::runtime_error("unmodelled script");
-        const auto it = repoBase.find({ num(a[0]), num(a[1]), num(a[2]) });
+        const Triple t{ num(a[0]), num(a[1]), num(a[2]) };
+        const auto it = repoBase.find(t);
+        if (gamePool) {   // the definition the pool build validates: its name key, and its droprate
+            ++poolRepoReads;
+            const auto key = uniqueKeys.find(t);
+            if (!uniqueDataReady || key == uniqueKeys.end()) return RValue();
+            return makeStruct({ { "itemBaseInfoStruct", makeStruct({ { "28", RValue(key->second) } }) },
+                                { "droprate", makeStruct({ { "base", RValue(it == repoBase.end() ? 50000000.0 : it->second) } }) } });
+        }
         if (it == repoBase.end()) return RValue();
         return makeStruct({ { "droprate", makeStruct({ { "base", RValue(it->second) } }) } });
+    }
+    // InitItemFromJson(parsed, "0-0-1-<type>"): the pool build's probe item, rarity 7 (Angelic)
+    // for a unique the game knows, nothing before its unique data is there.
+    void CallGameScriptEx(RValue& out, std::string_view name, CInstance*, CInstance*, std::vector<RValue> a) {
+        if (name != "gml_Script_InitItemFromJson") throw std::runtime_error("unmodelled script");
+        out = RValue();
+        if (initItemAlsoCalls) initItemAlsoCalls();
+        const std::string& key = a[1].text;
+        const Triple t{ std::strtod(key.c_str() + key.rfind('-') + 1, nullptr), obj(a[0])["j"].number, obj(a[0])["b"].number };
+        if (uniqueDataReady && uniqueKeys.count(t)) out = makeStruct({ { "itemInfoStruct", makeStruct({ { "27", RValue(7.0) } }) } });
     }
     void GetGlobalInstance(CInstance** out) { *out = &globalInstance; }
 };
@@ -372,13 +414,21 @@ static double HhReadNumber(const RValue& value, const char* field, double fallba
     return fallback;
 }
 // The validated pool BuildAngelicPool leaves: ordinary uniques, the three real stand-in
-// candidates, and whatever a scenario adds.
+// candidates, and whatever a scenario adds. A scenario with `gamePool` runs the plugin's own
+// build instead (ProductionBuildAngelicPool, set in reset()) against the model's unique data.
 struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
 static std::vector<AngelicCandidate> g_AngelicPool;
+static bool g_AngelicPoolBuilt = false;
 static std::vector<AngelicCandidate> poolExtras;
 static int poolBuilds = 0;
-static void BuildAngelicPool(bool) {
+static void (*productionPoolBuild)(bool) = nullptr;
+static void BuildAngelicPool(bool verbose) {
     ++poolBuilds;
+    if (gamePool) {
+        if (!productionPoolBuild) throw std::runtime_error("this source has no BuildAngelicPool to run");
+        productionPoolBuild(verbose);
+        return;
+    }
     if (!g_AngelicPool.empty()) return;
     for (int i = 0; i < 40; ++i) g_AngelicPool.push_back({ 3, 1, i, "unique", true });
     g_AngelicPool.push_back({ 8, 0, 51, "Liquor Holster", true });
@@ -713,6 +763,10 @@ static void reset() {
     outLines.clear();
     g_HhEnabled = false; g_TyEnabled = false; g_HhForced = false; g_TyForced = false;
     g_AngelicPool.clear(); poolExtras.clear(); poolBuilds = 0;
+    g_AngelicPoolBuilt = false; gamePool = false; uniqueDataReady = true; uniqueKeys.clear(); poolRepoReads = 0; initItemAlsoCalls = nullptr;
+#ifdef HAS_PRODUCTIONBUILDANGELICPOOL
+    productionPoolBuild = ProductionBuildAngelicPool;
+#endif
     spawns.clear(); builds.clear(); builtinCalls = 0;
     controllerCount = 1; controllerVars.clear(); dsIdKind = VALUE_REAL; setList(vanillaTriples());
     controllerKind = VALUE_REF; getReturnsCopy = false; copiedIds.clear();
@@ -756,6 +810,16 @@ static void reset() {
 }
 static void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+// The plugin's own pool build against the model's unique data, which knows every kAngelicBases
+// row by its key (the game agreeing with the plugin's table), but not before `ready`.
+static void useGamePool(bool ready) {
+    gamePool = true;
+    uniqueDataReady = ready;
+    uniqueKeys.clear();
+#ifdef HAS_KANGELICBASES
+    for (const AngelicBase& base : kAngelicBases) uniqueKeys[{ (double)base.type, (double)base.sub, (double)base.b }] = base.key;
+#endif
 }
 // What a switch turning on does: install the detection. Absent from a source without it.
 static void installDetection() {
@@ -1673,6 +1737,87 @@ int main(int argc, char** argv) {
             require(sigdropStatusLine().find(" gate=tyrant:off,headhunter:off ") != std::string::npos, "`sigdrop status` does not report the gate off for auto-armed items");
 #else
             require(false, "no `sigdrop status` line reports the gate");
+#endif
+        // ---- the #74 review: a pool build that comes back empty is not kept ----
+        // Both fail against the plugin before the fix, which latched the first build however it
+        // came out, so a switch applied at the main menu left both stand-ins unresolved all session.
+        } else if (test == "empty_pool_retried_on_a_later_roll") {
+#ifdef HAS_KANGELICBASES
+            // The panel's auto-apply at the main menu: both switches on (each switch-on installs the
+            // detection and resolves the stand-ins) before the game's unique data is there.
+            useGamePool(false);
+            g_HhForced = true; g_TyForced = true;
+            installDetection();
+            const int firstTry = poolRepoReads;
+            require(firstTry > 0, "the switch-on did not try to build the pool");
+            installDetection();
+            require(poolRepoReads == firstTry, "the second switch-on, inside 5 s, built the pool again");
+            require(!switchOn(0) && !switchOn(1), "a stand-in resolved against a build with no unique data");
+            require(linesStartingWith("angelic pool:") == 1 && anyLineHas("angelic pool:", ": 0 candidates"),
+                    "the empty build was not logged once: " + lastLine("angelic pool:"));
+            // Still not loaded 5 s later: the next roll tries again, and says nothing.
+            fakeNowMs += 5000;
+            roll(monster, { false });
+            const int secondTry = poolRepoReads;
+            require(secondTry > firstTry, "an empty pool was never built again");
+            require(linesStartingWith("angelic pool:") == 1, "a retry logged the empty pool again");
+            // In a zone, the data loaded: a roll inside the throttle builds nothing and pushes nothing.
+            uniqueDataReady = true;
+            setList(vanillaTriples(false));   // n = 0: the pushed entry is the only Liquor Holster
+            pickPolicy = Pick::Last;
+            fakeNowMs += 4999;
+            roll(monster, { false });
+            require(poolRepoReads == secondTry, "the pool was built again sooner than 5 s after the last try");
+            require(listDuringCall.back() == vanilla, "a roll pushed an entry before the stand-ins resolved: " + describe(listDuringCall.back()));
+            // The first roll 5 s after the last try builds the pool, resolves both stand-ins and pushes
+            // them. The build runs inside the game's roll: were InitItemFromJson to call
+            // CreateDefaultParams itself (not established), none of its calls may count as a hit.
+            initItemAlsoCalls = [] {
+                RValue sub(0.0), b(1.0), c(1.0), params;
+                RValue* args[] = { &sub, &b, &c };
+                cdpEntry(nullptr, nullptr, params, 3, args);
+            };
+            fakeNowMs += 1;
+            roll(monster, { true });
+            require(g_SigGameHits == 1 && g_SigUntyped == 0,
+                    "the pool build inside the roll was taken for a hit: gameHits=" + std::to_string(g_SigGameHits) + " untyped=" + std::to_string(g_SigUntyped));
+            require(switchOn(0) && switchOn(1), "the stand-ins did not resolve on a roll after the unique data loaded");
+            require(listDuringCall.back() == plus(vanilla, { kCrownStandIn, kBeltStandIn }),
+                    "the roll after the pool built did not carry both stand-ins: " + describe(listDuringCall.back()));
+            require(g_SigOurHits == 1 && countBuilds(1) == 1, "the hit on the pushed entry was not built as Headhunter");
+            require(linesStartingWith("angelic pool:") == 2 && lastLine("angelic pool:").find(": 0 candidates") == std::string::npos,
+                    "the build that found candidates was not logged once: " + lastLine("angelic pool:"));
+            // A pool that found candidates is kept: no build after it, however long the session.
+            const int kept = poolRepoReads;
+            fakeNowMs += 600000;
+            roll(monster, { false });
+            require(poolRepoReads == kept, "a pool that found candidates was built again");
+#else
+            require(false, "this source has no kAngelicBases for the model's unique data");
+#endif
+        } else if (test == "empty_pool_retried_on_a_later_switch_on") {
+#ifdef HAS_KANGELICBASES
+            useGamePool(false);
+            g_HhForced = true;
+            installDetection();   // `headhunter force` at the main menu
+            require(!switchOn(1), "the stand-in resolved against a build with no unique data");
+            uniqueDataReady = true;
+            fakeNowMs += 5000;
+            installDetection();   // `headhunter force` again, in a zone
+            require(switchOn(1), "a later switch-on did not resolve the stand-in once the unique data loaded");
+            require(anyLineHas("signature drops:", "Headhunter:Liquor Holster"), "the later switch-on did not name the stand-in");
+            setList(vanillaTriples(false));
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(g_SigOurHits == 1 && countBuilds(1) == 1, "the hit on the pushed entry was not built as Headhunter");
+            // `angeliclist` still rebuilds at once and verbosely, inside the throttle, and keeps the pool.
+            const size_t pool = g_AngelicPool.size();
+            const int listed = linesStartingWith("angeliclist:");
+            g_AngelicPoolBuilt = false; BuildAngelicPool(true);
+            require(g_AngelicPoolBuilt && g_AngelicPool.size() == pool, "`angeliclist` did not rebuild the same pool at once");
+            require(linesStartingWith("angeliclist:") - listed == (int)std::size(kAngelicBases), "`angeliclist` did not list every row");
+#else
+            require(false, "this source has no kAngelicBases for the model's unique data");
 #endif
         } else return 2;
         std::cout << "PASS " << test << '\n';
