@@ -145,6 +145,10 @@ class BossRarityPanelTextTests(unittest.TestCase):
         text = re.sub(r"<[^>]+>", " ", card)
         self.assertIn('id="boss_rarity"', card)
         self.assertIn("Bosses", text)
+        # The select carries its row's label as its accessible name: the
+        # visible "Bosses" is a <span>, not a <label for>, so nothing else
+        # names it (WCAG 4.1.2).
+        self.assertIn('<select class="style-select" id="boss_rarity" aria-label="Bosses">', card)
         self.assertIn("off by default", text.lower())
         self.assertIn("left alone", text.lower(), "bosses the game made rare are left alone")
         for value in forgepact.BOSS_RARITY_VALUES:

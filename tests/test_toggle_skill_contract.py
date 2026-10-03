@@ -1257,7 +1257,8 @@ class SkillTimerShipContractTests(unittest.TestCase):
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
         self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
                                           'aria-label="Show hidden loot while held">'), 1)
-        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="boss_rarity">'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="boss_rarity" '
+                                          'aria-label="Bosses">'), 1)
         # Named by its row's label, since the visible label is a <span>.
         m = re.search(
             r'<select class="style-select" id="mod_skill_timer_style" '
