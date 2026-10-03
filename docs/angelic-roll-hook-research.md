@@ -1629,7 +1629,7 @@ research.
    tokens: the index rides inside `list=`.
 7. **The `list=` token, and the player build.** On both status lines
    (`sigdrop status` and `angelicprobe inject status`) `list=` now prints
-   `<name>[<index>]:<size>`, for example `lootListUnique[5]:58`, and `none` or
+   `<name>[<index>]:<size>`, for example `lootListUnique[5]:380`, and `none` or
    `missing` as before. The player build's `kAngelicListVar` stays empty
    until Live 2's `reach` proves a name, and `kAngelicListIndex` stays 5
    unless that session had to move it; with the name empty the gate refuses
