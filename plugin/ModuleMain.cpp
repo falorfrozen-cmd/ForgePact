@@ -45973,6 +45973,17 @@ static bool JsExcludedBlocks(TRoutine orig, const JsNs::BuiltinRow& b, CInstance
     return false;
 }
 
+// Builtins whose free answer outside a window must still reach the core.
+// collision_circle feeds walk-before-open=; filtering it out would leave that
+// counter seeing only blocked circles, and a walk that runs before skillsLeap
+// would read the same as a failed family test.
+static constexpr bool JsFreeAnswerReachesCore(int row)
+{
+    return row == (int)JsNs::Builtin::CollisionCircle;
+}
+static_assert(JsFreeAnswerReachesCore((int)JsNs::Builtin::CollisionCircle),
+              "walk-before-open= needs free collision_circle answers outside the window");
+
 static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     if (!g_JumpScenery.Enabled() || g_JsBusy) { if (g_JsOrig[row]) g_JsOrig[row](Result, S, O, argc, Args); return; }
@@ -45984,8 +45995,11 @@ static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int
     const JsNs::BuiltinRow& b = JsNs::kBuiltins[row];
     const int64_t frame = (int64_t)g_RuntimeFrame;
     const bool blocked = JsBlocked(b.answer, Result, false);
-    // A free answer outside a window changes nothing in the core: no reads.
-    if (!blocked && !g_JumpScenery.WindowOpen(frame)) return;
+    // A free answer outside a window still matters for collision_circle: the
+    // core counts every family circle, blocked or not, for walk-before-open=,
+    // the positive control on the window. Other free answers outside a window
+    // change nothing in the core, so they skip the object lookup.
+    if (!blocked && !JsFreeAnswerReachesCore(row) && !g_JumpScenery.WindowOpen(frame)) return;
     JsNs::Answer answer = JsNs::Answer::Real;
     g_JsBusy = true;
     try {
