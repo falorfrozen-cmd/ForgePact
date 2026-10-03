@@ -46681,9 +46681,18 @@ static void DungeonProbeTick()
     g_DpVars.swap(now);
     DpPrintStoreDiffs();
 }
+// Whether `gameCalls=` can be read at all: the builtin and GPV hooks tell the
+// plugin's own global-self calls apart from the game's by comparing against
+// g_DpGlobal, so a null global would count every other feature's call as a
+// game call. Printed on `on` and in the status header so a session can tell.
+static const char* DpGlobalState()
+{
+    return g_DpGlobal ? "global=resolved" : "global=unresolved";
+}
 static void DungeonProbeStatus()
 {
     Out(std::string("dungeonprobe: ") + (g_DpOn ? "on" : "off")
+        + " " + DpGlobalState()
         + " | chests=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Dungeon_Chest_obj))
         + " kills=" + std::to_string(ForgePact::DungeonChest::state.tally.kills)
         + " killHook=" + DungeonChestHookState()
@@ -46733,7 +46742,8 @@ static void DungeonProbeCommand(const std::string& rest)
         DpInstallStoreHooks();
         DpInstallChatHooks();
         g_DpLastMs = -1000.0;
-        Out(std::string("dungeonprobe: on - one line a second while the room holds a dungeon chest; killHook=")
+        Out(std::string("dungeonprobe: on ") + DpGlobalState()
+            + " - one line a second while the room holds a dungeon chest; killHook="
             + DungeonChestHookState() + " (`dungeonprobe status` lists every counter)");
         return;
     }

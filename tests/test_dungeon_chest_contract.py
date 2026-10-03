@@ -321,6 +321,17 @@ class DungeonChestPluginContractTests(unittest.TestCase):
             self.assertGreater(guard, endif, '"dungeonprobe" used outside #ifndef FORGEPACT_RELEASE')
             start = idx + 1
 
+    def test_dungeonprobe_names_global_resolution(self):
+        # `gameCalls=` is told apart from the plugin's own global-self calls by
+        # comparing against the resolved global instance; a null one would
+        # count those calls as the game's. The probe has to say which it is
+        # (Live procedure 1's `builtin-hook-fires` requires `global=resolved`),
+        # and the line is research-only, like the rest of the probe.
+        stripped = strip_research_blocks(self.plugin)
+        for text in ("global=resolved", "global=unresolved"):
+            self.assertIn(text, self.plugin, f"the probe never prints {text}")
+            self.assertNotIn(text, stripped, f"{text} survives outside a research block")
+
 
 if __name__ == "__main__":
     unittest.main()

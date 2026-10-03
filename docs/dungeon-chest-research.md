@@ -172,6 +172,10 @@ on the chest's own row is a finding about the chest:
   plain `calls=` cannot serve: the probe itself calls `instance_number` and
   `instance_find` every second, through the very routine the detour patches,
   so `calls=` is above zero whether or not any game call arrives.
+  `gameCalls=` is meaningful only with `global=resolved` on the
+  `dungeonprobe: on` line and the `status` header: with
+  `global=unresolved`, other features' calls carrying the global instance
+  as `self` count as game calls too.
 - **The per-`self` match sees a chest.** At first sight of the chest the probe
   calls `instance_number` once through `CallBuiltinEx` with the chest instance
   the census resolved as `self`, and an argument the chest has no reason to
@@ -211,8 +215,11 @@ the session). The owner is asked before it is installed.
 - steps:
   1. `dungeonchest status` → `dungeonchest: off | kills=0 alive=… unlockRoute=unavailable
      countdown=head chat=unavailable … hook=none` (the player command answers).
-  2. `dungeonprobe on` → `dungeonprobe: on` plus a `HOOK INSTALLED` line for
-     each of the four builtins, `GPV`, `SPV` and each chat candidate.
+  2. `dungeonprobe on` → a `dungeonprobe: on …` line naming `global=resolved`,
+     plus a `HOOK INSTALLED` line for each of the four builtins, `GPV`, `SPV`
+     and each chat candidate. `global=unresolved` means `gameCalls=` cannot be
+     told apart from the plugin's own global-`self` calls, so
+     `builtin-hook-fires` fails.
   3. `dungeonprobe chat control` → the `IsDefined` pair: the defined argument
      answers true, `undefined` answers false (`chat-call-control`).
   4. Person: load slot 14 if not loaded, go to the Pumpkin Patch map, and use a
@@ -222,8 +229,9 @@ the session). The owner is asked before it is installed.
      lines (`builtin:` ones included), the self-attribution control line
      `dungeonprobe control: PASS …`, and any `dungeonprobe gpv …` first-read
      lines.
-  5. `dungeonprobe status` → the builtin counters: `gameCalls=` > 0 for at
-     least one builtin and the `builtin control … self=Dungeon_Chest_obj
+  5. `dungeonprobe status` → the header names `global=resolved`; the builtin
+     counters: `gameCalls=` > 0 for at least one builtin and the `builtin
+     control … self=Dungeon_Chest_obj
      arg=Dungeon_Chest_obj calls=1` row (`builtin-hook-fires`), the
      `self=Dungeon_Chest_obj` rows (zero or not — the finding), and the
      `store GPV` line with `gameCalls=` > 0 and its `gpv` rows.
@@ -258,8 +266,9 @@ the session). The owner is asked before it is installed.
 - checks: `dll-hash`; `marker`; `control`; `chat-call-control` (the
   `IsDefined` pair answered true then false); `kill-hook-fires` (`kills=`
   equals the drop in `alive=` within ±1 over step 6); `builtin-hook-fires`
-  (`gameCalls=` > 0 on at least one builtin, never the plain `calls=`, and
-  the `dungeonprobe control: PASS` line with its control row `calls=1`);
+  (`global=resolved` on the `dungeonprobe: on` line, `gameCalls=` > 0 on at
+  least one builtin, never the plain `calls=`, and the `dungeonprobe control:
+  PASS` line with its control row `calls=1`);
   `chest-vars-dumped` (V ≥ 1 and at least one `var` line); `alive-count` (N >
   0 at entry); `creators-in-dungeon` (C, recorded; pass if 0, fail if > 0 — a
   finding either way); `unlock-signal` (a chest or blocker variable, built-ins
@@ -361,18 +370,22 @@ address.
 - `writer`: the variable flips, but a diff shows another object
   (`Spawn_Dungeon_obj`, a room variable) changing first. The mod detours that
   writer by name and performs the same write at the latch.
+- `store`: the flip is a `gpvdiff` key only (a value read from the game's
+  protected store through `GPV`). No route is written until the plan is
+  amended with the write (the matching `SPV` writer, if an `spv` row named
+  one); the unlock step stops on this token.
 
 Reading Live 1 into the token: `builtin-poll` pass → `unlock-route: builtin`.
-`builtin-poll` not-observed and `unlock-signal` pass with the flipped variable
-on the chest or blocker → `unlock-route: variable`. `unlock-signal` pass with
-the first flip on another object → `unlock-route: writer`. Both not-observed →
-`unlock-route: not-observed`, and a widening session (Live procedure 1b, same
-research DLL) follows before any unlock code is written.
-
-A value the chest reads through `GPV` that flips at the last kill fits none
-of the three routes as written (it is a protected-store key, not an instance
-variable); if Live 1 shows one, which route answers it is the planner's call
-before any unlock code is written.
+`builtin-poll` not-observed and `unlock-signal` pass with the flipped instance
+variable (a `diff` row, `builtin:` included) on the chest or blocker →
+`unlock-route: variable`. `unlock-signal` pass with the first flip on another
+object → `unlock-route: writer`. An `unlock-signal` pass carried only by a
+`gpvdiff` row (a `GPV` store key, not an instance variable) →
+`unlock-route: store`; it never maps to `variable`, because
+`variable_instance_set` would write an instance variable that does not exist,
+and it goes back to the plan before any unlock code is written. Both
+not-observed → `unlock-route: not-observed`, and a widening session (Live
+procedure 1b, same research DLL) follows before any unlock code is written.
 
 **Token:** not yet set (Live procedure 1 has not run). Until it is, the
 player build has no unlock action and refuses every share
