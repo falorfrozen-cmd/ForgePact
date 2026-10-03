@@ -320,8 +320,10 @@ DEFAULTS = {
     # turn it on shows as full (route B's latch takes the first reading it
     # sees).
     "mod_skill_timer_style": "off",
-    # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
-    # (percent each, together at most 100; the rest stay normal).
+    # Monster Rarity: the share of normal monsters raised to rank 3 (rarity_rare,
+    # shown in the panel and the game as Ancient) and to rank 4 (rarity_ancient,
+    # shown as Legion; #159), percent each, together at most 100; the rest stay
+    # normal.  The keys keep their old names so saved settings carry over.
     "rarity_rare": 0,
     "rarity_ancient": 0,
     # Bosses (issue #44): every boss the game spawns while this is on rolls as
@@ -814,9 +816,10 @@ def angelic_cmd(cfg: dict) -> str:
 
 
 def rarity_setting(cfg: dict):
-    """(rare, ancient) shares of the Monster Rarity sliders, in percent of the
-    normal monsters.  Ancient is honoured first; Rare is cut so the two never
-    exceed 100 together."""
+    """(rank 3, rank 4) shares of the Monster Rarity sliders, in percent of the
+    normal monsters: `rarity_rare` (the panel's Ancient row) and
+    `rarity_ancient` (its Legion row, #159).  Rank 4 is honoured first; rank 3
+    is cut so the two never exceed 100 together."""
     ancient = _pct(cfg.get("rarity_ancient", 0))
     rare = min(_pct(cfg.get("rarity_rare", 0)), 100 - ancient)
     return rare, ancient

@@ -127,8 +127,8 @@ class EnabledModsPanelTests(unittest.TestCase):
         world, loot = panel_file("tabs/World.svelte"), panel_file("tabs/Loot.svelte")
         for text, switch_id, range_id, label in (
                 (world, "enemy_speed", "enemyspeed", "Speed bonus"),
-                (world, "rarity_rare", "rarity_rare", "Rare"),
-                (world, "rarity_ancient", "rarity_ancient", "Ancient"),
+                (world, "rarity_rare", "rarity_rare", "Ancient"),
+                (world, "rarity_ancient", "rarity_ancient", "Legion"),
                 (loot, "angelic_items", "angelic_items", "Angelic / Unholy items")):
             with self.subTest(switch=switch_id):
                 tag = (f'<label class="switch slider-switch"><input type="checkbox" id="sw_{switch_id}" '

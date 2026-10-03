@@ -208,6 +208,17 @@ experience.
 - `sigdrop crown|belt|off|status` is still a test command that makes every kill
   drop the named item.
 
+## Fixed
+
+- **The two Monster Rarity rows are named for the monsters they make (#159).**
+  On the World tab, the row called **Rare** raised normal monsters to what the
+  game shows as an Ancient (yellow name), and the row called **Ancient** raised
+  them to a Legion: each name was one tier too low. The rows are now called
+  **Ancient** and **Legion**, and the card's note, its hint and the Enabled
+  mods list use the same names. What the rows do is unchanged, and the shares
+  you set carry over: a share you had on Rare now shows on Ancient, and one you
+  had on Ancient shows on Legion.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
