@@ -26,7 +26,7 @@ export function setupEmphasis(chainIncomplete) {
   return { installmod: !!chainIncomplete, launchgame: !chainIncomplete };
 }
 
-// "Monster Rarity › Rare", or the name alone when there is no heading or it
+// "Monster Rarity › Ancient", or the name alone when there is no heading or it
 // says the same.
 export function entryTitle(heading, name) {
   const section = (heading || '').trim();
