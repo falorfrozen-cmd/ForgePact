@@ -34,6 +34,9 @@ import subprocess
 import unittest
 from pathlib import Path
 
+# per-mod-accounting times wall-clock spins, which a full parallel run preempts (2 of 6 failed on 87d890e under 24 busy loops; final gate 2026-10-03).
+PARALLEL_EXCLUSIVE = True
+
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build" / "incident-monitor-behavior"
 FIXTURES = ROOT / "tests" / "fixtures" / "incident"
