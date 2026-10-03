@@ -114,13 +114,14 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 ### `dungeonchest` (both builds)
 
 The player command. Every form answers one status line that reports what was
-*done*: `dungeonchest: <pct>%|off | kills=<k> alive=<a> threshold=<t>
-remaining=<r> latched=<0|1> unlocked=<0|1> unlockRoute=<ok|unavailable>
-countdown=<form> chat=<ok|unavailable> chatLines=<n>
-hook=ok|table-only|failed|none`, extended in this workorder with
-`total=<T|unavailable>` (the planned total), `unlock=<ok|table-only|failed|none>`
-(the `instance_exists` detour's install state) and `answered=<n>` (the chest's
-polls the detour answered "none"). `latched` is the decision; `unlocked` is
+*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable> alive=<a>
+threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
+unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
+chatLines=<n> hook=ok|table-only|failed|none`. `total=` is the planned total,
+`unlock=` the `instance_exists` detour's install state and `answered=` the
+chest's polls the detour answered `false` in this room. The Live procedure 1
+build printed `unlockRoute=<ok|unavailable>` in place of the last three; that
+field is gone. `latched` is the decision; `unlocked` is
 the unlock action, which is what changes the chest. `kills` is our own count
 from the `EnemyDestroyKillProc` hook Headhunter already installs (an
 enemy-`self` call, once per instance id, with its own recent-id set); `alive`
