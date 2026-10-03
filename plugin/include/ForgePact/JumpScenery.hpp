@@ -120,6 +120,13 @@ struct Counters {
     uint64_t noDirection = 0;     // a blocked query before the walk gave two circles (left undecided)
     uint64_t landedInside = 0;    // a granted jump that ended inside the family
     uint64_t beforeOpen = 0;      // blocked family queries in a take-off frame before its window opened
+    // Where the take-off walk ran, blocked or clear, so a clear jump is the
+    // positive control on the window. before-open= cannot say: it sees only
+    // blocked queries, and walking and standing collision checks land in it
+    // too. Both read 0 when no walk circle reached the mod as family at all
+    // (a failed ancestry question looks like that).
+    uint64_t walkBeforeOpen = 0;  // family collision_circle queries, blocked or not, in a take-off frame before its window opened
+    uint64_t walkInWindow = 0;    // jumps whose take-off frame gave at least two family circle centres inside the window
     uint64_t excluded = 0;        // granted-window queries a gate or lock blocked, or named
 };
 
@@ -224,7 +231,7 @@ public:
         const Class c = Classify(q.object);
         if (!c.family && !c.excluded) return Answer::Real;
         if (!WindowOpen(q.frame)) {
-            if (q.reallyBlocked && c.family) NotePendingBlocked(q.frame);
+            if (c.family) NotePending(q.frame, q.reallyBlocked, q.builtin == Builtin::CollisionCircle);
             return Answer::Real;
         }
         if (q.frame == jump_.takeoffFrame && c.family) {
@@ -286,6 +293,8 @@ public:
         s += " no-direction=" + std::to_string(c.noDirection);
         s += " landed-inside=" + std::to_string(c.landedInside);
         s += " before-open=" + std::to_string(c.beforeOpen);
+        s += " walk-before-open=" + std::to_string(c.walkBeforeOpen);
+        s += " walk-in-window=" + std::to_string(c.walkInWindow);
         s += " excluded=" + std::to_string(c.excluded);
         double w = 0.0, h = 0.0;
         if (ReadRoom(w, h))
@@ -356,14 +365,19 @@ private:
         try { return placeMeeting_(x, y); } catch (...) { return true; }
     }
 
-    void NotePendingBlocked(int64_t frame)
+    // A player-self family query outside any window. Only the ones in the
+    // frame a jump then starts in are kept: the blocked ones for before-open=,
+    // the circles (blocked or not) for walk-before-open=.
+    void NotePending(int64_t frame, bool blocked, bool circle)
     {
         if (!pendingValid_ || pendingFrame_ != frame) {
             pendingValid_ = true;
             pendingFrame_ = frame;
             pendingBlocked_ = 0;
+            pendingCircles_ = 0;
         }
-        ++pendingBlocked_;
+        if (blocked) ++pendingBlocked_;
+        if (circle) ++pendingCircles_;
     }
 
     void DropJump()
@@ -371,6 +385,7 @@ private:
         jump_ = Jump{};
         pendingValid_ = false;
         pendingBlocked_ = 0;
+        pendingCircles_ = 0;
     }
 
     void StartJump(int64_t frame)
@@ -381,12 +396,16 @@ private:
         jump_.lastEntry = frame;
         jump_.haveTakeoff = ReadPosition(jump_.takeoffX, jump_.takeoffY);
         ++counters_.jumps;
-        if (pendingValid_ && pendingFrame_ == frame && pendingBlocked_ > 0) {
-            counters_.beforeOpen += pendingBlocked_;
-            jump_.takeoffBlocked = true;
+        if (pendingValid_ && pendingFrame_ == frame) {
+            counters_.walkBeforeOpen += pendingCircles_;
+            if (pendingBlocked_ > 0) {
+                counters_.beforeOpen += pendingBlocked_;
+                jump_.takeoffBlocked = true;
+            }
         }
         pendingValid_ = false;
         pendingBlocked_ = 0;
+        pendingCircles_ = 0;
     }
 
     void CloseJump()
@@ -401,6 +420,7 @@ private:
             }
         }
         if (landed && jump_.decision == Decision::Granted && FamilyAt(x, y)) ++counters_.landedInside;
+        if (jump_.circles >= 2) ++counters_.walkInWindow;
         jump_ = Jump{};
     }
 
@@ -455,6 +475,7 @@ private:
     bool pendingValid_ = false;
     int64_t pendingFrame_ = 0;
     uint64_t pendingBlocked_ = 0;
+    uint64_t pendingCircles_ = 0;
     Counters counters_;
 };
 
