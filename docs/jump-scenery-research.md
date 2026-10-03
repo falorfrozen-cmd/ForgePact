@@ -456,8 +456,8 @@ whose bar has no leap, dash, charge or blink skill.
 - J1 and J2 were one jump: the owner was already in front of the prop with
   the cursor beyond it, so there was no separate open-ground jump. Walking (the
   builtin control, L0) was driven by key input, not by the owner.
-- J5 was aimed north, over a building and prop area, from 355 px inside the
-  room's west side and about 390 px below its top, so the nearest room edge
+- J5 was aimed north, over a building and prop area, with the player 355 px
+  from the room's west side and about 390 px from its top, so the nearest room edge
   was beyond the jump's reach (about 117 px). It was a second jump aimed into
   scenery, not a map-edge test.
 
