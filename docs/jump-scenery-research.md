@@ -35,12 +35,16 @@ own loop.
   and the player build is free of it.
 - **Instrument:** `jumpprobe` (§ Instrument), research build only, on the
   ForgePact branch `16-jump-through-scenery-research`.
-- **Live procedure 1:** not run. § Results reads `pending`, and both § Decision
-  lines read `pending`.
-- **Static reading:** done on 2026-10-03 for the scripts that have a name (§
-  Static reading). The unnamed compiled functions that host the local jump's
-  keypress and its per-frame update are the open part. Live 1 measures what
-  they do from the outside.
+- **Live procedure 1:** run on 2026-10-03, slot 14 "Sorak", in `Town_01_rm`
+  (§ Results › Live 1 results). § Decision: `finding: builtins` (the jump
+  crossed the prop only when the lever answered the player's builtin queries
+  against the whole `Collision_Parent_obj` family) and `valid-landing:
+  not-observed` (a jump aimed into a prop did not start, so nothing landed
+  inside one).
+- **Static reading:** done on 2026-10-03 for the scripts that have a name and
+  for the player's per-step update, read as a list of the scripts it calls (§
+  Static reading). The function that turns the jump key into a jump is still
+  unnamed; Live 1 measured what the jump does from the outside.
 - **Arc:** `arc: not-established`. The reading did not establish the jump's
   arithmetic (§ Not established), so this phase has no jump-arc model or spec.
 
@@ -228,6 +232,38 @@ Every claim carries one of four labels, plus a source:
   first two did not render). Whether a leap or dash skill shares the jump's path
   is **not established**.
 
+### The player's per-step update
+
+The large unnamed function that calls `playerJumpGravity` was read after the
+round-0 reading, as a list of the scripts it calls rather than as a body: a
+full rendering of it did not finish in the time the local tooling allows. The
+listing covers the function and may run a little past its end.
+
+- **It is the player's own per-step update** (**static reading**). Besides
+  `playerJumpGravity` it calls the player's movement, timer, interaction,
+  minimap, town-portal, disabled-state and in-water scripts
+  (`PlayerMovement`, `PlayerUpdateTimers`, `PlayerInteracting`,
+  `PlayerUpdateMinimap`, `PlayerCastTownPortal`, `PlayerDisabled`,
+  `IsInWater`), the life and mana timers, and the skill scripts
+  `skillsBasic`, `skillsLeap`, `skillsCharge`, `skillsBlink` and `skillsAura`.
+- **Of the instrument's collision-script rows it calls only
+  `InstancePlaceTallest` directly**, from several sites (**static reading**).
+  It makes no direct call to `CanMove`, `CanMoveFuncs`, `TilePlaceMeeting`,
+  `CheckCollisionLine`, `CheckPath`, `getClosestCollisionDir`,
+  `CollisionsFunc`, `collision_normal`, `CA_playerJump` or `PlayerForceJump`.
+  A call to `CanMove` or `CheckCollisionLine` through the script table or a
+  method value is still possible (neither has a direct site anywhere): **not
+  established**.
+- **Which collision builtins it calls is not established** statically.
+  Builtins are reached through runtime function pointers, so a list of call
+  targets cannot name them. Live 1 named them from the outside (§ Results).
+- **Whether the blocked decision is read every frame or once at take-off is
+  not established** statically: the calls sit in a per-step function, so they
+  can run every frame, but what gates them was not read. Live 1 measured that
+  the jump runs through `skillsLeap` and `playerJumpGravity` once per frame
+  for its whole length, and that a blocked jump does not move the player at
+  all (§ Results).
+
 ### What this means for the lever
 
 The reading puts no collision test in either jump script, and it places the
@@ -399,11 +435,123 @@ The operator then restores the saves under their own rules.
 
 ## Results
 
-pending (Live 1 not run)
+### Live 1 results
+
+Run on 2026-10-03 by the workorder's live operator, on the research build of
+`aaf1856` (SHA-256 `6a0907ca21f1d2124dc8593e835efd3499aaa43fae7d19e97698fe9688e1e3e9`).
+The capture is the toolkit workorder's
+`forgepact-16-jump-scenery-research-live-1.md`, a local working note; what it
+measured is restated here. Character: save slot 14, "Sorak" (level 100, Hell),
+whose bar has no leap, dash, charge or blink skill.
+
+**Where it differed from § Live procedure 1:**
+
+- The room was `Town_01_rm` (Town of Inoya, a safe zone), not `Act_01_01`.
+  The owner chose the props there. Whether an outdoor zone's props block the
+  jump the same way is **not established**.
+- The jump key is Space, and the jump goes **towards the mouse cursor**, not
+  in the direction the player faces (the owner, 2026-10-03). The owner placed
+  the cursor and the character; the operator pressed Space through the
+  driving tool and never moved the cursor.
+- J1 and J2 were one jump: the owner was already in front of the prop with
+  the cursor beyond it, so there was no separate open-ground jump. Walking (the
+  builtin control, L0) was driven by key input, not by the owner.
+- The edge in J5 was not named by the owner and the wall was not identified.
+
+| Check | Observed | Verdict |
+| --- | --- | --- |
+| `dll-hash` | the installed DLL's SHA-256 equals the recorded build | pass |
+| `marker` | `jumpprobe: rows=20 hooked=0 held=0 builtins=0 ...`; `hook` answered `20 detoured, 0 failed, 0 held, 10 builtins` | pass |
+| `control` | `pong (YYTK 4.0.1)` | pass |
+| `builtin-control` | `CheckTalentUse` `calls=` 1230, then 570 over the walk; `position_meeting` 4920, then 1909 | pass |
+| `jump-rows` | `skillsLeap` and `playerJumpGravity` logged a call with the player as `self` on every frame of the jump (104 and 103 calls); `CA_playerJump`, `PlayerForceJump` and `CA_enemyJump` 0 | pass |
+| `airborne-state` | the only instance variables matching the name filter are `bufferJump` and `slopeHeight`, and both stayed 0 through every jump | not-observed |
+| `vanilla-block` | lever off, a jump at the prop left the player exactly where it started | pass |
+| `lever-control` | `pass 1 104 all hold`, then a walk into the prop: `position_meeting` `passed=420`, `place_meeting` 1947, `collision_line` 2021 | pass |
+| `pass-crosses-prop` | `props` and `props scripts` stayed blocked with `passed=0` on every row; `all` crossed, 117 px | pass |
+| `invalid-landing` | with `all hold`, a jump aimed into a horse carriage did not start; nothing landed inside a prop | not-observed |
+| `boundary-wall` | with `all hold`, two jumps aimed outward from 355 px inside the room's west side did not move the player | pass |
+| `warp-restore` | nothing was stuck or out of bounds, so no restore was needed | not-observed |
+
+What the session established, each item **measured** unless it says
+otherwise:
+
+- **The universal jump runs through `skillsLeap` and `playerJumpGravity`,
+  once per frame, for 104 frames.** Both log a call with the player as `self`
+  on every frame of the jump, whether the player moves or not; `skillsLeap`
+  takes one argument close to 1 (0.996 to 1.001 across frames).
+  `CA_playerJump` and `PlayerForceJump` are not called by the local jump, as
+  the static reading predicted, so the lever's jump-script window never opened
+  (`windows-opened=0` on every run) and every lever run used `hold`.
+  `StatJumpPower`, `CanMove`, `TilePlaceMeeting`, `CheckCollisionLine` and the
+  other collision-script rows logged no player call during a jump, and
+  `InstancePlaceTallest`, which the player calls while walking, logged none
+  during one either.
+- **The jump's length is 104 frames, about 117 px on open ground for this
+  character** (about 1.1 px per frame, in the `all` crossing's trace). Sorak's
+  Jump Power was not read, so this is not the base jump.
+- **No instance variable named like a jump state changes.** `bufferJump` and
+  `slopeHeight` are the only names matching `jump`, `air`, `grav`, `land`,
+  `fall`, `height`, `zpos`, `hover` or `fly`, and both stayed 0. Where the
+  game keeps the jump's state is **not established** (the static reading
+  points at an array-valued variable, § Static reading).
+- **A blocked jump does not move the player at all.** With the lever off, a
+  jump at a prop 22 to 40 px away left the position unchanged to the tenth of
+  a pixel, while `skillsLeap` and `playerJumpGravity` still ran for the jump's
+  whole length. The player does not stop at the prop's edge.
+- **During the jump the player queries the collision family by its parent,
+  not by the prop.** The calls with the player as `self` that name a
+  collision object pass `Collision_Parent_obj` itself (`position_meeting`,
+  `place_meeting`, `instance_position`, `collision_line`) or
+  `Wall_Parent_obj` (`collision_circle`); `position_meeting` also queries
+  `Enemy_Parent_obj`. None passes `Collision_Prop_obj` or a descendant of it.
+  `instance_position` returned real instances at 22 to 40 px; which objects
+  they were was not read.
+- **Answering those queries "nothing there" lets the jump cross.** With the
+  lever on under `props` (with or without `scripts`), every builtin row
+  counted only `other-family=` (`position_meeting` 1413, `place_meeting` 1790,
+  `collision_line` 154 in one run) and the player stayed put. Under `all`,
+  `position_meeting` (556), `place_meeting` (1756), `instance_position` (46),
+  `collision_line` (179) and `collision_circle` (31) were answered, and the
+  same jump moved the player 117 px past the prop, over 104 frames, where it
+  settled. `place_free`, `tilemap_get_at_pixel` and the three script rows
+  answered nothing. Which of the five answered rows is the deciding one is
+  **not established**.
+- **Walking stayed blocked with the lever on.** Under `all hold`, walking
+  into the same prop answered the three rows above (`lever-control`) and
+  did not move the player. Two things ran unanswered during that walk:
+  `InstancePlaceTallest`, 1944 calls with the player as `self` (the lever was
+  not set to answer script rows), and 6252 `place_meeting` calls naming an
+  object outside the collision family. Which of them, if either, holds the
+  walk is **not established**.
+- **A jump aimed into a prop does not start, even with the lever on.** Aimed
+  at a horse carriage, under `all hold`, the jump ran (`skillsLeap` and
+  `playerJumpGravity` per frame), but the player moved about 4 px once in the
+  first run and not at all in the second. So the landing point is judged by
+  something other than the player's answered queries. `instance_place` counted 1110 calls
+  from other selves in that run and none from the player; whether one of
+  those is the landing test is **not established**.
+- **Aimed outward near the room's west side, the jump did not start either**
+  (two runs, the lever answering). Whether a wall, a prop or the room's
+  bounds refused it is **not established**.
+- **`skillsCharge` counted one player call** at some point after J4, with no
+  charge skill on the bar. The cause is **not established**. Whether a leap or
+  dash skill shares the jump's path is **not observed**: Sorak has none.
 
 ## Decision
 
-finding: pending
+finding: builtins
+
+Live 1, 2026-10-03 (§ Results › Live 1 results): with the lever answering
+the player's builtin collision queries, the jump crossed a prop it could not
+cross with the lever off, 117 px over its 104 frames, and `passed=` climbed on
+five builtin rows. The lever had to answer the whole family (`all`), because
+the player's queries name `Collision_Parent_obj` itself, never a prop
+object; `props` and `props scripts` changed nothing. The script rows and the
+tile rows answered nothing. `lever-control` passed first, so the result is
+about the game. For phase 2 this means the rule cannot tell a prop from a wall
+by the query's object argument: that argument is the family's parent on every
+query.
 
 `finding:` takes exactly one of these values:
 
@@ -423,7 +571,14 @@ finding: pending
   with `hold`). This says nothing about the game, and the question stays open
   for a second session.
 
-valid-landing: pending
+valid-landing: not-observed
+
+Live 1, J4: the lever engaged (`lever-control` passed, and J4 ran under
+`all hold` with `passed=` climbing), and a jump aimed into a horse carriage
+did not start: the player stayed at the take-off point, within 4 px, in two
+runs. So no landing inside a prop happened, and what the game does with one
+is still open. What refused the jump is something the lever does not answer
+(§ Results).
 
 `valid-landing:` takes exactly one of these values:
 
@@ -438,28 +593,59 @@ valid-landing: pending
 
 ## Not established
 
-Before Live 1, these are not established:
+After Live 1 (2026-10-03), these are still not established. Live 1 settled
+that the local jump does not go through `CA_playerJump` or `PlayerForceJump`
+but runs through `skillsLeap` and `playerJumpGravity` per frame, that it lasts
+104 frames, and that answering the player's builtin queries against
+`Collision_Parent_obj` lets it cross a prop (§ Results).
 
-- The local jump's entry point (the keypress handler), and whether it goes
-  through `PlayerForceJump`, `CA_playerJump` or neither.
-- The names of the player's jump-state variables, including the array-valued
-  variable both jump scripts write (§ Static reading).
-- The jump's airborne length in frames, and its distance in px, at the base
-  Jump Power.
-- Whether the blocked test runs once at take-off (a target check) or every
-  frame (a movement check).
-- What the game does with a landing point inside a prop, at a map edge
-  (`Invisible_Wall_obj`) and at a zone gate.
-- Whether a leap or dash skill shares the jump's path.
+- **What turns the jump key into a jump.** The keypress handler is still
+  unnamed. `skillsLeap` runs on every frame of the jump, so it is the jump's
+  per-frame step, not necessarily its start.
+- **Which of the five answered builtin rows decides the crossing**
+  (`position_meeting`, `place_meeting`, `instance_position`,
+  `collision_line`, `collision_circle`). Live 1 answered all five at once.
+- **Whether the blocked decision is taken once at take-off or every frame.** A
+  blocked jump does not move the player at all, which fits a decision made
+  before the first step, but the answered builtins are called throughout the
+  jump. Not measured either way.
+- **What refuses a jump aimed into a prop, and what the game would do with a
+  landing inside one.** Under `all`, a jump aimed into a horse carriage did not
+  start. The refusal comes from something the lever does not answer:
+  `instance_place` calls from other selves, `InstancePlaceTallest`, or
+  something unhooked. Whether the landing test runs under another `self` (a
+  landing-marker object, for instance) is a question a second session could
+  answer only with a lever that answers other selves, which this build's lever
+  does not.
+- **Which objects the blocking queries found.** `instance_position` returned
+  real instances 22 to 40 px from the player; their objects were not read.
+  Whether a phase-2 rule can tell a prop from a wall therefore has to come from
+  the instance a query returns, not from its object argument (§ Decision).
+- **What holds a walk** with the lever answering (`InstancePlaceTallest` or
+  the out-of-family `place_meeting` queries, § Results).
+- **The map edge and zone gates.** J5's jumps near the room's west side did
+  not start, but the edge was not identified as an `Invisible_Wall_obj`, and no
+  zone gate was tried.
+- **The outdoor zones.** Live 1 ran in `Town_01_rm`, not `Act_01_01`.
+- **The jump's state.** No instance variable named like a jump state moved
+  (`bufferJump` and `slopeHeight` stayed 0). The array-valued variable the jump
+  scripts write (§ Static reading) is still unnamed.
+- **The base jump's length.** 104 frames and about 117 px were measured for
+  Sorak, whose Jump Power was not read.
+- Whether a leap or dash skill shares the jump's path: **not observed**
+  (Sorak has none on the bar). Why `skillsCharge` counted one player call is
+  not established.
 - Whether `Boss_Block_obj` and the other parentless blockers block a jump at
   all.
 - **`arc: not-established`.** The jump's arithmetic (airborne frames or distance
   as a function of Jump Power and the base jump) was not established by the
   reading. `StatJumpPower`'s body was not read for its formula, and
-  `playerJumpGravity`'s value did not render. The per-frame update sits in an
-  unnamed Step-sized function that this phase did not read. So this phase has
-  no `docs/models/jump-arc-spec.md`, no `jump_arc_model.py` and no
-  `tests/test_jump_arc_model.py`. Live 1's trace measures the arc at one Jump
-  Power instead, and that measurement can seed a model in phase 2.
+  `playerJumpGravity`'s value did not render. The per-step update was read only
+  as a list of the scripts it calls (§ Static reading), and `StatJumpPower`
+  logged no call during a jump. So this phase has no
+  `docs/models/jump-arc-spec.md`, no `jump_arc_model.py` and no
+  `tests/test_jump_arc_model.py`. Live 1 measured the arc at one, unread, Jump
+  Power (104 frames, about 117 px), which can seed a model in phase 2 once the
+  character's Jump Power is read beside it.
 - `getClosestCollisionDir` does nothing in this build (§ Static reading). If a
   game update gives it a body, the static reading has to be redone.

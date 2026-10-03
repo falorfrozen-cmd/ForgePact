@@ -23,8 +23,9 @@ it. This phase ships one research-build instrument for that launch,
   opened for, or with no builtin hooked or no player, says so;
 - the local player resolves by the instance-handle rule, never a kind check;
 - the research document carries its eight headings and the two Decision keys,
-  which read `pending` until Live 1 has run, and an outcome of their own
-  (`lever-not-engaged`) for a lever the session never proved engaged.
+  answered from Live 1 (2026-10-03) with a label its recorded checks back, and
+  an outcome of their own (`lever-not-engaged`) for a lever the session never
+  proved engaged.
 
 JumpSceneryProbe.hpp's decision itself is exercised by
 test_jump_scenery_behavior.py.
@@ -53,6 +54,10 @@ JP_SYMBOL = r"\b(?:g_|k)?Jp[A-Z0-9_]\w*"
 # docs/jump-scenery-research.md: the eight headings, in this order.
 DOC_HEADINGS = ("Status", "Static search", "Static reading", "Instrument", "Live procedure 1", "Results",
                 "Decision", "Not established")
+
+# Live procedure 1's checks, names verbatim, each with a verdict in ### Live 1 results.
+LIVE_1_CHECKS = ("dll-hash", "marker", "control", "builtin-control", "jump-rows", "airborne-state", "vanilla-block",
+                 "lever-control", "pass-crosses-prop", "invalid-landing", "boundary-wall", "warp-restore")
 
 # The standard headers the decision core may include, and nothing else.
 STD_HEADERS = {"cstdint", "functional", "string_view", "unordered_map", "algorithm", "array", "string", "vector",
@@ -361,18 +366,54 @@ class JumpProbeContract(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn("jumpprobe", text)
 
-    def test_the_decision_keys_read_pending_until_live_1(self):
-        """Until the live gate: both keys exist and read `pending`.
+    def test_the_decision_keys_carry_a_label_live_1_backs(self):
+        """Both keys are answered, and each answer is one the session's checks back.
 
-        Replace these assertions once Live 1 has run (the way
-        test_menu_probe_contract.py did): the keys must then name a measured
-        value, never `pending`.
+        These assertions replaced a pair that required the literal `pending`,
+        deliberately, when Live 1 ran on 2026-10-03 (the way
+        test_menu_probe_contract.py did). That pair kept an invented finding
+        from passing for a measured one before there was anything to measure,
+        so the protection survives as the rule itself: a key names one of the
+        labels ## Decision lists, never `pending`; ## Results' `### Live 1
+        results` cites the session's capture and gives every check a verdict;
+        a crossing label needs `pass-crosses-prop` passed, a landing label
+        needs `invalid-landing` passed, and a negative about the game
+        (`not-observed`) needs `lever-control` passed, since a lever that never
+        engaged measured nothing (`lever-not-engaged`).
         """
-        decision = doc_section(DOC.read_text(encoding="utf-8").replace("\r\n", "\n"), "Decision")
-        for key in ("finding", "valid-landing"):
-            match = re.search(r"(?m)^`?" + re.escape(key) + r":`?\s*`?([\w-]+)", decision)
-            self.assertIsNotNone(match, key + ": is missing from ## Decision")
-            self.assertEqual(match.group(1), "pending", key + " no longer reads pending: replace this test")
+        text = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        decision = doc_section(text, "Decision")
+        results = doc_section(text, "Results")
+        self.assertIn("\n### Live 1 results", results)
+        self.assertIn("forgepact-16-jump-scenery-research-live-1.md", results, "cite the capture, never paste it")
+        verdicts = dict(re.findall(r"(?m)^\| `([\w-]+)` \|.*\| (pass|fail|not-observed) \|$", results))
+        for check in LIVE_1_CHECKS:
+            self.assertIn(check, verdicts, check + " has no verdict row in ### Live 1 results")
+        labels = {
+            "finding": ("builtins", "scripts", "tiles", "not-observed", "lever-not-engaged"),
+            "valid-landing": ("game-ejects", "game-stuck", "game-falls-through", "not-observed", "lever-not-engaged"),
+        }
+        answers = {}
+        for key, allowed in labels.items():
+            found = re.findall(r"(?m)^" + re.escape(key) + r":\s*`?([\w-]+)", decision)
+            self.assertEqual(len(found), 1, key + ": must appear exactly once in ## Decision")
+            answers[key] = found[0]
+            self.assertNotEqual(found[0], "pending", "Live 1 has run; `pending` is no longer an answer")
+            self.assertIn(found[0], allowed)
+            for label in allowed:
+                self.assertIn("`" + label + "`", decision, key + " no longer lists " + label)
+        engaged = verdicts["lever-control"] == "pass"
+        if answers["finding"] in ("builtins", "scripts", "tiles"):
+            self.assertEqual(verdicts["pass-crosses-prop"], "pass", "a crossing label needs a crossing")
+            self.assertTrue(engaged)
+        if answers["finding"] == "not-observed":
+            self.assertTrue(engaged, "a game negative needs the lever proven to engage")
+            self.assertNotEqual(verdicts["pass-crosses-prop"], "pass")
+        if answers["valid-landing"] in ("game-ejects", "game-stuck", "game-falls-through"):
+            self.assertEqual(verdicts["invalid-landing"], "pass", "a landing label needs a landing")
+        if answers["valid-landing"] == "not-observed":
+            self.assertTrue(engaged, "a game negative needs the lever proven to engage")
+            self.assertEqual(verdicts["invalid-landing"], "not-observed")
 
     def test_a_lever_that_never_engaged_has_its_own_outcome(self):
         """`not-observed` is a finding about the game only once the lever is proven to engage."""
