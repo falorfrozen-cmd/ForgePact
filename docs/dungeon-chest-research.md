@@ -36,7 +36,7 @@ below once it has run.
 
 Read on 2026-10-03 in the local Ghidra project
 (`%USERPROFILE%\ghidra_projects\HeroSiege`, program `Hero_Siege.exe`). The
-decompiler output stayed on the reader's machine. Each line says how it is
+reading's raw output stayed on the reader's machine. Each line says how it is
 known.
 
 - **The chest's events** (static reading). `Dungeon_Chest_obj` (SDK index
@@ -317,12 +317,16 @@ No ForgePact code had put a line in the game's chat before this issue. The
 countdown's chat form needs one call that does, made by name.
 
 - **Candidates**, all in `hs-game-sdk` (`scripts.hpp`): `CA_chatIngame`,
-  `gml_Script_ChatAddMessage` (with its method `ChatAddMessageFunc`),
-  `gml_Script_ChatAddServerMessage`, `gml_Script_ChatIngameAdd` and
+  `ChatAddMessage` (with its method `ChatAddMessageFunc`),
+  `ChatAddServerMessage`, `ChatIngameAdd` and
   `IngameChatFeedAddLatest`. The chat objects are `Ingame_Chat_obj` (2258) and
   `UI_Ingame_Chat_obj` (5107). Nothing in ForgePact's docs, the hub's
   `RUNTIME_DATA_MODELS.md` or `hs-game-sdk/curated` described their arguments
-  (searched 2026-10-03).
+  (searched 2026-10-03). The research build also hooks
+  `ChatAddMessageFiltered` and `ChatAddIngameMessageFiltered`, found by the
+  same SDK substring search, and counts `Chat_obj` beside the two chat
+  objects; `ChatAddMessageFunc` is a method, not a script `HookOneScript` can
+  reach by name, so it is not hooked.
 - **The static reading of the candidates** — what each reads, of what kind,
   what `self` it expects, what it writes — is done locally and turned into the
   numbered shape table `dungeonprobe chat list` prints. Its paraphrase is
