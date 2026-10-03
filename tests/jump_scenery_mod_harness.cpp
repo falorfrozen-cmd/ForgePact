@@ -15,7 +15,8 @@
 // window closes two frames after the last skillsLeap entry. Target: a granted
 // jump answers each of the five builtins with its measured value and is
 // decided once; the landing guard's refusals; the reach learned only from a
-// clear jump of at least 32 px; landed-inside=, before-open= and excluded=.
+// clear jump of at least 32 px; landed-inside=, before-open=, walk-before-open=,
+// walk-in-window= and excluded=.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -160,13 +161,15 @@ static std::string counts(const Counters& c)
         + " answered=" + std::to_string(c.answered) + " refused-landing=" + std::to_string(c.refusedLanding)
         + " refused-room=" + std::to_string(c.refusedRoom) + " refused-no-reach=" + std::to_string(c.refusedNoReach)
         + " no-direction=" + std::to_string(c.noDirection) + " landed-inside=" + std::to_string(c.landedInside)
-        + " before-open=" + std::to_string(c.beforeOpen) + " excluded=" + std::to_string(c.excluded);
+        + " before-open=" + std::to_string(c.beforeOpen) + " walk-before-open=" + std::to_string(c.walkBeforeOpen)
+        + " walk-in-window=" + std::to_string(c.walkInWindow) + " excluded=" + std::to_string(c.excluded);
 }
 
 static bool allZero(const Counters& c)
 {
     return c.jumps == 0 && c.granted == 0 && c.answered == 0 && c.refusedLanding == 0 && c.refusedRoom == 0
-        && c.refusedNoReach == 0 && c.noDirection == 0 && c.landedInside == 0 && c.beforeOpen == 0 && c.excluded == 0;
+        && c.refusedNoReach == 0 && c.noDirection == 0 && c.landedInside == 0 && c.beforeOpen == 0
+        && c.walkBeforeOpen == 0 && c.walkInWindow == 0 && c.excluded == 0;
 }
 
 static std::string text(Answer a) { return std::string(AnswerName(a)); }
@@ -629,6 +632,44 @@ int main()
             counts(m.Stats()));
     }
 
+    // ---- walk-before-open= and walk-in-window= ------------------------------
+    {
+        World w;
+        Mod m = make(w);
+        m.SetEnabled(true);
+        // A walk that ran before the window opened: the player's family
+        // circles in the take-off frame count, blocked or not; one in an
+        // earlier frame, another self's, another family's and a non-circle
+        // query do not.
+        circle(m, 99, 1000.0, 1005.0);
+        circle(m, 100, 1000.0, 1005.0);
+        circle(m, 100, 1000.0, 1009.0, true);
+        ask(m, Builtin::CollisionCircle, 100, false, WallParent, true, false, 1000.0, 1013.0);
+        ask(m, Builtin::CollisionCircle, 100, true, Skeleton, true, false, 1000.0, 1013.0);
+        ask(m, Builtin::PlaceMeeting, 100, true, Fence, true);
+        m.OnLeapEntry(100, true);
+        const bool before = m.Stats().walkBeforeOpen == 2 && m.Stats().beforeOpen == 2 && m.Stats().walkInWindow == 0;
+        for (int64_t f = 101; f <= 103; ++f) m.OnLeapEntry(f, true);
+        land(m, w, 103, 1000.0, 1100.0);
+        const bool noneInside = m.Stats().walkInWindow == 0;
+        // A walk inside the window: two take-off-frame circles, counted once
+        // the window closes.
+        takeoff(m, w, 200);
+        const bool notYet = m.Stats().walkInWindow == 0;
+        land(m, w, 200, 1000.0, 1100.0);
+        const bool inside = m.Stats().walkInWindow == 1 && m.Stats().walkBeforeOpen == 2;
+        // One take-off-frame circle, then circles a frame later: no walk.
+        m.OnLeapEntry(300, true);
+        circle(m, 300, 1000.0, 1005.0);
+        m.OnLeapEntry(301, true);
+        circle(m, 301, 1000.0, 1009.0);
+        circle(m, 301, 1000.0, 1013.0);
+        land(m, w, 301, 1000.0, 1100.0);
+        check("target/walk_before_open_and_in_window", before && noneInside && notYet && inside
+            && m.Stats().walkInWindow == 1 && m.Stats().walkBeforeOpen == 2 && m.Stats().jumps == 3,
+            counts(m.Stats()));
+    }
+
     // ---- the family through its ancestry -----------------------------------
     {
         World w;
@@ -725,9 +766,11 @@ int main()
         const std::string after = m.StatLine();
         check("stat/line_names_every_counter",
             fresh == "jumpscenery: on reach=none jumps=0 granted=0 answered=0 refused-landing=0 refused-room=0 "
-                     "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 excluded=0 room=2000x2000"
+                     "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 walk-before-open=0 "
+                     "walk-in-window=0 excluded=0 room=2000x2000"
                 && after == "jumpscenery: on reach=100 jumps=2 granted=1 answered=2 refused-landing=0 refused-room=0 "
-                            "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 excluded=0 room=2000x2000",
+                            "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 walk-before-open=0 "
+                            "walk-in-window=1 excluded=0 room=2000x2000",
             fresh + " | " + after);
         w.roomReadable = false;
         m.SetEnabled(false);
