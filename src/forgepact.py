@@ -2619,25 +2619,33 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _reply(self, code, headers, b):
+        try:
+            self.send_response(code)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(b)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            # The client went away mid-answer (the page closed while a poll was
+            # in flight): end this request quietly instead of letting
+            # socketserver print a traceback for a closed client.
+            self.close_connection = True
+
     def _file(self, path: Path):
         b = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", PANEL_MIME.get(path.suffix.lower(), "application/octet-stream"))
-        self.send_header("Content-Length", str(len(b)))
+        headers = [("Content-Type", PANEL_MIME.get(path.suffix.lower(), "application/octet-stream")),
+                   ("Content-Length", str(len(b)))]
         if path.suffix.lower() == ".html":
             # The page names its hashed assets; a cached copy would keep asking
             # for the previous build's files after an update.
-            self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(b)
+            headers.append(("Cache-Control", "no-cache"))
+        self._reply(200, headers, b)
 
     def _json(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(b)))
-        self.end_headers()
-        self.wfile.write(b)
+        self._reply(code, [("Content-Type", "application/json; charset=utf-8"),
+                           ("Content-Length", str(len(b)))], b)
 
     def do_GET(self):
         u = urlparse(self.path)

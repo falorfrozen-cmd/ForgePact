@@ -12,6 +12,12 @@ when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
 
+**Headhunter** and **Tyrant's Crown** now drop the way the game's own Angelic
+items do: from the game's Angelic roll, as one more entry in its list, and only
+while that item's switch is on. The **Angelic / Unholy Drops** slider no longer
+drops them. With both switches off, the default, neither one ever drops, even
+if you have forged it.
+
 A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
 tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
 Measured in a live game on one boss, a Karp King spawned from the research
@@ -156,14 +162,61 @@ experience.
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
 
+## Changed
+
+- **Headhunter and Tyrant's Crown drop only from the game's own Angelic roll.**
+  - Before, they were two more items in the **Angelic / Unholy Drops** slider's
+    pool: ForgePact's own die dropped them whatever their switches said, and
+    the game's own Angelic roll never did.
+  - Now the game decides. When a Blood Pact or dungeon "Angelic item drop
+    chance" effect is active, the game's Angelic roll picks one unique from its
+    own list and rolls that unique's drop rate. While a switch is on, its item
+    is one more entry in that list for the length of each roll, and is taken
+    out again as soon as the roll is over, so merchants, shrines and crafting
+    never see it.
+  - Each item stands in through a real Angelic unique of the same kind and is
+    exactly as rare as it: Headhunter as rare as **Liquor Holster**, Tyrant's
+    Crown as rare as the more common of **Lucifer's Crown** and **Mask of the
+    Celestial**, the one with the lower drop-rate number (the log names which
+    one when you turn the switch on; in our testing it was Mask of the Celestial). Those
+    uniques keep their own chance to drop.
+  - When the game's roll lands on the item, the game itself builds it and drops
+    it where the monster died: one item per hit, in place of what that roll
+    would otherwise have dropped.
+  - Only while that item's switch (**Mods → Items → Headhunter** or
+    **Tyrant's Crown**) is on. Forging the item in the Custom Forge still turns
+    its mechanic on, as in earlier versions, but not this drop: a forged
+    Headhunter or Tyrant's Crown with its switch off never drops from the
+    game's Angelic roll.
+  - Both switches are off by default, so a default install drops neither item,
+    forged or not, and the game's roll and its list are left as they are.
+  - ForgePact adds no chance of its own for these two and does not change the
+    game's Angelic chance. If the plugin cannot find the game's list on your
+    game, turning a switch on says so in the log and the roll stays the game's
+    own.
+  - Checked in a live session on 2026-10-02, with the game's Angelic chance
+    raised so that hits came quickly and the item given many entries instead
+    of one so that hits would fall to it: every hit that fell to the item
+    became the item, 48 of 48 for Headhunter and 11 of 11 for Tyrant's Crown,
+    each built by the game where the monster died, one per hit, and with both
+    switches off every hit stayed the game's own. Not yet watched: a hit at the
+    game's normal Angelic chance, which is about one in several thousand rolls.
+    How often the item drops with the single entry a normal install adds is
+    worked out from that session, not measured.
+- **The Angelic / Unholy Drops slider's pool is the game's real Angelic and
+  Unholy uniques again**, with no signature items in it.
+- `sigdrop crown|belt|off|status` is still a test command that makes every kill
+  drop the named item.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
 gained a slider, two switches, an Incident reports card and a Gameplay page,
 so updating only the plugin leaves them out. Your existing settings are
 retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
-before using **Install Mod Plugin**. The plugin changed too, so press **Install
-Mod Plugin** once after updating - updating only the panel leaves the old
-plugin in place.
+before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded
+Game** brings it up to date for you. If you start the game from Steam instead,
+or ForgePact's warning asks for it, press **Install Mod Plugin** once after
+updating.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

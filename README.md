@@ -35,7 +35,7 @@ none of these diagnostic hooks or the recorder. See
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP, quest progress and the floating XP text are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
-| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
+| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
@@ -298,16 +298,64 @@ rare, three on an ancient.
   and the setting stays as it was.
 
 ### Signature drops
-Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) are two more items in the **Angelic /
-Unholy Drops** pool above: they drop from the very same die as every other item in it, such as
-**Liquor Holster**, at exactly the same rate - so they never drop while that slider is off (the
-default), and more often as it is raised, along with everything else in the pool. They are not
-part of the game's own Angelic roll (the Blood Pact / dungeon "Angelic item drop chance" effect) -
-only ForgePact's own die drops them. They arrive as SS-tier Unholy items, fully set up, and the
-plugin recognises them on every load even without the Item Editor. `sigdrop status`,
-`sigdrop crown`, `sigdrop belt` and `sigdrop off` are a test command that forces every kill
-to drop the named item (or turns that off); it does not change the normal drop rate, which
-always follows the Angelic / Unholy Drops slider.
+Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game's own
+Angelic roll - the one a Blood Pact or dungeon "Angelic item drop chance" effect turns on - and only while
+that item's switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) is on. Forging the item in
+the Custom Forge turns its mechanic on, as before, but not this drop: with its switch off, a forged
+Headhunter or Tyrant's Crown never drops from the game's roll.
+
+How it drops: the game's Angelic roll picks one entry from its own list of Angelic and Unholy
+uniques and then rolls that unique's own drop rate. For the length of each roll, ForgePact adds
+one entry to that list for each item whose switch is on, and takes it out again as soon as the
+roll is over, so between rolls the list is exactly the game's and nothing else that reads it
+(merchants, shrines, crafting, the other drop routines) ever sees the extra entry. The game's
+picker and the game's die decide. Each added entry stands in through a real Angelic unique of
+the same item type, and drops at that unique's rate: Headhunter through **Liquor Holster**, and
+Tyrant's Crown through the more common of the Angelic helmets the plugin finds in the game's pool (**Lucifer's
+Crown** or **Mask of the Celestial**, whichever has the lower drop-rate number; the switch-on line in the
+log names the one chosen). So the item is exactly as rare as its stand-in, and the stand-in keeps
+its own share. A hit can fall to the added entry only when the game's roll landed on the stand-in
+itself: ForgePact reads which unique the roll looked up for that hit, and only when that is the
+stand-in - its item type included, so another unique that happens to share its other numbers
+never counts - does the hit go to the signature item, with the added entry's share (one in two
+when the game's own list holds the stand-in once). A hit ForgePact cannot identify stays the
+game's own drop. When a hit does fall to the added entry, the game itself builds the signature
+item and places it where the monster died: one item per hit, in place of what that roll would
+otherwise have dropped. The plugin's Custom Forge hook recognises it the same way it recognises
+one from `sigdrop`.
+
+Verified in a live session (Live 3, 2026-10-02) on the research build, with the roll's chance
+raised so that hits came quickly and 200 entries added per roll so that they fell to the item:
+48 of 48 hits that fell to Headhunter's entry (46 with Headhunter alone on, 2 more with both on)
+and 11 of 11 that fell to Tyrant's Crown's were built
+by the game as that item, one per hit (`ourHits=` and `built=` grew together, `refused=0`), and
+with both switches off every hit stayed the game's own and the list was left as it was. Not
+observed: a hit at the game's natural chance (about one in several thousand rolls), and the share
+the player build's single entry gets, which is arithmetic on that session, not a measurement.
+That session ran the build from before the list check's kind gate (the check now refuses, before
+converting it, a value that can never be a list handle). The player path hands the check only
+the game's list, a ref, and a later live session (Live 4, 2026-10-02) on the gated build measured
+that the list is still accepted and that the research scan no longer raises runner errors.
+Record: [`docs/angelic-roll-hook-research.md`](docs/angelic-roll-hook-research.md) § "Session 5:
+the id on the built item (issue #74)" and § "Session 6: the scan and the runner errors (issue #74)".
+
+ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
+both switches off (the default), no entry is added, neither item drops, forged or not, and the
+game's roll is left alone. If the plugin cannot find the game's list on your game, the switch
+logs one line saying so and the roll stays the game's own (`list=missing` below). The **Angelic /
+Unholy Drops** slider never drops them: its pool is the real uniques only.
+
+`sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command that
+forces every kill to drop the named item (or turns that off); it does not change the normal drop
+rate. `sigdrop status` also reports the game's Angelic roll: `gameRolls=` and `gameHits=` (the
+game's own rolls and hits), `injected=` (entries added, over all rolls), `ourHits=` (hits that
+fell to a signature item), `untyped=` (hits ForgePact could not identify, which stayed the game's
+own), `built=`, `crown=` and `belt=` (the signature items the game built), `anomalies=` (rolls
+where the added entry did not show in the list, so that roll carried nothing extra, or where the
+list had changed by the time the plugin came to take its entry out, so it left the list as it
+found it), `list=` (the game's list by name and length; `none` before the first look, `missing`
+when it was not found), `gate=`
+(which switch is on), and `cdpCalls=` / `detect=` (whether the plugin can see the game's hits).
 
 ### Tier (Custom Forge)
 A forged item can carry a Tier letter (`tier=1` C … `tier=5` SS in the runtime file; the Item
@@ -315,7 +363,7 @@ Editor 2.15.3 offers it under Appearance). It is the letter the tooltip prints a
 filters use.
 
 ### Headhunter (Custom Forge mechanic)
-Forge any item in the Item Editor with **Mechanic: Headhunter** and switch on **World →
+Forge any item in the Item Editor with **Mechanic: Headhunter** and switch on **Mods → Items →
 Headhunter** in the panel. Killing a **rare or champion** monster then grants its affixes to
 you as 20-second buffs, through the game's own on-kill dispatcher and `BuffAdd`:
 
@@ -346,10 +394,12 @@ resolution. Commands: `hhlabel on|off`, `hhlabeloffset <px>` (height above the h
 Commands: `headhunter on|off|force|status`, `hhdur <seconds>`, `hhmap <affix> <buffId> [v0] [v1]`,
 `hhdefault <buffId>|off`. The panel sends `headhunter force` at every game start while the switch
 is on; `force` also stands in for the equipped-item check, which is not finished yet.
+The same switch gates the Headhunter belt's own drop: only while it is on can the game's Angelic
+roll drop one. A forged Headhunter turns the buff mechanic on but not the drop ([Signature drops](#signature-drops)).
 
 ### Tyrant's Crown (Custom Forge mechanic)
-Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **World →
-Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
+Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **Mods →
+Items → Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
 **rare** with a 30 % chance (they get two affixes), and every rare or champion carries **one more
 affix**. Ancients are never touched. Bosses are not excluded: by a reading of our own code
 (not observed live), the crown can raise a rank-1 boss to rare and give a rare or champion
@@ -371,7 +421,10 @@ vanilla rules. Live check 2026-09-05 at the default 15 %: 243 monsters seen, 30 
 
 Commands: `tyrant on|off|force|status`, `tyrantchance <pct>` (normal → rare, default 30),
 `tyrantaffix <pct>` (extra affix on rares/champions, default 100). The panel sends `tyrant force`
-at every game start while its switch is on. Research build: `raritytrace <n>` logs entry/exit
+at every game start while its switch is on. The same switch gates the crown's own drop: only
+while it is on can the game's Angelic roll drop one. A forged Tyrant's Crown turns the rare
+mechanic on but not the drop ([Signature drops](#signature-drops)).
+Research build: `raritytrace <n>` logs entry/exit
 state of the next n monsters.
 
 ### Beacon (Custom Forge mechanic)
