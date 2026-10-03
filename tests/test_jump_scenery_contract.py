@@ -125,7 +125,11 @@ class JumpProbeContract(unittest.TestCase):
         self.assertIsNone(re.search(JP_SYMBOL, self.shipped), "a Jp* symbol reaches the player build")
         self.assertNotIn("jumpprobe", self.shipped)
         self.assertNotIn("JumpSceneryProbe.hpp", strip_research_blocks(self.plugin))
-        self.assertNotIn("JumpScenery", self.shipped)
+        # The probe's own header and namespace. Phase 2's mod ships its core,
+        # JumpScenery.hpp (namespace ForgePact::JumpSceneryMod), in the player
+        # build on purpose (test_jump_scenery_mod_contract.py).
+        self.assertNotIn("JumpSceneryProbe", self.shipped)
+        self.assertIsNone(re.search(r"\bForgePact::JumpScenery\b", self.shipped))
 
     def test_not_a_player_command(self):
         run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
@@ -257,6 +261,9 @@ class JumpProbeContract(unittest.TestCase):
         install = self.body("static void JpInstall()")
         self.assertLess(install.index("JpCitraceHolders()"), install.index("for (JpRow& t : g_JpRows)"))
         self.assertIn('"jumpprobe hook: refused - citrace holds "', install)
+        # And while phase 2's `jumpscenery` holds the builtins it shares.
+        self.assertLess(install.index("JumpSceneryHeldHooks()"), install.index("for (JpRow& t : g_JpRows)"))
+        self.assertIn('"jumpprobe hook: refused - jumpscenery holds "', install)
         holders = self.body("static std::string JpCitraceHolders()")
         # Every citrace spatial builtin hook, derived from its own macro list.
         spatial = re.findall(r'CITRACE_BUILTIN_PM\((\w+), "(\w+)"\)', self.plugin)

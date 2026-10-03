@@ -852,6 +852,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The incident monitor's `incident stat` (ForgePact #76;
             # test_incident_monitor_contract.py).
             "incident",
+            # Jump through scenery, the Mods tab's switch (ForgePact #16;
+            # test_jump_scenery_mod_contract.py).
+            "jumpscenery",
         }
         self.assertEqual(entries, expected)
 
@@ -3015,14 +3018,16 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `bossrarity` is the Bosses control (ForgePact #44,
         # test_boss_rarity_contract.py), and `incident` is the incident
         # monitor's `incident stat` (ForgePact #76,
-        # test_incident_monitor_contract.py).
+        # test_incident_monitor_contract.py), and `jumpscenery` is Jump
+        # through scenery's switch (ForgePact #16,
+        # test_jump_scenery_mod_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "hiddenloot", "bossrarity", "incident"})
+                                        "densityroll", "hiddenloot", "bossrarity", "incident", "jumpscenery"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
