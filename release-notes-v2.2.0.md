@@ -167,9 +167,11 @@ experience.
   off by default. Until now a jump aimed across a rock, a fence, a cart or
   other scenery did not move you at all. With this on, the jump carries you
   over it, but only when it would land you on open ground inside the area;
-  when the landing spot is blocked or past the edge of the area, the jump
-  stays blocked as it always was. Locked doors and zone gates still block the
-  jump. The mod learns how far your jump goes from a jump you make in the
+  when the landing spot is blocked or outside the room's outer bounds, the
+  jump stays blocked as it always was. Those bounds are wider than the part
+  of a zone you can walk in, so a jump towards the edge of the walkable map
+  is not held back by this check. Locked doors and zone gates are meant to
+  keep blocking the jump. The mod learns how far your jump goes from a jump you make in the
   open, so after loading a character, make one jump on open ground first:
   until then, a jump into scenery stays blocked. Make one again after a big
   change to your Jump Power, because until then the mod checks the landing
@@ -179,10 +181,12 @@ experience.
   charge skills, and in co-op only your own character. Checked in play on
   2026-10-03: with the switch off a jump at a prop in the Town of Inoya did
   not move the character, and with it on the same jump carried them over
-  it, never leaving them inside scenery. The checks on the landing spot and
-  on the edge of the area were not reached in that test (a jump aimed into a
-  carriage did not move the character at all, and no edge of the area could
-  be reached), so they have been tested outside the game only.
+  it, never leaving them inside scenery. The checks on the landing spot, on
+  the room's bounds and on locked doors and zone gates were not reached in
+  that test (a jump aimed into a carriage did not move the character at all,
+  and no edge of the area could be reached), so they have been tested
+  outside the game only, and what the game does at the edge of the walkable
+  map has not been observed.
 
 ## Changed
 
