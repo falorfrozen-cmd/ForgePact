@@ -65,7 +65,7 @@ function rarityPaint(){
   const ron=r>0&&!switchedOff('rarity_rare'), aon=a>0&&!switchedOff('rarity_ancient');
   rv.textContent=ron?r+'%':'off'; rv.className='val '+(ron?'':'off');
   av.textContent=aon?a+'%':'off'; av.className='val '+(aon?'':'off');
-  document.getElementById('raritynote').textContent=(r>0||a>0)?`of the normal monsters: ${a}% Ancient, ${r}% Rare, ${Math.max(0,100-r-a)}% stay normal`:'off - the game rolls rarity on its own';
+  document.getElementById('raritynote').textContent=(r>0||a>0)?`of the normal monsters: ${a}% Legion, ${r}% Ancient, ${Math.max(0,100-r-a)}% stay normal`:'off - the game rolls rarity on its own';
 }
 function rarityLoad(c){
   document.getElementById('angelic_items').value=+(c.angelic_items||1); angelicPaint();
@@ -975,7 +975,7 @@ function preparePanelUI(){
   for(const id of ['densityCard','rarityCard'])document.getElementById(id).classList.add('half');
   const summaries={
     densityCard:'Adjust the number of monster packs in newly loaded zones.',
-    rarityCard:'Choose the share of normal monsters upgraded to Rare or Ancient.',
+    rarityCard:'Choose the share of normal monsters upgraded to Ancient or Legion.',
     speedCard:'Increase enemy movement speed. Choose all zones or Chaos Tower only.',
     spawnsCard:'Choose how frequently special content appears in new zones.',
     dropsCard:'Multiply drop chances. ×1 keeps a drop at its normal rate.',

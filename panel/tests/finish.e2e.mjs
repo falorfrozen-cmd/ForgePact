@@ -399,7 +399,7 @@ async function rarityNote({ page }) {
   });
   await frames(page);
   n = await note();
-  assert(n.shown && /25% Rare/.test(n.text), `a Rare share of 25%: ${JSON.stringify(n)}`);
+  assert(n.shown && /25% Ancient/.test(n.text), `an Ancient share of 25%: ${JSON.stringify(n)}`);
   return `hidden at rest (its words kept: "${n.text.slice(0, 24)}..." once on); shown with a share`;
 }
 

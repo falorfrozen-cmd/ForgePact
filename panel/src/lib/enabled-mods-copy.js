@@ -12,7 +12,7 @@ export const UNDO_TEXTS = {
   announceUndo: '{name} turned back on',
 };
 
-// "Monster Rarity › Rare": the section's heading, then the entry's name.
+// "Monster Rarity › Ancient": the section's heading, then the entry's name.
 export const ENTRY_TITLE_JOINER = ' › ';
 
 export function withName(text, name) {
