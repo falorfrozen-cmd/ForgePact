@@ -4,8 +4,8 @@
 //   node tests/screens.mjs --out <dir> [--legacy] [--dist <dir>]
 //                          [--compare <dir> --max-mismatch <ratio>]
 //
-// For each tab (setup, modifiers, world, loot, and the Mods tab's two
-// sub-tabs, mods-qol and mods-items) at 1280x800 and 900x700 this writes a
+// For each tab (setup, modifiers, world, loot, and the Mods tab's three
+// sub-tabs, mods-qol, mods-items and mods-gameplay) at 1280x800 and 900x700 this writes a
 // full-page `<tab>-<w>.png` and the page's accessibility tree as
 // `<tab>-<w>.txt`. With --compare it runs pixelmatch on each pair against the
 // same names in <dir>, prints `<name> mismatch=<ratio>` per pair, and exits 1
@@ -28,6 +28,7 @@ const SHOTS = [
   ['loot', 'loot', null],
   ['mods-qol', 'mods', 'qol'],
   ['mods-items', 'mods', 'items'],
+  ['mods-gameplay', 'mods', 'gameplay'],
 ];
 
 async function capture(args) {

@@ -2,7 +2,7 @@
   import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../hidden-loot-keys.js';
 </script>
 
-<!-- Mods tab: the Quality of Life and Items panels, switched by App.svelte's sub-tab strip. Neither repeats its
+<!-- Mods tab: the Quality of Life, Items and Gameplay panels, switched by App.svelte's sub-tab strip. None repeats its
      sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one.
      A child row is marked by its indent (app.css .feature-with-child), never by a glyph (finish review F6). -->
 <div class="card tab-card" data-tab="mods" id="qolCard" role="tabpanel" aria-labelledby="subtab-qol">
@@ -140,5 +140,17 @@
     <span class="lbl" style="width:auto;flex:1">Beacon: every monster hunts you<br><span class="feature-description">For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange &lt;px&gt; caps the distance.</span></span>
     <label class="switch"><input type="checkbox" id="beacon"><span class="sl"></span></label>
     <span class="val" id="beval">on</span>
+  </div>
+</div>
+
+<div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">
+  <div class="hint">Change how the monsters you meet are made, in every zone. Settings apply immediately while the game is running.</div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Bosses<br><span class="feature-description">While this is on, a boss the game spawns is given Rare ("uber") or Ancient ("uber uber") rarity as it is set up. Tested in a live game at Ancient, a boss came out far stronger, with about five times its health. Bosses the game already made champion, rare or ancient, and bosses another monster creates (phases, clones), are left alone. Off by default.</span></span>
+    <select class="style-select" id="boss_rarity" aria-label="Bosses">
+      <option value="off">Normal (the game's own)</option>
+      <option value="rare">Rare &mdash; "uber" boss</option>
+      <option value="ancient">Ancient &mdash; "uber uber" boss</option>
+    </select>
   </div>
 </div>

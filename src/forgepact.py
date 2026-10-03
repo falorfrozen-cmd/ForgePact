@@ -324,6 +324,11 @@ DEFAULTS = {
     # (percent each, together at most 100; the rest stay normal).
     "rarity_rare": 0,
     "rarity_ancient": 0,
+    # Bosses (issue #44): every boss the game spawns while this is on rolls as
+    # Rare ("uber" boss) or Ancient ("uber uber" boss) through the game's own
+    # rarity setup; "off" leaves bosses as the game made them. One of
+    # BOSS_RARITY_VALUES; the sliders above never touch a boss either way.
+    "boss_rarity": "off",
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
     # rate (1 in 7,500), every step above adds a die.
     "angelic_items": 1,
@@ -822,6 +827,22 @@ def rarity_cmd(cfg: dict) -> str:
     return f"rarity {rare} {ancient}" if rare > 0 or ancient > 0 else "rarity off"
 
 
+# Bosses (issue #44): the panel's three-way select, kept as one tuple so
+# build_cmds and /api/set share one validator.
+BOSS_RARITY_VALUES = ("off", "rare", "ancient")
+
+
+def boss_rarity_value(value) -> str:
+    """The saved mode after trim+lower; anything outside BOSS_RARITY_VALUES is off."""
+    mode = value.strip().lower() if isinstance(value, str) else ""
+    return mode if mode in BOSS_RARITY_VALUES else "off"
+
+
+def boss_rarity_cmd(cfg: dict) -> str:
+    """Plugin command for the Bosses select; a missing or invalid value is off."""
+    return f"bossrarity {boss_rarity_value(cfg.get('boss_rarity', 'off'))}"
+
+
 ENEMY_SPEED_MAX = 300   # percent; x4 is where ranged sprinters stop being fair
 ENEMY_SPEED_STEP = 5
 
@@ -1075,6 +1096,10 @@ def build_cmds(cfg: dict) -> list:
     rare, ancient = rarity_setting(cfg)
     if rare > 0 or ancient > 0:
         out.append(f"rarity {rare} {ancient}")
+    if boss_rarity_value(cfg.get("boss_rarity", "off")) != "off":
+        # Only a raised mode is sent at launch: the plugin installs the shared
+        # rarity hook for it, and "off" at defaults keeps the startup list empty.
+        out.append(boss_rarity_cmd(cfg))
     if angelic_one_in(cfg.get("angelic_items", 1)) > 0:
         out.append(angelic_cmd(cfg))
     if enemy_speed_pct(cfg.get("enemy_speed", 0)) > 0:
@@ -2773,6 +2798,12 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid skilltimer style"}, 400)
                         return
                     cfg[key] = style
+                elif key == "boss_rarity":
+                    mode = val.strip().lower() if isinstance(val, str) else None
+                    if mode not in BOSS_RARITY_VALUES:
+                        self._json({"err": "invalid boss rarity"}, 400)
+                        return
+                    cfg[key] = mode
                 elif key == "theme":
                     if not isinstance(val, str) or not THEME_NAME.fullmatch(val):
                         self._json({"err": "invalid theme"}, 400)
@@ -2897,6 +2928,10 @@ class H(BaseHTTPRequestHandler):
                     elif key in ("rarity_rare", "rarity_ancient"):
                         # Always explicit: "rarity off" returns a live hook to vanilla.
                         send_cmds([rarity_cmd(eff)], cfg)
+                    elif key == "boss_rarity":
+                        # Always explicit, off included: a live hook returns
+                        # bosses to the game's own rarity only when told.
+                        send_cmds([boss_rarity_cmd(cfg)], cfg)
                     elif key == "angelic_items":
                         send_cmds([angelic_cmd(eff)], cfg)
                     elif key in ("enemy_speed", "enemy_speed_ct"):

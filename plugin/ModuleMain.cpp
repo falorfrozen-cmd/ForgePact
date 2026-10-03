@@ -496,6 +496,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
+#include <ForgePact/BossRarityMod.hpp>
 #include <ForgePact/HiddenLootMod.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
@@ -1484,11 +1485,10 @@ static int ToplamOrnek()
 }
 
 
-#ifdef FORGEPACT_RELEASE
-// The player build detaches the game from YYToolkit's "YYToolkit Log"
-// console instead of hiding its window (#58). YYToolkit opens that console
-// inside the game's own process (AllocConsole), which makes it the game's
-// standard output, so GameMaker writes every runtime warning to it
+// Both builds detach the game from YYToolkit's "YYToolkit Log" console
+// instead of hiding its window (#58). YYToolkit opens that console inside the
+// game's own process (AllocConsole), which makes it the game's standard
+// output, so GameMaker writes every runtime warning and error to it
 // synchronously - hidden or not. Underground Garden's zone generation
 // (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
 // specified tilemap" warnings, and writing them to the console froze the load
@@ -1496,12 +1496,18 @@ static int ToplamOrnek()
 // main thread sat in WriteFile, called from the game's own code, for the whole
 // freeze, and the console buffer held nothing but that warning. The unmodded
 // game has no console, so there those writes fail at once; detaching restores
-// that. Players never saw this console, and the research build keeps it.
+// that. The second case, 2026-10-02 (#44, Live 1, research build): right after
+// a raw Karp King spawn the game froze while the console filled with the
+// runner's own YYError lines from timer_system_update ("Unable to find any
+// instance for object index ...", a different id each line) - observed by the
+// owner in the console, not instrumented, and none of it in out.txt, so no
+// ForgePact print was involved. Nothing either build prints needs the
+// console: every Out() line goes to out.txt first, and YYToolkit's own lines
+// go to bin\YYToolkit.log.
 static void DetachConsole()
 {
     if (GetConsoleWindow()) FreeConsole();
 }
-#endif
 
 static void KuyrukIsle()
 {
@@ -1801,17 +1807,26 @@ static bool TyrantActive();
 static bool g_CreatingFromEnemy = false;             // true while a monster runs instance_create
 static std::unordered_set<int> g_EnemyBornIds;       // monsters created by a monster, by instance id
 static volatile LONG g_EnemyBornSeen = 0, g_RarSkippedEnemyBorn = 0;
+// The kinds the runtime produces for an instance's `object_index` or `id`: a number, or
+// an asset/instance reference. RValue::ToDouble() is the runner's REAL_RValue, which on
+// any other kind raises the runner's own error instead of throwing, so `catch (...)`
+// never sees it: a `cb` spawn (a `self` with no object_index) raised "REAL argument
+// incorrect type undefined" here in the Live 1 rerun (issue #44). Anything else is unknown.
+static bool IsNumericInstanceRead(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF;
+}
 static int CallerObjectIndex(CInstance* S)
 {
     if (!S) return -1;
-    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return (int)oi.ToDouble(); } catch (...) { return -1; }
+    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return IsNumericInstanceRead(oi) ? (int)oi.ToDouble() : -1; } catch (...) { return -1; }
 }
 static bool CallerIsEnemyInstance(CInstance* S) { return IsEnemyObject(CallerObjectIndex(S)); }
 // The built-in `id` is not a struct member: variable_struct_get gives undefined for it (the
 // enemy-born match was silently dead, 2026-09-07: 1261 births recorded, 0 matched).
 static double InstanceIdOf(const RValue& inst)
 {
-    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return v.ToDouble(); } catch (...) { return -1.0; }
+    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return IsNumericInstanceRead(v) ? v.ToDouble() : -1.0; } catch (...) { return -1.0; }
 }
 // Shared only by guards in one create-hook invocation, before native code runs.
 // Never cache an instance pointer or classification across native calls/frames.
@@ -1892,7 +1907,7 @@ struct EnemyBornScope
     EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
     {
         try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
-        if (!(RarityFloorActive() || TyrantActive() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
+        if (!(RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
         if (!(IsEnemyObject(objIdx) || IsCachedCreatorObject(objIdx))) return;
         if (!IsEnemyObject(caller.ObjectIndex())) return;   // only a real monster starts a chain
         active = true; prevCreating = g_CreatingFromEnemy; prevCaller = g_CallerIsEnemy;
@@ -7577,6 +7592,9 @@ static long g_RarSkippedBoss = 0;
 #endif
 static bool RarityFloorActive() { return g_RarRarePct > 0.0 || g_RarAncientPct > 0.0; }
 static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
+// HookOneScript answers true for a TABLE-ONLY install too; this says whether
+// the inline detour went in, so `bossrarity` can report a blind hook.
+static bool g_TyHookNative = false;
 static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
 // enemyAffix indices whose meaning is live-confirmed (see kHhAffixNames); 0 = champion marker.
 // Left out on purpose (2026-09-07 player reports "the more I kill, the more there are"):
@@ -7647,8 +7665,10 @@ static std::string TyInstName(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        if (!IsNumericInstanceRead(oi)) return "?";   // object_get_name would convert it
         RValue nm = g_Yytk->CallBuiltin("object_get_name", { oi });
         RValue id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        if (!IsNumericInstanceRead(id)) return nm.ToString() + "#?";
         return nm.ToString() + "#" + std::to_string((long long)id.ToDouble());
     } catch (...) { return "?"; }
 }
@@ -7682,6 +7702,28 @@ static std::string RarState(const RValue& inst)
     return s;
 }
 #endif
+// Bosses control (`bossrarity`, BossRarityMod.hpp): raises a boss the hook
+// already identified, through the sliders' own writes - enemyRarity first,
+// then the affix top-up from kTyAffixPool - so the original that runs next
+// builds the boss as if it had rolled that tier. The decision and the
+// counters live in the header, where tests/boss_rarity_harness.cpp runs them.
+static void BossRarityRaise(const RValue& inst, bool enemyBorn)
+{
+    namespace BR = ForgePact::BossRarity;
+    double rar = -1.0;
+    try {
+        RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
+        if (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) rar = rv.ToDouble();
+    } catch (...) {}
+    BR::RaiseBoss(BR::counters, BR::CurrentMode(), rar, /*isBoss=*/true, enemyBorn, [&](int tier, int wantAffixes) {
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue((double)tier) });
+            const int add = BR::AffixesToAdd(wantAffixes, TyCountAffixes(inst));
+            if (add > 0) TyAddAffixes(inst, add);
+            return true;
+        } catch (...) { return false; }
+    });
+}
 // Bosses (Anubis, Damien, Cthulhu, the Uber_* variants, and the rest of the
 // Enemy_Child_Boss_obj family - hs-game-sdk's OBJECT_PARENT_INDEX confirms
 // Anubis_obj's own chain runs Anubis_obj -> Enemy_Child_Boss_obj ->
@@ -7696,6 +7738,9 @@ static bool RarInstanceIsBoss(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        // Runs for every enemy while Bosses is on: a ToDouble on a kind with no
+        // number raises the runner's error, which catch (...) never sees.
+        if (!IsNumericInstanceRead(oi)) return false;
         return HeroSiege::Objects::IsDescendantOf((int32_t)oi.ToDouble(), (int32_t)HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj);
     } catch (...) { return false; }
 }
@@ -7711,10 +7756,15 @@ static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, i
     if (g_RarPreLeft > 0 && S) { --g_RarPreLeft; try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue(g_RarPreVal) }); Out("   -> enemyRarity pre-set to " + std::to_string((int)g_RarPreVal)); } catch (...) {} }
 #endif
     bool enemyBorn = g_CreatingFromEnemy;
-    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive())) {
+    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) {
         try { const double id = InstanceIdOf(inst); if (id >= 0.0 && g_EnemyBornIds.erase((int)id)) enemyBorn = true; } catch (...) {}
     }
-    if (enemyBorn && S && (RarityFloorActive() || TyrantActive())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    if (enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    // Bosses control: a boss, judged here at the point of use, is raised to
+    // the chosen tier when the game rolled it at rarity 1 and no monster made
+    // it (BossRarityMod.hpp decides and counts). It runs before the sliders'
+    // own boss check below, which still leaves every boss alone.
+    if (S && ForgePact::BossRarity::Active() && RarInstanceIsBoss(inst)) BossRarityRaise(inst, enemyBorn);
     if (S && !enemyBorn && RarityFloorActive() && RarInstanceIsBoss(inst)) {
 #ifndef FORGEPACT_RELEASE
         InterlockedIncrement(&g_RarSkippedBoss);
@@ -7764,8 +7814,45 @@ static void InstallTyrantHook()
 {
     if (g_TyHookAttempted) return;
     g_TyHookAttempted = true;
-    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings);
+    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings, &g_TyHookNative);
     InstallCreateHooks();   // enemy-born tracking rides the instance_create hooks
+}
+// The shared hook as `bossrarity` reports it. `table-only` is HookOneScript's
+// TABLE-ONLY fallback: installed, but blind to compiled GML's direct calls,
+// so a boss mode reporting it is armed and does nothing on those paths.
+static const char* BossRarityHookState()
+{
+    if (!g_TyHookAttempted) return "none";
+    if (!g_TyHookInstalled) return "failed";
+    return g_TyHookNative ? "ok" : "table-only";
+}
+// `bossrarity off|rare|ancient|status` - the panel's Mods > Gameplay > Bosses
+// select. `rare` / `ancient` install the shared hook (once); `off` leaves it in
+// place and only turns the mode off, so the sliders and the crown keep theirs.
+// A hook that failed to install refuses `rare` / `ancient` and leaves the mode
+// as it was (BossRarityMod.hpp's StoresMode), as Tyrant's Crown refuses in that
+// case; `table-only` keeps the mode. Every form answers one `bossrarity:` line.
+static void BossRarityCommand(const std::string& rest)
+{
+    namespace BR = ForgePact::BossRarity;
+    const std::string v = Lower(TrimCopy(rest));
+    if (v.empty() || v == "status" || v == "stat") {
+        Out(BR::StatusLine(BR::CurrentMode(), BR::counters, BossRarityHookState()));
+        return;
+    }
+    BR::Mode m = BR::CurrentMode();
+    if (!BR::ParseMode(v, m)) {
+        Out("bossrarity: usage bossrarity off|rare|ancient|status (unchanged: " + std::string(BR::ModeName(BR::CurrentMode())) + ")");
+        return;
+    }
+    if (m != BR::Mode::Off) InstallTyrantHook();
+    const char* hook = BossRarityHookState();
+    if (!BR::StoresMode(m, hook)) {
+        Out(BR::RefusedLine(m, BR::CurrentMode(), hook));
+        return;
+    }
+    BR::SetMode(m);
+    Out(BR::StatusLine(m, BR::counters, hook));
 }
 static void TyrantAutoArm()
 {
@@ -7790,6 +7877,197 @@ static void TyrantStatus()
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
 }
+
+#ifndef FORGEPACT_RELEASE
+// --- Bosses control research probes (issue #44, docs/boss-rarity-research.md) ---
+// `bossprobe`: one line per live boss (an Enemy_Parent_obj instance that
+// RarInstanceIsBoss accepts): its name, rarity, forceRarity, affixes and
+// health bar (RarState), then every instance variable whose name carries one
+// of the words below. A number that could be a protected-store handle is read
+// through the getter the control line proved and printed as
+// `<name>=<key>-><value>`.
+//
+// Three guards, because a handle carries no tag that says it is one:
+// - Range. The store holds 262,144 records and a -1 handle passed into it
+//   faulted the game (docs/RUNTIME_DATA_MODELS.md 5.8). The plugin builds
+//   with /EHsc, so catch (...) does not catch that access violation: only a
+//   finite whole number in [0, 262144) is ever handed to a getter, anything
+//   else prints `->not-key` and is not read.
+// - Control. Before any boss, both PC_GetVariableGMLWrapper and the proven
+//   GPV (gatestats, the Shadow Realm gate) read gDataProtected[177], a slot
+//   whose key equals its index and whose value is the heroic chance (28
+//   unmodded). The wrapper is used only when it answers the same non-zero
+//   number GPV does; GPV is used when only it answers; with neither, every
+//   key prints `->unread`, so a failed read names the call shape, not "no key".
+// - Identity. Only `enemy_hp` is a proven key (the kill route in
+//   tools/boss_drop_trial.py zeroes the record it names and the boss dies). Any other in-range number may be a bar width or a
+//   chance, and the record it names is someone else's: its read prints as
+//   `->?<value>`, which is what that record holds IF the number is a key.
+static const char* const kBossProbeWords[] = { "hp", "health", "damage", "dmg", "exp", "slots", "chance", "dropmult", "droptable" };
+static const char* const kBossProbeProvenKeys[] = { "enemy_hp" };
+static const double kProtStoreRecords = 262144.0;
+static const double kBossProbeControlSlot = 177.0;
+enum class BossProbeGetter { None, Wrapper, Gpv };
+static bool BossProbeIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+static bool BossProbeKeyInRange(const RValue& v)
+{
+    if (!BossProbeIsNumber(v)) return false;
+    const double d = v.ToDouble();
+    return std::isfinite(d) && d >= 0.0 && d < kProtStoreRecords && d == std::floor(d);
+}
+static BossProbeGetter BossProbeGetterControl()
+{
+    std::string line = "bossprobe control: gDataProtected[177]=";
+    BossProbeGetter route = BossProbeGetter::None;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= (int)kBossProbeControlSlot) {
+            line += "missing (len=" + std::to_string(len) + ") getter=unproven";
+        } else {
+            RValue h = g_Yytk->CallBuiltin("array_get", { arr, RValue(kBossProbeControlSlot) });
+            line += Describe(h);
+            if (!BossProbeKeyInRange(h)) {
+                line += " not-key getter=unproven";
+            } else {
+                RValue gpv, wrap; bool gpvOk = false, wrapOk = false;
+                try { gpv = g_Yytk->CallGameScript("gml_Script_GPV", { h }); gpvOk = BossProbeIsNumber(gpv); line += " GPV->" + Describe(gpv); }
+                catch (...) { line += " GPV->EXC"; }
+                try { wrap = g_Yytk->CallGameScript("gml_Script_PC_GetVariableGMLWrapper", { h }); wrapOk = BossProbeIsNumber(wrap); line += " PC_GetVariableGMLWrapper->" + Describe(wrap); }
+                catch (...) { line += " PC_GetVariableGMLWrapper->EXC"; }
+                if (gpvOk && wrapOk && wrap.ToDouble() == gpv.ToDouble() && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Wrapper; line += " getter=PC_GetVariableGMLWrapper (agrees with GPV)";
+                } else if (gpvOk && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Gpv; line += " getter=GPV (wrapper did not agree)";
+                } else {
+                    line += " getter=unproven";
+                }
+            }
+        }
+    } catch (...) { line += " EXC getter=unproven"; route = BossProbeGetter::None; }
+    Out(line);
+    return route;
+}
+// One probe line for one live instance: `bossprobe #<n> <Obj>#<id> <RarState> |`
+// then the matching variables under the read rules above. Both forms of the
+// command print through it, so a boss and an ordinary monster are read the
+// same way.
+static std::string BossProbeLine(int n, const RValue& id, BossProbeGetter getter)
+{
+    std::string line = "bossprobe #" + std::to_string(n) + " " + TyInstName(id) + RarState(id) + " |";
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+        const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string vars;
+        for (int i = 0; i < count; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string s = nm.ToString(), ls = Lower(s);
+            bool hit = false;
+            for (const char* w : kBossProbeWords) if (ls.find(w) != std::string::npos) { hit = true; break; }
+            if (!hit) continue;
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
+            std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
+            vars += " " + s + "=" + d;
+            if (!BossProbeIsNumber(v)) continue;
+            if (!BossProbeKeyInRange(v)) { vars += "->not-key"; continue; }
+            if (getter == BossProbeGetter::None) { vars += "->unread"; continue; }
+            bool proven = false;
+            for (const char* k : kBossProbeProvenKeys) if (s == k) { proven = true; break; }
+            try {
+                RValue got = g_Yytk->CallGameScript(getter == BossProbeGetter::Wrapper ? "gml_Script_PC_GetVariableGMLWrapper" : "gml_Script_GPV",
+                                                    { RValue(v.ToDouble()) });
+                std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
+                vars += std::string(proven ? "->" : "->?") + g;
+            } catch (...) { vars += "->EXC"; }
+        }
+        line += vars.empty() ? std::string(" (no matching vars)") : vars;
+    } catch (...) { line += " (vars exc)"; }
+    return line;
+}
+// `bossprobe <object index>`: the argument is a non-negative whole number,
+// digits only (at most 9, so it fits an int). Anything else is refused.
+static bool BossProbeParseObjectIndex(const std::string& arg, int& objIdx)
+{
+    if (arg.empty() || arg.size() > 9) return false;
+    for (char c : arg) if (c < '0' || c > '9') return false;
+    objIdx = std::atoi(arg.c_str());
+    return true;
+}
+// `bossprobe` reads every live boss. `bossprobe <object index>` reads every
+// live enemy whose own object_index is that number, boss or not, through the
+// same control line, line and read rules: Live procedure 1b's identity control
+// reads an ordinary monster this way before a boss's damage or XP counts.
+static void BossProbeCommand(const std::string& rest)
+{
+    const std::string arg = TrimCopy(rest);
+    int objIdx = -1;
+    const bool byObject = !arg.empty();
+    if (byObject && !BossProbeParseObjectIndex(arg, objIdx)) {
+        Out("bossprobe: usage: bossprobe [<object index>] - a non-negative whole number; nothing probed");
+        return;
+    }
+    try {
+        const BossProbeGetter getter = BossProbeGetterControl();
+        const RValue eobj((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+        if (byObject) {
+            std::string objName = "?";
+            try { objName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString(); } catch (...) {}
+            int found = 0;
+            for (int n = 0; n < total && n < 2000; ++n) {
+                RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+                RValue oi;
+                try { oi = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("object_index") }); } catch (...) { continue; }
+                if (!IsNumericInstanceRead(oi)) continue;   // a ToDouble on `undefined` raises a runner error
+                if ((int)oi.ToDouble() != objIdx) continue;
+                Out(BossProbeLine(found++, id, getter));
+            }
+            Out("bossprobe: " + std::to_string(found) + " instance(s) of " + objName + " among " + std::to_string(total) + " enemies");
+            return;
+        }
+        int bosses = 0;
+        for (int n = 0; n < total && n < 2000; ++n) {
+            RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+            if (!RarInstanceIsBoss(id)) continue;
+            Out(BossProbeLine(bosses++, id, getter));
+        }
+        Out("bossprobe: " + std::to_string(bosses) + " boss(es) among " + std::to_string(total) + " enemies");
+    } catch (...) { Out("bossprobe: EXC"); }
+}
+// `droptrace <n>`: the next n DropItem / DropItemBoss calls through
+// DropManager's hooks, one line each with the dropping instance and the
+// arguments (DropItem's first argument is the drop rank,
+// docs/RUNTIME_DATA_MODELS.md 13.7). Noted from ApRollDropScopeEnter, which
+// every DropManager hook body enters first in this build.
+static std::atomic<int> g_DropTraceLeft{ 0 };
+static void DropTraceNote(const char* hookName, CInstance* S, int argc, RValue** A)
+{
+    if (!hookName || g_DropTraceLeft.load(std::memory_order_relaxed) <= 0) return;
+    const std::string_view fn(hookName);
+    if (fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem)
+        && fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemBoss)) return;
+    if (g_DropTraceLeft.fetch_sub(1, std::memory_order_relaxed) <= 0) return;
+    RValue self; bool haveSelf = false;
+    try { if (S) { self = S->ToRValue(); haveSelf = true; } } catch (...) {}
+    Out("droptrace: " + std::string(fn) + " self=" + (haveSelf ? TyInstName(self) : std::string("none"))
+        + " argc=" + std::to_string(argc) + TyArgs(argc, A));
+}
+static void DropTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    int n = 20;
+    if (v == "off" || v == "0") n = 0;
+    else if (!v.empty()) { try { n = std::stoi(v); } catch (...) { n = 20; } }
+    if (n < 0) n = 0;
+    if (n > 500) n = 500;
+    if (n > 0) ForgePact::DropManager::Instance().InstallHooks();   // idempotent; the research build has them from startup
+    g_DropTraceLeft.store(n, std::memory_order_relaxed);
+    Out("droptrace -> next " + std::to_string(n) + " DropItem / DropItemBoss calls through DropManager's hooks");
+}
+#endif
 
 #ifndef FORGEPACT_RELEASE
 // --- monster AI target trace (Beacon amulet groundwork) ------------------------------
@@ -20932,6 +21210,9 @@ static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, 
 // hook body returns.
 static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    DropTraceNote(hookName, S, argc, A);   // `droptrace` (the Bosses research); off unless asked for
+#endif
     if (!hookName || !g_ApRollAttached.load(std::memory_order_relaxed)) return false;
     for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
         ApRollRow& r = g_ApRollRows[i];
@@ -44010,7 +44291,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "incident"
+        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -44113,6 +44394,9 @@ static void RunCommand(const std::string& line)
     // standalone early returns.
     if (lc == "zonecensus") { ZoneCensusCommand(rest); return; }
     if (lc == "evcount") { EvCountCommand(rest); return; }
+    // Bosses control research (issue #44): the same standalone early returns.
+    if (lc == "bossprobe") { BossProbeCommand(rest); return; }
+    if (lc == "droptrace") { DropTraceCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -44155,6 +44439,8 @@ static void RunCommand(const std::string& line)
     // Hidden loot sleep: the Mods tab's switch and its show key, the same
     // standalone early return.
     if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
+    // Bosses (Mods > Gameplay): the select's command, the same early return.
+    if (lc == "bossrarity") { BossRarityCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -45756,9 +46042,7 @@ EXPORTED AurieStatus ModuleInitialize(
     ForgePact::ModManager::Instance().Initialize();
     HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
-#ifdef FORGEPACT_RELEASE
     DetachConsole();
-#endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
     InstallHeadLabelHook();

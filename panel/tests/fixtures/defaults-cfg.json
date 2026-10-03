@@ -30,6 +30,7 @@
  "mod_skill_timer_style": "off",
  "rarity_rare": 0,
  "rarity_ancient": 0,
+ "boss_rarity": "off",
  "angelic_items": 1,
  "enemy_speed": 0,
  "enemy_speed_ct": true,

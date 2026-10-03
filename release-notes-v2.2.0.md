@@ -12,6 +12,13 @@ when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
 
+A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
+tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
+Measured in a live game on one boss, a Karp King spawned from the research
+console: set to Ancient, with the rarity and the affixes the mod added, it had
+about five times its usual health, about twice its damage and 6.25 times its
+experience.
+
 ## New
 
 - **Mining Ore Extra Rolls (#36).** A new slider on the Loot tab, right under
@@ -55,6 +62,38 @@ the panel's Setup tab.
   the game took about 7.5 ms a frame with them asleep, against 14 to 18 ms
   with them awake. This version of the switch has been tested both outside
   the game and in a live game.
+- **Bosses: "uber" and "uber uber" bosses (#44).** The Mods tab has a third
+  page, **Gameplay**, after Quality of Life and Items, with one setting:
+  **Bosses**. Pick **Rare — "uber" boss** or **Ancient — "uber uber" boss** and
+  the plugin asks the game, through the hook the Monster Rarity sliders already
+  use, to set up every boss that spawns while it is on as a rare or an ancient
+  one, and asks for the same extra affixes the sliders give a monster they raise
+  (up to two on a rare, three on an ancient). It is off by default (**Normal
+  (the game's own)**): choose a setting to use it. Bosses the game itself
+  already made champion, rare or ancient are left alone, and so are the
+  monsters and phases a boss creates during its fight; that is how the
+  setting is built, and neither case has come up in a live game yet. Ordinary
+  monsters are not affected, and the Monster Rarity sliders on the World tab
+  still leave bosses alone. With Tyrant's Crown also on, a boss this setting
+  raised to Rare can also get the crown's extra affix. If the plugin cannot
+  set it up on your game, choosing Rare or Ancient is refused and bosses stay
+  as the game makes them: the log shows `bossrarity: refused` with
+  `hook=failed`. If `bossrarity status` shows `hook=table-only`, bosses the
+  game creates through its compiled code's direct calls are not raised.
+  What was measured in a live game, on 2026-10-02: on the research build, a
+  Karp King set to Rare and to Ancient, and Damien, Uber Damien and Uber Anubis
+  set to Ancient, each came out at the rarity chosen with its extra affixes. On
+  an Ancient Karp King, spawned from the research console, the game then built
+  a stronger boss from the rarity and the affixes the mod added: about 4.7 to
+  5.7 times its usual health (two sessions), about 2.1 times its damage and
+  6.25 times its experience, and its death rolled its loot at the ancient rank
+  instead of the normal one. Those numbers come from that one boss. Not seen in those sessions: an ancient look (its
+  name bar looked the same), more or better loot (one kill at each rank, too
+  few to tell), or extra boss gems, runes or parts; and what Rare changes on a
+  boss beyond its rarity was not measured. On the release plugin, the panel
+  turned the setting on and off in a running game and the hook went in on
+  both routes; no boss was fought on that build, so the raise itself was
+  measured on the research build.
 - **Incident reports (#76).** When the game crashes or freezes, ForgePact
   saves a report folder under `bp_ipc\reports\` in the game's `bin` folder.
   A significant FPS drop (a single frame that takes over a quarter of a
@@ -120,10 +159,11 @@ the panel's Setup tab.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, two switches and an Incident reports card, so updating only
-the plugin leaves them out. Your existing settings are retained. Source users
-can run `Prepare-Plugin.bat` if plugin files are missing before using **Install
-Mod Plugin**. The plugin changed too, so press **Install Mod Plugin** once
-after updating - updating only the panel leaves the old plugin in place.
+gained a slider, two switches, an Incident reports card and a Gameplay page,
+so updating only the plugin leaves them out. Your existing settings are
+retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
+before using **Install Mod Plugin**. The plugin changed too, so press **Install
+Mod Plugin** once after updating - updating only the panel leaves the old
+plugin in place.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
