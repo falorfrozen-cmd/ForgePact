@@ -21714,6 +21714,10 @@ static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int ar
             }
         } catch (...) {}
     }
+    // Everywhere mode (issue #157): the game asks "is the player in the zone
+    // for this room?" and gets true for every room while the switch is on. The
+    // mod arrays and the resolved value itself are untouched.
+    if (g_SatEverywhere.load()) r = RValue(true);
     return r;
 }
 
@@ -21723,15 +21727,232 @@ static bool EnsureSatanicZoneHook()
     return HookOneScript("LoadSatanicZone", "fp_loadsz", (PVOID)HookLoadSatanicZone, &g_OrigLoadSatanicZone);
 }
 
+// ---- Satanic Zone control (issue #157) ---------------------------------
+// The resolved zone is a writable protected value (measured live 2026-10-03,
+// docs/satanic-zone-mods-research.md "Live 3"): Controller_obj.satanicZone is
+// the *key*, GPV(key) is the room's asset index, and SPV(key, room) sets it.
+// Both are game scripts, called here the same way `pcall` calls them (self =
+// the local player, the shape the live probes used). The game re-rolls the
+// value on its own during play, so a pin is re-asserted by the same 15-frame
+// poll that corrects the mod arrays. `follow` keeps the room the player is in
+// pinned; `everywhere` instead forces LoadSatanicZone's answer true (the
+// answer the game asks for ~150x a second) and never touches the value.
+static std::atomic<int>  g_SatZonePin{ -1 };        // room index kept as the zone, -1 = none
+static std::atomic<bool> g_SatZoneFollow{ false };  // keep the current room pinned
+static std::atomic<bool> g_SatEverywhere{ false };  // force LoadSatanicZone's answer true
+static std::atomic<long> g_SatZoneWrites{ 0 };
+static std::atomic<long> g_SatZoneRefusals{ 0 };
+static std::atomic<int>  g_SatZoneLastRoom{ -1 };
+static std::mutex        g_SatZoneWhyMutex;
+static std::string       g_SatZoneLastWhy;
+static std::map<std::string, int> g_SatRoomIndexByName;   // built lazily, one scan
+
+#define SATZONE_WHY(s) { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); g_SatZoneLastWhy = (s); }
+
+// "Act_01_02" and nothing else: the act zones the game resolves (towns and
+// sub-areas have other shapes). HS-Offline-Tracker's IsActZoneRoomName is the
+// precedent for the shape.
+static bool SatZoneIsZoneRoomName(const std::string& name)
+{
+    if (name.size() != 9U || name.rfind("Act_", 0U) != 0U || name[6] != '_') return false;
+    for (const size_t i : { 4U, 5U, 7U, 8U })
+        if (name[i] < '0' || name[i] > '9') return false;
+    return true;
+}
+
+static bool SatZoneRoomName(int idx, std::string& out)
+{
+    try {
+        out = g_Yytk->CallBuiltin("room_get_name", { RValue((double)idx) }).ToString();
+    } catch (...) { return false; }
+    return !out.empty() && out != "<undefined>";
+}
+
+// The number room_get_name accepts for the player's current room: the room
+// builtin's name, then an index scan (built once a session; the room table is
+// a few hundred entries and this only runs when control is on).
+static bool SatZoneCurrentRoomIndex(double& outIdx, std::string& outName)
+{
+    try {
+        RValue roomV;
+        g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, roomV);
+        outName = g_Yytk->CallBuiltin("room_get_name", { roomV }).ToString();
+    } catch (...) { return false; }
+    if (outName.empty() || outName == "<undefined>") return false;
+    if (g_SatRoomIndexByName.empty()) {
+        for (int i = 0; i < 600; ++i) {
+            std::string n;
+            if (!SatZoneRoomName(i, n)) break;
+            g_SatRoomIndexByName[n] = i;
+        }
+    }
+    const auto it = g_SatRoomIndexByName.find(outName);
+    if (it == g_SatRoomIndexByName.end()) return false;
+    outIdx = (double)it->second;
+    return true;
+}
+
+// GPV(key) with the local player as self, the shape pcall used live.
+static bool SatZoneReadValue(const RValue& key, double& out)
+{
+    RValue player;
+    try {
+        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
+        if (pid.ToDouble() < 0) { SATZONE_WHY("no player"); return false; }
+        const int32_t id = (int32_t)pid.ToDouble();
+        CInstance* inst = nullptr;
+        g_Yytk->GetInstanceObject(id, inst);
+        if (!inst) { SATZONE_WHY("player instance unreadable"); return false; }
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_GPV", inst, inst, { key });
+        if (!AurieSuccess(st)) { SATZONE_WHY("GPV refused st=" + std::to_string((int)st)); return false; }
+        out = res.ToDouble();
+        return std::isfinite(out);
+    } catch (...) { SATZONE_WHY("GPV threw"); return false; }
+}
+
+// SPV(key, value) with the same self; true when the call was dispatched.
+static bool SatZoneWriteValue(const RValue& key, int room)
+{
+    try {
+        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
+        if (pid.ToDouble() < 0) { SATZONE_WHY("no player"); return false; }
+        const int32_t id = (int32_t)pid.ToDouble();
+        CInstance* inst = nullptr;
+        g_Yytk->GetInstanceObject(id, inst);
+        if (!inst) { SATZONE_WHY("player instance unreadable"); return false; }
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_SPV", inst, inst,
+            { key, RValue((double)room) });
+        if (!AurieSuccess(st)) { SATZONE_WHY("SPV refused st=" + std::to_string((int)st)); return false; }
+        return true;
+    } catch (...) { SATZONE_WHY("SPV threw"); return false; }
+}
+
+// Re-assert the pin. Called from SatanicPollTick (same 15-frame cadence as the
+// mod filter); does no game reads while no pin and no follow is active.
+static void SatZoneTick()
+{
+    const int pin = g_SatZonePin.load();
+    const bool follow = g_SatZoneFollow.load();
+    if (pin < 0 && !follow) return;
+
+    RValue controller;
+    if (!ResolveControllerObj(controller)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("Controller_obj not found"); return; }
+    RValue key;
+    try { key = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue("satanicZone") }); }
+    catch (...) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("satanicZone key read threw"); return; }
+
+    int target = pin;
+    if (target < 0) {
+        double idx = -1;
+        std::string name;
+        if (!SatZoneCurrentRoomIndex(idx, name)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("current room unresolved"); return; }
+        if (!SatZoneIsZoneRoomName(name)) return;   // town / sub-area: leave the zone alone
+        target = (int)idx;
+    }
+    double current = -1;
+    if (!SatZoneReadValue(key, current)) { g_SatZoneRefusals.fetch_add(1); return; }
+    if ((int)current == target) return;
+    if (SatZoneWriteValue(key, target)) {
+        g_SatZoneWrites.fetch_add(1);
+        g_SatZoneLastRoom.store(target);
+    } else {
+        g_SatZoneRefusals.fetch_add(1);
+    }
+}
+
+// `satzone` - both builds (issue #157). Player-facing, off by default.
+static void SatZoneCmd(const std::string& rest)
+{
+    std::string sub, rest2;
+    sub = Lower(FirstToken(rest, rest2));
+    rest2 = TrimCopy(rest2);
+    const int pin = g_SatZonePin.load();
+    auto statLine = [&]() {
+        std::string pinned = "off";
+        const int p = g_SatZonePin.load();
+        if (p >= 0) {
+            std::string n;
+            pinned = (SatZoneRoomName(p, n) ? n : std::string("<unreadable>")) + " (" + std::to_string(p) + ")";
+        }
+        std::string why;
+        { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); why = g_SatZoneLastWhy; }
+        return std::string("satzone stat: pin=") + pinned
+            + " follow=" + (g_SatZoneFollow.load() ? "on" : "off")
+            + " everywhere=" + (g_SatEverywhere.load() ? "on" : "off")
+            + " writes=" + std::to_string(g_SatZoneWrites.load())
+            + " refused=" + std::to_string(g_SatZoneRefusals.load())
+            + (why.empty() ? "" : (" (last " + why + ")"));
+    };
+
+    if (sub.empty() || sub == "stat" || sub == "status") { Out(statLine()); return; }
+    if (sub == "off" || sub == "0") {
+        g_SatZonePin.store(-1);
+        g_SatZoneFollow.store(false);
+        Out("satzone -> off (the game rolls the zone itself again) " + statLine());
+        return;
+    }
+    if (sub == "follow") {
+        const bool on = (rest2 == "1" || rest2 == "on" || rest2 == "true");
+        g_SatZoneFollow.store(on);
+        if (on) g_SatZonePin.store(-1);
+        Out(std::string("satzone -> follow ") + (on ? "on (the room you are in stays the zone)" : "off") + " " + statLine());
+        return;
+    }
+    if (sub == "everywhere") {
+        const bool on = (rest2 == "1" || rest2 == "on" || rest2 == "true");
+        g_SatEverywhere.store(on);
+        if (on && !EnsureSatanicZoneHook())
+            Out("satzone: everywhere on, but the LoadSatanicZone hook could not install this session");
+        Out(std::string("satzone -> everywhere ") + (on ? "on (every zone counts as satanic)" : "off") + " " + statLine());
+        return;
+    }
+    if (sub == "pin") {
+        if (rest2.empty() || Lower(rest2) == "here") {
+            double idx = -1;
+            std::string name;
+            if (!SatZoneCurrentRoomIndex(idx, name)) {
+                Out("satzone: refused - the current room could not be resolved"); return;
+            }
+            if (!SatZoneIsZoneRoomName(name)) {
+                Out("satzone: refused - " + name + " is not an act zone (go to the zone you want, then `satzone pin here`)");
+                return;
+            }
+            g_SatZonePin.store((int)idx);
+            g_SatZoneFollow.store(false);
+            Out("satzone -> pinned " + name + " (" + std::to_string((int)idx) + ") " + statLine());
+            return;
+        }
+        int idx = -1;
+        try { idx = std::stoi(rest2); } catch (...) { }
+        std::string name;
+        if (idx < 0 || !SatZoneRoomName(idx, name)) {
+            Out("satzone: refused - '" + rest2 + "' is not a room index (room_get_name does not know it)"); return;
+        }
+        if (!SatZoneIsZoneRoomName(name)) {
+            Out("satzone: refused - " + name + " is not an act zone; only Act_NN_MM rooms can be the zone"); return;
+        }
+        g_SatZonePin.store(idx);
+        g_SatZoneFollow.store(false);
+        Out("satzone -> pinned " + name + " (" + std::to_string(idx) + ") " + statLine());
+        return;
+    }
+    Out("satzone: usage -> satzone pin here|<index> | satzone follow 0|1 | satzone everywhere 0|1 | satzone off | satzone stat");
+    (void)pin;
+}
+
 // ---- Poll-and-correct: the actual filtering mechanism -----------------
-// Live research 2026-09-10 found LoadSatanicZone never fires during normal
-// play (call counter stayed 0 through zone loads, waypoint travel); rereading
-// HS-Offline-Tracker's own README, LoadSatanicZone(room) is THEIR diagnostic
-// code asking the game a question, not something the game calls on its own
-// during a real roll. So hooking a specific "roll" routine is the wrong
-// approach - the actual write site is still unidentified (and may not even
-// be a single script; the array visibly changed once mid-session with the
-// hook installed and calls staying at 0).
+// The 2026-09-10 finding that LoadSatanicZone never fires during normal play
+// was an instrument artefact: that probe ran before HookOneScript had its
+// inline-detour route (2026-09-12), so a table-only hook could not see the
+// game's calls. Re-probed 2026-10-03 (docs/satanic-zone-mods-research.md
+// "Live 3"): the game calls it ~150-160x a second with the resolved zone's
+// room index. The mod *filter* still needs no knowledge of which routine
+// performs the roll, so the poll stays as it is; the answer's value is what
+// the control section above pins.
 //
 // Instead: sample Controller_obj.satanicZoneBuff/Debuff every
 // kSatanicPollFrames frames from the existing FrameCallback, and the instant
@@ -21768,6 +21989,10 @@ static std::vector<int> ReadIntArray(const RValue& controller, const char* varNa
 // Called every kSatanicPollFrames frames from FrameCallback.
 static void SatanicPollTick()
 {
+    // The control pin runs before the filter's bail-out: it has its own
+    // on/off state and must re-assert even while the mod filter is idle.
+    SatZoneTick();
+
     // Cheap bail-out: nothing to correct and nothing to trace.
     if (g_SatDisabledBuffs.empty() && g_SatDisabledDebuffs.empty() && g_SatLoadTraceLeftPoll <= 0) return;
     RValue controller;
@@ -44006,7 +44231,7 @@ static void RunCommand(const std::string& line)
         "ping", "density", "reveal", "specialrate", "dropmult",
         "stat", "statadd", "raredrop", "droprate", "dungeonkey",
         "headhunter", "hhdur", "hhmap", "hhdefault", "hhlabel", "tyrant", "beacon", "beaconrange", "beaconmode", "beaconwake", "beaconspawn", "beaconfarstep", "tyrantchance", "tyrantaffix", "hhlabelfont", "hhlabeloffset", "hhlabelmax",
-        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "petquest", "petunstick", "petrelic",
+        "enemyspeed", "rarity", "sigdrop", "angelicdrop", "relicfilter", "orbpickup", "satmods", "satzone", "petquest", "petunstick", "petrelic",
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
@@ -44210,6 +44435,10 @@ static void RunCommand(const std::string& line)
         }
         return;
     }
+    // Satanic Zone control (issue #157): pin a zone / follow the current one /
+    // everywhere mode. Both builds; a standalone early return for the same
+    // C1061 reason as `restartanytime` above.
+    if (lc == "satzone") { SatZoneCmd(rest); return; }
     // Toggle-skill active indicator (issue #11, Track B). A standalone early
     // return, not one more `else if` below: that chain is already at MSVC's
     // block-nesting limit (C1061) - the same reason the research command
