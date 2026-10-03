@@ -658,3 +658,172 @@ but runs through `skillsLeap` and `playerJumpGravity` per frame, that it lasts
   character's Jump Power is read beside it.
 - `getClosestCollisionDir` does nothing in this build (§ Static reading). If a
   game update gives it a body, the static reading has to be redone.
+
+## Phase 2: the mod
+
+Phase 2 (workorder `forgepact-16-jump-scenery-mod`, 2026-10-03) turns §
+Decision's `finding: builtins` into a player mod: **Jump through scenery**,
+the plugin command `jumpscenery 1|0|stat` and a Mods → Quality of Life switch
+(`mod_jump_scenery`), off by default. The owner's decisions (2026-10-03): the
+universal jump only; pass the whole `Collision_Parent_obj` family while the
+player is airborne, except zone gates and locks; no further research session,
+so the mod carries its own landing guard; release 2.2.0 if it merges before
+2026-10-09, otherwise 2.3.0.
+
+Each claim below is labelled **measured** (a live session, our own tool's
+output), **static reading** (read locally, in our own words) or **not
+established**. The mod's own rules are design, pinned by the tests listed at
+the end; they are not claims about the game.
+
+### The take-off check
+
+Source: the session's own `<game>\bin\bp_ipc\out.txt` from Live 1
+(2026-10-03), the `jumpprobe` lines between the first `jumpprobe arm:` and the
+last `jumpprobe arm: off`. The capture shortened the armed lines, so the
+arguments below come from that file (a local copy is kept outside the
+repository; the file itself is rotated by the next plugin loads). This is our
+own instrument's output.
+
+- **measured**: in the frame a jump takes off, before that frame's
+  `skillsLeap` line, the game walks along the jump's direction with queries
+  whose `self` is the player. In J1 (frame 47239, player at (1074.2, 1383.7),
+  heading south) the walk:
+  - steps about every 4.0 px along the direction: circle centres (1074.0,
+    1389.0), (1074.17, 1393.0), (1074.34, 1397.0), (1074.50, 1401.0), ...;
+  - asks, at each step, `collision_circle(cx, cy, 15, Wall_Parent_obj, true,
+    true)`;
+  - asks `instance_position` at two points about 14 px to either side of the
+    step, perpendicular to the direction, against `Collision_Parent_obj`
+    (for the first step, (1060.01, 1389.59) and (1087.99, 1388.41)).
+- **measured**: the first circle centre sits about 5-6 px below the player's
+  origin whatever the direction: J1 and J4 run B headed south, J5 (frame
+  116389, player at (355.3, 390.4), centres (355, 396), (354.87, 392.0),
+  (354.74, 388.0)) headed north. The take-off check was seen on these three
+  take-offs.
+- **measured**: in J1, the right-hand point of step 2 returned instance
+  228737, and that jump then moved 0 px. Every other query of that walk
+  returned `noone`.
+- **measured**: the builtin rows are logged when they return, and
+  `skillsLeap`'s own line, which prints `ret=`, comes after them in the same
+  frame. **Not established**: whether the walk runs inside `skillsLeap`'s
+  first call or just before it in the same frame. That decides whether a
+  window opened at `skillsLeap` entry covers the walk; the mod counts the
+  difference as `before-open=` (below), and the live session reads it.
+- **measured** (J3): the "no collision" answers the game accepted from the
+  research lever: real -4 (`noone`) for `instance_position`, `collision_line`
+  and `collision_circle`, bool false for `position_meeting` and
+  `place_meeting`. The game's own `noone` comes back as a ref to instance -4;
+  the mod writes the same forms the lever wrote.
+- **static reading** (phase 1, § Static search): `Wall_Parent_obj` (map edges'
+  `Invisible_Wall_obj`, and the zone gates under `Gate_Parent_obj`) is inside
+  the `Collision_Parent_obj` family, which is why phase 1's `all` lever
+  answered the walk's circles.
+
+### The airborne window
+
+The mod opens a window on each `skillsLeap` entry whose `self` is the local
+player, before the original runs, so a walk nested inside that first call
+falls inside it. A family query from the player is inside the window when the
+latest such entry happened this frame or the previous one, checked on the
+query itself, at the point of use. The window therefore lasts as long as the
+jump, at any Jump Power, with no fixed frame count (**measured** in phase 1:
+`skillsLeap` runs once per airborne frame, 104 frames for Sorak, and makes no
+player-self call while walking or standing). An entry after a gap of two
+frames or more starts a new jump and records the take-off position. The
+per-frame tick only closes a jump: it records the landing, learns the reach
+and counts `landed-inside=`; while the mod is off it returns at once.
+
+### The landing guard
+
+Phase 1 did not observe what the game does with a landing inside a prop
+(`valid-landing: not-observed`), so the mod lets a jump through only when its
+landing is free. Each jump is decided once, at the first query in its window
+whose real answer is "blocked":
+
+1. The original builtin runs first; a free answer is returned unchanged.
+2. **Direction**: the unit vector between the first two `collision_circle`
+   centres of this jump's take-off walk. Fewer than two: the real answer,
+   counted `no-direction=`, and the jump stays undecided.
+3. **Reach**: the straight-line distance of a recent jump in which the mod
+   answered nothing, whose take-off frame had no really-blocked family query,
+   and which moved at least 32 px. None since the character loaded:
+   `refused-no-reach=`.
+4. **Landing** = take-off + reach × direction. It and the points 16 px before
+   and after it must lie inside `[0, room_width) × [0, room_height)`
+   (otherwise `refused-room=`) and the original `place_meeting(x, y,
+   Collision_Parent_obj)`, run with the player as `self`, must return false at
+   each (otherwise `refused-landing=`). Both hold: `granted=`.
+5. A granted jump answers each really-blocked player-self family query in its
+   window with the measured "no collision" value (`answered=`), except where a
+   gate or a lock blocks it (below). A refused jump keeps the real answers
+   until its window closes.
+
+`room_width` and `room_height` are built-in variables, read through
+YYToolkit's `GetBuiltin`, as `hhlabelprobe` does; `variable_global_get` cannot
+see them. A reach measured at one Jump Power is wrong after a gear change: too
+short lands inside the obstacle and is refused (safe), too long can grant a
+landing beyond a free point. The 16 px band and the next clean jump bound
+that; it is a Known Limitation in the guide.
+
+### Gates and locks keep blocking
+
+Owner, 2026-10-03: the pass set is the `Collision_Parent_obj` family except
+`Gate_Parent_obj`, `Lock_obj` and their descendants, both named through
+`hs-game-sdk`. A query's object argument does not say what blocked it (phase
+1's static search puts `Gate_Parent_obj` under `Wall_Parent_obj`), so before
+answering a really-blocked query in a granted window, the adapter runs the
+same original builtin, with the same arguments and `self`, against each
+excluded object. If any is blocked, the real answer stands (`excluded=`). A
+query naming an excluded object gets the real answer the same way. The
+landing check still uses the whole family, so a landing on a gate is refused.
+**Not established**: whether a gate or a lock blocks a jump through these five
+builtins at all; the harness pins the rule, and no live check is planned.
+
+### Hooks, cost and the research build
+
+Six hooks, installed on the first `jumpscenery 1` and resolved by name:
+`skillsLeap` through its SDK constant and `HookOneScript` (refused unless the
+inline detour went in, since a table-only hook would miss the game's direct
+calls), and `position_meeting`, `place_meeting`, `instance_position`,
+`collision_line` and `collision_circle` through `HookBuiltin`, each checked
+to be in the game's own image first. While the mod is off each detour returns
+the original at once; the family test is a table built once per object
+index, never an `object_is_ancestor` call per query. Only the local player
+counts as `self` (the `VALUE_REF` rule); every other `self` gets the
+original. A builtin detours once, so in the research build `jumpscenery 1`
+refuses (`jumpscenery: refused - <holder>`) while `citrace` or `jumpprobe`
+holds one of the five, and `jumpprobe hook` refuses while `jumpscenery` holds
+them.
+
+### Player surface
+
+`jumpscenery 1` prints `jumpscenery: on`, `0` prints `jumpscenery: off`, and
+bare `jumpscenery` or `stat` prints one line: `jumpscenery: on|off
+reach=<px|none> jumps=<n> granted=<n> answered=<n> refused-landing=<n>
+refused-room=<n> refused-no-reach=<n> no-direction=<n> landed-inside=<n>
+before-open=<n> excluded=<n> room=<w>x<h>|unknown`. `before-open=` counts
+really-blocked player-self family queries in a take-off frame that came
+before the window opened; above 0 with `answered=0` in a crossing test means
+the window opens too late. The modstate JSON carries
+`"jumpScenery":{"enabled":...}`. The panel switch sends `jumpscenery 1|0` and
+has a `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
+
+### Status and what is not established
+
+- **Harness-verified**: `tests/test_jump_scenery_mod_behavior.py` compiles
+  `plugin/include/ForgePact/JumpScenery.hpp` whole in
+  `tests/jump_scenery_mod_harness.cpp` (baseline: off, outside the window,
+  another `self`, another family, a free answer; target: granted, refused by
+  landing, room and reach, no direction, gates and locks);
+  `tests/test_jump_scenery_mod_contract.py` pins the adapter's wiring;
+  `tests/test_jump_scenery_panel_contract.py` pins the panel's half.
+- **Live**: Live 1 (phase 1) is the inspected evidence the mod is built on.
+  The mod itself has not been run in a live game yet; this workorder's live
+  session (slot 14 "Sorak", representative cases, a positive control and a
+  room-edge case) is pending, and its result is added here.
+- **Not established**: whether the take-off walk runs inside `skillsLeap`'s
+  first call (`before-open=`); which of the five builtins decides the
+  crossing; what refuses J4 and J5 (the mod cannot override it); whether the
+  game ejects a landing inside a prop; what happens at a room edge; whether a
+  Leap skill also runs `skillsLeap` (**not observed**: Sorak has none);
+  co-op.

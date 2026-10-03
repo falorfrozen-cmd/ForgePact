@@ -7,8 +7,10 @@ pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key. A new **Pet collects relics** switch,
-also off by default, has your pet pick up the relics lying around you. And
-when the game crashes, freezes or drops frames badly, ForgePact now saves a
+also off by default, has your pet pick up the relics lying around you. A new
+**Jump through scenery** switch, off by default, lets your jump carry you over
+the rocks, fences and carts that stop it, when it would land on open ground.
+And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
 
@@ -161,6 +163,22 @@ experience.
   relic by one level, left 10/10 relics alone and stayed put when only those
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
+- **Jump through scenery (#16).** A new switch in Mods → Quality of Life,
+  off by default. Until now a jump aimed across a rock, a fence, a cart or
+  other scenery did not move you at all. With this on, the jump carries you
+  over it, but only when it would land you on open ground inside the area;
+  when the landing spot is blocked or past the edge of the area, the jump
+  stays blocked as it always was. Locked doors and zone gates still block the
+  jump. The mod learns how far your jump goes from a jump you make in the
+  open, so after loading a character, make one jump on open ground first:
+  until then, a jump into scenery stays blocked. Make one again after a big
+  change to your Jump Power, because until then the mod checks the landing
+  at your old jump distance. Some jumps the game itself refuses to start,
+  such as one aimed to land inside a carriage, stay refused: the mod cannot
+  change those. Only your universal jump is affected, not leap, dash or
+  charge skills, and in co-op only your own character. How the jump is
+  blocked was measured in a live game on 2026-10-03; the switch itself has
+  been tested outside the game.
 
 ## Changed
 
@@ -211,7 +229,7 @@ experience.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, two switches, an Incident reports card and a Gameplay page,
+gained a slider, three switches, an Incident reports card and a Gameplay page,
 so updating only the plugin leaves them out. Your existing settings are
 retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
 before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded
