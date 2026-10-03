@@ -11499,10 +11499,23 @@ static void Hook_Ci_VariableInstanceSet(RValue& Result, CInstance* S, CInstance*
     } catch (...) {}
 }
 
+// The hooks `jumpscenery 1` put in (five builtins and skillsLeap), by name;
+// "" when it has none. Defined with the jumpscenery adapter below.
+static std::string JumpSceneryHeldHooks();
+
 static bool g_CiHooksInstalled = false;
-static void InstallCiTraceHooks()
+// false when citrace refused and hooked nothing: two of jumpscenery's builtins
+// are citrace's too, a builtin detours once, and a second MmCreateHook would
+// fail with a console line while citrace counted that row's zero as real.
+static bool InstallCiTraceHooks()
 {
-    if (g_CiHooksInstalled) return;
+    if (g_CiHooksInstalled) return true;
+    const std::string jumpscenery = JumpSceneryHeldHooks();
+    if (!jumpscenery.empty()) {
+        Out("citrace: refused - jumpscenery holds " + jumpscenery + " (a builtin detours once, and its hooks"
+            " stay in once installed); nothing hooked. Relaunch without turning `jumpscenery` on to run citrace.");
+        return false;
+    }
     g_CiHooksInstalled = true;
     ResolveCiProfileManagerIdx();
     ResolveCiPlayerId();
@@ -11577,6 +11590,7 @@ static void InstallCiTraceHooks()
     HookRawNamedRoutine("gml_Object_Profile_Manager_obj_Step_0",        "fp_ci_pmstep", (PVOID)Hook_Ci_PmStep,       &g_OrigCi_PmStep);
     HookRawNamedRoutine("gml_Object_Player_obj_Step_0",                 "fp_ci_plstep", (PVOID)Hook_Ci_PlayerStep,  &g_OrigCi_PlayerStep);
     HookRawNamedRoutine("gml_Object_Player_obj_Mouse_3",                "fp_ci_plm3",   (PVOID)Hook_Ci_PlayerMouse3, &g_OrigCi_PlayerMouse3);
+    return true;
 }
 
 static void CiTraceStats()
@@ -44668,10 +44682,6 @@ static std::string JpCitraceHolders()
     return held;
 }
 
-// The hooks `jumpscenery 1` put in (five builtins and skillsLeap), by name;
-// "" when it has none. Defined with the jumpscenery adapter below.
-static std::string JumpSceneryHeldHooks();
-
 static void JpInstall()
 {
     const std::string citrace = JpCitraceHolders();
@@ -45813,7 +45823,10 @@ static void HiddenLootCommand(const std::string& rest)
 // each excluded object, and if one of them is there the real answer stands.
 // No address, no struct read. In the research build citrace and jumpprobe
 // hook some of the same builtins, and a builtin detours once, so each side
-// refuses while the other holds them.
+// refuses while the other holds them: `jumpscenery 1` while citrace or
+// jumpprobe holds one (JumpSceneryResearchHolders), and `citrace 1`
+// (InstallCiTraceHooks) and `jumpprobe hook` (JpInstall) while jumpscenery
+// holds any of its six (JumpSceneryHeldHooks).
 namespace JsNs = ForgePact::JumpSceneryMod;
 
 static constexpr HeroSiege::Objects::GameObject kJsFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
@@ -47864,8 +47877,8 @@ static void RunCommand(const std::string& line)
             return;
         }
         bool enable = (subLc == "1" || subLc == "true" || subLc == "on");
+        if (enable && !InstallCiTraceHooks()) { g_CiTraceOn.store(false); return; }
         g_CiTraceOn.store(enable);
-        if (enable) InstallCiTraceHooks();
         CiTraceStats();
 #endif
     } else if (lc == "reloadcfg") {

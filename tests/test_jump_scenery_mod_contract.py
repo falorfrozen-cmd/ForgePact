@@ -9,7 +9,7 @@ through its SDK constant and HookOneScript, the five builtins through
 HookBuiltin), the gates and locks are named through the SDK, every detour and
 the frame tick return the game's own answer at once while the mod is off, the
 research build's citrace and jumpprobe and this mod refuse each other's
-builtins, the mod state carries the switch, `stat` names every counter, and no
+builtins (both ways), the mod state carries the switch, `stat` names every counter, and no
 address is computed anywhere in it.
 """
 import re
@@ -235,6 +235,22 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertIn("g_JsOrig[i]", held)
         self.assertIn("g_JsOrigLeap", held)
         self.assertNotIn("JumpSceneryHeldHooks", self.shipped)
+
+    def test_citrace_refuses_while_jumpscenery_holds_them(self):
+        # Review of #163: citrace's second MmCreateHook on a builtin jumpscenery
+        # holds failed with a console line while citrace counted that row's
+        # zero as real, so citrace refuses before it marks itself installed.
+        ci_install = strip_comments(function_body(self.plugin, "static bool InstallCiTraceHooks()"))
+        refusal = ci_install.index("JumpSceneryHeldHooks()")
+        self.assertLess(refusal, ci_install.index("g_CiHooksInstalled = true;"))
+        self.assertLess(refusal, ci_install.index('HookBuiltin("instance_position"'))
+        self.assertLess(refusal, ci_install.index('HookBuiltin("position_meeting"'))
+        self.assertIn('"citrace: refused - jumpscenery holds "', ci_install)
+        self.assertIn("return false;", ci_install[refusal:ci_install.index("g_CiHooksInstalled = true;")])
+        # A refused `citrace 1` leaves the trace off and prints no zero counts.
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        self.assertIn("if (enable && !InstallCiTraceHooks()) { g_CiTraceOn.store(false); return; }", run)
+        self.assertNotIn("InstallCiTraceHooks", self.shipped)
 
     # ---- no address -----------------------------------------------------------------
 

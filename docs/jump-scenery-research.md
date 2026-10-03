@@ -793,8 +793,11 @@ index, never an `object_is_ancestor` call per query. Only the local player
 counts as `self` (the `VALUE_REF` rule); every other `self` gets the
 original. A builtin detours once, so in the research build `jumpscenery 1`
 refuses (`jumpscenery: refused - <holder>`) while `citrace` or `jumpprobe`
-holds one of the five, and `jumpprobe hook` refuses while `jumpscenery` holds
-them.
+holds one of the five, and both `citrace 1` (`citrace: refused - jumpscenery
+holds <hooks>`) and `jumpprobe hook` refuse while `jumpscenery` holds them, so
+the refusal runs both ways. A refused `citrace 1` hooks nothing and leaves the
+trace off; since `jumpscenery 0` leaves its hooks in, running `citrace` after
+`jumpscenery 1` takes a relaunch.
 
 ### Player surface
 
