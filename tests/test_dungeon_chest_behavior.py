@@ -9,7 +9,9 @@ is the kills counted since then and the threshold is ceil(pct % of T). The
 unlock is the `instance_exists` detour: once the threshold latches, the
 chest's own poll for an Enemy_Parent_obj is answered `false`. A countdown
 (`Chest: <n> kills to go`) shows when 50 or fewer kills remain, above the
-player's head, as chat lines at milestones, both, or neither.
+player's head, as chat lines at milestones, both, or neither. The head label holds its own
+state (D12): its text changes only when the count does, and its place only
+when the player or the camera moves.
 
 These scenarios pin the decision, the tally, the detour's decision and the
 countdown: nothing at all while the mode is off or the room holds no chest,
@@ -70,7 +72,7 @@ TARGETS = (
     "target/chat-milestones-double-kill",
 )
 # The countdown's forms: what is drawn and what is sent, whatever the latch does.
-FORMS = ("form/countdown-head", "form/countdown-none", "form/chat-refused", "form/chat-failed")
+FORMS = ("form/countdown-head", "form/countdown-head-stable", "form/countdown-none", "form/chat-refused", "form/chat-failed")
 COMMANDS = ("command/words_parsed", REFUSAL, "command/status_line")
 
 
@@ -178,6 +180,11 @@ class DungeonChestBehaviorTests(unittest.TestCase):
         """countdown-head (the default), countdown-none, chat-refused, chat-failed."""
         for label in FORMS:
             self.assertScenario(label)
+
+    def test_form_countdown_head_stable(self):
+        """D12: across frames with no kill, polls included, the head label is present with the
+        same text on the same whole pixel; one kill rewrites it exactly once."""
+        self.assertScenario("form/countdown-head-stable")
 
     def test_command_words_and_status(self):
         self.assertScenario("command/words_parsed")

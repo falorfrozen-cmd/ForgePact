@@ -284,10 +284,11 @@ class IncidentMonitorContractTests(unittest.TestCase):
                           "IncidentScope incidentScope(IncidentMod::farsleep);"])
         # Dungeon chest opens early (ForgePact #31): the same shape - its off
         # test (and the poll's throttle) first, then its own row, so switched
-        # off it costs nothing.
+        # off it costs nothing. The draw's off test reads the header's head
+        # label state (D12, a stable label).
         self.assertEqual(code_lines(function_body(self.plugin, "static void DungeonChestDraw()"))[:3],
-                         ["const std::string text = ForgePact::DungeonChest::HeadText(ForgePact::DungeonChest::state);",
-                          "if (text.empty()) return;",
+                         ["ForgePact::DungeonChest::HeadLabel& label = ForgePact::DungeonChest::UpdateHeadLabel(ForgePact::DungeonChest::state);",
+                          "if (!ForgePact::DungeonChest::LabelShown(label)) return;",
                           "IncidentScope incidentScope(IncidentMod::dungeonchest);"])
         tick = code_lines(function_body(self.plugin, "static void DungeonChestTick()"))
         self.assertEqual(tick[1], "if (!DC::Tracking(DC::state)) return;")

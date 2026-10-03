@@ -108,9 +108,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # `#boss_rarity` select's handler (ForgePact #44). Plus 2 for Mods >
         # Gameplay's Dungeon chest opens early (ForgePact #31): its
         # `#mod_dungeon_chest` switch's handler and its `#dungeon_chest_pct`
-        # range's change handler (both in the derived oracle).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2)
+        # range's change handler (both in the derived oracle). Plus 1 for its
+        # `#dungeon_chest_countdown` child select's handler (the owner's
+        # countdown form choice, 2026-10-04; in the derived oracle too).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

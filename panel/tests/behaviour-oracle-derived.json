@@ -62,7 +62,8 @@
   "#openreports",
   "#boss_rarity",
   "#mod_dungeon_chest",
-  "#dungeon_chest_pct"
+  "#dungeon_chest_pct",
+  "#dungeon_chest_countdown"
  ],
  "steps": [
   {
@@ -5854,7 +5855,8 @@
     },
     "cmds": {
      "is": [
-      "dungeonchest 75"
+      "dungeonchest 75",
+      "dungeonchest countdown head"
      ]
     }
    }
@@ -5991,7 +5993,8 @@
     },
     "cmds": {
      "is": [
-      "dungeonchest 95"
+      "dungeonchest 95",
+      "dungeonchest countdown head"
      ]
     }
    }
@@ -5999,6 +6002,104 @@
   {
    "step": 479,
    "control": "#enabledMods .quick-disable[data-for=\"mod_dungeon_chest\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 476
+    },
+    "cmds": {
+     "same": 476
+    }
+   }
+  },
+  {
+   "step": 480,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 478
+    },
+    "cmds": {
+     "same": 478
+    }
+   }
+  },
+  {
+   "step": 481,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "chat",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "chat"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown chat"
+     ]
+    }
+   }
+  },
+  {
+   "step": 482,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "both",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "both"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown both"
+     ]
+    }
+   }
+  },
+  {
+   "step": 483,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "head",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "head"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown head"
+     ]
+    }
+   }
+  },
+  {
+   "step": 484,
+   "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
     "posts": {

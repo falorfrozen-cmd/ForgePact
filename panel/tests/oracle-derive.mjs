@@ -88,9 +88,18 @@
 // range at its maximum while off (posted, nothing sent), the switch on again
 // (it sends the saved maximum), and the Turn off button, which repeats the
 // switch's off. Entered on their tab and Mods sub-tab (the native selects
-// leave them open), they come after the native selects, last of all, so no
-// earlier step's index moves, and both the switch and the range are in
-// `controls`, since no recording lists either.
+// leave them open), they come after the native selects, so no earlier step's
+// index moves, and both the switch and the range are in `controls`, since no
+// recording lists either. A pair with a child select (`restate`) sends that
+// select's saved line after its own each time the switch turns on.
+//
+// NATIVE_CHILD_SELECTS are selects no recorded page ever had that sit under a
+// switch-plus-range pair's switch and are disabled while it is off (where
+// Dungeon chest opens early's countdown shows, the owner's choice of
+// 2026-10-04), the shape of the show key's select above: the switch turned on
+// around them (on repeats the pair's last on, off its off), each value posted
+// and its line sent, ending on the default. Last of all, after the pairs, so
+// no earlier step's index moves.
 //
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
@@ -184,10 +193,18 @@ export const NATIVE_SELECTS = [
 // early, issue #31; see the header): the switch's config key, the range's
 // config key (each control's id is its key), where they sit, the plugin verb
 // src/forgepact.py sends, the range's resting value in a fresh sandbox, its
-// ends, and the value typed into its number input. Last of all.
+// ends, the value typed into its number input, and the child select's line
+// the switch's on restates (its default in a fresh sandbox).
 export const NATIVE_SWITCHED_RANGES = [
   { key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay', verb: 'dungeonchest',
-    rest: 75, min: 50, max: 95, typed: 80 },
+    rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' },
+];
+// Child selects of a switch-plus-range pair (see the header): the config key
+// (the control's id), the pair's switch, the values posted in order (the
+// default last) and the line src/forgepact.py sends before each value. Last
+// of all.
+export const NATIVE_CHILD_SELECTS = [
+  { key: 'dungeon_chest_countdown', parent: 'mod_dungeon_chest', values: ['chat', 'both', 'head'], verb: 'dungeonchest countdown' },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
@@ -377,23 +394,39 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     push(selector, 'select', { value: raised, expect: { posts: { same: on }, cmds: { same: on } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
-  // The switch-plus-range pairs no recording has: their literal contract, last
-  // of all (Mods › Gameplay is still open from the native selects).
-  for (const { key, range, tab, sub, verb, rest, min, max, typed } of NATIVE_SWITCHED_RANGES) {
+  // The switch-plus-range pairs no recording has: their literal contract
+  // (Mods › Gameplay is still open from the native selects).
+  const pairAt = {};
+  for (const { key, range, tab, sub, verb, rest, min, max, typed, restate } of NATIVE_SWITCHED_RANGES) {
     const sw = '#' + key;
     const rg = '#' + range;
     controls.push(sw, rg);
     if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
     if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
     const sends = (value, cmds) => ({ posts: { is: setPost({ key: range, value }) }, cmds: { is: cmds } });
-    push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} ${rest}`] } } });
+    const onCmds = (value) => [`${verb} ${value}`, ...(restate ? [restate] : [])];
+    push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: onCmds(rest) } } });
     push(rg, 'max', { expect: sends(max, [`${verb} ${max}`]) });
     push(rg, 'min', { expect: sends(min, [`${verb} ${min}`]) });
     push(rg, 'type', { value: String(typed), expect: sends(typed, [`${verb} ${typed}`]) });
     const off = push(sw, 'click', { expect: { posts: { is: setPost({ key, value: false }) }, cmds: { is: [`${verb} off`] } } });
     push(rg, 'max', { expect: sends(max, []) });
-    push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: [`${verb} ${max}`] } } });
+    const on = push(sw, 'click', { expect: { posts: { is: setPost({ key, value: true }) }, cmds: { is: onCmds(max) } } });
     push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
+    pairAt[key] = { on, off };
+  }
+  // The child selects no recording has, last of all: their switch turned on
+  // around them (it is off after the pair's Turn off), each value in turn.
+  for (const { key, parent, values, verb } of NATIVE_CHILD_SELECTS) {
+    const selector = '#' + key;
+    const sw = '#' + parent;
+    const { on: parentOn, off: parentOff } = pairAt[parent];
+    controls.push(selector);
+    push(sw, 'click', { expect: { posts: { same: parentOn }, cmds: { same: parentOn } } });
+    for (const value of values) {
+      push(selector, 'select', { value, expect: { posts: { is: setPost({ key, value }) }, cmds: { is: [`${verb} ${value}`] } } });
+    }
+    push(sw, 'click', { expect: { posts: { same: parentOff }, cmds: { same: parentOff } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

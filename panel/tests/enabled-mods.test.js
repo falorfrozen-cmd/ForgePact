@@ -86,6 +86,17 @@ test('sleep loot your filter hides is an entry while on, off by default, and its
   assert.deepEqual(enabledControls(cfg({ mod_hidden_loot_key: 0, mod_hidden_loot: true })), ['mod_hidden_loot']);
 });
 
+test('dungeon chest\'s countdown form is never an entry: it rides on the switch, head by default', () => {
+  assert.ok(!BOOLEAN_MODS.includes('dungeon_chest_countdown'));
+  assert.equal(DEFAULTS.dungeon_chest_countdown, 'head');
+  // Another form with the switch off is still nothing on, and with it on
+  // still the switch's one entry.
+  for (const form of ['head', 'chat', 'both']) {
+    assert.deepEqual(enabledControls(cfg({ dungeon_chest_countdown: form })), [], form);
+    assert.deepEqual(enabledControls(cfg({ dungeon_chest_countdown: form, mod_dungeon_chest: true })), ['mod_dungeon_chest'], form);
+  }
+});
+
 test('the skill timer is an entry for any style but off', () => {
   for (const style of ['arc', 'bar', 'number', 'fade']) {
     assert.deepEqual(enabledControls(cfg({ mod_skill_timer_style: style })), ['mod_skill_timer_style'], style);

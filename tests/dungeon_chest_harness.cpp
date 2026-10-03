@@ -18,6 +18,7 @@
 // Every target that says "not yet" sits beside the same tally going on to the
 // latch, so a decision that never unlocks fails it instead of passing it.
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -50,7 +51,11 @@ static bool FailUnlock() { ++unlockCalls; return false; }
 static bool RecordChat(const std::string& line) { chatLines.push_back(line); return true; }
 // A chat call that the game refuses (the script unresolved, the call failed).
 static bool FailChat(const std::string&) { ++chatFailures; return false; }
-static long Source(long alive) { ++sourceCalls; return sourceAnswer < 0 ? alive : sourceAnswer; }
+static long Source(long alive, DC::Census& census) {
+    ++sourceCalls;
+    census = DC::Census{};
+    return sourceAnswer < 0 ? alive : sourceAnswer;
+}
 static void ResetRecorders() { unlockCalls = 0; chatLines.clear(); chatFailures = 0; sourceAnswer = -1; sourceCalls = 0; }
 
 // One dungeon as the poll reads it. Every kill the game makes moves one
@@ -219,14 +224,19 @@ int main() {
         Poll(c, small);
         const int clampEarly = KillAndPoll(c, small, 19);
         const int clampLatch = KillAndPoll(c, small, 1);
+        // The player build's estimate (`total-route: estimate`) gives back Live
+        // procedure 1b's run A from its own inputs - 5 alive and 117 creators
+        // still to spawn at first sight, 619 to clear - and rounds up.
+        const bool estimate = DC::EstimatedTotal(5, 117) == 619 && DC::EstimatedTotal(5, 122) == 646
+            && DC::EstimatedTotal(44, 0) == 44 && DC::EstimatedTotal(0, 1) == 6 && DC::EstimatedTotal(-3, -1) == 0;
         check("target/total-planned",
             fixed && monotone && notYet && latched == 1 && s.tally.latched && unlocks == 1
                 && s.tally.threshold == 300 && asks == 1
                 && at249.empty() && at250 == "Chest: 50 kills to go"
                 && line == "dungeonchest: unlocked early at 300/600 alive=44"
-                && clampEarly == 0 && clampLatch == 1 && c.tally.threshold == 20,
+                && clampEarly == 0 && clampLatch == 1 && c.tally.threshold == 20 && estimate,
             "at299: " + at299 + " | at300: " + Tally(s) + " | at249=[" + at249 + "] at250=[" + at250 + "] " + line
-                + " | clamp: " + Tally(c));
+                + " | clamp: " + Tally(c) + " | estimate(5,117)=" + std::to_string(DC::EstimatedTotal(5, 117)));
     }
     {
         // total-unknown: with no total source the share is refused with
@@ -390,6 +400,53 @@ int main() {
             "head=[" + head + "] lines=" + Lines());
     }
     {
+        // countdown-head-stable (D12, the owner's Live procedure 1b report of a
+        // label that blinked and jerked): over frames with no kill, polls
+        // included, the label is present on every frame with the very same
+        // text, and it is placed on the same whole pixel while the player
+        // stands still - though the sprite's box top moves with its animation
+        // frame and the camera sits on a fractional position, which a label
+        // hung from the box top each frame follows (the negative control
+        // beside it). A kill changes the text exactly once, and the label goes
+        // when the form draws nothing above the head.
+        DC::State s;
+        Arm(s, 50, false);
+        Dungeon d; d.alive = 40;
+        Poll(s, d);
+        KillAndPoll(s, d, 5);                     // remaining 15
+        const double x = 812.0, y = 640.0, vx = 100.25, vy = 220.5, vw = 1280.0, vh = 720.0, gw = 1920.0, gh = 1080.0;
+        const double tops[] = { 600.0, 598.0, 601.0, 597.0 };   // the box top as the idle animation cycles
+        DC::HeadLabel& label = DC::UpdateHeadLabel(s);
+        const std::string first = label.text;
+        const long rewrites0 = label.rewrites;
+        const DC::LabelSpot spot0 = DC::PlaceHeadLabel(label, x, y, tops[0], vx, vy, vw, vh, gw, gh, 150.0);
+        bool same = DC::LabelShown(label) && first == "Chest: 15 kills to go";
+        bool whole = spot0.x == std::floor(spot0.x) && spot0.y == std::floor(spot0.y);
+        bool naiveMoved = false;
+        double naive0 = 0.0;
+        for (int frame = 1; frame <= 240; ++frame) {
+            if (frame % 60 == 0) { d.alive = frame % 120 == 0 ? 35 : 33; Poll(s, d); }   // the once-a-second poll
+            DC::HeadLabel& l = DC::UpdateHeadLabel(s);
+            const double top = tops[frame % 4];
+            const DC::LabelSpot p = DC::PlaceHeadLabel(l, x, y, top, vx, vy, vw, vh, gw, gh, 150.0);
+            same = same && DC::LabelShown(l) && l.text == first && p.x == spot0.x && p.y == spot0.y;
+            const double naive = (top - vy) * gh / vh - 150.0;
+            if (frame == 1) naive0 = naive; else if (naive != naive0) naiveMoved = true;
+        }
+        same = same && DC::UpdateHeadLabel(s).rewrites == rewrites0;
+        Kill(s, d);                               // remaining 14, between polls
+        std::string after;
+        for (int frame = 0; frame < 30; ++frame) after = DC::UpdateHeadLabel(s).text;
+        const long rewrites1 = DC::UpdateHeadLabel(s).rewrites;
+        DC::SetForm(s, DC::Form::None);
+        const bool gone = !DC::LabelShown(DC::UpdateHeadLabel(s)) && !s.label.anchored;
+        check("form/countdown-head-stable",
+            same && whole && naiveMoved && after == "Chest: 14 kills to go" && rewrites1 == rewrites0 + 1 && gone,
+            "first=[" + first + "] after=[" + after + "] rewrites " + std::to_string(rewrites0) + "->"
+                + std::to_string(rewrites1) + " spot=" + std::to_string(spot0.x) + "," + std::to_string(spot0.y)
+                + (naiveMoved ? " (a box-top label moved)" : " (control: a box-top label did not move)"));
+    }
+    {
         // countdown-none: neither the head text nor a chat line.
         DC::State s;
         Arm(s, 50, true);
@@ -541,7 +598,7 @@ int main() {
         KillAndPoll(s, d, 3);
         const std::string line = DC::StatusLine(s, "ok", "ok");
         check("command/status_line",
-            line == "dungeonchest: 50% | kills=3 total=40 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok",
+            line == "dungeonchest: 50% | kills=3 total=40 creators=0 pending=0 unreadable=0 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok",
             line);
     }
 

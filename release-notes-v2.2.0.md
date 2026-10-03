@@ -168,11 +168,12 @@ experience.
   monsters, spawned or not, is dead, instead of every last one, so you no
   longer hunt down the last few stragglers. The total is every monster the
   dungeon plans when it loads, so the count of kills left only goes down.
-  When 50 or fewer kills are left, a countdown tells you how many.
+  That total is an estimate from the dungeon's monster spawners, so in some
+  dungeons the chest may open a little sooner or later than the share you set.
+  When 50 or fewer kills are left, a countdown tells you how many: above your
+  character, in chat, or both, whichever you pick under the switch.
   It is off by default: turn it on in the panel, and the slider rests at 75 %
-  until you move it. **Not working yet in this build:** how many monsters a
-  dungeon plans has not been measured in a live game, so the setting is
-  refused and changes nothing until it has.
+  until you move it.
 
 ## Changed
 

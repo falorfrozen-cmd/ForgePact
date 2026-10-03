@@ -31,7 +31,10 @@ namespace ForgePact::DungeonChest {
 //     or still to be made by its spawners, 0 when it cannot tell. Asked at
 //     the chest's first sight, where that is the planned total, and again
 //     once a second only while it answers 0; an answer given later has the
-//     kills already counted added to it. Unset: every share is refused.
+//     kills already counted added to it. Unset: every share is refused. The
+//     player build's source is the estimate below (EstimatedTotal, workorder
+//     token `total-route: estimate`): the creators still to spawn, counted
+//     at first sight, times a mean Live procedure 1b measured.
 //   - `unlock`: called once, when the threshold latches; it answers whether
 //     the game's own chest can now be let open, which for this route (the
 //     `instance_exists` detour, workorder token `unlock-route: builtin`)
@@ -59,6 +62,43 @@ inline constexpr int kMilestoneCount = static_cast<int>(sizeof(kMilestones) / si
 inline constexpr int kRecentIds = 256;
 
 inline constexpr char kReadyText[] = "Chest: ready to open";
+
+// ---- the planned total's estimate (`total-route: estimate`) -------------------
+// Live procedure 1b (2026-10-03) found no creator variable, read by name, whose
+// sum came near the kills to clear (`creator-sum` not observed), but whether a
+// creator has spawned is readable: its `enemyArray` is not an array until it
+// has (`creator-state`). So the planned total is the monsters alive at the
+// chest's first sight plus the creators still to spawn then, times a measured
+// mean, rounded up to a whole monster. The mean is run A of that session
+// (Pumpkin Cellar): 619 kills to clear, 5 alive at first sight, 122 creators
+// of which 5 had spawned by then, so 117 pending and (619 - 5) / 117 = 614 /
+// 117, about 5.25 per pending creator. It is taken over kills, never births:
+// 25 of the run's 644 births were never killed. If those 5 first-sight
+// monsters were idle ones rather than packs, all 122 creators were pending and
+// this estimate gives 646 for that run rather than 619; an over-count only
+// raises the threshold, and the game's own rule (every monster dead) still
+// opens the chest, so the mod never opens it later than the game would. The
+// inputs are curated in the hub's
+// hs-game-sdk/curated/dungeon_chest_measurements.json (DC19).
+inline constexpr long kEstimateKills = 614;            // kills to clear less those alive at first sight: 619 - 5
+inline constexpr long kEstimatePendingCreators = 117;  // creators still to spawn at first sight: 122 - 5
+
+// alive + ceil(pending x 614 / 117); negative inputs count as 0.
+inline long EstimatedTotal(long alive, long pending)
+{
+    const long long a = alive > 0 ? alive : 0;
+    const long long p = pending > 0 ? pending : 0;
+    return static_cast<long>(a + (p * kEstimateKills + kEstimatePendingCreators - 1) / kEstimatePendingCreators);
+}
+
+// What the total source saw of the room's creators when it answered, kept for
+// `status`: every creator-family instance, those still to spawn, and those
+// whose state could not be read (counted as spawned).
+struct Census {
+    long creators = 0;
+    long pending = 0;
+    long unreadable = 0;
+};
 
 // ---- the countdown's form ---------------------------------------------------
 
@@ -133,7 +173,7 @@ inline std::string RefusedLine(int asked, int kept, std::string_view hook, std::
 {
     std::string why;
     if (!InRange(asked)) why = " (the share is 50..95, or off";
-    else if (!totalAvailable) why = " total=unavailable (this build has no source for the dungeon's planned total yet, so the share has nothing to be a share of";
+    else if (!totalAvailable) why = " total=unavailable (no source for the dungeon's planned total is set, so the share has nothing to be a share of";
     else if (unlock != "ok") why = " unlock=" + std::string(unlock) + " (the instance_exists detour is not installed, so the chest would not open early";
     else if (hook != "ok") why = " hook=" + std::string(hook) + " (the kill hook is not on both routes, so kills would go uncounted";
     else why = " (refused";
@@ -194,6 +234,7 @@ struct Tally {
     long alive = 0;               // Enemy_Parent_obj instances at the last poll
     long alive0 = 0;              // Enemy_Parent_obj instances when the chest was first seen
     long total = 0;               // the planned total, fixed once known; 0 = unknown
+    Census census;                // what the total source last saw of the room's creators
     long threshold = 0;           // the threshold at the last evaluation
     bool latched = false;         // reached in this room: stays reached until the room changes
     bool unlocked = false;        // the unlock action answered at the latch that the chest can open
@@ -235,8 +276,38 @@ using ChatAction = bool (*)(const std::string& line);
 using UnlockAction = bool (*)();
 // Answers how many of the room's monsters are still to die - alive now plus
 // those its spawners have yet to make - or 0 when it cannot tell. `alive` is
-// the poll's Enemy_Parent_obj count.
-using TotalSource = long (*)(long alive);
+// the poll's Enemy_Parent_obj count; `census` is filled with what the source
+// saw of the room's creators, for `status`.
+using TotalSource = long (*)(long alive, Census& census);
+
+// ---- the head label's state (D12: a stable label) ----------------------------
+// Live procedure 1b's owner report: the label "felt jerky and was blinking very
+// fast as it was updating every frame". The label is drawn every frame, so
+// everything that can change it is held here rather than re-derived per frame
+// from inputs that move on their own: its text is written only when the count
+// it shows changes (UpdateHeadLabel), and its height above the player is taken
+// once, when it appears, from the player's origin and bounding box, and then
+// held (PlaceHeadLabel) - the box's top follows the sprite's animation frame,
+// so a label hung from it bobs while the player stands still. Its position is
+// whole GUI pixels, since a fractional one is rasterised differently from
+// frame to frame, and the last one placed is kept for a frame whose reads fail,
+// so a missed read never blanks the label for a frame.
+struct LabelSpot {
+    double x = 0.0;
+    double y = 0.0;
+};
+
+struct HeadLabel {
+    long count = 0;          // the remaining count shown; 0 = hidden
+    std::string text;        // CountdownLine(count), written when count changes
+    long rewrites = 0;       // times the text changed (appeared, counted down, went)
+    bool anchored = false;   // the lift is taken: from the label's first frame until it hides
+    double lift = 0.0;       // room units between the player's origin and its box top, at that frame
+    bool placed = false;     // `spot` holds a placed position
+    LabelSpot spot;          // the last position placed, in whole GUI pixels
+};
+
+inline bool LabelShown(const HeadLabel& l) { return l.count > 0; }
 
 struct State {
     std::atomic<int> pct{ 0 };                               // 0 = off, else 50..95
@@ -246,6 +317,7 @@ struct State {
     std::atomic<bool> observe{ false };
     Tally tally;
     Counters counters;
+    HeadLabel label;                    // what the head draw shows, written by UpdateHeadLabel
     ChatAction chat = nullptr;          // unset: the chat forms are refused
     UnlockAction unlock = nullptr;      // called once, when the threshold latches; unset: no latch ever unlocks
     TotalSource totalSource = nullptr;  // unset: every share is refused (`total=unavailable`)
@@ -375,7 +447,7 @@ inline void AskTotal(State& s)
     Tally& t = s.tally;
     if (t.total > 0 || !s.totalSource) return;
     ++s.counters.totalAsks;
-    const long answer = s.totalSource(t.alive);
+    const long answer = s.totalSource(t.alive, t.census);
     if (answer > 0) t.total = answer + t.kills;
 }
 
@@ -429,13 +501,57 @@ inline std::string HeadText(const State& s)
     return CountdownText(t.active, t.latched, Remaining(t));
 }
 
+// The head label for this frame (D12). The count it shows is HeadText's
+// window - shown only while the mode is on, the form draws above the head, a
+// chest is tracked, the threshold is not reached and 0 < remaining <= 50 -
+// and its text is rewritten only when that count changes, so frames with no
+// kill and no threshold move draw the very same string. Hiding drops the
+// anchor, so the next showing takes its lift afresh.
+inline HeadLabel& UpdateHeadLabel(State& s)
+{
+    HeadLabel& l = s.label;
+    long count = 0;
+    if (Active(s) && FormShowsHead(CurrentForm(s))) {
+        const Tally& t = s.tally;
+        const long remaining = Remaining(t);
+        if (t.active && !t.latched && remaining > 0 && remaining <= kCountdownFrom) count = remaining;
+    }
+    if (count != l.count) {
+        l.count = count;
+        l.text = count > 0 ? CountdownLine(count) : std::string();
+        ++l.rewrites;
+        if (count == 0) { l.anchored = false; l.placed = false; }
+    }
+    return l;
+}
+
+// Where the label goes this frame, in whole GUI pixels: `x`, `y` are the
+// player's origin and `top` its bounding box top, in room units; the camera's
+// view (`vx`, `vy`, `vw`, `vh`) and the GUI size (`gw`, `gh`) convert them, and
+// `offsetPx` lifts the label above the box. The lift (y - top) is taken on the
+// label's first frame and held while it shows, so only the player's position
+// and the camera move it. Kept as the label's last spot.
+inline LabelSpot PlaceHeadLabel(HeadLabel& l, double x, double y, double top, double vx, double vy, double vw,
+                                double vh, double gw, double gh, double offsetPx)
+{
+    if (!l.anchored) { l.lift = y - top; l.anchored = true; }
+    LabelSpot p;
+    p.x = std::floor((x - vx) * gw / vw + 0.5);
+    p.y = std::floor((y - l.lift - vy) * gh / vh - offsetPx + 0.5);
+    l.spot = p;
+    l.placed = true;
+    return p;
+}
+
 // `hook` is the kill hook's state as ModuleMain records it: "ok" (both routes),
 // "table-only" (compiled GML's direct calls bypass it), "failed" (not
 // installed) or "none" (never asked for); `unlock` is the instance_exists
 // detour's, the same words. `total` is the total the decision uses, or
-// `unavailable` while it is unknown. `latched` is the decision; `unlocked` is
-// the unlock action's answer, which opens the detour's view; `answered` is
-// what the detour then did to the chest's polls in this room.
+// `unavailable` while it is unknown; `creators`, `pending` and `unreadable`
+// are what the total source last saw of the room's creators (all, still to
+// spawn, state unreadable). `latched` is the decision; `unlocked` is the
+// unlock action's answer, which opens the detour's view; `answered` is what
+// the detour then did to the chest's polls in this room.
 inline std::string StatusLine(const State& s, const char* hook, const char* unlock)
 {
     const Tally& t = s.tally;
@@ -443,6 +559,9 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
     return std::string("dungeonchest: ") + ModeText(Pct(s))
         + " | kills=" + std::to_string(t.kills)
         + " total=" + (total > 0 ? std::to_string(total) : std::string("unavailable"))
+        + " creators=" + std::to_string(t.census.creators)
+        + " pending=" + std::to_string(t.census.pending)
+        + " unreadable=" + std::to_string(t.census.unreadable)
         + " alive=" + std::to_string(t.alive)
         + " threshold=" + std::to_string(t.threshold)
         + " remaining=" + std::to_string(Remaining(t))

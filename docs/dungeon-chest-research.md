@@ -8,7 +8,8 @@ head|chat|both|none`) lets a player open the end chest of a key dungeon once
 that share of the dungeon's monsters is dead, instead of all of them. When 50
 or fewer kills remain to the threshold, a countdown says how many
 (`Chest: 23 kills to go`): as a short line above the player's head, as chat
-lines, or both. Only `Dungeon_Chest_obj` is gated; what the chest drops, how
+lines, or both, whichever the player picks in the child select under the
+switch (`dungeon_chest_countdown`, head by default). Only `Dungeon_Chest_obj` is gated; what the chest drops, how
 often and at what rarity is the game's own open and is not touched.
 
 "The dungeon's monsters" is our own definition, not a game fact: the
@@ -19,9 +20,11 @@ T; the threshold is the share of T, rounded up, and once reached it stays
 latched. Live procedure 1 showed why it cannot be the kills plus the monsters
 alive now (the first definition): the monsters stream in from spawners as the
 player moves, so that sum starts near 44 in a dungeon of 600 (see
-[Negative results](#negative-results)). Where T comes from is what Live
-procedure 1b measures; until a build has a source for it, the share is
-refused (`total=unavailable`). The arithmetic is written out in the hub's
+[Negative results](#negative-results)). Live procedure 1b found no spawner
+variable that holds the count, so T is an estimate: the monsters alive at the
+chest's first sight plus the spawners still to fire then, times a mean that
+session measured (`total-route: estimate`, [Live procedure 1b](#live-procedure-1b)).
+A build with no source for T refuses the share (`total=unavailable`). The arithmetic is written out in the hub's
 [`docs/models/dungeon-chest-spec.md`](../../docs/models/dungeon-chest-spec.md)
 and modelled in `hs-game-sdk/python/hs_game_sdk/dungeon_chest_model.py`.
 
@@ -31,16 +34,20 @@ The game's code was read locally; what it does is told here in our own words,
 and no script text, listing, address or byte pattern is reproduced (hub
 `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin").
 
-Status, 2026-10-03: **Live procedure 1 has run** ([Results](#results)). The
-chest polls `instance_exists(Enemy_Parent_obj)` itself about once a frame, so
-the unlock action is to answer that one call as "none" for the chest while the
-threshold is latched (`unlock-route: builtin`, [Route](#route)); whether that
-alone opens it is measured in Live procedure 1b. The chat call is proven
-(`chat-route: proven`: `ChatAddServerMessage`, [Chat route](#chat-route)).
-The measured dungeon held 122 spawners from the first tick and took 600 kills
-to clear, which replaced the denominator above. Live procedure 1b (a census of
-the spawners and a run that unlocks at 50 % of a known total) and Live
-procedure 2 (the player build) follow.
+Status, 2026-10-04: **Live procedures 1 and 1b have run** ([Results](#results),
+[1b's results](#live-procedure-1b)). The chest polls
+`instance_exists(Enemy_Parent_obj)` itself about once a frame, and answering
+that one call as "none" for the chest while the threshold is latched opens it
+with monsters alive (`unlock-route: builtin`, confirmed in Live procedure 1b,
+[Route](#route)). The chat call is proven (`chat-route: proven`:
+`ChatAddServerMessage`, [Chat route](#chat-route)). The measured dungeon held
+122 spawners from the first tick and took 600 kills to clear (619 in Live
+procedure 1b), which replaced the denominator above; no spawner variable
+holds its count, so the player build estimates the total (`total-route:
+estimate`). The owner chose to ship every countdown form as a choice on the
+panel (`countdown-form: choice`, 2026-10-04) and reported a flickering head
+label, which the build now holds steady. Live procedure 2 (the player build)
+follows.
 
 ## Static reading
 
@@ -114,14 +121,18 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 ### `dungeonchest` (both builds)
 
 The player command. Every form answers one status line that reports what was
-*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable> alive=<a>
+*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable>
+creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
 chatLines=<n> hook=ok|table-only|failed|none`. `total=` is the planned total,
-`unlock=` the `instance_exists` detour's install state and `answered=` the
+`creators=`/`pending=`/`unreadable=` what the total source counted at first
+sight (every spawner, those still to fire, those whose state it could not
+read), `unlock=` the `instance_exists` detour's install state and `answered=` the
 chest's polls the detour answered `false` in this room. The Live procedure 1
 build printed `unlockRoute=<ok|unavailable>` in place of the last three; that
-field is gone. `latched` is the decision; `unlocked` is
+field is gone, and the Live procedure 1b build had no `creators=`, `pending=`
+or `unreadable=`. `latched` is the decision; `unlocked` is
 the unlock action, which is what changes the chest. `kills` is our own count
 from the `EnemyDestroyKillProc` hook Headhunter already installs (an
 enemy-`self` call, once per instance id, with its own recent-id set); `alive`
@@ -133,6 +144,28 @@ sight (and again once a second only while it answered 0). The tally resets on
 a room change and when the chest count drops to 0. When the threshold latches,
 `out.txt` gets one `dungeonchest: unlocked early at <k>/<T> alive=<n>` line
 per dungeon.
+
+**The total source** (`total-route: estimate`, both builds). At the chest's
+first sight the adapter counts the spawner family
+(`kKnownDensityCreatorObjects`, a child object never counted twice) and reads
+each spawner's `enemyArray` by name: one that is not an array has not fired
+yet (Live procedure 1b, `creator-state`). T is the monsters alive then plus
+those pending spawners times 614 / 117, rounded up (`EstimatedTotal` and its
+two named constants in `DungeonChestMod.hpp`; the inputs are run A of Live
+procedure 1b, curated as the hub's DC19). A spawner whose state cannot be read
+counts as fired (`unreadable=`); the clamp keeps T at or above the kills plus
+the monsters alive.
+
+**The head label** (D12). Live procedure 1b's owner report: the label "felt
+jerky and was blinking very fast as it was updating every frame". The header
+now holds the label's state: its text is rewritten only when the remaining
+count changes, its height above the player is taken once when it appears
+(from the player's origin, not the bounding box top, which follows the
+sprite's animation frame) and held, its position is whole GUI pixels, it sits
+in a fixed line under the Headhunter labels' base rather than above however
+many of them drew that frame, and a frame whose reads fail draws it at the
+last position instead of not at all. Which of those inputs the owner saw is
+not established; Live procedure 2's `on-head-steady` is the check.
 
 **The unlock action** (`unlock-route: builtin`, both builds). One `HookBuiltin`
 detour on `instance_exists`, installed once on the first non-off mode together
@@ -245,7 +278,9 @@ sub-commands under [Chat route](#chat-route).
   source answers `<n>` for the next room (`dungeonprobe: total override <n>
   for the next room`), so Live procedure 1b can prove the unlock and the
   countdown against the measured 600 before the build has a source of its
-  own; `off` returns to the build's own source. Never in the player build.
+  own; `off` returns to the build's own source (now the estimate, which also
+  runs beside the override to fill `creators=`/`pending=`/`unreadable=`).
+  Never in the player build.
 
 **Positive controls.** For the census, the kill hook is the control: it is
 the route Headhunter proves (307 calls in the § 13.5 measurement), and in Live
@@ -592,7 +627,73 @@ Reading it into tokens:
 
 ### Results
 
-Not yet run.
+Run 2026-10-03 on the research DLL (SHA-256 `316a68ed…1bd6d`, the hash taken
+at dispatch, matched by the lease), save slot 14 (Sorak), two Pumpkin Cellar
+runs (`Pumpkin_Cellar_01_rm`) in one launch; the saves backup was restored
+after it. The capture stays local
+(`.claude/workorders/forgepact-issue-31-dungeon-chest-b-live-1b.md`); this is its
+tracked copy. Screenshots are named, not pasted.
+
+| check | result | observed |
+|---|---|---|
+| `dll-hash` | pass | the installed DLL's hash matched the dispatch's |
+| `marker` | pass | `dungeonprobe: off global=unresolved …` |
+| `control` | pass | `pong (YYTK 4.0.1)` |
+| `kill-hook-fires` | pass | `killHook=ok killNotEnemySelf=0`; run A `kills=` rose 0 → 619 to `alive=0` |
+| `builtin-hook-fires` | pass | `dungeonprobe: on global=resolved`; `dungeonprobe control: PASS … calls=1` |
+| `builtin-poll` | pass | `instance_exists self=Dungeon_Chest_obj arg=Enemy_Parent_obj calls=17697` (run A), 56440 by the end of run B |
+| `creators-at-load` | pass | first tick `creators=122`; `first-sight alive0=5 births0=5 spawned0=5 creators=122 sampled=8 names=20` |
+| `births-hook-fires` | pass | `births=42` with `kills=0` about 10 s after entry (`alive=42 spawned=11`) |
+| `kills-equal-births` | fail | K = 619, `alive0` = 5, `birthsSince` = 639 (`alive0` + `birthsSince` = 644), `births` = 644: both 25 above K |
+| `creator-sum` | not-observed | no candidate near 619; nearest `img` (`sum0` 112.67, `sum0Pending` 91), `isWormhole` (19806532), `spawnPack` (19970468) |
+| `creator-match` | not-observed | best row `img match=0/122 matchPending=0/117`; every candidate 0 |
+| `creator-state` | pass | sampled spawners at first sight `alarm[0]=5`, `enemyCreatorTimer` undefined, `enemyArray` undefined; armed (step 4) `alarm[0]=-1`, `enemyCreatorTimer` 214..221; fired (step 6) `enemyArray` an array |
+| `boss-dungeon` | not-observed | `blockers=0` throughout both runs; not covered live, only Cellar Keys |
+| `on-status-research` | pass | `dungeonchest: 50% \| … unlock=ok answered=0 countdown=head chat=ok chatLines=0 hook=ok` |
+| `countdown-head-seen` | pass | `head-label-9.png`: `Chest: 9 kills to go` above the character (the 50 mark was passed before the screenshot); the owner reported the label flickering (below) |
+| `chat-countdown-seen` | pass | the owner saw `Chest: 5 kills to go` in chat (`chatLines=2`); `chat-5.png` shows the head label, the chat line had faded |
+| `poll-answered` | pass | `latched=1 unlocked=1 answered=390` |
+| `unlock-works` | pass | `dungeonchest: unlocked early at 304/600 alive=214`; the sprite went from closed to open at `kills=325 alive=193`; the drop was not checked by the operator |
+| `chat-sender` | pass | `chat-try-8.png`: `[00:49] ForgePact : ForgePact chat test 8`, no `SERVER:` prefix, no crash |
+
+Key lines. Run A at first sight: `dungeonprobe creators: first-sight alive0=5
+births0=5 spawned0=5 creators=122 sampled=8 names=20`. At the clear:
+`dungeonprobe creators: alive0=5 creators=122 births=644 births0=5
+birthsSince=639 spawned=122 spawned0=5 kills=619`. The variables on the
+spawners whose names suggest a pack size read as one large real per spawner,
+rising from one spawner to the next (about 163047 upward), not as counts. Run
+B: `dungeonchest status` in the room read `total=600 alive=41 threshold=300
+remaining=300 latched=0`, and after the open `kills=325 total=600 alive=193
+threshold=300 remaining=0 latched=1 unlocked=1 unlock=ok answered=390
+countdown=both chat=ok chatLines=3`; the chat hook saw
+`ChatAddServerMessage … "Chest: ready to open"`. One deviation from the
+procedure: step 9's commands were first issued while the owner was still in
+run A's room, so the override bound to that room; they were issued again
+after the owner left, before the second key.
+
+The owner, on the head label in run B: "the text above character felt jerky
+and was blinking very fast as it was updating every frame". That is our draw,
+not the game; see the head label under [The instrument](#the-instrument).
+
+**Tokens.** `unlock-route: builtin`, confirmed: `unlock-works` passed with
+`answered=390`, so answering the chest's own poll is enough to open it.
+`total-route: estimate`: `creator-sum` and `creator-match` were not observed
+and `creator-state` passed, so the planned total is the monsters alive at
+first sight plus the spawners still to fire (`enemyArray` not an array) times
+a mean from run A: (619 − 5) ÷ (122 − 5) = 614 ÷ 117 ≈ 5.25 per pending
+spawner, over kills, never births (`kills-equal-births`: 25 births were never
+killed). If the 5 monsters alive at first sight were idle ones rather than
+the 5 fired spawners' packs, all 122 were pending and the same mean gives 646
+for that run instead of 619; an over-count only raises the threshold. Live 1's
+(600 − 44) ÷ 122 ≈ 4.6 is a second point, from a census taken later, and not
+the constant.
+
+**Countdown form** (`countdown-form: choice`). The owner, 2026-10-04, after
+this session, on which countdown form ships: "we can ship both with an option
+to choose, like we can chose skill counter style". So the panel has a select
+under the switch, "Where the countdown shows" (`dungeon_chest_countdown`:
+head, chat or both, head by default), sending `dungeonchest countdown <form>`
+only while the switch is on. `none` stays a plugin word only.
 
 ## Live procedure 2
 
@@ -614,14 +715,20 @@ session), with the panel served from this branch's build.
      `dungeonchest: 50% …` and the `HOOK INSTALLED` lines (`on-status`).
   2. Person: run A — Cellar Key at the Pumpkin Cellar entrance. `dungeonchest
      status` within 2 s → `total=T threshold=ceil(T/2) remaining=…
-     latched=0` with T > 0 from the build's planned source (`on-total`; T is
-     recorded against Live procedure 1b's kills to clear).
+     latched=0` with T > 0 from the build's planned source, the estimate
+     (`on-total`; T, `creators=`, `pending=` and `unreadable=` are recorded
+     against Live procedure 1b's kills to clear).
   3. Person: kill until `status` shows `remaining=50`; screenshot: `Chest: 50
      kills to go` over the character, no chat line (`on-countdown-head`).
-  4. `dungeonchest countdown chat` → `countdown=chat`; kill to the next
-     milestone; screenshot: the chat line, no label (`on-countdown-chat`).
-  5. `dungeonchest countdown both`: at the next milestone one screenshot with
-     both (the both-form note under `on-countdown-chat`).
+     Person: stand still about 10 s without killing, then kill one: the label
+     neither blinks nor jumps and its number changes only at the kill
+     (`on-head-steady`; the owner's words recorded).
+  4. Panel: Mods → Gameplay, the countdown form select ("Where the countdown
+     shows") → In chat. Expected in `cmd.txt`/`out.txt`: `dungeonchest
+     countdown chat` and `countdown=chat` (`on-form-control`); kill to the
+     next milestone; screenshot: the chat line, no label (`on-countdown-chat`).
+  5. Panel: the form → Both; at the next milestone one screenshot with both
+     (the both-form note under `on-countdown-chat`).
   6. Person: kill to the threshold. Expected: `dungeonchest: unlocked early at
      T'/T' alive=N` (N > 0), the label gone, `Chest: ready to open` in chat;
      `status` → `kills=` equals the threshold, `answered=` > 0
@@ -629,23 +736,25 @@ session), with the panel served from this branch's build.
      line, and never exceeds the births plus `alive0` the research run saw).
   7. Person: open the chest while `status` shows `alive=` > 0
      (`on-opens-early`).
-  8. `dungeonchest countdown head`.
+  8. Panel: the form → Above your character (`dungeonchest countdown head`;
+     the select is greyed while the switch is off).
   9. Panel: switch off → `dungeonchest: off …`.
   10. Person: run B (off): the chest does not open with monsters alive; kill
       all; it opens (`off-baseline`).
 - cases: run A on at 50 % (head, chat, both), run B off; outlier
   `boss-dungeon` as Live procedure 1b.
 - checks: `dll-hash`; `marker`; `control`; `on-status`; `on-total`;
-  `on-countdown-head`; `on-countdown-chat` (not-observed only if the chat
-  form is refused); `on-opens-early`; `off-baseline`; `no-double-count`;
-  `boss-dungeon`.
+  `on-countdown-head`; `on-head-steady`; `on-form-control`;
+  `on-countdown-chat` (not-observed only if the chat form is refused);
+  `on-opens-early`; `off-baseline`; `no-double-count`; `boss-dungeon`.
 - Restore the saves backup after the session, as always.
 
 ### Results
 
-Not yet run. The shipping countdown form (`countdown-form:` head, chat, both,
-or a player choice) is the owner's pick after this session, and is recorded
-here with its reason.
+Not yet run. The countdown form is already the player's choice
+(`countdown-form: choice`, the owner, 2026-10-04, recorded under [Live
+procedure 1b](#live-procedure-1b)); this session checks the control and each
+form.
 
 ## Route
 
@@ -696,9 +805,16 @@ while the threshold is latched, the chest's own call about `Enemy_Parent_obj`
 is answered `false`, every other call untouched, and the game's Step, its
 `nearest` lookup and its open run as they do at `alive=0`.
 
-Sufficiency is indicated, not proven: the chest's Step also reads `GPV` and
-has an Alarm 0. It is measured in Live procedure 1b (`unlock-works`: the chest
-must open with monsters alive). If it fails with `answered>0`, the token
+**Confirmed in Live procedure 1b** (2026-10-03, `unlock-works` pass): at 50 %
+of an override total of 600 the threshold latched at `unlocked early at
+304/600 alive=214`, the detour answered the chest's poll `false` 390 times
+(`answered=390`), and the chest's sprite went from closed to open at
+`kills=325 alive=193`. Answering that one call is enough; the `GPV` key and
+the Alarm 0 path below are not needed.
+
+Before that session, sufficiency was indicated, not proven: the chest's Step also reads `GPV` and
+has an Alarm 0. It was measured in Live procedure 1b (`unlock-works`: the chest
+must open with monsters alive). Had it failed with `answered>0`, the token
 becomes `unlock-route: builtin-insufficient` and the next candidates are, in
 that order, the `GPV` key, the Alarm 0 path, and an `instance_number` poll by
 the chest. That last one is not ruled out: Live 1's `instance_number` detour
@@ -784,8 +900,12 @@ one string; a refused resolution or a failed call turns the chat form off
 with one log line naming the field (`chat=unavailable`), never retried per
 kill. A countdown line is therefore expected to read `SERVER: Chest: <n>
 kills to go`, in red (seen in Live procedure 1b, `chat-countdown-seen`): the
-prefix is the game's, and is a fact for the owner's choice of countdown form after Live
-procedure 2. Only shape 1 ships unless the owner picks otherwise.
+prefix is the game's. Live procedure 1b's shape 8 (`ChatAddMessage` called
+directly with the sender `"ForgePact"`) showed `[00:49] ForgePact : ForgePact
+chat test 8` with no prefix and no crash (`chat-sender` pass); it stays a
+research shape. The owner then chose to offer every form on the panel
+(`countdown-form: choice`, 2026-10-04) without asking for a different sender,
+so only shape 1 ships.
 
 ## Negative results
 
@@ -809,7 +929,20 @@ control that ran beside it, never as "does not happen".
   game's own call for a typed line was not seen. The call control and shape 1
   ran beside it and passed.
 - **`boss-dungeon` not observed** (not covered live: only Cellar Keys were at
-  hand; `blockers=0` throughout).
+  hand; `blockers=0` throughout Live procedures 1 and 1b).
+- **No spawner variable read by name was observed to hold its pack count**
+  (Live procedure 1b, `creator-sum` and `creator-match` not observed). Every
+  numeric variable on the 122 spawners at first sight was summed against the
+  619 kills to clear and compared with each spawner's births; none came near,
+  and every match row read 0. The control beside it held: the births counter
+  saw 42 births by the tenth second with no kill, and the census read 20
+  names on the sampled spawners. That is a negative about the variables the
+  census saw (numeric ones present on at least 90 % of the spawners at first
+  sight), not about every state the game keeps; the total is estimated
+  instead.
+- **Kills and births differ** (Live procedure 1b, `kills-equal-births` fail):
+  619 kills to clear, 644 births by spawners. 25 monsters were born and never
+  killed by the player, so the estimate's mean is taken over kills.
 - **No unlock flag observed** at the last kill: no store key read through
   `GPV` moved, no `SPV` ran, and of the chest's 27 user variables and its
   built-ins only `nearest` changed. That is a negative about what the probe

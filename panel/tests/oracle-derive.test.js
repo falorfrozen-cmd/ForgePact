@@ -12,13 +12,16 @@
 // PANEL_BUTTONS), entered on Setup, then the selects no recording has
 // (NATIVE_SELECTS, the Bosses select), entered again on Mods › Gameplay, and
 // last of all the switch-plus-range pairs no recording has
-// (NATIVE_SWITCHED_RANGES, Dungeon chest opens early), on the same sub-tab.
+// (NATIVE_SWITCHED_RANGES, Dungeon chest opens early), on the same sub-tab,
+// followed by their child selects (NATIVE_CHILD_SELECTS, where its countdown
+// shows).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, NATIVE_SELECTS, NATIVE_SLIDERS, NATIVE_SWITCHED_RANGES, PANEL_BOOLEANS,
+  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, NATIVE_CHILD_SELECTS, NATIVE_SELECTS, NATIVE_SLIDERS, NATIVE_SWITCHED_RANGES,
+  PANEL_BOOLEANS,
   PANEL_BUTTONS, derive,
   derivedFromPath, quickDisable, serialise, switchIdOf, tableRange,
 } from './oracle-derive.mjs';
@@ -53,10 +56,17 @@ const PANEL_STEPS = PANEL_TABS + 2 * PANEL_BOOLEANS.length + PANEL_BUTTONS.lengt
 // (the panel's own controls left Setup open), then raised, off, raised and
 // Turn off for each.
 const NATIVE_SELECT_STEPS = 2 + 4 * NATIVE_SELECTS.length;
-// Then, last, the switch-plus-range pairs': no navigation (the native selects
-// left Mods › Gameplay open), then eight steps each, and two controls each.
-const NATIVE_RANGE_STEPS = 8 * NATIVE_SWITCHED_RANGES.length;
-const NATIVE_RANGE_CONTROLS = 2 * NATIVE_SWITCHED_RANGES.length;
+// Then the switch-plus-range pairs': no navigation (the native selects left
+// Mods › Gameplay open), then eight steps each, and two controls each.
+const PAIR_STEPS = 8 * NATIVE_SWITCHED_RANGES.length;
+const PAIR_CONTROLS = 2 * NATIVE_SWITCHED_RANGES.length;
+// Then, last, their child selects': the switch on, one select per value, the
+// switch off, and one control each.
+const CHILD_SELECT_STEPS = NATIVE_CHILD_SELECTS.reduce((n, c) => n + 2 + c.values.length, 0);
+const CHILD_SELECT_CONTROLS = NATIVE_CHILD_SELECTS.length;
+// Everything after the native selects.
+const NATIVE_RANGE_STEPS = PAIR_STEPS + CHILD_SELECT_STEPS;
+const NATIVE_RANGE_CONTROLS = PAIR_CONTROLS + CHILD_SELECT_CONTROLS;
 // Everything after the key supplement's slider.
 const TAIL = NATIVE_STEPS + KEY_STEPS + NATIVE_SLIDER_STEPS + PANEL_STEPS + NATIVE_SELECT_STEPS + NATIVE_RANGE_STEPS;
 
@@ -215,7 +225,8 @@ test('every control is covered: the switches in legacy order, the theme, the key
     ...NATIVE_BOOLEANS.map((n) => '#' + n.key), '#mod_hidden_loot_key',
     ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`]),
     ...PANEL_BOOLEANS.map((n) => '#' + n.key), ...PANEL_BUTTONS.map((b) => '#' + b.id),
-    ...NATIVE_SELECTS.map((n) => '#' + n.key), ...NATIVE_SWITCHED_RANGES.flatMap((n) => ['#' + n.key, '#' + n.range])]);
+    ...NATIVE_SELECTS.map((n) => '#' + n.key), ...NATIVE_SWITCHED_RANGES.flatMap((n) => ['#' + n.key, '#' + n.range]),
+    ...NATIVE_CHILD_SELECTS.map((n) => '#' + n.key)]);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
@@ -427,7 +438,7 @@ test('a native select\'s contract is literal: raised and off post the value and 
 
 test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb> off`, a range moved while off sends nothing', () => {
   assert.deepEqual(NATIVE_SWITCHED_RANGES, [{ key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay',
-    verb: 'dungeonchest', rest: 75, min: 50, max: 95, typed: 80 }]);
+    verb: 'dungeonchest', rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' }]);
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_RANGE_STEPS;
   for (const n of NATIVE_SWITCHED_RANGES) {
@@ -446,7 +457,7 @@ test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_SELECTS.at(-1).key));
   assert.equal(NATIVE_SWITCHED_RANGES[0].tab, NATIVE_SELECTS.at(-1).tab);
   assert.equal(NATIVE_SWITCHED_RANGES[0].sub, NATIVE_SELECTS.at(-1).sub);
-  NATIVE_SWITCHED_RANGES.forEach(({ key, range, verb, rest, min, max, typed }, i) => {
+  NATIVE_SWITCHED_RANGES.forEach(({ key, range, verb, rest, min, max, typed, restate }, i) => {
     const first = at + 8 * i;
     const sw = '#' + key;
     const rg = '#' + range;
@@ -456,15 +467,49 @@ test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb
     ]);
     const toggled = (value) => [{ url: '/api/set', body: { key, value } }];
     const moved = (value) => [{ url: '/api/set', body: { key: range, value } }];
-    assert.deepEqual(steps[first].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${rest}`] } });
+    // The switch's on restates its child select's form after the percentage.
+    assert.deepEqual(steps[first].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${rest}`, restate] } });
     assert.deepEqual(steps[first + 1].expect, { posts: { is: moved(max) }, cmds: { is: [`${verb} ${max}`] } });
     assert.deepEqual(steps[first + 2].expect, { posts: { is: moved(min) }, cmds: { is: [`${verb} ${min}`] } });
     assert.deepEqual(steps[first + 3].expect, { posts: { is: moved(typed) }, cmds: { is: [`${verb} ${typed}`] } });
     assert.deepEqual(steps[first + 4].expect, { posts: { is: toggled(false) }, cmds: { is: [`${verb} off`] } });
     assert.deepEqual(steps[first + 5].expect, { posts: { is: moved(max) }, cmds: { is: [] } }, 'moved while off: saved, nothing sent');
-    assert.deepEqual(steps[first + 6].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${max}`] } });
+    assert.deepEqual(steps[first + 6].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${max}`, restate] } });
     assert.deepEqual(steps[first + 7].expect, { posts: { same: first + 4 }, cmds: { same: first + 4 } });
   });
-  assert.deepEqual(DERIVED.controls.slice(-NATIVE_RANGE_CONTROLS), NATIVE_SWITCHED_RANGES.flatMap((n) => ['#' + n.key, '#' + n.range]));
-  assert.equal(steps.at(-1).control, quickDisable(NATIVE_SWITCHED_RANGES.at(-1).key));
+  assert.deepEqual(DERIVED.controls.slice(-NATIVE_RANGE_CONTROLS, -CHILD_SELECT_CONTROLS),
+    NATIVE_SWITCHED_RANGES.flatMap((n) => ['#' + n.key, '#' + n.range]));
+  assert.equal(steps[at + PAIR_STEPS - 1].control, quickDisable(NATIVE_SWITCHED_RANGES.at(-1).key));
+});
+
+test('a child select of a pair is literal and last: its switch on around it, each value posted and sent, the default last', () => {
+  assert.deepEqual(NATIVE_CHILD_SELECTS, [{ key: 'dungeon_chest_countdown', parent: 'mod_dungeon_chest', values: ['chat', 'both', 'head'],
+    verb: 'dungeonchest countdown' }]);
+  const steps = DERIVED.steps;
+  const pairs = steps.length - NATIVE_RANGE_STEPS;
+  let at = steps.length - CHILD_SELECT_STEPS;
+  // The pairs' last step (the Turn off) comes first, so none of their indexes moved.
+  assert.equal(steps[at - 1].control, quickDisable(NATIVE_SWITCHED_RANGES.at(-1).key));
+  for (const { key, parent, values, verb } of NATIVE_CHILD_SELECTS) {
+    const p = NATIVE_SWITCHED_RANGES.findIndex((n) => n.key === parent);
+    assert.ok(p >= 0, `${key}: its parent is a switch-plus-range pair`);
+    const [off, on] = [pairs + 8 * p + 4, pairs + 8 * p + 6];
+    const select = '#' + key;
+    assert.ok(!LEGACY.controls.includes(select) && !SUPPLEMENT.controls.includes(select) && !KEY_SUPPLEMENT.controls.includes(select));
+    assert.ok(!steps.slice(0, at).some((s) => s.control === select), `${select} appears before its own steps`);
+    // The default the switch's on restates is the last value, so the walk ends on it.
+    assert.equal(NATIVE_SWITCHED_RANGES[p].restate, `${verb} ${values.at(-1)}`);
+    assert.deepEqual(steps[at], { step: at, control: '#' + parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
+    values.forEach((value, i) => {
+      assert.deepEqual(steps[at + 1 + i], {
+        step: at + 1 + i, control: select, action: 'select', value,
+        expect: { posts: { is: [{ url: '/api/set', body: { key, value } }] }, cmds: { is: [`${verb} ${value}`] } },
+      });
+    });
+    const last = at + 1 + values.length;
+    assert.deepEqual(steps[last], { step: last, control: '#' + parent, action: 'click', expect: { posts: { same: off }, cmds: { same: off } } });
+    at = last + 1;
+  }
+  assert.equal(at, steps.length);
+  assert.deepEqual(DERIVED.controls.slice(-CHILD_SELECT_CONTROLS), NATIVE_CHILD_SELECTS.map((n) => '#' + n.key));
 });

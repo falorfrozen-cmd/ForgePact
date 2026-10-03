@@ -9,8 +9,16 @@ an integer 50..95, default 75). The backend turns them into
 live switch is turned off. The startup list (`build_cmds`) carries the line
 only while the switch is on, so the all-off list stays empty. A percentage
 moved while the switch is off is saved and sends nothing: 75 is only the
-slider's resting position. The backend never sends `dungeonchest countdown`;
-the plugin's default form applies (plan D8).
+slider's resting position.
+
+A third key, `dungeon_chest_countdown` (head, chat or both; head by default),
+is where the countdown shows: the owner's choice of 2026-10-04 ("we can ship
+both with an option to choose, like we can chose skill counter style"), a
+select in its own child row under the switch, disabled while the switch is
+off. It is sent as `dungeonchest countdown <form>` after the percentage, only
+while the switch is on (at startup, when the switch turns on, and when the
+select changes); a saved value that is not one of the three sends no form
+line, and `/api/set` refuses one with a 400.
 
 The baseline tests pin today's behaviour at defaults; the target tests pin
 the switch on, a moved percentage, the switch off and refused values. The
@@ -174,16 +182,34 @@ class DungeonChestTargetTests(unittest.TestCase):
     def test_target_switch_on_emits_the_percentage(self):
         self.assertIn("dungeonchest 75", forgepact.build_cmds(defaults(mod_dungeon_chest=True)))
         cmds = forgepact.build_cmds(defaults(mod_dungeon_chest=True, dungeon_chest_pct=80))
-        self.assertEqual([c for c in cmds if c.startswith("dungeonchest")], ["dungeonchest 80"])
+        self.assertEqual([c for c in cmds if c.startswith("dungeonchest")], ["dungeonchest 80", "dungeonchest countdown head"])
 
-    def test_target_build_cmds_never_sends_a_countdown_form(self):
-        cmds = forgepact.build_cmds(defaults(mod_dungeon_chest=True))
-        self.assertFalse(any(c.startswith("dungeonchest countdown") for c in cmds))
+    def test_baseline_default_config_sends_no_countdown_form(self):
+        self.assertEqual(forgepact.DEFAULTS["dungeon_chest_countdown"], "head")
+        self.assertEqual(forgepact.DUNGEON_CHEST_COUNTDOWN_FORMS, ("head", "chat", "both"))
+        for form in forgepact.DUNGEON_CHEST_COUNTDOWN_FORMS:
+            with self.subTest(form=form):
+                cmds = forgepact.build_cmds(defaults(dungeon_chest_countdown=form))
+                self.assertFalse(any(c.startswith("dungeonchest") for c in cmds))
+
+    def test_target_build_cmds_sends_the_countdown_form_after_the_percentage(self):
+        for form in ("head", "chat", "both", " Chat "):
+            with self.subTest(form=form):
+                cmds = forgepact.build_cmds(defaults(mod_dungeon_chest=True, dungeon_chest_pct=60, dungeon_chest_countdown=form))
+                self.assertEqual([c for c in cmds if c.startswith("dungeonchest")],
+                                 ["dungeonchest 60", f"dungeonchest countdown {form.strip().lower()}"])
+        # A hand-edited value the select does not offer (`none` is a plugin
+        # word only) sends the percentage and no form line.
+        for bad in ("none", "off", "sideways", "", None, 3):
+            with self.subTest(bad=bad):
+                cmds = forgepact.build_cmds(defaults(mod_dungeon_chest=True, dungeon_chest_countdown=bad))
+                self.assertEqual([c for c in cmds if c.startswith("dungeonchest")], ["dungeonchest 75"])
 
     def test_target_live_on_percentage_off(self):
         live = LiveSandbox(self)
         code, body, sent = live.post(None, "mod_dungeon_chest", True)
-        self.assertEqual((code, sent), (200, [["dungeonchest 75"]]))
+        # Turning it on restates where the countdown shows, after the share.
+        self.assertEqual((code, sent), (200, [["dungeonchest 75", "dungeonchest countdown head"]]))
         self.assertIs(live.saved()["mod_dungeon_chest"], True)
         code, body, sent = live.post(None, "dungeon_chest_pct", 80)
         self.assertEqual((code, sent), (200, [["dungeonchest 80"]]))
@@ -201,7 +227,37 @@ class DungeonChestTargetTests(unittest.TestCase):
         self.assertEqual((code, sent), (200, []))
         self.assertEqual(live.saved()["dungeon_chest_pct"], 90)
         code, _, sent = live.post(None, "mod_dungeon_chest", True)
-        self.assertEqual((code, sent), (200, [["dungeonchest 90"]]))
+        self.assertEqual((code, sent), (200, [["dungeonchest 90", "dungeonchest countdown head"]]))
+
+    def test_target_live_countdown_form_is_sent_only_while_on(self):
+        live = LiveSandbox(self)
+        # Off: stored, nothing sent; the switch's on then restates it.
+        code, body, sent = live.post(None, "dungeon_chest_countdown", "chat")
+        self.assertEqual((code, sent), (200, []))
+        self.assertEqual(live.saved()["dungeon_chest_countdown"], "chat")
+        code, _, sent = live.post(None, "mod_dungeon_chest", True)
+        self.assertEqual((code, sent), (200, [["dungeonchest 75", "dungeonchest countdown chat"]]))
+        # On: each change is sent as it is made, trimmed and lower-cased.
+        code, body, sent = live.post(None, "dungeon_chest_countdown", " Both ")
+        self.assertEqual((code, sent), (200, [["dungeonchest countdown both"]]))
+        self.assertEqual(live.saved()["dungeon_chest_countdown"], "both")
+        self.assertEqual(body["cfg"]["dungeon_chest_countdown"], "both")
+        # Off sends only `dungeonchest off`; the form is kept.
+        code, _, sent = live.post(None, "mod_dungeon_chest", False)
+        self.assertEqual((code, sent), (200, [["dungeonchest off"]]))
+        self.assertEqual(live.saved()["dungeon_chest_countdown"], "both")
+
+    def test_target_invalid_countdown_form_is_refused(self):
+        live = LiveSandbox(self)
+        live.post(None, "mod_dungeon_chest", True)
+        before = live.sandbox.config.read_bytes()
+        for bad in ("none", "off", "sideways", "", None, 3, True, ["chat"]):
+            with self.subTest(value=bad):
+                code, body, sent = live.post(None, "dungeon_chest_countdown", bad)
+                self.assertEqual(code, 400)
+                self.assertEqual(body, {"err": "invalid dungeon chest countdown"})
+                self.assertEqual(sent, [])
+                self.assertEqual(live.sandbox.config.read_bytes(), before)
 
     def test_target_a_typed_value_rounds_to_an_integer(self):
         live = LiveSandbox(self)
@@ -236,16 +292,45 @@ class DungeonChestTargetTests(unittest.TestCase):
 
 class DungeonChestPanelTextTests(unittest.TestCase):
     def test_the_row_is_a_switch_and_a_range_never_a_select(self):
+        # The percentage (the owner, 2026-10-03: no choice dropdown for it).
+        # The countdown form's select is its own child row, pinned below.
         row = dungeon_chest_row()
         self.assertIn(ROW_LABEL, row)
         self.assertNotIn("<select", row)
-        self.assertNotRegex(panel_file("tabs/Mods.svelte"), r'<select[^>]*id="[^"]*dungeon')
+        self.assertNotRegex(panel_file("tabs/Mods.svelte"), r'<select[^>]*id="dungeon_chest_pct"')
         self.assertIn('<label class="switch">', row)
         rng = re.search(r'<input type="range" id="dungeon_chest_pct"[^>]*>', row).group(0)
         for attr in ('min="50"', 'max="95"', 'step="5"', "aria-label=\"Share of the dungeon's monsters to kill\""):
             self.assertIn(attr, rng)
         switch = re.search(r'<input type="checkbox" id="mod_dungeon_chest"[^>]*>', row).group(0)
         self.assertIn(f'aria-label="{ROW_LABEL}"', switch)
+
+    def test_the_countdown_form_is_a_child_select_disabled_while_off(self):
+        source = panel_file("tabs/Mods.svelte")
+        switch_row = source.index(dungeon_chest_row())
+        child = source.find('<div class="row" id="dungeon_chest_countdown_row">')
+        self.assertGreater(child, switch_row, "the child row follows the switch's row")
+        self.assertEqual(source.find('<div class="card', switch_row, child), -1, "the child row is in #gameplayCard")
+        row = source[child:source.index("</select>", child)]
+        self.assertIn("Where the countdown shows", row)
+        self.assertIn('<select class="style-select" id="dungeon_chest_countdown" aria-label="Where the countdown shows">', row)
+        self.assertEqual(re.findall(r'<option value="(\w+)"', row), list(forgepact.DUNGEON_CHEST_COUNTDOWN_FORMS))
+        self.assertNotIn("selected", row, "head, the default, is the first option")
+        js = panel_file("panel.js")
+        self.assertIn("{key:'dungeon_chest_countdown',value:e.target.value}", js)
+        # Painted on load and on every refresh, like the skill timer's look,
+        # and disabled with the switch: on load, on the switch's change and on refresh.
+        self.assertEqual(js.count("document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';"), 2)
+        self.assertIn("syncDungeonChestCountdown(mdc);", js)
+        self.assertIn("syncDungeonChestCountdown(e.target.checked);", js)
+        self.assertIn("syncDungeonChestCountdown(!!c.mod_dungeon_chest);", js)
+        self.assertIn("if(id==='gameplayCard'){", js)
+        self.assertIn("dcChild=document.getElementById('dungeon_chest_countdown_row')", js)
+        sync = panel_file("mods-sync.js")
+        body = sync[sync.index("export function syncDungeonChestCountdown(parentOn){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("box.disabled=!parentOn;", body)
+        self.assertIn("row.title=parentOn?'':'Enable Dungeon chest opens early first.';", body)
 
     def test_the_value_is_typable_and_posted_on_change(self):
         js = panel_file("panel.js")

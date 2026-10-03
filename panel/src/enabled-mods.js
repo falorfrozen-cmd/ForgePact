@@ -6,8 +6,8 @@
 // Never entries: dungeon_chest_pct (it rides on mod_dungeon_chest's entry),
 // auto_apply (a panel setting), enemy_speed_ct (a scope, not a
 // value), the child options map_reveal_packs / map_reveal_spawn /
-// mod_auto_prospect_bag / mod_hidden_loot_key (they ride on their parent's
-// entry), gem_filter (an
+// mod_auto_prospect_bag / mod_hidden_loot_key / dungeon_chest_countdown (they
+// ride on their parent's entry), gem_filter (an
 // option of the Mythic gems entry: it is sent only while that switch is on),
 // game_exe, theme, and the Satanic Zone pools (all on by default, so
 // "enabled" there is the default rather than something the player turned on).

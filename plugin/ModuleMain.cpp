@@ -7598,29 +7598,51 @@ static void HhDrawHeadLabels()
 // Dungeon chest opens early (issue #31, DungeonChestMod.hpp): the countdown
 // above the player's head, in the `head` and `both` forms. The same player
 // resolution, camera-to-GUI conversion and outlined text as the Headhunter
-// labels above, drawn one line above the labels this frame shows so the two
-// never overlap (the skill timer draws on the hotbar, not here). Returns at
+// labels above (the skill timer draws on the hotbar, not here). Returns at
 // once while the mode is off or no countdown is due.
+//
+// D12, the label is stable (Live procedure 1b: "the text above character felt
+// jerky and was blinking very fast as it was updating every frame"). Read
+// against this draw, three of its per-frame inputs moved on their own while
+// the player stood still: the height was hung from `bbox_top`, which follows
+// the sprite's animation frame; the line was stacked over however many
+// Headhunter labels drew that frame, which come and go with kills; and the
+// position was a fractional GUI pixel. Which one the owner saw is not
+// established, so none is left: the header holds the text (rewritten only
+// when the count changes) and the height (taken once when the label appears,
+// from the player's origin), the spot is whole pixels, the label sits in a
+// fixed slot one line under the Headhunter labels' base (they stack upward
+// from it, so neither ever moves the other), and a frame whose reads fail
+// draws at the last spot instead of drawing nothing.
 static void DungeonChestDraw()
 {
-    const std::string text = ForgePact::DungeonChest::HeadText(ForgePact::DungeonChest::state);
-    if (text.empty()) return;
+    ForgePact::DungeonChest::HeadLabel& label = ForgePact::DungeonChest::UpdateHeadLabel(ForgePact::DungeonChest::state);
+    if (!ForgePact::DungeonChest::LabelShown(label)) return;
     IncidentScope incidentScope(IncidentMod::dungeonchest);
     try {
-        RValue id;
-        if (!HhResolveLocalPlayer(id)) return;
-        const double x = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") }).ToDouble();
-        const double top = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("bbox_top") }).ToDouble();
-        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
-        const double vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
-        const double vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
-        const double vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
-        const double vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
-        const double gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
-        const double gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
-        if (vw <= 0 || vh <= 0) return;
-        const double sx = (x - vx) * gw / vw;
-        const double sy = (top - vy) * gh / vh - g_HhLabelOffsetPx;
+        ForgePact::DungeonChest::LabelSpot spot = label.spot;
+        bool placed = false;
+        try {
+            RValue id;
+            if (HhResolveLocalPlayer(id)) {
+                const double x = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") }).ToDouble();
+                const double y = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("y") }).ToDouble();
+                const double top = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("bbox_top") }).ToDouble();
+                RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+                const double vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
+                const double vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
+                const double vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
+                const double vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
+                const double gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
+                const double gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
+                if (vw > 0 && vh > 0) {
+                    spot = ForgePact::DungeonChest::PlaceHeadLabel(label, x, y, top, vx, vy, vw, vh, gw, gh, g_HhLabelOffsetPx);
+                    placed = true;
+                }
+            }
+        } catch (...) {}
+        // A frame whose reads failed keeps the last spot rather than blinking.
+        if (!placed && !label.placed) return;
         RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
         RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
         RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
@@ -7637,11 +7659,10 @@ static void DungeonChestDraw()
         g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned, like the labels
         g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
         const double lineH = g_Yytk->CallBuiltin("string_height", { RValue("Ag") }).ToDouble();
-        // HhDrawHeadLabels ran first this frame: its lines (three labels to a
-        // line) end at sy, so the countdown sits on the line above them.
-        const size_t hhLines = (g_HhLabelOn.load() && !g_HhStolen.empty()) ? (g_HhStolen.size() + 2) / 3 : 0;
+        // The Headhunter labels (three to a line) stack upward from the same
+        // base, so the countdown takes the fixed line just under it.
         RValue pale = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(236.0), RValue(232.0), RValue(220.0) });
-        HhDrawOutlinedWorld(sx, sy - lineH * (double)hhLines, text, pale);
+        HhDrawOutlinedWorld(spot.x, spot.y + std::floor(lineH + 0.5), label.text, pale);
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
         g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
@@ -19410,12 +19431,62 @@ static bool DungeonChestChat(const std::string& line)
     return false;
 }
 
-// ---- the planned total (D3, `total-route:`) -----------------------------------
-// The build's own source of the room's planned total. None yet: Live procedure
-// 1b is what finds where a spawner keeps how many monsters it will make, and
-// Join step J7 writes the source it selects here. While this is null every
-// share is refused (`total=unavailable`).
-static ForgePact::DungeonChest::TotalSource g_DcBuildTotalSource = nullptr;
+// ---- the planned total (D3, `total-route: estimate`) ---------------------------
+// Live procedure 1b found no creator variable whose sum is the dungeon's total,
+// so the build's source is the header's estimate (EstimatedTotal): the
+// monsters alive at the chest's first sight plus the creators still to spawn
+// then, times the mean that session measured. A creator still to spawn is one
+// whose `enemyArray`, read by name, is not an array: the session read it
+// undefined at first sight and while the creator's timer was armed and
+// waiting, and an array once it had spawned. `enemyCreatorTimer` cannot tell
+// the two apart (it is undefined both before a creator arms and after it
+// spawns). A creator whose state cannot be read counts as spawned and is
+// counted (`unreadable=` on status): leaving it out lowers the total, and the
+// header's clamp keeps the total at or above the kills plus the monsters alive.
+//
+// The creator family to count: kKnownDensityCreatorObjects resolved by name,
+// less any that descends from another listed one (instance_number and
+// instance_find of the parent already reach its children, so a child is never
+// counted twice). Resolved once; an attempt that resolved none is retried.
+static std::vector<int> g_DcCreatorObjects;
+static const std::vector<int>& DungeonChestCreatorObjects()
+{
+    if (!g_DcCreatorObjects.empty()) return g_DcCreatorObjects;
+    std::vector<int> idx;
+    for (const char* name : kKnownDensityCreatorObjects) {
+        try {
+            const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble();
+            if (i >= 0) idx.push_back(i);
+        } catch (...) {}
+    }
+    for (int i : idx) {
+        bool child = false;
+        for (int p : idx) if (p != i && HeroSiege::Objects::IsDescendantOf(i, p)) { child = true; break; }
+        if (!child) g_DcCreatorObjects.push_back(i);
+    }
+    return g_DcCreatorObjects;
+}
+static long DungeonChestEstimateTotal(long alive, ForgePact::DungeonChest::Census& census)
+{
+    namespace DC = ForgePact::DungeonChest;
+    census = DC::Census{};
+    for (int obj : DungeonChestCreatorObjects()) {
+        long n = 0;
+        try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue((double)obj) }).ToDouble(); } catch (...) { continue; }
+        for (long k = 0; k < n; ++k) {
+            ++census.creators;
+            try {
+                const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)obj), RValue((double)k) });
+                if (!HhResolveInstance(inst)) { ++census.unreadable; continue; }
+                const RValue packs = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyArray") });
+                if (!g_Yytk->CallBuiltin("is_array", { packs }).ToBoolean()) ++census.pending;
+            } catch (...) { ++census.unreadable; }
+        }
+    }
+    if (census.creators == 0 && alive <= 0) return 0;
+    return DC::EstimatedTotal(alive, census.pending);
+}
+static ForgePact::DungeonChest::TotalSource g_DcBuildTotalSource = &DungeonChestEstimateTotal;
 
 // The header's callbacks, supplied once, before the first command reads them.
 static void DungeonChestWire()
@@ -47100,12 +47171,15 @@ static void DpCreatorsStatus()
 // <n> is the dungeon's whole total, so it answers <n> less the kills already
 // counted, and the header adds those back. It binds to the first dungeon
 // chest room that asks for it (this one, or the next) and answers 0 anywhere
-// else. `off` returns the build's own source (none, until J7 writes one).
+// else. The build's own estimate still runs beside it, so `status` shows the
+// creators it counted (creators=, pending=, unreadable=) against the override.
+// `off` returns the build's own source, the estimate.
 static long g_DpTotalOverride = 0;
 static bool g_DpTotalBound = false;
 static int64_t g_DpTotalRoom = INT64_MIN;
-static long DpTotalOverrideSource(long /*alive*/)
+static long DpTotalOverrideSource(long alive, ForgePact::DungeonChest::Census& census)
 {
+    DungeonChestEstimateTotal(alive, census);
     const int64_t room = CurrentRoomKey();
     if (room == INT64_MIN || g_DpTotalOverride <= 0) return 0;
     if (!g_DpTotalBound) {
@@ -47133,7 +47207,8 @@ static void DpTotalCommand(const std::string& arg)
         g_DpTotalBound = false;
         DC::state.totalSource = g_DcBuildTotalSource;
         Out(std::string("dungeonprobe: total override off - the build's own total source (")
-            + (g_DcBuildTotalSource ? "written" : "none in this build: dungeonchest answers total=unavailable") + ")");
+            + (g_DcBuildTotalSource ? "the estimate: alive at first sight + pending creators x 614/117"
+                                    : "none in this build: dungeonchest answers total=unavailable") + ")");
         return;
     }
     long n = 0;

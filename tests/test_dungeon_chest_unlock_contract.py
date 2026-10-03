@@ -23,9 +23,13 @@ pins the other hooks:
   build, and the births counter rides the create hooks InstallCreateHooks
   already installs rather than a second HookBuiltin on instance_create_*;
 - the player build supplies the unlock and chat callbacks (the chat line is
-  ChatAddServerMessage by its SDK name, the shape Live procedure 1 proved),
-  and has no total source until Join step J7 writes the one Live procedure 1b
-  selects.
+  ChatAddServerMessage by its SDK name, the shape Live procedure 1 proved)
+  and the total source Live procedure 1b selected (`total-route: estimate`):
+  the creators still to spawn, told apart by `enemyArray` read by name, times
+  the header's measured mean, never a literal per-dungeon total;
+- the head draw (D12, a label the owner saw blink and jerk in Live procedure
+  1b) draws the header's head label state and never formats the count, reads
+  the Headhunter labels' count or hangs the label from the box top per frame.
 """
 import re
 import sys
@@ -37,6 +41,7 @@ from test_release_hook_contract import function_body, strip_comments, strip_rese
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_SRC = ROOT / "plugin" / "ModuleMain.cpp"
+HEADER = ROOT / "plugin" / "include" / "ForgePact" / "DungeonChestMod.hpp"
 
 
 def definition_body(source, signature):
@@ -131,7 +136,7 @@ class DungeonChestUnlockContractTests(unittest.TestCase):
                 hook = function_body(self.plugin, signature)
                 self.assertRegex(hook, r"#ifndef FORGEPACT_RELEASE\s*DpCreatorBirth\(callerInfo, argc, Args\);\s*#endif")
 
-    def test_the_player_build_supplies_unlock_and_chat_and_no_total_yet(self):
+    def test_the_player_build_supplies_unlock_chat_and_its_total(self):
         wire = function_body(self.player, "static void DungeonChestWire()")
         self.assertIn("ForgePact::DungeonChest::state.unlock = &DungeonChestUnlock;", wire)
         self.assertIn("ForgePact::DungeonChest::state.chat = &DungeonChestChat;", wire)
@@ -148,7 +153,56 @@ class DungeonChestUnlockContractTests(unittest.TestCase):
         self.assertIn("DungeonChestWire();", function_body(self.player, "static void DungeonChestCommand("))
 
     def test_total_source_reads_the_measured_route(self):
-        raise unittest.SkipTest("written in J7")
+        """`total-route: estimate`: the build's source counts the creators still to spawn by
+        `enemyArray`, read by name, and applies the header's curated mean; no per-dungeon total."""
+        self.assertIn("static ForgePact::DungeonChest::TotalSource g_DcBuildTotalSource = &DungeonChestEstimateTotal;",
+                      self.player)
+        source = code_statements(function_body(self.player, "static long DungeonChestEstimateTotal("))
+        self.assertIn('RValue("enemyArray")', source)
+        self.assertIn('CallBuiltin("is_array", { packs })', source)
+        self.assertIn("++census.pending;", source)
+        self.assertIn("++census.unreadable;", source)
+        self.assertIn("return DC::EstimatedTotal(alive, census.pending);", source)
+        self.assertIn("for (int obj : DungeonChestCreatorObjects())", source)
+        family = code_statements(function_body(self.player, "static const std::vector<int>& DungeonChestCreatorObjects()"))
+        self.assertIn("for (const char* name : kKnownDensityCreatorObjects)", family)
+        self.assertIn("HeroSiege::Objects::IsDescendantOf(i, p)", family)
+        # The mean is the header's named constants, curated with their inputs;
+        # no total of any one dungeon is written into code, header or adapter.
+        header = code_statements(HEADER.read_text(encoding="utf-8"))
+        self.assertIn("inline constexpr long kEstimateKills = 614;", header)
+        self.assertIn("inline constexpr long kEstimatePendingCreators = 117;", header)
+        self.assertIn("(p * kEstimateKills + kEstimatePendingCreators - 1) / kEstimatePendingCreators", header)
+        for code in (header, source):
+            self.assertIsNone(re.search(r"\b(600|619|644|645|646)\b", code), "a literal dungeon total in code")
+        self.assertIsNone(re.search(r"\b\d{3,}\b", source), "a literal count in the total source")
+        # The research override stays out of the player build (its own test pins the strings).
+        self.assertNotIn("DpTotalOverrideSource", self.player)
+
+    def test_the_head_draw_draws_the_header_s_head_label(self):
+        """D12: the plugin draws the header's head label state every frame; it never formats the
+        count, stacks over the Headhunter labels' count or hangs the label from the box top."""
+        draw = code_statements(function_body(self.player, "static void DungeonChestDraw()"))
+        self.assertTrue(draw.startswith(
+            "ForgePact::DungeonChest::HeadLabel& label = "
+            "ForgePact::DungeonChest::UpdateHeadLabel(ForgePact::DungeonChest::state); "
+            "if (!ForgePact::DungeonChest::LabelShown(label)) return;"), draw[:200])
+        self.assertIn("ForgePact::DungeonChest::PlaceHeadLabel(label, x, y, top,", draw)
+        self.assertIn("HhDrawOutlinedWorld(spot.x, spot.y + std::floor(lineH + 0.5), label.text, pale);", draw)
+        self.assertIn("if (!placed && !label.placed) return;", draw)
+        for text in ("HeadText(", "CountdownLine(", "std::to_string", "kills to go", "g_HhStolen", "sy - "):
+            with self.subTest(text=text):
+                self.assertNotIn(text, draw)
+        # The header rewrites the text only when the count it shows changes.
+        header = code_statements(HEADER.read_text(encoding="utf-8"))
+        update = header[header.index("inline HeadLabel& UpdateHeadLabel(State& s)"):]
+        update = update[:update.index("return l; }") + len("return l; }")]
+        self.assertEqual(update.count("l.text ="), 1)
+        self.assertIn("if (count != l.count) { l.count = count; l.text = count > 0 ? CountdownLine(count) : std::string();",
+                      update)
+        place = header[header.index("inline LabelSpot PlaceHeadLabel("):]
+        self.assertIn("if (!l.anchored) { l.lift = y - top; l.anchored = true; }", place)
+        self.assertIn("std::floor((y - l.lift - vy) * gh / vh - offsetPx + 0.5)", place)
 
 
 if __name__ == "__main__":

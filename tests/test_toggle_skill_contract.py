@@ -1253,10 +1253,14 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
         # control of record), hidden loot sleep's show key
         # (`#mod_hidden_loot_key`, test_hidden_loot_panel_contract.py pins its
-        # options) and the Mods > Gameplay `#boss_rarity` select (ForgePact
-        # #44) are the page's only other <select>s, so the skill timer is
-        # still the one select with these styles.
-        self.assertEqual(PANEL_PAGE.count("<select"), 4)
+        # options), the Mods > Gameplay `#boss_rarity` select (ForgePact #44)
+        # and Dungeon chest opens early's countdown form
+        # (`#dungeon_chest_countdown`, ForgePact #31) are the page's only
+        # other <select>s, so the skill timer is still the one select with
+        # these styles.
+        self.assertEqual(PANEL_PAGE.count("<select"), 5)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="dungeon_chest_countdown" '
+                                          'aria-label="Where the countdown shows">'), 1)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
         self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
                                           'aria-label="Show hidden loot while held">'), 1)

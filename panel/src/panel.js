@@ -10,7 +10,7 @@ import { ST, setST } from './state.svelte.js';
 import { j, pendingWrites } from './api.js';
 import { PANEL_ICON_MAP } from './icons.js';
 import { activeTab, controlFilter, modsSubtab, openTab, bindModsSubtabs, setControlFilter, setModsSubtab } from './nav.js';
-import { syncRevealPacks, syncProspectBag, syncHiddenLootKey } from './mods-sync.js';
+import { syncRevealPacks, syncProspectBag, syncHiddenLootKey, syncDungeonChestCountdown } from './mods-sync.js';
 import { HIDDEN_LOOT_KEY_DEFAULT } from './hidden-loot-keys.js';
 import { setupModsColumns } from './mods-columns.js';
 import { pollDelayMs, pollNextChangeAt } from './poll-policy.js';
@@ -485,6 +485,8 @@ async function boot(){
     document.getElementById('mod_dungeon_chest').checked=mdc;
     document.getElementById('dungeon_chest_pct').value=c.dungeon_chest_pct??75;
     dungeonChestPaint(c.dungeon_chest_pct??75);
+    document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';
+    syncDungeonChestCountdown(mdc);
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -646,8 +648,15 @@ function bind(){
   typable(dcp,document.getElementById('dcpval'));
   document.getElementById('mod_dungeon_chest').onchange=async(e)=>{
     dungeonChestPaint(+dcp.value);
+    syncDungeonChestCountdown(e.target.checked);
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_dungeon_chest',value:e.target.checked})});
     toast('Dungeon chest opens early '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+  };
+  // Where its countdown shows: the skill timer look's shape, a child select
+  // posted on change (the backend sends it only while the switch is on).
+  document.getElementById('dungeon_chest_countdown').onchange=async(e)=>{
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'dungeon_chest_countdown',value:e.target.value})});
+    toast('Dungeon chest countdown: '+e.target.selectedOptions[0].textContent+' - '+(res.ok||res.err));
   };
   document.getElementById('autoapply').onchange=async(e)=>{
     await j('/api/set',{method:'POST',body:JSON.stringify({key:'auto_apply',value:e.target.checked})});
@@ -1042,6 +1051,10 @@ function preparePanelUI(){
       const hlParent=document.getElementById('mod_hidden_loot').closest('.row'),hlChild=document.getElementById('mod_hidden_loot_key_row');
       const hlGroup=document.createElement('div');hlGroup.className='feature-with-child';hlParent.before(hlGroup);hlGroup.append(hlParent,hlChild);
     }
+    if(id==='gameplayCard'){
+      const dcParent=document.getElementById('mod_dungeon_chest').closest('.row'),dcChild=document.getElementById('dungeon_chest_countdown_row');
+      const dcGroup=document.createElement('div');dcGroup.className='feature-with-child';dcParent.before(dcGroup);dcGroup.append(dcParent,dcChild);
+    }
     setupModsColumns(grid);
   }
   document.querySelectorAll('input[type=range]').forEach((range,index)=>{
@@ -1146,6 +1159,8 @@ export function refreshSavedControls(){
   document.getElementById('denval').className='val '+(c.density_on?'':'off');
   // After the booleans: the range's oninput above painted with the switch's old state.
   dungeonChestPaint(c.dungeon_chest_pct??75);
+  document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';
+  syncDungeonChestCountdown(!!c.mod_dungeon_chest);
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   showHiddenLootKey(c);

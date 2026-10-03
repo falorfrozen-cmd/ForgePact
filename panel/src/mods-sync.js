@@ -44,3 +44,12 @@ export function syncHiddenLootKey(parentOn){
   box.disabled=!parentOn;
   row.title=parentOn?'':'Enable Sleep loot your filter hides first.';
 }
+// And Dungeon chest opens early's countdown form only does anything while its
+// switch is on. The form stays as picked: only its select is disabled.
+export function syncDungeonChestCountdown(parentOn){
+  const row=document.getElementById('dungeon_chest_countdown_row');
+  const box=document.getElementById('dungeon_chest_countdown');
+  if(!row||!box)return;
+  box.disabled=!parentOn;
+  row.title=parentOn?'':'Enable Dungeon chest opens early first.';
+}

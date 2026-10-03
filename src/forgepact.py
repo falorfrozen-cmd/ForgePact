@@ -337,6 +337,11 @@ DEFAULTS = {
     # DUNGEON_CHEST_PCT_RANGE) is kept while it is off and sends nothing.
     "mod_dungeon_chest": False,
     "dungeon_chest_pct": 75,
+    # Its child, "Where the countdown shows" (the owner, 2026-10-04: "we can
+    # ship both with an option to choose, like we can chose skill counter
+    # style"): one of DUNGEON_CHEST_COUNTDOWN_FORMS, above the head by
+    # default, the plugin's own default; only sent while the switch is on.
+    "dungeon_chest_countdown": "head",
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
     # rate (1 in 7,500), every step above adds a die.
     "angelic_items": 1,
@@ -879,6 +884,29 @@ def dungeon_chest_cmd(cfg: dict) -> str:
     return f"dungeonchest {DUNGEON_CHEST_PCT_DEFAULT if pct is None else pct}"
 
 
+# Where the countdown shows (the select under the switch): above the head, as
+# chat lines, or both - the plugin's `dungeonchest countdown head|chat|both`.
+# Its `none` is a command only: a player who wants no countdown has no reason
+# to pick one here. Kept as its own tuple, like SKILL_TIMER_STYLES, so
+# build_cmds and /api/set share one validator.
+DUNGEON_CHEST_COUNTDOWN_FORMS = ("head", "chat", "both")
+
+
+def dungeon_chest_countdown_valid(value) -> bool:
+    """Valid = exactly one of head|chat|both after trim+lower."""
+    return isinstance(value, str) and value.strip().lower() in DUNGEON_CHEST_COUNTDOWN_FORMS
+
+
+def dungeon_chest_countdown_cmd(cfg: dict):
+    """`dungeonchest countdown <form>` for the saved form, or None when the
+    saved value is not one of the three (a hand-edited config): nothing is
+    sent for it, and the plugin keeps the form it has."""
+    form = cfg.get("dungeon_chest_countdown", DEFAULTS["dungeon_chest_countdown"])
+    if not dungeon_chest_countdown_valid(form):
+        return None
+    return f"dungeonchest countdown {form.strip().lower()}"
+
+
 ENEMY_SPEED_MAX = 300   # percent; x4 is where ranged sprinters stop being fair
 ENEMY_SPEED_STEP = 5
 
@@ -1138,9 +1166,13 @@ def build_cmds(cfg: dict) -> list:
         out.append(boss_rarity_cmd(cfg))
     if cfg.get("mod_dungeon_chest", False):
         # Only while the switch is on: a new game already opens its chests by
-        # its own rule. No `dungeonchest countdown` line: the plugin's default
-        # form applies until the owner picks the shipping one (plan D8).
+        # its own rule. The countdown's form follows the percentage, so the
+        # plugin is told where to show it whichever form it last had; a
+        # hand-edited invalid form sends no line.
         out.append(dungeon_chest_cmd(cfg))
+        countdown = dungeon_chest_countdown_cmd(cfg)
+        if countdown:
+            out.append(countdown)
     if angelic_one_in(cfg.get("angelic_items", 1)) > 0:
         out.append(angelic_cmd(cfg))
     if enemy_speed_pct(cfg.get("enemy_speed", 0)) > 0:
@@ -2861,6 +2893,11 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid dungeon chest percentage"}, 400)
                         return
                     cfg[key] = pct
+                elif key == "dungeon_chest_countdown":
+                    if not dungeon_chest_countdown_valid(val):
+                        self._json({"err": "invalid dungeon chest countdown"}, 400)
+                        return
+                    cfg[key] = val.strip().lower()
                 elif key == "theme":
                     if not isinstance(val, str) or not THEME_NAME.fullmatch(val):
                         self._json({"err": "invalid theme"}, 400)
@@ -2992,11 +3029,24 @@ class H(BaseHTTPRequestHandler):
                     elif key == "mod_dungeon_chest":
                         # Always explicit, off included: `dungeonchest off`
                         # returns a live game's chests to their own rule.
-                        send_cmds([dungeon_chest_cmd(cfg)], cfg)
+                        # Turning it on restates the countdown's form after
+                        # the percentage, as hidden loot restates its key: a
+                        # form picked while the game was closed never
+                        # reached the plugin.
+                        cmds = [dungeon_chest_cmd(cfg)]
+                        countdown = dungeon_chest_countdown_cmd(cfg)
+                        if cfg["mod_dungeon_chest"] and countdown:
+                            cmds.append(countdown)
+                        send_cmds(cmds, cfg)
                     elif key == "dungeon_chest_pct":
                         # Stored either way; sent only while the switch is on.
                         if cfg.get("mod_dungeon_chest", False):
                             send_cmds([dungeon_chest_cmd(cfg)], cfg)
+                    elif key == "dungeon_chest_countdown":
+                        # Stored either way; sent only while the switch is on
+                        # (the select is disabled while it is off).
+                        if cfg.get("mod_dungeon_chest", False):
+                            send_cmds([dungeon_chest_countdown_cmd(cfg)], cfg)
                     elif key == "angelic_items":
                         send_cmds([angelic_cmd(eff)], cfg)
                     elif key in ("enemy_speed", "enemy_speed_ct"):
