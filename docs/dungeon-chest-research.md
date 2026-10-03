@@ -121,7 +121,7 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 ### `dungeonchest` (both builds)
 
 The player command. Every form answers one status line that reports what was
-*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable>
+*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable[(unreadable=<u>/<c>)]>
 creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>

@@ -163,6 +163,10 @@ class DungeonChestUnlockContractTests(unittest.TestCase):
         self.assertIn("++census.pending;", source)
         self.assertIn("++census.unreadable;", source)
         self.assertIn("return DC::EstimatedTotal(alive, census.pending);", source)
+        # A census that failed as a whole refuses (total=unavailable) rather than
+        # estimating the monsters alive as the dungeon's total.
+        self.assertIn("if (DungeonChestCreatorObjects().empty() || census.creators == 0 "
+                      "|| census.unreadable >= census.creators) return 0;", source)
         self.assertIn("for (int obj : DungeonChestCreatorObjects())", source)
         family = code_statements(function_body(self.player, "static const std::vector<int>& DungeonChestCreatorObjects()"))
         self.assertIn("for (const char* name : kKnownDensityCreatorObjects)", family)

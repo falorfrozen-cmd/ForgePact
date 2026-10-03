@@ -56,6 +56,12 @@ static long Source(long alive, DC::Census& census) {
     census = DC::Census{};
     return sourceAnswer < 0 ? alive : sourceAnswer;
 }
+// The build's source when every creator's state was unreadable: it refuses (0).
+static long UnreadableSource(long, DC::Census& census) {
+    census = DC::Census{};
+    census.creators = 4; census.unreadable = 4;
+    return 0;
+}
 static void ResetRecorders() { unlockCalls = 0; chatLines.clear(); chatFailures = 0; sourceAnswer = -1; sourceCalls = 0; }
 
 // One dungeon as the poll reads it. Every kill the game makes moves one
@@ -265,11 +271,18 @@ int main() {
         DC::State none;
         Arm(none, 50, false);
         none.totalSource = nullptr;
+        DC::State blind;
+        Arm(blind, 50, false);
+        blind.totalSource = &UnreadableSource;
+        Dungeon b; b.alive = 5;
+        Poll(blind, b);
+        const std::string blindLine = DC::StatusLine(blind, "ok", "ok");
         check("target/total-unknown",
             refused.find(" total=unavailable") != std::string::npos && refused.find("unchanged: off") != std::string::npos
                 && silent && answered == 1 && s.tally.total == 40 && s.tally.latched && asks == 32 && asksAfter == 32
-                && !DC::TotalAvailable(none) && DC::StatusLine(none, "ok", "ok").find(" total=unavailable ") != std::string::npos,
-            refused + " | before: " + before + " | after: " + after);
+                && !DC::TotalAvailable(none) && DC::StatusLine(none, "ok", "ok").find(" total=unavailable ") != std::string::npos
+                && blind.tally.total == 0 && blindLine.find(" total=unavailable(unreadable=4/4) ") != std::string::npos,
+            refused + " | before: " + before + " | after: " + after + " | blind: " + blindLine);
     }
 
     // ---- target: the instance_exists detour's decision ----------------------

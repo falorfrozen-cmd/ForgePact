@@ -558,7 +558,9 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
     const long total = TotalNow(t);
     return std::string("dungeonchest: ") + ModeText(Pct(s))
         + " | kills=" + std::to_string(t.kills)
-        + " total=" + (total > 0 ? std::to_string(total) : std::string("unavailable"))
+        + " total=" + (total > 0 ? std::to_string(total) : std::string("unavailable")
+            + (t.census.unreadable > 0 ? "(unreadable=" + std::to_string(t.census.unreadable) + "/"
+                + std::to_string(t.census.creators) + ")" : std::string()))
         + " creators=" + std::to_string(t.census.creators)
         + " pending=" + std::to_string(t.census.pending)
         + " unreadable=" + std::to_string(t.census.unreadable)

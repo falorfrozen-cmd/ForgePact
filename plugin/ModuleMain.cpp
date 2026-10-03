@@ -19443,6 +19443,10 @@ static bool DungeonChestChat(const std::string& line)
 // spawns). A creator whose state cannot be read counts as spawned and is
 // counted (`unreadable=` on status): leaving it out lowers the total, and the
 // header's clamp keeps the total at or above the kills plus the monsters alive.
+// That clamp does not stop a total of a few percent of the dungeon, so a
+// census that failed as a whole (the family unresolved, no creators, every
+// creator unreadable) answers 0: total=unavailable, the share is not applied
+// and the game's own rule stays, rather than a total of the monsters alive.
 //
 // The creator family to count: kKnownDensityCreatorObjects resolved by name,
 // less any that descends from another listed one (instance_number and
@@ -19483,7 +19487,7 @@ static long DungeonChestEstimateTotal(long alive, ForgePact::DungeonChest::Censu
             } catch (...) { ++census.unreadable; }
         }
     }
-    if (census.creators == 0 && alive <= 0) return 0;
+    if (DungeonChestCreatorObjects().empty() || census.creators == 0 || census.unreadable >= census.creators) return 0;
     return DC::EstimatedTotal(alive, census.pending);
 }
 static ForgePact::DungeonChest::TotalSource g_DcBuildTotalSource = &DungeonChestEstimateTotal;
