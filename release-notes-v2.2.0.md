@@ -164,13 +164,15 @@ experience.
 - **Dungeon chest opens early (#31).** A new setting on the Mods tab, under
   Gameplay, after Bosses: a switch and a slider from 50 to 95 %, or click the
   number next to the slider and type it. With the switch on, the chest at the
-  end of a key dungeon opens once that share of the dungeon's monsters is
-  dead, instead of all of them, so you no longer hunt down the last few
-  stragglers. When 50 or fewer kills are left, a countdown tells you how many.
+  end of a key dungeon opens once that share of all of the dungeon's
+  monsters, spawned or not, is dead, instead of every last one, so you no
+  longer hunt down the last few stragglers. The total is every monster the
+  dungeon plans when it loads, so the count of kills left only goes down.
+  When 50 or fewer kills are left, a countdown tells you how many.
   It is off by default: turn it on in the panel, and the slider rests at 75 %
-  until you move it. **Not working yet in this build:** how the game unlocks
-  the chest has not been measured in a live game, so the setting is refused
-  and changes nothing until it has.
+  until you move it. **Not working yet in this build:** how many monsters a
+  dungeon plans has not been measured in a live game, so the setting is
+  refused and changes nothing until it has.
 
 ## Changed
 

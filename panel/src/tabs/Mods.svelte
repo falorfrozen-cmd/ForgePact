@@ -156,7 +156,7 @@
   <!-- Dungeon chest opens early (issue #31): a switch and a slider, never a select (the owner, 2026-10-03). The value
        beside the slider is typable (panel.js typable()); "off" while the switch is off, as Monster Density's is. -->
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Dungeon chest opens early<br><span class="feature-description">The chest at the end of a key dungeon opens once the share of its monsters set here is dead, not all of them. A countdown shows the last 50 kills. Off by default. Not working yet: until a live test confirms how the chest unlocks, turning it on changes nothing.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Dungeon chest opens early<br><span class="feature-description">The chest at the end of a key dungeon opens once the share set here of all its monsters is dead, counting every monster the dungeon plans when it loads, spawned yet or not. A countdown shows the last 50 kills. Off by default. Not confirmed in a live game yet, so for now it changes nothing.</span></span>
     <label class="switch"><input type="checkbox" id="mod_dungeon_chest" aria-label="Dungeon chest opens early"><span class="sl"></span></label>
     <input type="range" id="dungeon_chest_pct" min="50" max="95" step="5" value="75" aria-label="Share of the dungeon's monsters to kill">
     <span class="val off" id="dcpval" style="width:64px">off</span>

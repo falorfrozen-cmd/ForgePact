@@ -255,7 +255,7 @@ class DungeonChestPanelTextTests(unittest.TestCase):
 
     def test_panel_text_states_behaviour_without_overclaim(self):
         text = feature_description(dungeon_chest_row())
-        self.assertLessEqual(len(text), 300, text)
+        self.assertLessEqual(len(text), 320, text)
         self.assertIn("off by default", text.lower())
         self.assertIn("50", text, "the countdown shows the last 50 kills")
         measured = measured_words()
@@ -266,6 +266,14 @@ class DungeonChestPanelTextTests(unittest.TestCase):
                 self.assertIsNone(
                     pattern.search(text),
                     f"the dungeon chest row says {word!r} before Live procedure 2 measured it")
+
+    def test_panel_text_names_the_planned_total(self):
+        # D3 rewritten: the share is of every monster the dungeon plans at
+        # load, spawned yet or not, never of the kills plus those alive now.
+        text = feature_description(dungeon_chest_row()).lower()
+        self.assertTrue("spawned" in text or "load" in text, text)
+        self.assertIn("all its monsters", text)
+        self.assertNotIn("alive", text)
 
     def test_measured_words_reads_only_measured_lines(self):
         # The relaxation, with a negative control beside it: a placeholder,
@@ -289,11 +297,27 @@ class DungeonChestDocsTests(unittest.TestCase):
         self.assertIn(f"(#{README_ANCHOR})", row)
         self.assertRegex(readme, rf"(?m)^### {re.escape(ROW_LABEL)}\s*$")
 
+    def test_readme_names_the_planned_total(self):
+        readme = README.read_text(encoding="utf-8")
+        row = next(line for line in readme.splitlines() if line.startswith(f"| **{ROW_LABEL}** |"))
+        self.assertIn("spawned", row.lower())
+        section = readme.split(f"### {ROW_LABEL}", 1)[1].split("\n### ", 1)[0]
+        low = re.sub(r"\s+", " ", section.lower())
+        self.assertIn("counted when the dungeon loads", low)
+        self.assertNotIn("still alive", low)
+
     def test_release_notes_name_the_mod_under_new(self):
         notes = RELEASE_NOTES.read_text(encoding="utf-8")
         new = re.search(r"^## New\s*\n(.*?)(?=^## |\Z)", notes, re.S | re.M)
         self.assertIsNotNone(new)
         self.assertIn(f"**{ROW_LABEL}", new.group(1))
+
+    def test_release_notes_name_the_planned_total(self):
+        notes = RELEASE_NOTES.read_text(encoding="utf-8")
+        bullet = notes.split(f"**{ROW_LABEL}", 1)[1].split("\n- ", 1)[0]
+        low = re.sub(r"\s+", " ", bullet.lower())
+        self.assertIn("all of the dungeon's monsters, spawned or not", low)
+        self.assertNotIn("alive", low)
 
 
 class DungeonChestPluginContractTests(unittest.TestCase):
