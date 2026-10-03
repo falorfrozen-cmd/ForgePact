@@ -6,8 +6,9 @@
 // once-a-second poll reads (the room, how many Dungeon_Chest_obj and how many
 // Enemy_Parent_obj instances it holds), each kill arrives as the kill hook
 // hands it over (the dying enemy's instance id), and the two actions the
-// adapter supplies are recorders: `unlock` counts its calls, `chat` keeps the
-// lines it was given. No game process is touched.
+// adapter supplies are recorders: `unlock` counts its calls and answers that
+// its write was made (or, in `unlock-failed`, that it failed), `chat` keeps
+// the lines it was given. No game process is touched.
 //
 // Every target that says "not yet" sits beside the same tally going on to the
 // latch, so a decision that never unlocks fails it instead of passing it.
@@ -32,7 +33,9 @@ static void check(const std::string& label, bool ok, const std::string& detail =
 // The adapter's two actions, as recorders.
 static int unlockCalls = 0;
 static std::vector<std::string> chatLines;
-static void RecordUnlock() { ++unlockCalls; }
+static bool RecordUnlock() { ++unlockCalls; return true; }
+// An unlock action whose write fails (the route refused, the chest unreadable).
+static bool FailUnlock() { ++unlockCalls; return false; }
 static bool RecordChat(const std::string& line) { chatLines.push_back(line); return true; }
 static void ResetRecorders() { unlockCalls = 0; chatLines.clear(); }
 
@@ -59,7 +62,7 @@ static std::string Tally(const DC::State& s) {
     const DC::Tally& t = s.tally;
     return "kills=" + std::to_string(t.kills) + " alive=" + std::to_string(t.alive)
         + " threshold=" + std::to_string(t.threshold) + " remaining=" + std::to_string(DC::Remaining(t))
-        + " latched=" + std::to_string(t.latched) + " unlockCalls=" + std::to_string(unlockCalls)
+        + " latched=" + std::to_string(t.latched) + " unlocked=" + std::to_string(t.unlocked) + " unlockCalls=" + std::to_string(unlockCalls)
         + " chat=" + std::to_string(chatLines.size());
 }
 static std::string Lines() {
@@ -113,9 +116,32 @@ int main() {
         const std::string unlockedLine = DC::UnlockedLine(s);
         const int after = KillAndPoll(s, d, 5);
         check("target/latch_at_threshold",
-            notYet && latched == 1 && after == 0 && s.tally.latched && unlockCalls == 1 && s.tally.threshold == 20
-                && unlockedLine == "dungeonchest: unlocked early at 20/20 alive=20",
+            notYet && latched == 1 && after == 0 && s.tally.latched && s.tally.unlocked && unlockCalls == 1
+                && s.tally.threshold == 20 && s.counters.unlocks == 1 && s.counters.unlockFailed == 0
+                && unlockedLine == "dungeonchest: unlocked early at 20/20 alive=20"
+                && DC::StatusLine(s, "ok").find(" latched=1 unlocked=1 unlockRoute=ok ") != std::string::npos,
             "at19: " + at19 + " | at20+: " + Tally(s) + " | " + unlockedLine);
+    }
+    {
+        // unlock-failed: the threshold latches but the unlock action's write
+        // fails. The status line and the latch line say so, `unlocked` stays
+        // 0, and no `ready to open` line is sent for a chest the game keeps shut.
+        DC::State s;
+        Arm(s, 50, true);
+        s.unlock = &FailUnlock;
+        DC::SetForm(s, DC::Form::Both);
+        Dungeon d; d.alive = 40;
+        Poll(s, d);
+        const int latched = KillAndPoll(s, d, 20);
+        const std::string line = DC::UnlockedLine(s);
+        check("target/unlock-failed",
+            latched == 1 && s.tally.latched && !s.tally.unlocked && unlockCalls == 1
+                && s.counters.unlocks == 0 && s.counters.unlockFailed == 1
+                && line.rfind("dungeonchest: threshold reached at 20/20 ", 0) == 0
+                && line.find("unlock action failed") != std::string::npos
+                && DC::StatusLine(s, "ok").find(" latched=1 unlocked=0 ") != std::string::npos
+                && !chatLines.empty() && chatLines.back() != "Chest: ready to open",
+            line + " | " + Tally(s) + " " + Lines());
     }
 
     // ---- target: the countdown's text --------------------------------------
@@ -274,29 +300,37 @@ int main() {
         check("command/words_parsed", ok);
     }
     {
-        // What DungeonChestCommand stores: 50, 73 and 95 are stored; 49, 96
-        // and `abc` are refused; a failed kill hook refuses every share and
-        // never `off`. Each refusal sits beside a stored pair, so a decision
-        // that refuses everything fails here too.
-        struct Case { const char* word; const char* hook; bool stored; };
+        // What DungeonChestCommand stores: 50, 73 and 95 are stored with the
+        // kill hook on both routes and an unlock action supplied; 49, 96 and
+        // `abc` are refused; a failed or table-only kill hook, or no unlock
+        // action, refuses every share and never `off`. Each refusal sits
+        // beside a stored pair, so a decision that refuses everything fails
+        // here too.
+        struct Case { const char* word; const char* hook; bool unlock; bool stored; };
         const Case cases[] = {
-            { "50", "ok", true }, { "73", "table-only", true }, { "95", "none", true },
-            { "49", "ok", false }, { "96", "ok", false }, { "abc", "ok", false },
-            { "75", "failed", false }, { "off", "failed", true }, { "0", "ok", true },
+            { "50", "ok", true, true }, { "73", "ok", true, true }, { "95", "ok", true, true },
+            { "49", "ok", true, false }, { "96", "ok", true, false }, { "abc", "ok", true, false },
+            { "75", "failed", true, false }, { "75", "table-only", true, false }, { "75", "none", true, false },
+            { "75", "ok", false, false },
+            { "off", "failed", true, true }, { "off", "table-only", false, true }, { "0", "ok", false, true },
         };
         bool ok = true;
         std::string detail;
         for (const Case& c : cases) {
             int pct = -1;
             const bool parsed = DC::ParsePct(c.word, pct);
-            const bool stored = parsed && DC::StoresMode(pct, c.hook);
-            if (stored != c.stored) { ok = false; detail += std::string(" ") + c.word + "/" + c.hook; }
+            const bool stored = parsed && DC::StoresMode(pct, c.hook, c.unlock);
+            if (stored != c.stored) { ok = false; detail += std::string(" ") + c.word + "/" + c.hook + (c.unlock ? "/unlock" : "/no-unlock"); }
         }
-        const std::string range = DC::RefusedLine(49, 0, "ok");
-        const std::string hook = DC::RefusedLine(75, 0, "failed");
+        const std::string range = DC::RefusedLine(49, 0, "ok", true);
+        const std::string hook = DC::RefusedLine(75, 0, "failed", true);
+        const std::string tableOnly = DC::RefusedLine(75, 0, "table-only", true);
+        const std::string noUnlock = DC::RefusedLine(75, 0, "ok", false);
         ok = ok && range.rfind("dungeonchest: refused 49 ", 0) == 0 && range.find("unchanged: off") != std::string::npos
-            && hook.find(" hook=failed") != std::string::npos;
-        check("command/refused", ok, range + " | " + hook + (detail.empty() ? "" : " wrong:" + detail));
+            && hook.find(" hook=failed") != std::string::npos && tableOnly.find(" hook=table-only") != std::string::npos
+            && noUnlock.find(" unlockRoute=unavailable") != std::string::npos && noUnlock.find("unchanged: off") != std::string::npos;
+        check("command/refused", ok, range + " | " + hook + " | " + tableOnly + " | " + noUnlock
+            + (detail.empty() ? "" : " wrong:" + detail));
     }
     {
         DC::State s;
@@ -306,7 +340,7 @@ int main() {
         KillAndPoll(s, d, 3);
         const std::string line = DC::StatusLine(s, "ok");
         check("command/status_line",
-            line == "dungeonchest: 50% | kills=3 alive=37 threshold=20 remaining=17 unlocked=0 countdown=head chat=unavailable chatLines=0 hook=ok",
+            line == "dungeonchest: 50% | kills=3 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlockRoute=ok countdown=head chat=unavailable chatLines=0 hook=ok",
             line);
     }
 

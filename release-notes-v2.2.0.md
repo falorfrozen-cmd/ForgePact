@@ -168,7 +168,9 @@ experience.
   dead, instead of all of them, so you no longer hunt down the last few
   stragglers. When 50 or fewer kills are left, a countdown tells you how many.
   It is off by default: turn it on in the panel, and the slider rests at 75 %
-  until you move it.
+  until you move it. **Not working yet in this build:** how the game unlocks
+  the chest has not been measured in a live game, so the setting is refused
+  and changes nothing until it has.
 
 ## Changed
 

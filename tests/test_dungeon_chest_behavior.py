@@ -12,8 +12,9 @@ These scenarios pin the decision, the tally and the countdown: nothing at all
 while the mode is off or the room holds no chest, the latch at exactly the
 threshold (the 20th of 40 at 50 %, not the 19th), the countdown text's window,
 one count per enemy id, a reset on a room change or when the chest is gone,
-the chat milestones (each once, one line for a kill that passes several), and
-the chat forms refused while no chat call is available.
+the chat milestones (each once, one line for a kill that passes several), the
+chat forms refused while no chat call is available, and a latch whose unlock
+write fails reported as `unlocked=0` with no `ready to open` line.
 
 The header is compiled three times. Once as written, where every scenario must
 pass; once with the unlock decision replaced by one that never unlocks, where
@@ -23,9 +24,11 @@ targets measure the latch itself, and that a "not yet" target cannot pass for
 a decision that does nothing.
 
 The third run is the same kind of control for the command's refusal: a share
-outside 50..95, or any share while the kill hook failed to install, must be
-refused, so `dungeonchest 49` cannot report itself armed. This build replaces
-the store-or-refuse line with one that stores every mode, and the refusal
+outside 50..95, or any share while the kill hook is not on both routes
+(failed or table-only) or no unlock action is supplied, must be refused, so
+`dungeonchest 49` cannot report itself armed, and neither can a share that
+would count no kill or never open the chest. This build replaces the
+store-or-refuse line with one that stores every mode, and the refusal
 scenario must fail there.
 """
 import os
@@ -41,13 +44,14 @@ HARNESS = ROOT / "tests/dungeon_chest_harness.cpp"
 DECISION_LINE = "return kills >= threshold;"
 NEVER_UNLOCKS = "return false;"
 # The command's store-or-refuse decision; its negative control stores every mode.
-STORE_LINE = 'return pct == 0 || (pct >= kMinPct && pct <= kMaxPct && hook != "failed");'
+STORE_LINE = 'return pct == 0 || (InRange(pct) && hook == "ok" && unlockAvailable);'
 STORES_EVERY_MODE = "return true;"
 REFUSAL = "command/refused"
 
 BASELINES = ("baseline/off_never_latches", "baseline/no_chest_no_tally")
 TARGETS = (
     "target/latch_at_threshold",
+    "target/unlock-failed",
     "target/countdown_text",
     "target/kill_once_per_id",
     "target/room_change_resets",
@@ -155,7 +159,7 @@ class DungeonChestBehaviorTests(unittest.TestCase):
         self.assertScenario("command/status_line")
 
     def test_refused_shares_and_failed_hook_leave_the_mode(self):
-        """49, 96 and abc refused; 50, 73 and 95 stored; a failed hook refuses every share."""
+        """49, 96 and abc refused; 50, 73 and 95 stored; a failed or table-only hook, or no unlock action, refuses every share."""
         self.assertScenario(REFUSAL)
 
     def test_negative_control_refusal_fails_when_every_mode_is_stored(self):

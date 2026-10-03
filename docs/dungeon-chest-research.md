@@ -26,11 +26,12 @@ and no script text, listing, address or byte pattern is reproduced (hub
 `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin").
 
 Status, 2026-10-03: **no live session has run yet.** The game's own rule for
-the chest is not established, so the player build's unlock action is a no-op
-(the decision still latches and reports `unlocked=1`), and the chat form of
-the countdown is refused until a chat call shape is proven. Live procedure 1
-answers both; its results, and the route each one selects, are filled in
-below once it has run.
+the chest is not established, so the player build has no unlock action, and
+`dungeonchest <pct>` refuses every share (`unlockRoute=unavailable`) rather
+than count, show a countdown and latch over a chest that stays shut. The chat
+form of the countdown is refused until a chat call shape is proven. Live
+procedure 1 answers both; its results, and the route each one selects, are
+filled in below once it has run.
 
 ## Static reading
 
@@ -47,7 +48,8 @@ known.
   though `symbols.csv` names only scripts.
 - **What the Step uses** (static reading). The chest's Step calls, by name,
   `GetKeyDungeonRoom`, `GetKeyDungeon`, `NetworkSendClientEffect`, `GPV` (the
-  getter for a player variable), `IsDefined` and `PlaySound3D`. It calls no
+  getter for a player variable, read by key from the protected store; see
+  `boss-rarity-research.md`), `IsDefined` and `PlaySound3D`. It calls no named
   script that counts or lists enemies.
 - **The open** (static reading). The animation-end event is where the chest
   opens: it calls `CreateInFreePos`, an `instance_create` by name, `SPV`,
@@ -74,10 +76,12 @@ known.
   `EnemyDestroyKillProc` runs with the dying enemy as `self`, and again with
   the player as `self`; `Enemy_Parent_obj` (1429) is the monster family;
   `Enemy_Death_Effect_obj` is not made on every kill, so it cannot count kills.
-- **What follows** (reading, not a measurement). The chest's unlock condition
-  is either a builtin poll the static reading cannot see, or a variable that
-  another event writes. Only a live census can tell which, so the unlock code
-  waits for `dungeonprobe` (below).
+- **What follows** (reading, not a measurement). What decides the unlock is
+  not established. Candidates include a builtin poll the static reading cannot
+  see, a chest or blocker variable (built-in or not) that another event
+  writes, and the player variable the Step reads through `GPV`. Only a live
+  census can tell which, so the unlock code waits for `dungeonprobe` (below),
+  which watches all three.
 
 The chat candidates' static reading is recorded under [Chat route](#chat-route).
 
@@ -87,14 +91,23 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 
 The player command. Every form answers one status line that reports what was
 *done*: `dungeonchest: <pct>%|off | kills=<k> alive=<a> threshold=<t>
-remaining=<r> unlocked=<0|1> countdown=<form> chat=<ok|unavailable>
-chatLines=<n> hook=ok|table-only|failed|none`. `kills` is our own count from
-the `EnemyDestroyKillProc` hook Headhunter already installs (an enemy-`self`
-call, once per instance id, with its own recent-id set); `alive` is
-`instance_number` of `Enemy_Parent_obj`, polled once a second while the room
-holds a `Dungeon_Chest_obj`. The tally resets on a room change and when the
-chest count drops to 0. When the threshold latches, `out.txt` gets one
-`dungeonchest: unlocked early at <k>/<t>` line per dungeon.
+remaining=<r> latched=<0|1> unlocked=<0|1> unlockRoute=<ok|unavailable>
+countdown=<form> chat=<ok|unavailable> chatLines=<n>
+hook=ok|table-only|failed|none`. `latched` is the decision; `unlocked` is the
+unlock action's write, which is what changes the chest. `kills` is our own
+count from the `EnemyDestroyKillProc` hook Headhunter already installs (an
+enemy-`self` call, once per instance id, with its own recent-id set); `alive`
+is `instance_number` of `Enemy_Parent_obj`, polled once a second while the
+room holds a `Dungeon_Chest_obj`. The tally resets on a room change and when
+the chest count drops to 0. When the threshold latches, `out.txt` gets one
+`dungeonchest: unlocked early at <k>/<t>` line per dungeon, or `threshold
+reached ... but the unlock action failed` when the write did not happen.
+
+A share is stored only with the kill hook on both routes (`hook=ok`) and an
+unlock action supplied; otherwise it is refused with the reason
+(`hook=table-only`, `hook=failed`, `unlockRoute=unavailable`) and the mode
+stays as it was. `hook=` is what `HookOneScript` answered when it installed
+the hook, not an inference from where the saved original points.
 
 ### `dungeonprobe` (research build only)
 
@@ -113,14 +126,37 @@ sub-commands under [Chat route](#chat-route).
   variable of the chest, and of any `Dungeon_Boss_Blocker_obj` and
   `Spawn_Dungeon_obj` instance, through `variable_instance_get_names` (the
   census route `petrelic census` uses), one `dungeonprobe var <object>
-  <name>=<value>` line each. After that it prints only what changed since the
-  previous second, `dungeonprobe diff <object> <name> <old>-><new>`. `dump`
-  prints the full chest list again.
+  <name>=<value>` line each. `variable_instance_get_names` returns user
+  variables only, so the census also reads each instance's built-ins by name
+  (`sprite_index`, `image_index`, `image_speed`, `image_alpha`, `visible`,
+  `mask_index`, `solid`) and its alarm 0 (`alarm_get` with the instance as
+  `self`), printed as `builtin:<name>`: a lock carried in the sprite, its
+  frame or speed, visibility, the mask or the alarm still produces a line.
+  After that it prints only what changed since the previous second,
+  `dungeonprobe diff <object> <name> <old>-><new>`. `dump` prints the full
+  list again.
+- **The store reads.** The chest's Step and Alarm 0, the blocker's Step and
+  the spawner's Alarm 0 call `GPV` (static reading), which reads a value by
+  key from the game's protected store, not an instance variable, so the
+  variable census cannot see it. `dungeonprobe on` detours `GPV` and `SPV`
+  (its write) count-only through `HookOneScript`. For every `GPV` call whose
+  `self` is a watched instance, it keeps the key and the value returned, and
+  the census prints `dungeonprobe gpv <object> key=<k> =<value> (first read)`
+  and then `dungeonprobe gpvdiff <object> key=<k> <old>-><new>` whenever that
+  value moves. An `SPV` call that writes one of those keys is recorded with
+  its writer's object (`dungeonprobe spv key=<k> writer=<object> ...`,
+  `spvdiff`), so a key that flips at the last kill also names what wrote it.
+  `status` prints `dungeonprobe store GPV calls=<n> gameCalls=<g> hook=...`
+  and every row.
 - **The builtin counters.** `dungeonprobe on` installs, once, `HookBuiltin`
   detours (resolved by name, patched at the builtin itself, so they see every
   caller) on `instance_number`, `instance_exists`, `instance_find` and
-  `instance_place`. Each counts every call (`calls=`), and separately the
-  calls whose `self` is a `Dungeon_Chest_obj`, `Dungeon_Boss_Blocker_obj` or
+  `instance_place`. Each counts every call (`calls=`), splits off the
+  plugin's own calls (`ownCalls=`: the census, the `dungeonchest` poll and
+  the chat-self lookups run inside a scope that marks them) and the game's
+  (`gameCalls=`: the rest whose `self` is an instance other than the global
+  one the plugin's calls carry), and separately counts the game's calls
+  whose `self` is a `Dungeon_Chest_obj`, `Dungeon_Boss_Blocker_obj` or
   `Spawn_Dungeon_obj`, keyed by the object index in the first argument:
   `dungeonprobe builtin instance_number self=Dungeon_Chest_obj
   arg=Enemy_Parent_obj calls=<n>` on `status`. Every counter prints at zero
@@ -129,17 +165,33 @@ sub-commands under [Chat route](#chat-route).
 **Positive controls.** For the census, the kill hook is the control: it is
 the route Headhunter proves (307 calls in the § 13.5 measurement), so `kills`
 rising while `alive` falls by the same amount shows the census reads the room
-it is in. For the builtin counters, the all-callers count is the control for
-the per-`self` rows: these builtins are called all the time, so `calls=` above
-zero from any caller shows the detour sees calls, and only then is a zero on
-the chest's own row a finding about the chest. A zero row is written "not
-observed", never "the chest does not poll".
+it is in. The builtin counters have two controls, both needed before a zero
+on the chest's own row is a finding about the chest:
+
+- **The detour sees the game.** `gameCalls=` above zero on a builtin. The
+  plain `calls=` cannot serve: the probe itself calls `instance_number` and
+  `instance_find` every second, through the very routine the detour patches,
+  so `calls=` is above zero whether or not any game call arrives.
+- **The per-`self` match sees a chest.** At first sight of the chest the probe
+  calls `instance_number` once through `CallBuiltinEx` with the chest instance
+  the census resolved as `self`, and an argument the chest has no reason to
+  poll (its own object). The detour must file it as `dungeonprobe builtin
+  control instance_number self=Dungeon_Chest_obj arg=Dungeon_Chest_obj
+  calls=1`, and the census prints `dungeonprobe control: PASS ...`. The
+  control row is kept apart from the self rows, so it never reads as a poll.
+
+For the store reads, `GPV`'s own `gameCalls=` is the control: the game reads
+its protected store constantly. A zero row is written "not observed", never
+"the chest does not poll".
 
 **What it cannot see.** Reads the runtime does without calling one of those
 four builtins (`with`-style iteration over an object, the `collision_*` family,
-`place_meeting`) are not counted. If Live 1 sees no poll and no variable flip,
-the widening session (Live procedure 1b) adds those that can be hooked and a
-dump of the `global` names that mention dungeons, enemies, kills or counts.
+`place_meeting`) are not counted. A `GPV` call the chest makes from inside a
+`with` on another instance carries that instance as `self` and is not
+attributed to the chest. If Live 1 sees no poll, no variable flip and no
+store value moving, the widening session (Live procedure 1b) adds those that
+can be hooked and a dump of the `global` names that mention dungeons,
+enemies, kills or counts.
 
 ## Live procedure 1
 
@@ -157,25 +209,31 @@ the session). The owner is asked before it is installed.
 - control: `ping` → a line starting `pong`. Marker: `dungeonprobe status` → a
   line starting `dungeonprobe: off` (research build identified).
 - steps:
-  1. `dungeonchest status` → `dungeonchest: off | kills=0 alive=… countdown=head
-     chat=unavailable … hook=none` (the player command answers).
+  1. `dungeonchest status` → `dungeonchest: off | kills=0 alive=… unlockRoute=unavailable
+     countdown=head chat=unavailable … hook=none` (the player command answers).
   2. `dungeonprobe on` → `dungeonprobe: on` plus a `HOOK INSTALLED` line for
-     each of the four builtins and each chat candidate.
+     each of the four builtins, `GPV`, `SPV` and each chat candidate.
   3. `dungeonprobe chat control` → the `IsDefined` pair: the defined argument
      answers true, `undefined` answers false (`chat-call-control`).
   4. Person: load slot 14 if not loaded, go to the Pumpkin Patch map, and use a
      Cellar Key at the Pumpkin Cellar entrance (one action). Expected within
      2 s: a `dungeonprobe: room=216 alive=N creators=C blockers=B kills=0
-     chestVars=V` line and a block of `dungeonprobe var Dungeon_Chest_obj …`
+     chestVars=V` line, a block of `dungeonprobe var Dungeon_Chest_obj …`
+     lines (`builtin:` ones included), the self-attribution control line
+     `dungeonprobe control: PASS …`, and any `dungeonprobe gpv …` first-read
      lines.
-  5. `dungeonprobe status` → the builtin counters: `calls=` > 0 for at least
-     one builtin from any self (`builtin-hook-fires`), and the
-     `self=Dungeon_Chest_obj` rows (zero or not — the finding).
+  5. `dungeonprobe status` → the builtin counters: `gameCalls=` > 0 for at
+     least one builtin and the `builtin control … self=Dungeon_Chest_obj
+     arg=Dungeon_Chest_obj calls=1` row (`builtin-hook-fires`), the
+     `self=Dungeon_Chest_obj` rows (zero or not — the finding), and the
+     `store GPV` line with `gameCalls=` > 0 and its `gpv` rows.
   6. Person: kill monsters until about half are dead. Expected: `kills=`
-     rising, `alive=` falling by the same amount, `diff` lines if any chest
-     variable moves per kill.
+     rising, `alive=` falling by the same amount, `diff` or `gpvdiff` lines if
+     any chest value moves per kill.
   7. Person: kill the rest. Expected at the last kill: `alive=0` and one or
-     more `diff Dungeon_Chest_obj …` lines (the `unlock-signal`), or none.
+     more `diff Dungeon_Chest_obj …` (`builtin:` included) or `gpvdiff
+     Dungeon_Chest_obj …` lines (the `unlock-signal`), with any `spv`/`spvdiff`
+     line naming the writer, or none.
   8. Person: open the chest. Expected: loot; `dungeonprobe` shows the open's
      variable changes (helps tell the "openable" flag from the "opened" one).
   9. `dungeonprobe status` once more (the builtin rows after the unlock).
@@ -200,11 +258,14 @@ the session). The owner is asked before it is installed.
 - checks: `dll-hash`; `marker`; `control`; `chat-call-control` (the
   `IsDefined` pair answered true then false); `kill-hook-fires` (`kills=`
   equals the drop in `alive=` within ±1 over step 6); `builtin-hook-fires`
-  (any builtin `calls=` > 0); `chest-vars-dumped` (V ≥ 1 and at least one
-  `var` line); `alive-count` (N > 0 at entry); `creators-in-dungeon` (C,
-  recorded; pass if 0, fail if > 0 — a finding either way); `unlock-signal` (a
-  chest or blocker variable changed at the last kill: pass with its name and
-  values, else not-observed); `builtin-poll` (a `self=Dungeon_Chest_obj` row
+  (`gameCalls=` > 0 on at least one builtin, never the plain `calls=`, and
+  the `dungeonprobe control: PASS` line with its control row `calls=1`);
+  `chest-vars-dumped` (V ≥ 1 and at least one `var` line); `alive-count` (N >
+  0 at entry); `creators-in-dungeon` (C, recorded; pass if 0, fail if > 0 — a
+  finding either way); `unlock-signal` (a chest or blocker variable, built-ins
+  included, or a value the chest or blocker read through `GPV` (`gpvdiff`),
+  changed at the last kill: pass with its name or key and values, and the
+  writer if an `spv` row names one, else not-observed); `builtin-poll` (a `self=Dungeon_Chest_obj` row
   with an enemy-family `arg=` and calls > 0: pass with the builtin's name, else
   not-observed); `boss-dungeon`; `chat-hook-fires` (a candidate's calls > 0
   after step 10: pass with script, self and argument kinds, else
@@ -308,8 +369,14 @@ the first flip on another object → `unlock-route: writer`. Both not-observed �
 `unlock-route: not-observed`, and a widening session (Live procedure 1b, same
 research DLL) follows before any unlock code is written.
 
+A value the chest reads through `GPV` that flips at the last kill fits none
+of the three routes as written (it is a protected-store key, not an instance
+variable); if Live 1 shows one, which route answers it is the planner's call
+before any unlock code is written.
+
 **Token:** not yet set (Live procedure 1 has not run). Until it is, the
-player build's unlock action is a no-op.
+player build has no unlock action and refuses every share
+(`unlockRoute=unavailable`).
 
 ## Chat route
 

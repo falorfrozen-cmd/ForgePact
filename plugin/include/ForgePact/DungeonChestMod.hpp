@@ -20,9 +20,11 @@ namespace ForgePact::DungeonChest {
 // count (a once-a-second poll), each kill (the EnemyDestroyKillProc hook,
 // enemy-`self` calls only, one count per instance id) and two actions:
 //   - `unlock`: what to write, and where, so the game's own chest becomes
-//     openable. The route is chosen by the research session (workorder token
-//     `unlock-route:`); until then the adapter's action is a no-op and the
-//     decision still latches and reports `unlocked=1`.
+//     openable; it answers whether the write was made. The route is chosen by
+//     the research session (workorder token `unlock-route:`). While no unlock
+//     action is supplied, every share is refused with a reason: a mode stored
+//     then would count, show a countdown and latch while the chest stays shut,
+//     which is a mod that reports itself armed while doing nothing.
 //   - `chat`: put one line in the game's chat. Unset until a call shape is
 //     proven live (`chat-route:`); while unset, a `chat` or `both` countdown
 //     form is refused with a reason and the form stays what it was.
@@ -87,14 +89,19 @@ inline bool ParsePct(std::string_view word, int& out)
     return true;
 }
 
+inline bool InRange(int pct) { return pct >= kMinPct && pct <= kMaxPct; }
+
 // Whether `dungeonchest <pct>` stores the share it was asked for, given the
 // kill hook's state as read after the command asked for it ("ok",
-// "table-only", "failed" or "none"). Off is always stored. A share outside
-// 50..95 is refused, never clamped. A failed kill hook refuses every share:
-// a mode stored then would report itself armed while counting no kill.
-inline bool StoresMode(int pct, std::string_view hook)
+// "table-only", "failed" or "none") and whether an unlock action is supplied.
+// Off is always stored. A share outside 50..95 is refused, never clamped. A
+// share needs the kill hook on both routes ("ok") and an unlock action: a
+// failed or table-only hook counts no kill of compiled GML's, and without the
+// unlock action the chest never opens early, so a mode stored in either case
+// would report itself armed while doing nothing.
+inline bool StoresMode(int pct, std::string_view hook, bool unlockAvailable)
 {
-    return pct == 0 || (pct >= kMinPct && pct <= kMaxPct && hook != "failed");
+    return pct == 0 || (InRange(pct) && hook == "ok" && unlockAvailable);
 }
 
 inline std::string ModeText(int pct)
@@ -104,12 +111,14 @@ inline std::string ModeText(int pct)
 
 // The one line a refused `dungeonchest <pct>` answers: what was asked, why it
 // was refused, and the mode left in place.
-inline std::string RefusedLine(int asked, int kept, std::string_view hook)
+inline std::string RefusedLine(int asked, int kept, std::string_view hook, bool unlockAvailable)
 {
-    const bool inRange = asked >= kMinPct && asked <= kMaxPct;
-    return std::string("dungeonchest: refused ") + std::to_string(asked)
-        + (inRange ? " hook=" + std::string(hook) + " (the kill hook did not install"
-                   : std::string(" (the share is 50..95, or off"))
+    std::string why;
+    if (!InRange(asked)) why = " (the share is 50..95, or off";
+    else if (!unlockAvailable) why = " unlockRoute=unavailable (the unlock route is not written yet, so the chest would not open early";
+    else if (hook != "ok") why = " hook=" + std::string(hook) + " (the kill hook is not on both routes, so kills would go uncounted";
+    else why = " (refused";
+    return std::string("dungeonchest: refused ") + std::to_string(asked) + why
         + "; unchanged: " + ModeText(kept) + ")";
 }
 
@@ -157,6 +166,7 @@ struct Tally {
     long alive = 0;               // Enemy_Parent_obj instances at the last poll
     long threshold = 0;           // the threshold at the last evaluation
     bool latched = false;         // reached in this room: stays reached until the room changes
+    bool unlocked = false;        // the unlock action ran at the latch and made its write
     int milestonesPassed = 0;     // kMilestones[0..n) announced in chat
     bool readySent = false;       // `Chest: ready to open` sent
     int recent[kRecentIds] = {};  // the last kRecentIds counted ids, a ring
@@ -175,13 +185,16 @@ struct Counters {
     std::atomic<long> kills{ 0 };       // kills counted, every room
     std::atomic<long> duplicates{ 0 };  // a second call for an id already counted
     std::atomic<long> rooms{ 0 };       // chests first seen
-    std::atomic<long> unlocks{ 0 };     // rooms whose threshold latched
+    std::atomic<long> latches{ 0 };     // rooms whose threshold latched
+    std::atomic<long> unlocks{ 0 };     // latches whose unlock action made its write
+    std::atomic<long> unlockFailed{ 0 };// latches whose unlock action failed, or had none
     std::atomic<long> chatLines{ 0 };   // chat lines the chat action accepted
     std::atomic<long> chatFailed{ 0 };  // chat lines it refused
 };
 
 using ChatAction = bool (*)(const std::string& line);
-using UnlockAction = void (*)();
+// Answers whether the write that makes the chest openable was made.
+using UnlockAction = bool (*)();
 
 struct State {
     std::atomic<int> pct{ 0 };                               // 0 = off, else 50..95
@@ -192,7 +205,7 @@ struct State {
     Tally tally;
     Counters counters;
     ChatAction chat = nullptr;      // unset: the chat forms are refused
-    UnlockAction unlock = nullptr;  // called once, when the threshold latches
+    UnlockAction unlock = nullptr;  // called once, when the threshold latches; unset: every share is refused
 };
 
 // Off at load: no mod is on by default. Set only by the `dungeonchest` command.
@@ -203,6 +216,7 @@ inline bool Active(const State& s) { return Pct(s) != 0; }
 inline bool Tracking(const State& s) { return Active(s) || s.observe.load(std::memory_order_relaxed); }
 inline Form CurrentForm(const State& s) { return static_cast<Form>(s.form.load(std::memory_order_relaxed)); }
 inline bool ChatAvailable(const State& s) { return s.chat != nullptr; }
+inline bool UnlockAvailable(const State& s) { return s.unlock != nullptr; }
 
 inline void ResetTally(Tally& t)
 {
@@ -260,8 +274,9 @@ inline void SendChat(State& s, const std::string& line)
 }
 
 // Recomputes the threshold and decides. Answers true once, on the evaluation
-// that latched: the unlock action has then run, and in a chat form the ready
-// line has been sent.
+// that latched: the unlock action has then run (`tally.unlocked` says whether
+// it made its write), and in a chat form the ready line has been sent - only
+// when it did, so the chat never announces a chest the game keeps shut.
 inline bool Evaluate(State& s)
 {
     Tally& t = s.tally;
@@ -271,9 +286,11 @@ inline bool Evaluate(State& s)
     const Form form = CurrentForm(s);
     if (DecideUnlock(pct, t.kills, t.alive)) {
         t.latched = true;
-        ++s.counters.unlocks;
-        if (s.unlock) s.unlock();
-        if (FormSendsChat(form) && !t.readySent) { t.readySent = true; SendChat(s, kReadyText); }
+        ++s.counters.latches;
+        t.unlocked = s.unlock != nullptr && s.unlock();
+        if (t.unlocked) ++s.counters.unlocks;
+        else ++s.counters.unlockFailed;
+        if (t.unlocked && FormSendsChat(form) && !t.readySent) { t.readySent = true; SendChat(s, kReadyText); }
         return true;
     }
     const long remaining = Remaining(t);
@@ -316,9 +333,10 @@ inline std::string HeadText(const State& s)
     return CountdownText(t.active, t.latched, Remaining(t));
 }
 
-// `hook` is the kill hook's state as ModuleMain reads it: "ok" (both routes),
+// `hook` is the kill hook's state as ModuleMain records it: "ok" (both routes),
 // "table-only" (compiled GML's direct calls bypass it), "failed" (not
-// installed) or "none" (never asked for).
+// installed) or "none" (never asked for). `latched` is the decision;
+// `unlocked` is the unlock action's write, which is what changes the chest.
 inline std::string StatusLine(const State& s, const char* hook)
 {
     const Tally& t = s.tally;
@@ -327,19 +345,25 @@ inline std::string StatusLine(const State& s, const char* hook)
         + " alive=" + std::to_string(t.alive)
         + " threshold=" + std::to_string(t.threshold)
         + " remaining=" + std::to_string(Remaining(t))
-        + " unlocked=" + (t.latched ? "1" : "0")
+        + " latched=" + (t.latched ? "1" : "0")
+        + " unlocked=" + (t.unlocked ? "1" : "0")
+        + " unlockRoute=" + (UnlockAvailable(s) ? "ok" : "unavailable")
         + " countdown=" + FormName(CurrentForm(s))
         + " chat=" + (ChatAvailable(s) ? "ok" : "unavailable")
         + " chatLines=" + std::to_string(s.counters.chatLines.load())
         + " hook=" + (hook ? hook : "?");
 }
 
-// The line the adapter prints on the evaluation that latched.
+// The line the adapter prints on the evaluation that latched: the write made,
+// or the write that failed and left the chest to the game's own rule.
 inline std::string UnlockedLine(const State& s)
 {
     const Tally& t = s.tally;
-    return "dungeonchest: unlocked early at " + std::to_string(t.kills) + "/" + std::to_string(t.threshold)
+    const std::string at = std::to_string(t.kills) + "/" + std::to_string(t.threshold)
         + " alive=" + std::to_string(t.alive);
+    return t.unlocked ? "dungeonchest: unlocked early at " + at
+                      : "dungeonchest: threshold reached at " + at
+                            + " but the unlock action failed: the chest is left to the game's own rule";
 }
 
 } // namespace ForgePact::DungeonChest
