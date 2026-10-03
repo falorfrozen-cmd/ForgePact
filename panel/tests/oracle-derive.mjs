@@ -57,6 +57,18 @@
 // show key's select, so no earlier step's index moves, and both the range and its switch are in
 // `controls`, since no recording lists the range either.
 //
+// PANEL_BOOLEANS and PANEL_BUTTONS are panel controls no recorded page ever
+// had that send the plugin nothing (the Setup tab's Incident reports card,
+// issue #76). The card has one, Open reports folder; PANEL_BOOLEANS is empty
+// since its FPS-drop switch went (an FPS drop is recorded without a notice,
+// the owner, 2026-10-02) and stays as a working list for the next panel
+// switch: a switch is clicked off then on again from its default (on),
+// each click posting its key with the new value and sending no command, and a
+// button is clicked once, posting an empty body to its own route and sending
+// no command. Neither is a mod, so neither has a Turn off button. They come
+// after the native sliders, so no earlier step's index moves, and each is in
+// `controls`.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -126,6 +138,13 @@ export const NATIVE_SLIDERS = [
     atMin: 'statadd allskills 0', atMax: 'statadd allskills 100' },
   { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', min: 1, max: 10,
     atMin: 'miningrolls 1', atMax: 'miningrolls 10' },
+];
+// Panel settings and actions no recorded page ever had, which send the plugin
+// nothing (issue #76's Incident reports card on Setup): a switch's key, tab
+// and default (none now), and a button's id, tab and route. Appended last.
+export const PANEL_BOOLEANS = [];
+export const PANEL_BUTTONS = [
+  { id: 'openreports', tab: 'tab:setup', url: '/api/openreports' },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
@@ -286,6 +305,22 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
       expect: { posts: { is: setPost({ section: 'switches', key: switchId, value: true }) }, cmds: { same: on } },
     });
     push(selector, 'min', { expect: { posts: { same: atMinStep }, cmds: { same: atMinStep } } });
+  }
+  // The panel's own switches and buttons: a switch away from its default and
+  // back, a button once, each posting its own literal and sending no command.
+  for (const { key, tab, initial } of PANEL_BOOLEANS) {
+    const selector = '#' + key;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    for (const value of [!initial, initial]) {
+      push(selector, 'click', { expect: { posts: { is: setPost({ key, value }) }, cmds: { is: [] } } });
+    }
+  }
+  for (const { id, tab, url } of PANEL_BUTTONS) {
+    const selector = '#' + id;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    push(selector, 'click', { expect: { posts: { is: [{ url, body: {} }] }, cmds: { is: [] } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

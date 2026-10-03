@@ -150,7 +150,7 @@ async function pickerAria({ page }) {
     `options: ${JSON.stringify(closed.options)}`);
   assert(closed.options.filter((o) => o[1] === 'true').map((o) => o[0]).join() === 'Ledger', `aria-selected: ${JSON.stringify(closed.options)}`);
   // The oracle's coverage walk counts button[id]: the picker adds none.
-  assert(JSON.stringify(closed.buttonIds.sort()) === JSON.stringify(['exebrowse', 'exesave', 'installmod', 'launchgame', 'removeplugin']), `Setup's button ids: ${closed.buttonIds.join(',')}`);
+  assert(JSON.stringify(closed.buttonIds.sort()) === JSON.stringify(['exebrowse', 'exesave', 'installmod', 'launchgame', 'openreports', 'removeplugin']), `Setup's button ids: ${closed.buttonIds.join(',')}`);
   await page.click(trigger);
   await wait(300);
   const open = await $(page, ([t, l]) => ({ expanded: document.querySelector(t).getAttribute('aria-expanded'), active: document.querySelector(l).getAttribute('aria-activedescendant'),
@@ -322,7 +322,8 @@ async function nativeHidden({ page }) {
   assert(got.ariaHidden === 'true' && got.tab === -1, `the select is reachable: ${JSON.stringify(got)}`);
   assert(got.borders.every((b) => b === '0px'), `the select carries a border: ${got.borders.join(' ')}`);
   assert(JSON.stringify(got.options) === JSON.stringify(THEMES.map((t) => t.value)), `options: ${got.options.join(',')}`);
-  const snap = await page.locator('.tab-card[data-tab="setup"]:not(#setupCard)').ariaSnapshot();
+  // The Appearance card by what it holds: Setup has a third card since issue #76 (Incident reports).
+  const snap = await page.locator('.tab-card[data-tab="setup"]:has(#theme)').ariaSnapshot();
   assert(!/combobox/.test(snap) && /button "Theme Ledger"/.test(snap), `the Appearance card's tree: ${snap}`);
   // Tab from the trigger never lands on the select.
   await $(page, () => document.querySelector('.theme-picker-trigger').focus());
