@@ -176,9 +176,13 @@ experience.
   at your old jump distance. Some jumps the game itself refuses to start,
   such as one aimed to land inside a carriage, stay refused: the mod cannot
   change those. Only your universal jump is affected, not leap, dash or
-  charge skills, and in co-op only your own character. How the jump is
-  blocked was measured in a live game on 2026-10-03; the switch itself has
-  been tested outside the game.
+  charge skills, and in co-op only your own character. Checked in play on
+  2026-10-03: with the switch off a jump at a prop in the Town of Inoya did
+  not move the character, and with it on the same jump carried them over
+  it, never leaving them inside scenery. The checks on the landing spot and
+  on the edge of the area were not reached in that test (a jump aimed into a
+  carriage did not move the character at all, and no edge of the area could
+  be reached), so they have been tested outside the game only.
 
 ## Changed
 

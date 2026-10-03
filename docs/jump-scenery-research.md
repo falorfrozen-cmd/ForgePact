@@ -825,12 +825,93 @@ has a `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
   `tests/test_jump_scenery_mod_contract.py` pins the adapter's wiring;
   `tests/test_jump_scenery_panel_contract.py` pins the panel's half.
 - **Live**: Live 1 (phase 1) is the inspected evidence the mod is built on.
-  The mod itself has not been run in a live game yet; this workorder's live
-  session (slot 14 "Sorak", representative cases, a positive control and a
-  room-edge case) is pending, and its result is added here.
-- **Not established**: whether the take-off walk runs inside `skillsLeap`'s
-  first call (`walk-before-open=` with `walk-in-window=`); which of the five builtins decides the
-  crossing; what refuses J4 and J5 (the mod cannot override it); whether the
-  game ejects a landing inside a prop; what happens at a room edge; whether a
-  Leap skill also runs `skillsLeap` (**not observed**: Sorak has none);
-  co-op.
+  The mod itself was run in a live game on 2026-10-03 (§ Mod live 1 results):
+  **verified** for the crossing, the off state and the learned reach; the
+  landing guard and the room guard were **not observed** live and stay
+  harness-verified only.
+- **Not established**: which of the five builtins decides the crossing; what
+  refuses J4 and J5 (the mod cannot override it); whether the game ejects a
+  landing inside a prop; what happens at a room edge; why a crossing jump
+  ends shorter than the learned reach; whether a Leap skill also runs
+  `skillsLeap` (**not observed**: Sorak has none); co-op.
+
+### Mod live 1 results
+
+Run on 2026-10-03 (21:59-22:07 UTC) by the workorder's live operator, on the
+player build `BloodPactPlugin_ship.dll` from `build.bat release` at ForgePact
+`b273907` (SHA-256
+`19c0ea7591cf1a173ed78ecfab472e292239c6b3b1732ee4455965b85d4f168f`). The
+capture is the toolkit workorder's `forgepact-16-jump-scenery-mod-live-1.md`,
+a local working note; what it measured is restated here. Character: save
+slot 14, "Sorak", in `Town_01_rm`, as in Live 1. The owner placed the mouse
+cursor (the jump goes towards it) and the operator pressed Space. Positions
+are `menulayout Player_obj`'s `gui=` reads; the counters are `jumpscenery
+stat`'s, cumulative over the session.
+
+| Check | Observed | Verdict |
+| --- | --- | --- |
+| `dll-hash` | the installed DLL's SHA-256 equals the recorded build | pass |
+| `marker` | first line `jumpscenery: off reach=none jumps=0 granted=0 ...` | pass |
+| `control` | `pong (YYTK 4.0.1)` | pass |
+| `calibrate` | mod on, a jump at open ground: (912.0, 822.0) to (921.9, 996.7), a move of about 175 px; `reach=178`, `granted=0` | the learned reach matches the measured move (see below) |
+| `off-blocked` | mod off, at Live 1's prop (1074.2, 1383.7), aimed south past it: 0 px | pass |
+| `on-crosses` | mod on, same spot and aim: to (1069.1, 1508.7), 125 px south; `granted=1 answered=1145 landed-inside=0 before-open=0 walk-before-open=0 walk-in-window=2` | pass |
+| `landing-guard` | mod on, at Live 1's horse carriage (1307.3, 1482.9), aimed so a full jump would end inside it: 0 px; `granted` 1 to 2, `answered` 1145 to 2297, `refused-landing=0`, `landed-inside=0` | not-observed |
+| `edge-guard` | no standable point within 100 px of a room edge was found (below); steps 6-7 not run, `refused-room=0` | not-observed |
+| `off-again` | mod off, step 3 repeated: 0 px | pass |
+| `never-stuck` | `landed-inside=0` at the end; step 4 ended in the open, step 5 did not move; step 7 not run | pass (steps 4 and 5 only) |
+
+**Calibrate.** The procedure's written range for `reach=` (80..160 px) was a
+planner's estimate, and the check line records `fail` against it. The reach
+is learned from the player's own jump and is meant to match it: here the
+learned `reach=178` against a measured move of about 175 px. The owner,
+2026-10-04: the jump's length varies, so it is derived, never a fixed range;
+`calibrate` is judged by that match and is not required to pass. No reach
+range is written into the mod, its tests or these docs.
+
+**The airborne window covers the take-off walk.** **Measured**:
+`walk-in-window=` (jumps whose take-off frame gave at least two family
+circle centres inside the window) rose by one on each of the three jumps made
+with the mod on (1, 2, 3), and `walk-before-open=` stayed 0 throughout. With
+Live 1's ordering (the walk's builtin rows logged before that frame's
+`skillsLeap` line, which is logged on return), the take-off walk runs inside
+`skillsLeap`'s first call, after its entry. That settles § The take-off
+check's open question and § If the take-off check runs before `skillsLeap`
+does not apply: the window opened at `skillsLeap` entry is the right opener.
+`before-open=` stayed 0 too.
+
+**The crossing.** **Measured**: with the mod off, the jump at Live 1's prop
+did not move the player, before and after the mod was used (`off-blocked`,
+`off-again`), as in Live 1's J1/J4. With it on, the same jump crossed: 125 px
+south, the mod answering 1145 player-self queries in that jump's window, and
+the player did not end inside a prop. The crossing jump ended 50 px shorter
+than the open-ground jump (125 against about 175 px); why is **not
+established**.
+
+**The carriage.** **Measured**: aimed so that a full jump would end inside
+the horse carriage, the mod granted the jump (`granted=` +1) and answered
+1152 queries, and the player did not move at all: neither `refused-landing=`
+nor `landed-inside=` rose. This repeats Live 1's J7, now through the mod: the
+game refuses that jump by a route the five builtins do not cover. The
+owner's reading (2026-10-04) is that the game validates the landing zone
+itself; that is the owner's reading of the result, not a measured mechanism.
+The mod's landing guard was not reached, so it is **not observed** live and
+stays as written (harness-verified).
+
+**The room edge.** **Measured**: `jumpscenery stat` read `room=2800x2400` for
+`Town_01_rm`. `playerwarp` placed the player at (50, 1200), (95, 1200),
+(2705, 1200), (1400, 2350) and (1400, 50), and each position held on a
+separate re-read (no snap back). The owner reported the player out of bounds
+at (50, 1200) and at (2705, 1200), and (95, 1200) put the player in the dark
+margin at the west of the view, not judged standable. So the room rectangle
+is larger than the walkable map, and no
+standable point within 100 px of a room edge was found; (1400, 2350) and
+(1400, 50) were not judged. A jump aimed west from (50, 1200) with the mod
+off did not move the player, but that start was out of bounds, so it is not a
+vanilla edge baseline. The game's behaviour at a room edge and the mod's
+room guard are **not observed**; the guard stays as written
+(harness-verified).
+
+**Teardown.** `jumpscenery 0`, the game closed gracefully, and the session's
+save backup was restored (104 files; inspect after: nothing changed, added or
+missing).

@@ -1328,6 +1328,14 @@ jump behaves as without the mod.
 - **Cost.** Five collision builtins and the jump script are hooked on the first
   `jumpscenery 1`, by name; while the mod is off each hook returns the game's
   own answer at once.
+- **Checked in play** on 2026-10-03 (slot 14, Town of Inoya): with the mod
+  off, a jump at a prop did not move the player; with it on, the same jump
+  crossed the prop (125 px) and the player never ended inside scenery. The
+  learned reach (178 px) matched an open-ground jump of about 175 px. A jump
+  aimed to land inside a horse carriage did not move the player even with the
+  mod on, and no room edge could be reached, so neither the landing check nor
+  the room check has been seen working in play; both are tested outside the
+  game only.
 
 `jumpscenery stat` prints the reach and the counters: jumps, `granted=`,
 `answered=`, the refusals by reason, `landed-inside=`, `excluded=` and the room
