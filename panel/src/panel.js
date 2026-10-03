@@ -474,6 +474,7 @@ async function boot(){
       document.getElementById(val).className='val '+(on?'':'off');
     }
     document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
+    document.getElementById('boss_rarity').value=c.boss_rarity||'off';
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -865,6 +866,10 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_skill_timer_style',value:e.target.value})});
         toast('Timed skill countdown: '+e.target.value+' - '+(res.ok||res.err));
     };
+    document.getElementById('boss_rarity').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'boss_rarity',value:e.target.value})});
+        toast('Bosses: '+e.target.value+' - '+(res.ok||res.err));
+    };
   { const el=document.getElementById('angelic_items');
     el.oninput=angelicPaint;
     el.onchange=async()=>{ const v=sliderVal(el); const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'angelic_items',value:v})}); angelicPaint(); toast('angelic drops '+(v>1?'x'+v:'off')+' - '+(res.ok||res.err)); };
@@ -996,7 +1001,7 @@ function preparePanelUI(){
     card.append(details);
   }
   for(const id of ['spawners','dropSettings'])document.getElementById(id).classList.add('settings-grid');
-  for(const id of ['qolCard','itemsCard']){
+  for(const id of ['qolCard','itemsCard','gameplayCard']){
     const card=document.getElementById(id);
     if(card.querySelector('.mods-grid'))continue;
     const grid=document.createElement('div');grid.className='mods-grid';
@@ -1108,6 +1113,7 @@ export function refreshSavedControls(){
   const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
+  document.getElementById('boss_rarity').value=c.boss_rarity||'off';
   for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mprpval:'mod_pet_relic_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }

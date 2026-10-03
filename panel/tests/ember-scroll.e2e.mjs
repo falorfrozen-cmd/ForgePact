@@ -92,9 +92,11 @@ try {
         await openTab(page, 'mods');
         await page.click('#subtab-items');
         await reachBottom(`${width}x${height} item mods`);
+        await page.click('#subtab-gameplay');
+        await reachBottom(`${width}x${height} gameplay mods`);
       }
     }
-    checks.push(`All seven pages and both Mods sections: wheel reaches the end at ${width}x${height}, footer stays separate`);
+    checks.push(`All seven pages and all three Mods sections: wheel reaches the end at ${width}x${height}, footer stays separate`);
   }
 
   await page.setViewportSize({ width: 1366, height: 768 });

@@ -54,6 +54,7 @@ none of these diagnostic hooks or the recorder. See
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
+| **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 | **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
@@ -165,6 +166,9 @@ taken from the test sandbox, which reports the game open without the mod plugin
 ![The Mods tab, Items](assets/panel/mods-items-1280.png)
 **Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
+![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
+**Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made.
+
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
 Saved decimal values are retained after reopening the panel. Disabled Monster
@@ -181,12 +185,13 @@ embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
 main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
-has two sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
+has three sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
-toggle marker/guard and the timed skill countdown), and **Items**, the custom
+toggle marker/guard and the timed skill countdown), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
+Crown, Beacon), and **Gameplay**, which holds the Bosses setting. Quality of
+Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
 Reveal full map; its switch is unavailable while the parent is off. All
@@ -251,6 +256,46 @@ apply on top, and nothing compounds. **Only inside Chaos Tower** (default on) ke
 zone vanilla; goblins and online client movement use their own movement code and are not
 touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `enemyspeed` alone
 prints the status with path-start and applied counters.
+
+### Bosses: "uber" and "uber uber" bosses
+**Mods › Gameplay → Bosses** picks how the bosses you meet are made: **Normal (the game's
+own)**, the default, which changes nothing; **Rare — "uber" boss**; or **Ancient — "uber
+uber" boss**. While it is set to Rare or Ancient, every boss that spawns comes at that
+rarity, its rarity set just before the game's own setup runs, through the same
+`EnemyRaritySettings` hook the Monster Rarity sliders and Tyrant's Crown use. A raised boss
+gets the same affix top-up the sliders give a monster they raise: up to two affixes on a
+rare, three on an ancient.
+
+- **Left alone:** a boss the game already made champion, rare or ancient keeps its own
+  rarity; the monsters, phases and clones a boss creates during its fight keep theirs;
+  ordinary monsters are never touched by this setting. The Monster Rarity sliders on the
+  World tab still leave every boss alone. The first two are how the setting is built and
+  have not come up in a live game yet: every status line captured so far read
+  `notRank1=0` and `enemyBorn=0`.
+- **With Tyrant's Crown:** the crown is not kept off bosses. With it on, a boss this setting
+  raised to Rare can also get the crown's extra affix ([Tyrant's Crown](#tyrants-crown-custom-forge-mechanic)).
+- **Measured in a live game (2026-10-02, research build):** a Karp King set to Rare and to
+  Ancient, and Damien, Uber Damien and Uber Anubis set to Ancient, each came out at that
+  rarity with its extra affixes. On an Ancient Karp King, spawned from the research
+  console, the game built a stronger boss from the rarity and the affixes the mod added:
+  about 4.7 times its rank-1 health in one session and 5.7 times in another, about 2.1
+  times its damage, exactly 6.25 times its experience, and its death handed the drop roll
+  rank 4 instead of 1. Those numbers come from that one boss.
+- **Not observed:** an ancient look (its name bar and body looked the same), more or better
+  loot (one kill at each rank, 10 against 12 items, too few to tell), extra boss gems, runes
+  or parts, and what Rare changes on a boss beyond its rarity. Not observed is not "does not
+  happen" ([research and test scope](docs/boss-rarity-research.md)).
+- **The shipped plugin (2026-10-02, release build `b235c9fd…5c81`):** the panel turned
+  the setting to Ancient and back off in a running game, `bossrarity status` followed it
+  (`hook=ok`) and the hook installed on both routes. No boss was fought on that build, so
+  the raise itself was measured on the research build.
+- **Commands:** the panel sends `bossrarity rare`, `bossrarity ancient` or
+  `bossrarity off`. `bossrarity status` (or `bossrarity` alone) prints the mode, how many
+  bosses were raised and seen, how many were left alone and why, and whether the hook is
+  in (`hook=ok`). `hook=table-only` means bosses the game creates through its compiled
+  code's direct calls are not raised. If the hook could not be installed at all, choosing
+  Rare or Ancient is refused: the plugin answers `bossrarity: refused <mode> hook=failed`
+  and the setting stays as it was.
 
 ### Signature drops
 Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game's own
@@ -356,7 +401,9 @@ roll drop one. A forged Headhunter turns the buff mechanic on but not the drop (
 Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **Mods →
 Items → Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
 **rare** with a 30 % chance (they get two affixes), and every rare or champion carries **one more
-affix**. Ancients and bosses are never touched.
+affix**. Ancients are never touched. Bosses are not excluded: by a reading of our own code
+(not observed live), the crown can raise a rank-1 boss to rare and give a rare or champion
+boss its extra affix, including a boss the **Bosses** setting raised to Rare.
 
 How: `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj` Alarm 4 with the monster as
 self, after the spawner decided `enemyRarity` and filled `enemyAffix` / `affixList`, but before
