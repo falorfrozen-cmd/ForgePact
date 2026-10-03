@@ -44250,6 +44250,874 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
 }
 
 #ifndef FORGEPACT_RELEASE
+// ---- jumpprobe: the jump-through-scenery phase 1 instrument (ForgePact #16) ----
+// docs/jump-scenery-research.md holds the static search, the readings, the
+// live procedure and the decision this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleJumpProbeCommand;
+// this comment sits inside the guard so the verb's name vanishes from a
+// player build.
+//
+// How the game decides that the universal jump is blocked by scenery is
+// unmeasured. Every candidate the static search found is a row: the jump's
+// scripts (CA_playerJump, PlayerForceJump, playerJumpGravity, StatJumpPower),
+// the movement relays beside them, the leap/blink/charge skills, the named
+// collision scripts, the enemies' jump as the negative control and
+// CheckTalentUse (once per frame) as the own-detour control. Each script row
+// is native-detoured by one `hook` the way skillprobe attaches: MmCreateHook
+// at the function's own address, only once AddrIsExecutableInModule has said
+// the address is game code, because a table-only hook is blind to this
+// build's direct `call rel32` sites. A function another install already
+// detours is reported `held` and never detoured a second time.
+//
+// Object events do not resolve by name on this build, so the player's own
+// Step collision is reached through the builtins it calls: one HookBuiltin
+// per collision builtin, position_meeting being the builtin control. A
+// builtin detours once, so `hook` refuses while citrace's spatial builtin
+// hooks are in place, naming them.
+//
+// `pass` is the one research lever (plugin/include/ForgePact/
+// JumpSceneryProbe.hpp holds its decision, which tests/
+// jump_scenery_harness.cpp compiles whole): while it is on, the local
+// player's own CA_playerJump / PlayerForceJump entry opens a window of
+// `frames` frames, and inside it a hooked builtin called by the local player
+// against Collision_Prop_obj (or, with `all`, Collision_Parent_obj) - decided
+// through object_is_ancestor by name - is answered "no collision" without
+// running the game's function. Everything else runs the original. The one
+// per-frame piece, JpFrameTick, returns at once while nothing is armed,
+// traced or on.
+#include <ForgePact/JumpSceneryProbe.hpp>
+
+namespace JpNs = ForgePact::JumpScenery;
+
+static constexpr long kJpDefaultBudget = 5;      // logged calls per row unless `arm <n>`
+static constexpr long kJpMaxBudget = 500;        // out.txt stays readable
+static constexpr size_t kJpValueMax = 120;       // one value's text in a trace or state line
+
+static JpNs::Probe g_JpCore;
+static CInstance* g_JpPlayer = nullptr;   // the local player, refreshed each frame while the probe is active
+static long g_JpBudget = 0;               // calls per row `arm` asked to log; 0 = not armed
+static bool g_JpBusy = false;             // game thread only: the probe's own reads inside a detour
+static bool g_JpFamiliesResolved = false;
+
+// The row roles: a plain row only counts and logs; a window row's entry
+// opens the lever's window; a lever row is one of the `scripts` flag's three.
+static constexpr int kJpRolePlain = -2;
+static constexpr int kJpRoleOpensWindow = -1;
+static constexpr int kJpRoleCanMove = (int)JpNs::ScriptLever::CanMove;
+static constexpr int kJpRoleInstancePlaceTallest = (int)JpNs::ScriptLever::InstancePlaceTallest;
+static constexpr int kJpRoleTilePlaceMeeting = (int)JpNs::ScriptLever::TilePlaceMeeting;
+
+// One row per script in docs/jump-scenery-research.md § Static search. SAFE,
+// label, SDK constant, role. The runtime name is always the hs-game-sdk
+// constant's own value - never retyped here. Three are spelled without the
+// gml_Script_ prefix in the SDK; `hook` resolves each by that name and then
+// with the prefix, and a row neither finds is reported `not found`.
+#define JUMPPROBE_TARGETS(X) \
+    /* the universal jump: the first two open the lever's window */ \
+    X(CAPlayerJump, "CA_playerJump", gml_Script_CA_playerJump, kJpRoleOpensWindow) \
+    X(PlayerForceJump, "PlayerForceJump", gml_Script_PlayerForceJump, kJpRoleOpensWindow) \
+    X(PlayerJumpGravity, "playerJumpGravity", gml_Script_playerJumpGravity, kJpRolePlain) \
+    X(StatJumpPower, "StatJumpPower", gml_Script_StatJumpPower, kJpRolePlain) \
+    /* the movement relays beside the jump's */ \
+    X(CAPlayerMove, "CA_playerMove", gml_Script_CA_playerMove, kJpRolePlain) \
+    X(CAPlayerSetMoveDirection, "CA_playerSetMoveDirection", gml_Script_CA_playerSetMoveDirection, kJpRolePlain) \
+    /* skill-shaped movement */ \
+    X(SkillsLeap, "skillsLeap", gml_Script_skillsLeap, kJpRolePlain) \
+    X(SkillsBlink, "skillsBlink", gml_Script_skillsBlink, kJpRolePlain) \
+    X(SkillsCharge, "skillsCharge", gml_Script_skillsCharge, kJpRolePlain) \
+    /* the named collision scripts; the first three are the `scripts` flag's rows */ \
+    X(CanMove, "CanMove", gml_Script_CanMove, kJpRoleCanMove) \
+    X(InstancePlaceTallest, "InstancePlaceTallest", gml_Script_InstancePlaceTallest, kJpRoleInstancePlaceTallest) \
+    X(TilePlaceMeeting, "TilePlaceMeeting", gml_Script_TilePlaceMeeting, kJpRoleTilePlaceMeeting) \
+    X(CanMoveFuncs, "CanMoveFuncs", CanMoveFuncs, kJpRolePlain) \
+    X(CheckCollisionLine, "CheckCollisionLine", gml_Script_CheckCollisionLine, kJpRolePlain) \
+    X(CheckPath, "CheckPath", gml_Script_CheckPath, kJpRolePlain) \
+    X(GetClosestCollisionDir, "getClosestCollisionDir", getClosestCollisionDir, kJpRolePlain) \
+    X(CollisionsFunc, "CollisionsFunc", CollisionsFunc, kJpRolePlain) \
+    X(CollisionNormal, "collision_normal", gml_Script_collision_normal, kJpRolePlain) \
+    /* negative control: the enemies' jump, never passed through anything */ \
+    X(CAEnemyJump, "CA_enemyJump", gml_Script_CA_enemyJump, kJpRolePlain) \
+    /* own-detour control: runs once per frame */ \
+    X(CheckTalentUse, "CheckTalentUse", gml_Script_CheckTalentUse, kJpRolePlain)
+
+#define JP_ROW_INDEX(SAFE, LABEL, CONSTANT, ROLE) kJpRow_##SAFE,
+enum JpRowIndex : int { JUMPPROBE_TARGETS(JP_ROW_INDEX) kJpRowCount };
+#undef JP_ROW_INDEX
+
+static RValue& JpOnScript(int row, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+
+#define JP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT, ROLE) \
+    static RValue& JpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        return JpOnScript(kJpRow_##SAFE, S, O, R, argc, A); \
+    }
+JUMPPROBE_TARGETS(JP_DEFINE_DETOUR)
+#undef JP_DEFINE_DETOUR
+
+struct JpRow {
+    const char*        label;
+    const char*        safe;          // the row's identifier, for its hook id
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    int                role;
+    PFUNC_YYGMLScript  orig = nullptr;
+    volatile long      calls = 0;
+    volatile long      logged = 0;
+    volatile long      otherSelf = 0;   // calls, while the probe is active, whose self is not the local player
+    long               lastShown = 0;
+    bool               installed = false;
+    std::string        resolvedName;
+    std::string        heldBy;          // who detours the function instead, when `hook` found it held
+    volatile long*     heldCalls = nullptr;
+    std::string        status;          // the last `hook`'s answer for this row
+};
+
+#define JP_ENTRY(SAFE, LABEL, CONSTANT, ROLE) \
+    { LABEL, #SAFE, HeroSiege::Scripts::CONSTANT.data(), "fp_jp_" #SAFE, (PVOID)JpDetour_##SAFE, ROLE },
+static JpRow g_JpRows[] = {
+    JUMPPROBE_TARGETS(JP_ENTRY)
+};
+#undef JP_ENTRY
+#undef JUMPPROBE_TARGETS
+static_assert(sizeof(g_JpRows) / sizeof(g_JpRows[0]) == (size_t)kJpRowCount, "one jumpprobe row per target");
+
+// The builtin rows, in JumpSceneryProbe.hpp's kBuiltins order.
+struct JpBuiltinRow {
+    TRoutine      orig = nullptr;
+    volatile long calls = 0;
+    volatile long logged = 0;
+    volatile long otherSelf = 0;
+    long          lastShown = 0;
+    bool          installed = false;
+    std::string   status;
+};
+static JpBuiltinRow g_JpBuiltinRows[JpNs::kBuiltinCount];
+static const char* const kJpBuiltinHookIds[JpNs::kBuiltinCount] = {
+    "fp_jp_b_pmt", "fp_jp_b_plm", "fp_jp_b_plf", "fp_jp_b_ipl", "fp_jp_b_ipo",
+    "fp_jp_b_cpt", "fp_jp_b_cln", "fp_jp_b_crc", "fp_jp_b_ccr", "fp_jp_b_tgp",
+};
+
+static void JpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+#define JP_BUILTIN_DETOUR(I) \
+    static void JpBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
+        JpOnBuiltin(I, Result, S, O, argc, Args); \
+    }
+JP_BUILTIN_DETOUR(0) JP_BUILTIN_DETOUR(1) JP_BUILTIN_DETOUR(2) JP_BUILTIN_DETOUR(3) JP_BUILTIN_DETOUR(4)
+JP_BUILTIN_DETOUR(5) JP_BUILTIN_DETOUR(6) JP_BUILTIN_DETOUR(7) JP_BUILTIN_DETOUR(8) JP_BUILTIN_DETOUR(9)
+#undef JP_BUILTIN_DETOUR
+static const PVOID kJpBuiltinDetours[JpNs::kBuiltinCount] = {
+    (PVOID)JpBuiltin_0, (PVOID)JpBuiltin_1, (PVOID)JpBuiltin_2, (PVOID)JpBuiltin_3, (PVOID)JpBuiltin_4,
+    (PVOID)JpBuiltin_5, (PVOID)JpBuiltin_6, (PVOID)JpBuiltin_7, (PVOID)JpBuiltin_8, (PVOID)JpBuiltin_9,
+};
+static_assert(JpNs::kBuiltinCount == 10, "one detour per builtin row");
+
+static bool JpIsOwnControl(const JpRow& t)
+{
+    return std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CheckTalentUse;
+}
+static constexpr int kJpBuiltinControl = (int)JpNs::Builtin::PositionMeeting;
+
+static std::string JpBuiltinName(int i) { return std::string(JpNs::kBuiltins[i].name); }
+
+// The value a lever answer writes in place of the game's own result.
+static RValue JpAnswerValue(JpNs::Answer a)
+{
+    switch (a) {
+    case JpNs::Answer::Noone: return RValue(JpNs::kNoone);
+    case JpNs::Answer::False: return RValue(false);
+    case JpNs::Answer::Zero:  return RValue(0.0);
+    case JpNs::Answer::True:  return RValue(true);
+    default:                  return RValue();
+    }
+}
+
+// The object index a builtin's object argument names: an object index as it
+// is, an instance (id or reference) by its own object_index; -1 for `all`,
+// `noone` or anything else - the lever then runs the original.
+static int JpObjectIndexOf(const RValue& v)
+{
+    try {
+        int n = -1;
+        if (!N1ObjectIndex(v, n)) return -1;
+        if (g_Yytk->CallBuiltin("object_exists", { RValue((double)n) }).ToBoolean()) return n;
+        if (!g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()) return -1;
+        int obj = -1;
+        if (N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), obj)) return obj;
+    } catch (...) {}
+    return -1;
+}
+
+static std::string JpObjectName(int obj)
+{
+    if (obj < 0) return "-";
+    try { return g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) }).ToString(); }
+    catch (...) { return "#" + std::to_string(obj); }
+}
+
+// The local player's position for an armed line, read from the call's self.
+static std::string JpSelfXY(CInstance* S)
+{
+    std::string xy;
+    for (const char* v : { "x", "y" }) {
+        std::string text = "unreadable";
+        try { text = MenuLayoutValueText(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue(v) })); } catch (...) {}
+        xy += std::string(" ") + v + "=" + text;
+    }
+    return xy;
+}
+
+static std::string JpBuiltinArgs(int argc, RValue* Args)
+{
+    std::string a;
+    for (int i = 0; Args && i < argc && i < 8; ++i) {
+        std::string d = Describe(Args[i]);
+        if (d.size() > 200) d = d.substr(0, 200) + "...";
+        a += " a" + std::to_string(i) + "=" + d;
+    }
+    return a;
+}
+
+// One budgeted line per call of a row whose self is the local player, after
+// the call, so it carries the return: the armed-line shape of skillprobe
+// (PpDescribeSelf, AggroArgs, PpRetText) plus the position and the frame.
+static bool JpTakeLogSlot(volatile long* logged)
+{
+    const long limit = g_JpBudget;
+    if (!g_JpCore.Armed() || limit <= 0 || *logged >= limit) return false;
+    return InterlockedIncrement(logged) <= limit;
+}
+
+static RValue& JpOnScript(int row, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    JpRow& t = g_JpRows[row];
+    const long n = InterlockedIncrement(&t.calls);
+    if (g_JpBusy || !g_JpCore.Active()) return t.orig ? t.orig(S, O, R, argc, A) : R;
+    const bool player = S && S == g_JpPlayer;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    if (!player) InterlockedIncrement(&t.otherSelf);
+    if (t.role == kJpRoleOpensWindow && g_JpCore.OnJumpEntry(frame, player)) {
+        Out(std::string("jumpprobe pass: window opened at frame ") + std::to_string(frame) + " by " + t.label
+            + " for " + std::to_string(g_JpCore.Frames()) + " frames");
+    }
+    JpNs::Answer answer = JpNs::Answer::RunOriginal;
+    if (t.role >= 0) answer = g_JpCore.DecideScript(static_cast<JpNs::ScriptLever>(t.role), frame, player);
+    if (answer != JpNs::Answer::RunOriginal) {
+        R = JpAnswerValue(answer);
+        if (player && JpTakeLogSlot(&t.logged)) {
+            g_JpBusy = true;
+            try {
+                Out(std::string("jumpprobe ") + t.label + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                    + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + " ret=" + PpRetText(R) + " answered="
+                    + std::string(JpNs::AnswerName(answer)) + JpSelfXY(S) + " frame=" + std::to_string(frame));
+            } catch (...) {}
+            g_JpBusy = false;
+        }
+        return R;
+    }
+    RValue& r = t.orig ? t.orig(S, O, R, argc, A) : R;
+    if (player && JpTakeLogSlot(&t.logged)) {
+        g_JpBusy = true;
+        try {
+            Out(std::string("jumpprobe ") + t.label + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + " ret=" + PpRetText(r) + JpSelfXY(S)
+                + " frame=" + std::to_string(frame));
+        } catch (...) {}
+        g_JpBusy = false;
+    }
+    return r;
+}
+
+static void JpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    JpBuiltinRow& t = g_JpBuiltinRows[row];
+    const long n = InterlockedIncrement(&t.calls);
+    if (g_JpBusy || !g_JpCore.Active()) { if (t.orig) t.orig(Result, S, O, argc, Args); return; }
+    const bool player = S && S == g_JpPlayer;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    if (!player) InterlockedIncrement(&t.otherSelf);
+    const int objArg = JpNs::kBuiltins[row].objectArg;
+    int object = -1;
+    bool objectRead = false;
+    JpNs::Answer answer = JpNs::Answer::RunOriginal;
+    g_JpBusy = true;
+    try {
+        answer = g_JpCore.DecideBuiltin(static_cast<JpNs::Builtin>(row), frame, player, [&]() {
+            objectRead = true;
+            object = (objArg >= 0 && objArg < argc && Args) ? JpObjectIndexOf(Args[objArg]) : -1;
+            return object;
+        });
+    } catch (...) { answer = JpNs::Answer::RunOriginal; }
+    g_JpBusy = false;
+    if (answer != JpNs::Answer::RunOriginal) {
+        Result = JpAnswerValue(answer);
+        if (player && JpTakeLogSlot(&t.logged)) {
+            g_JpBusy = true;
+            try {
+                Out(std::string("jumpprobe ") + JpBuiltinName(row) + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                    + " argc=" + std::to_string(argc) + JpBuiltinArgs(argc, Args) + " object=" + JpObjectName(object)
+                    + " ret=" + PpRetText(Result) + " answered=" + std::string(JpNs::AnswerName(answer)) + JpSelfXY(S)
+                    + " frame=" + std::to_string(frame));
+            } catch (...) {}
+            g_JpBusy = false;
+        }
+        return;
+    }
+    if (t.orig) t.orig(Result, S, O, argc, Args);
+    if (player && JpTakeLogSlot(&t.logged)) {
+        g_JpBusy = true;
+        try {
+            if (!objectRead && objArg >= 0 && objArg < argc && Args) object = JpObjectIndexOf(Args[objArg]);
+            Out(std::string("jumpprobe ") + JpBuiltinName(row) + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                + " argc=" + std::to_string(argc) + JpBuiltinArgs(argc, Args) + " object=" + JpObjectName(object)
+                + " ret=" + PpRetText(Result) + JpSelfXY(S) + " frame=" + std::to_string(frame));
+        } catch (...) {}
+        g_JpBusy = false;
+    }
+}
+
+// ---- the local player, the families -----------------------------------------
+
+static void JpRefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    g_JpBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    g_JpBusy = false;
+    g_JpPlayer = inst;
+}
+
+static std::string JpPlayerText()
+{
+    if (!g_JpPlayer) return "none (no local player resolved)";
+    g_JpBusy = true;
+    std::string d;
+    try { d = PpDescribeSelf(g_JpPlayer); } catch (...) { d = "(unresolved)"; }
+    g_JpBusy = false;
+    return d;
+}
+
+// Collision_Prop_obj and Collision_Parent_obj by name, through the SDK's own
+// names; the family rule then asks object_is_ancestor, by name, per object.
+static void JpResolveFamilies()
+{
+    if (g_JpFamiliesResolved) return;
+    int prop = -1, parent = -1;
+    try {
+        prop = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Collision_Prop_obj))) }).ToDouble();
+        parent = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Collision_Parent_obj))) }).ToDouble();
+    } catch (...) {}
+    g_JpCore.SetFamilies(prop, parent);
+    g_JpCore.SetIsAncestor([](int object, int ancestor) {
+        return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+    });
+    g_JpFamiliesResolved = prop >= 0 && parent >= 0;
+}
+
+// ---- hook ----------------------------------------------------------------------
+
+// By name only: the SDK value, then - for a constant the SDK spells without
+// it - the same name with gml_Script_ in front.
+static bool JpResolveName(const JpRow& t, std::string& name, PVOID& p, AurieStatus& st)
+{
+    name = t.runtimeName;
+    p = nullptr;
+    st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    if ((!AurieSuccess(st) || !p) && name.rfind("gml_Script_", 0) != 0) {
+        name = "gml_Script_" + name;
+        p = nullptr;
+        st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    }
+    return AurieSuccess(st) && p;
+}
+
+// Which other install detours this script now: skillprobe's table, then
+// every holder skillprobe itself knows (SpHolder). "" when none does.
+static std::string JpHolder(std::string_view name, volatile long*& calls)
+{
+    calls = nullptr;
+    for (SpTarget& t : g_SpTargets)
+        if (t.installed.load() && name == t.runtimeName) { calls = t.calls; return "skillprobe hook"; }
+    return SpHolder(name, calls);
+}
+
+// citrace's spatial builtin hooks, by name, that are installed now.
+static std::string JpCitraceHolders()
+{
+    std::string held;
+    const struct { const char* name; TRoutine* orig; } kCi[] = {
+        { "instance_position", &g_OrigCi_InstancePosition }, { "instance_place", &g_OrigCi_InstancePlace },
+        { "collision_point", &g_OrigCi_CollisionPoint }, { "point_in_rectangle", &g_OrigCi_PointInRectangle },
+        { "distance_to_point", &g_OrigCi_DistanceToPoint }, { "instance_nearest", &g_OrigCi_InstanceNearest },
+        { "point_in_circle", &g_OrigCi_PointInCircle }, { "position_meeting", &g_OrigCi_PositionMeeting },
+    };
+    for (const auto& c : kCi) if (*c.orig) held += (held.empty() ? "" : ", ") + std::string(c.name);
+    return held;
+}
+
+static void JpInstall()
+{
+    const std::string citrace = JpCitraceHolders();
+    if (!citrace.empty()) {
+        Out("jumpprobe hook: refused - citrace holds " + citrace + " (a builtin detours once, and its hook would read"
+            " as this probe's zero); nothing hooked. Relaunch without `citrace` to run jumpprobe.");
+        return;
+    }
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, held = 0, builtins = 0, builtinsFailed = 0;
+    for (JpRow& t : g_JpRows) {
+        if (t.installed) { Out(std::string("jumpprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        t.heldBy.clear();
+        t.heldCalls = nullptr;
+        volatile long* holderCalls = nullptr;
+        const std::string holder = JpHolder(t.runtimeName, holderCalls);
+        if (!holder.empty()) {
+            t.heldBy = holder;
+            t.heldCalls = holderCalls;
+            t.status = "held by " + holder;
+            Out(std::string("jumpprobe hook: ") + t.label + " held by " + holder + " (its install owns this function; neither"
+                " detoured nor failed here - " + (holderCalls ? "`show` reads that probe's count" : "its own `stat` counts it") + ")");
+            ++held;
+            continue;
+        }
+        std::string name;
+        PVOID p = nullptr;
+        AurieStatus st = AURIE_SUCCESS;
+        if (!JpResolveName(t, name, p, st)) {
+            t.status = "failed (not found by name: " + std::string(t.runtimeName)
+                + (std::string_view(t.runtimeName).rfind("gml_Script_", 0) != 0 ? ", nor with gml_Script_ in front" : "")
+                + ", st=" + std::to_string((int)st) + ")";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        t.resolvedName = name;
+        CScript* sc = reinterpret_cast<CScript*>(p);
+        if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))
+            || !sc->m_Functions->m_ScriptFunction) {
+            t.status = "failed (name resolved, but not to a readable script record with a function)";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        PVOID src = (PVOID)sc->m_Functions->m_ScriptFunction;
+        if (!AddrIsExecutableInModule(mainMod, src)) {
+            // A hook of this plugin took the table entry: the function is
+            // that hook's, and the row is held, never detoured on top.
+            t.heldBy = "a ForgePact hook (the table entry is not game code)";
+            t.status = "held by " + t.heldBy;
+            Out(std::string("jumpprobe hook: ") + t.label + " held by " + t.heldBy + " - neither detoured nor failed here");
+            ++held;
+            continue;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            t.status = "failed (MmCreateHook st=" + std::to_string((int)hs) + ")";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        t.orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed = true;
+        t.status = "detoured";
+        char b[320];
+        sprintf_s(b, "jumpprobe hook: detoured %s at exe+0x%llX", t.label, (unsigned long long)((char*)src - (char*)mainMod));
+        Out(std::string(b) + (name != t.runtimeName ? " as " + name : std::string()));
+        ++ok;
+    }
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+        JpBuiltinRow& t = g_JpBuiltinRows[i];
+        const std::string name = JpBuiltinName(i);
+        if (t.installed) { Out("jumpprobe hook: builtin " + name + " already hooked"); ++builtins; continue; }
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+        if (!AurieSuccess(st) || !p) {
+            t.status = "failed (not found by name, st=" + std::to_string((int)st) + ")";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        if (!AddrIsExecutableInModule(mainMod, p)) {
+            t.status = "failed (the builtin is not executable code inside Hero_Siege.exe - another hook may hold it)";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        if (!HookBuiltin(name.c_str(), kJpBuiltinHookIds[i], kJpBuiltinDetours[i], &t.orig) || !t.orig) {
+            t.status = "failed (HookBuiltin: see its line above)";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        t.installed = true;
+        t.status = "hooked";
+        ++builtins;
+    }
+    Out("jumpprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed, " + std::to_string(held)
+        + " held, " + std::to_string(builtins) + " builtins"
+        + (builtinsFailed ? ", " + std::to_string(builtinsFailed) + " builtins failed" : std::string()));
+    Out("  Next: `jumpprobe show` twice while walking - CheckTalentUse and position_meeting must climb, or nothing here counts."
+        " Nothing is logged until `jumpprobe arm`.");
+}
+
+// ---- arm, show, pass ------------------------------------------------------------
+
+static void JpArm(const std::vector<std::string>& tail)
+{
+    if (!tail.empty() && Lower(tail[0]) == "off") {
+        g_JpCore.SetArmed(false);
+        g_JpBudget = 0;
+        Out("jumpprobe arm: off - no row logs; the counts continue");
+        return;
+    }
+    long n = kJpDefaultBudget;
+    if (!tail.empty()) {
+        try { n = std::stol(tail[0]); } catch (...) { Out("jumpprobe arm: n must be a whole number; nothing armed"); return; }
+        if (n < 1 || n > kJpMaxBudget) { Out("jumpprobe arm: n must be 1.." + std::to_string(kJpMaxBudget) + "; nothing armed"); return; }
+    }
+    for (JpRow& t : g_JpRows) InterlockedExchange(&t.logged, 0);
+    for (JpBuiltinRow& t : g_JpBuiltinRows) InterlockedExchange(&t.logged, 0);
+    g_JpBudget = n;
+    g_JpCore.SetArmed(true);
+    JpRefreshPlayer();
+    Out("jumpprobe arm: the next " + std::to_string(n) + " calls per row whose self is the local player are logged"
+        " (player=" + JpPlayerText() + "); calls from other selves count under other-self=. Then `jumpprobe show`.");
+}
+
+static bool JpCallsOf(const JpRow& t, long& calls)
+{
+    if (t.installed) { calls = t.calls; return true; }
+    if (!t.heldBy.empty() && t.heldCalls) { calls = *t.heldCalls; return true; }
+    return false;
+}
+
+static void JpShowRow(JpRow& t, const std::string& prefix)
+{
+    long calls = 0;
+    if (!JpCallsOf(t, calls)) {
+        Out(prefix + t.label + " calls=n/a (" + (t.status.empty() ? std::string("not hooked: `jumpprobe hook` first") : t.status) + ")");
+        return;
+    }
+    std::string line = prefix + t.label + " calls=" + std::to_string(calls - t.lastShown) + " total=" + std::to_string(calls);
+    if (t.installed) {
+        const long logged = g_JpBudget > 0 ? (std::min)((long)t.logged, g_JpBudget) : 0;
+        line += " logged=" + std::to_string(logged) + (g_JpBudget > 0 ? "/" + std::to_string(g_JpBudget) : std::string(" (not armed)"))
+            + " other-self=" + std::to_string(t.otherSelf);
+    } else {
+        line += " (held by " + t.heldBy + ": that probe's count)";
+    }
+    t.lastShown = calls;
+    Out(line);
+}
+
+static void JpShowBuiltin(int i, const std::string& prefix)
+{
+    JpBuiltinRow& t = g_JpBuiltinRows[i];
+    if (!t.installed) {
+        Out(prefix + JpBuiltinName(i) + " calls=n/a (" + (t.status.empty() ? std::string("not hooked: `jumpprobe hook` first") : t.status) + ")");
+        return;
+    }
+    const long calls = t.calls;
+    const long logged = g_JpBudget > 0 ? (std::min)((long)t.logged, g_JpBudget) : 0;
+    Out(prefix + JpBuiltinName(i) + " calls=" + std::to_string(calls - t.lastShown) + " total=" + std::to_string(calls)
+        + " logged=" + std::to_string(logged) + (g_JpBudget > 0 ? "/" + std::to_string(g_JpBudget) : std::string(" (not armed)"))
+        + " other-self=" + std::to_string(t.otherSelf));
+    t.lastShown = calls;
+}
+
+// Every row's calls since the previous `show`, the two controls first. A
+// held row's count is its holder's; a row nobody counts prints calls=n/a,
+// never 0, and is never left out.
+static void JpShow()
+{
+    int detoured = 0, held = 0, builtins = 0;
+    for (const JpRow& t : g_JpRows) { if (t.installed) ++detoured; else if (!t.heldBy.empty()) ++held; }
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
+    Out("jumpprobe show: " + std::to_string(detoured) + "/" + std::to_string((int)kJpRowCount) + " rows detoured, "
+        + std::to_string(held) + " held, " + std::to_string(builtins) + "/" + std::to_string(JpNs::kBuiltinCount)
+        + " builtins hooked; player=" + (g_JpCore.Active() ? JpPlayerText() : std::string("not resolved (nothing armed)")));
+    for (JpRow& t : g_JpRows) {
+        if (!JpIsOwnControl(t)) continue;
+        if (!t.installed) {
+            Out(std::string("  own-detour control ") + t.label + " not detoured by jumpprobe ("
+                + (t.status.empty() ? std::string("not hooked") : t.status) + ") - nothing proves jumpprobe's own detours,"
+                " so every count below from a jumpprobe detour is unproven: INSTRUMENT-BLIND");
+            continue;
+        }
+        JpShowRow(t, "  own-detour control ");
+    }
+    JpShowBuiltin(kJpBuiltinControl, "  builtin control ");
+    for (JpRow& t : g_JpRows) if (!JpIsOwnControl(t)) JpShowRow(t, "  ");
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) if (i != kJpBuiltinControl) JpShowBuiltin(i, "  builtin ");
+}
+
+static std::string JpCountersText(const JpNs::Counters& c)
+{
+    return "passed=" + std::to_string(c.passed) + " passthrough=" + std::to_string(c.passthrough)
+        + " outside-window=" + std::to_string(c.outsideWindow) + " other-self=" + std::to_string(c.otherSelf)
+        + " other-family=" + std::to_string(c.otherFamily);
+}
+
+static void JpPassStat()
+{
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    std::string window = g_JpCore.WindowOpen(frame)
+        ? "open since frame " + std::to_string(g_JpCore.WindowStart()) + " (now " + std::to_string(frame) + ")"
+        : std::string("closed");
+    Out(std::string("jumpprobe pass: ") + (g_JpCore.LeverOn() ? "ON" : "OFF") + " frames=" + std::to_string(g_JpCore.Frames())
+        + " rule=" + std::string(JpNs::FamilyName(g_JpCore.Rule())) + " scripts=" + (g_JpCore.ScriptsOn() ? "on" : "off")
+        + " window=" + window + " windows-opened=" + std::to_string(g_JpCore.WindowsOpened())
+        + " families: Collision_Prop_obj=" + std::to_string(g_JpCore.PropFamily())
+        + " Collision_Parent_obj=" + std::to_string(g_JpCore.AllFamily()));
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+        const auto row = static_cast<JpNs::Builtin>(i);
+        Out("  " + JpBuiltinName(i) + " " + JpCountersText(g_JpCore.BuiltinCounters(row)) + " (answer "
+            + std::string(JpNs::AnswerName(JpNs::kBuiltins[i].answer))
+            + (JpNs::kBuiltins[i].objectArg < 0 ? ", no object argument: answered only under `all`" : "")
+            + (g_JpBuiltinRows[i].installed ? std::string(")") : std::string("; not hooked)")));
+    }
+    for (const JpRow& t : g_JpRows) {
+        if (t.role < 0) continue;
+        const auto lever = static_cast<JpNs::ScriptLever>(t.role);
+        Out(std::string("  ") + t.label + " (scripts) " + JpCountersText(g_JpCore.ScriptCounters(lever)) + " (answer "
+            + std::string(JpNs::AnswerName(JpNs::kScriptAnswers[t.role])) + (t.installed ? ")" : "; not detoured)"));
+    }
+}
+
+// `pass 1 [frames] [props|all] [scripts]` / `pass 0` / `pass stat`.
+static void JpPass(const std::vector<std::string>& tail)
+{
+    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] | pass 0 | pass stat";
+    if (tail.empty() || Lower(tail[0]) == "stat") { JpPassStat(); return; }
+    const std::string v = Lower(tail[0]);
+    if (v == "0" || v == "off") {
+        g_JpCore.LeverOff();
+        Out("jumpprobe pass: OFF - every call runs the game's own function; `pass stat` keeps the counts");
+        return;
+    }
+    if (v != "1" && v != "on") { Out(usage); return; }
+    int64_t frames = JpNs::kDefaultFrames;
+    JpNs::FamilyRule rule = JpNs::FamilyRule::Props;
+    bool scripts = false;
+    for (size_t i = 1; i < tail.size(); ++i) {
+        const std::string a = Lower(tail[i]);
+        if (a == "props") rule = JpNs::FamilyRule::Props;
+        else if (a == "all") rule = JpNs::FamilyRule::All;
+        else if (a == "scripts") scripts = true;
+        else {
+            try { size_t used = 0; frames = std::stoll(a, &used); if (used != a.size()) throw 0; }
+            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts; nothing changed"); return; }
+        }
+    }
+    JpResolveFamilies();
+    if (!g_JpFamiliesResolved) {
+        Out("jumpprobe pass: refused - Collision_Prop_obj or Collision_Parent_obj did not resolve by name ("
+            + std::to_string(g_JpCore.PropFamily()) + ", " + std::to_string(g_JpCore.AllFamily()) + "); nothing changed");
+        return;
+    }
+    if (!g_JpCore.SetLever(frames, rule, scripts)) {
+        Out("jumpprobe pass: frames must be " + std::to_string(JpNs::kMinFrames) + ".." + std::to_string(JpNs::kMaxFrames) + "; nothing changed");
+        return;
+    }
+    JpRefreshPlayer();
+    bool opener = false;
+    for (const JpRow& t : g_JpRows) if (t.role == kJpRoleOpensWindow && t.installed) opener = true;
+    Out("jumpprobe pass: ON frames=" + std::to_string(frames) + " rule=" + std::string(JpNs::FamilyName(rule))
+        + " scripts=" + (scripts ? "on" : "off") + " player=" + JpPlayerText() + " - counters zeroed; the local player's"
+        " CA_playerJump/PlayerForceJump entry opens the window");
+    if (!opener)
+        Out("jumpprobe pass: WARNING - neither CA_playerJump nor PlayerForceJump is detoured by jumpprobe, so no window can"
+            " open: `jumpprobe hook` first");
+}
+
+// ---- state and trace (hook-free) ------------------------------------------------
+
+static bool JpIsStateName(const std::string& name)
+{
+    static const char* const kWords[] = { "jump", "air", "grav", "land", "fall", "height", "zpos", "hover", "fly" };
+    const std::string l = Lower(name);
+    for (const char* w : kWords) if (l.find(w) != std::string::npos) return true;
+    return false;
+}
+
+// Every instance variable of the player whose name says jump, air, gravity,
+// landing, falling, height, z, hover or flight. False when they could not be
+// listed.
+static bool JpStateNames(const RValue& player, std::vector<std::string>& names)
+{
+    names.clear();
+    try {
+        const RValue all = g_Yytk->CallBuiltin("variable_instance_get_names", { player });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { all }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            try {
+                const std::string nm = g_Yytk->CallBuiltin("array_get", { all, RValue((double)i) }).ToString();
+                if (JpIsStateName(nm)) names.push_back(nm);
+            } catch (...) {}
+        }
+        std::sort(names.begin(), names.end());
+        return true;
+    } catch (...) { return false; }
+}
+
+static std::string JpShort(std::string s)
+{
+    if (s.size() > kJpValueMax) s = s.substr(0, kJpValueMax) + "...(cut)";
+    return s;
+}
+
+static std::string JpVarText(const RValue& inst, const std::string& name)
+{
+    try { return JpShort(SpValueText(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }))); }
+    catch (...) { return "unreadable"; }
+}
+
+// `state`: the local player's x, y, sprite and every state-shaped variable,
+// each read by name in its own try; `unreadable` per item, never a default.
+// Nothing is installed or written.
+static void JpState()
+{
+    RValue player;
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) { Out("jumpprobe state: unreadable (no local player)"); return; }
+    Out("jumpprobe state: player via " + how);
+    Out("  x=" + JpVarText(player, "x") + " y=" + JpVarText(player, "y"));
+    std::string sprite = "unreadable";
+    try {
+        const RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("sprite_index") });
+        const double s = spr.ToDouble();
+        sprite = s < 0 ? std::string("none")
+            : MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { RValue(s) }).ToString());
+    } catch (...) {}
+    Out("  sprite_index=" + sprite);
+    std::vector<std::string> names;
+    if (!JpStateNames(player, names)) { Out("  variables=unreadable (variable_instance_get_names failed)"); return; }
+    for (const std::string& nm : names) Out("  " + nm + "=" + JpVarText(player, nm));
+    Out("jumpprobe state: " + std::to_string(names.size())
+        + " variable(s) whose name contains jump, air, grav, land, fall, height, zpos, hover or fly");
+}
+
+static std::vector<std::string> g_JpTraceNames;
+static CInstance* g_JpTracePlayer = nullptr;
+static std::string g_JpTraceLast;
+static bool g_JpTraceCapped = false;
+
+static void JpTrace(const std::vector<std::string>& tail)
+{
+    const std::string v = tail.empty() ? std::string() : Lower(tail[0]);
+    if (v == "0" || v == "off") {
+        g_JpCore.SetTrace(false);
+        Out("jumpprobe trace: off (" + std::to_string(g_JpCore.TraceLines()) + " of " + std::to_string(JpNs::kTraceMaxLines)
+            + " lines this session)");
+        return;
+    }
+    if (v != "1" && v != "on") { Out("jumpprobe trace: usage -> trace 1 | trace 0"); return; }
+    if (g_JpTraceCapped) { Out("jumpprobe trace: refused - the session's " + std::to_string(JpNs::kTraceMaxLines) + " lines are spent"); return; }
+    g_JpTracePlayer = nullptr;
+    g_JpTraceLast.clear();
+    g_JpCore.SetTrace(true);
+    JpRefreshPlayer();
+    Out("jumpprobe trace: on - one line per frame in which x, y or a state variable changed (player=" + JpPlayerText()
+        + "), at most " + std::to_string(JpNs::kTraceMaxLines) + " a session");
+}
+
+// One sample: a line only when x, y or a state variable changed since the
+// last line. The variable names are listed again whenever the player changes.
+static void JpTraceSample(int64_t frame)
+{
+    if (!g_JpPlayer) return;
+    g_JpBusy = true;
+    std::string body;
+    try {
+        const RValue p = g_JpPlayer->ToRValue();
+        if (g_JpTracePlayer != g_JpPlayer) {
+            if (!JpStateNames(p, g_JpTraceNames)) g_JpTraceNames.clear();
+            g_JpTracePlayer = g_JpPlayer;
+        }
+        body = " x=" + JpVarText(p, "x") + " y=" + JpVarText(p, "y");
+        for (const std::string& nm : g_JpTraceNames) body += " " + nm + "=" + JpVarText(p, nm);
+    } catch (...) { body = " unreadable"; }
+    g_JpBusy = false;
+    if (body == g_JpTraceLast) return;
+    g_JpTraceLast = body;
+    if (!g_JpCore.TakeTraceLine()) {
+        g_JpTraceCapped = true;
+        g_JpCore.SetTrace(false);
+        Out("jumpprobe trace: the session's " + std::to_string(JpNs::kTraceMaxLines) + " lines are spent; trace off");
+        return;
+    }
+    Out("jumpprobe trace frame=" + std::to_string(frame) + body);
+}
+
+// The one per-frame piece, from FrameCallback: closes an expired window,
+// refreshes the local player the detours compare their self against, and
+// samples the trace. Returns at once while nothing is armed, traced or on.
+static void JpFrameTick()
+{
+    if (!g_JpCore.Active()) return;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    g_JpCore.Tick(frame);
+    JpRefreshPlayer();
+    if (g_JpCore.Tracing()) JpTraceSample(frame);
+}
+
+static void JpUsage()
+{
+    int hooked = 0, held = 0, builtins = 0;
+    for (const JpRow& t : g_JpRows) { if (t.installed) ++hooked; else if (!t.heldBy.empty()) ++held; }
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
+    Out("jumpprobe: rows=" + std::to_string((int)kJpRowCount) + " hooked=" + std::to_string(hooked) + " held=" + std::to_string(held)
+        + " builtins=" + std::to_string(builtins) + " - research instrument for docs/jump-scenery-research.md (research build only)");
+    Out("  hook                              native-detour every script row and HookBuiltin every collision builtin;"
+        " a row another install detours is `held`; refused while citrace's spatial builtin hooks are in place");
+    Out("  arm [n] | arm off                 log the next n (default " + std::to_string(kJpDefaultBudget) + ", at most "
+        + std::to_string(kJpMaxBudget) + ") calls per row whose self is the local player; counts run regardless");
+    Out("  show                              calls since the previous show per row, the CheckTalentUse own-detour control and"
+        " the position_meeting builtin control first; a row nobody counts prints calls=n/a");
+    Out("  state                             hook-free: the player's x, y, sprite and every variable naming jump, air, grav,"
+        " land, fall, height, zpos, hover or fly");
+    Out("  trace 1|0                         one line per frame in which x, y or a state variable changed (at most "
+        + std::to_string(JpNs::kTraceMaxLines) + " a session)");
+    Out("  pass 1 [frames] [props|all] [scripts] | pass 0 | pass stat   the research lever: the local player's jump opens a"
+        " window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision builtins"
+        " against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites CanMove,"
+        " InstancePlaceTallest and TilePlaceMeeting");
+}
+
+static void JpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { JpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { JpInstall(); return; }
+    if (sub == "arm") { JpArm(tail); return; }
+    if (sub == "show") { JpShow(); return; }
+    if (sub == "state") { JpState(); return; }
+    if (sub == "trace") { JpTrace(tail); return; }
+    if (sub == "pass") { JpPass(tail); return; }
+    JpUsage();
+}
+#endif // FORGEPACT_RELEASE (jumpprobe)
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand; answers false in the player build.
+static bool HandleJumpProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "jumpprobe") { JpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
+#ifndef FORGEPACT_RELEASE
 // `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
 // sits above LogDrop.
 static void GoldTraceCommand(const std::string& rest)
@@ -45978,6 +46846,7 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleJumpProbeCommand(lc, rest)) return;
     if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
@@ -47247,6 +48116,7 @@ void FrameCallback(FWFrame& FrameContext)
     KuyrukIsle();
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
+    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
 #endif
 
     // one-time setup once the runner is fully alive: load config + install hook
