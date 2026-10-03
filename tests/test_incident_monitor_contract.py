@@ -282,6 +282,16 @@ class IncidentMonitorContractTests(unittest.TestCase):
         self.assertEqual(code_lines(function_body(self.plugin, "static void FarSleepTick()"))[1:3],
                          ["if (!fs.Enabled() && !fs.Draining()) return;",
                           "IncidentScope incidentScope(IncidentMod::farsleep);"])
+        # Dungeon chest opens early (ForgePact #31): the same shape - its off
+        # test (and the poll's throttle) first, then its own row, so switched
+        # off it costs nothing.
+        self.assertEqual(code_lines(function_body(self.plugin, "static void DungeonChestDraw()"))[:3],
+                         ["const std::string text = ForgePact::DungeonChest::HeadText(ForgePact::DungeonChest::state);",
+                          "if (text.empty()) return;",
+                          "IncidentScope incidentScope(IncidentMod::dungeonchest);"])
+        tick = code_lines(function_body(self.plugin, "static void DungeonChestTick()"))
+        self.assertEqual(tick[1], "if (!DC::Tracking(DC::state)) return;")
+        self.assertEqual(tick[5], "IncidentScope incidentScope(IncidentMod::dungeonchest);")
         frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
         self.assertLess(frame.index("IncidentScope incidentScope(IncidentMod::mapreveal);"),
                         frame.index("ForgePact::MapRevealManager::Instance().OnFrame(g_RuntimeFrame);"))
@@ -518,8 +528,11 @@ class IncidentMonitorContractTests(unittest.TestCase):
 
     def test_the_setup_block_carries_its_scope_and_prints_its_time(self):
         # D18: the one-time setup is its own row, `setup`, after `ipc`.
+        # ForgePact #31 appended `dungeonchest` after it, before Count, so no
+        # existing row changed its number.
         self.assertIn('"stashmoveall", "ipc", "setup",', self.header)
-        self.assertRegex(self.header, r"ipc,[^\n]*\n\s*setup,[^\n]*\n\s*Count")
+        self.assertRegex(self.header, r"ipc,[^\n]*\n\s*setup,[^\n]*\n\s*dungeonchest,[^\n]*\n\s*Count")
+        self.assertRegex(self.header, r'"ipc", "setup",\s*\n\s*"dungeonchest",\s*\n\s*\};')
         self.assertEqual(self.plugin.count(SETUP_BLOCK), 1)
         frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
         setup = brace_block(frame, SETUP_BLOCK)

@@ -535,6 +535,7 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
 #include <ForgePact/BossRarityMod.hpp>
+#include <ForgePact/DungeonChestMod.hpp>
 #include <ForgePact/HiddenLootMod.hpp>
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
@@ -7578,6 +7579,60 @@ static void HhDrawHeadLabels()
         g_Yytk->CallBuiltin("draw_set_font", { prevFont });
     } catch (...) { g_HhLabelLastErr = "exception while drawing"; }
 }
+// Dungeon chest opens early (issue #31, DungeonChestMod.hpp): the countdown
+// above the player's head, in the `head` and `both` forms. The same player
+// resolution, camera-to-GUI conversion and outlined text as the Headhunter
+// labels above, drawn one line above the labels this frame shows so the two
+// never overlap (the skill timer draws on the hotbar, not here). Returns at
+// once while the mode is off or no countdown is due.
+static void DungeonChestDraw()
+{
+    const std::string text = ForgePact::DungeonChest::HeadText(ForgePact::DungeonChest::state);
+    if (text.empty()) return;
+    IncidentScope incidentScope(IncidentMod::dungeonchest);
+    try {
+        RValue id;
+        if (!HhResolveLocalPlayer(id)) return;
+        const double x = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("x") }).ToDouble();
+        const double top = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("bbox_top") }).ToDouble();
+        RValue cam = g_Yytk->CallBuiltin("view_get_camera", { RValue(0.0) });
+        const double vx = g_Yytk->CallBuiltin("camera_get_view_x", { cam }).ToDouble();
+        const double vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
+        const double vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
+        const double vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
+        const double gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
+        const double gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
+        if (vw <= 0 || vh <= 0) return;
+        const double sx = (x - vx) * gw / vw;
+        const double sy = (top - vy) * gh / vh - g_HhLabelOffsetPx;
+        RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
+        RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        if (!g_HhLabelFont.empty()) {
+            try {
+                RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_HhLabelFont) });
+                if (f.ToDouble() < 0) f = RValue(std::stod(g_HhLabelFont));
+                if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });
+            } catch (...) {}
+        }
+        g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
+        g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned, like the labels
+        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+        const double lineH = g_Yytk->CallBuiltin("string_height", { RValue("Ag") }).ToDouble();
+        // HhDrawHeadLabels ran first this frame: its lines (three labels to a
+        // line) end at sy, so the countdown sits on the line above them.
+        const size_t hhLines = (g_HhLabelOn.load() && !g_HhStolen.empty()) ? (g_HhStolen.size() + 2) / 3 : 0;
+        RValue pale = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(236.0), RValue(232.0), RValue(220.0) });
+        HhDrawOutlinedWorld(sx, sy - lineH * (double)hhLines, text, pale);
+        g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+        g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
+        g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+        g_Yytk->CallBuiltin("draw_set_font", { prevFont });
+    } catch (...) {}
+}
 // DrawHudBuffs runs once per frame in the Draw GUI phase (the buff icon row); the labels
 // are drawn right after it so they sit on top of the world and under nothing.
 static PFUNC_YYGMLScript g_Orig_DrawHudBuffs = nullptr;
@@ -7594,6 +7649,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     ToggleIndicatorDraw();
     SkillTimerDraw();
     ForgePact::MinerHelmet::Draw();
+    DungeonChestDraw();
 #ifndef FORGEPACT_RELEASE
     TgProbeSpurnAfterDraw();
 #endif
@@ -19012,6 +19068,20 @@ static bool HhIsPlayerInstance(CInstance* instance)
     } catch (...) { return false; }
 }
 static void HhSteal(CInstance* enemyInst, CInstance* killerHint, CInstance* other);
+// Dungeon chest opens early (issue #31): the kill hook's second consumer. One
+// count per dying enemy, keyed by its instance id in DungeonChestMod.hpp's own
+// recent set (never Headhunter's g_HhHandledIds); only the enemy-`self` call
+// counts, so the player-`self` call of the same kill adds nothing. Returns at
+// once unless a dungeon chest is being tracked.
+static void DungeonChestOnKill(CInstance* S)
+{
+    namespace DC = ForgePact::DungeonChest;
+    if (!S || !DC::Tracking(DC::state) || !DC::state.tally.active) return;
+    if (!CallerIsEnemyInstance(S)) return;
+    int id = -1;
+    try { const double d = InstanceIdOf(S->ToRValue()); if (d >= 0.0 && d <= (double)INT32_MAX) id = (int)d; } catch (...) {}
+    DC::CountKill(DC::state, id);
+}
 static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     PERF_SCOPE(g_PerfKill);
@@ -19028,7 +19098,8 @@ static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, 
     // (which the harness models as cleaning the enemy up; not measured) - a suspected cause
     // of the x100 Angelic crash, not proven.
     // Nothing below the trampoline touches S, and a throwing drop cannot skip the original.
-    try { SignatureDropOnKill(S); AngelicDropOnKill(S); } catch (...) {}
+    // The dungeon chest's kill count reads the same live enemy, after the drops.
+    try { SignatureDropOnKill(S); AngelicDropOnKill(S); DungeonChestOnKill(S); } catch (...) {}
     return g_Orig_EnemyDestroyKillProc ? g_Orig_EnemyDestroyKillProc(S, O, R, argc, A) : R;
 }
 
@@ -19191,6 +19262,105 @@ static void HeadhunterActivityTick()
     if (now - lastReportMs < 30000.0) return;
     lastHook = hook; lastDeath = death; lastEffect = effect; lastReportMs = now;
     HeadhunterStatus(false);
+}
+
+// ===== Dungeon chest opens early (issue #31) ======================================
+// `dungeonchest <pct>|off|status` and `dungeonchest countdown head|chat|both|none`,
+// Mods > Gameplay, off by default. The decision, the tally and the countdown
+// live in DungeonChestMod.hpp, where tests/dungeon_chest_harness.cpp runs them;
+// this is the adapter: the kill hook it shares with Headhunter (its consumer,
+// DungeonChestOnKill, sits beside the hook), the once-a-second poll, the head
+// label (DungeonChestDraw, beside the Headhunter labels) and the two actions.
+static bool g_DcHookAttempted = false;
+// The kill hook as `dungeonchest` reports it. `table-only` is HookOneScript's
+// TABLE-ONLY fallback (the trampoline slot holds the game's own function):
+// installed, but blind to compiled GML's direct calls, so kills= would stay low.
+static const char* DungeonChestHookState()
+{
+    if (!g_DcHookAttempted && !g_HhHookInstalled) return "none";
+    if (!g_HhHookInstalled || !g_Orig_EnemyDestroyKillProc) return "failed";
+    return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)g_Orig_EnemyDestroyKillProc)
+        ? "table-only" : "ok";
+}
+// The unlock action: a no-op until Live procedure 1 picks the route (workorder
+// token `unlock-route:`, D4) and Join step J7 writes it here. Until then the
+// decision still latches and reports `unlocked=1`, and DungeonChestTick says
+// the chest itself was left unchanged.
+static void DungeonChestUnlockAction() {}
+// The mode's one hook, installed lazily and once: Headhunter's
+// EnemyDestroyKillProc detour, which this mod reads through a second consumer.
+// The chat action is left unset on purpose: until Live procedure 1 proves a
+// call shape (workorder token `chat-route:`, D7) and Join step J7 supplies it,
+// `dungeonchest countdown chat|both` is refused.
+static void DungeonChestInstall()
+{
+    ForgePact::DungeonChest::state.unlock = &DungeonChestUnlockAction;
+    if (g_DcHookAttempted) return;
+    g_DcHookAttempted = true;
+    InstallHeadhunterHook();
+}
+// Every form answers one `dungeonchest:` line. A share outside 50..95, or any
+// share while the kill hook failed to install, is refused and leaves the mode
+// as it was (DungeonChestMod.hpp's StoresMode); `0` is off.
+static void DungeonChestCommand(const std::string& rest)
+{
+    namespace DC = ForgePact::DungeonChest;
+    std::string tail;
+    const std::string first = Lower(FirstToken(TrimCopy(rest), tail));
+    if (first.empty() || first == "status" || first == "stat") {
+        Out(DC::StatusLine(DC::state, DungeonChestHookState()));
+        return;
+    }
+    if (first == "countdown") {
+        DC::Form form = DC::CurrentForm(DC::state);
+        if (!DC::ParseForm(Lower(TrimCopy(tail)), form)) {
+            Out(std::string("dungeonchest: usage dungeonchest countdown head|chat|both|none (unchanged: ")
+                + DC::FormName(DC::CurrentForm(DC::state)) + ")");
+            return;
+        }
+        if (!DC::SetForm(DC::state, form)) { Out(DC::FormRefusedLine(form, DC::CurrentForm(DC::state))); return; }
+        Out(DC::StatusLine(DC::state, DungeonChestHookState()));
+        return;
+    }
+    int pct = DC::Pct(DC::state);
+    if (!TrimCopy(tail).empty() || !DC::ParsePct(first, pct)) {
+        Out("dungeonchest: usage dungeonchest 50..95|off|status, or dungeonchest countdown head|chat|both|none (unchanged: "
+            + DC::ModeText(DC::Pct(DC::state)) + ")");
+        return;
+    }
+    if (pct != 0 && DC::StoresMode(pct, "none")) DungeonChestInstall();
+    const char* hook = DungeonChestHookState();
+    if (!DC::StoresMode(pct, hook)) {
+        Out(DC::RefusedLine(pct, DC::Pct(DC::state), hook));
+        return;
+    }
+    DC::SetMode(DC::state, pct);
+    Out(DC::StatusLine(DC::state, hook));
+}
+// The once-a-second poll, from FrameCallback's housekeeping under its own
+// throttle: the room, whether it holds a Dungeon_Chest_obj, how many
+// Enemy_Parent_obj instances are alive, then the decision. Returns at once
+// while the mode is off (and the research probe is not observing).
+static double g_DcLastPollMs = -1000.0;
+static void DungeonChestTick()
+{
+    namespace DC = ForgePact::DungeonChest;
+    if (!DC::Tracking(DC::state)) return;
+    const double now = HhNowMs();
+    if (now - g_DcLastPollMs < 1000.0) return;
+    g_DcLastPollMs = now;
+    IncidentScope incidentScope(IncidentMod::dungeonchest);
+    const int64_t room = CurrentRoomKey();
+    long chests = 0, alive = 0;
+    try {
+        chests = (long)g_Yytk->CallBuiltin("instance_number",
+            { RValue((double)(int32_t)HeroSiege::Objects::GameObject::Dungeon_Chest_obj) }).ToDouble();
+        if (chests > 0)
+            alive = (long)g_Yytk->CallBuiltin("instance_number",
+                { RValue((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj) }).ToDouble();
+    } catch (...) { return; }
+    if (DC::Poll(DC::state, room != INT64_MIN, room, chests, alive))
+        Out(DC::UnlockedLine(DC::state) + " (unlock route not measured yet: the chest itself was left unchanged)");
 }
 
 #define DROP_HOOK(NAME) \
@@ -45877,6 +46047,504 @@ static void IncidentMonitorStart()
 
 // ===== end of the incident monitor (issue #76) =====
 
+#ifndef FORGEPACT_RELEASE
+// ===== Dungeon chest research probe (issue #31, docs/dungeon-chest-research.md) =====
+// `dungeonprobe on|off|status|dump` and `dungeonprobe chat control|list|try <n>`:
+// research build only, never in kPlayerCommands. Hooks every candidate at once
+// (D6), so one session answers how the game decides the chest is openable and
+// how a line reaches its chat:
+//   - while on, and only while the room holds a Dungeon_Chest_obj, one
+//     `dungeonprobe:` line a second (room, alive, creators, blockers, kills,
+//     chestVars); at first sight every instance variable of the chest, of any
+//     Dungeon_Boss_Blocker_obj and of any Spawn_Dungeon_obj (`var` lines),
+//     then only the ones that changed (`diff` lines);
+//   - count-only detours on instance_number / instance_exists / instance_find
+//     / instance_place: every call, and separately the calls made with one of
+//     those three objects as `self`, keyed by the first argument's object;
+//   - count-only detours on every chat candidate script, and the call shapes
+//     `dungeonprobe chat try <n>` runs one at a time (G3b).
+// `kills=` is Dungeon chest opens early's own tally, run in observe mode (it
+// counts, never decides): the kill hook Headhunter proves is the instrument's
+// positive control. Every counter prints at zero too, so a blind hook shows.
+static bool g_DpOn = false;
+static double g_DpLastMs = -1000.0;
+static int64_t g_DpRoom = INT64_MIN;
+static bool g_DpDumped = false;                        // the first-sight dump ran in this room
+static std::map<std::string, std::string> g_DpVars;    // "<object> <name>" -> value as printed
+static long g_DpChestVars = 0;
+// The selves the builtin detours watch, re-found each second: instance -> object.
+static std::vector<std::pair<CInstance*, int>> g_DpWatched;
+
+static const char* DpKindName(int kind)
+{
+    switch (kind) {
+    case VALUE_REAL: return "real";
+    case VALUE_INT32: return "int32";
+    case VALUE_INT64: return "int64";
+    case VALUE_BOOL: return "bool";
+    case VALUE_STRING: return "string";
+    case VALUE_OBJECT: return "struct";
+    case VALUE_ARRAY: return "array";
+    case VALUE_PTR: return "ptr";
+    case VALUE_UNDEFINED: return "undefined";
+    case VALUE_NULL: return "null";
+    case VALUE_REF: return "ref";
+    default: return "other";
+    }
+}
+static std::string DpObjectName(int objIdx)
+{
+    if (objIdx < 0) return "none";
+    const std::string_view n = HeroSiege::Objects::GetObjectName(static_cast<HeroSiege::Objects::GameObject>(objIdx));
+    return n == "Unknown_Object" ? "object#" + std::to_string(objIdx) : std::string(n);
+}
+// One argument as the probe records it: its kind, and a string's first 40 characters.
+static std::string DpArgText(const RValue& v)
+{
+    std::string s = DpKindName((int)v.m_Kind);
+    if (v.m_Kind == VALUE_STRING) {
+        std::string t;
+        try { t = v.ToString(); } catch (...) {}
+        if (t.size() > 40) t = t.substr(0, 40);
+        s += ":\"" + t + "\"";
+    }
+    return s;
+}
+static std::string DpArgList(int argc, RValue** A)
+{
+    std::string s;
+    for (int i = 0; i < argc; ++i) s += (i ? "," : "") + (A && A[i] ? DpArgText(*A[i]) : std::string("null"));
+    return s.empty() ? std::string("none") : s;
+}
+
+// ---- builtin detours: does the chest (or its blocker or spawner) poll? ----------
+struct DpBuiltin {
+    const char* name;
+    const char* id;
+    TRoutine orig = nullptr;
+    bool attempted = false;
+    bool hooked = false;
+    long calls = 0;
+    long watchedCalls[3] = {};   // self = Dungeon_Chest_obj, Dungeon_Boss_Blocker_obj, Spawn_Dungeon_obj
+};
+static DpBuiltin g_DpBuiltins[4] = {
+    { "instance_number", "fp_dp_inumber" },
+    { "instance_exists", "fp_dp_iexists" },
+    { "instance_find", "fp_dp_ifind" },
+    { "instance_place", "fp_dp_iplace" },
+};
+static constexpr HeroSiege::Objects::GameObject kDpWatchedObjects[3] = {
+    HeroSiege::Objects::GameObject::Dungeon_Chest_obj,
+    HeroSiege::Objects::GameObject::Dungeon_Boss_Blocker_obj,
+    HeroSiege::Objects::GameObject::Spawn_Dungeon_obj,
+};
+// "<builtin> self=<object> arg=<object>" -> calls.
+static std::map<std::string, long> g_DpSelfRows;
+// The first argument's object: an object index as given, or the object of the
+// instance it names. Read only for a watched self, so the cost stays off the
+// game's other calls.
+static std::string DpArgObject(int argc, RValue* Args)
+{
+    if (argc < 1 || !Args) return "none";
+    const RValue& a = Args[0];
+    try {
+        if (a.m_Kind == VALUE_REAL || a.m_Kind == VALUE_INT32 || a.m_Kind == VALUE_INT64 || a.m_Kind == VALUE_REF) {
+            const double n = a.ToDouble();
+            if (n >= 0.0 && n < 100000.0) return DpObjectName((int)n);
+            RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { a, RValue("object_index") });
+            if (IsNumericInstanceRead(oi)) return DpObjectName((int)oi.ToDouble());
+        }
+    } catch (...) {}
+    return DpKindName((int)a.m_Kind);
+}
+template <int N>
+static void Hook_DpBuiltin(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    DpBuiltin& b = g_DpBuiltins[N];
+    if (b.orig) b.orig(Result, S, O, argc, Args);
+    ++b.calls;
+    if (!S || g_DpWatched.empty()) return;
+    for (const auto& w : g_DpWatched) {
+        if (w.first != S) continue;
+        for (int k = 0; k < 3; ++k) if (w.second == (int)kDpWatchedObjects[k]) ++b.watchedCalls[k];
+        ++g_DpSelfRows[std::string(b.name) + " self=" + DpObjectName(w.second) + " arg=" + DpArgObject(argc, Args)];
+        break;
+    }
+}
+static void DpInstallBuiltins()
+{
+    static const PVOID kDest[4] = {
+        (PVOID)&Hook_DpBuiltin<0>, (PVOID)&Hook_DpBuiltin<1>, (PVOID)&Hook_DpBuiltin<2>, (PVOID)&Hook_DpBuiltin<3>,
+    };
+    for (int i = 0; i < 4; ++i) {
+        DpBuiltin& b = g_DpBuiltins[i];
+        if (b.attempted) continue;
+        b.attempted = true;
+        b.hooked = HookBuiltin(b.name, b.id, kDest[i], &b.orig);
+    }
+}
+
+// ---- G3b: the chat call-shape research -------------------------------------------
+// Candidates: every chat script the SDK names (scripts.hpp, by substring
+// "chat"), each hooked count-only so the game's own call is recorded when the
+// person types a line. ChatAddMessageFunc (496) is a method, not a script
+// HookOneScript can reach by name, so it is left out.
+struct DpChatHook {
+    const char* script;
+    const char* id;
+    PFUNC_YYGMLScript orig = nullptr;
+    bool attempted = false;
+    bool hooked = false;
+    bool native = false;
+    long calls = 0;
+    std::string self = "none";
+    std::string args = "none";
+};
+static DpChatHook g_DpChat[7] = {
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_CA_chatIngame), "fp_dp_chat_ca" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage), "fp_dp_chat_add" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), "fp_dp_chat_server" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatIngameAdd), "fp_dp_chat_ingame" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_IngameChatFeedAddLatest), "fp_dp_chat_feed" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessageFiltered), "fp_dp_chat_filtered" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddIngameMessageFiltered), "fp_dp_chat_ingame_filtered" },
+};
+template <int N>
+static RValue& Hook_DpChat(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    DpChatHook& h = g_DpChat[N];
+    ++h.calls;
+    try { h.self = DpObjectName(CallerObjectIndex(S)); h.args = std::to_string(argc) + ":" + DpArgList(argc, A); } catch (...) {}
+    return h.orig ? h.orig(S, O, R, argc, A) : R;
+}
+static void DpInstallChatHooks()
+{
+    static const PVOID kDest[7] = {
+        (PVOID)&Hook_DpChat<0>, (PVOID)&Hook_DpChat<1>, (PVOID)&Hook_DpChat<2>, (PVOID)&Hook_DpChat<3>,
+        (PVOID)&Hook_DpChat<4>, (PVOID)&Hook_DpChat<5>, (PVOID)&Hook_DpChat<6>,
+    };
+    for (int i = 0; i < 7; ++i) {
+        DpChatHook& h = g_DpChat[i];
+        if (h.attempted) continue;
+        h.attempted = true;
+        h.hooked = HookOneScript(h.script, h.id, kDest[i], &h.orig, &h.native);
+    }
+}
+
+// The shapes `dungeonprobe chat try <n>` runs, most likely first, each through
+// ApCallScript's route (asset_get_index of the short name, then script_execute
+// through CallBuiltinEx, with the self below as self and other).
+//
+// Static reading, local Ghidra project, 2026-10-03 (our own words; no script
+// text is kept anywhere in this repository):
+//   - ChatAddServerMessage declares two parameters; an undefined second one
+//     is replaced by 0. It builds a padded prefix and hands a full
+//     15-argument call to ChatAddMessage carrying both of its arguments,
+//     passing its own self and other through. It reads no instance variable
+//     of its self that we could see, so the local player is a plausible self.
+//     Static reading.
+//   - ChatAddMessage declares fifteen parameters. It looks a chat channel up
+//     with GetChatChannelData and adds the finished message to the in-game
+//     feed through IngameChatFeedAddLatest. Static reading.
+//   - IngameChatFeedAddLatest reads a member off its first argument (a built
+//     message struct, not text) and works over every Ingame_Chat_obj; it also
+//     checks for Player_obj and UI_Ingame_Chat_obj. Not a text entry point.
+//     Static reading.
+//   - ChatIngameAdd declares five parameters: an undefined fourth becomes the
+//     colour white (16777215), an undefined fifth becomes 0; it works over
+//     every Chat_obj. Which of the first three is the text is not settled.
+//     Static reading.
+//   - ChatAddMessageFiltered passes its arguments on to ChatAddMessage, and
+//     CA_chatIngame is a network client action that builds an item-drop
+//     message and calls ChatAddIngameMessageFiltered with twelve arguments.
+//     Static reading.
+// Not established: which argument of ChatAddMessage is the text, what the
+// channel argument must be, and whether an offline game holds any
+// Ingame_Chat_obj or Chat_obj at all (`status` prints their counts). The
+// game's own call, recorded by the chat hooks above when the person types a
+// line, outranks this table.
+struct DpChatShape {
+    const char* script;     // short name, from the SDK
+    const char* self;       // "player", or an object name: its first instance
+    const char* args;       // comma-separated: text | 0 | white | empty
+};
+static const DpChatShape kDpChatShapes[] = {
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), "player", "text" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), "player", "text,0" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), "Ingame_Chat_obj", "text" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatIngameAdd), "player", "text,empty,empty,white,0" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatIngameAdd), "player", "empty,text,empty,white,0" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage), "player", "text" },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessageFiltered), "player", "text" },
+};
+static constexpr int kDpChatShapeCount = (int)(sizeof(kDpChatShapes) / sizeof(kDpChatShapes[0]));
+
+// The self a shape names: the local player, or the first live instance of a
+// named object. Null when there is none; `how` then says which.
+static CInstance* DpChatSelf(const std::string& self, std::string& how)
+{
+    try {
+        if (self == "player") {
+            RValue id;
+            if (!HhResolveLocalPlayer(id)) { how = "player (no local player - load a character)"; return nullptr; }
+            CInstance* inst = HhResolveInstance(id);
+            how = inst ? "Player_obj" : "player (not resolvable to an instance)";
+            return inst;
+        }
+        RValue obj = g_Yytk->CallBuiltin("asset_get_index", { RValue(self) });
+        if (obj.ToDouble() < 0) { how = self + " (asset_get_index refused the name)"; return nullptr; }
+        if (g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble() < 1) { how = self + " (no instance in the room)"; return nullptr; }
+        CInstance* inst = HhResolveInstance(g_Yytk->CallBuiltin("instance_find", { obj, RValue(0.0) }));
+        how = inst ? self : self + " (instance not resolvable)";
+        return inst;
+    } catch (...) { how = self + " (exception while resolving)"; return nullptr; }
+}
+static std::vector<RValue> DpChatArgs(const char* spec, const std::string& text)
+{
+    std::vector<RValue> out;
+    std::string s(spec), tok;
+    std::stringstream ss(s);
+    while (std::getline(ss, tok, ',')) {
+        if (tok == "text") out.push_back(RValue(text));
+        else if (tok == "white") out.push_back(RValue(16777215.0));
+        else if (tok == "empty") out.push_back(RValue(std::string()));
+        else out.push_back(RValue(std::stod(tok)));
+    }
+    return out;
+}
+static std::string DpArgVector(const std::vector<RValue>& args)
+{
+    std::string s;
+    for (size_t i = 0; i < args.size(); ++i) s += (i ? "," : "") + DpArgText(args[i]);
+    return s.empty() ? std::string("none") : s;
+}
+// One by-name call, printed with what was supplied. A refused resolution names
+// the field that failed; a call that dispatched proves only that it ran.
+static void DpChatCall(const std::string& label, const char* script, const std::string& selfSpec,
+                       const std::vector<RValue>& args, RValue& ret, bool& dispatched)
+{
+    dispatched = false;
+    std::string how;
+    CInstance* self = DpChatSelf(selfSpec, how);
+    std::string line = "dungeonprobe chat " + label + " supplied script=" + script + " self=" + how
+        + " args=" + DpArgVector(args) + " -> ";
+    if (!self) { Out(line + "dispatched=0 refused: self"); return; }
+    try {
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+        if (index.ToDouble() < 0) { Out(line + "dispatched=0 refused: asset_get_index(" + script + ")=" + Describe(index)); return; }
+    } catch (...) { Out(line + "dispatched=0 refused: asset_get_index threw"); return; }
+    dispatched = ApCallScript(script, self, args, ret);
+    Out(line + "dispatched=" + (dispatched ? "1" : "0") + " ret=" + DpArgText(ret)
+        + (dispatched ? "" : " (script_execute threw or returned a failure status)"));
+}
+// The route's positive control: IsDefined by name, through the same route, with
+// a defined value and with undefined. defined->true and undefined->false proves
+// the route executes a script and hands its value back.
+static void DpChatControl()
+{
+    const char* isDefined = SdkShortScriptName(HeroSiege::Scripts::gml_Script_IsDefined);
+    RValue yes, no;
+    bool dYes = false, dNo = false;
+    DpChatCall("control", isDefined, "player", { RValue(1.0) }, yes, dYes);
+    DpChatCall("control", isDefined, "player", { RValue() }, no, dNo);
+    bool tYes = false, tNo = true;
+    try { if (dYes) tYes = yes.ToBoolean(); if (dNo) tNo = no.ToBoolean(); } catch (...) {}
+    const bool pass = dYes && dNo && tYes && !tNo;
+    Out(std::string("dungeonprobe chat control: ") + (pass ? "PASS" : "FAIL")
+        + " defined->" + (dYes ? (tYes ? "true" : "false") : "not-dispatched")
+        + " undefined->" + (dNo ? (tNo ? "true" : "false") : "not-dispatched")
+        + (pass ? " (the route executes a script and returns its value)" : " (the route is not proven; chat tries would measure nothing)"));
+}
+static void DpChatList()
+{
+    for (int i = 0; i < kDpChatShapeCount; ++i)
+        Out("dungeonprobe chat shape " + std::to_string(i + 1) + ": script=" + kDpChatShapes[i].script
+            + " self=" + kDpChatShapes[i].self + " args=" + kDpChatShapes[i].args);
+}
+static void DpChatTry(int n)
+{
+    if (n < 1 || n > kDpChatShapeCount) {
+        Out("dungeonprobe chat try: shape must be 1.." + std::to_string(kDpChatShapeCount) + " (`dungeonprobe chat list`); nothing called");
+        return;
+    }
+    const DpChatShape& shape = kDpChatShapes[n - 1];
+    RValue ret;
+    bool dispatched = false;
+    DpChatCall("try " + std::to_string(n), shape.script, shape.self,
+               DpChatArgs(shape.args, "ForgePact chat test " + std::to_string(n)), ret, dispatched);
+}
+
+// ---- the per-second census ---------------------------------------------------------
+static long DpCount(HeroSiege::Objects::GameObject obj)
+{
+    try { return (long)g_Yytk->CallBuiltin("instance_number", { RValue((double)(int32_t)obj) }).ToDouble(); }
+    catch (...) { return -1; }
+}
+// Live instances of the Enemy_Creator_obj family: ResolveKnownCreatorObjects'
+// names, a child counted under its listed parent only once.
+static long DpCreatorCount()
+{
+    ResolveKnownCreatorObjects();
+    std::vector<int> idx;
+    for (const char* name : kKnownDensityCreatorObjects) {
+        try { const int i = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(name) }).ToDouble(); if (i >= 0) idx.push_back(i); } catch (...) {}
+    }
+    long total = 0;
+    for (int i : idx) {
+        bool child = false;
+        for (int p : idx) if (p != i && HeroSiege::Objects::IsDescendantOf(i, p)) { child = true; break; }
+        if (child) continue;
+        try { total += (long)g_Yytk->CallBuiltin("instance_number", { RValue((double)i) }).ToDouble(); } catch (...) {}
+    }
+    return total;
+}
+static std::string DpRoomText()
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return "(unreadable)";
+        std::string s = (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64)
+            ? std::to_string((long long)v.ToDouble()) : v.ToString();
+        return s + " (" + g_Yytk->CallBuiltin("room_get_name", { v }).ToString() + ")";
+    } catch (...) { return "(unreadable)"; }
+}
+// Reads every instance variable of every live instance of the three watched
+// objects into `now` ("<object>[#k] <name>" -> value), and the watched selves.
+static void DpReadVars(std::map<std::string, std::string>& now, long& chestVars)
+{
+    chestVars = 0;
+    g_DpWatched.clear();
+    for (HeroSiege::Objects::GameObject obj : kDpWatchedObjects) {
+        const long n = DpCount(obj);
+        for (long k = 0; k < n && k < 8; ++k) {
+            try {
+                const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)(int32_t)obj), RValue((double)k) });
+                if (CInstance* ci = HhResolveInstance(inst)) g_DpWatched.push_back({ ci, (int)obj });
+                const std::string label = DpObjectName((int)obj) + (k ? "#" + std::to_string(k) : std::string());
+                RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+                const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+                for (int i = 0; i < count; ++i) {
+                    RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+                    RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, nm });
+                    std::string d = Describe(v);
+                    if (d.size() > 80) d = d.substr(0, 80) + "...";
+                    now[label + " " + nm.ToString()] = d;
+                    if (obj == HeroSiege::Objects::GameObject::Dungeon_Chest_obj) ++chestVars;
+                }
+            } catch (...) {}
+        }
+    }
+}
+static void DungeonProbeTick()
+{
+    if (!g_DpOn) return;
+    const double nowMs = HhNowMs();
+    if (nowMs - g_DpLastMs < 1000.0) return;
+    g_DpLastMs = nowMs;
+    const int64_t room = CurrentRoomKey();
+    if (room != g_DpRoom) { g_DpRoom = room; g_DpDumped = false; g_DpVars.clear(); }
+    const long chests = DpCount(HeroSiege::Objects::GameObject::Dungeon_Chest_obj);
+    if (chests <= 0) { g_DpWatched.clear(); g_DpDumped = false; g_DpVars.clear(); return; }
+    std::map<std::string, std::string> now;
+    DpReadVars(now, g_DpChestVars);
+    Out("dungeonprobe: room=" + DpRoomText()
+        + " alive=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Enemy_Parent_obj))
+        + " creators=" + std::to_string(DpCreatorCount())
+        + " blockers=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Dungeon_Boss_Blocker_obj))
+        + " kills=" + std::to_string(ForgePact::DungeonChest::state.tally.kills)
+        + " chestVars=" + std::to_string(g_DpChestVars));
+    if (!g_DpDumped) {
+        for (const auto& kv : now) {
+            const size_t sp = kv.first.find(' ');
+            Out("dungeonprobe var " + kv.first.substr(0, sp) + " " + kv.first.substr(sp + 1) + "=" + kv.second);
+        }
+        g_DpDumped = true;
+    } else {
+        for (const auto& kv : now) {
+            auto it = g_DpVars.find(kv.first);
+            const std::string old = it == g_DpVars.end() ? std::string("(absent)") : it->second;
+            if (old != kv.second) Out("dungeonprobe diff " + kv.first + " " + old + "->" + kv.second);
+        }
+        for (const auto& kv : g_DpVars)
+            if (!now.count(kv.first)) Out("dungeonprobe diff " + kv.first + " " + kv.second + "->(absent)");
+    }
+    g_DpVars.swap(now);
+}
+static void DungeonProbeStatus()
+{
+    Out(std::string("dungeonprobe: ") + (g_DpOn ? "on" : "off")
+        + " | chests=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Dungeon_Chest_obj))
+        + " kills=" + std::to_string(ForgePact::DungeonChest::state.tally.kills)
+        + " killHook=" + DungeonChestHookState()
+        + " chestVars=" + std::to_string(g_DpChestVars)
+        + " watched=" + std::to_string(g_DpWatched.size()));
+    for (const DpBuiltin& b : g_DpBuiltins) {
+        Out(std::string("dungeonprobe builtin ") + b.name + " calls=" + std::to_string(b.calls)
+            + " hook=" + (!b.attempted ? "not-asked" : b.hooked ? "installed" : "failed"));
+        for (int k = 0; k < 3; ++k)
+            Out(std::string("dungeonprobe builtin ") + b.name + " self=" + DpObjectName((int)kDpWatchedObjects[k])
+                + " calls=" + std::to_string(b.watchedCalls[k]));
+    }
+    for (const auto& kv : g_DpSelfRows) Out("dungeonprobe builtin " + kv.first + " calls=" + std::to_string(kv.second));
+    for (const DpChatHook& h : g_DpChat)
+        Out(std::string("dungeonprobe chathook ") + h.script + " calls=" + std::to_string(h.calls)
+            + " self=" + h.self + " args=" + h.args
+            + " hook=" + (!h.attempted ? "not-asked" : !h.hooked ? "failed" : h.native ? "native" : "table-only"));
+    Out("dungeonprobe chat objects Ingame_Chat_obj=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Ingame_Chat_obj))
+        + " UI_Ingame_Chat_obj=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::UI_Ingame_Chat_obj))
+        + " Chat_obj=" + std::to_string(DpCount(HeroSiege::Objects::GameObject::Chat_obj)));
+}
+static void DungeonProbeCommand(const std::string& rest)
+{
+    std::string tail;
+    const std::string sub = Lower(FirstToken(TrimCopy(rest), tail));
+    if (sub.empty() || sub == "status") { DungeonProbeStatus(); return; }
+    if (sub == "on") {
+        g_DpOn = true;
+        ForgePact::DungeonChest::state.observe.store(true);
+        DungeonChestInstall();   // the kill hook: kills= counts through it
+        DpInstallBuiltins();
+        DpInstallChatHooks();
+        g_DpLastMs = -1000.0;
+        Out(std::string("dungeonprobe: on - one line a second while the room holds a dungeon chest; killHook=")
+            + DungeonChestHookState() + " (`dungeonprobe status` lists every counter)");
+        return;
+    }
+    if (sub == "off") {
+        g_DpOn = false;
+        ForgePact::DungeonChest::state.observe.store(false);
+        if (!ForgePact::DungeonChest::Active(ForgePact::DungeonChest::state))
+            ForgePact::DungeonChest::ResetTally(ForgePact::DungeonChest::state.tally);
+        g_DpWatched.clear();
+        Out("dungeonprobe: off (the hooks stay installed and keep their counts)");
+        return;
+    }
+    if (sub == "dump") {
+        std::map<std::string, std::string> now;
+        DpReadVars(now, g_DpChestVars);
+        for (const auto& kv : now) {
+            const size_t sp = kv.first.find(' ');
+            Out("dungeonprobe var " + kv.first.substr(0, sp) + " " + kv.first.substr(sp + 1) + "=" + kv.second);
+        }
+        Out("dungeonprobe: dump " + std::to_string(now.size()) + " variables, chestVars=" + std::to_string(g_DpChestVars));
+        return;
+    }
+    if (sub == "chat") {
+        std::string arg;
+        const std::string what = Lower(FirstToken(TrimCopy(tail), arg));
+        if (what == "control") { DpChatControl(); return; }
+        if (what == "list") { DpChatList(); return; }
+        if (what == "try") {
+            int n = 0;
+            try { size_t k = 0; const std::string a = TrimCopy(arg); n = std::stoi(a, &k); if (k != a.size()) n = 0; } catch (...) { n = 0; }
+            DpChatTry(n);
+            return;
+        }
+    }
+    Out("dungeonprobe: usage dungeonprobe on|off|status|dump, or dungeonprobe chat control|list|try <n>");
+}
+#endif // FORGEPACT_RELEASE (dungeonprobe)
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -45896,7 +46564,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident"
+        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -46002,6 +46670,8 @@ static void RunCommand(const std::string& line)
     // Bosses control research (issue #44): the same standalone early returns.
     if (lc == "bossprobe") { BossProbeCommand(rest); return; }
     if (lc == "droptrace") { DropTraceCommand(rest); return; }
+    // Dungeon chest research (issue #31): the same standalone early return.
+    if (lc == "dungeonprobe") { DungeonProbeCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -46046,6 +46716,9 @@ static void RunCommand(const std::string& line)
     if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
     // Bosses (Mods > Gameplay): the select's command, the same early return.
     if (lc == "bossrarity") { BossRarityCommand(rest); return; }
+    // Dungeon chest opens early (Mods > Gameplay): the switch-and-slider's
+    // command and the countdown form, the same early return.
+    if (lc == "dungeonchest") { DungeonChestCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -47454,6 +48127,15 @@ void FrameCallback(FWFrame& FrameContext)
     // while the show key is held (HiddenLootMod.hpp). Returns at once while
     // it is off.
     if (g_Setup) HiddenLootTick();
+
+    // Dungeon chest opens early, toggled by `dungeonchest <pct>`: the
+    // once-a-second poll of the room's chest and monsters, under its own
+    // throttle (DungeonChestTick). Returns at once while it is off.
+    if (g_Setup) DungeonChestTick();
+#ifndef FORGEPACT_RELEASE
+    // Its research probe's once-a-second census, after the tally's own poll.
+    if (g_Setup) DungeonProbeTick();
+#endif
 
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll

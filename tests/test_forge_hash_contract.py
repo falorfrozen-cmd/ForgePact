@@ -107,6 +107,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # plugin's own counters, changes nothing in the game
     # (test_incident_monitor_contract.py pins it).
     "incident",
+    # Dungeon chest opens early, Mods > Gameplay (ForgePact #31;
+    # test_dungeon_chest_behavior.py pins its decision and refusals).
+    "dungeonchest",
 }
 
 
