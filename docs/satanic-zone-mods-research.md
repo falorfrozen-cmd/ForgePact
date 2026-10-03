@@ -214,10 +214,12 @@ even when the player is in it (store = 235 = the town, player in the town:
 false). So the answer is not a plain "player room == store"; eligibility and/or
 more state are involved. Forcing the answer true everywhere (`satforce on`) in
 town changed nothing visible — `playerBuff` identical, HUD identical,
-before/after screenshots identical — so the zone's effects are event- or
-entry-driven, not a per-frame application of the answer. The strongest
-candidate consumer chain is the kill path (`ProjectileKill00Universal` ->
-`EnemyKillSatanicZoneRelic`/`Feast`, `docs/models/relic-pick-spec.md`).
+before/after screenshots identical — but that was a room the call answers false
+for anyway, and no positive control was run in an eligible zone, so *whether*
+the effects are event/entry-driven rather than per-frame is **not established**:
+the town may equally be excluded by a second check. The kill path
+(`ProjectileKill00Universal` -> `EnemyKillSatanicZoneRelic`/`Feast`,
+`docs/models/relic-pick-spec.md`) is an untested candidate consumer.
 
 **`satforce` (new research command, dev build only).** `satforce 1|0|off`
 makes every `LoadSatanicZone` call return true/false to its caller; it force-
