@@ -119,6 +119,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
   { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
+  { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
 // child row), derived as #mod_skill_timer_style is but with literals, since no
