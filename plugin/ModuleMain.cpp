@@ -41547,14 +41547,18 @@ static void RunCommand(const std::string& line)
             Out(std::string("satforce stat: ") + (g_SatForceReturn < 0 ? "off (the game's own answers)"
                 : (g_SatForceReturn ? "every call -> true" : "every call -> false"))
                 + " g_SatLoadCalls=" + std::to_string(g_SatLoadCalls));
-        } else if (v == "off" || v == "0" || v == "false" || v == "no") {
+        } else if (v == "off" || v == "no") {
             g_SatForceReturn = -1;
             Out("satforce -> off (the game's own answers)");
-        } else {
-            g_SatForceReturn = (v == "true" || v == "on" || v == "1" || v == "yes") ? 1 : 0;
+        } else if (v == "on" || v == "true" || v == "1" || v == "yes" || v == "0" || v == "false") {
+            // `0`/`false` force false; only `off`/`no` disable the forcing
+            // (review of #156 caught `0` falling into the off branch).
+            g_SatForceReturn = (v == "0" || v == "false") ? 0 : 1;
             const bool hooked = EnsureSatanicZoneHook();
             Out(std::string("satforce -> every call returns ") + (g_SatForceReturn ? "true" : "false")
                 + (hooked ? " (LoadSatanicZone hook on)" : " (HOOK COULD NOT INSTALL)"));
+        } else {
+            Out("satforce: usage -> satforce 1|0|off  (no argument = status)");
         }
         return;
     }
