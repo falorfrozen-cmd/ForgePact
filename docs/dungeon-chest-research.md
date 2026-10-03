@@ -215,14 +215,23 @@ sub-commands under [Chat route](#chat-route).
   one's variables by name (`variable_instance_get_names` /
   `variable_instance_get`, the chest census's route) and keeps every numeric
   value in memory, keyed by instance and name. It prints `dungeonprobe
-  creators: first-sight alive0=<n> creators=<n> sampled=8 names=<n>` and the
+  creators: first-sight alive0=<n> births0=<n> spawned0=<n> creators=<n>
+  sampled=8 names=<n>` and the
   full dump of the first 8 creators as `dungeonprobe cvar <object>#<k>
   <name>=<value>` lines, with `builtin:alarm[0..2]` and `enemyCreatorTimer`.
+  The census runs at the probe's first once-a-second tick that sees the
+  chest, up to a second after the room's first birth started the births
+  count: `births0` is the births already counted then (those monsters are in
+  `alive0` too) and `spawned0` the census creators that had already fired, so
+  their first-sight values are after-spawn ones.
   The `dungeonprobe creators` command then prints `alive0`, `creators`,
-  `births`, `spawned` and `kills`; one `dungeonprobe cand <name> sum0=<sum at
-  first sight> now=<sum now> match=<m>/<s>` row per numeric name present on at
-  least 90 % of the creators (`m` = creators whose first-sight value equals the
-  births they made, `s` = creators that made at least one); and the
+  `births`, `births0`, `birthsSince` (`births − births0`), `spawned`,
+  `spawned0` and `kills`; one `dungeonprobe cand <name> sum0=<sum at first
+  sight> now=<sum now> match=<m>/<s> sum0Pending=<sum over the creators with
+  no birth before the census> matchPending=<m'>/<s'>` row per numeric name
+  present on at least 90 % of the creators (`m` = creators whose first-sight
+  value equals the births they made, `s` = creators that made at least one;
+  `m'`/`s'` the same over the creators pending at the census only); and the
   `dungeonprobe cdiff <object>#<k> <name> <old>-><new>` rows of the sampled
   creators since first sight, which separate a spawner that has fired from one
   still pending. Rows print at zero.
@@ -413,7 +422,13 @@ After the last kill, `status` listed every argument the chest polled through
 `Loot_Ground_obj` 12, `objZoneGenV2` 12, `Controller_obj` 3,
 `Menu_Controller_obj` 2, `Client_obj`, `Codex_Controller_obj` and
 `Infernal_Codex_Controller_obj` 1 each. The chest's rows for
-`instance_number`, `instance_find` and `instance_place` stayed at 0. The
+`instance_find` and `instance_place` stayed at 0, and those zeros are
+evidence: both detours saw the game's own calls (`gameCalls=631489` and
+`6422`). The chest's `instance_number` row also read 0, but that row was
+blind: `instance_number calls=18754 gameCalls=0 ownCalls=574`, so the detour
+attributed no call to any game `self` in the whole session, and the control's
+`calls=1` was ForgePact's own `CallBuiltinEx` call, not the route compiled
+GML takes. Whether the chest polls `instance_number` is not observed. The
 open, about 13 s after the last kill, changed only `builtin:sprite_index`
 (Closed → Open), `builtin:image_index` and `builtin:image_speed`; no user
 variable moved.
@@ -471,8 +486,9 @@ before it is installed.
      Key at the Pumpkin Cellar entrance (one action). Expected within 2 s: the
      first `dungeonprobe: room=… alive=N creators=C blockers=B kills=0
      births=… spawned=…` line, the chest `var` block, `dungeonprobe control:
-     PASS …`, `dungeonprobe creators: first-sight alive0=N creators=C
-     sampled=8 names=<n>` and the `cvar` block for 8 creators.
+     PASS …`, `dungeonprobe creators: first-sight alive0=N births0=B0
+     spawned0=S0 creators=C sampled=8 names=<n>` and the `cvar` block for 8
+     creators.
   4. After about 10 s standing still: `dungeonprobe creators` → the `cand`
      rows (zero `match` is fine now) and the `cdiff` rows of the sampled
      creators that fired near the entrance (`creator-state`); the per-second
@@ -482,9 +498,10 @@ before it is installed.
      rising as packs arrive, `creators=` constant; at the end `alive=0`, the
      `nearest` diff, then the open's sprite diffs.
   6. `dungeonprobe creators` → with kills to clear K and `alive0`, the `cand`
-     rows: a name with `sum0` = K (or `alive0 + sum0 over pending` = K) within
-     2 % (`creator-sum`), its `match=m/s` (`creator-match`), `births=` against
-     K − alive0 (`kills-equal-births`).
+     rows: a name with `sum0` = K (or `alive0 + sum0Pending` = K) within
+     2 % (`creator-sum`), its `match=m/s`, or `matchPending=m'/s'` when
+     `spawned0` > 0 (`creator-match`), `birthsSince=` against K − alive0
+     (`kills-equal-births`).
   7. `dungeonprobe status` → the builtin rows (`builtin-poll` again:
      `instance_exists self=Dungeon_Chest_obj arg=Enemy_Parent_obj calls>0`),
      `killHook=ok killNotEnemySelf=0` (`kill-hook-fires`).
@@ -502,7 +519,7 @@ before it is installed.
       next milestone (40) one screenshot showing the chat line `Chest: 40
       kills to go` and the head label (`chat-countdown-seen`).
   12. Person: kill to 300. Expected in `out.txt`: `dungeonchest: unlocked
-      early at 300/300 alive=N` with N > 0, a chat line `Chest: ready to
+      early at 300/600 alive=N` (kills over the total) with N > 0, a chat line `Chest: ready to
       open`, the label gone; `dungeonchest status` → `latched=1 unlocked=1
       answered=<n>` with n > 0 (`poll-answered`).
   13. Person: walk to the chest and open it while `status` shows `alive=` > 0
@@ -527,11 +544,17 @@ before it is installed.
   `sampled=8 names=n` with n ≥ 1: pass with C, n and the sampled names, else
   fail); `births-hook-fires` (`births=` ≥ 30 by step 4 with `kills=0`: pass
   with the number, else fail — then `kills-equal-births` and `creator-match`
-  are not-observed, never fail); `kills-equal-births` (K vs `births` + alive0
-  within ±2 at the clear); `creator-sum` (pass with the name, the reading that
-  matched and both sums, else not-observed with the three nearest
-  candidates); `creator-match` (pass with `m/s` ≥ 90 %, else not-observed with
-  the best row); `creator-state` (pass with the variable(s) that differed
+  are not-observed, never fail); `kills-equal-births` (K vs alive0 +
+  `birthsSince` within ±2 at the clear, `birthsSince` = `births` − `births0`
+  from step 6's header, so a monster born before the census is not counted
+  twice; K vs `births` alone also passes when every monster came from a
+  creator); `creator-sum` (pass with the name, the reading that matched — `sum0`
+  over every creator, or alive0 + `sum0Pending` over the creators pending at
+  the census — and both sums, else not-observed with the three nearest
+  candidates); `creator-match` (pass with `m/s` ≥ 90 %, or with
+  `matchPending=m'/s'` ≥ 90 % when `spawned0` > 0, since a creator that fired
+  before the census has after-spawn first-sight values; else not-observed
+  with the best row); `creator-state` (pass with the variable(s) that differed
   between a fired sampled creator and a pending one, else not-observed);
   `boss-dungeon`; `on-status-research` (step 9 line, pass/fail with the line);
   `countdown-head-seen` (step 11 screenshot); `chat-countdown-seen` (step 11
@@ -558,8 +581,10 @@ Reading it into tokens:
 - `unlock-route: builtin` is confirmed when `unlock-works` passes;
   `unlock-route: builtin-insufficient` when it fails with `latched=1
   unlocked=1 answered>0` (the detour answered and the chest still did not
-  open: the next candidates are the `GPV` key the chest's Step reads and its
-  Alarm 0 path); `unlock-route: instrument` when `answered=0` (the detour did
+  open: the next candidates are the `GPV` key the chest's Step reads, its
+  Alarm 0 path, and an `instance_number` poll the probe cannot attribute,
+  since Live 1's `instance_number` row was blind with `gameCalls=0`);
+  `unlock-route: instrument` when `answered=0` (the detour did
   not reach the chest's call: check the `unlock=` state and the `self`
   pointer match first).
 - `countdown-head-seen` and `chat-countdown-seen` are observations for the
@@ -674,8 +699,14 @@ is answered `false`, every other call untouched, and the game's Step, its
 Sufficiency is indicated, not proven: the chest's Step also reads `GPV` and
 has an Alarm 0. It is measured in Live procedure 1b (`unlock-works`: the chest
 must open with monsters alive). If it fails with `answered>0`, the token
-becomes `unlock-route: builtin-insufficient` and those two are the next
-candidates, in that order; with `answered=0` it is `unlock-route:
+becomes `unlock-route: builtin-insufficient` and the next candidates are, in
+that order, the `GPV` key, the Alarm 0 path, and an `instance_number` poll by
+the chest. That last one is not ruled out: Live 1's `instance_number` detour
+attributed no call to any game `self` (`gameCalls=0`), so its zero chest row
+measured nothing, and an `instance_number(Enemy_Parent_obj)` poll the probe
+cannot attribute stays a candidate until an instrument that sees the game's
+`instance_number` calls says otherwise (`status` now marks such a row
+`(blind: gameCalls=0 …)`). With `answered=0` it is `unlock-route:
 instrument`, a defect in our detour rather than a finding about the game.
 
 ## Chat route

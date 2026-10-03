@@ -46874,10 +46874,20 @@ static void DpReadVars(std::map<std::string, std::string>& now, long& chestVars)
 //     and what the sampled creators changed since first sight (`cdiff`).
 // Every row prints at zero, so a census or a births count that sees nothing
 // shows as zeros rather than silence.
-struct DpCreator { int id = -1; int object = -1; int k = 0; bool sampled = false; };
+// The births count starts at the room's first birth and the census runs at
+// the probe's first tick that sees the chest, up to a second later: a monster
+// born in between is in both `births` and `alive0`, and a creator that fired
+// in between has its after-spawn values recorded as first-sight ones. So the
+// census keeps the births at that moment (`births0`, `spawned0`) and each
+// creator's own births then (`DpCreator::births0`): kills are compared with
+// alive0 + (births - births0), and the `cand` rows carry a pending-only sum
+// and match over the creators with no birth before the census.
+struct DpCreator { int id = -1; int object = -1; int k = 0; bool sampled = false; long births0 = 0; };
 static constexpr int kDpCreatorSample = 8;
 static bool g_DpCensusDone = false;
 static long g_DpAlive0 = 0;
+static long g_DpBirths0 = 0;   // births in this room at the census
+static long g_DpSpawned0 = 0;  // census creators with a birth before the census
 static std::vector<DpCreator> g_DpCreators;                            // first sight, in census order
 static std::map<std::pair<int, std::string>, double> g_DpCreatorNums;  // (id, name) -> numeric value at first sight
 static std::map<std::string, long> g_DpCreatorNameCount;               // numeric name -> creators carrying it at first sight
@@ -46924,6 +46934,8 @@ static void DpClearCreators()
 {
     g_DpCensusDone = false;
     g_DpAlive0 = 0;
+    g_DpBirths0 = 0;
+    g_DpSpawned0 = 0;
     g_DpCreators.clear();
     g_DpCreatorNums.clear();
     g_DpCreatorNameCount.clear();
@@ -46973,6 +46985,7 @@ static void DpCreatorCensus(long alive0)
     DpClearCreators();
     g_DpCensusDone = true;
     g_DpAlive0 = alive0;
+    g_DpBirths0 = DpBirthsHere();
     std::map<int, int> perObject;
     int sampled = 0;
     for (int obj : DpCreatorObjects()) {
@@ -46988,6 +47001,8 @@ static void DpCreatorCensus(long alive0)
                 RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
                 c.object = IsNumericInstanceRead(oi) ? (int)oi.ToDouble() : obj;
                 c.k = perObject[c.object]++;
+                c.births0 = c.id >= 0 ? DpBirthsOf(c.id) : 0;
+                if (c.births0 > 0) ++g_DpSpawned0;
                 c.sampled = sampled < kDpCreatorSample;
                 if (c.sampled) ++sampled;
                 std::map<std::pair<int, std::string>, double> nums;
@@ -47002,6 +47017,8 @@ static void DpCreatorCensus(long alive0)
         Out("dungeonprobe cvar " + kv.first.substr(0, sp) + " " + kv.first.substr(sp + 1) + "=" + kv.second);
     }
     Out("dungeonprobe creators: first-sight alive0=" + std::to_string(alive0)
+        + " births0=" + std::to_string(g_DpBirths0)
+        + " spawned0=" + std::to_string(g_DpSpawned0)
         + " creators=" + std::to_string(g_DpCreators.size())
         + " sampled=" + std::to_string(sampled)
         + " names=" + std::to_string(g_DpCreatorNameCount.size()));
@@ -47016,10 +47033,14 @@ static void DpCreatorsStatus()
 {
     DcOwnBuiltinCall ownCalls;
     const long creators = (long)g_DpCreators.size();
+    const long birthsNow = DpBirthsHere();
     Out("dungeonprobe creators: alive0=" + std::to_string(g_DpAlive0)
         + " creators=" + std::to_string(creators)
-        + " births=" + std::to_string(DpBirthsHere())
+        + " births=" + std::to_string(birthsNow)
+        + " births0=" + std::to_string(g_DpBirths0)
+        + " birthsSince=" + std::to_string(g_DpCensusDone ? birthsNow - g_DpBirths0 : 0)
         + " spawned=" + std::to_string(DpSpawnedHere())
+        + " spawned0=" + std::to_string(g_DpSpawned0)
         + " kills=" + std::to_string(ForgePact::DungeonChest::state.tally.kills)
         + (g_DpCensusDone ? "" : " (no census yet: it runs at a dungeon chest's first sight while the probe is on)"));
     std::vector<bool> exists;
@@ -47027,8 +47048,8 @@ static void DpCreatorsStatus()
     const long spawned = DpSpawnedHere();
     for (const auto& name : g_DpCreatorNameCount) {
         if (creators <= 0 || name.second * 10 < creators * 9) continue;
-        double sum0 = 0.0, sumNow = 0.0;
-        long match = 0;
+        double sum0 = 0.0, sumNow = 0.0, sum0Pending = 0.0;
+        long match = 0, matchPending = 0, spawnedPending = 0;
         for (size_t i = 0; i < g_DpCreators.size(); ++i) {
             const DpCreator& c = g_DpCreators[i];
             auto it = g_DpCreatorNums.find({ c.id, name.first });
@@ -47036,6 +47057,14 @@ static void DpCreatorsStatus()
             sum0 += it->second;
             const long births = DpBirthsOf(c.id);
             if (births > 0 && it->second == (double)births) ++match;
+            // Pending at the census: no birth yet, so its first-sight value is a before-spawn one.
+            if (c.births0 == 0) {
+                sum0Pending += it->second;
+                if (births > 0) {
+                    ++spawnedPending;
+                    if (it->second == (double)births) ++matchPending;
+                }
+            }
             if (!exists[i]) continue;
             try {
                 double now = 0.0;
@@ -47043,7 +47072,9 @@ static void DpCreatorsStatus()
             } catch (...) {}
         }
         Out("dungeonprobe cand " + name.first + " sum0=" + DpShort(RValue(sum0)) + " now=" + DpShort(RValue(sumNow))
-            + " match=" + std::to_string(match) + "/" + std::to_string(spawned));
+            + " match=" + std::to_string(match) + "/" + std::to_string(spawned)
+            + " sum0Pending=" + DpShort(RValue(sum0Pending))
+            + " matchPending=" + std::to_string(matchPending) + "/" + std::to_string(spawnedPending));
     }
     for (size_t i = 0; i < g_DpCreators.size(); ++i) {
         const DpCreator& c = g_DpCreators[i];
@@ -47183,9 +47214,13 @@ static void DungeonProbeStatus()
             + " gameCalls=" + std::to_string(b.gameCalls) + " ownCalls=" + std::to_string(b.ownCalls)
             + " hook=" + (!b.attempted ? "not-asked" : b.hooked ? "installed" : "failed")
             + (&b == &g_DpBuiltins[1] ? " (the dungeon chest's unlock detour)" : ""));
+        // A detour that attributed no call to any game self cannot show a
+        // watched self's call either: its zero rows say so, rather than read as
+        // a measured "never called".
         for (int k = 0; k < 3; ++k)
             Out(std::string("dungeonprobe builtin ") + b.name + " self=" + DpObjectName((int)kDpWatchedObjects[k])
-                + " calls=" + std::to_string(b.watchedCalls[k]));
+                + " calls=" + std::to_string(b.watchedCalls[k])
+                + (b.gameCalls == 0 ? " (blind: gameCalls=0, no game self seen by this detour)" : ""));
     }
     // What the unlock detour did: the chest's polls it answered `false`, every room.
     Out("dungeonprobe builtin instance_exists self=Dungeon_Chest_obj arg=Enemy_Parent_obj answered="
