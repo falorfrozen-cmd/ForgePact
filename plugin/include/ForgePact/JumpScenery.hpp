@@ -1,0 +1,461 @@
+#pragma once
+
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace ForgePact::JumpSceneryMod {
+
+// ---- Jump through scenery: the decision core (ForgePact #16) ---------------
+//
+// `jumpscenery 1` lets the local player's universal jump get over rocks,
+// fences, carts and other scenery that stops it today, and only when the jump
+// would land on open ground inside the room. Otherwise the game keeps its own
+// answer, so a refused jump is the vanilla jump.
+//
+// What the game does (docs/jump-scenery-research.md, Live 1): in the take-off
+// frame the jump walks along its direction in steps of about 4 px, asking at
+// each step collision_circle(cx, cy, 15, Wall_Parent_obj, ...) and
+// instance_position at two points beside it against Collision_Parent_obj. A
+// blocked step stops the jump. While airborne the jump script skillsLeap runs
+// every frame. Answering the five builtins below "no collision" for the
+// player, against the Collision_Parent_obj family, lets the jump cross.
+//
+// The rule this header decides:
+//   - the window: a family query whose self is the local player is inside it
+//     when the latest player skillsLeap entry was this frame or the previous
+//     one. That is checked on the query itself, at the point of use, so the
+//     window lasts exactly as long as the jump. An entry after a gap of two
+//     frames or more starts a new jump.
+//   - the original runs first. A free answer is returned as it is.
+//   - each jump is decided once, at its first really-blocked family query:
+//     direction from the walk's first two circle centres, reach from a recent
+//     clear jump, landing = take-off + reach x direction. The landing and the
+//     points kLandingBandPx before and after it must be inside the room and
+//     free of the family (the original place_meeting). Granted, or refused.
+//   - a granted jump answers each really-blocked family query of its window
+//     with the builtin's measured "no collision", except where a gate or a
+//     lock (the excluded objects) is what blocks it, or is what it names.
+//
+// It is game-independent by contract - frame numbers, object indices,
+// coordinates and booleans, never an instance or an RValue - so
+// tests/jump_scenery_mod_harness.cpp compiles it whole. The adapter in
+// ModuleMain.cpp supplies the frame, whether a call's self is the local
+// player, the object argument, the original's own answer, whether an excluded
+// object blocks the same query (the same original, same arguments and self,
+// against each excluded object), the original place_meeting at a point, the
+// room size and the player position; it resolves every object, script and
+// builtin by name.
+
+// What a hooked call gets back. Real keeps the game's own answer; the other
+// two are written into the result instead (measured in Live 1's J3).
+enum class Answer : int {
+    Real,
+    Noone,   // the instance-returning queries: no instance there
+    False,   // the boolean meeting queries: nothing met
+};
+
+inline constexpr std::string_view AnswerName(Answer a)
+{
+    switch (a) {
+    case Answer::Real:  return "real";
+    case Answer::Noone: return "noone";
+    case Answer::False: return "false";
+    }
+    return "?";
+}
+
+// GameMaker's `noone`, the value an instance-returning query answers when it
+// finds nothing. The game's own comes back as a ref to instance -4.
+inline constexpr double kNoone = -4.0;
+
+// The five builtins whose answers crossed a jump in Live 1's J3. `objectArg`
+// is the position of the object argument.
+enum class Builtin : int { PositionMeeting, PlaceMeeting, InstancePosition, CollisionLine, CollisionCircle };
+inline constexpr int kBuiltinCount = 5;
+
+struct BuiltinRow {
+    std::string_view name;
+    int              objectArg;
+    Answer           answer;
+};
+
+inline constexpr BuiltinRow kBuiltins[kBuiltinCount] = {
+    { "position_meeting",  2, Answer::False },
+    { "place_meeting",     2, Answer::False },
+    { "instance_position", 2, Answer::Noone },
+    { "collision_line",    4, Answer::Noone },
+    { "collision_circle",  3, Answer::Noone },
+};
+
+// A jump that moved less than this is a hop on the spot, not a reach.
+inline constexpr double kMinReachPx = 32.0;
+// The landing is checked here before and after the landing point too.
+inline constexpr double kLandingBandPx = 16.0;
+// A query is inside the window while frame - last entry < this.
+inline constexpr int64_t kWindowFrames = 2;
+// Two walk circles closer than this give no direction.
+inline constexpr double kMinDirectionPx = 0.001;
+// The family table forgets everything once it holds this many objects, so an
+// adapter that passes something other than an object index cannot grow it
+// without bound.
+inline constexpr size_t kFamilyTableMax = 65536;
+
+enum class Decision : int { Undecided, Granted, RefusedLanding, RefusedRoom, RefusedNoReach };
+
+// What `jumpscenery stat` prints. Kept across off/on.
+struct Counters {
+    uint64_t jumps = 0;           // the player's jumps the mod saw start while on
+    uint64_t granted = 0;         // jumps let through
+    uint64_t answered = 0;        // queries answered "no collision"
+    uint64_t refusedLanding = 0;  // landing (or its band) blocked, or the take-off unreadable
+    uint64_t refusedRoom = 0;     // landing (or its band) outside the room, or the room unreadable
+    uint64_t refusedNoReach = 0;  // no clear jump to learn the reach from yet
+    uint64_t noDirection = 0;     // a blocked query before the walk gave two circles (left undecided)
+    uint64_t landedInside = 0;    // a granted jump that ended inside the family
+    uint64_t beforeOpen = 0;      // blocked family queries in a take-off frame before its window opened
+    uint64_t excluded = 0;        // granted-window queries a gate or lock blocked, or named
+};
+
+// One hooked builtin call, after the original ran.
+struct Query {
+    Builtin builtin;
+    int64_t frame;
+    bool    playerSelf;      // the call's self is the local player
+    int     object;          // the object argument; -1 when it is not an object index
+    bool    reallyBlocked;   // the original's own answer: an instance, or true
+    double  x = 0.0;         // collision_circle's centre; unused by the other rows
+    double  y = 0.0;
+};
+
+class Mod {
+public:
+    // Is `ancestor` an ancestor of `object`? (object_is_ancestor: an object
+    // is not its own ancestor.) Asked once per object, then remembered.
+    using IsAncestorFn = std::function<bool(int object, int ancestor)>;
+    // The original place_meeting(x, y, Collision_Parent_obj) with the player
+    // as self: true when the family is there.
+    using PlaceMeetingFn = std::function<bool(double x, double y)>;
+    // room_width / room_height; false when they cannot be read.
+    using RoomSizeFn = std::function<bool(double& width, double& height)>;
+    // The local player's x / y; false when it cannot be read.
+    using PositionFn = std::function<bool(double& x, double& y)>;
+
+    void SetIsAncestor(IsAncestorFn fn) { isAncestor_ = std::move(fn); familyTable_.clear(); }
+
+    // The family (Collision_Parent_obj) and the excluded objects (Gate_Parent_obj,
+    // Lock_obj), as indices the adapter resolved by name. A -1 in either means
+    // a name did not resolve, and the mod then answers for nothing.
+    void SetFamily(int family, std::vector<int> excluded)
+    {
+        family_ = family;
+        excluded_ = std::move(excluded);
+        familyTable_.clear();
+    }
+
+    void SetPlaceMeeting(PlaceMeetingFn fn) { placeMeeting_ = std::move(fn); }
+    void SetRoomSize(RoomSizeFn fn) { roomSize_ = std::move(fn); }
+    void SetPlayerPosition(PositionFn fn) { playerPosition_ = std::move(fn); }
+
+    bool Configured() const
+    {
+        if (family_ < 0) return false;
+        for (int e : excluded_) if (e < 0) return false;
+        return true;
+    }
+
+    // `jumpscenery 1|0`. Any jump in progress is dropped either way; the
+    // reach and the counters stay.
+    void SetEnabled(bool on)
+    {
+        if (on == enabled_) return;
+        enabled_ = on;
+        DropJump();
+    }
+    bool Enabled() const { return enabled_; }
+
+    // The local player's identity, whenever the adapter resolves it. A
+    // different player (another character loaded) has another Jump Power, so
+    // the reach is forgotten.
+    void NotePlayer(int64_t id)
+    {
+        if (havePlayer_ && id == player_) return;
+        havePlayer_ = true;
+        player_ = id;
+        haveReach_ = false;
+        reach_ = 0.0;
+        DropJump();
+    }
+
+    // A skillsLeap entry, before the original runs (so a walk inside its
+    // first call is inside the window). True when it counted: the mod is on
+    // and the self is the local player.
+    bool OnLeapEntry(int64_t frame, bool playerSelf)
+    {
+        if (!enabled_ || !playerSelf) return false;
+        if (!WindowOpen(frame)) {
+            if (jump_.active) CloseJump();
+            StartJump(frame);
+        }
+        jump_.lastEntry = frame;
+        return true;
+    }
+
+    bool WindowOpen(int64_t frame) const
+    {
+        return enabled_ && jump_.active && frame >= jump_.lastEntry && frame - jump_.lastEntry < kWindowFrames;
+    }
+
+    // One hooked builtin call, after its original ran. `excludedBlocks()`
+    // runs the same original against each excluded object and says whether
+    // any of them is there; it is called only for a really-blocked family
+    // query inside a granted window.
+    template <class ExcludedBlocksFn>
+    Answer OnQuery(const Query& q, ExcludedBlocksFn&& excludedBlocks)
+    {
+        const int i = static_cast<int>(q.builtin);
+        if (!enabled_ || !q.playerSelf || i < 0 || i >= kBuiltinCount || !Configured()) return Answer::Real;
+        const Class c = Classify(q.object);
+        if (!c.family && !c.excluded) return Answer::Real;
+        if (!WindowOpen(q.frame)) {
+            if (q.reallyBlocked && c.family) NotePendingBlocked(q.frame);
+            return Answer::Real;
+        }
+        if (q.frame == jump_.takeoffFrame && c.family) {
+            if (q.builtin == Builtin::CollisionCircle && jump_.circles < 2) {
+                jump_.circleX[jump_.circles] = q.x;
+                jump_.circleY[jump_.circles] = q.y;
+                ++jump_.circles;
+            }
+            if (q.reallyBlocked) jump_.takeoffBlocked = true;
+        }
+        if (!q.reallyBlocked) return Answer::Real;
+        if (c.excluded) {
+            if (jump_.decision == Decision::Granted) ++counters_.excluded;
+            return Answer::Real;
+        }
+        if (jump_.decision == Decision::Undecided) Decide();
+        if (jump_.decision != Decision::Granted) return Answer::Real;
+        bool gate = true;
+        try { gate = static_cast<bool>(excludedBlocks()); } catch (...) { gate = true; }
+        if (gate) {
+            ++counters_.excluded;
+            return Answer::Real;
+        }
+        ++counters_.answered;
+        ++jump_.answered;
+        return kBuiltins[i].answer;
+    }
+
+    // The per-frame tick: housekeeping only. Once a jump's window has closed
+    // it records the landing, learns the reach and counts landed-inside=.
+    // Returns at once while off.
+    void Tick(int64_t frame)
+    {
+        if (!enabled_) return;
+        if (jump_.active && !WindowOpen(frame)) CloseJump();
+    }
+
+    bool HasReach() const { return haveReach_; }
+    double Reach() const { return reach_; }
+    const Counters& Stats() const { return counters_; }
+    Decision JumpDecision() const { return jump_.decision; }
+    bool JumpActive() const { return jump_.active; }
+
+    // `jumpscenery 1` / `jumpscenery 0`.
+    std::string StatusLine() const { return enabled_ ? "jumpscenery: on" : "jumpscenery: off"; }
+
+    // Bare `jumpscenery` / `jumpscenery stat`.
+    std::string StatLine() const
+    {
+        const Counters& c = counters_;
+        std::string s = StatusLine();
+        s += " reach=" + (haveReach_ ? std::to_string(std::llround(reach_)) : std::string("none"));
+        s += " jumps=" + std::to_string(c.jumps);
+        s += " granted=" + std::to_string(c.granted);
+        s += " answered=" + std::to_string(c.answered);
+        s += " refused-landing=" + std::to_string(c.refusedLanding);
+        s += " refused-room=" + std::to_string(c.refusedRoom);
+        s += " refused-no-reach=" + std::to_string(c.refusedNoReach);
+        s += " no-direction=" + std::to_string(c.noDirection);
+        s += " landed-inside=" + std::to_string(c.landedInside);
+        s += " before-open=" + std::to_string(c.beforeOpen);
+        s += " excluded=" + std::to_string(c.excluded);
+        double w = 0.0, h = 0.0;
+        if (ReadRoom(w, h))
+            s += " room=" + std::to_string(std::llround(w)) + "x" + std::to_string(std::llround(h));
+        else
+            s += " room=unknown";
+        return s;
+    }
+
+private:
+    struct Class { bool family = false; bool excluded = false; };
+
+    struct Jump {
+        bool active = false;
+        int64_t takeoffFrame = 0;
+        int64_t lastEntry = 0;
+        bool haveTakeoff = false;
+        double takeoffX = 0.0, takeoffY = 0.0;
+        int circles = 0;
+        double circleX[2] = { 0.0, 0.0 };
+        double circleY[2] = { 0.0, 0.0 };
+        bool takeoffBlocked = false;   // a really-blocked family query in the take-off frame
+        uint64_t answered = 0;
+        Decision decision = Decision::Undecided;
+    };
+
+    // The object's own index or one of its descendants. A failed ancestry
+    // question is "no" for the family and "yes" for the exclusion: either
+    // way the query keeps the game's answer.
+    bool IsOrDescends(int object, int ancestor, bool onFailure) const
+    {
+        if (object == ancestor) return true;
+        if (!isAncestor_) return false;
+        try { return isAncestor_(object, ancestor); } catch (...) { return onFailure; }
+    }
+
+    Class Classify(int object)
+    {
+        if (object < 0) return Class{};
+        const auto it = familyTable_.find(object);
+        if (it != familyTable_.end()) return Class{ (it->second & 1) != 0, (it->second & 2) != 0 };
+        Class c;
+        c.family = IsOrDescends(object, family_, false);
+        for (int e : excluded_) {
+            if (IsOrDescends(object, e, true)) { c.excluded = true; break; }
+        }
+        if (familyTable_.size() >= kFamilyTableMax) familyTable_.clear();
+        familyTable_.emplace(object, static_cast<uint8_t>((c.family ? 1 : 0) | (c.excluded ? 2 : 0)));
+        return c;
+    }
+
+    bool ReadRoom(double& w, double& h) const
+    {
+        if (!roomSize_) return false;
+        try { return roomSize_(w, h); } catch (...) { return false; }
+    }
+
+    bool ReadPosition(double& x, double& y) const
+    {
+        if (!playerPosition_) return false;
+        try { return playerPosition_(x, y); } catch (...) { return false; }
+    }
+
+    // Unreadable counts as blocked: the landing is then refused.
+    bool FamilyAt(double x, double y) const
+    {
+        if (!placeMeeting_) return true;
+        try { return placeMeeting_(x, y); } catch (...) { return true; }
+    }
+
+    void NotePendingBlocked(int64_t frame)
+    {
+        if (!pendingValid_ || pendingFrame_ != frame) {
+            pendingValid_ = true;
+            pendingFrame_ = frame;
+            pendingBlocked_ = 0;
+        }
+        ++pendingBlocked_;
+    }
+
+    void DropJump()
+    {
+        jump_ = Jump{};
+        pendingValid_ = false;
+        pendingBlocked_ = 0;
+    }
+
+    void StartJump(int64_t frame)
+    {
+        jump_ = Jump{};
+        jump_.active = true;
+        jump_.takeoffFrame = frame;
+        jump_.lastEntry = frame;
+        jump_.haveTakeoff = ReadPosition(jump_.takeoffX, jump_.takeoffY);
+        ++counters_.jumps;
+        if (pendingValid_ && pendingFrame_ == frame && pendingBlocked_ > 0) {
+            counters_.beforeOpen += pendingBlocked_;
+            jump_.takeoffBlocked = true;
+        }
+        pendingValid_ = false;
+        pendingBlocked_ = 0;
+    }
+
+    void CloseJump()
+    {
+        double x = 0.0, y = 0.0;
+        const bool landed = ReadPosition(x, y);
+        if (landed && jump_.haveTakeoff && jump_.answered == 0 && !jump_.takeoffBlocked) {
+            const double moved = std::hypot(x - jump_.takeoffX, y - jump_.takeoffY);
+            if (moved >= kMinReachPx) {
+                haveReach_ = true;
+                reach_ = moved;
+            }
+        }
+        if (landed && jump_.decision == Decision::Granted && FamilyAt(x, y)) ++counters_.landedInside;
+        jump_ = Jump{};
+    }
+
+    void Decide()
+    {
+        if (jump_.circles < 2) { ++counters_.noDirection; return; }
+        const double dx = jump_.circleX[1] - jump_.circleX[0];
+        const double dy = jump_.circleY[1] - jump_.circleY[0];
+        const double len = std::hypot(dx, dy);
+        if (!(len > kMinDirectionPx)) { ++counters_.noDirection; return; }
+        const double ux = dx / len, uy = dy / len;
+        if (!haveReach_) { Refuse(Decision::RefusedNoReach); return; }
+        if (!jump_.haveTakeoff) { Refuse(Decision::RefusedLanding); return; }
+        const double lx = jump_.takeoffX + reach_ * ux;
+        const double ly = jump_.takeoffY + reach_ * uy;
+        const double px[3] = { lx - kLandingBandPx * ux, lx, lx + kLandingBandPx * ux };
+        const double py[3] = { ly - kLandingBandPx * uy, ly, ly + kLandingBandPx * uy };
+        double w = 0.0, h = 0.0;
+        if (!ReadRoom(w, h)) { Refuse(Decision::RefusedRoom); return; }
+        for (int k = 0; k < 3; ++k) {
+            // Written so that a NaN fails it.
+            if (!(px[k] >= 0.0 && px[k] < w && py[k] >= 0.0 && py[k] < h)) { Refuse(Decision::RefusedRoom); return; }
+        }
+        for (int k = 0; k < 3; ++k) {
+            if (FamilyAt(px[k], py[k])) { Refuse(Decision::RefusedLanding); return; }
+        }
+        jump_.decision = Decision::Granted;
+        ++counters_.granted;
+    }
+
+    void Refuse(Decision d)
+    {
+        jump_.decision = d;
+        if (d == Decision::RefusedLanding) ++counters_.refusedLanding;
+        else if (d == Decision::RefusedRoom) ++counters_.refusedRoom;
+        else if (d == Decision::RefusedNoReach) ++counters_.refusedNoReach;
+    }
+
+    IsAncestorFn isAncestor_;
+    PlaceMeetingFn placeMeeting_;
+    RoomSizeFn roomSize_;
+    PositionFn playerPosition_;
+    int family_ = -1;
+    std::vector<int> excluded_;
+    std::unordered_map<int, uint8_t> familyTable_;
+    bool enabled_ = false;
+    bool havePlayer_ = false;
+    int64_t player_ = 0;
+    bool haveReach_ = false;
+    double reach_ = 0.0;
+    Jump jump_;
+    bool pendingValid_ = false;
+    int64_t pendingFrame_ = 0;
+    uint64_t pendingBlocked_ = 0;
+    Counters counters_;
+};
+
+} // namespace ForgePact::JumpSceneryMod
