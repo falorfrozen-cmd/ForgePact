@@ -107,6 +107,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # plugin's own counters, changes nothing in the game
     # (test_incident_monitor_contract.py pins it).
     "incident",
+    # Jump through scenery, the Mods tab's switch (ForgePact #16;
+    # test_jump_scenery_mod_contract.py).
+    "jumpscenery",
 }
 
 
