@@ -13,7 +13,9 @@
 // against a Collision_Prop_obj descendant is answered no-collision, counted
 // once, with each builtin's own answer kind; `all` widens to the map-edge
 // walls and answers the two object-less rows; the window closes at exactly
-// `frames`; the `scripts` flag rewrites only its three rows.
+// `frames`; the `scripts` flag rewrites only its three rows; `hold` keeps the
+// window open with no jump script at all, and a lever no window ever opened
+// for is named inert rather than read as ON.
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -308,6 +310,66 @@ int main()
             && ask(on, Builtin::PositionMeeting, 20, true, InvisibleWall) == Answer::RunOriginal
             && ask(on, Builtin::PlaceFree, 20, true, -1) == Answer::RunOriginal;
         check("scripts/builtins_unchanged", builtinsSame);
+    }
+
+    // ---- `hold`: the window held open while the lever is on --------------
+    // The lever's own route: a lever whose window only a jump script can
+    // open answers nothing if neither script fires on the local jump, so
+    // `hold` opens it without one.
+    {
+        Probe p = make();
+        p.SetLever(90, FamilyRule::Props, false, true);
+        const bool held = p.Holding() && p.WindowOpen(5) && p.WindowOpen(100000) && p.WindowsOpened() == 0;
+        const bool answered = ask(p, Builtin::PositionMeeting, 5, true, Fence) == Answer::False
+            && p.BuiltinCounters(Builtin::PositionMeeting).passed == 1
+            && p.BuiltinCounters(Builtin::PositionMeeting).outsideWindow == 0;
+        check("hold/window_held_open_without_a_jump", held && answered, counts(p.BuiltinCounters(Builtin::PositionMeeting)));
+        const bool rules = ask(p, Builtin::PositionMeeting, 6, false, Fence) == Answer::RunOriginal
+            && ask(p, Builtin::InstancePlace, 6, true, EnemyParent) == Answer::RunOriginal
+            && ask(p, Builtin::InstancePlace, 6, true, InvisibleWall) == Answer::RunOriginal
+            && ask(p, Builtin::PlaceFree, 6, true, -1) == Answer::RunOriginal
+            && p.DecideScript(ScriptLever::CanMove, 6, true) == Answer::RunOriginal;
+        check("hold/still_the_players_family_only", rules);
+        // A jump entry still counts - J1's evidence - and the window stays held.
+        const bool entry = p.OnJumpEntry(50, true) && p.WindowsOpened() == 1;
+        p.Tick(1000);
+        check("hold/jump_entry_counted_window_stays_held", entry && p.WindowOpen(1000) && p.WindowOpen(50 + 90 + 10));
+        p.LeverOff();
+        const bool released = !p.Holding() && !p.WindowOpen(10)
+            && ask(p, Builtin::PositionMeeting, 10, true, Fence) == Answer::RunOriginal;
+        p.SetLever(90, FamilyRule::Props, false);
+        check("hold/pass0_releases_it", released && !p.Holding() && !p.WindowOpen(10));
+        Probe q = make();
+        q.SetLever(90, FamilyRule::All, true);
+        check("hold/default_is_not_held", !q.Holding() && !q.WindowOpen(5)
+            && ask(q, Builtin::PositionMeeting, 5, true, Fence) == Answer::RunOriginal);
+        Probe s = make();
+        s.SetLever(90, FamilyRule::All, true, true);
+        const bool all = ask(s, Builtin::PlaceFree, 7, true, -1) == Answer::True
+            && s.DecideScript(ScriptLever::CanMove, 7, true) == Answer::True;
+        check("hold/all_and_scripts_answer_without_a_jump", all);
+    }
+
+    // ---- an inert lever is named, not read as ON -----------------------
+    {
+        Probe p = make();
+        p.SetLever(90, FamilyRule::Props, true);
+        const bool quiet = !p.Inert();   // no call yet: nothing to name
+        ask(p, Builtin::PositionMeeting, 5, true, Fence);
+        p.DecideScript(ScriptLever::CanMove, 5, true);
+        const bool inert = p.Inert() && p.WindowsOpened() == 0 && p.OutsideWindowTotal() == 2;
+        check("inert/no_window_opened_is_named", quiet && inert, "outside=" + std::to_string(p.OutsideWindowTotal()));
+        p.OnJumpEntry(6, true);
+        check("inert/a_window_ends_it", !p.Inert());
+        Probe h = make();
+        h.SetLever(90, FamilyRule::Props, false, true);
+        ask(h, Builtin::PositionMeeting, 5, true, Crate);
+        Probe off = make();
+        ask(off, Builtin::PositionMeeting, 5, true, Fence);
+        Probe other = make();
+        other.SetLever(90, FamilyRule::Props, false);
+        ask(other, Builtin::PositionMeeting, 5, false, Fence);
+        check("inert/hold_lever_off_and_other_selves_are_not", !h.Inert() && !off.Inert() && !other.Inert());
     }
 
     // ---- the probe's activity and the trace's cap ------------------------

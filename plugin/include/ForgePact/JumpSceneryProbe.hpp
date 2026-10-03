@@ -14,9 +14,10 @@ namespace ForgePact::JumpScenery {
 // to the player's own collision queries while airborne lets the jump cross a
 // prop. ModuleMain.cpp's `jumpprobe pass` is the one lever that asks it: while
 // it is on, a jump-script entry with the local player as self opens a window
-// of `frames` frames, and inside that window a hooked collision builtin called
-// by the local player against a scenery family is answered without running
-// the game's own function.
+// of `frames` frames (or, with `hold`, the window stays open while the lever
+// is on), and inside that window a hooked collision builtin called by the
+// local player against a scenery family is answered without running the
+// game's own function.
 //
 // This header is that decision, and nothing else: the window arithmetic, the
 // family rule (through an is-ancestor callback the adapter supplies - the
@@ -150,15 +151,25 @@ public:
     bool Active() const { return armed_ || trace_ || lever_; }
 
     // ---- the lever -------------------------------------------------------
-    // `pass 1 [frames] [props|all] [scripts]`: on, with every counter zeroed
-    // and no window open. False, and nothing changed, for frames out of range.
-    bool SetLever(int64_t frames, FamilyRule rule, bool scripts)
+    // `pass 1 [frames] [props|all] [scripts] [hold]`: on, with every counter
+    // zeroed and no window open. False, and nothing changed, for frames out of
+    // range.
+    //
+    // `hold` keeps the window open for as long as the lever is on, with no
+    // jump script at all. The static reading predicts that neither window
+    // opener fires on the local keypress (CA_playerJump is the co-op relay,
+    // PlayerForceJump is reached from a hit and a launcher), and a lever that
+    // depends on them would then answer nothing while reporting itself ON.
+    // `hold` is the lever's own positive control: walking into a prop with it
+    // on proves that an answered builtin changes the player's movement.
+    bool SetLever(int64_t frames, FamilyRule rule, bool scripts, bool hold = false)
     {
         if (frames < kMinFrames || frames > kMaxFrames) return false;
         lever_ = true;
         frames_ = frames;
         rule_ = rule;
         scripts_ = scripts;
+        hold_ = hold;
         windowOpen_ = false;
         windowsOpened_ = 0;
         for (Counters& c : builtin_) c = Counters{};
@@ -170,17 +181,21 @@ public:
     void LeverOff()
     {
         lever_ = false;
+        hold_ = false;
         windowOpen_ = false;
     }
 
     bool LeverOn() const { return lever_; }
     bool ScriptsOn() const { return lever_ && scripts_; }
+    bool Holding() const { return lever_ && hold_; }
     int64_t Frames() const { return frames_; }
     FamilyRule Rule() const { return rule_; }
 
     // A jump script's entry (CA_playerJump, PlayerForceJump). Opens - or
     // restarts - the window at `frame` only while the lever is on and only
-    // for the local player's own jump; true when it did.
+    // for the local player's own jump; true when it did. Under `hold` the
+    // entry is still counted (windows-opened= is then J1's evidence that an
+    // opener fired), and the window stays held either way.
     bool OnJumpEntry(int64_t frame, bool playerSelf)
     {
         if (!lever_ || !playerSelf) return false;
@@ -190,22 +205,41 @@ public:
         return true;
     }
 
-    // Open on frames start .. start + frames - 1, closed from start + frames.
+    // Open on frames start .. start + frames - 1, closed from start + frames;
+    // open on every frame while held.
     bool WindowOpen(int64_t frame) const
     {
-        return lever_ && windowOpen_ && frame >= windowStart_ && frame - windowStart_ < frames_;
+        return lever_ && (hold_ || InJumpWindow(frame));
     }
 
     // The per-frame tick: a window whose last frame has passed is closed, so
     // `pass stat` reads it as closed rather than as open with a stale start.
     void Tick(int64_t frame)
     {
-        if (windowOpen_ && !WindowOpen(frame)) windowOpen_ = false;
+        if (windowOpen_ && !InJumpWindow(frame)) windowOpen_ = false;
     }
 
     bool WindowRecorded() const { return windowOpen_; }
     int64_t WindowStart() const { return windowStart_; }
     uint64_t WindowsOpened() const { return windowsOpened_; }
+
+    // Every row's outside-window= count, builtins and scripts together.
+    uint64_t OutsideWindowTotal() const
+    {
+        uint64_t n = 0;
+        for (const Counters& c : builtin_) n += c.outsideWindow;
+        for (const Counters& c : script_) n += c.outsideWindow;
+        return n;
+    }
+
+    // The lever is on and the local player's calls arrive, but no jump script
+    // ever opened a window for them: every answer so far was "run the
+    // original". `pass stat` and `show` name this state, so a lever that
+    // answers nothing is never read as a lever that changed nothing.
+    bool Inert() const
+    {
+        return lever_ && !hold_ && windowsOpened_ == 0 && OutsideWindowTotal() > 0;
+    }
 
     // ---- the decisions ---------------------------------------------------
     // One hooked builtin call. `objectOf()` returns the object index of the
@@ -280,6 +314,11 @@ public:
     int TraceLines() const { return traceLines_; }
 
 private:
+    bool InJumpWindow(int64_t frame) const
+    {
+        return windowOpen_ && frame >= windowStart_ && frame - windowStart_ < frames_;
+    }
+
     IsAncestorFn isAncestor_;
     int propFamily_ = -1;
     int allFamily_ = -1;
@@ -288,6 +327,7 @@ private:
     bool trace_ = false;
     bool lever_ = false;
     bool scripts_ = false;
+    bool hold_ = false;
     FamilyRule rule_ = FamilyRule::Props;
     int64_t frames_ = kDefaultFrames;
     bool windowOpen_ = false;

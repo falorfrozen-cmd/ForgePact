@@ -44496,8 +44496,12 @@ static RValue& JpOnScript(int row, CInstance* S, CInstance* O, RValue& R, int ar
     const int64_t frame = (int64_t)g_RuntimeFrame;
     if (!player) InterlockedIncrement(&t.otherSelf);
     if (t.role == kJpRoleOpensWindow && g_JpCore.OnJumpEntry(frame, player)) {
-        Out(std::string("jumpprobe pass: window opened at frame ") + std::to_string(frame) + " by " + t.label
-            + " for " + std::to_string(g_JpCore.Frames()) + " frames");
+        if (g_JpCore.Holding())
+            Out(std::string("jumpprobe pass: jump entry at frame ") + std::to_string(frame) + " by " + t.label
+                + " (window held open: `hold`)");
+        else
+            Out(std::string("jumpprobe pass: window opened at frame ") + std::to_string(frame) + " by " + t.label
+                + " for " + std::to_string(g_JpCore.Frames()) + " frames");
     }
     JpNs::Answer answer = JpNs::Answer::RunOriginal;
     if (t.role >= 0) answer = g_JpCore.DecideScript(static_cast<JpNs::ScriptLever>(t.role), frame, player);
@@ -44830,6 +44834,19 @@ static void JpShowBuiltin(int i, const std::string& prefix)
     t.lastShown = calls;
 }
 
+// The lever is on and the local player's calls arrive, but no jump script
+// opened a window for them, so every one ran the game's own function. Named
+// on `pass stat` and `show`, so an inert lever is never read as a lever that
+// answered and changed nothing.
+static void JpWarnIfInert(const std::string& prefix)
+{
+    if (!g_JpCore.Inert()) return;
+    Out(prefix + "INERT - the lever is ON but no window has opened (windows-opened=0, outside-window="
+        + std::to_string(g_JpCore.OutsideWindowTotal()) + "): neither CA_playerJump nor PlayerForceJump ran with the"
+        " local player as self, so every call ran the game's own function. Nothing from this run says what blocks"
+        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all> hold`");
+}
+
 // Every row's calls since the previous `show`, the two controls first. A
 // held row's count is its holder's; a row nobody counts prints calls=n/a,
 // never 0, and is never left out.
@@ -44841,6 +44858,7 @@ static void JpShow()
     Out("jumpprobe show: " + std::to_string(detoured) + "/" + std::to_string((int)kJpRowCount) + " rows detoured, "
         + std::to_string(held) + " held, " + std::to_string(builtins) + "/" + std::to_string(JpNs::kBuiltinCount)
         + " builtins hooked; player=" + (g_JpCore.Active() ? JpPlayerText() : std::string("not resolved (nothing armed)")));
+    JpWarnIfInert("  pass: ");
     for (JpRow& t : g_JpRows) {
         if (!JpIsOwnControl(t)) continue;
         if (!t.installed) {
@@ -44866,14 +44884,17 @@ static std::string JpCountersText(const JpNs::Counters& c)
 static void JpPassStat()
 {
     const int64_t frame = (int64_t)g_RuntimeFrame;
-    std::string window = g_JpCore.WindowOpen(frame)
+    std::string window = g_JpCore.Holding() ? std::string("held open (hold)")
+        : g_JpCore.WindowOpen(frame)
         ? "open since frame " + std::to_string(g_JpCore.WindowStart()) + " (now " + std::to_string(frame) + ")"
         : std::string("closed");
     Out(std::string("jumpprobe pass: ") + (g_JpCore.LeverOn() ? "ON" : "OFF") + " frames=" + std::to_string(g_JpCore.Frames())
         + " rule=" + std::string(JpNs::FamilyName(g_JpCore.Rule())) + " scripts=" + (g_JpCore.ScriptsOn() ? "on" : "off")
+        + " hold=" + (g_JpCore.Holding() ? "on" : "off")
         + " window=" + window + " windows-opened=" + std::to_string(g_JpCore.WindowsOpened())
         + " families: Collision_Prop_obj=" + std::to_string(g_JpCore.PropFamily())
         + " Collision_Parent_obj=" + std::to_string(g_JpCore.AllFamily()));
+    JpWarnIfInert("jumpprobe pass: ");
     for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
         const auto row = static_cast<JpNs::Builtin>(i);
         Out("  " + JpBuiltinName(i) + " " + JpCountersText(g_JpCore.BuiltinCounters(row)) + " (answer "
@@ -44889,10 +44910,10 @@ static void JpPassStat()
     }
 }
 
-// `pass 1 [frames] [props|all] [scripts]` / `pass 0` / `pass stat`.
+// `pass 1 [frames] [props|all] [scripts] [hold]` / `pass 0` / `pass stat`.
 static void JpPass(const std::vector<std::string>& tail)
 {
-    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] | pass 0 | pass stat";
+    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat";
     if (tail.empty() || Lower(tail[0]) == "stat") { JpPassStat(); return; }
     const std::string v = Lower(tail[0]);
     if (v == "0" || v == "off") {
@@ -44904,14 +44925,16 @@ static void JpPass(const std::vector<std::string>& tail)
     int64_t frames = JpNs::kDefaultFrames;
     JpNs::FamilyRule rule = JpNs::FamilyRule::Props;
     bool scripts = false;
+    bool hold = false;
     for (size_t i = 1; i < tail.size(); ++i) {
         const std::string a = Lower(tail[i]);
         if (a == "props") rule = JpNs::FamilyRule::Props;
         else if (a == "all") rule = JpNs::FamilyRule::All;
         else if (a == "scripts") scripts = true;
+        else if (a == "hold") hold = true;
         else {
             try { size_t used = 0; frames = std::stoll(a, &used); if (used != a.size()) throw 0; }
-            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts; nothing changed"); return; }
+            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts|hold; nothing changed"); return; }
         }
     }
     JpResolveFamilies();
@@ -44920,19 +44943,30 @@ static void JpPass(const std::vector<std::string>& tail)
             + std::to_string(g_JpCore.PropFamily()) + ", " + std::to_string(g_JpCore.AllFamily()) + "); nothing changed");
         return;
     }
-    if (!g_JpCore.SetLever(frames, rule, scripts)) {
+    if (!g_JpCore.SetLever(frames, rule, scripts, hold)) {
         Out("jumpprobe pass: frames must be " + std::to_string(JpNs::kMinFrames) + ".." + std::to_string(JpNs::kMaxFrames) + "; nothing changed");
         return;
     }
     JpRefreshPlayer();
     bool opener = false;
+    int builtins = 0;
     for (const JpRow& t : g_JpRows) if (t.role == kJpRoleOpensWindow && t.installed) opener = true;
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
     Out("jumpprobe pass: ON frames=" + std::to_string(frames) + " rule=" + std::string(JpNs::FamilyName(rule))
-        + " scripts=" + (scripts ? "on" : "off") + " player=" + JpPlayerText() + " - counters zeroed; the local player's"
-        " CA_playerJump/PlayerForceJump entry opens the window");
-    if (!opener)
+        + " scripts=" + (scripts ? "on" : "off") + " hold=" + (hold ? "on" : "off") + " player=" + JpPlayerText()
+        + " builtins=" + std::to_string(builtins) + "/" + std::to_string(JpNs::kBuiltinCount) + " - counters zeroed; "
+        + (hold ? "the window is held open until `pass 0`, jump or no jump"
+                : "the local player's CA_playerJump/PlayerForceJump entry opens the window"));
+    // Each of these leaves the lever ON and answering nothing; say so now
+    // rather than let `ON` read as armed.
+    if (!hold && !opener)
         Out("jumpprobe pass: WARNING - neither CA_playerJump nor PlayerForceJump is detoured by jumpprobe, so no window can"
-            " open: `jumpprobe hook` first");
+            " open: `jumpprobe hook` first, or add `hold`");
+    if (builtins == 0)
+        Out("jumpprobe pass: WARNING - no collision builtin is hooked by jumpprobe, so no builtin can be answered:"
+            " `jumpprobe hook` first");
+    if (!g_JpPlayer)
+        Out("jumpprobe pass: WARNING - no local player resolved, so no call counts as the player's: load a character");
 }
 
 // ---- state and trace (hook-free) ------------------------------------------------
@@ -45083,10 +45117,10 @@ static void JpUsage()
         " land, fall, height, zpos, hover or fly");
     Out("  trace 1|0                         one line per frame in which x, y or a state variable changed (at most "
         + std::to_string(JpNs::kTraceMaxLines) + " a session)");
-    Out("  pass 1 [frames] [props|all] [scripts] | pass 0 | pass stat   the research lever: the local player's jump opens a"
-        " window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision builtins"
-        " against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites CanMove,"
-        " InstancePlaceTallest and TilePlaceMeeting");
+    Out("  pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
+        " opens a window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision"
+        " builtins against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites"
+        " CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open until pass 0, jump or no jump");
 }
 
 static void JpCommand(const std::string& rest)

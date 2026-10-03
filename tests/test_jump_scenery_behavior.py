@@ -130,6 +130,18 @@ class JumpSceneryBehaviorTests(unittest.TestCase):
                       "scripts/only_inside_the_window_for_the_player", "scripts/builtins_unchanged"):
             self.assertScenario(label)
 
+    def test_hold_keeps_the_window_open_without_a_jump(self):
+        """The lever's own route: `hold` does not depend on a jump script firing."""
+        for label in ("hold/window_held_open_without_a_jump", "hold/still_the_players_family_only",
+                      "hold/jump_entry_counted_window_stays_held", "hold/pass0_releases_it",
+                      "hold/default_is_not_held", "hold/all_and_scripts_answer_without_a_jump"):
+            self.assertScenario(label)
+
+    def test_a_lever_no_window_ever_opened_for_is_named_inert(self):
+        for label in ("inert/no_window_opened_is_named", "inert/a_window_ends_it",
+                      "inert/hold_lever_off_and_other_selves_are_not"):
+            self.assertScenario(label)
+
     def test_the_probe_is_idle_unless_armed_tracing_or_on(self):
         self.assertScenario("active/only_when_armed_tracing_or_lever_on")
         self.assertScenario("trace/at_most_600_lines")

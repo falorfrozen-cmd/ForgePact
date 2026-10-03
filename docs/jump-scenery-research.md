@@ -157,10 +157,9 @@ Every claim carries one of four labels, plus a source:
 - **`PlayerForceJump` has two direct call sites** (**static reading**). One is
   in `PlayerTakeDamage` (2786), so a hit can start the same jump. Under which
   condition it does so is **not established**. The other is in an unnamed
-  function that runs one three-argument builtin test at its own position. It
-  then calls `PlayerForceJump` once for each instance of a set it loops over,
-  passing three values of its own. That is the shape of a world object that
-  launches whatever it catches. Which object it is is **not established**.
+  function shaped like a world object that launches whatever it catches:
+  it tests for instances at its own position and starts a forced jump on
+  each one it finds. Which object it is is **not established**.
 - **`playerJumpGravity` has one direct call site**, inside a very large unnamed
   function (**static reading**). The size and the missing name fit an object's
   Step event. Its own body is a few instructions, a getter. The value it
@@ -182,34 +181,22 @@ Every claim carries one of four labels, plus a source:
 
 ### What the jump scripts do
 
-- **`PlayerForceJump` starts a jump towards a computed target, and checks no
-  collision on the way** (**static reading**).
-  - It takes up to three arguments. It reads the first two as a distance and a
-    direction, and turns them into horizontal and vertical offsets the way
-    `lengthdir_x` and `lengthdir_y` do. A missing third argument defaults to 3.
-  - It adds the two offsets to two of `self`'s own position variables, giving
-    a target point. `CanMove` reads the same two variables before its
-    collision tests (below), which fits `x` and `y`. That they are `x` and `y`
-    is **not established**.
-  - It then writes about a dozen entries of one **array-valued** instance
-    variable on `self`: it clears a flag, sets another entry to 1, and stores
-    the target point, the third argument and a value derived from 8. It also
-    sets one other variable of its own to -4.
-  - If a network condition holds, it sends a ten-argument client message
-    (`NetworkSendClient`).
-  - It makes three builtin calls and calls no collision script. **So nothing in
-    `PlayerForceJump` tests the target against scenery.** If a blocked test
-    exists, it runs somewhere else: per frame while airborne, or in whatever
-    calls the jump.
+- **`PlayerForceJump` starts a jump towards a target point computed from a
+  distance and a direction it is given, and tests no scenery on the way**
+  (**static reading**). It records the jump on `self` (as entries of an
+  array-valued variable, name not established), announces it to the network
+  when playing co-op, and calls no collision script. The target is offset
+  from `self`'s own position; that the position it starts from is `x`/`y`
+  fits what `CanMove` reads, but is **not established**. **So nothing in
+  `PlayerForceJump` tests the target against scenery.** If a blocked test
+  exists, it runs somewhere else: per frame while airborne, or in whatever
+  calls the jump.
 - **`CA_playerJump` replays another player's jump from the sender's numbers**
-  (**static reading**). It looks up an instance from its first argument
-  through a global table, which fits the player list indexed by network slot,
-  and checks that the instance exists. It then writes the same entries of the
-  same array-valued variable that `PlayerForceJump` writes, taking the target
-  point and the rest from its own arguments. It calls no collision script.
+  (**static reading**), looking the player up by network slot, and calls no
+  collision script.
 - **The jump state is held as entries of one array-valued variable, not as
   named variables** (**static reading**). Variable-name recovery found no named
-  variable for any of the writes above. The name of the array variable itself
+  variable for the jump's state. The name of the array variable itself
   is **not established**. A consequence for the instrument: `jumpprobe state`
   finds variables by name pattern (`jump`, `air`, `grav` ...). It shows this
   state only if that array's name matches, or if the jump also moves a named
@@ -218,20 +205,15 @@ Every claim carries one of four labels, plus a source:
 
 ### What the collision scripts do
 
-- **`CanMove` is a yes/no gate on a position** (**static reading**).
-  - It reads `self`'s two position variables and runs five builtin collision
-    tests, one with seven arguments and four with three. It answers false as
-    soon as one of them reports a hit.
-  - It then asks `InstancePlaceTallest` for an instance at the point. Depending
-    on one variable of the instance it finds, it may also answer false.
-  - Otherwise it answers true.
-  - Which builtins the five tests are is **not established**, because the
-    compiled code does not name them. The instrument's builtin rows count them
-    by name.
-- **`CheckCollisionLine` probes along a 2000-pixel line in a given direction**
-  (**static reading**). It turns the direction into an end point the
-  `lengthdir` way and makes sixteen builtin calls, among them one with nine
-  arguments and one with seven. Which builtins they are is **not established**.
+- **`CanMove` is a yes/no gate on a position, built on builtin collision
+  tests plus one instance lookup** (**static reading**). A hit in any of the
+  tests answers "blocked"; the lookup goes through `InstancePlaceTallest`, and
+  what the instance it finds is like can also answer "blocked". Which
+  builtins the tests are is **not established**, because the compiled code
+  does not name them. The instrument's builtin rows count them by name.
+- **`CheckCollisionLine` is a long line probe in one direction, built on
+  builtin calls** (**static reading**). Which builtins they are is **not
+  established**.
 - **`getClosestCollisionDir` does nothing in this build** (**static reading**):
   its compiled body returns an empty value at once.
 - **`CollisionsFunc` has the same shape as `CanMoveFuncs`** (**static
@@ -255,7 +237,10 @@ cannot be hooked by name. What it calls can be: the builtins (through the
 builtin table) and the collision scripts (through the script table or a method
 value). That is why the lever answers the player's own builtin collision
 queries, and optionally three script rows, instead of hooking the jump itself
-(**our code**, § Instrument).
+(**our code**, § Instrument). And because the reading predicts that neither
+jump script runs on the local keypress, the lever can also hold its window
+open with no jump script at all (`hold`), and Live 1 proves it engages before
+any negative is read (`lever-control`).
 
 ## Instrument
 
@@ -286,8 +271,8 @@ search, each through its `hs-game-sdk` constant or builtin name.
     `VALUE_REF` is accepted (`docs/RUNTIME_DATA_MODELS.md` § 1 in the toolkit).
   - Builtin rows also print the name of the object argument.
   - Calls from any other `self` are counted under `other-self=` and not logged.
-- **`jumpprobe show`** prints `calls=` per row since the last `show`, with the
-  two controls first:
+- **`jumpprobe show`** prints `calls=` per row since the last `show`, and the
+  cumulative `total=`, with the two controls first:
   - `CheckTalentUse`, the own-detour control, which climbs once per frame;
   - `position_meeting`, the builtin control, which climbs while the player
     walks.
@@ -302,11 +287,28 @@ search, each through its `hs-game-sdk` constant or builtin name.
   `jumpprobe trace frame=<f> x=<x> y=<y> <name>=<value>...` line for each frame
   in which `x`, `y` or any `state` variable changed, at most 600 lines a
   session. While off, the per-frame tick returns at once.
-- **`jumpprobe pass 1 [frames] [props|all] [scripts]`** / **`pass 0`** /
+- **`jumpprobe pass 1 [frames] [props|all] [scripts] [hold]`** / **`pass 0`** /
   **`pass stat`** is **the one research lever**.
   - While it is on, a `CA_playerJump` or `PlayerForceJump` detour entry with the
     local player as `self` opens a window of `frames` frames. The default is 90;
     Live 1 sets the real value from its measured airborne length.
+  - **`hold`** keeps the window open for as long as the lever is on, jump or no
+    jump, until `pass 0`. § Static reading predicts that neither window opener
+    runs on the local keypress (`CA_playerJump` is the co-op relay,
+    `PlayerForceJump` is reached from a hit and a launcher). Without `hold`
+    the lever would then answer nothing while reporting itself ON, and every
+    later check would read as a negative about the game. With `hold` the lever
+    does not depend on either script, and it is the lever's own positive
+    control: walking into a prop with it on shows whether an answered builtin
+    changes the player's movement at all. A jump-script entry under `hold` is
+    still counted in `windows-opened=`.
+  - **An inert lever is named.** While the lever is on without `hold`, if the
+    local player's calls arrive (`outside-window=` climbs) but no window has
+    opened (`windows-opened=0`), `pass stat` and `show` print a
+    `jumpprobe pass: INERT - ...` line: every call ran the game's own function,
+    and nothing from that run says what blocks the jump. `pass 1` also warns
+    when no opener is detoured (without `hold`), when no collision builtin is
+    hooked, and when no local player resolved.
   - Inside the window, a hooked builtin call with the local player as `self` is
     answered without running the original if its object argument is one of
     these:
@@ -331,7 +333,14 @@ search, each through its `hs-game-sdk` constant or builtin name.
     `self`, against `Enemy_Parent_obj` or against any other family.
   - The counters per row are `passed=`, `passthrough=`, `outside-window=`,
     `other-self=` and `other-family=`. `pass stat` prints them with the window
-    state. `pass 0` closes any window.
+    state, `hold=` and `windows-opened=`. `pass 0` closes any window and ends
+    `hold`.
+  - The family rule reads the query's object argument, not the instance the
+    query hits. A query against `Collision_Parent_obj` itself is outside
+    `props`, so under `props` it runs the original and counts
+    `other-family=`. The armed lines print `object=`, so a `props` run whose
+    `other-family=` climbed on `Collision_Parent_obj` queries is a run where
+    `props` never saw the query that blocks.
   - The lever is deliberately blunt. It skips the landing check too, so Live 1
     can measure what the game itself does with a landing point inside a prop.
     That is the question phase 2's "valid target" rule has to answer.
@@ -361,10 +370,14 @@ is a local working note, so the setup and the checks are repeated here.
 - **Rules:** no `citrace` command runs in this session.
 - **Cases:** one ordinary jump, one jump at a low prop, and three outliers: a
   landing inside a prop, a map edge, and a leap or dash skill if the character
-  has one.
+  has one. Before the lever's jumps, one walk into a prop with the lever held
+  open proves the lever engages (`lever-control`).
 
 **Checks**, in this order. The first four establish that the session is valid.
-For the rest, a `fail` or a `not-observed` is itself the finding.
+For the rest, a `fail` or a `not-observed` is itself the finding, except that
+a negative about the game from J3, J4 or J5 counts only when the lever is
+proven to engage: `lever-control` passed, and that run's `pass stat` showed
+`windows-opened=` ≥ 1 or `hold=on`.
 
 | Check | Step | Expected |
 | --- | --- | --- |
@@ -375,10 +388,11 @@ For the rest, a `fail` or a `not-observed` is itself the finding.
 | `jump-rows` | J1 (an ordinary jump on open ground, armed, traced); J6 (a leap or dash skill, if on the bar) | `CA_playerJump` or `PlayerForceJump` logs a call with the player as `self` (which one, and its arguments); `CA_enemyJump` stays at 0. J6 names the rows a skill fires, or reads `not-observed (no such skill)` |
 | `airborne-state` | J1 trace and `state` before and after | `x`/`y` move over a run of frames, and at least one `state` variable changes at take-off and again at landing (its name, and the frame count, which is J3's `frames`). Otherwise `not-observed`, with `frames` taken from the moving-`x` run |
 | `vanilla-block` | J2: lever off, the player jumps straight at a low `Collision_Prop_obj` from one step away | the player does not cross (stays within a few px, or stops at the prop's edge), and `show` names the builtin rows that counted calls with a `Collision_*` argument during the jump |
-| `pass-crosses-prop` | J3: `jumpprobe pass 1 <frames> props`, repeat J2 | the player ends on the far side and `passed=` rose on at least one row. If not, repeat with `scripts`, then with `all`, and record which flag crossed, or that none did |
-| `invalid-landing` | J4: lever on, jump so the arc ends inside a prop wider than the jump, traced | one of: settles outside within a few frames (`game-ejects`, with the frames), stays inside (`game-stuck`), or leaves the room's bounds (`game-falls-through`) |
+| `lever-control` | L0, the lever's own positive control: `jumpprobe pass 1 <frames> all hold`, the owner **walks** (no jump) into J2's prop, `menulayout Player_obj`, `jumpprobe pass stat`, `jumpprobe pass 0` | `passed=` > 0 on at least one builtin row: an answered builtin reaches the player's movement queries. Also record whether the player walked into the prop (`playerwarp` back to the pre-walk coordinates if so). `passed=` 0 on every row is `fail`: the lever never engaged, and J3, J4 and J5 record `lever-not-engaged`, never `not-observed` |
+| `pass-crosses-prop` | J3: `jumpprobe pass 1 <frames> props`, repeat J2, `jumpprobe pass stat`. Add `hold` when J1 logged neither `CA_playerJump` nor `PlayerForceJump` with the player as `self` | the player ends on the far side and `passed=` rose on at least one row. Without `hold`, `pass stat` must show `windows-opened=` ≥ 1; `windows-opened=0` (the `INERT` line) means the run says nothing, so repeat it with `hold`. If the armed lines show `other-family=` climbing on `Collision_Parent_obj` queries, `props` never saw the blocking query: repeat with `all` before recording. If not crossed, repeat with `scripts`, then with `all`, and record which flag crossed, or that none did. `not-observed` (none crossed) needs `lever-control` passed and every run engaged (`windows-opened=` ≥ 1 or `hold=on`); otherwise record `lever-not-engaged` |
+| `invalid-landing` | J4: lever on (J3's mode, `hold` included), jump so the arc ends inside a prop wider than the jump, traced, `jumpprobe pass stat` | one of: settles outside within a few frames (`game-ejects`, with the frames), stays inside (`game-stuck`), or leaves the room's bounds (`game-falls-through`). `not-observed` needs the run engaged, as for J3; otherwise `lever-not-engaged` |
 | `warp-restore` | only if J4 left the player stuck or out of bounds | `playerwarp <x> <y>` with J3's post-jump coordinates, then `menulayout Player_obj` reads within 2 px. Otherwise `not-observed (not needed)` |
-| `boundary-wall` | J5: `jumpprobe pass 1 <frames> all`, jump outward at the zone's edge (`Invisible_Wall_obj`) | the player either stays inside (quote `passed=`) or leaves the map (then `playerwarp` back). Record which |
+| `boundary-wall` | J5: `jumpprobe pass 1 <frames> all` (with `hold` if J3 needed it), jump outward at the zone's edge (`Invisible_Wall_obj`), `jumpprobe pass stat` | the player either stays inside (quote `passed=` and `windows-opened=`) or leaves the map (then `playerwarp` back). Record which. A stay-inside with the lever not engaged is `lever-not-engaged` |
 
 **Teardown:** `jumpprobe pass 0`, `jumpprobe trace 0` and `jumpprobe arm off`.
 The operator then restores the saves under their own rules.
@@ -400,8 +414,14 @@ finding: pending
   `scripts` flag.
 - `tiles`: the crossing needs the tile rows (`tilemap_get_at_pixel` /
   `TilePlaceMeeting`).
-- `not-observed`: the player stays blocked with every lever on. The decision is
-  made upstream of every hooked row.
+- `not-observed`: the player stays blocked with every lever on, and the lever
+  is proven to engage (`lever-control` passed, and each J3 run showed
+  `windows-opened=` ≥ 1 or `hold=on`). The decision is made upstream of every
+  hooked row.
+- `lever-not-engaged`: the lever never answered the player's queries during
+  the jump (`lever-control` failed, or no J3 run opened a window and none ran
+  with `hold`). This says nothing about the game, and the question stays open
+  for a second session.
 
 valid-landing: pending
 
@@ -411,7 +431,10 @@ valid-landing: pending
   (quote the frames).
 - `game-stuck`: the player stays inside and needs `playerwarp`.
 - `game-falls-through`: the player ends outside the room or under the map.
-- `not-observed`.
+- `not-observed`: the lever engaged (as for `finding:`) and the jump still did
+  not land inside a prop.
+- `lever-not-engaged`: J4 ran with a lever that answered nothing, so no
+  landing inside a prop was attempted.
 
 ## Not established
 

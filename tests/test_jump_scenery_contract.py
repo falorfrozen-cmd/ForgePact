@@ -19,8 +19,12 @@ it. This phase ships one research-build instrument for that launch,
   AddrIsExecutableInModule, and `hook` refuses while citrace holds a spatial
   builtin, since a builtin detours once;
 - the lever writes a result only when it answers, and runs no original then;
+  `hold` opens its window without a jump script, and a lever no window ever
+  opened for, or with no builtin hooked or no player, says so;
+- the local player resolves by the instance-handle rule, never a kind check;
 - the research document carries its eight headings and the two Decision keys,
-  which read `pending` until Live 1 has run.
+  which read `pending` until Live 1 has run, and an outcome of their own
+  (`lever-not-engaged`) for a lever the session never proved engaged.
 
 JumpSceneryProbe.hpp's decision itself is exercised by
 test_jump_scenery_behavior.py.
@@ -292,6 +296,44 @@ class JumpProbeContract(unittest.TestCase):
         entry = braced_block(self.header, "bool OnJumpEntry(int64_t frame, bool playerSelf)\n    {")
         self.assertIn("if (!lever_ || !playerSelf) return false;", entry)
 
+    def test_hold_opens_the_window_without_a_jump_script(self):
+        """The lever's own route: it must not depend on a jump script firing.
+
+        The static reading predicts that neither window opener runs on the
+        local keypress, so `hold` keeps the window open while the lever is on.
+        """
+        window = braced_block(self.header, "bool WindowOpen(int64_t frame) const\n    {")
+        self.assertEqual(window.strip(), "return lever_ && (hold_ || InJumpWindow(frame));")
+        self.assertIn("bool SetLever(int64_t frames, FamilyRule rule, bool scripts, bool hold = false)", self.header)
+        off = braced_block(self.header, "void LeverOff()\n    {")
+        self.assertIn("hold_ = false;", off)
+        lever = self.body("static void JpPass(")
+        self.assertIn('else if (a == "hold") hold = true;', lever)
+        self.assertIn("g_JpCore.SetLever(frames, rule, scripts, hold)", lever)
+        self.assertIn("[hold]", self.body("static void JpUsage()"))
+
+    def test_an_inert_lever_is_named_and_every_dead_arming_warns(self):
+        """ON with no window opened, no builtin hooked or no player is never silent."""
+        inert = braced_block(self.header, "bool Inert() const\n    {")
+        self.assertEqual(inert.strip(), "return lever_ && !hold_ && windowsOpened_ == 0 && OutsideWindowTotal() > 0;")
+        warn = self.body("static void JpWarnIfInert(")
+        self.assertEqual([line.strip() for line in warn.split("\n") if line.strip()][0], "if (!g_JpCore.Inert()) return;")
+        self.assertIn("INERT", warn)
+        self.assertIn('JpWarnIfInert("jumpprobe pass: ");', self.body("static void JpPassStat()"))
+        self.assertIn('JpWarnIfInert("  pass: ");', self.body("static void JpShow()"))
+        lever = self.body("static void JpPass(")
+        for guard in ("if (!hold && !opener)", "if (builtins == 0)", "if (!g_JpPlayer)"):
+            self.assertIn(guard, lever)
+        self.assertEqual(lever.count("WARNING"), 3)
+
+    def test_the_local_player_resolves_by_the_instance_handle_rule(self):
+        """The runner resolves the local player as VALUE_REF: no kind check may gate it."""
+        refresh = self.body("static void JpRefreshPlayer()")
+        self.assertIn("if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);", refresh)
+        self.assertIn("g_JpPlayer = inst;", refresh)
+        for word in ("m_Kind", "VALUE_OBJECT"):
+            self.assertNotIn(word, self.code, word + ": a raw kind check in jumpprobe would silently disable the lever")
+
     def test_armed_lines_are_the_local_players_only(self):
         for signature in ("static RValue& JpOnScript(", "static void JpOnBuiltin("):
             fn = self.body(signature)
@@ -331,6 +373,16 @@ class JumpProbeContract(unittest.TestCase):
             match = re.search(r"(?m)^`?" + re.escape(key) + r":`?\s*`?([\w-]+)", decision)
             self.assertIsNotNone(match, key + ": is missing from ## Decision")
             self.assertEqual(match.group(1), "pending", key + " no longer reads pending: replace this test")
+
+    def test_a_lever_that_never_engaged_has_its_own_outcome(self):
+        """`not-observed` is a finding about the game only once the lever is proven to engage."""
+        text = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
+        decision = doc_section(text, "Decision")
+        self.assertGreaterEqual(decision.count("`lever-not-engaged`"), 2, "finding: and valid-landing: both need it")
+        procedure = doc_section(text, "Live procedure 1")
+        self.assertIn("`lever-control`", procedure)
+        self.assertIn("windows-opened=", procedure)
+        self.assertIn("hold", doc_section(text, "Instrument"))
 
 
 if __name__ == "__main__":
