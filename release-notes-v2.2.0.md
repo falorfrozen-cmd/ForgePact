@@ -7,8 +7,10 @@ pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key. A new **Pet collects relics** switch,
-also off by default, has your pet pick up the relics lying around you. And
-when the game crashes, freezes or drops frames badly, ForgePact now saves a
+also off by default, has your pet pick up the relics lying around you. A new
+**Jump through scenery** switch, off by default, lets your jump carry you over
+the rocks, fences and carts that stop it.
+And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
 
@@ -174,6 +176,32 @@ experience.
   character, in chat, or both, whichever you pick under the switch.
   It is off by default: turn it on in the panel, and the slider rests at 75 %
   until you move it.
+- **Jump through scenery (#16).** A new switch in Mods → Quality of Life,
+  off by default. Until now a jump aimed across a rock, a fence, a cart or
+  other scenery did not move you at all. With this on, the jump carries you
+  over it. Before letting a jump through, the mod also checks where it would
+  land, and is meant to keep the jump blocked when that spot is inside
+  scenery or outside the room's rectangle. That landing check has been
+  tested outside the game only. The room's rectangle can be larger than the
+  part of a zone you can walk in, so the check does not hold back a jump
+  towards the edge of the walkable map. Locked doors and zone gates are
+  meant to keep blocking the jump. The mod learns how far your jump goes
+  from a jump you make in the open, so after loading a character, make one
+  jump on open ground first: until then, a jump into scenery stays blocked.
+  Make one again after a big change to your Jump Power, because until then
+  the mod checks the landing at your old jump distance. Some jumps stay
+  refused even with the switch on, such as one aimed at a horse carriage in
+  our test: what stops them is not something the mod changes. Only your
+  universal jump is affected, not leap, dash or charge skills, and in co-op
+  only your own character. Checked in play on 2026-10-03: with the switch
+  off a jump at a prop in the Town of Inoya did not move the character, and
+  with it on the same jump carried them over it, to open ground. At the
+  carriage, the landing and room checks ran and let the jump through, and
+  the character still did not move. Where that jump would have landed was
+  not recorded, so whether it lay inside the carriage is not known. Neither
+  check has been seen holding a jump back in play, the check on locked
+  doors and zone gates was not reached, and what the game does at the edge
+  of the walkable map has not been observed.
 
 ## Changed
 
@@ -221,10 +249,21 @@ experience.
 - `sigdrop crown|belt|off|status` is still a test command that makes every kill
   drop the named item.
 
+## Fixed
+
+- **The two Monster Rarity rows are named for the monsters they make (#159).**
+  On the World tab, the row called **Rare** raised normal monsters to what the
+  game shows as an Ancient (yellow name), and the row called **Ancient** raised
+  them to a Legion: each name was one tier too low. The rows are now called
+  **Ancient** and **Legion**, and the card's note, its hint and the Enabled
+  mods list use the same names. What the rows do is unchanged, and the shares
+  you set carry over: a share you had on Rare now shows on Ancient, and one you
+  had on Ancient shows on Legion.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, two switches, an Incident reports card and a Gameplay page,
+gained a slider, three switches, an Incident reports card and a Gameplay page,
 so updating only the plugin leaves them out. Your existing settings are
 retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
 before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded

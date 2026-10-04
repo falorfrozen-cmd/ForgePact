@@ -306,6 +306,11 @@ DEFAULTS = {
     # HIDDEN_LOOT_KEYS (0 = none). Left Alt (164) by default, the owner's
     # choice (2026-09-28); only sent while the switch is on.
     "mod_hidden_loot_key": 164,
+    # Jump through scenery (docs/jump-scenery-research.md, #16): the universal
+    # jump passes scenery that would stop it, only when it would land on open
+    # ground inside the room; zone gates and locks still block. Off by
+    # default; offline only, like every mod here.
+    "mod_jump_scenery": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -321,8 +326,10 @@ DEFAULTS = {
     # turn it on shows as full (route B's latch takes the first reading it
     # sees).
     "mod_skill_timer_style": "off",
-    # Monster Rarity: the share of normal monsters raised to Rare and to Ancient
-    # (percent each, together at most 100; the rest stay normal).
+    # Monster Rarity: the share of normal monsters raised to rank 3 (rarity_rare,
+    # shown in the panel and the game as Ancient) and to rank 4 (rarity_ancient,
+    # shown as Legion; #159), percent each, together at most 100; the rest stay
+    # normal.  The keys keep their old names so saved settings carry over.
     "rarity_rare": 0,
     "rarity_ancient": 0,
     # Bosses (issue #44): every boss the game spawns while this is on rolls as
@@ -827,9 +834,10 @@ def angelic_cmd(cfg: dict) -> str:
 
 
 def rarity_setting(cfg: dict):
-    """(rare, ancient) shares of the Monster Rarity sliders, in percent of the
-    normal monsters.  Ancient is honoured first; Rare is cut so the two never
-    exceed 100 together."""
+    """(rank 3, rank 4) shares of the Monster Rarity sliders, in percent of the
+    normal monsters: `rarity_rare` (the panel's Ancient row) and
+    `rarity_ancient` (its Legion row, #159).  Rank 4 is honoured first; rank 3
+    is cut so the two never exceed 100 together."""
     ancient = _pct(cfg.get("rarity_ancient", 0))
     rare = min(_pct(cfg.get("rarity_rare", 0)), 100 - ancient)
     return rare, ancient
@@ -1140,6 +1148,10 @@ def build_cmds(cfg: dict) -> list:
         # goes first, 0 included, so the switch never starts with a stale one.
         out.append(hidden_loot_key_cmd(cfg))
         out.append("hiddenloot 1")
+    if cfg.get("mod_jump_scenery", False):
+        # Safe to send at launch: `jumpscenery 1` only turns the switch on;
+        # the plugin decides nothing until the player's own jump starts.
+        out.append("jumpscenery 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -2859,7 +2871,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3006,6 +3018,8 @@ class H(BaseHTTPRequestHandler):
                         # Always sent, switch on or off: the plugin stores the
                         # key and reads it only while the switch is on.
                         send_cmds([hidden_loot_key_cmd(cfg)], cfg)
+                    elif key == "mod_jump_scenery":
+                        send_cmds([f"jumpscenery {1 if cfg['mod_jump_scenery'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

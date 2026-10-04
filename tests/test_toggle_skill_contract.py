@@ -855,6 +855,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Dungeon chest opens early (ForgePact #31;
             # test_dungeon_chest_behavior.py).
             "dungeonchest",
+            # Jump through scenery, the Mods tab's switch (ForgePact #16;
+            # test_jump_scenery_mod_contract.py).
+            "jumpscenery",
         }
         self.assertEqual(entries, expected)
 
@@ -3031,15 +3034,18 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `bossrarity` is the Bosses control (ForgePact #44,
         # test_boss_rarity_contract.py), `incident` is the incident
         # monitor's `incident stat` (ForgePact #76,
-        # test_incident_monitor_contract.py), and `dungeonchest` is Dungeon
-        # chest opens early (ForgePact #31, test_dungeon_chest_behavior.py).
+        # test_incident_monitor_contract.py), `dungeonchest` is Dungeon
+        # chest opens early (ForgePact #31, test_dungeon_chest_behavior.py),
+        # and `jumpscenery` is Jump through scenery's switch (ForgePact #16,
+        # test_jump_scenery_mod_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest"})
+                                        "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
+                                        "jumpscenery"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

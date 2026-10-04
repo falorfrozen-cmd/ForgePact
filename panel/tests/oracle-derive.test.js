@@ -132,7 +132,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 68 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 69 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -141,9 +141,10 @@ test('the counts: 132 switch clicks, 68 Turn off buttons, one theme step per the
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2 + NATIVE_SELECTS.length
     + NATIVE_SWITCHED_RANGES.length);
   // The dungeon chest switch's id has no `sw_` prefix: it adds a Turn off
-  // button and no `#sw_` click.
+  // button and no `#sw_` click. Jump through scenery's native boolean adds
+  // one more Turn off button.
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 68);
+  assert.equal(quick.length, 69);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -231,7 +232,8 @@ test('every control is covered: the switches in legacy order, the theme, the key
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
-    ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot']);
+    ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
+      'mod_jump_scenery']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
@@ -288,8 +290,11 @@ test('the show key\'s select follows the native booleans: its switch on, Ctrl, N
   const nativeAt = steps.length - TAIL + 2 + 4 * NATIVE_BOOLEANS.findIndex((n) => n.key === HIDDEN_LOOT_KEY_PARENT);
   const [on, off] = [nativeAt, nativeAt + 1];
   assert.equal(steps[on].control, parent);
-  // The switch's own steps left it off, and the select is disabled while it is.
-  assert.equal(steps[at - 1].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  // The switch's own steps left it off, and the select is disabled while it
+  // is; the native booleans after it (Jump through scenery) leave it alone.
+  assert.equal(steps[nativeAt + 3].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
+  for (let i = nativeAt + 4; i < at; i++) assert.notEqual(steps[i].control, parent, i);
   assert.deepEqual(steps[at], { step: at, control: parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
   HIDDEN_LOOT_KEY_CODES.forEach((code, i) => {
     assert.deepEqual(steps[at + 1 + i], {

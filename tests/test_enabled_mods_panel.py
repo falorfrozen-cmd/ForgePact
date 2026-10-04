@@ -99,9 +99,10 @@ class EnabledModsPanelTests(unittest.TestCase):
         # save) before it was ported here, plus 7 no legacy page had: the Pet
         # moves on switch (forgepact-pet-loot-stuck), Far scenery sleep's
         # switch, Move all into the stash's switch, Extra packs as you
-        # approach's switch, Pet collects relics' switch (#124), and Sleep
-        # loot your filter hides' switch and show key (forgepact-issue-95-mod;
-        # all seven in the derived oracle). Issue #76 adds none: its Setup
+        # approach's switch, Pet collects relics' switch (#124), Sleep
+        # loot your filter hides' switch and show key (forgepact-issue-95-mod),
+        # and Jump through scenery's switch (#16; all eight in the derived
+        # oracle). Issue #76 adds none: its Setup
         # switch for FPS-drop notices went before it shipped (an FPS drop is
         # recorded without a notice, the owner, 2026-10-02), and Open reports
         # folder posts to its own route. Plus 1 for the Mods > Gameplay
@@ -111,8 +112,8 @@ class EnabledModsPanelTests(unittest.TestCase):
         # range's change handler (both in the derived oracle). Plus 1 for its
         # `#dungeon_chest_countdown` child select's handler (the owner's
         # countdown form choice, 2026-10-04; in the derived oracle too).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7 + 1 + 2 + 1)
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.
@@ -132,8 +133,8 @@ class EnabledModsPanelTests(unittest.TestCase):
         world, loot = panel_file("tabs/World.svelte"), panel_file("tabs/Loot.svelte")
         for text, switch_id, range_id, label in (
                 (world, "enemy_speed", "enemyspeed", "Speed bonus"),
-                (world, "rarity_rare", "rarity_rare", "Rare"),
-                (world, "rarity_ancient", "rarity_ancient", "Ancient"),
+                (world, "rarity_rare", "rarity_rare", "Ancient"),
+                (world, "rarity_ancient", "rarity_ancient", "Legion"),
                 (loot, "angelic_items", "angelic_items", "Angelic / Unholy items")):
             with self.subTest(switch=switch_id):
                 tag = (f'<label class="switch slider-switch"><input type="checkbox" id="sw_{switch_id}" '

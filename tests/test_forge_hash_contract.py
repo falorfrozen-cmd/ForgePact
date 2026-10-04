@@ -110,6 +110,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Dungeon chest opens early, Mods > Gameplay (ForgePact #31;
     # test_dungeon_chest_behavior.py pins its decision and refusals).
     "dungeonchest",
+    # Jump through scenery, the Mods tab's switch (ForgePact #16;
+    # test_jump_scenery_mod_contract.py).
+    "jumpscenery",
 }
 
 

@@ -24,7 +24,7 @@ assertions pass on the pre-change panel and on the result.
 `ModsCategorySplitTests` pins the result: three Mods-tab cards named
 `qolCard`/`itemsCard`/`gameplayCard`, in that order, none repeating its
 sub-tab's name as a heading (the strip names them), `qolCard` holding exactly
-the fourteen Quality of Life controls in the assignment table's order, and
+the fifteen Quality of Life controls in the assignment table's order, and
 `gameplayCard` holding exactly the Bosses select (`boss_rarity`, issue #44)
 and Dungeon chest opens early's switch, range and countdown form select
 (`mod_dungeon_chest`, `dungeon_chest_pct`, `dungeon_chest_countdown`, issue
@@ -86,6 +86,8 @@ QOL_CONTROL_IDS = [
     # Sleep loot your filter hides and its show key (forgepact-issue-95-mod).
     "mod_hidden_loot",
     "mod_hidden_loot_key",
+    # Jump through scenery (forgepact-16-jump-scenery-mod).
+    "mod_jump_scenery",
     "mod_skill_timer_style",
 ]
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
@@ -354,7 +356,7 @@ class ModsCategorySplitTests(unittest.TestCase):
             if cid != "gameplayCard":
                 self.assertNotIn('id="boss_rarity"', other, f"boss_rarity found in {cid!r}")
 
-    def test_qol_card_controls_are_exactly_the_fourteen_qol_ids_in_order(self):
+    def test_qol_card_controls_are_exactly_the_fifteen_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")
         positions = []
         for control_id in QOL_CONTROL_IDS:

@@ -104,6 +104,11 @@
         </select>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Jump through scenery<br><span class="feature-description">Your jump can carry you over rocks, fences, carts and other scenery that would stop it, but only when it would land on open ground inside the area; otherwise the jump works as it always has. Locked doors and zone gates still block it. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_jump_scenery"><span class="sl"></span></label>
+        <span class="val" id="mjsval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style" aria-label="Timed skill countdown">
             <option value="off">Off</option>
