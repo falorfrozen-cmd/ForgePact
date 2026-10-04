@@ -61,6 +61,18 @@
     </div>
     <button type="button" class="sat-button" id="satRestore" title="Enable every positive and negative zone modifier">&#8634; Restore defaults</button>
   </div>
+  <div class="sat-zonecontrol">
+    <div class="row" style="border:none">
+      <span class="lbl" style="width:auto;flex:1">Keep the zone you are in satanic<br><span class="feature-description">Wherever you go, the game treats the zone you are in as the Satanic Zone. Towns and sub-areas are left alone. Off by default.</span></span>
+      <label class="switch"><input type="checkbox" id="satanic_follow"><span class="sl"></span></label>
+      <span class="val" id="szfval">off</span>
+    </div>
+    <div class="row" style="border:none">
+      <span class="lbl" style="width:auto;flex:1">Every zone counts as satanic<br><span class="feature-description">The game's own "is this a Satanic Zone?" answer becomes yes wherever you are, so satanic modifiers and relic chances apply everywhere. Off by default; not yet confirmed in a live game.</span></span>
+      <label class="switch"><input type="checkbox" id="satanic_everywhere"><span class="sl"></span></label>
+      <span class="val" id="szeval">off</span>
+    </div>
+  </div>
   <div class="sat-toolbar">
     <label class="sat-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>

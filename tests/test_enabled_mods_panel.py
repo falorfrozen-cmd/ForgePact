@@ -104,9 +104,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # all seven in the derived oracle). Issue #76 adds none: its Setup
         # switch for FPS-drop notices went before it shipped (an FPS drop is
         # recorded without a notice, the owner, 2026-10-02), and Open reports
-        # folder posts to its own route.
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7)
+        # folder posts to its own route. Plus 2 from the Satanic Zone control
+        # card (#157): Keep the zone you are in satanic, and Every zone counts
+        # as satanic.
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 7 + 2)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 7 + 2)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

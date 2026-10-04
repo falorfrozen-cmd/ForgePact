@@ -116,6 +116,23 @@ the panel's Setup tab.
   relic by one level, left 10/10 relics alone and stayed put when only those
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
+- **Satanic Zone: choose the zone (#157).** Two new switches in
+  World → Satanic Zone, both off by default. **Keep the zone you are in
+  satanic** makes wherever you go count as the Satanic Zone, so its modifiers
+  and its drops follow you; towns and sub-areas are left alone, and the plugin
+  keeps the game's own value in step about four times a second because the
+  game re-rolls it on its own. **Every zone counts as satanic** makes the
+  game's own "is this a Satanic Zone?" answer yes wherever you are. The
+  `satzone` command pins one exact zone instead (`satzone pin here`,
+  `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
+  off the game rolls its zone exactly as before. The zone the game keeps is a
+  protected value: the plugin reads and writes it through the game's own
+  `GPV`/`SPV`, never a fixed number. Measured on the research build
+  (2026-10-03): the game asks `LoadSatanicZone` about 150 times a second with
+  the resolved zone's room index, and that value can be written, sticking
+  until the game's next roll. **Not yet confirmed in a live game**: forcing
+  the answer true changed nothing visible in town, and a real zone where a
+  kill can drop a relic has not been tested yet.
 
 ## How to update
 

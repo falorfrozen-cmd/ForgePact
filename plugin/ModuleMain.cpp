@@ -21674,6 +21674,28 @@ static void FilterSatanicArray(const RValue& controller, const char* varName,
     } catch (...) {}
 }
 
+// ---- Satanic Zone control (issue #157) ---------------------------------
+// The resolved zone is a writable protected value (measured live 2026-10-03,
+// docs/satanic-zone-mods-research.md "Live 3"): Controller_obj.satanicZone is
+// the *key*, GPV(key) is the room's asset index, and SPV(key, room) sets it.
+// Both are game scripts, called here the same way `pcall` calls them (self =
+// the local player, the shape the live probes used). The game re-rolls the
+// value on its own during play, so a pin is re-asserted by the same 15-frame
+// poll that corrects the mod arrays. `follow` keeps the room the player is in
+// pinned; `everywhere` instead forces LoadSatanicZone's answer true (the
+// answer the game asks for ~150x a second) and never touches the value.
+static std::atomic<int>  g_SatZonePin{ -1 };        // room index kept as the zone, -1 = none
+static std::atomic<bool> g_SatZoneFollow{ false };  // keep the current room pinned
+static std::atomic<bool> g_SatEverywhere{ false };  // force LoadSatanicZone's answer true
+static std::atomic<long> g_SatZoneWrites{ 0 };
+static std::atomic<long> g_SatZoneRefusals{ 0 };
+static std::atomic<int>  g_SatZoneLastRoom{ -1 };
+static std::mutex        g_SatZoneWhyMutex;
+static std::string       g_SatZoneLastWhy;
+static std::map<std::string, int> g_SatRoomIndexByName;   // built lazily, one scan
+
+#define SATZONE_WHY(s) { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); g_SatZoneLastWhy = (s); }
+
 static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     BP_DIAG_INCREMENT(g_SatLoadCalls);
@@ -21726,28 +21748,6 @@ static bool EnsureSatanicZoneHook()
     if (g_OrigLoadSatanicZone) return true;
     return HookOneScript("LoadSatanicZone", "fp_loadsz", (PVOID)HookLoadSatanicZone, &g_OrigLoadSatanicZone);
 }
-
-// ---- Satanic Zone control (issue #157) ---------------------------------
-// The resolved zone is a writable protected value (measured live 2026-10-03,
-// docs/satanic-zone-mods-research.md "Live 3"): Controller_obj.satanicZone is
-// the *key*, GPV(key) is the room's asset index, and SPV(key, room) sets it.
-// Both are game scripts, called here the same way `pcall` calls them (self =
-// the local player, the shape the live probes used). The game re-rolls the
-// value on its own during play, so a pin is re-asserted by the same 15-frame
-// poll that corrects the mod arrays. `follow` keeps the room the player is in
-// pinned; `everywhere` instead forces LoadSatanicZone's answer true (the
-// answer the game asks for ~150x a second) and never touches the value.
-static std::atomic<int>  g_SatZonePin{ -1 };        // room index kept as the zone, -1 = none
-static std::atomic<bool> g_SatZoneFollow{ false };  // keep the current room pinned
-static std::atomic<bool> g_SatEverywhere{ false };  // force LoadSatanicZone's answer true
-static std::atomic<long> g_SatZoneWrites{ 0 };
-static std::atomic<long> g_SatZoneRefusals{ 0 };
-static std::atomic<int>  g_SatZoneLastRoom{ -1 };
-static std::mutex        g_SatZoneWhyMutex;
-static std::string       g_SatZoneLastWhy;
-static std::map<std::string, int> g_SatRoomIndexByName;   // built lazily, one scan
-
-#define SATZONE_WHY(s) { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); g_SatZoneLastWhy = (s); }
 
 // "Act_01_02" and nothing else: the act zones the game resolves (towns and
 // sub-areas have other shapes). HS-Offline-Tracker's IsActZoneRoomName is the
@@ -21833,10 +21833,29 @@ static bool SatZoneWriteValue(const RValue& key, int room)
 
 // Re-assert the pin. Called from SatanicPollTick (same 15-frame cadence as the
 // mod filter); does no game reads while no pin and no follow is active.
+static bool SatZonePlayerExists()
+{
+    try {
+        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
+        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
+        return pid.ToDouble() >= 0;
+    } catch (...) { return false; }
+}
+
 static void SatZoneTick()
 {
     const int pin = g_SatZonePin.load();
     const bool follow = g_SatZoneFollow.load();
+    // Everywhere mode arms at launch and installs its hook in here: char
+    // select must not get hooks (the restartanytime pattern). A failed
+    // install is retried every few hundred frames, not every tick.
+    if (g_SatEverywhere.load() && !g_OrigLoadSatanicZone) {
+        static int64_t s_NextTryFrame = 0;
+        if ((int64_t)g_RuntimeFrame >= s_NextTryFrame && SatZonePlayerExists()) {
+            s_NextTryFrame = (int64_t)g_RuntimeFrame + 300;
+            EnsureSatanicZoneHook();
+        }
+    }
     if (pin < 0 && !follow) return;
 
     RValue controller;
@@ -21905,9 +21924,11 @@ static void SatZoneCmd(const std::string& rest)
     if (sub == "everywhere") {
         const bool on = (rest2 == "1" || rest2 == "on" || rest2 == "true");
         g_SatEverywhere.store(on);
-        if (on && !EnsureSatanicZoneHook())
-            Out("satzone: everywhere on, but the LoadSatanicZone hook could not install this session");
-        Out(std::string("satzone -> everywhere ") + (on ? "on (every zone counts as satanic)" : "off") + " " + statLine());
+        // The hook installs from the frame tick once a player exists: char
+        // select must not get hooks (the restartanytime pattern).
+        Out(std::string("satzone -> everywhere ") + (on
+            ? "on (every zone counts as satanic; the hook installs once you are in game)"
+            : "off") + " " + statLine());
         return;
     }
     if (sub == "pin") {
