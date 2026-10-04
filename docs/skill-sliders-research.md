@@ -24,8 +24,9 @@ amount, `StatAOESkillSize` element 0 for the AoE, and stat 75 through
 and ForgePact 2.3.0's release notes carry them. Design, scope, the `projprobe`
 exclusion, tests and verification status: the hub guide's section "Skill
 sliders (`skillslider`, issue #160)" (`docs/submodules/ForgePact/instructions.md`).
-Status there: built and unit-tested, live confirmation pending. The sections
-below are the research record and are unchanged.
+Status there: verified live on 2026-10-04 (`## Implementation live 1`, at the
+end). The sections between here and that one are the research record and are
+unchanged.
 
 Every claim carries one of four labels, as in
 [`docs/models/skill-stat-spec.md`](../../docs/models/skill-stat-spec.md):
@@ -577,3 +578,134 @@ real first (`read-control`), and `projprobe ids on` stayed armed throughout.
   `LoadAllModifiers` (for example `Necro_Summon_Parent_obj`, `Mariel_NPC_obj`,
   `Pyromancer_Volcano_obj`) were not observed either way. The enemy count rows
   saw no enemy shot.
+
+## Implementation live 1
+
+The shipped sliders ran in a live game in two sessions on 2026-10-04, Live
+procedures 1 and 2 of the implementation workorder. Their operator captures
+are `forgepact-issue-160-skill-sliders-impl-live-1.md` and
+`forgepact-issue-160-skill-sliders-impl-live-2.md`, local workorder files in
+the hub (`.claude/workorders/`, not tracked); this section summarises them
+check by check and cites them rather than copying them. Both sessions ran the
+development build of the `160-mod-skill-sliders` branch at `c971f90`
+(`plugin_build/BloodPactPlugin_rel.dll` from `build.bat dev`, sha256
+`2f8590b1ab61df923848a1f57eaa97b67467965a27bb9ea2eb63953fb8c3a199`, checked by
+each session's lease). The slider code is the same in both builds; the
+research readers `tgprobe vars` and `oget` were the only reason for the dev
+build. No `projprobe` command was sent. Sorak (slot 14, a White Mage) in the
+Town of Inoya, Shadow Bolt bound to Q through the game's skill popup, Healing
+Zone on E, Soul Spurn on R; the saves were backed up before and restored after
+each session. Everything here is **measured**; a negative is "not observed".
+
+How a count is read: `skillstate`'s `effect=` on slot 0,3 is the number of
+`White_Mage_Shadow_Bolt_obj` instances, so anything that makes a Shadow Bolt
+(a double cast, an item proc) counts as well as the cast itself. A count is
+corroborated by the lever's own `skillslider` line (`first=<a>-><b>`, `own=`,
+`double=`), not by the count alone.
+
+### Implementation live 1 (town, then Outskirts of Inoya)
+
+Capture: `forgepact-issue-160-skill-sliders-impl-live-1.md`. 14 checks: 13
+pass, 1 fail (`off-restored`, re-measured in Implementation live 2 below, whose
+verdict replaces it).
+
+- **`dll-hash`, `marker`, `control`, `read-control`: pass.** The lease hashed
+  the DLL above; at launch `skillslider` printed the three
+  `+0 hook=none first=- own=0 double=0 other=0 skip=0 last-other=-` lines;
+  `ping` answered `pong (YYTK 4.0.1)`; `oget Player_obj image_xscale` read 1.0.
+- **`off-amount`: pass.** Three single Q casts, nothing armed: 1, 1, 1.
+- **`off-speed`: pass.** Two new bolts read `deltaSpeed` 2.916667, v0.
+- **`off-aoe`: pass.** Two new Soul Spurn objects read `image_xscale` 7.5, s0
+  (town).
+- **Arming.** `skillslider projamount 2`, `aoesize 50`, `projspeed 50` each
+  replied `-> +<v>`, the five scripts printed `HOOK INSTALLED`, and every lever
+  showed `hook=native first=waiting`.
+- **`on-amount`: pass.** A single Q cast counted 3; the amount line read
+  `first=1->3 own=1 skip=0`.
+- **`on-speed`: pass.** Two new bolts read `deltaSpeed` 4.375, 1.5 × v0; the
+  speed line read `first=0->50 skip=0` (stat 75 was 0 on Sorak).
+- **`on-aoe`: pass.** Two new Soul Spurn objects read `image_xscale` 8.0,
+  s0 + 0.5; the AoE line read `first=0->50 skip=0`.
+- **`hz-outlier` (research): pass.** At `aoesize 50` two Healing Zone casts
+  settled at `image_xscale` 1.5 (`maxScale` 3), as in the research sessions. A
+  read about a second after the press caught the zone growing in at 0.333333,
+  and the same instance read 1.5 a second later. The AoE lever's `own=` rose
+  5 -> 6 -> 7 across the two casts, and the first raised `double=` 0 -> 1 on
+  the AoE and speed levers (a double cast). Healing Zone was not cast at the
+  ceiling.
+- **`at-max` (research): pass.** At the ceilings, `projamount 5`, `aoesize
+  100`, `projspeed 100`: a single Q cast counted 6 (`first=1->6`), a bolt read
+  `deltaSpeed` 5.833333 (2 × v0, `first=0->100`) and a Soul Spurn read
+  `image_xscale` 8.5 (s0 + 1.0, `first=0->100`). A read outside the check, one
+  bolt's `image_xscale` straight after that cast, gave 1.75, against 0.75 for
+  one bolt straight after the first cast at +0: one read each, so the Shadow
+  Bolt object taking the AoE element too is a supporting read, not a result.
+- **`off-restored`: fail, superseded.** With all three set back to 0 (each
+  `-> +0`, still `hook=native`), a bolt read `deltaSpeed` 2.916667 (v0) and a
+  Soul Spurn `image_xscale` 7.5 (s0): those two reads stand. The first single
+  Q cast after zeroing counted 3, with every lever's `own=` and `double=`
+  unchanged across it, and the next casts counted 1, 1, 1. The count was taken
+  from the first poll that moved, not a maximum over several reads. At +0 the
+  hooks are pass-throughs that count nothing, so unchanged counters are expected
+  there; the count was re-measured against a vanilla baseline in
+  Implementation live 2.
+- **`scope-other` (research): pass.** Levers re-armed at 2/50/50, Sorak taken
+  by waypoint to Outskirts of Inoya (`Act_01_01`) and left with no input for
+  about 60 s beside enemies and the mercenary. The speed lever counted
+  `other=7`, `last-other=Mercenary_obj`, and left those calls unchanged; the
+  amount and AoE levers counted no other caller. No `last-other=` named
+  `Player_obj` or `Universal_Double_Cast_obj`, and no enemy object was named:
+  the enemies died within the first seconds, so an enemy's call to these
+  scripts was not observed. The speed lever's `own=` rose 13 -> 17 -> 18 over
+  the zone change and the idle window with no cast: `Player_obj` calls
+  `LoadAllModifiers` outside a cast too, and with the lever non-zero those calls
+  get stat 75 raised as well. What triggers them was not read.
+
+### Implementation live 2 (town): the after-zero count against a vanilla baseline
+
+Capture: `forgepact-issue-160-skill-sliders-impl-live-2.md`. Same DLL, a fresh
+launch, the same setup. The owner asked for it on 2026-10-04 ("Re-run that
+check") after Implementation live 1's `off-restored` count. Every cast's count
+here is the largest of `hs_skill_cast`'s `effect_after` and at least five
+`skillstate` reads, with no reclassification of a 2 as a double cast. 7
+checks: 5 pass, 2 recorded fail (one a research finding, one accepted by the
+owner).
+
+- **`dll-hash`, `marker`, `control`: pass.** Same hash; the three `+0
+  hook=none` lines at launch; `pong (YYTK 4.0.1)`.
+- **`vanilla-baseline` (research): fail, the finding the session ran for.**
+  Eight single Q casts, no lever ever armed in that launch: 1, 1, 1, 1, 2, 3,
+  2, 1. A vanilla Shadow Bolt cast on Sorak counts 2 or 3 at times. During the
+  cast that counted 3 the Healing Zone slot also showed an instance the
+  operator had not cast. What makes the extra bolts (a double cast, an item
+  proc) was not read.
+- **`on-control`: recorded fail, accepted by the owner (2026-10-04, "Accept,
+  move to record").** Three transitions with `projamount 2` alone each counted
+  3 on the armed cast, with the amount lever's `own=` rising 0 -> 1 -> 2 -> 3
+  and `first=1->3 skip=0`. The fourth transition armed all three levers at
+  2/50/50, as Live procedure 1 had, and its armed cast counted 6 with
+  `double=` 0 -> 1 on every lever: a double cast of a 3, not a defect.
+- **`off-restored`: pass, and it replaces Implementation live 1's.** The first
+  cast after each of the four zeroings counted 1, 1, 2, 1. The baseline showed
+  a 2 on 2 of its 8 casts, at least the 1 in 4 here, and every lever's `own=`,
+  `double=` and `other=` was unchanged across that cast. So Implementation
+  live 1's after-zero 3 is consistent with the vanilla variance and is not a
+  slider effect.
+- **`after-zero-later` (research): pass.** The twelve later casts at +0
+  counted 1 or 2, both counts the baseline also showed.
+
+### What the two sessions settle
+
+- **Each slider does in play what the research lever did**, on the same
+  numbers: `projamount 2` turns one Shadow Bolt into three, `projspeed 50`
+  takes a bolt from 2.916667 to 4.375, `aoesize 50` grows Soul Spurn from 7.5
+  to 8.0. At the ceilings, 6 bolts, ×2 speed and 8.5: each lever is linear up
+  to the top of its range on these skills.
+- **Off is vanilla on the values the sliders change**: at +0 the bolt's speed
+  and Soul Spurn's scale are back at v0 and s0. A Shadow Bolt count above 1 at
+  +0 is also seen with nothing ever armed, at about the same rate.
+- **Scope**: the mercenary's calls reach the speed hooks and are left alone;
+  double casts are boosted (`double=` rose with them).
+- **Not observed**: a basic attack (none was cast), an enemy's call to the
+  hooked scripts, `ReturnExtraProjectilesRanged` in play, Healing Zone at the
+  AoE ceiling, any class but the White Mage, co-op.

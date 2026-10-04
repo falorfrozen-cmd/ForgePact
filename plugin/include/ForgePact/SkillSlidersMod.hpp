@@ -31,9 +31,11 @@ namespace ForgePact {
 // Only the player's own casts count, decided at the point of use from the
 // `self` each hooked call receives (AGENTS.md, "Check a Permission Where It Is
 // Used"): Player_obj, and the double-cast proc Universal_Double_Cast_obj that
-// repeats the player's cast. The mercenary, enemies and basic attacks
-// (LoadAllModifiers with self=Projectile_Player_obj) are left exactly as the
-// game returned them, and counted `other`. A cast's base-6
+// repeats the player's cast. Every other caller is meant to get exactly what
+// the game returned, counted `other`: by design that covers the mercenary
+// (seen live: Mercenary_obj counted other and left unchanged), enemies and
+// basic attacks (LoadAllModifiers with self=Projectile_Player_obj; no basic
+// attack or enemy call was seen live). A cast's base-6
 // ReturnExtraSpellProjectiles call (an item proc, by the research's reading)
 // has the same `self` and argument shapes as the skill's own, so it is raised
 // too. The counts and the first-call line ship: a player build has no other

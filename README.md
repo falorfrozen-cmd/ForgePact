@@ -1477,13 +1477,18 @@ your skill, after it has counted your gear and buffs.
   second projectile count of 6 alongside the skill's own, which the research
   takes to be an item effect. The plugin cannot tell it from the skill's own
   count, so Projectile Amount raises it as well (6 to 8 at +2).
-- **Measured** in the research sessions on a White Mage, on the research
-  build, with a test command that adds to the same values the sliders add to:
-  +2 projectiles turned one Shadow Bolt into three; +50% speed took a Shadow
-  Bolt's speed from 2.916667 to 4.375; +50 Area of Effect grew a Soul Spurn from
-  7.5 to 8.0. A Healing Zone at +50 did not grow. The sliders themselves have
-  been tested outside the game only, and have not yet been checked in play.
-  Values above +2, +50 and +50% have not been played.
+- **Checked in play** on 2026-10-04 on a White Mage, with a development build
+  of this plugin: +2 projectiles turned one Shadow Bolt into three; +50% speed
+  took a Shadow Bolt's speed from 2.916667 to 4.375; +50 Area of Effect grew a
+  Soul Spurn from 7.5 to 8.0. At the top of each slider, +5 made six bolts,
+  +100% doubled the speed and +100 grew the Soul Spurn to 8.5. With the sliders
+  back at 0, the speed and the size were the game's own again. A Healing Zone
+  at +50 did not grow. The mercenary's calls reached the plugin and were left
+  alone; no enemy was seen reaching it. A basic attack was not cast, so its
+  being unchanged is by design and not yet seen in play.
+- **A Shadow Bolt sometimes makes 2 or 3 bolts on its own.** In the same
+  check, single casts with every slider off made 1, 1, 1, 1, 2, 3, 2, 1 bolts,
+  so an extra bolt now and then at 0 is the game, not the slider.
 - **If the plugin cannot set a slider up** on your game, the slider stays at 0
   and the log says which game function it could not reach, for example
   `skillslider: ReturnExtraSpellProjectiles hook is TABLE-ONLY - the game calls
