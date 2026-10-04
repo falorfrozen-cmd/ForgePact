@@ -287,8 +287,9 @@ One code lesson worth carrying: `instance_find(Player_obj)` hands back a
 `VALUE_REF` on this runner, so the mod's first pin attempt resolved no player
 ("player instance unreadable") until it went through `HhResolveLocalPlayer` +
 `HhResolveInstance` - the same trap the 2026-09-10 note above records. The
-in-zone check (the game's own answer turning true inside a real zone, and a
-relic drop in one) is still the open measurement.
+in-zone check this section left open is answered below (Live 4): the game's own
+answer turns true in the pinned room and the zone's buffs are applied there;
+only a relic drop in a satanic zone remains unwatched.
 
 ## Live 4 (2026-10-04): what `LoadSatanicZone` really answers, and the map marker
 

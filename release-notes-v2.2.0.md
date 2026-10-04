@@ -166,9 +166,9 @@ experience.
 - **Satanic Zone: choose the zone (#157).** Two new switches in
   World → Satanic Zone, both off by default. **Keep the zone you are in
   satanic** makes wherever you go count as the Satanic Zone, so its modifiers
-  and its drops follow you; towns and sub-areas are left alone, and the plugin
-  keeps the game's own value in step about four times a second because the
-  game re-rolls it on its own. **Every zone counts as satanic** makes the
+  follow you (drops not yet checked); towns and sub-areas are left alone, and
+  the plugin keeps the game's own value in step about four times a second
+  because the game re-rolls it on its own. **Every zone counts as satanic** makes the
   game's own "is this a Satanic Zone?" answer yes wherever you are. The
   `satzone` command pins one exact zone instead (`satzone pin here`,
   `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
