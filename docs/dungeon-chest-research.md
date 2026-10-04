@@ -46,8 +46,13 @@ procedure 1b), which replaced the denominator above; no spawner variable
 holds its count, so the player build estimates the total (`total-route:
 estimate`). The owner chose to ship every countdown form as a choice on the
 panel (`countdown-form: choice`, 2026-10-04) and reported a flickering head
-label, which the build now holds steady. Live procedure 2 (the player build)
-follows.
+label, which the build now holds steady. Live procedures 2 and 3 ran the
+player build on 2026-10-04 ([Live procedure 2](#live-procedure-2),
+[Live procedure 3](#live-procedure-3)): the kill count, the estimate, every
+countdown form and the early open work in the Pumpkin Cellar; Live procedure
+2's two fails (a one-frame size flicker of the head label, and a latch about
+a dozen kills late) were fixed and measured fixed in Live procedure 3. A boss
+dungeon is not observed.
 
 ## Static reading
 
@@ -871,7 +876,67 @@ status, so `kills=0` could not say whether the hook fired. Pinned by
 round-4 tree (tag `forgepact-issue-31-dungeon-chest-c-base`) and pass on the
 fix.
 
-**Attempt 2**: not yet run (the fixed player build, the whole procedure above).
+**Attempt 2** (2026-10-04, 08:47-09:25 UTC; capture
+`forgepact-issue-31-dungeon-chest-c-live-2.md`, player DLL SHA-256
+`ed3cab181f14e215bfba83c8d2186446086752e5113901d121456f1c163c2910`, built
+from the fixed tree). Of 14 checks, 11 passed, 2 failed and 1 was not
+observed.
+
+- Passed: `dll-hash`, `marker` (the off status carried `notEnemy=0`),
+  `control` (`pong`; `killHook=0` before the dungeon), `on-status` (the
+  panel's switch and typed 50 gave `dungeonchest: 50% …` and both `HOOK
+  INSTALLED` lines), `on-total`, `on-kills-count`, `on-countdown-head`,
+  `on-form-control`, `on-countdown-chat`, `on-opens-early` and
+  `off-baseline`.
+- The census at the chest's first sight read `total=642 creators=122
+  pending=122 unreadable=0`, `threshold=321`: the estimate is 641 for the 122
+  pending spawners, so 1 monster was alive at that moment by its arithmetic.
+- The kill count works in the player build (`on-kills-count`). After about 25
+  kills by the owner's rough count, the first read showed `kills=38
+  notEnemy=0`, and `headhunter status`'s `killHook=` had gone from 0 to 915.
+  This session's part of `out.txt` (from its own plugin header on) holds no
+  `Enemy_Parent_obj index =` line, so no create-hook installer resolved the
+  index and the count came through the enemy check's resolution by name: the
+  cause found in attempt 1 is measured, and so is its fix.
+- Each countdown form showed where the panel's select put it. `head`: the
+  label `Chest: 42 kills to go` above the character with no chat line (the
+  owner overshot the 50 point, so `Chest: 50 kills to go` itself was not
+  seen). `chat`: after the select changed (status `countdown=chat`),
+  `chatLines=` went from 0 to 2 at `remaining=39`, and the owner saw the chat
+  line and no label. `both`: the label `Chest: 29 kills to go` in a
+  screenshot while the owner read 29 in chat (`chatLines=3`). The chat line
+  itself never showed in an operator screenshot; the owner's words and
+  `chatLines=` carry it. At the latch the label went and the owner read the
+  chest's ready line in chat.
+- `on-opens-early`: the latch line read `dungeonchest: unlocked early at
+  333/642 alive=170`, and the owner opened the chest with monsters alive and
+  got its loot; the status right after read `alive=163 answered=15485`.
+  `off-baseline`: a second Pumpkin Cellar with the mod off kept its chest
+  shut with monsters alive, and it opened after the clear (the owner's
+  report).
+- **`on-head-steady` failed** (a finding, answered by D14). The owner, standing
+  still: the label is "still jittering", "Shakes position", "Flickers", about
+  three times a second. Per-frame capture: .NET `System.Drawing`
+  `Graphics.CopyFromScreen` of the label's region only (200 × 50 physical
+  pixels, DPI-aware) into in-memory bitmaps for 1.001 s, saved to the
+  operator's scratchpad afterwards and never to this repository: 272 frames,
+  about two per game frame at the game's ~144 fps. 270 frames drew the label
+  identically (its bright text 181 px wide, 18 px tall). Frames 32 and 172,
+  single frames about 0.51 s apart, drew the same text at about 72 % (131 px
+  wide, 14 px tall) on the same horizontal centre. The other frame-to-frame
+  differences were a torch's glow behind the label's right end, excluded
+  because the same three-frame pattern shows in a region holding only the
+  torch and the label's bright-pixel count and box stayed the same on those
+  frames. D14's fix: the label sets its own font (`__newfont6`) on every
+  draw. Live procedure 3 measured it.
+- **`no-double-count` failed** (a finding, answered by D15). The latch line
+  came at `333/642` against `threshold=321`, 12 kills over, with
+  `answered=9421`, `notEnemy=0` and monsters alive (`alive=170`). No kill was
+  counted twice; the latch decision ran only at the once-a-second poll, and a
+  second of area-damage play holds about a dozen kills. D15's fix: the counted
+  kill that reaches the threshold latches. Live procedure 3 measured it.
+- `boss-dungeon`: not observed (only Cellar Keys were at hand).
+- The saves backup was restored after the session.
 
 ## Live procedure 3
 
@@ -955,7 +1020,44 @@ countdown form `both`.
 
 ### Results
 
-Not yet run.
+Run 2026-10-04, 10:50-11:01 UTC; capture
+`forgepact-issue-31-dungeon-chest-c-live-3.md`, player DLL SHA-256
+`3e55e5cd49d71772c6a4d07e3d25e2ef4fa51185b0b4512a86ceda9cd9262835`, built
+from ForgePact `1f563bb`. Of 9 checks, 8 passed and 1 was not observed.
+
+- `dll-hash`, `marker` (`labelFont=none … latchedAt=0` on the off status)
+  and `control` (`pong`; `killHook=` 0 before the dungeon, 1016 after the
+  kills): pass.
+- The census read `total=646 creators=122 pending=122 unreadable=0` and
+  `threshold=323`, ceil(646 / 2).
+- `on-head-steady`: pass. With `Chest: 47 kills to go` up (form `both`) and
+  the owner standing still, the same per-frame method as Live procedure 2
+  (`CopyFromScreen`, a 240 × 55 region, 1.203 s) caught 329 frames, about 273
+  a second. Every frame drew the label 225 px wide with 703 bright pixels, and
+  all 329 were one bitmap, byte for byte. No scenery was excluded: no torch
+  sat in the region. The capture's own control, the same method on a region
+  of moving characters, gave 69 distinct bitmaps in 161 frames. The status
+  read `labelFont=__newfont6`, and the owner: "Steady, no jitter".
+- `font-cause`: pass, readable, so the cause is measured. Both status reads
+  showed `inheritedFont=7` and `inheritedUnread=0`. Across the stand-still,
+  about 45 s between the two reads, `fontSwitches=` went from 62 to 116 (54
+  label draws found a different inherited font from the draw before) while
+  `guiResizes=` stayed 0. The font the game leaves current where the label
+  draws switches from frame to frame and the GUI size does not, which is the
+  cause of Live procedure 2's size flicker. Which of the game's draws leaves
+  the other font current is not established.
+- `label-look`: not observed (the owner made no remark on the label's size or
+  readability).
+- `latch-exact`: pass. The session's only latch line read `dungeonchest:
+  unlocked early at 323/646 alive=128`, at `threshold=323`, and the status
+  then showed `latched=1 latchedAt=323` (D15 fixed).
+- `on-ready-chat`: pass. The second stop was missed (the owner overshot), so
+  the baseline is the stand-still read: `chatLines=` 1 there, 11 after the
+  latch, `chat=ok`, and the owner: "Chat yes, label gone".
+- `on-opens-early`: pass. The status read `alive=113` just before the open;
+  the owner opened the chest with monsters alive and got its loot, and the
+  status after read `alive=103`, `answered=` 1680 → 8809.
+- The saves backup was restored after the session.
 
 ## Route
 

@@ -175,7 +175,11 @@ experience.
   When 50 or fewer kills are left, a countdown tells you how many: above your
   character, in chat, or both, whichever you pick under the switch.
   It is off by default: turn it on in the panel, and the slider rests at 75 %
-  until you move it.
+  until you move it. Checked in play on 2026-10-04 in two Pumpkin Cellar runs
+  at 50 %: the chest opened with over 100 monsters left in the dungeon, the
+  countdown showed above the character, in chat and both, as picked, and the
+  label above the character held steady while standing still. A boss
+  dungeon has not been checked yet.
 - **Satanic Zone: choose the zone (#157).** Two new switches in
   World → Satanic Zone, both off by default. **Keep the zone you are in
   satanic** makes wherever you go count as the Satanic Zone, so its modifiers
