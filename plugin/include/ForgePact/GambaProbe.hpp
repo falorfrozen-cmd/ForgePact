@@ -105,19 +105,24 @@ inline constexpr std::string_view RouteName(Route r)
 }
 
 // ---- the trace budget and the lever's limits --------------------------------
-// The first kTraceLinesPerRow lines per row are logged; after that the row
-// only counts, and its status line says BUDGET SPENT. Each line carries a key
-// - what it is about: a script's first argument (GPV's state key), a
-// builtin's argument text, an event's instance id - and one key writes at
-// most kTraceLinesPerKey lines, so one call shape a machine repeats every
-// frame (an idle irandom, a timer key whose value moves) cannot spend the
-// whole row; the lines a key was refused are counted as key-capped. A line
-// identical to the previous line for the same key is not logged and costs
-// nothing. The budget is per window: `gambaprobe trace`, `hook` again and
-// every `spawn` start it over, so the live procedure re-arms it right before
-// each spin it measures.
-inline constexpr int kTraceLinesPerRow = 40;
+// Each line carries a key - what it is about: a script's first argument
+// (GPV's state key), a builtin's argument text, an event's instance id - and
+// one key writes at most kTraceLinesPerKey lines a window, so one call shape a
+// machine repeats every frame (an idle irandom, a timer key whose value moves)
+// spends only its own lines; the lines a key was refused are counted as
+// key-capped. The row's own cap, kTraceLinesPerRow, is there only to bound a
+// row whose keys never repeat: it covers kTraceKeysPerRow full keys, so the
+// protected store's moving keys (InitPV sets up 28) cannot spend GPV's or
+// SPV's row during a spin's animation and leave the keys written at the
+// spin's end undescribed. A row past it only counts, and its status line says
+// BUDGET SPENT. A line identical to the previous line for the same key is not
+// logged and costs nothing. The budget is per window: `gambaprobe trace`,
+// `hook` again and every `spawn` start it over, so the live procedure re-arms
+// it right before each spin it measures.
 inline constexpr int kTraceLinesPerKey = 8;
+inline constexpr int kTraceKeysPerRow = 64;
+inline constexpr int kTraceLinesPerRow = 512;
+static_assert(kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow, "a row's budget covers kTraceKeysPerRow full keys");
 inline constexpr int64_t kRngMinCount = 1;
 inline constexpr int64_t kRngMaxCount = 50;
 
@@ -177,9 +182,38 @@ struct Counters {
     uint64_t otherSelf = 0;     // armed or levered: everything else
     uint64_t logged = 0;        // lines written this window (at most kTraceLinesPerRow)
     uint64_t keyCapped = 0;     // new lines refused because their key had written kTraceLinesPerKey
-    uint64_t answered = 0;     // RNG rows: calls the lever answered
+    uint64_t answered = 0;      // RNG rows: calls the lever answered
     uint64_t outOfRange = 0;    // `choose`: a lever value that named none of the call's arguments
+    uint64_t passed = 0;        // RNG rows: machine-self calls the armed lever let through (not its target)
 };
+
+// A builtin's row by its name (`irandom`, `choose`, ...); false for a name
+// the probe does not hook.
+inline bool BuiltinByName(std::string_view name, Builtin& out)
+{
+    for (int i = 0; i < kBuiltinCount; ++i)
+        if (kBuiltins[i].name == name) {
+            out = static_cast<Builtin>(i);
+            return true;
+        }
+    return false;
+}
+
+// A call's argument text as the lever compares it: trimmed, every run of
+// whitespace one space. The adapter's text (` a0=1 a1=100`) and what the
+// operator types after `args` (copied from a trace line) meet here.
+inline std::string ArgsKey(std::string_view text)
+{
+    std::string s;
+    bool space = false;
+    for (const char ch : text) {
+        if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') { space = !s.empty(); continue; }
+        if (space) s += ' ';
+        space = false;
+        s += ch;
+    }
+    return s;
+}
 
 // One RNG builtin call's answer. `answer` false: the game's own function runs.
 struct RngDecision {
@@ -251,11 +285,16 @@ public:
     }
 
     // One RNG builtin call: Observe, then the lever. Answered only for a
-    // machine self, only while the lever is on and has answers left, and for
-    // `choose` only with a value that names one of this call's `argc`
-    // arguments. The count-th answer turns the lever off.
-    template <class SelfFn>
-    RngDecision DecideRng(Builtin builtin, SelfFn&& selfObject, bool inMachineEvent, int argc)
+    // machine self, only while the lever is on and has answers left, only
+    // for the lever's target builtin and, when the lever names argument
+    // text, only for a call whose `argsText()` matches it, and for `choose`
+    // only with a value that names one of this call's `argc` arguments. Any
+    // other machine-self RNG call the armed lever sees passes through
+    // untouched and is counted as passed. `argsText()` is called only for a
+    // machine-self call of the target with an argument filter set. The
+    // count-th answer turns the lever off.
+    template <class SelfFn, class ArgsFn>
+    RngDecision DecideRng(Builtin builtin, SelfFn&& selfObject, bool inMachineEvent, int argc, ArgsFn&& argsText)
     {
         RngDecision d;
         const int b = static_cast<int>(builtin);
@@ -265,6 +304,22 @@ public:
         const AnswerKind kind = kBuiltins[b].kind;
         if (d.seen != Seen::Machine || kind == AnswerKind::NotRng || !rngOn_ || rngRemaining_ <= 0) return d;
         Counters& c = rows_[static_cast<size_t>(row)];
+        // Aimed: another builtin's call, or the target's with other
+        // arguments, is not the call the lever was armed for.
+        if (builtin != rngTarget_) {
+            ++c.passed;
+            ++rngPassedBuiltin_;
+            return d;
+        }
+        if (!rngArgs_.empty()) {
+            std::string text;
+            try { text = ArgsKey(argsText()); } catch (...) { text.clear(); }
+            if (text != rngArgs_) {
+                ++c.passed;
+                ++rngPassedArgs_;
+                return d;
+            }
+        }
         if (kind == AnswerKind::ArgumentIndex) {
             const double v = rngValue_;
             if (!(v >= 0.0) || v != std::floor(v) || v >= static_cast<double>(argc)) {
@@ -319,19 +374,30 @@ public:
     }
 
     // ---- the lever -----------------------------------------------------------
-    // `rng <value> [count]`: answer the next `count` machine-self RNG builtin
-    // calls with `value`. False, and nothing changed, for a value that is not
+    // `rng <builtin> <value> [count] [args <text>]`: answer the next `count`
+    // machine-self calls of one RNG builtin - with `args`, only those whose
+    // argument text is `args` (ArgsKey on both sides) - with `value`. Aimed,
+    // because the machine makes RNG calls the prize does not depend on (a
+    // reel roll each spin, possibly an idle call every frame), and an unaimed
+    // lever hands its answer to the first of them. False, and nothing
+    // changed, for a builtin that is not an RNG row, a value that is not
     // finite or a count out of range.
-    bool SetRng(double value, int64_t count)
+    bool SetRng(Builtin target, double value, int64_t count, std::string_view args = {})
     {
+        const int b = static_cast<int>(target);
+        if (b < 0 || b >= kBuiltinCount || kBuiltins[b].kind == AnswerKind::NotRng) return false;
         if (!std::isfinite(value) || count < kRngMinCount || count > kRngMaxCount) return false;
         rngOn_ = true;
         rngFinished_ = false;
+        rngTarget_ = target;
+        rngArgs_ = ArgsKey(args);
         rngValue_ = value;
         rngCount_ = count;
         rngRemaining_ = count;
         rngAnswered_ = 0;
         rngOutOfRange_ = 0;
+        rngPassedBuiltin_ = 0;
+        rngPassedArgs_ = 0;
         return true;
     }
 
@@ -347,6 +413,12 @@ public:
     int64_t RngRemaining() const { return rngRemaining_; }
     uint64_t RngAnswered() const { return rngAnswered_; }
     uint64_t RngOutOfRange() const { return rngOutOfRange_; }
+    Builtin RngTarget() const { return rngTarget_; }
+    const std::string& RngArgs() const { return rngArgs_; }
+    // Machine-self RNG calls the armed lever let through: another builtin's,
+    // and the target's with other argument text.
+    uint64_t RngPassedBuiltin() const { return rngPassedBuiltin_; }
+    uint64_t RngPassedArgs() const { return rngPassedArgs_; }
 
     // The lever answered its last call and turned itself off. Read once: the
     // adapter prints the line, then the flag is clear.
@@ -357,8 +429,9 @@ public:
         return f;
     }
 
-    // The lever is armed but no machine RNG call has reached it: every answer
-    // so far was the game's own. `status` names this state, so a lever that
+    // The lever is armed but no machine call of its target has reached it:
+    // every answer so far was the game's own. `status` names this state, and
+    // how many other machine-self RNG calls passed by, so a lever that
     // answered nothing is never read as a lever that changed nothing.
     bool Inert() const { return rngOn_ && rngAnswered_ == 0; }
 
@@ -388,7 +461,8 @@ public:
             + " key-capped=" + std::to_string(c.keyCapped);
         if (row >= kFirstBuiltinRow && row < kFirstScriptRow
             && kBuiltins[row - kFirstBuiltinRow].kind != AnswerKind::NotRng)
-            s += " answered=" + std::to_string(c.answered) + " out-of-range=" + std::to_string(c.outOfRange);
+            s += " answered=" + std::to_string(c.answered) + " out-of-range=" + std::to_string(c.outOfRange)
+                + " passed=" + std::to_string(c.passed);
         if (BudgetSpent(row))
             s += " BUDGET SPENT - counted, not described; `gambaprobe trace` starts it over";
         return s;
@@ -425,25 +499,38 @@ public:
             t.keyCapped += c.keyCapped;
             t.answered += c.answered;
             t.outOfRange += c.outOfRange;
+            t.passed += c.passed;
         }
         return std::string("gambaprobe: ") + (armed_ ? "on" : "off") + " machine-object=" + std::to_string(machineObject_)
             + " " + EventsText() + " | calls=" + std::to_string(t.calls) + " machine-self=" + std::to_string(t.machineSelf)
             + " in-event=" + std::to_string(t.inEvent) + " other-self=" + std::to_string(t.otherSelf)
             + " logged=" + std::to_string(t.logged) + " key-capped=" + std::to_string(t.keyCapped)
             + " spent-rows=" + std::to_string(SpentRows()) + " answered=" + std::to_string(t.answered)
-            + " out-of-range=" + std::to_string(t.outOfRange);
+            + " out-of-range=" + std::to_string(t.outOfRange) + " passed=" + std::to_string(t.passed);
     }
 
-    // The lever's line: what it answered, what it holds, and INERT when it is
-    // armed and nothing reached it.
+    // What the lever is aimed at: `irandom` or `irandom args="a0=100"`.
+    std::string RngTargetText() const
+    {
+        std::string s(kBuiltins[static_cast<int>(rngTarget_)].name);
+        if (!rngArgs_.empty()) s += " args=\"" + rngArgs_ + "\"";
+        return s;
+    }
+
+    // The lever's line: what it is aimed at, what it answered, what it let
+    // through, and INERT when it is armed and its target never reached it.
     std::string RngLine() const
     {
         std::string s = "gambaprobe: rng answered " + std::to_string(rngAnswered_) + " of " + std::to_string(rngCount_)
-            + " value=" + NumberText(rngValue_) + " remaining=" + std::to_string(rngOn_ ? rngRemaining_ : 0)
-            + " out-of-range=" + std::to_string(rngOutOfRange_) + " lever=" + (rngOn_ ? "on" : "off");
+            + " target=" + RngTargetText() + " value=" + NumberText(rngValue_)
+            + " remaining=" + std::to_string(rngOn_ ? rngRemaining_ : 0) + " out-of-range=" + std::to_string(rngOutOfRange_)
+            + " passed=" + std::to_string(rngPassedBuiltin_ + rngPassedArgs_) + " (other builtin "
+            + std::to_string(rngPassedBuiltin_) + ", other args " + std::to_string(rngPassedArgs_) + ") lever="
+            + (rngOn_ ? "on" : "off");
         if (Inert())
-            s += " INERT - armed, but no RNG builtin call whose self is a gamba machine has reached it; every answer"
-                 " so far was the game's own";
+            s += " INERT - armed, but no machine-self " + RngTargetText() + " call has reached it; every answer so far"
+                 " was the game's own, and " + std::to_string(rngPassedBuiltin_ + rngPassedArgs_)
+                 + " other machine-self RNG call(s) passed through untouched";
         return s;
     }
 
@@ -460,11 +547,15 @@ private:
     bool armed_ = false;
     bool rngOn_ = false;
     bool rngFinished_ = false;
+    Builtin rngTarget_ = Builtin::Irandom;
+    std::string rngArgs_;   // empty: any argument text
     double rngValue_ = 0.0;
     int64_t rngCount_ = 0;
     int64_t rngRemaining_ = 0;
     uint64_t rngAnswered_ = 0;
     uint64_t rngOutOfRange_ = 0;
+    uint64_t rngPassedBuiltin_ = 0;
+    uint64_t rngPassedArgs_ = 0;
 };
 
 } // namespace ForgePact::GambaProbe

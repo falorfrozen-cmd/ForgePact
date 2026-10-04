@@ -2,17 +2,21 @@
 
 `gambaprobe` (research build only, ForgePact #134) hooks the gamba machine's
 events, the scripts they call and the RNG and instance builtins, and its one
-lever, `rng <value> [count]`, answers the next `count` RNG builtin calls whose
-self is a gamba machine. These scenarios pin the decision ModuleMain.cpp's
-adapter takes from plugin/include/ForgePact/GambaProbe.hpp, compiled whole.
+lever, `rng <builtin> <value> [count] [args <text>]`, answers the next `count`
+calls of that RNG builtin whose self is a gamba machine (and, with `args`,
+whose argument text matches). These scenarios pin the decision
+ModuleMain.cpp's adapter takes from plugin/include/ForgePact/GambaProbe.hpp,
+compiled whole.
 
 Baseline: with the probe idle and the lever off, every RNG answer is the real
 one, no self is read and no counter but `calls` moves; armed with the lever
 off, calls are classified and still never answered. Target: with the lever on,
-only a machine-self call is answered, `count` calls and then the lever is off;
-another object's call, and another self inside a machine's event, are
-untouched; a lever no machine call reached is named INERT; the status line
-reads back every counter.
+only a machine-self call of the target is answered, `count` calls and then the
+lever is off; another object's call, another self inside a machine's event,
+and a machine call of another builtin or with other arguments are untouched,
+the last two counted as passed; a lever its target never reached is named
+INERT; moving keys cannot spend a row's trace budget within a spin; the status
+line reads back every counter.
 """
 import os
 import shutil
@@ -87,7 +91,7 @@ class GambaProbeBehaviorTests(unittest.TestCase):
 
     def test_the_tables(self):
         for label in ("table/events", "table/rng_rows_and_kinds", "table/row_layout", "table/route_names",
-                      "table/trace_budget_is_named"):
+                      "table/trace_budget_is_named", "table/builtin_by_name", "table/args_key_trims_and_folds_whitespace"):
             self.assertScenario(label)
 
     # ---- baseline: what the game does without the lever ------------------
@@ -114,7 +118,15 @@ class GambaProbeBehaviorTests(unittest.TestCase):
         for label in ("target/set_rng", "target/another_objects_call_is_untouched",
                       "target/another_self_inside_a_machine_event_is_untouched", "target/levered_reads_the_self",
                       "target/machine_self_answered_with_the_value", "target/instance_rows_never_answered",
-                      "target/answered_counted_per_row"):
+                      "target/an_instance_row_is_no_target", "target/other_selves_are_not_counted_as_passed",
+                      "target/another_builtins_machine_call_passes_untouched", "target/answered_counted_per_row"):
+            self.assertScenario(label)
+
+    def test_an_armed_lever_leaves_a_non_matching_machine_self_call_untouched(self):
+        """The lever is aimed: an idle per-frame call or a reel roll cannot take the answer meant for the prize roll."""
+        for label in ("aim/set_with_args", "aim/non_matching_machine_calls_are_untouched",
+                      "aim/inert_line_counts_what_passed", "aim/args_text_is_read_only_for_the_targets_machine_calls",
+                      "aim/the_matching_call_is_answered", "aim/no_args_filter_matches_any_arguments"):
             self.assertScenario(label)
 
     def test_count_calls_then_off(self):
@@ -140,8 +152,14 @@ class GambaProbeBehaviorTests(unittest.TestCase):
                       "trace/reset_restores_each_keys_budget", "trace/bad_row_refused"):
             self.assertScenario(label)
 
+    def test_moving_keys_cannot_spend_a_row_within_a_spin(self):
+        """Six keys moving every frame, then a seventh key at the spin's end: its line is still logged."""
+        for label in ("trace/moving_keys_cannot_spend_the_row_within_a_spin",
+                      "trace/every_key_of_a_full_row_writes_its_lines"):
+            self.assertScenario(label)
+
     def test_the_status_line_reads_back_every_counter(self):
-        for label in ("status/events_by_key", "status/row_reads_every_counter",
+        for label in ("status/events_by_key", "status/row_reads_every_counter", "status/passed_is_counted_on_its_own_row",
                       "status/non_rng_rows_omit_the_lever_counters", "status/line_sums_every_counter",
                       "status/rng_line", "status/number_text"):
             self.assertScenario(label)

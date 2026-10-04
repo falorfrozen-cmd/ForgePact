@@ -9,11 +9,14 @@
 // Baseline: with the probe idle and the lever off, every RNG builtin call runs
 // the game's own function, no self is read, and no counter but `calls` moves;
 // armed with the lever off, the same calls are classified but still never
-// answered. Target: with `rng <value> <count>`, only a call whose self is a
-// machine is answered, `count` times and then the lever is off; another
-// object's call, or another self inside a machine's event, is untouched; a
-// lever no machine call reached is named INERT; the trace budget and the
-// status text read back every counter.
+// answered. Target: with `rng <builtin> <value> <count> [args <text>]`, only a
+// call of the target builtin whose self is a machine (and whose argument text
+// matches, when the lever names one) is answered, `count` times and then the
+// lever is off; another object's call, another self inside a machine's event,
+// and a machine call of another builtin or with other arguments are untouched,
+// the last two counted as passed; a lever its target never reached is named
+// INERT; moving keys cannot spend a row's trace budget within a spin; the
+// status text reads back every counter.
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -44,9 +47,11 @@ static Probe make()
 }
 
 static long g_SelfReads = 0;
-static RngDecision rng(Probe& p, Builtin b, int self, bool inEvent = false, int argc = 1)
+static long g_ArgsReads = 0;
+static RngDecision rng(Probe& p, Builtin b, int self, bool inEvent = false, int argc = 1, const std::string& args = "")
 {
-    return p.DecideRng(b, [self]() { ++g_SelfReads; return self; }, inEvent, argc);
+    return p.DecideRng(b, [self]() { ++g_SelfReads; return self; }, inEvent, argc,
+                       [&args]() { ++g_ArgsReads; return args; });
 }
 static Seen observe(Probe& p, int row, int self, bool inEvent = false)
 {
@@ -83,8 +88,15 @@ int main()
         check("table/route_names", RouteName(Route::Detoured) == "detoured" && RouteName(Route::TableOnly) == "table-only"
             && RouteName(Route::Shared) == "shared" && RouteName(Route::Missing) == "missing"
             && RouteName(Route::DetouredUnder) == "detoured-under");
-        check("table/trace_budget_is_named", kTraceLinesPerRow == 40 && kTraceLinesPerKey == 8
-            && kTraceLinesPerKey < kTraceLinesPerRow && kRngMinCount == 1 && kRngMaxCount == 50);
+        check("table/trace_budget_is_named", kTraceLinesPerRow == 512 && kTraceLinesPerKey == 8 && kTraceKeysPerRow == 64
+            && kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow && kRngMinCount == 1 && kRngMaxCount == 50);
+        Builtin b = Builtin::InstanceDestroy;
+        Builtin none = Builtin::Irandom;
+        check("table/builtin_by_name", BuiltinByName("irandom", b) && b == Builtin::Irandom && BuiltinByName("choose", b)
+            && b == Builtin::Choose && BuiltinByName("random_range", b) && b == Builtin::RandomRange
+            && !BuiltinByName("IRANDOM", none) && !BuiltinByName("gamba", none) && none == Builtin::Irandom);
+        check("table/args_key_trims_and_folds_whitespace", ArgsKey("  a0=100 \t  a1=5 ") == "a0=100 a1=5"
+            && ArgsKey(" a0=1") == "a0=1" && ArgsKey("") == "" && ArgsKey("   ") == "", ArgsKey("  a0=100 \t  a1=5 "));
     }
 
     // ---- baseline: the probe idle, the lever off ------------------------------
@@ -135,7 +147,7 @@ int main()
             && !p.IsMachine(kMachine + 1) && !p.IsMachine(-1));
         p.SetMachineObject(-1);
         check("predicate/unresolved_machine_is_nothing", !p.IsMachine(-1) && !p.IsMachine(kMachine));
-        p.SetRng(98, 5);
+        p.SetRng(Builtin::Irandom, 98, 5);
         const RngDecision d = rng(p, Builtin::Irandom, kMachine);
         check("predicate/unresolved_machine_answers_nothing", !d.answer && d.seen == Seen::Other);
     }
@@ -143,7 +155,8 @@ int main()
     // ---- target: the lever ------------------------------------------------------
     {
         Probe p = make();
-        check("target/set_rng", p.SetRng(98, 2) && p.RngOn() && p.Active() && p.RngRemaining() == 2);
+        check("target/set_rng", p.SetRng(Builtin::Irandom, 98, 2) && p.RngOn() && p.Active() && p.RngRemaining() == 2
+            && p.RngTarget() == Builtin::Irandom && p.RngArgs().empty());
         g_SelfReads = 0;
         const RngDecision other = rng(p, Builtin::Irandom, kEnemy);
         const RngDecision player = rng(p, Builtin::IrandomRange, kPlayer);
@@ -153,61 +166,111 @@ int main()
         check("target/another_self_inside_a_machine_event_is_untouched", !inEvent.answer && inEvent.seen == Seen::InEvent
             && p.RowCounters(BuiltinRowOf(Builtin::Random)).inEvent == 1);
         check("target/levered_reads_the_self", g_SelfReads == 3);
+        check("target/other_selves_are_not_counted_as_passed", p.RngPassedBuiltin() == 0 && p.RngPassedArgs() == 0);
         const RngDecision a = rng(p, Builtin::Irandom, kMachine);
         check("target/machine_self_answered_with_the_value", a.answer && a.value == 98.0 && a.seen == Seen::Machine
             && p.RngRemaining() == 1 && p.RngOn());
-        const RngDecision b = rng(p, Builtin::RandomRange, kMachine);
+        // A machine-self call of another RNG builtin is not the lever's target.
+        const RngDecision wrong = rng(p, Builtin::RandomRange, kMachine);
+        check("target/another_builtins_machine_call_passes_untouched", !wrong.answer && wrong.seen == Seen::Machine
+            && p.RngRemaining() == 1 && p.RngOn() && p.RngPassedBuiltin() == 1
+            && p.RowCounters(BuiltinRowOf(Builtin::RandomRange)).passed == 1
+            && p.RowCounters(BuiltinRowOf(Builtin::RandomRange)).answered == 0);
+        const RngDecision b = rng(p, Builtin::Irandom, kMachine);
         check("target/count_calls_then_off", b.answer && b.value == 98.0 && !p.RngOn() && p.RngAnswered() == 2
             && p.RngRemaining() == 0);
         check("target/finished_is_read_once", p.TakeRngFinished() && !p.TakeRngFinished());
         const RngDecision c = rng(p, Builtin::Irandom, kMachine);
         check("target/after_count_the_real_one_again", !c.answer && !p.Active());
-        check("target/answered_counted_per_row", p.RowCounters(BuiltinRowOf(Builtin::Irandom)).answered == 1
-            && p.RowCounters(BuiltinRowOf(Builtin::RandomRange)).answered == 1);
+        check("target/answered_counted_per_row", p.RowCounters(BuiltinRowOf(Builtin::Irandom)).answered == 2
+            && p.RowCounters(BuiltinRowOf(Builtin::RandomRange)).answered == 0);
     }
     {
         Probe p = make();
-        p.SetRng(3, 5);
+        p.SetRng(Builtin::Irandom, 3, 5);
         bool none = true;
         for (Builtin b : kOtherRows) if (rng(p, b, kMachine).answer) none = false;
         check("target/instance_rows_never_answered", none && p.RngRemaining() == 5);
+        bool refused = true;
+        for (Builtin b : kOtherRows) if (p.SetRng(b, 3, 1)) refused = false;
+        check("target/an_instance_row_is_no_target", refused && p.RngTarget() == Builtin::Irandom && p.RngRemaining() == 5);
     }
     {
         // choose: the value names one of the call's own arguments.
         Probe p = make();
-        p.SetRng(1, 1);
+        p.SetRng(Builtin::Choose, 1, 1);
         const RngDecision in = rng(p, Builtin::Choose, kMachine, false, 3);
         check("target/choose_answers_an_argument_index", in.answer && in.value == 1.0 && !p.RngOn());
-        p.SetRng(5, 1);
+        p.SetRng(Builtin::Choose, 5, 1);
         const RngDecision out = rng(p, Builtin::Choose, kMachine, false, 3);
         check("target/choose_out_of_range_runs_the_original", !out.answer && p.RngOn() && p.RngRemaining() == 1
             && p.RngOutOfRange() == 1 && p.RowCounters(BuiltinRowOf(Builtin::Choose)).outOfRange == 1);
-        p.SetRng(1.5, 1);
+        p.SetRng(Builtin::Choose, 1.5, 1);
         const RngDecision frac = rng(p, Builtin::Choose, kMachine, false, 3);
-        p.SetRng(-1, 1);
+        p.SetRng(Builtin::Choose, -1, 1);
         const RngDecision neg = rng(p, Builtin::Choose, kMachine, false, 3);
         check("target/choose_fraction_or_negative_runs_the_original", !frac.answer && !neg.answer);
-        // irandom takes any value: the lever is blunt on purpose.
-        p.SetRng(-7.25, 1);
+        // irandom takes any value: the value is the operator's to choose.
+        p.SetRng(Builtin::Irandom, -7.25, 1);
         const RngDecision any = rng(p, Builtin::Irandom, kMachine);
         check("target/value_rows_take_any_finite_value", any.answer && any.value == -7.25);
     }
     {
         Probe p = make();
-        p.SetRng(4, 3);
-        const bool refused = !p.SetRng(4, 0) && !p.SetRng(4, kRngMaxCount + 1) && !p.SetRng(std::nan(""), 1)
-            && !p.SetRng(INFINITY, 1);
+        p.SetRng(Builtin::Irandom, 4, 3);
+        const bool refused = !p.SetRng(Builtin::Irandom, 4, 0) && !p.SetRng(Builtin::Irandom, 4, kRngMaxCount + 1)
+            && !p.SetRng(Builtin::Irandom, std::nan(""), 1) && !p.SetRng(Builtin::Irandom, INFINITY, 1)
+            && !p.SetRng(Builtin::InstanceCreateDepth, 4, 1) && !p.SetRng(static_cast<Builtin>(kBuiltinCount), 4, 1);
         check("target/out_of_range_set_refused_nothing_changed", refused && p.RngOn() && p.RngValue() == 4.0
-            && p.RngRemaining() == 3);
+            && p.RngRemaining() == 3 && p.RngTarget() == Builtin::Irandom);
         rng(p, Builtin::Irandom, kMachine);
-        p.SetRng(9, 1);
-        check("target/set_rng_starts_clean", p.RngAnswered() == 0 && p.RngRemaining() == 1 && p.RngValue() == 9.0);
+        rng(p, Builtin::Random, kMachine);
+        p.SetRng(Builtin::Random, 9, 1, "a0=1");
+        check("target/set_rng_starts_clean", p.RngAnswered() == 0 && p.RngRemaining() == 1 && p.RngValue() == 9.0
+            && p.RngPassedBuiltin() == 0 && p.RngPassedArgs() == 0 && p.RngTarget() == Builtin::Random && p.RngArgs() == "a0=1");
+    }
+
+    // ---- aim: the lever answers the call step 4 identified, not its neighbours --------
+    {
+        // An idle per-frame call with other arguments, and a reel roll of
+        // another builtin, run before the prize roll: neither takes the answer.
+        Probe p = make();
+        p.SetArmed(true);
+        check("aim/set_with_args", p.SetRng(Builtin::Irandom, 98, 1, "  a0=100   a1=5 ") && p.RngArgs() == "a0=100 a1=5"
+            && contains(p.RngLine(), "target=irandom args=\"a0=100 a1=5\""), p.RngLine());
+        g_ArgsReads = 0;
+        bool none = true;
+        for (int frame = 0; frame < 600; ++frame) if (rng(p, Builtin::Irandom, kMachine, false, 1, " a0=3").answer) none = false;
+        const RngDecision reel = rng(p, Builtin::IrandomRange, kMachine, false, 2, " a0=100 a1=5");
+        check("aim/non_matching_machine_calls_are_untouched", none && !reel.answer && p.RngOn() && p.RngRemaining() == 1
+            && p.RngPassedArgs() == 600 && p.RngPassedBuiltin() == 1 && p.Inert()
+            && p.RowCounters(BuiltinRowOf(Builtin::Irandom)).passed == 600
+            && p.RowCounters(BuiltinRowOf(Builtin::Irandom)).answered == 0, p.RngLine());
+        check("aim/inert_line_counts_what_passed", contains(p.RngLine(), "INERT")
+            && contains(p.RngLine(), "passed=601 (other builtin 1, other args 600)")
+            && contains(p.RngLine(), "601 other machine-self RNG call(s) passed through untouched"), p.RngLine());
+        // Another self making the very call is still not the machine's.
+        const RngDecision enemy = rng(p, Builtin::Irandom, kEnemy, false, 2, " a0=100 a1=5");
+        check("aim/args_text_is_read_only_for_the_targets_machine_calls", !enemy.answer && g_ArgsReads == 600);
+        const RngDecision hit = rng(p, Builtin::Irandom, kMachine, false, 2, " a0=100  a1=5");
+        check("aim/the_matching_call_is_answered", hit.answer && hit.value == 98.0 && !p.RngOn() && p.RngAnswered() == 1
+            && g_ArgsReads == 601 && !p.Inert());
+    }
+    {
+        // Without `args` the target builtin's every machine-self call matches,
+        // and the argument text is never read.
+        Probe p = make();
+        p.SetRng(Builtin::Random, 0.5, 2);
+        g_ArgsReads = 0;
+        const RngDecision x = rng(p, Builtin::Random, kMachine, false, 1, " a0=7");
+        const RngDecision y = rng(p, Builtin::Random, kMachine, false, 1, " a0=8");
+        check("aim/no_args_filter_matches_any_arguments", x.answer && y.answer && g_ArgsReads == 0 && !p.RngOn());
     }
 
     // ---- inert ----------------------------------------------------------------------
     {
         Probe p = make();
-        p.SetRng(98, 1);
+        p.SetRng(Builtin::Irandom, 98, 1);
         rng(p, Builtin::Irandom, kEnemy);
         rng(p, Builtin::Irandom, kPlayer, true);
         check("inert/armed_lever_no_machine_call_reached_is_named", p.Inert() && contains(p.RngLine(), "INERT")
@@ -216,7 +279,7 @@ int main()
         check("inert/an_answer_ends_it", !p.Inert() && !contains(p.RngLine(), "INERT")
             && contains(p.RngLine(), "gambaprobe: rng answered 1 of 1"), p.RngLine());
         Probe q = make();
-        q.SetRng(98, 1);
+        q.SetRng(Builtin::Irandom, 98, 1);
         q.RngOff();
         Probe r = make();
         check("inert/lever_off_or_never_set_is_not", !q.Inert() && !r.Inert() && !contains(r.RngLine(), "INERT"));
@@ -227,7 +290,7 @@ int main()
         Probe p = make();
         const int row = ScriptRowOf(0);
         int taken = 0;
-        for (uint64_t i = 0; i < 100; ++i) if (p.TakeTraceLine(row, i, i)) ++taken;   // a new key each line
+        for (uint64_t i = 0; i < 1000; ++i) if (p.TakeTraceLine(row, i, i)) ++taken;   // a new key each line
         check("trace/at_most_the_budget_per_row", taken == kTraceLinesPerRow
             && p.RowCounters(row).logged == static_cast<uint64_t>(kTraceLinesPerRow) && p.RowCounters(row).keyCapped == 0);
         check("trace/budget_is_per_row", p.TakeTraceLine(ScriptRowOf(1), 0, 1));
@@ -261,6 +324,30 @@ int main()
             && p.RowCounters(irnd).calls == calls);
         check("trace/bad_row_refused", !p.TakeTraceLine(-1, 0, 0) && !p.TakeTraceLine(p.RowCount(), 0, 0));
     }
+    {
+        // A spin's reel animation: six protected-store keys change every
+        // frame (each spends its kTraceLinesPerKey lines, then is key-capped
+        // for the rest of the spin), then at the spin's end a seventh key - the
+        // gold-spent or spin-count write - changes once. Its line is logged.
+        Probe p = make();
+        const int gpv = ScriptRowOf(1);
+        int moving = 0;
+        for (uint64_t frame = 0; frame < 120; ++frame)
+            for (uint64_t key = 1; key <= 6; ++key) if (p.TakeTraceLine(gpv, key, frame)) ++moving;
+        const bool spinEnd = p.TakeTraceLine(gpv, 7, 10000);
+        check("trace/moving_keys_cannot_spend_the_row_within_a_spin", moving == 6 * kTraceLinesPerKey && spinEnd
+            && !p.BudgetSpent(gpv) && p.RowCounters(gpv).keyCapped == static_cast<uint64_t>(6 * (120 - kTraceLinesPerKey))
+            && !contains(p.RowText(gpv), "BUDGET SPENT"), p.RowText(gpv));
+        // Every key of a full row writes all its lines; only a key past
+        // kTraceKeysPerRow finds the row spent.
+        Probe q = make();
+        int all = 0;
+        for (uint64_t key = 0; key < static_cast<uint64_t>(kTraceKeysPerRow); ++key)
+            for (uint64_t line = 0; line < static_cast<uint64_t>(kTraceLinesPerKey); ++line)
+                if (q.TakeTraceLine(gpv, key, line)) ++all;
+        check("trace/every_key_of_a_full_row_writes_its_lines", all == kTraceLinesPerRow && q.BudgetSpent(gpv)
+            && !q.TakeTraceLine(gpv, static_cast<uint64_t>(kTraceKeysPerRow), 0), q.RowText(gpv));
+    }
 
     // ---- the status text reads back every counter ---------------------------------
     {
@@ -270,25 +357,29 @@ int main()
         observe(p, EventRowOf(Event::Alarm9), kMachine);
         for (int i = 0; i < 30; ++i) observe(p, EventRowOf(Event::Step), kMachine);
         check("status/events_by_key", p.EventsText() == "create=1 alarm0=0 alarm9=1 step=30 cleanup=0", p.EventsText());
-        p.SetRng(2, 2);
+        p.SetRng(Builtin::Choose, 2, 2);
         const int row = BuiltinRowOf(Builtin::Choose);
         rng(p, Builtin::Choose, kMachine, false, 3);    // answered
-        p.SetRng(9, 1);
+        p.SetRng(Builtin::Choose, 9, 1);
         rng(p, Builtin::Choose, kMachine, false, 3);    // out of range
         rng(p, Builtin::Choose, kPlayer, true, 3);      // in event
         rng(p, Builtin::Choose, kEnemy, false, 3);      // other
+        rng(p, Builtin::Irandom, kMachine);             // passed: not the lever's target
         p.TakeTraceLine(row, 0, 1);
         const std::string text = p.RowText(row);
-        check("status/row_reads_every_counter", text == "calls=4 machine-self=2 in-event=1 other-self=1 logged=1/40"
-            " key-capped=0 answered=1 out-of-range=1", text);
+        check("status/row_reads_every_counter", text == "calls=4 machine-self=2 in-event=1 other-self=1 logged=1/512"
+            " key-capped=0 answered=1 out-of-range=1 passed=0", text);
+        check("status/passed_is_counted_on_its_own_row", p.RowText(BuiltinRowOf(Builtin::Irandom))
+            == "calls=1 machine-self=1 in-event=0 other-self=0 logged=0/512 key-capped=0 answered=0 out-of-range=0 passed=1",
+              p.RowText(BuiltinRowOf(Builtin::Irandom)));
         check("status/non_rng_rows_omit_the_lever_counters",
-              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/40 key-capped=0");
+              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/512 key-capped=0");
         const std::string line = p.StatusLine();
         check("status/line_sums_every_counter", line == "gambaprobe: on machine-object=4644 create=1 alarm0=0 alarm9=1"
-            " step=30 cleanup=0 | calls=36 machine-self=34 in-event=1 other-self=1 logged=1 key-capped=0 spent-rows=0"
-            " answered=1 out-of-range=1", line);
-        check("status/rng_line", contains(p.RngLine(), "gambaprobe: rng answered 0 of 1 value=9 remaining=1 out-of-range=1"
-            " lever=on"), p.RngLine());
+            " step=30 cleanup=0 | calls=37 machine-self=35 in-event=1 other-self=1 logged=1 key-capped=0 spent-rows=0"
+            " answered=1 out-of-range=1 passed=1", line);
+        check("status/rng_line", contains(p.RngLine(), "gambaprobe: rng answered 0 of 1 target=choose value=9 remaining=1"
+            " out-of-range=1 passed=1 (other builtin 1, other args 0) lever=on"), p.RngLine());
         check("status/number_text", NumberText(98) == "98" && NumberText(-7.25) == "-7.25" && NumberText(0.5) == "0.5");
     }
 
@@ -296,7 +387,7 @@ int main()
     {
         Probe p = make();
         p.SetArmed(true);
-        p.SetRng(98, 3);
+        p.SetRng(Builtin::Irandom, 98, 3);
         rng(p, Builtin::Irandom, kMachine);
         p.Off();
         const RngDecision d = rng(p, Builtin::Irandom, kMachine);

@@ -268,16 +268,21 @@ and logged with `scope=machine-event`, in case the prize is placed from a
 `with` block or a struct method), or anything else. The first two are logged,
 within a budget that is per **window**:
 
-- A row writes at most 40 lines a window (`kTraceLinesPerRow`). Once it has,
-  its calls are still counted but not described, and its `status` line ends
-  `BUDGET SPENT`; `status` also prints a `BUDGET SPENT on <n> row(s)` line
-  above the rows.
 - Each line has a key, what it is about: a script's first argument (a `GPV`
   or `SPV` state key), a builtin's argument text, an event's instance id. One
   key writes at most 8 lines a window (`kTraceLinesPerKey`); the lines a key
   was refused are counted as `key-capped=`. So one call shape the machine
   repeats every frame with a moving result (an idle `irandom`, a timer key)
-  spends 8 lines, not the row.
+  spends its own 8 lines and nothing of any other key's.
+- A row writes at most 512 lines a window (`kTraceLinesPerRow`), which is 64
+  full keys (`kTraceKeysPerRow`). The row cap exists only to bound a row whose
+  keys never repeat. It is set above the 28 keys `InitPV` sets up, so that
+  however many of the machine's state keys move during a spin's animation,
+  the keys written at the spin's end (the gold-spent and spin-count update,
+  the threshold compare) still get their lines. Once a row has written 512,
+  its calls are still counted but not described, and its `status` line ends
+  `BUDGET SPENT`; `status` also prints a `BUDGET SPENT on <n> row(s)` line
+  above the rows.
 - A line identical to its key's last line is not logged and costs nothing.
   That is all the deduplication guarantees: a key whose value or result
   changes spends a line each time it changes, until its 8 are gone.
@@ -288,7 +293,8 @@ within a budget that is per **window**:
   `trace` and the spin; the row's `machine-self=` count still moves, and a
   `key-capped=` above zero at the spin says the shape was cut.
 
-The `rng` lever still answers machine-self calls only.
+The `rng` lever still answers machine-self calls only, and only the one
+builtin and argument text it is aimed at (`gambaprobe rng` below).
 
 **The machine-self filter.** A call counts for the machine only when its `self`
 resolves (instance-handle rule, `VALUE_REF` accepted) to an instance whose
@@ -310,14 +316,27 @@ kind check, and a call from any other object passes through untouched.
   at the local player, depth 0, answering `gambaprobe spawn: id=<n>`. It
   starts a new trace window first, so the new machine's `Create_0` is
   described. The `Create_0` and `Alarm_9` rows are its positive control.
-- **`gambaprobe rng <value> [count]`**: answers the next `count` machine-self
-  RNG builtin calls with `value` and logs what was replaced, then turns itself
-  off (`count` 1 to 50, default 1). For `choose`, `value` is the index of the
-  argument to answer with; a value that names no argument runs the original
-  and counts as out-of-range. It writes a result only when it answers, and
-  then runs no original. A
-  lever that is armed but that no machine call ever reached is reported
-  inert in `status`.
+- **`gambaprobe rng <builtin> <value> [count] [args <text>]`**: answers the
+  next `count` machine-self calls of one RNG builtin (`irandom`,
+  `irandom_range`, `random`, `random_range` or `choose`) with `value`, logs
+  what was replaced, then turns itself off (`count` 1 to 50, default 1).
+  - It is aimed, because the machine makes RNG calls the prize does not
+    depend on: a reel roll each spin, possibly an idle call every frame. An
+    unaimed lever would hand its one answer to the first of them. With
+    `args`, only a call whose argument text is `<text>` is answered. The text
+    is everything after `args`, copied from a trace line (`a0=100 a1=5`), and
+    runs of spaces do not matter.
+  - Every other machine-self RNG call the armed lever sees, whether another
+    builtin's or the target's with other arguments, runs the game's own
+    function and is counted as `passed=`, on its row and in the lever's line
+    (`passed=<n> (other builtin <a>, other args <b>)`).
+  - For `choose`, `value` is the index of the argument to answer with; a
+    value that names no argument runs the original and counts as
+    out-of-range.
+  - It writes a result only when it answers, and then runs no original. A
+    lever that is armed but that its target never reached is reported
+    `INERT` in `status`, with how many other machine-self RNG calls passed it
+    by.
 - **`gambaprobe drop`**: builds Goburin's Head through the measured loader
   route `json_parse` -> `InitItemFromJson` -> `LootGroundCreateFromItem`,
   with definition `{"w":1,"a":<seed>,"j":0,"b":98,"c":1}` and key `0-0-1-10`,
@@ -339,9 +358,12 @@ set, the held rows spliced or detoured under and never hooked twice, every
 detour behind `AddrIsExecutableInModule`, the trace window, this doc's headings
 and decision keys). `tests/test_gamba_probe_behavior.py` with
 `tests/gamba_probe_harness.cpp` runs the decision core: lever off, every RNG
-answer is the real one; lever on, only a machine-self call is answered, `count`
-calls and then off, and the inert lever is named; one key cannot spend a row's
-budget, and a spent row is named.
+answer is the real one; lever on, only a machine-self call of its target is
+answered, `count` calls and then off, a machine-self call of another builtin or
+with other argument text is left untouched and counted as passed, and the inert
+lever is named; one key cannot spend a row's budget, six keys moving every
+frame of a spin leave a seventh key's line at the spin's end logged, and a
+spent row is named.
 
 ## Live procedure 1
 
@@ -381,7 +403,8 @@ repeated here whole.
      `step-fires`). Wait about five seconds with nobody at the machine and
      send `gambaprobe status` again: record any RNG builtin row whose
      `machine-self=` climbed while idle (a per-frame call: its lines at the
-     spin may come back `key-capped`).
+     spin may come back `key-capped`), and from its trace lines the argument
+     text of each such idle call (step 5 needs it).
   3. `gambaprobe trace`, then person: walk to the machine and use it once (one
      spin; the HUD gold falls by 10,000). Then `gambaprobe status` and the IPC
      log tail: the machine-self rows that fired, in order, with arguments;
@@ -394,15 +417,31 @@ repeated here whole.
      arguments and `CreateDefaultParams` count, what placed the prize, and a
      screenshot of what dropped (`explosion-trace`, `prize-trace`,
      `roll-identity`). Record with the checks any row that reads `BUDGET
-     SPENT` or `key-capped=` above 0 in the explosion's `status`.
-  5. If step 4 showed one RNG builtin call deciding the prize: `gambaprobe
-     spawn`, then `gambaprobe rng <the value that selects base 98> 1`, then
-     person: spin to the explosion, with `gambaprobe trace` before each spin
-     as in step 4. Expected: `gambaprobe: rng answered 1` and Goburin's Head
-     on the ground (screenshot; `GetUniqueRepoStruct` arguments `10, 0, 98`).
-     If step 4 showed no such call, send `gambaprobe rng 0 1` anyway and
-     record `inert` (`forced-head`; a `not-observed` with `inert` is the
-     finding, never a defect).
+     SPENT` or `key-capped=` above 0 in the explosion's `status`. For the
+     call that decided the prize, record its builtin and its argument text
+     exactly as its trace line prints them (`a0=... a1=...`), and whether the
+     same builtin with the same text also fired on a spin that did not
+     explode.
+  5. If step 4 showed one RNG builtin call deciding the prize, compare its
+     builtin and argument text with the idle calls step 2 recorded. If an
+     idle call has the same builtin and the same text, the lever cannot be
+     aimed at the prize roll alone: skip the forced roll and record
+     `forced-head` as not run, naming that call. Otherwise `gambaprobe spawn`
+     a machine; then, before each spin, `gambaprobe trace` and
+     `gambaprobe rng <builtin> <value> 1 args <text>` (the builtin and text
+     from step 4, and the value that selects base 98); person: one spin;
+     then `gambaprobe status`. Repeat until the machine explodes. If step 4
+     showed that the explosion comes on a spin the machine's state predicts
+     (`explosion-rule` gold or spins), arm the lever only before that spin
+     and spin the others unarmed. Record every `gambaprobe rng: answered`
+     line with its spin number, and the lever line's `passed=` count after
+     each spin: an answer on a spin that did not explode means that call
+     shape is not the prize roll alone. Expected at the explosion:
+     `gambaprobe: rng answered 1` and Goburin's Head on the ground
+     (screenshot; `GetUniqueRepoStruct` arguments `10, 0, 98`). If step 4
+     showed no such call, send `gambaprobe rng irandom 0 1` anyway and record
+     `inert` with its `passed=` count (`forced-head`; a `not-observed` with
+     `inert` is the finding, never a defect).
   6. `gambaprobe spawn` a second machine, then `gambaprobe trace`; person: one
      spin on it. Expected: its `gold_spent`-like state key starts from zero,
      not from the first machine's total (`second-machine`).

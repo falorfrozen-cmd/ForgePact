@@ -394,10 +394,16 @@ class GambaProbeContract(unittest.TestCase):
         # The answer comes only from the decision core.
         self.assertIn("const GpNs::RngDecision d = g_GpCore.DecideRng(", fn)
         # The core answers a machine self only, with answers left.
-        decide = braced_block(self.header, "RngDecision DecideRng(Builtin builtin, SelfFn&& selfObject, bool inMachineEvent, int argc)\n    {")
+        decide = braced_block(self.header, "RngDecision DecideRng(Builtin builtin, SelfFn&& selfObject, bool inMachineEvent, int argc, ArgsFn&& argsText)\n    {")
         self.assertIn("if (d.seen != Seen::Machine || kind == AnswerKind::NotRng || !rngOn_ || rngRemaining_ <= 0) return d;",
                       decide)
         self.assertLess(decide.index("return d;"), decide.index("d.answer = true;"))
+        # ... and only the call it is aimed at: its target builtin, and the
+        # argument text it names, both decided before any answer.
+        for gate in ("if (builtin != rngTarget_) {", "if (text != rngArgs_) {"):
+            self.assertLess(decide.index(gate), decide.index("d.answer = true;"), gate)
+            self.assertIn("++c.passed;", braced_block(decide, gate))
+            self.assertTrue(braced_block(decide, gate).rstrip().endswith("return d;"), gate)
         # Scripts and events are never answered.
         for signature in ("static RValue& GpOnScript(", "static void GpOnEvent("):
             body = self.body(signature)
@@ -412,9 +418,36 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("INERT", line)
         self.assertIn("Out(g_GpCore.RngLine());", self.body("static void GpStatus()"))
         lever = self.body("static void GpRng(")
-        for guard in ("if (rngRows == 0)", "if (g_GpCore.MachineObject() < 0)", "else if (g_GpMachines.empty())"):
+        for guard in ("if (!targetHooked)", "if (g_GpCore.MachineObject() < 0)", "else if (g_GpMachines.empty())"):
             self.assertIn(guard, lever)
         self.assertEqual(lever.count("WARNING"), 3)
+        # The line names what passed it by, so a lever that never reached its
+        # target is told apart from one that had nothing to reach.
+        self.assertIn("passed=", line)
+        self.assertIn("other machine-self RNG call(s) passed through untouched", line)
+
+    def test_the_lever_is_aimed_at_one_builtin_and_its_argument_text(self):
+        """An unaimed lever hands its answer to the machine's first RNG call, not the prize roll."""
+        lever = self.body("static void GpRng(")
+        self.assertIn("GpNs::BuiltinByName(Lower(tail[0]), target)", lever)
+        self.assertIn("g_GpCore.SetRng(target, value, count, args)", lever)
+        set_rng = braced_block(self.header, "bool SetRng(Builtin target, double value, int64_t count, std::string_view args = {})\n    {")
+        self.assertIn("kBuiltins[b].kind == AnswerKind::NotRng) return false;", set_rng)
+        self.assertIn("rngArgs_ = ArgsKey(args);", set_rng)
+        # The argument text the lever compares is the trace line's own text,
+        # described only when the core asks for it.
+        builtin = self.body("static void GpOnBuiltin(")
+        self.assertIn("try { a = GpBuiltinArgs(argc, Args); } catch (...) { a.clear(); }", builtin)
+        decide = braced_block(self.header, "RngDecision DecideRng(Builtin builtin, SelfFn&& selfObject, bool inMachineEvent, int argc, ArgsFn&& argsText)\n    {")
+        self.assertLess(decide.index("if (!rngArgs_.empty()) {"), decide.index("argsText()"))
+        self.assertIn("text = ArgsKey(argsText());", decide)
+        # status counts what the armed lever let through.
+        self.assertIn('" passed="', braced_block(self.header, "std::string RowText(int row) const\n    {"))
+        self.assertIn('" passed="', braced_block(self.header, "std::string StatusLine() const\n    {"))
+        # The procedure aims it: the builtin and the argument text step 4 found.
+        procedure = doc_section(DOC.read_text(encoding="utf-8").replace("\r\n", "\n"), "Live procedure 1")
+        self.assertIn("`gambaprobe rng <builtin> <value> 1 args <text>`", procedure)
+        self.assertNotRegex(procedure, r"`gambaprobe rng (?:<the value|\d)", "an unaimed rng in the procedure")
 
     # ---- the trace window -------------------------------------------------------
 
@@ -436,6 +469,12 @@ class GambaProbeContract(unittest.TestCase):
         take = braced_block(self.header, "bool TakeTraceLine(int row, uint64_t key, uint64_t text)\n    {")
         self.assertIn("kTraceLinesPerKey", take)
         self.assertIn("++c.keyCapped;", take)
+        # The row's cap covers kTraceKeysPerRow full keys, so the protected
+        # store's moving keys cannot spend GPV's or SPV's row within a spin.
+        self.assertIn("static_assert(kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow,", self.header)
+        keys = re.search(r"inline constexpr int kTraceKeysPerRow = (\d+);", self.header)
+        self.assertIsNotNone(keys)
+        self.assertGreaterEqual(int(keys.group(1)), 28, "fewer keys per row than InitPV sets up")
         # A spent row says so, in the row and above the rows.
         self.assertIn("BUDGET SPENT", braced_block(self.header, "std::string RowText(int row) const\n    {"))
         status = self.body("static void GpStatus()")

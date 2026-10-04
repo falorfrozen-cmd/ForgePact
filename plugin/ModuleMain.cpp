@@ -46818,12 +46818,16 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 // or its lever is on, a call is classified by its self: a gamba machine (an
 // object index equal to Slot_Machine_01_obj's, resolved by name), another
 // self inside a machine's own event, or anything else; the first two are
-// logged, kTraceLinesPerRow lines per row and kTraceLinesPerKey per key in
-// one window, repeats skipped (plugin/include/ForgePact/GambaProbe.hpp holds
-// those decisions, which tests/gamba_probe_harness.cpp compiles whole). The
-// window starts over on `trace`, `hook` again and every `spawn`. The one
-// lever, `rng <value> [count]`, answers the next `count` RNG builtin calls
-// whose self is a machine with `value` without running the game's function.
+// logged, kTraceLinesPerKey lines per key (kTraceLinesPerRow per row, enough
+// for kTraceKeysPerRow full keys) in one window, repeats skipped
+// (plugin/include/ForgePact/GambaProbe.hpp holds those decisions, which
+// tests/gamba_probe_harness.cpp compiles whole). The window starts over on
+// `trace`, `hook` again and every `spawn`. The one lever,
+// `rng <builtin> <value> [count] [args <text>]`, is aimed: it answers the next
+// `count` calls of that one RNG builtin whose self is a machine (and, with
+// `args`, whose argument text is the one a trace line showed) with `value`,
+// without running the game's function, and counts every other machine-self
+// RNG call it let through as `passed`.
 // The one per-frame piece, GpFrameTick, returns at once while nothing is
 // armed or on.
 #include <ForgePact/GambaProbe.hpp>
@@ -47196,8 +47200,17 @@ static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O,
     GpBuiltinRow& t = g_GpBuiltinRows[builtin];
     if (g_GpBusy) { if (t.orig) t.orig(Result, S, O, argc, Args); return; }   // the probe's own call
     const int row = GpNs::BuiltinRowOf(static_cast<GpNs::Builtin>(builtin));
+    // The argument text is described only when the core asks: a machine-self
+    // call of the lever's target while the lever names `args`. It is the same
+    // text a trace line prints, so the operator copies it from there.
     const GpNs::RngDecision d = g_GpCore.DecideRng(static_cast<GpNs::Builtin>(builtin), [S]() { return GpSelfObject(S); },
-                                                   g_GpEventDepth > 0, argc);
+                                                   g_GpEventDepth > 0, argc, [argc, Args]() {
+                                                       std::string a;
+                                                       g_GpBusy = true;
+                                                       try { a = GpBuiltinArgs(argc, Args); } catch (...) { a.clear(); }
+                                                       g_GpBusy = false;
+                                                       return a;
+                                                   });
     if (d.answer) {
         Result = GpAnswerValue(builtin, d, argc, Args);
         g_GpBusy = true;
@@ -47627,35 +47640,54 @@ static void GpSpawn()
         Out("gambaprobe spawn: WARNING - the event rows are not detoured (`gambaprobe hook` first), so create= and alarm9= cannot count");
 }
 
-// `rng <value> [count]` / `rng off` / `rng`.
+// `rng <builtin> <value> [count] [args <text>]` / `rng off` / `rng`. The
+// lever is aimed at one RNG builtin and, with `args`, at one argument text -
+// everything after `args`, as a trace line prints it (`a0=100 a1=5`) - so an
+// idle per-frame call or a reel roll the machine makes before the prize roll
+// cannot take the answer.
 static void GpRng(const std::vector<std::string>& tail)
 {
-    const std::string usage = "gambaprobe rng: usage -> rng <value> [count 1.." + std::to_string(GpNs::kRngMaxCount) + ", default 1]"
-        " | rng off | rng";
+    const std::string usage = "gambaprobe rng: usage -> rng <irandom|irandom_range|random|random_range|choose> <value> [count 1.."
+        + std::to_string(GpNs::kRngMaxCount) + ", default 1] [args <argument text from a trace line, e.g. a0=100 a1=5>] | rng off | rng";
     if (tail.empty()) { Out(g_GpCore.RngLine()); return; }
     if (Lower(tail[0]) == "off") { g_GpCore.RngOff(); Out("gambaprobe rng: off - " + g_GpCore.RngLine()); return; }
+    GpNs::Builtin target = GpNs::Builtin::Irandom;
+    if (!GpNs::BuiltinByName(Lower(tail[0]), target) || GpNs::kBuiltins[(int)target].kind == GpNs::AnswerKind::NotRng) {
+        Out(usage + "; `" + tail[0] + "` is not an RNG builtin row; nothing changed");
+        return;
+    }
     double value = 0.0;
     int64_t count = 1;
+    size_t next = 2;
+    std::string args;
     try {
+        if (tail.size() < 2) throw 0;
         size_t used = 0;
-        value = std::stod(tail[0], &used);
-        if (used != tail[0].size()) throw 0;
-        if (tail.size() > 1) { count = std::stoll(tail[1], &used); if (used != tail[1].size()) throw 0; }
+        value = std::stod(tail[1], &used);
+        if (used != tail[1].size()) throw 0;
+        if (tail.size() > 2 && Lower(tail[2]) != "args") {
+            count = std::stoll(tail[2], &used);
+            if (used != tail[2].size()) throw 0;
+            next = 3;
+        }
+        if (tail.size() > next) {
+            if (Lower(tail[next]) != "args" || tail.size() == next + 1) throw 0;
+            for (size_t i = next + 1; i < tail.size(); ++i) args += (args.empty() ? "" : " ") + tail[i];
+        }
     } catch (...) { Out(usage + "; nothing changed"); return; }
-    if (tail.size() > 2) { Out(usage + "; nothing changed"); return; }
     GpEnsureRows();
-    if (!g_GpCore.SetRng(value, count)) { Out(usage + "; nothing changed"); return; }
+    if (!g_GpCore.SetRng(target, value, count, args)) { Out(usage + "; nothing changed"); return; }
     GpResolveMachineObject();
     GpRefreshMachines();
-    int rngRows = 0;
-    for (int i = 0; i < GpNs::kBuiltinCount; ++i)
-        if (GpNs::kBuiltins[i].kind != GpNs::AnswerKind::NotRng && g_GpBuiltinRows[i].route != GpNs::Route::Missing) ++rngRows;
-    Out("gambaprobe rng: ON value=" + GpNs::NumberText(value) + " count=" + std::to_string(count) + " - the next " + std::to_string(count)
-        + " RNG builtin call(s) whose self is a gamba machine answer " + GpNs::NumberText(value) + " (choose: its argument #"
-        + GpNs::NumberText(value) + "); machines now " + GpMachinesText());
+    const bool targetHooked = g_GpBuiltinRows[(int)target].route != GpNs::Route::Missing;
+    Out("gambaprobe rng: ON target=" + g_GpCore.RngTargetText() + " value=" + GpNs::NumberText(value) + " count="
+        + std::to_string(count) + " - the next " + std::to_string(count) + " " + g_GpCore.RngTargetText()
+        + " call(s) whose self is a gamba machine answer " + GpNs::NumberText(value) + " (choose: its argument #"
+        + GpNs::NumberText(value) + "); every other machine-self RNG call passes through untouched and counts as passed;"
+        " machines now " + GpMachinesText());
     // Each of these leaves the lever ON and answering nothing; say so now.
-    if (rngRows == 0)
-        Out("gambaprobe rng: WARNING - no RNG builtin is hooked, so nothing can be answered: `gambaprobe hook` first");
+    if (!targetHooked)
+        Out("gambaprobe rng: WARNING - " + GpBuiltinName((int)target) + " is not hooked, so nothing can be answered: `gambaprobe hook` first");
     if (g_GpCore.MachineObject() < 0)
         Out("gambaprobe rng: WARNING - " + GpMachineName() + " did not resolve by name, so no call is a machine's");
     else if (g_GpMachines.empty())
@@ -47781,8 +47813,10 @@ static void GpUsage()
     Out("  trace                      a new trace window: every row's budget starts over (send it right before each measured spin)");
     Out("  spawn                      one " + GpMachineName() + " at the local player, depth 0 (the Create_0/Alarm_9 control);"
         " starts a new trace window");
-    Out("  rng <value> [count]        answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
-        + ") RNG builtin calls whose self is a machine with value (choose: its argument #value); rng off | rng");
+    Out("  rng <builtin> <value> [count] [args <text>]  answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
+        + ") calls of that RNG builtin whose self is a machine - with args, only those whose argument text (as a trace line"
+        " prints it) matches - with value (choose: its argument #value); other machine-self RNG calls pass and are counted;"
+        " rng off | rng");
     Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
     Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)
         + " new lines per row, " + std::to_string(GpNs::kTraceLinesPerKey) + " per key, are logged each window; BUDGET SPENT"
