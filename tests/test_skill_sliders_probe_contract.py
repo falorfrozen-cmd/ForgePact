@@ -195,8 +195,14 @@ class ProjProbeContractTests(unittest.TestCase):
         k_names = self.code.split("static void NAddrAll()", 1)[1].split("std::ofstream", 1)[0]
         for name in HOOKED + ENEMY_ROWS + ("ReturnSpecificStat",):
             self.assertIn('"' + name + '"', k_names, name + " missing from NAddrAll's kNames")
-        # statadd's pin on the same list still holds.
-        self.assertIn('"StatSpellHaste", "StatAllSkills",', k_names)
+        # `naddrall` is reachable in the player build, so projprobe's names sit
+        # inside a research guard there and the player DLL stays unchanged.
+        guard_at = k_names.index("#ifndef FORGEPACT_RELEASE")
+        guarded = k_names[guard_at:k_names.index("#endif", guard_at)]
+        for name in HOOKED + ENEMY_ROWS + ("ReturnSpecificStat",):
+            self.assertIn('"' + name + '"', guarded, name + " is outside NAddrAll's research guard")
+        # statadd's pin on the same list still holds, outside the guard.
+        self.assertIn('"StatSpellHaste", "StatAllSkills",', k_names[:guard_at])
 
     def test_levers_start_off_and_are_clamped(self):
         self.assertRegex(self.region, r"static int\s+g_PpAmount = 0;")
@@ -338,6 +344,10 @@ class ProjProbeContractTests(unittest.TestCase):
         scope = self.region[self.region.index("struct ProjProbeOuterScope"):]
         scope = scope[:scope.index("};")]
         self.assertIn("(t.flags & kPpSpeedScope) != 0", scope)
+        # Only a native row raises either depth: a blocked row's table-routed
+        # calls must not attribute ids to a row `ids on` called not watched.
+        self.assertIn("outer(t.mode == kPpNative && (t.flags & kPpOuter) != 0)", scope)
+        self.assertIn("speedScope(t.mode == kPpNative && (t.flags & kPpSpeedScope) != 0)", scope)
         self.assertIn("++g_PpSpeedScopeDepth", scope)
         self.assertIn("--g_PpSpeedScopeDepth", scope)
         self.assertIn('"projprobe ids: "', self.region)

@@ -21455,13 +21455,16 @@ static void NAddrAll()
         "EnemyCalculateExperience",
         // ForgePact::StatsManager's `statadd` table (StatFasterCastRate is above).
         "StatSpellHaste", "StatAllSkills",
+#ifndef FORGEPACT_RELEASE
         // `projprobe`'s rows and its `ids` hook (research build, issue #160).
+        // Guarded like projprobe itself, so the player DLL is unchanged.
         "StatAOESkillSize", "StatExplosionAOE", "ReturnExtraSpellProjectiles",
         "ReturnExtraProjectilesRanged", "LoadProjectileSettings", "LoadProjectile",
         "LoadAOEModifiers", "CreatePhysicalProjectile", "CA_playerProjectile",
         "TalentUseSetSpeed", "GetProjectileGravity", "AddAoeIndicatorSize",
         "CreateAoeIndicator", "LoadAllModifiers", "CA_enemyProjectile",
         "ClientCreateEnemyProjectile", "ReturnSpecificStat",
+#endif
     };
 
     std::ofstream f(IPC_DIR + "\\script_addresses.csv", std::ios::trunc);
@@ -38872,7 +38875,10 @@ static volatile long g_PpIdsDropped = 0;            // calls of a new pair the f
 
 // What is on this thread's stack: how many outer rows (kPpOuter), the
 // innermost one's name, and how many speed-scope rows (kPpSpeedScope:
-// LoadAllModifiers and LoadProjectileSettings).
+// LoadAllModifiers and LoadProjectileSettings). Only a native row counts: a
+// blocked row's table swap still reaches its detour on the few table-routed
+// calls, and counting those would attribute stat ids to a row `ids on` has
+// just reported as not watched.
 static thread_local int g_PpOuterDepth = 0;
 static thread_local int g_PpSpeedScopeDepth = 0;
 static thread_local const char* g_PpOuterName = nullptr;
@@ -38882,7 +38888,8 @@ struct ProjProbeOuterScope {
     const bool speedScope;
     const char* const prev;
     explicit ProjProbeOuterScope(const ProjProbeRow& t)
-        : outer((t.flags & kPpOuter) != 0), speedScope((t.flags & kPpSpeedScope) != 0), prev(g_PpOuterName)
+        : outer(t.mode == kPpNative && (t.flags & kPpOuter) != 0),
+          speedScope(t.mode == kPpNative && (t.flags & kPpSpeedScope) != 0), prev(g_PpOuterName)
     {
         if (outer) { ++g_PpOuterDepth; g_PpOuterName = t.name; }
         if (speedScope) ++g_PpSpeedScopeDepth;

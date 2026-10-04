@@ -350,7 +350,7 @@ carry. Our code; the full command is in the hub's ForgePact guide.
 | `CreateAoeIndicator` | `gml_Script_CreateAoeIndicator` (665) | 16 sites in 11 talent scripts (Shaman 3; Storm Weaver, Necromancer, Demon Spawn 2 each; seven others 1 each) | call row | count only; tells which bar skill is an AoE skill (census) |
 | `CA_enemyProjectile` | `gml_Script_CA_enemyProjectile` (275) | not scanned | count row, never a lever | enemy side; in town a zero proves nothing |
 | `ClientCreateEnemyProjectile` | `gml_Script_ClientCreateEnemyProjectile` (574) | not scanned | count row, never a lever | enemy side; in town a zero proves nothing |
-| `ReturnSpecificStat` | `gml_Script_ReturnSpecificStat` (3344) | about 140,000 calls a session (`RUNTIME_DATA_MODELS`) | hooked only on the first `projprobe ids on`; one line per new (outer row, stat id) pair, 200 lines, and every pair in `projprobe show` | instrument, not a candidate |
+| `ReturnSpecificStat` | `gml_Script_ReturnSpecificStat` (3344) | about 140,000 calls a session (`RUNTIME_DATA_MODELS`) | hooked on the first `projprobe ids on` or `projprobe speed stat ...`, whichever comes first; one line per new (outer row, stat id) pair, 200 lines, and every pair in `projprobe show` | instrument, not a candidate |
 
 The session's positive control is not in this table: `statadd skillhaste`,
 whose `StatSpellHaste` detour is already proven native, run in the same
