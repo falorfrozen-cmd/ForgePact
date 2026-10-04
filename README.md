@@ -1470,9 +1470,9 @@ your skill, after it has counted your gear and buffs.
 - **Whose casts.** Your own character's, and the repeat a double-cast effect
   makes of them; the plugin decides on each call, from what is casting. Your
   mercenary and the enemies are left exactly as the game made them.
-  Projectile Amount and Area of Effect leave your basic attack alone. Whether
-  Projectile Speed also changes a basic attack's speed has **not been
-  observed** (no basic attack was seen in the research sessions).
+  The sliders are not built to change your basic attack, but that has **not
+  been observed** for any of the three (no basic attack was seen in the
+  research sessions).
 - **An item effect may get the extra projectiles too.** Many casts make a
   second projectile count of 6 alongside the skill's own, which the research
   takes to be an item effect. The plugin cannot tell it from the skill's own
