@@ -118,7 +118,7 @@ class LootAnnounceHeaderTests(unittest.TestCase):
             self.assertRegex(self.code, rf"long long {counter} = 0;", counter)
 
     def test_the_creation_window_replaced_the_bag_drop_window(self):
-        # Live procedure 1's bag drop was announced while the LootGroundDrop
+        # Live procedure 2's bag drop was announced while the LootGroundDrop
         # window counted 0; the core now decides on "built this frame or the
         # last", with a capped window that switching off clears.
         for gone in ("BagDropScope", "BeginBagDrop", "EndBagDrop", "BagDropActive", "m_BagDropDepth"):

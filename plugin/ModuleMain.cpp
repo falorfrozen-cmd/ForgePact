@@ -47847,8 +47847,8 @@ static void JumpSceneryCommand(const std::string& rest)
 //     ground item counts only when its item struct was built in that frame or
 //     the one before, so a bag drop or a re-drop after a pickup (an existing
 //     struct put back on the ground) is held. It replaced a count-only
-//     LootGroundDrop window that counted 0 while Live procedure 1's bag drop
-//     was announced. A table-only CreateItemNew hook would never see
+//     LootGroundDrop window that counted 0 while Live procedure 2's bag drop
+//     was announced; Live procedure 3 measured the guard holding a bag drop. A table-only CreateItemNew hook would never see
 //     LootGroundCreate's direct call, so its route is reported (create-hook=).
 // At the end of the frame (LootAnnounceTick) each noted call is resolved: the
 // first handle that is a live Loot_Ground_obj (by object_index, the object

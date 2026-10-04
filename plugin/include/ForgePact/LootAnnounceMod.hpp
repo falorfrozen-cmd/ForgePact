@@ -29,7 +29,9 @@ namespace ForgePact {
 //     pickup, or anything else that puts an existing struct on the ground
 //     finds no recent note and is held (held-bag-drop). This replaced a
 //     "bag-drop window" around LootGroundDrop, whose detour counted 0 while
-//     Live procedure 1's bag drop reached LootGroundInit and was announced.
+//     Live procedure 2's bag drop reached LootGroundInit and was announced.
+//     Live procedure 3 measured the guard holding a bag drop (held-bag-drop)
+//     while the game's own drops passed it (created rose with seen).
 //   - the rarity is itemInfoStruct["27"] (RUNTIME_DATA_MODELS.md section
 //     16.4). Only kAnnouncedRarities announce; anything else, and a rarity
 //     that could not be read as a number (kRarityUnread), does not.
@@ -81,7 +83,10 @@ public:
     // so whether the ground item holds the announcement closure is not
     // established; NetworkSendChatMessageIngame and GetItemDropMessage
     // refused with the one item argument supplied (the itemInstance struct).
-    // Live procedure 2 retests `method` with the fixed probe.
+    // Live procedure 3 (2026-10-04) retested `method` with the fixed probe:
+    // the anon control still resolved no anon@ method (each read as index
+    // -1), so `method` stays unsettled and `server` ships by the owner's
+    // rule; no further session is planned.
     enum class Sink : int { Method, NetSend, ChatAdd, Server };
     static constexpr Sink kShippedSink = Sink::Server;
 

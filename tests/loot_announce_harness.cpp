@@ -18,7 +18,8 @@
 // identity (itemType and a real itemTimeStamp, else the ground id) was
 // already announced does not; switching off clears the creation window; the
 // window and the memory are capped; the counters and the stat line say what
-// happened. live1_replay replays Live procedure 1's steps 2-6, the session
+// happened. live1_replay replays Live procedure 2's steps 2-6 (the
+// workorder's Live 1, aborted), the session
 // whose bag drop the old LootGroundDrop window announced.
 #include <cstdint>
 #include <iostream>
@@ -329,7 +330,7 @@ int main()
               counts(m));
     }
     {
-        // Live procedure 1 (2026-10-04), steps 2-6: three placements, each
+        // Live procedure 2 (2026-10-04), steps 2-6: three placements, each
         // built and placed in one call; the Heroic picked up and dropped from
         // the bag (the old window announced it); then off and a fourth
         // placement.
