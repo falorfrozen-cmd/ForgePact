@@ -121,7 +121,7 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 ### `dungeonchest` (both builds)
 
 The player command. Every form answers one status line that reports what was
-*done*: `dungeonchest: <pct>%|off | kills=<k> total=<T|unavailable[(unreadable=<u>/<c>)]>
+*done*: `dungeonchest: <pct>%|off | kills=<k> notEnemy=<n> total=<T|unavailable[(unreadable=<u>/<c>)]>
 creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
@@ -135,7 +135,12 @@ field is gone, and the Live procedure 1b build had no `creators=`, `pending=`
 or `unreadable=`. `latched` is the decision; `unlocked` is
 the unlock action, which is what changes the chest. `kills` is our own count
 from the `EnemyDestroyKillProc` hook Headhunter already installs (an
-enemy-`self` call, once per instance id, with its own recent-id set); `alive`
+enemy-`self` call, once per instance id, with its own recent-id set), and
+`notEnemy` the room's kill-hook calls the adapter refused because their `self`
+failed the enemy check (the player-`self` call of a kill, or an enemy check that
+cannot answer): `kills=0` beside a rising `notEnemy=` means the hook fired and
+the check refused it, both at 0 that the hook did not fire. Live 2's player
+build had no `notEnemy=` (attempt 1 under Live procedure 2's results); `alive`
 is `instance_number` of `Enemy_Parent_obj`, polled once a second while the
 room holds a `Dungeon_Chest_obj`, and is used only for the status line and the
 clamp (the threshold is never set so that the mod would open the chest later

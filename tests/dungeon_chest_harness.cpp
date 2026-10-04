@@ -668,7 +668,7 @@ int main() {
         KillAndPoll(s, d, 3);
         const std::string line = DC::StatusLine(s, "ok", "ok");
         check("command/status_line",
-            line == "dungeonchest: 50% | kills=3 total=40 creators=0 pending=0 unreadable=0 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok",
+            line == "dungeonchest: 50% | kills=3 notEnemy=0 total=40 creators=0 pending=0 unreadable=0 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok",
             line);
     }
 

@@ -243,7 +243,8 @@ struct Tally {
     int64_t room = 0;             // the room it belongs to (meaningful once roomSet)
     bool roomSet = false;
     long kills = 0;               // kills counted since the chest was first seen
-    long alive = 0;               // Enemy_Parent_obj instances at the last poll
+    long notEnemy = 0;            // kill-hook calls refused here because their `self` was not an enemy
+    long alive = 0;              // Enemy_Parent_obj instances at the last poll
     long alive0 = 0;              // Enemy_Parent_obj instances when the chest was first seen
     long total = 0;               // the planned total, fixed once known; 0 = unknown
     Census census;                // what the total source last saw of the room's creators
@@ -394,6 +395,17 @@ inline bool CountKill(State& s, int id)
     ++t.kills;
     ++s.counters.kills;
     return true;
+}
+
+// A kill-hook call the adapter refused because its `self` is not an enemy
+// (the player-`self` call of a kill, or an enemy check that cannot answer),
+// counted only while a chest is tracked: `notEnemy=` on the status line. In
+// Live 2 (2026-10-04) the player build's enemy check refused every kill and
+// nothing on the player build's status said so.
+inline void CountNotEnemy(State& s)
+{
+    if (!Tracking(s) || !s.tally.active) return;
+    ++s.tally.notEnemy;
 }
 
 // A chat line the callback could not send switches the chat forms off for the
@@ -558,7 +570,10 @@ inline LabelSpot PlaceHeadLabel(HeadLabel& l, double x, double y, double top, do
 // `hook` is the kill hook's state as ModuleMain records it: "ok" (both routes),
 // "table-only" (compiled GML's direct calls bypass it), "failed" (not
 // installed) or "none" (never asked for); `unlock` is the instance_exists
-// detour's, the same words. `total` is the total the decision uses, or
+// detour's, the same words. `notEnemy` counts the room's kill-hook calls
+// refused as not an enemy `self` (CountNotEnemy), so `kills=0` beside a rising
+// `notEnemy=` says the hook fired and the enemy check refused it, and both at
+// 0 says the hook did not fire. `total` is the total the decision uses, or
 // `unavailable` while it is unknown; `creators`, `pending` and `unreadable`
 // are what the total source last saw of the room's creators (all, still to
 // spawn, state unreadable). `latched` is the decision; `unlocked` is the
@@ -570,6 +585,7 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
     const long total = TotalNow(t);
     return std::string("dungeonchest: ") + ModeText(Pct(s))
         + " | kills=" + std::to_string(t.kills)
+        + " notEnemy=" + std::to_string(t.notEnemy)
         + " total=" + (total > 0 ? std::to_string(total) : std::string("unavailable")
             + (t.census.unreadable > 0 ? "(unreadable=" + std::to_string(t.census.unreadable) + "/"
                 + std::to_string(t.census.creators) + ")" : std::string()))

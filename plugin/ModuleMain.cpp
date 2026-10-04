@@ -1354,22 +1354,46 @@ static void ResolveKnownCreatorObjects()
     Out("density creators cached = " + std::to_string(resolved));
 }
 
+// Enemy_Parent_obj's index for IsEnemyObject: the create hooks' copy once
+// InstallCreateHooks has resolved it, else resolved here by name, on demand.
+// The player build calls InstallCreateHooks only for the features that need the
+// create hooks, so a consumer that does not (Dungeon chest opens early's kill
+// count) found the global at -1: in Live 2 (issue #31, 2026-10-04) every kill
+// call was refused as "not an enemy" and the tally stayed at 0. This never
+// writes g_EnemyParentIdx, which other features read as "the create hooks
+// resolved it" (FrameProfEnemyParent keeps its own copy for the same reason),
+// and a lookup the runtime refuses is asked again next time instead of kept.
+static int IsEnemyParentIndex()
+{
+    if (g_EnemyParentIdx >= 0) return g_EnemyParentIdx;
+    static int own = -1;
+    if (own < 0 && g_Yytk) {
+        try { own = static_cast<int>(g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") }).ToDouble()); }
+        catch (...) { own = -1; }
+        if (own < 0) own = -1;
+    }
+    return own;
+}
+
+// An answer is cached per object index only when it was computed against a
+// resolved Enemy_Parent_obj: an ask made before the index can be resolved
+// answers `false` for now and is asked again, never kept for the session.
 static bool IsEnemyObject(int objIdx)
 {
     if (objIdx < 0) return false;
     auto it = g_IsEnemyCache.find(objIdx);
     if (it != g_IsEnemyCache.end()) return it->second;
+    const int parent = IsEnemyParentIndex();
+    if (parent < 0) return false;
     bool res = false;
     try {
-        if (g_EnemyParentIdx >= 0) {
-            if (objIdx == g_EnemyParentIdx) res = true;
-            else {
-                RValue r = g_Yytk->CallBuiltin("object_is_ancestor",
-                    { RValue((double)objIdx), RValue((double)g_EnemyParentIdx) });
-                res = r.ToBoolean();
-            }
+        if (objIdx == parent) res = true;
+        else {
+            RValue r = g_Yytk->CallBuiltin("object_is_ancestor",
+                { RValue((double)objIdx), RValue((double)parent) });
+            res = r.ToBoolean();
         }
-    } catch (...) { res = false; }
+    } catch (...) { return false; }
     g_IsEnemyCache[objIdx] = res;
     return res;
 }
@@ -19131,13 +19155,16 @@ static void HhSteal(CInstance* enemyInst, CInstance* killerHint, CInstance* othe
 // Kill-hook calls seen while a chest was tracked whose `self` was not an enemy
 // (the player-`self` call of a kill, or a shape this build never measured);
 // the research probe's status prints it beside kills=, so a tally stuck at 0 shows
-// whether the hook fired with the wrong self or did not fire.
+// whether the hook fired with the wrong self or did not fire. `dungeonchest
+// status` prints the room's own count as `notEnemy=` in both builds
+// (DC::CountNotEnemy): Live 2's player build had no such line, so its kills=0
+// could not say which.
 static long g_DcKillNotEnemySelf = 0;
 static void DungeonChestOnKill(CInstance* S)
 {
     namespace DC = ForgePact::DungeonChest;
     if (!S || !DC::Tracking(DC::state) || !DC::state.tally.active) return;
-    if (!CallerIsEnemyInstance(S)) { ++g_DcKillNotEnemySelf; return; }
+    if (!CallerIsEnemyInstance(S)) { ++g_DcKillNotEnemySelf; DC::CountNotEnemy(DC::state); return; }
     int id = -1;
     try { const double d = InstanceIdOf(S->ToRValue()); if (d >= 0.0 && d <= (double)INT32_MAX) id = (int)d; } catch (...) {}
     DC::CountKill(DC::state, id);
