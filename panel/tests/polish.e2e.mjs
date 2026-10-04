@@ -503,7 +503,8 @@ function modCards([id, children]) {
   const childHome = children.filter((c) => document.getElementById(c) && card.contains(document.getElementById(c))).map((c) => {
     const holder = top.find((t) => t.contains(document.getElementById(c)));
     // The child's own control and its parent's switch (a child may be a select).
-    return { child: c, parentInSame: !!holder && holder.querySelectorAll('input[type=checkbox], select').length > 1 };
+    const mates = holder ? [...holder.querySelectorAll('input[type=checkbox], select')].map((el) => el.id) : [];
+    return { child: c, parentInSame: mates.length > 1, mates };
   });
   return {
     wrapper: bg(card), transparent: bg(card) === 'rgba(0, 0, 0, 0)', raised: raised.length, top: top.length,
@@ -537,7 +538,10 @@ async function modsCardsItems({ page }) {
 async function modsCardsGameplay({ page }) {
   await tab(page, 'mods');
   await subtab(page, 'subtab-gameplay');
-  const got = await $(page, modCards, ['gameplayCard', []]);
+  // The countdown form select is Dungeon chest opens early's child control, as
+  // the Quality of Life check treats its child rows: it is left out of the
+  // per-card list and must sit in the card that holds the dungeon chest switch.
+  const got = await $(page, modCards, ['gameplayCard', ['dungeon_chest_countdown']]);
   assert(got.transparent, `#gameplayCard is still drawn as a card (${got.wrapper})`);
   assert(got.top === 2 && got.raised === 2, `Gameplay: ${got.top} top-level cards (${got.raised} raised), not 2`);
   assert(got.unitsAreTops, `Gameplay: the cards are not the column's ${got.units} mods`);
@@ -545,6 +549,8 @@ async function modsCardsGameplay({ page }) {
   // a checkbox or select, so modCards does not list it).
   assert(JSON.stringify(got.perCard.map((p) => p.controls)) === '[["boss_rarity"],["mod_dungeon_chest"]]',
     'The Gameplay cards are not the Bosses select and the dungeon chest switch: ' + JSON.stringify(got.perCard));
+  assert(got.childHome.length === 1 && got.childHome[0].parentInSame && got.childHome[0].mates.includes('mod_dungeon_chest'),
+    'The countdown select is not in the dungeon chest\'s card: ' + JSON.stringify(got.childHome));
 }
 
 async function modsColumns({ page }) {
