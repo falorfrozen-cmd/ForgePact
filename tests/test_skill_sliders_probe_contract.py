@@ -260,7 +260,7 @@ class ProjProbeContractTests(unittest.TestCase):
         # instance form arms LoadProjectileSettings alone.
         self.assertIn('ProjProbeArm({ kPp_LoadAllModifiers, kPp_LoadProjectileSettings }, "speed stat")', speed_command)
         self.assertIn('ProjProbeArm({ kPp_LoadProjectileSettings }, "speed")', speed_command)
-        self.assertIn("static constexpr long kPpLogBudget = 40;", self.region)
+        self.assertIn("static constexpr long kProjProbeLogBudget = 40;", self.region)
         self.assertIn("static constexpr long kPpIdsBudget = 200;", self.region)
         # Names, never addresses.
         for token in ("HookOneScriptTable", "MmCreateHook", "Rva", "GetModuleHandle"):
@@ -317,7 +317,7 @@ class ProjProbeContractTests(unittest.TestCase):
         delta_at = speed.index('ProjProbeScaleVar(inst, "deltaSpeed", mult,')
         self.assertLess(delta_at, speed.index('ProjProbeScaleVar(inst, "speed", mult,'))
         # Both values are logged before and after, within a budget reset clears.
-        self.assertIn("g_PpSpeedLogged < kPpLogBudget", speed)
+        self.assertIn("g_PpSpeedLogged < kProjProbeLogBudget", speed)
         self.assertIn("InterlockedExchange(&g_PpSpeedLogged, 0);", function_body(self.region, "static void ProjProbeReset("))
         name = function_body(self.region, "static std::string ProjProbeSelfName(")
         self.assertLess(name.index("IsNumericInstanceRead(oi)"), name.index("object_get_name"))

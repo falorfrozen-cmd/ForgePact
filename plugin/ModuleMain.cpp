@@ -38749,12 +38749,12 @@ static void TgProbeCommand(const std::string& rest)
 // what it stored to the projectile's own `deltaSpeed`. So LoadAllModifiers is
 // a row, an `ids` outer row and a scope of the speed lever's stat form, and
 // the instance form scales `deltaSpeed` first and the `speed` built-in second.
-static constexpr long kPpLogBudget = 40;    // logged calls per row between resets
+static constexpr long kProjProbeLogBudget = 40;    // logged calls per row between resets
 static constexpr long kPpIdsBudget = 200;   // `projprobe ids:` lines between resets
 
 enum : uint32_t {
     kPpCount  = 0,    // count only, never logged (the enemy side)
-    kPpLog    = 1,    // log self, argc, the arguments and the return, kPpLogBudget calls
+    kPpLog    = 1,    // log self, argc, the arguments and the return, kProjProbeLogBudget calls
     kPpOuter  = 2,    // `projprobe ids` attributes ReturnSpecificStat calls made under this row
     kPpAmount = 4,    // `projprobe amount` adds to this row's result
     kPpAoe    = 8,    // `projprobe aoe` adds to this row's result
@@ -39028,7 +39028,7 @@ static bool ProjProbeScaleVar(const RValue& inst, const char* var, double mult, 
 // `projprobe speed <mult>`: after LoadProjectileSettings returns, the
 // projectile's own `deltaSpeed` and, as a second write, its `speed` built-in,
 // read and written on `self` the way Hook_PathFindStartPath scales an enemy's
-// `moveSpeed`. Both are logged before and after, within kPpLogBudget lines;
+// `moveSpeed`. Both are logged before and after, within kProjProbeLogBudget lines;
 // the first-boosted line reports `deltaSpeed` (or `speed` when `deltaSpeed`
 // did not move). Both at 0 is counted as a no-op (speedNoop), not applied.
 static void ProjProbeScaleSpeed(ProjProbeRow& t, CInstance* S, double mult)
@@ -39053,7 +39053,7 @@ static void ProjProbeScaleSpeed(ProjProbeRow& t, CInstance* S, double mult)
         } else {
             InterlockedIncrement(&g_PpSpeedUnreadable);
         }
-        if (g_PpSpeedLogged < kPpLogBudget && InterlockedIncrement(&g_PpSpeedLogged) <= kPpLogBudget) {
+        if (g_PpSpeedLogged < kProjProbeLogBudget && InterlockedIncrement(&g_PpSpeedLogged) <= kProjProbeLogBudget) {
             char b[64];
             sprintf_s(b, ": speed lever x%.2f self=", mult);
             Out(std::string("projprobe ") + t.name + b + ProjProbeSelfName(S) + note);
@@ -39084,7 +39084,7 @@ static RValue& ProjProbeDetourBody(int idx, CInstance* S, CInstance* O, RValue& 
     ProjProbeRow& t = g_PpRows[idx];
     const long n = InterlockedIncrement(&t.calls);
     std::string line;
-    if ((t.flags & kPpLog) && t.logged < kPpLogBudget && InterlockedIncrement(&t.logged) <= kPpLogBudget) {
+    if ((t.flags & kPpLog) && t.logged < kProjProbeLogBudget && InterlockedIncrement(&t.logged) <= kProjProbeLogBudget) {
         try { line = ProjProbeCallLine(t, n, S, argc, A); } catch (...) {}
     }
     RValue& r = ProjProbeCallOriginal(t, S, O, R, argc, A);
@@ -39304,7 +39304,7 @@ static void ProjProbeShow()
         std::string line = std::string("  ") + t.name + " mode=" + t.modeText;
         if (t.mode == kPpNative) {
             line += " calls=" + std::to_string(t.calls);
-            if (t.flags & kPpLog) line += " logged=" + std::to_string(std::min<long>((long)t.logged, kPpLogBudget)) + "/" + std::to_string(kPpLogBudget);
+            if (t.flags & kPpLog) line += " logged=" + std::to_string(std::min<long>((long)t.logged, kProjProbeLogBudget)) + "/" + std::to_string(kProjProbeLogBudget);
         } else if (t.mode == kPpVia && i == kPp_TalentUseSetSpeed) {
             line += " calls=" + std::to_string(g_TgRows[kTg_TalentUseSetSpeed].calls) + " (tgprobe's)";
         } else {
