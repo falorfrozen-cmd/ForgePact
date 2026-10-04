@@ -256,7 +256,10 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertLess(create.index("if (g_Orig_CreateItemNew)"), create.index("HookOneScript("))
         self.assertIn('SavedOriginalIsTableOnly(g_Orig_CreateItemNew) ? "table-only" : "both"', create)
         saved = _code(_body(self.plugin, "static void InstallSignatureAngelicHooks()"))
-        self.assertIn("SavedOriginalIsTableOnly(orig)", saved)
+        helper = _code(_body(self.plugin, "static bool SavedOriginalIsTableOnly(PFUNC_YYGMLScript orig)"))
+        test = "AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig)"
+        self.assertIn(test, saved)
+        self.assertIn(test, helper)
         # The research build's item inspection installs it with both routes,
         # so no later installer inherits a table swap.
         inspect = _code(_body(self.plugin, "static void InstallItemInspectHooks()"))

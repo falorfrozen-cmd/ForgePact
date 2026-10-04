@@ -22664,7 +22664,8 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 // it - so a switch never reports these drops on while nothing can see a hit.
 // A hook another installer put on first: its saved original is the game's own
 // code exactly when that install fell back to the table swap (an inline detour
-// saves its trampoline instead). Loot announcements' create-hook= reads it too.
+// saves its trampoline instead) - savedRoute's test below. Loot announcements'
+// create-hook= reads CreateItemNew's route with it.
 static bool SavedOriginalIsTableOnly(PFUNC_YYGMLScript orig)
 {
     return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig);
@@ -22673,7 +22674,7 @@ static bool SavedOriginalIsTableOnly(PFUNC_YYGMLScript orig)
 static void InstallSignatureAngelicHooks()
 {
     auto savedRoute = [](PFUNC_YYGMLScript orig) {
-        return SavedOriginalIsTableOnly(orig) ? "TABLE-ONLY" : "detoured";
+        return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig) ? "TABLE-ONLY" : "detoured";
     };
     const char* cdpRoute = "detoured";
     const char* rollRoute = "detoured";
