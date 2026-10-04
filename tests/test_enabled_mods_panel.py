@@ -111,9 +111,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # `#mod_dungeon_chest` switch's handler and its `#dungeon_chest_pct`
         # range's change handler (both in the derived oracle). Plus 1 for its
         # `#dungeon_chest_countdown` child select's handler (the owner's
-        # countdown form choice, 2026-10-04; in the derived oracle too).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1)
+        # countdown form choice, 2026-10-04; in the derived oracle too). Plus 2
+        # from the Satanic Zone control card (#157): Keep the zone you are in
+        # satanic, and Every zone counts as satanic.
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

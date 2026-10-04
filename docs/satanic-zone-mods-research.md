@@ -268,3 +268,76 @@ the hs-drive MCP (`menulayout`, `input.inject`).
   `g_SatLoadTraceLeftPoll`) is not gated behind `#ifndef FORGEPACT_RELEASE`,
   so a player build would also print it to `out.txt` for a player's first 40
   observed rolls. Low-priority cleanup before treating this as ship-ready.
+
+## The shipped control (issue #157), live-checked 2026-10-04
+
+On the test character in a town, through the plugin's own commands:
+
+- `satzone pin 44` wrote the protected value with the mod's own `SPV` call and
+  it held (`GPV` 85 -> 44 across the check; the 15-frame poll re-asserts it).
+- `satzone pin here` and `satzone pin 235` refused the town as "not an act
+  zone" - the shape gate works.
+- `satzone follow 1` skipped the town as designed (no writes while there).
+- `satzone everywhere 1` installed the `LoadSatanicZone` hook from the frame
+  tick (the char-select deferral: no hook while a menu is up), and the game's
+  ~150 calls a second then saw the forced answer; `everywhere 0` and `off`
+  released with zero refusals.
+
+One code lesson worth carrying: `instance_find(Player_obj)` hands back a
+`VALUE_REF` on this runner, so the mod's first pin attempt resolved no player
+("player instance unreadable") until it went through `HhResolveLocalPlayer` +
+`HhResolveInstance` - the same trap the 2026-09-10 note above records. The
+in-zone check this section left open is answered below (Live 4): the game's own
+answer turns true in the pinned room and the zone's buffs are applied there;
+only a relic drop in a satanic zone remains unwatched.
+
+## Live 4 (2026-10-04): what `LoadSatanicZone` really answers, and the map marker
+
+Same ship as Live 3, on the research build with the control feature:
+
+- **`LoadSatanicZone(room)` answers "is the player in that act-zone room?"**
+  Measured standing inside `Act_01_01`: `LoadSatanicZone(1)` true,
+  `LoadSatanicZone(2)` false; earlier in the town, `LoadSatanicZone(235)`
+  false while the player stood in it (towns are not zones). The game calls it
+  every frame with the value from the store, so the game's own "the player is
+  in the satanic zone" state becomes true exactly while the player stands in
+  the room the store names - which is what `satzone pin` writes (and what
+  `follow` keeps in step).
+- **The world map's red marker is a separate layer.** It is a per-node
+  `isSatanic` flag on `UI_Map_Zone_Button_obj` with its own
+  `satanicImg`/`satanicTimer`/`satanicScale`, set when the game itself
+  resolves a zone (the marked node differed across launches and reads zero
+  while inside a zone). Pinning the store did not move it; it did not move on
+  the game's own re-rolls; `satzone everywhere` (with `LoadSatanicZone` forced
+  true for every call, 10k+ calls) did not turn the map red; and invoking the
+  node's own `m_RefreshNode` on all 63 nodes (via the new `citrace invoke obj`
+  probe) changed neither the flags nor the drawing. The map icon is not drawn
+  from the state the control feature owns.
+- **While the map screen is open there is no `Player_obj`** (the game's own
+  menu-room swap): every player-resolving command answers "no player" and the
+  pin tick counts refusals until the map closes. Not a fault; a state to
+  expect.
+- **Travel works with DPI-aware injection.** The waypoint flow is hover a zone
+  node, click it, press F (Choose) - the blocker in Live 3 was that the
+  injecting process was not DPI-aware, so its client-to-screen mapping used a
+  1707x960 virtualized window for a 2560x1440 game and every click landed at
+  two-thirds of the target. With `SetProcessDpiAwareness(2)` before injecting,
+  the flow works end to end (`Town_01_rm` -> `Act_01_01`). Worth carrying into
+  the hs-drive input docs.
+- **The in-zone effect is confirmed in the same session.** Entering
+  `Act_01_01` a second time with `satzone pin 1` already set (so the game's own
+  per-frame `LoadSatanicZone(1)` was true from the room load) added five new
+  permanent buff objects to the player (`Draw_Player_Buff_obj`, `buffType`
+  368/371/385/401/411) - the same slots read `-4` (empty) in the entry made
+  with the pin off. The zone's own arrays that session held 3 buffs + 2
+  debuffs, and the player, watching their buff bar, confirmed the satanic
+  buffs and debuffs are showing. Releasing the pin mid-zone did not remove the
+  objects already applied. So the pinned room's state is not just a query
+  answer: the game applies the zone's effects in the room the pin names. The
+  map icon remains its own layer (above).
+- **The earlier attempt's deaths, for the record.** The HCSSF test character
+  (level 54) died in the same zone while the commands ran - twice (the zone's
+  own Nightmare mobs; the backup copy was re-injected between runs) - which is
+  why that attempt could not photograph the effect; the strong character's
+  session above established it without a screenshot (the buff objects read off
+  the game and the player's own report).

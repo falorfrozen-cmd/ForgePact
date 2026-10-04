@@ -36,15 +36,20 @@
 //
 // NATIVE_BOOLEANS are boolean mods no recorded page ever had (Far scenery
 // sleep, the Pet moves on switch of forgepact-pet-loot-stuck, Move all into
-// the stash, Extra packs as you approach, Pet collects relics (#124), and Sleep
-// loot your filter hides, whose show-key select is derived after them, so it
-// stays last): the same on, off, on and Turn off shape the legacy recording
-// holds for #mod_pet_quest_pickup, but nothing recorded stands for them, so their
-// contract is written out here as literals - on posts the mod's key with true and sends its plugin
-// verb with 1, off posts false and sends the verb with 0, on again repeats the
-// first, and its Turn off button repeats the off - entered on the tab and Mods
-// sub-tab they sit on. They come last, so no earlier step's index moves, and
-// each is in `controls`, so the replay's coverage check counts it.
+// the stash, Extra packs as you approach, Pet collects relics (#124), Sleep
+// loot your filter hides - whose show-key select is derived after them, so it
+// stays last - the two Satanic Zone control switches (#157, on the World
+// tab), and Jump through scenery): the same on, off, on and Turn off shape the
+// legacy recording holds for #mod_pet_quest_pickup, but nothing recorded
+// stands for them, so their contract is written out here as literals - on
+// posts the mod's key with true and sends its plugin verb with 1, off posts
+// false and sends the verb with 0, on again repeats the first, and its Turn
+// off button repeats the off - entered on the tab and Mods sub-tab they sit
+// on. They come last, so no earlier step's index moves, and each is in
+// `controls`, so the replay's coverage check counts it. The zone-control pair
+// sits before Jump through scenery rather than after it because the show
+// key's select follows this loop without a navigation step of its own: the
+// loop must end on Mods > Quality of Life.
 //
 // NATIVE_SLIDERS are switched table sliders no recorded page ever had (Skill
 // Haste and All Skills, #114; Mining Ore Extra Rolls, issue #36): the same
@@ -136,7 +141,10 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // where the switch sits, and the plugin verb src/forgepact.py sends for it.
 // `restate` is a line the backend sends before the verb's `1` when the switch
 // turns on (Sleep loot your filter hides restates its show key, at its
-// default in a fresh sandbox, as map reveal restates its child).
+// default in a fresh sandbox, as map reveal restates its child). The two
+// Satanic Zone control switches sit before Jump through scenery rather than
+// last: the show key's select follows this loop without a navigation step of
+// its own, so the loop must end on Mods > Quality of Life.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
@@ -144,6 +152,8 @@ export const NATIVE_BOOLEANS = [
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
   { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
+  { key: 'satanic_follow', tab: 'tab:world', verb: 'satzone follow' },
+  { key: 'satanic_everywhere', tab: 'tab:world', verb: 'satzone everywhere' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
