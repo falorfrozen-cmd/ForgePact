@@ -1637,7 +1637,9 @@ load there anyway.
 - `build_release.py` — packages `dist/ForgePact/` (the release zip contents).
 - `tools/` — developer helpers, not shipped to players: `ipc.ps1` sends one command to
   the running plugin and prints only its reply, `ghidra/ImportSymbols.java` names the
-  stripped game binary in Ghidra from the game's own script table, `panel_smoke.py`
+  stripped game binary in Ghidra from the game's own script table, and beside it
+  `ghidra/` holds the read-only reading scripts (decompile to local files, find callers,
+  name variable slots; see [`tools/ghidra/README.md`](tools/ghidra/README.md)), `panel_smoke.py`
   starts a packaged `ForgePact.exe` and checks it opens its window and serves the built
   panel, `package_size.py` builds the exe from a git ref or a working tree in a
   temporary directory and prints its size, `itemtruth_memrun.py` launches the game
