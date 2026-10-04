@@ -181,6 +181,42 @@ int main() {
             "at19: " + at19 + " | at20+: " + Tally(s) + " | " + unlockedLine);
     }
     {
+        // D15, Live 2 (2026-10-04): `unlocked early at 333/642` against a
+        // threshold of 321. The game polls once a second and a second of AoE
+        // play holds about a dozen kills, so a decision made only at the poll
+        // latches late. Here the poll sets the threshold (20 of a planned 40),
+        // then 25 kills arrive with no poll between them, each through the
+        // kill path's decision (DecideAtKill). The latch comes at exactly the
+        // 20th, its line reads 20/40, `latchedAt=20`, the chat milestones go
+        // out at the kills that pass them and the ready line at the latch, and
+        // the next poll decides nothing more.
+        DC::State s;
+        Arm(s, 50, true);
+        DC::SetForm(s, DC::Form::Both);
+        sourceAnswer = 40;
+        Dungeon d; d.alive = 40;
+        Poll(s, d);
+        const size_t linesAtPoll = chatLines.size();
+        int latchedAt = 0, latches = 0;
+        std::string unlockedLine;
+        for (int i = 1; i <= 25; ++i) {
+            if (Kill(s, d) && DC::DecideAtKill(s)) {
+                ++latches;
+                if (!latchedAt) { latchedAt = i; unlockedLine = DC::UnlockedLine(s); }
+            }
+        }
+        const bool pollAfter = Poll(s, d);
+        const std::string status = DC::StatusLine(s, "ok", "ok");
+        const bool milestonesAtKills = chatLines.size() == linesAtPoll + 7
+            && chatLines[linesAtPoll] == "Chest: 10 kills to go" && chatLines.back() == DC::kReadyText;
+        check("target/latch-between-polls",
+            latchedAt == 20 && latches == 1 && !pollAfter && s.tally.latched && s.tally.unlocked && unlockCalls == 1
+                && s.tally.kills == 25 && unlockedLine.rfind("dungeonchest: unlocked early at 20/40 alive=", 0) == 0
+                && status.find(" latchedAt=20") != std::string::npos && milestonesAtKills,
+            "latchedAt=" + std::to_string(latchedAt) + " latches=" + std::to_string(latches) + " | " + unlockedLine
+                + " | " + Tally(s) + " | " + Lines());
+    }
+    {
         // unlock-failed: the threshold latches but the unlock action answers
         // that the chest cannot open. The status line and the latch line say
         // so, `unlocked` stays 0, the detour's view stays shut (the chest's
@@ -668,7 +704,7 @@ int main() {
         KillAndPoll(s, d, 3);
         const std::string line = DC::StatusLine(s, "ok", "ok");
         check("command/status_line",
-            line == "dungeonchest: 50% | kills=3 notEnemy=0 total=40 creators=0 pending=0 unreadable=0 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok",
+            line == "dungeonchest: 50% | kills=3 notEnemy=0 total=40 creators=0 pending=0 unreadable=0 alive=37 threshold=20 remaining=17 latched=0 unlocked=0 unlock=ok answered=0 countdown=head chat=unavailable chatLines=0 hook=ok labelFont=none fontSwitches=0 guiResizes=0 latchedAt=0",
             line);
     }
 

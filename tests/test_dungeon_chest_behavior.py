@@ -16,7 +16,9 @@ when the player or the camera moves.
 These scenarios pin the decision, the tally, the detour's decision and the
 countdown: nothing at all while the mode is off or the room holds no chest,
 the latch at exactly the threshold (the 20th of a planned 40 at 50 %, the
-300th of Live procedure 1's 600, not the one before), a monotone countdown
+300th of Live procedure 1's 600, not the one before), also when several kills
+fall between two polls (D15: the kill that reaches the threshold latches, not
+the next once-a-second poll, which Live 2 measured at 333 against 321), a monotone countdown
 while the spawners top the room back up, nothing decided or shown while the
 total is unknown, the chest's poll answered only for the chest, only for an
 enemy argument and only after the latch, the countdown text's window, one
@@ -72,6 +74,7 @@ TOTAL = ("target/total-planned", "target/total-unknown", CENSUS)
 POLL = ("target/poll-answered-while-latched", "target/poll-untouched-otherwise")
 TARGETS = (
     "target/latch_at_threshold",
+    "target/latch-between-polls",
     "target/unlock-failed",
 ) + TOTAL + POLL + (
     "target/countdown_text",
@@ -162,6 +165,11 @@ class DungeonChestBehaviorTests(unittest.TestCase):
     def test_target_the_chest_unlocks_at_exactly_the_threshold(self):
         self.assertScenario("target/latch_at_threshold")
         self.assertScenario("target/unlock-failed")
+
+    def test_target_the_kill_that_reaches_the_threshold_latches(self):
+        """D15: 25 kills with no poll between them latch at the 20th, one latch line,
+        `latchedAt=20`, the chat milestones at their kills; the next poll decides nothing."""
+        self.assertScenario("target/latch-between-polls")
 
     def test_target_total_planned_fixed_at_first_sight(self):
         """T = 600 at 50 % latches at the 300th kill; the countdown is monotone; the source is asked once."""

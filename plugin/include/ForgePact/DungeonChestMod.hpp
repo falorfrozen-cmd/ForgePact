@@ -315,7 +315,9 @@ struct Tally {
     Census census;                // what the total source last saw of the room's creators
     bool refusalLogged = false;   // this room's refused census has printed its one log line
     long threshold = 0;           // the threshold at the last evaluation
+    long decidedTotal = 0;        // the total the last poll decided with; a kill decides against it
     bool latched = false;         // reached in this room: stays reached until the room changes
+    long latchedAt = 0;           // the kills counted when it latched; 0 before
     bool unlocked = false;        // the unlock action answered at the latch that the chest can open
     // The instance_exists detour's view of this room: true from the latch whose
     // unlock action answered, until the room changes. The detour tests it first.
@@ -384,9 +386,51 @@ struct HeadLabel {
     double lift = 0.0;       // room units between the player's origin and its box top, at that frame
     bool placed = false;     // `spot` holds a placed position
     LabelSpot spot;          // the last position placed, in whole GUI pixels
+    // D14's diagnostics, for the whole session (read as deltas): see NoteLabelDraw.
+    long draws = 0;          // label draws noted
+    std::string font;        // the font the last label draw used; "" = the inherited one
+    long fontSwitches = 0;   // label draws whose inherited font differed from the previous one's
+    long guiResizes = 0;     // label draws whose GUI size differed from the previous one's
+    double lastInherited = 0.0;
+    double lastGuiW = -1.0, lastGuiH = -1.0;
 };
 
 inline bool LabelShown(const HeadLabel& l) { return l.count > 0; }
+
+// D14, Live 2 (2026-10-04): on single frames, about one in 70, the label drew
+// at about 72 % of its size, on the same centre. The draw never set a font: it
+// drew, and measured its line height, in whatever font the game had left
+// current. It now sets this font by name on every draw (or the `hhlabelfont`
+// override), restores the inherited one after, and draws in the inherited one
+// only when the name does not resolve. `__newfont6` is the font the skill
+// timer's number already pins the same way. Changing the default is this one
+// name.
+inline constexpr char kLabelFont[] = "__newfont6";
+
+// One label draw, for `status`: the font it drew in (`used`, "" when it fell
+// back to the inherited one), the inherited font at its entry and the GUI size
+// it placed against (negative when unread, which compares with nothing). A
+// rising `fontSwitches` under a steady label measures the cause above; a
+// rising `guiResizes` says the GUI layer's size moved instead.
+inline void NoteLabelDraw(HeadLabel& l, const std::string& used, double inherited, double gw, double gh)
+{
+    if (l.draws > 0 && inherited != l.lastInherited) ++l.fontSwitches;
+    l.lastInherited = inherited;
+    if (gw >= 0 && gh >= 0) {
+        if (l.lastGuiW >= 0 && (gw != l.lastGuiW || gh != l.lastGuiH)) ++l.guiResizes;
+        l.lastGuiW = gw;
+        l.lastGuiH = gh;
+    }
+    l.font = used;
+    ++l.draws;
+}
+
+// The status word for the font the last label draw used.
+inline std::string LabelFontWord(const HeadLabel& l)
+{
+    if (l.draws == 0) return "none";
+    return l.font.empty() ? std::string("inherited") : l.font;
+}
 
 struct State {
     std::atomic<int> pct{ 0 };                               // 0 = off, else 50..95
@@ -502,23 +546,20 @@ inline void SendChat(State& s, const std::string& line)
     DisableChat(s);
 }
 
-// Recomputes the threshold and decides. Answers true once, on the evaluation
-// that latched: the unlock action has then run (`tally.unlocked` says whether
-// it answered that the chest can open, and opens the detour's view), and in a
-// chat form the ready line has been sent - only when it did, so the chat
-// never announces a chest the game keeps shut. While the total is unknown
-// nothing is decided or shown.
-inline bool Evaluate(State& s)
+// The decision against `total`, shared by the poll (Evaluate) and the kill
+// (DecideAtKill). Answers true once, on the decision that latched: the unlock
+// action has then run (`tally.unlocked` says whether it answered that the
+// chest can open, and opens the detour's view), and in a chat form the ready
+// line has been sent - only when it did, so the chat never announces a chest
+// the game keeps shut. Otherwise a chat form sends the milestone `remaining`
+// has reached.
+inline bool Decide(State& s, int pct, long total)
 {
     Tally& t = s.tally;
-    const int pct = Pct(s);
-    if (pct == 0 || !t.active || t.latched) return false;
-    const long total = TotalNow(t);
-    t.threshold = ThresholdFor(pct, total);
-    if (t.threshold <= 0) return false;
     const Form form = CurrentForm(s);
     if (DecideUnlock(pct, t.kills, total)) {
         t.latched = true;
+        t.latchedAt = t.kills;
         ++s.counters.latches;
         t.unlocked = s.unlock != nullptr && s.unlock();
         t.pollLatched = t.unlocked;
@@ -537,6 +578,40 @@ inline bool Evaluate(State& s)
         }
     }
     return false;
+}
+
+// The poll's decision: recomputes the total and the threshold, then decides.
+// While the total is unknown nothing is decided or shown.
+inline bool Evaluate(State& s)
+{
+    Tally& t = s.tally;
+    const int pct = Pct(s);
+    if (pct == 0 || !t.active || t.latched) return false;
+    const long total = TotalNow(t);
+    t.threshold = ThresholdFor(pct, total);
+    t.decidedTotal = total;
+    if (t.threshold <= 0) return false;
+    return Decide(s, pct, total);
+}
+
+// The kill's decision (D15), called after a counted kill. Live 2 (2026-10-04)
+// latched at 333 against a threshold of 321: the decision ran only at the
+// once-a-second poll, and a second of AoE play holds about a dozen kills. So
+// the kill that reaches the threshold latches, prints the latch line and sends
+// the chat lines itself, deciding against the total the last poll decided
+// with - not TotalNow, which adds the kills counted since that poll to the
+// poll's `alive` and so counts those monsters twice and can raise the
+// threshold. Nothing is decided before a poll has set a threshold. Answers
+// Decide's: true once, at the kill that latched; the next poll then decides
+// nothing more.
+inline bool DecideAtKill(State& s)
+{
+    Tally& t = s.tally;
+    const int pct = Pct(s);
+    if (pct == 0 || !t.active || t.latched || t.threshold <= 0) return false;
+    t.threshold = ThresholdFor(pct, t.decidedTotal);
+    if (t.threshold <= 0) return false;
+    return Decide(s, pct, t.decidedTotal);
 }
 
 // The planned total, asked of the total source while it is unknown: at the
@@ -655,7 +730,11 @@ inline LabelSpot PlaceHeadLabel(HeadLabel& l, double x, double y, double top, do
 // are what the total source last saw of the room's creators (all, still to
 // spawn, state unreadable). `latched` is the decision; `unlocked` is the
 // unlock action's answer, which opens the detour's view; `answered` is what
-// the detour then did to the chest's polls in this room.
+// the detour then did to the chest's polls in this room. After `hook`: the
+// head label's font (`labelFont`, the name it drew in, `inherited` when the
+// name did not resolve, `none` before its first draw) and its two session
+// counters `fontSwitches` and `guiResizes` (NoteLabelDraw, D14), then
+// `latchedAt`, the kills counted at the latch, 0 before (D15).
 inline std::string StatusLine(const State& s, const char* hook, const char* unlock)
 {
     const Tally& t = s.tally;
@@ -678,15 +757,21 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
         + " countdown=" + FormName(CurrentForm(s))
         + " chat=" + (ChatAvailable(s) ? "ok" : "unavailable")
         + " chatLines=" + std::to_string(s.counters.chatLines.load())
-        + " hook=" + (hook ? hook : "?");
+        + " hook=" + (hook ? hook : "?")
+        + " labelFont=" + LabelFontWord(s.label)
+        + " fontSwitches=" + std::to_string(s.label.fontSwitches)
+        + " guiResizes=" + std::to_string(s.label.guiResizes)
+        + " latchedAt=" + std::to_string(t.latchedAt);
 }
 
-// The line the adapter prints on the evaluation that latched: the chest let
-// open, or the unlock action that failed and left it to the game's own rule.
+// The line the adapter prints on the decision that latched, at the poll or at
+// the kill: the chest let open, or the unlock action that failed and left it
+// to the game's own rule. The total is the one the decision used; `alive` is
+// the last poll's.
 inline std::string UnlockedLine(const State& s)
 {
     const Tally& t = s.tally;
-    const std::string at = std::to_string(t.kills) + "/" + std::to_string(TotalNow(t))
+    const std::string at = std::to_string(t.kills) + "/" + std::to_string(t.decidedTotal)
         + " alive=" + std::to_string(t.alive);
     return t.unlocked ? "dungeonchest: unlocked early at " + at
                       : "dungeonchest: threshold reached at " + at

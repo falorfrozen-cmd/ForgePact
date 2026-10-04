@@ -7650,6 +7650,7 @@ static void DungeonChestDraw()
     try {
         ForgePact::DungeonChest::LabelSpot spot = label.spot;
         bool placed = false;
+        double gw = -1.0, gh = -1.0;   // the GUI size placed against, for guiResizes; negative while unread
         try {
             RValue id;
             if (HhResolveLocalPlayer(id)) {
@@ -7661,8 +7662,8 @@ static void DungeonChestDraw()
                 const double vy = g_Yytk->CallBuiltin("camera_get_view_y", { cam }).ToDouble();
                 const double vw = g_Yytk->CallBuiltin("camera_get_view_width", { cam }).ToDouble();
                 const double vh = g_Yytk->CallBuiltin("camera_get_view_height", { cam }).ToDouble();
-                const double gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
-                const double gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
+                gw = g_Yytk->CallBuiltin("display_get_gui_width", {}).ToDouble();
+                gh = g_Yytk->CallBuiltin("display_get_gui_height", {}).ToDouble();
                 if (vw > 0 && vh > 0) {
                     spot = ForgePact::DungeonChest::PlaceHeadLabel(label, x, y, top, vx, vy, vw, vh, gw, gh, g_HhLabelOffsetPx);
                     placed = true;
@@ -7676,21 +7677,32 @@ static void DungeonChestDraw()
         RValue prevValign = g_Yytk->CallBuiltin("draw_get_valign", {});
         RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
-        if (!g_HhLabelFont.empty()) {
-            try {
-                RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(g_HhLabelFont) });
-                if (f.ToDouble() < 0) f = RValue(std::stod(g_HhLabelFont));
-                if (f.ToDouble() >= 0) g_Yytk->CallBuiltin("draw_set_font", { f });
-            } catch (...) {}
-        }
-        g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
-        g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned, like the labels
-        g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
-        const double lineH = g_Yytk->CallBuiltin("string_height", { RValue("Ag") }).ToDouble();
-        // The Headhunter labels (three to a line) stack upward from the same
-        // base, so the countdown takes the fixed line just under it.
-        RValue pale = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(236.0), RValue(232.0), RValue(220.0) });
-        HhDrawOutlinedWorld(spot.x, spot.y + std::floor(lineH + 0.5), label.text, pale);
+        // D14 (Live 2: single frames at about 72 % size): the label sets its
+        // font by name on every draw - the `hhlabelfont` override, else the
+        // header's kLabelFont - and measures its line height in it, so the
+        // font the game left current never sizes it. A name that does not
+        // resolve draws in the inherited font and says so (`labelFont=inherited`).
+        const std::string fontName = g_HhLabelFont.empty() ? std::string(ForgePact::DungeonChest::kLabelFont) : g_HhLabelFont;
+        bool fontSet = false;
+        try {
+            RValue f = g_Yytk->CallBuiltin("asset_get_index", { RValue(fontName) });
+            if (f.ToDouble() < 0 && !g_HhLabelFont.empty()) f = RValue(std::stod(g_HhLabelFont));
+            if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontSet = true; }
+        } catch (...) {}
+        double inherited = -1.0;
+        try { inherited = prevFont.ToDouble(); } catch (...) {}
+        ForgePact::DungeonChest::NoteLabelDraw(label, fontSet ? fontName : std::string(), inherited, gw, gh);
+        try {
+            g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
+            g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned, like the labels
+            g_Yytk->CallBuiltin("draw_set_alpha", { RValue(1.0) });
+            const double lineH = g_Yytk->CallBuiltin("string_height", { RValue("Ag") }).ToDouble();
+            // The Headhunter labels (three to a line) stack upward from the same
+            // base, so the countdown takes the fixed line just under it.
+            RValue pale = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(236.0), RValue(232.0), RValue(220.0) });
+            HhDrawOutlinedWorld(spot.x, spot.y + std::floor(lineH + 0.5), label.text, pale);
+        } catch (...) {}
+        // Put back what the game had set, the font included, even after a failed draw.
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
         g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
@@ -19167,7 +19179,12 @@ static void DungeonChestOnKill(CInstance* S)
     if (!CallerIsEnemyInstance(S)) { ++g_DcKillNotEnemySelf; DC::CountNotEnemy(DC::state); return; }
     int id = -1;
     try { const double d = InstanceIdOf(S->ToRValue()); if (d >= 0.0 && d <= (double)INT32_MAX) id = (int)d; } catch (...) {}
-    DC::CountKill(DC::state, id);
+    // D15: the kill that reaches the threshold latches here, against the
+    // threshold the last poll set, and prints the latch line; the chat lines
+    // that decision sends go out here too (the Signature and Angelic kill
+    // drops already call into the game from the same hook). Live 2 waited for the next poll and
+    // latched at 333 against 321.
+    if (DC::CountKill(DC::state, id) && DC::DecideAtKill(DC::state)) Out(DC::UnlockedLine(DC::state));
 }
 static RValue& Hook_EnemyDestroyKillProc(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {

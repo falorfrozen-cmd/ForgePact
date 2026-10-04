@@ -30,6 +30,29 @@ fake runtime, in two binaries:
   line (`family-unresolved`, `no-creators`, `count-failed`), the first refusal
   in a room prints one log line and repeated polls print no more, and a
   readable census still estimates.
+
+Live 2 of this workorder (`-c-live-2.md`) then failed two checks, and two more
+pairs of classes pin them. Each pair has a kept class, which passes on the
+Live 2 build's sources and after (so both binaries compile there), and a fix
+class, which fails there and passes after. Run them against the tag
+forgepact-issue-31-dungeon-chest-c-live2 with FORGEPACT_TEST_PLUGIN_SOURCE and
+FORGEPACT_TEST_DC_HEADER pointing at that tree's ModuleMain.cpp and
+DungeonChestMod.hpp.
+
+- the latch (D15, the kill binary). Live 2 latched at 333 against a threshold
+  of 321: a kill only counted, and the decision waited for the next
+  once-a-second poll. `KeptTests`: a poll after every kill latches at the
+  threshold. `LatchFixTests`: 25 kills through the real DungeonChestOnKill with
+  no poll between them latch at the 20th, which prints the one latch line, and
+  `latchedAt=20`.
+- the head label (D14, a third binary, `draw`, built from the real
+  DungeonChestDraw and HhDrawOutlinedWorld). Live 2 drew the label at about
+  72 % of its size on single frames: it drew in whatever font the game had
+  left current. `KeptDrawTests`: the label's text, place and outline, and the
+  draw state put back. `LabelFixTests`: every draw in __newfont6 (or the
+  `hhlabelfont` override) whatever font the frame inherits, the inherited font
+  with `labelFont=inherited` when the name does not resolve, and the
+  `fontSwitches=`/`guiResizes=` counters.
 """
 import hashlib
 import os
@@ -40,7 +63,7 @@ from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = ROOT / "plugin/include/ForgePact/DungeonChestMod.hpp"
+DEFAULT_HEADER = ROOT / "plugin/include/ForgePact/DungeonChestMod.hpp"
 HARNESS = ROOT / "tests/dungeon_chest_adapter_harness.cpp"
 
 KILL_FUNCTIONS = (
@@ -57,6 +80,11 @@ CENSUS_FUNCTIONS = (
     "static const std::vector<int>& DungeonChestCreatorObjects(",
     "static long DungeonChestEstimateTotal(",
 )
+DRAW_FUNCTIONS = (
+    "static void HhDrawOutlinedWorld(",
+    "static void DungeonChestDraw(",
+)
+FUNCTIONS = {"kill": KILL_FUNCTIONS, "census": CENSUS_FUNCTIONS, "draw": DRAW_FUNCTIONS}
 
 
 def implementation(source, signature):
@@ -79,12 +107,17 @@ def _source_path():
     return Path(os.environ.get("FORGEPACT_TEST_PLUGIN_SOURCE", ROOT / "plugin/ModuleMain.cpp"))
 
 
+def _header_path():
+    return Path(os.environ.get("FORGEPACT_TEST_DC_HEADER", DEFAULT_HEADER))
+
+
 @lru_cache(maxsize=None)
 def build(kind):
-    """Compile the `kill` or `census` binary from the plugin source; returns its path."""
+    """Compile the `kill`, `census` or `draw` binary from the plugin source; returns its path."""
     path = _source_path()
+    header_path = _header_path()
     source = path.read_text(encoding="utf-8", errors="replace")
-    signatures = KILL_FUNCTIONS if kind == "kill" else CENSUS_FUNCTIONS
+    signatures = FUNCTIONS[kind]
     parts = []
     for signature in signatures:
         body = implementation(source, signature)
@@ -92,18 +125,20 @@ def build(kind):
             raise AssertionError(f"{path} has no {signature.strip('(')}")
         parts.append(body)
     functions = "\n\n".join(p for p in parts if p)
-    defines = "#define ADAPTER_KILL\n" if kind == "kill" else "#define ADAPTER_CENSUS\n"
+    defines = f"#define ADAPTER_{kind.upper()}\n"
     # The status line names refused kill calls once the consumer reports them
     # there; before that only the research probe's counter does.
     if kind == "kill" and "CountNotEnemy(" in implementation(source, "static void DungeonChestOnKill("):
         defines += "#define HAS_STATUS_NOT_ENEMY\n"
     header = "\n".join(
-        line for line in HEADER.read_text(encoding="utf-8").split("\n")
+        line for line in header_path.read_text(encoding="utf-8").split("\n")
         if not line.strip().startswith("#pragma once") and '#include "Common.hpp"' not in line
     )
     code = HARNESS.read_text(encoding="utf-8")
     code = defines + code.replace("// PRODUCTION_DUNGEONCHEST", header).replace("// PRODUCTION_FUNCTIONS", functions)
-    tag = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:10]
+    # Both sources name the build directory, so a run against one tree never
+    # reuses another tree's binary.
+    tag = hashlib.sha1((str(path.resolve()) + "|" + str(header_path.resolve())).encode("utf-8")).hexdigest()[:10]
     out = ROOT / "build/dungeon-chest-adapter" / tag
     out.mkdir(parents=True, exist_ok=True)
     cpp = out / f"{kind}.cpp"
@@ -196,6 +231,48 @@ class CensusTests(_Scenarios):
 
     def test_census_refusal_logged_once(self):
         self.run_scenario("census-refusal-logged-once")
+
+
+class KeptTests(_Scenarios):
+    """Pass on the Live 2 build's sources and after: a poll after every kill latches at the threshold."""
+
+    def test_latch_at_poll(self):
+        self.run_scenario("latch-at-poll")
+
+
+class LatchFixTests(_Scenarios):
+    """D15, fail on the Live 2 build's sources: the kill that reaches the threshold latches."""
+
+    def test_latch_at_the_kill(self):
+        self.run_scenario("latch-at-the-kill")
+
+
+class KeptDrawTests(_Scenarios):
+    """Pass on the Live 2 build's sources and after: the label's text, place, outline and restored state."""
+    kind = "draw"
+
+    def test_label_text_steady(self):
+        self.run_scenario("label-text-steady")
+
+    def test_label_state_restored(self):
+        self.run_scenario("label-state-restored")
+
+
+class LabelFixTests(_Scenarios):
+    """D14, fail on the Live 2 build's sources: the label draws in one font every frame."""
+    kind = "draw"
+
+    def test_label_font_pinned(self):
+        self.run_scenario("label-font-pinned")
+
+    def test_label_font_override(self):
+        self.run_scenario("label-font-override")
+
+    def test_label_font_unresolved(self):
+        self.run_scenario("label-font-unresolved")
+
+    def test_label_diagnostics(self):
+        self.run_scenario("label-diagnostics")
 
 
 del _Scenarios

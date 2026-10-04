@@ -125,7 +125,8 @@ The player command. Every form answers one status line that reports what was
 creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
-chatLines=<n> hook=ok|table-only|failed|none`. `total=` is the planned total,
+chatLines=<n> hook=ok|table-only|failed|none labelFont=<name>|inherited|none
+fontSwitches=<n> guiResizes=<n> latchedAt=<n>`. `total=` is the planned total,
 `creators=`/`pending=`/`unreadable=` what the total source counted at first
 sight (every spawner, those still to fire, those whose state it could not
 read), `unlock=` the `instance_exists` detour's install state and `answered=` the
@@ -148,7 +149,20 @@ than the game would). The total is asked once per room, at the chest's first
 sight (and again once a second only while it answered 0). The tally resets on
 a room change and when the chest count drops to 0. When the threshold latches,
 `out.txt` gets one `dungeonchest: unlocked early at <k>/<T> alive=<n>` line
-per dungeon.
+per dungeon, and `latchedAt=` holds `<k>`. The latch is decided at the kill
+that reaches the threshold, against the threshold and total the last poll set
+(D15): Live 2 decided only at the once-a-second poll and latched at 333
+against 321. `alive=` in that line is the last poll's count.
+
+`labelFont=` is the font the head label last drew in (`__newfont6`, or the
+`hhlabelfont` override; `inherited` when that name did not resolve and the
+label drew in the font the game left current; `none` before its first draw).
+`fontSwitches=` counts label draws whose inherited font differed from the
+previous label draw's, and `guiResizes=` those whose GUI size did. Both cover
+the session and are read as deltas: a rising `fontSwitches=` under a steady
+label measures D14's cause (Live 2 drew the label at about 72 % size on single
+frames, in whatever font was current), and a rising `guiResizes=` would say
+the GUI layer's size moved instead.
 
 **The total source** (`total-route: estimate`, both builds). At the chest's
 first sight the adapter counts the spawner family
