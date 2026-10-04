@@ -103,20 +103,18 @@ yet" cells.
 ### Projectile amount
 
 - **`ReturnExtraSpellProjectiles(player, x, base)` returns the adjusted count,
-  not just the extra.** It reads stat **394** for the player; if that is above
-  0, it replaces `base` with `floor(base × (1 + stat394 × 0.01))`. It then adds
-  stat **311** and returns the result, a number. The second argument is passed
+  not just the extra.** Stat **394** raises `base` by a percent, with the
+  result floored, and stat **311** is added on top; the result is a number. The second argument is passed
   on to the dispatcher as its third argument; what it carries is not
   established. Static reading; the 0.01 is a named global whose value was
   inferred from its use, not read.
 - **`ReturnExtraProjectilesRanged(player, x)` returns the extra count only.**
-  It starts from stat **239**. When a lookup in the game's protected data
-  table, keyed by its second argument, gives 13, it reads stat **451** and,
-  when a random roll falls below it, adds stat **452**. Last, when stat
-  **240** is above 0 and a random roll falls below it, it adds one. The caller
-  adds the result to its own base count. Static reading; the roll's range
-  (plausibly 0 to 100, which would make 240 and 451 percent chances) and what
-  value 13 identifies are not established.
+  The extra is a flat stat (**239**) plus up to two chance-based bonuses: one
+  worth stat **452**, gated on a chance read from stat **451** (and only for
+  some skills, picked by its second argument), and one worth a single
+  projectile, gated on a chance read from stat **240**. The caller adds the
+  result to its own base count. Static reading; the chances' scale (plausibly
+  percent) and which skills qualify for the 451/452 bonus are not established.
 - **How a class script uses the count.** At each White Mage site read, the
   call is followed by a collision-list set-up and then by `instance_create_layer`
   and the new instance's scale, owner and damage fields, the shape of a spawn
@@ -146,12 +144,12 @@ yet" cells.
   - That 74 and 75 are what the tooltip calls "Projectile Speed" is a reading
     by consumption only; Live 1's `projprobe ids` is the confirmation.
 - **`LoadProjectileSettings` applies them to the projectile's `deltaSpeed`, not
-  to the `speed` built-in.** When the calling instance's `deltaSpeed` is above
-  0, it sets `projEffect[70]` true; then, when `projEffect[1085]` is above 0,
-  it multiplies `deltaSpeed` by `1 + projEffect[1085]`; then, when
-  `projEffect[1084]` is above 0, it adds `projEffect[1084] × roomSpd`
-  (`roomSpd` being a global speed factor). So 75 is the multiplicative form
-  and 74 the flat form. Static reading.
+  to the `speed` built-in.** Stat 75 (element 1085) acts as a percent
+  multiplier on the calling instance's `deltaSpeed`, and stat 74 (element
+  1084) as a flat addition scaled by `roomSpd`, a global speed factor. So 75
+  is the multiplicative form and 74 the flat form. Static reading; the order
+  in which the two combine is left to Live 1's before/after measurement and
+  is recorded there as measured, not as a reading.
   - The `speed` built-in is read once in `LoadProjectileSettings`, inside a
     branch on `host`/`playerEffect`, and not written in the part read. Across
     the binary, `deltaSpeed` is referenced 1,503 times and `speed` 246 times.
@@ -201,9 +199,15 @@ yet" cells.
 a native detour on every row below with `projprobe hook`, counts calls, and
 logs up to 40 lines a row until `projprobe reset`: the `self` object name,
 `argc`, each numeric or string argument and the return (its kind; element 0
-of an array; the value of a real). `projprobe ids on` additionally logs the
+of an array; the value of a real). `projprobe ids on` additionally records the
 stat id of every `ReturnSpecificStat` call made while one of five outer rows
-is on the stack. Our code; the full command is in the hub's ForgePact guide.
+is on the stack: one line per new (outer row, stat id) pair, and `projprobe
+show` lists every pair with its hit count and last return, so the dispatcher
+calls around one cast cannot use up the budget before stats 74 and 75 appear.
+A speed lever call that moved nothing (a multiplier on a native 0) is counted
+as a no-op, not as applied, and the speed lever's stat form can also add
+(`speed stat <id> add <bonus>`), which raises a stat the character does not
+carry. Our code; the full command is in the hub's ForgePact guide.
 
 | Script | SDK constant | Direct callers found by name | What `projprobe` logs or does | Control role |
 |---|---|---|---|---|
@@ -213,7 +217,7 @@ is on the stack. Our code; the full command is in the hub's ForgePact guide.
 | `ReturnExtraSpellProjectiles` | `gml_Script_ReturnExtraSpellProjectiles` (3294) | 44 sites in 17 `Talents<Class>` scripts, one unnamed | call row with arguments and return; outer row for `ids`; `projprobe amount <k>` adds to its return | lever row (amount) |
 | `ReturnExtraProjectilesRanged` | `gml_Script_ReturnExtraProjectilesRanged` (3293) | 19 sites in six talent scripts, one unnamed | call row; outer row for `ids`; `projprobe amount <k>` adds to its return | lever row (amount) |
 | `LoadProjectileSettings` | `gml_Script_LoadProjectileSettings` (2255) | one unnamed, among the `Projectile_Player_obj` Create closures | call row (its count per cast is the projectile count, if `self` is the projectile); outer row for `ids`; `projprobe speed <mult>` scales `self`'s `deltaSpeed` and `speed` after it returns | lever row (speed); the counter for amount |
-| `LoadAllModifiers` | `gml_Script_LoadAllModifiers` (2129) | 66 sites: every `Talents<Class>` script, four `LoadAura*`, four in the projectile Create closures, other Create closures | call row; outer row for `ids` (where 74 and 75 are expected); `projprobe speed stat <id> <mult>` scales stat `<id>` while it or `LoadProjectileSettings` is on the stack | lever row (speed, stat form) |
+| `LoadAllModifiers` | `gml_Script_LoadAllModifiers` (2129) | 66 sites: every `Talents<Class>` script, four `LoadAura*`, four in the projectile Create closures, other Create closures | call row; outer row for `ids` (where 74 and 75 are expected); `projprobe speed stat <id> <mult>` scales, and `speed stat <id> add <bonus>` raises, stat `<id>` while it or `LoadProjectileSettings` is on the stack | lever row (speed, stat form) |
 | `LoadProjectile` | `gml_Script_LoadProjectile` (2253) | two unnamed functions, two sites each | call row | count only; reads `GetItemFromFingerprint`, an item-side loader |
 | `CreatePhysicalProjectile` | `gml_Script_CreatePhysicalProjectile` (696) | `hitboxCollisionChainSlice`, `hitboxCollisionTrickShot` (2), `ProjectileCollision05Nomad`, one unnamed | call row | count only; sub-projectiles spawned on collision |
 | `CA_playerProjectile` | `gml_Script_CA_playerProjectile` (354) | one unnamed | call row | count only; a client action (multiplayer side) |
@@ -223,7 +227,7 @@ is on the stack. Our code; the full command is in the hub's ForgePact guide.
 | `CreateAoeIndicator` | `gml_Script_CreateAoeIndicator` (665) | 16 sites in 11 talent scripts (Shaman 3; Storm Weaver, Necromancer, Demon Spawn 2 each; seven others 1 each) | call row | count only; tells which bar skill is an AoE skill (census) |
 | `CA_enemyProjectile` | `gml_Script_CA_enemyProjectile` (275) | not scanned | count row, never a lever | enemy side; in town a zero proves nothing |
 | `ClientCreateEnemyProjectile` | `gml_Script_ClientCreateEnemyProjectile` (574) | not scanned | count row, never a lever | enemy side; in town a zero proves nothing |
-| `ReturnSpecificStat` | `gml_Script_ReturnSpecificStat` (3344) | about 140,000 calls a session (`RUNTIME_DATA_MODELS`) | hooked only on the first `projprobe ids on`, with a 200-line budget | instrument, not a candidate |
+| `ReturnSpecificStat` | `gml_Script_ReturnSpecificStat` (3344) | about 140,000 calls a session (`RUNTIME_DATA_MODELS`) | hooked only on the first `projprobe ids on`; one line per new (outer row, stat id) pair, 200 lines, and every pair in `projprobe show` | instrument, not a candidate |
 
 The session's positive control is not in this table: `statadd skillhaste`,
 whose `StatSpellHaste` detour is already proven native, run in the same
@@ -254,9 +258,11 @@ Not yet run.
 - How the class scripts use the extra-projectile count (loop count, spread or
   cap), and so whether `+k` on the helpers' return is `+k` projectiles. Live 1
   steps 4-5.
-- The range of the random rolls in `ReturnExtraProjectilesRanged`, what its
-  second argument and the value 13 identify, and what
+- The scale of the chances in `ReturnExtraProjectilesRanged`, which skills
+  its second argument qualifies for the 451/452 bonus, and what
   `ReturnExtraSpellProjectiles`' second argument carries.
+- In which order stats 74 and 75 combine on `deltaSpeed`, and what either does
+  when it is 0 or negative. Live 1 steps 9-10.
 - Whether a lever on these scripts stays with the player's own skills. The
   two extra-projectile helpers are reached from the `Talents<Class>` scripts
   plus one unnamed function each, which was not identified. `LoadAllModifiers`

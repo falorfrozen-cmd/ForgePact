@@ -38503,10 +38503,13 @@ static ProjProbeRow g_PpRows[kPpRowCount] = {
 // pass-through. `g_PpSpeedStatId` picks the speed lever's form: -1 scales the
 // projectile's own `deltaSpeed` (and `speed`) after LoadProjectileSettings
 // returns, an id >= 0 scales what ReturnSpecificStat returns for that stat
-// inside LoadAllModifiers or LoadProjectileSettings instead.
+// inside LoadAllModifiers or LoadProjectileSettings instead. The stat form
+// can also add (`g_PpSpeedAdd`, off at 0): a character with no projectile-
+// speed gear reads 0 for the stat, and a multiplier cannot move a 0.
 static int    g_PpAmount = 0;
 static double g_PpAoe = 0.0;
 static double g_PpSpeedMult = 1.0;
+static double g_PpSpeedAdd = 0.0;
 static int    g_PpSpeedStatId = -1;
 static std::atomic<bool> g_PpIds{ false };
 
@@ -38520,6 +38523,27 @@ static volatile long g_PpSpeedUnreadable = 0;
 static volatile long g_PpSpeedLogged = 0;    // the instance speed lever's before/after lines
 static volatile long g_PpStatApplied = 0;
 static volatile long g_PpBoostSkipped = 0;   // a lever met a result that is not a number or an array of one
+// A speed lever that ran and moved nothing (a multiplier on a native 0) is
+// counted here, never as applied, and says so once per arming.
+static volatile long g_PpStatNoop = 0;
+static volatile long g_PpSpeedNoop = 0;
+static volatile long g_PpSpeedNoopFirst = kPpFirstIdle;
+
+// `projprobe ids`: one entry per (outer row, stat id) pair, so the line
+// budget covers distinct ids rather than calls (LoadProjectileSettings alone
+// makes about 30 dispatcher calls a projectile, and LoadAllModifiers more).
+// `show` lists the whole table, with no budget.
+struct ProjProbeIdSeen {
+    const char* outer;
+    bool        idKnown;
+    double      id;
+    long        hits;
+    std::string lastRet;
+};
+static constexpr size_t kPpIdsTableMax = 512;
+static std::mutex g_PpIdsLock;
+static std::vector<ProjProbeIdSeen> g_PpIdsSeen;   // guarded by g_PpIdsLock
+static volatile long g_PpIdsDropped = 0;            // calls of a new pair the full table could not keep
 
 // What is on this thread's stack: how many outer rows (kPpOuter), the
 // innermost one's name, and how many speed-scope rows (kPpSpeedScope:
@@ -38612,12 +38636,14 @@ static void ProjProbeSetMode(ProjProbeRow& t, long mode, const std::string& text
 
 // The `statadd` pattern (Known Limitations item 41): once per arming, what
 // the game built and what the lever turned it into.
-static void ProjProbeFirstBoost(volatile long& first, const char* script, double native, double boosted)
+// `note` marks a call that ran and moved nothing.
+static void ProjProbeFirstBoost(volatile long& first, const char* script, double native, double boosted,
+                                const char* note = "")
 {
     if (InterlockedCompareExchange(&first, kPpFirstShown, kPpFirstPending) != kPpFirstPending) return;
     char b[192];
     sprintf_s(b, "projprobe %s: first boosted call %g -> %g", script, native, boosted);
-    Out(b);
+    Out(std::string(b) + note);
 }
 
 // native * mul + add, on a copy: a number is replaced, an array is copied with
@@ -38659,11 +38685,14 @@ static void ProjProbeAdd(ProjProbeRow& t, RValue& r, double add)
 // One instance variable of `self`, scaled in place when it holds a number.
 // Anything else is left exactly as it is (variable_instance_set would create
 // a variable the instance never had), and `note` records what was found.
+// Returns whether it was a number; a 0 is a number the multiplier cannot
+// move, so it is read and noted but not written.
 static bool ProjProbeScaleVar(const RValue& inst, const char* var, double mult, std::string& note, double& native)
 {
     RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
     if (!N1Numeric(v)) { note += std::string(" ") + var + "=" + ProjProbeValue(v) + " (left)"; return false; }
     native = v.ToDouble();
+    if (native == 0.0) { note += std::string(" ") + var + "=0 (left: a multiplier cannot move 0)"; return true; }
     g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue(var), RValue(native * mult) });
     char b[128];
     sprintf_s(b, " %s %g -> %g", var, native, native * mult);
@@ -38675,8 +38704,8 @@ static bool ProjProbeScaleVar(const RValue& inst, const char* var, double mult, 
 // projectile's own `deltaSpeed` and, as a second write, its `speed` built-in,
 // read and written on `self` the way Hook_PathFindStartPath scales an enemy's
 // `moveSpeed`. Both are logged before and after, within kPpLogBudget lines;
-// the first-boosted line reports `deltaSpeed` (or `speed` when the instance
-// has no numeric `deltaSpeed`).
+// the first-boosted line reports `deltaSpeed` (or `speed` when `deltaSpeed`
+// did not move). Both at 0 is counted as a no-op (speedNoop), not applied.
 static void ProjProbeScaleSpeed(ProjProbeRow& t, CInstance* S, double mult)
 {
     if (!S) { InterlockedIncrement(&g_PpSpeedUnreadable); return; }
@@ -38684,12 +38713,18 @@ static void ProjProbeScaleSpeed(ProjProbeRow& t, CInstance* S, double mult)
         RValue inst = RValue(S);
         std::string note;
         double delta = 0.0, speed = 0.0;
-        const bool deltaScaled = ProjProbeScaleVar(inst, "deltaSpeed", mult, note, delta);
-        const bool speedScaled = ProjProbeScaleVar(inst, "speed", mult, note, speed);
-        if (deltaScaled || speedScaled) {
+        const bool deltaRead = ProjProbeScaleVar(inst, "deltaSpeed", mult, note, delta);
+        const bool speedRead = ProjProbeScaleVar(inst, "speed", mult, note, speed);
+        const bool deltaMoved = deltaRead && delta != 0.0;
+        const bool speedMoved = speedRead && speed != 0.0;
+        if (deltaMoved || speedMoved) {
             InterlockedIncrement(&g_PpSpeedApplied);
-            const double native = deltaScaled ? delta : speed;
+            const double native = deltaMoved ? delta : speed;
             ProjProbeFirstBoost(t.first, t.name, native, native * mult);
+        } else if (deltaRead || speedRead) {
+            InterlockedIncrement(&g_PpSpeedNoop);
+            ProjProbeFirstBoost(g_PpSpeedNoopFirst, t.name, 0.0, 0.0,
+                                " (native 0: a multiplier cannot move it; deltaSpeed and speed were both 0, not counted as applied)");
         } else {
             InterlockedIncrement(&g_PpSpeedUnreadable);
         }
@@ -38749,23 +38784,58 @@ static bool ProjProbeStatIdArg(int argc, RValue** A, double& id)
     try { id = A[1]->ToDouble(); return true; } catch (...) { return false; }
 }
 
+// One call of an (outer row, stat id) pair: its hit count and last return
+// are kept; true only for a pair not seen since the last reset, which is the
+// one call the caller logs.
+static bool ProjProbeIdsRecord(const char* outer, bool idKnown, double id, const std::string& ret)
+{
+    std::lock_guard<std::mutex> lock(g_PpIdsLock);
+    for (ProjProbeIdSeen& e : g_PpIdsSeen) {
+        if (e.idKnown == idKnown && (!idKnown || e.id == id) && std::strcmp(e.outer, outer) == 0) {
+            ++e.hits;
+            e.lastRet = ret;
+            return false;
+        }
+    }
+    if (g_PpIdsSeen.size() >= kPpIdsTableMax) { InterlockedIncrement(&g_PpIdsDropped); return false; }
+    g_PpIdsSeen.push_back({ outer, idKnown, id, 1, ret });
+    return true;
+}
+
 static void ProjProbeAfterStat(bool idKnown, double id, const std::string& args, RValue& r)
 {
-    if (g_PpIds.load(std::memory_order_relaxed) && g_PpIdsLogged < kPpIdsBudget
-        && InterlockedIncrement(&g_PpIdsLogged) <= kPpIdsBudget) {
-        char b[48];
-        if (idKnown) sprintf_s(b, "%g", id); else sprintf_s(b, "?");
+    if (g_PpIds.load(std::memory_order_relaxed)) {
         try {
-            Out(std::string("projprobe ids: ") + (g_PpOuterName ? g_PpOuterName : "?") + " stat=" + b
-                + " (" + args + ") ret=" + ProjProbeRet(r));
+            const char* outer = g_PpOuterName ? g_PpOuterName : "?";
+            const std::string ret = ProjProbeRet(r);
+            if (ProjProbeIdsRecord(outer, idKnown, id, ret)
+                && g_PpIdsLogged < kPpIdsBudget && InterlockedIncrement(&g_PpIdsLogged) <= kPpIdsBudget) {
+                char b[48];
+                if (idKnown) sprintf_s(b, "%g", id); else sprintf_s(b, "?");
+                Out(std::string("projprobe ids: ") + outer + " stat=" + b + " (" + args + ") ret=" + ret
+                    + " (first call of this pair; `projprobe show` has its hits)");
+            }
         } catch (...) {}
     }
-    if (g_PpSpeedStatId >= 0 && g_PpSpeedMult != 1.0 && g_PpSpeedScopeDepth > 0 && idKnown
+    const bool additive = g_PpSpeedAdd != 0.0;
+    if (g_PpSpeedStatId >= 0 && (g_PpSpeedMult != 1.0 || additive) && g_PpSpeedScopeDepth > 0 && idKnown
         && id == (double)g_PpSpeedStatId && g_PpStatMode == kPpNative) {
         double native = 0.0, boosted = 0.0;
-        if (!ProjProbeAdjust(r, 0.0, g_PpSpeedMult, native, boosted)) { InterlockedIncrement(&g_PpBoostSkipped); return; }
+        const bool adjusted = additive ? ProjProbeAdjust(r, g_PpSpeedAdd, 1.0, native, boosted)
+                                       : ProjProbeAdjust(r, 0.0, g_PpSpeedMult, native, boosted);
+        if (!adjusted) { InterlockedIncrement(&g_PpBoostSkipped); return; }
+        const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat);
+        if (boosted == native) {
+            // Ran and moved nothing: a multiplier on a native 0, the stat of a
+            // character with no projectile-speed gear. Not an applied boost.
+            InterlockedIncrement(&g_PpStatNoop);
+            ProjProbeFirstBoost(g_PpSpeedNoopFirst, script, native, boosted,
+                                native == 0.0 ? " (native 0: a multiplier cannot move it; use `speed stat <id> add <bonus>`)"
+                                              : " (unchanged)");
+            return;
+        }
         InterlockedIncrement(&g_PpStatApplied);
-        ProjProbeFirstBoost(g_PpStatFirst, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), native, boosted);
+        ProjProbeFirstBoost(g_PpStatFirst, script, native, boosted);
     }
 }
 
@@ -38861,18 +38931,49 @@ static void ProjProbeStatus()
     sprintf_s(b, "projprobe: hooks=%d/%d amount=+%d aoe=+%g speed=x%.2f ids=%s",
               ProjProbeNativeCount(), (int)kPpRowCount, g_PpAmount, g_PpAoe, g_PpSpeedMult,
               g_PpIds.load() ? "on" : "off");
-    Out(b);
+    std::string line = b;
+    // Only while the speed lever's stat form is armed, so the all-off line is unchanged.
+    if (g_PpSpeedStatId >= 0) {
+        char s[96];
+        if (g_PpSpeedAdd != 0.0) sprintf_s(s, " speedStat=%d add=+%g", g_PpSpeedStatId, g_PpSpeedAdd);
+        else sprintf_s(s, " speedStat=%d", g_PpSpeedStatId);
+        line += s;
+    }
+    Out(line);
 }
 
 static void ProjProbeShow()
 {
     ProjProbeStatus();
+    std::string form = "instance deltaSpeed+speed";
+    if (g_PpSpeedStatId >= 0) {
+        char s[96];
+        if (g_PpSpeedAdd != 0.0) sprintf_s(s, "stat %d add +%g", g_PpSpeedStatId, g_PpSpeedAdd);
+        else sprintf_s(s, "stat %d x%.2f", g_PpSpeedStatId, g_PpSpeedMult);
+        form = s;
+    }
+    std::vector<ProjProbeIdSeen> seen;
+    {
+        std::lock_guard<std::mutex> lock(g_PpIdsLock);
+        seen = g_PpIdsSeen;
+    }
+    const long idsLogged = std::min<long>((long)g_PpIdsLogged, kPpIdsBudget);
     Out("projprobe show: frame=" + std::to_string((unsigned long long)g_RuntimeFrame)
-        + " speedForm=" + (g_PpSpeedStatId < 0 ? std::string("instance deltaSpeed+speed") : "stat " + std::to_string(g_PpSpeedStatId))
+        + " speedForm=" + form
         + " ReturnSpecificStat=" + g_PpStatModeText
-        + " idsLogged=" + std::to_string(std::min<long>((long)g_PpIdsLogged, kPpIdsBudget)) + "/" + std::to_string(kPpIdsBudget)
-        + " speedApplied=" + std::to_string(g_PpSpeedApplied) + " speedUnreadable=" + std::to_string(g_PpSpeedUnreadable)
-        + " statApplied=" + std::to_string(g_PpStatApplied) + " boostSkipped=" + std::to_string(g_PpBoostSkipped));
+        + " idsLogged=" + std::to_string(idsLogged) + "/" + std::to_string(kPpIdsBudget)
+        + (idsLogged >= kPpIdsBudget ? " SATURATED (later new pairs are in the list below, not logged)" : "")
+        + " idsPairs=" + std::to_string(seen.size()) + "/" + std::to_string(kPpIdsTableMax)
+        + (g_PpIdsDropped > 0 ? " SATURATED (" + std::to_string(g_PpIdsDropped) + " calls of pairs not kept)" : std::string())
+        + " speedApplied=" + std::to_string(g_PpSpeedApplied) + " speedNoop=" + std::to_string(g_PpSpeedNoop)
+        + " speedUnreadable=" + std::to_string(g_PpSpeedUnreadable)
+        + " statApplied=" + std::to_string(g_PpStatApplied) + " statNoop=" + std::to_string(g_PpStatNoop)
+        + " boostSkipped=" + std::to_string(g_PpBoostSkipped));
+    for (const ProjProbeIdSeen& e : seen) {
+        char b[48];
+        if (e.idKnown) sprintf_s(b, "%g", e.id); else sprintf_s(b, "?");
+        Out(std::string("  ids ") + e.outer + " stat=" + b + " hits=" + std::to_string(e.hits) + " lastRet=" + e.lastRet);
+    }
     for (int i = 0; i < kPpRowCount; ++i) {
         const ProjProbeRow& t = g_PpRows[i];
         std::string line = std::string("  ") + t.name + " mode=" + t.modeText;
@@ -38903,7 +39004,14 @@ static void ProjProbeReset()
     InterlockedExchange(&g_PpSpeedLogged, 0);
     InterlockedExchange(&g_PpStatApplied, 0);
     InterlockedExchange(&g_PpBoostSkipped, 0);
-    Out("projprobe: counts and log budgets reset (levers and hooks unchanged)");
+    InterlockedExchange(&g_PpStatNoop, 0);
+    InterlockedExchange(&g_PpSpeedNoop, 0);
+    {
+        std::lock_guard<std::mutex> lock(g_PpIdsLock);
+        g_PpIdsSeen.clear();
+    }
+    InterlockedExchange(&g_PpIdsDropped, 0);
+    Out("projprobe: counts, log budgets and the ids list reset (levers and hooks unchanged)");
 }
 
 // A number and nothing after it; never NaN or infinity.
@@ -38924,6 +39032,9 @@ static bool ProjProbeParseNumber(const std::string& text, double& out)
 static int ProjProbeClampAmount(double k) { return (int)std::lround(std::clamp(k, 0.0, 10.0)); }
 static double ProjProbeClampAoe(double bonus) { return std::clamp(bonus, 0.0, 300.0); }
 static double ProjProbeClampSpeed(double mult) { return std::clamp(mult, 1.0, 4.0); }
+// The stat form's additive bonus. Wide on purpose: whether stat 75 is held as
+// a fraction (0.5) or as points (50) is what Live 1 reads off the `ids` list.
+static double ProjProbeClampSpeedAdd(double bonus) { return std::clamp(bonus, 0.0, 100.0); }
 
 // Attach a lever's rows if they are not yet, and arm only when every one of
 // them is native: the game calls them directly, so on any other route the
@@ -38978,35 +39089,40 @@ static void ProjProbeAoeCommand(const std::string& arg)
 static void ProjProbeSpeedOff(const std::string& note)
 {
     g_PpSpeedMult = 1.0;
+    g_PpSpeedAdd = 0.0;
     g_PpSpeedStatId = -1;
     Out("projprobe speed -> x1.00 (pass-through)" + note);
 }
 
-// `projprobe speed <mult>` or `projprobe speed stat <id> <mult>`; the two
-// forms replace each other.
+// `projprobe speed <mult>`, `projprobe speed stat <id> <mult>` or
+// `projprobe speed stat <id> add <bonus>`; the forms replace each other.
 static void ProjProbeSpeedCommand(const std::string& rest)
 {
     std::string tail;
     const std::string first = Lower(FirstToken(rest, tail));
     int statId = -1;
+    bool additive = false;
     std::string multText = rest;
     if (first == "stat") {
         std::string after;
         double id = -1.0;
         if (!ProjProbeParseNumber(FirstToken(tail, after), id) || id < 0.0 || id > 100000.0 || id != std::floor(id)) {
-            Out("projprobe speed stat: usage -> projprobe speed stat <id> <1.0..4.0>");
+            Out("projprobe speed stat: usage -> projprobe speed stat <id> <1.0..4.0> | speed stat <id> add <0..100>");
             return;
         }
         statId = (int)id;
         multText = after;
+        std::string afterAdd;
+        if (Lower(FirstToken(after, afterAdd)) == "add") { additive = true; multText = afterAdd; }
     }
-    double asked = 1.0;
+    double asked = additive ? 0.0 : 1.0;
     if (!ProjProbeParseNumber(multText, asked)) {
-        Out("projprobe speed: usage -> projprobe speed <1.0..4.0> | speed stat <id> <1.0..4.0>");
+        Out("projprobe speed: usage -> projprobe speed <1.0..4.0> | speed stat <id> <1.0..4.0> | speed stat <id> add <0..100>");
         return;
     }
-    const double mult = ProjProbeClampSpeed(asked);
-    if (mult == 1.0) { ProjProbeSpeedOff(ProjProbeClampNote(asked, 1.0)); return; }
+    const double mult = additive ? 1.0 : ProjProbeClampSpeed(asked);
+    const double bonus = additive ? ProjProbeClampSpeedAdd(asked) : 0.0;
+    if (mult == 1.0 && bonus == 0.0) { ProjProbeSpeedOff(ProjProbeClampNote(asked, additive ? 0.0 : 1.0)); return; }
     if (statId < 0) {
         if (!ProjProbeArm({ kPp_LoadProjectileSettings }, "speed")) { ProjProbeSpeedOff(""); return; }
     } else {
@@ -39022,10 +39138,13 @@ static void ProjProbeSpeedCommand(const std::string& rest)
     }
     g_PpSpeedStatId = statId;
     g_PpSpeedMult = mult;
-    char b[160];
-    if (statId >= 0) sprintf_s(b, "projprobe speed -> x%.2f on ReturnSpecificStat stat %d inside LoadAllModifiers or LoadProjectileSettings", mult, statId);
+    g_PpSpeedAdd = bonus;
+    InterlockedExchange(&g_PpSpeedNoopFirst, kPpFirstPending);
+    char b[192];
+    if (additive) sprintf_s(b, "projprobe speed -> +%g on ReturnSpecificStat stat %d inside LoadAllModifiers or LoadProjectileSettings (added, so a native 0 moves too)", bonus, statId);
+    else if (statId >= 0) sprintf_s(b, "projprobe speed -> x%.2f on ReturnSpecificStat stat %d inside LoadAllModifiers or LoadProjectileSettings", mult, statId);
     else sprintf_s(b, "projprobe speed -> x%.2f on self's deltaSpeed and speed after LoadProjectileSettings", mult);
-    Out(b + ProjProbeClampNote(asked, mult));
+    Out(b + ProjProbeClampNote(asked, additive ? bonus : mult));
 }
 
 static void ProjProbeIdsCommand(const std::string& arg)
@@ -39038,16 +39157,24 @@ static void ProjProbeIdsCommand(const std::string& arg)
         return;
     }
     if (v != "on" && v != "1") { Out("projprobe ids: usage -> projprobe ids on|off"); return; }
-    // The outer rows are what the stat ids are attributed to; attach any not yet.
+    // The outer rows are what the stat ids are attributed to; attach any not
+    // yet. A row that is not native never raises the depth, so its stat reads
+    // go unseen: name it rather than report the instrument on.
+    std::string unwatched;
     for (int idx : { kPp_LoadAllModifiers, kPp_LoadProjectileSettings, kPp_StatAOESkillSize,
-                     kPp_ReturnExtraSpellProjectiles, kPp_ReturnExtraProjectilesRanged })
+                     kPp_ReturnExtraSpellProjectiles, kPp_ReturnExtraProjectilesRanged }) {
         ProjProbeAttach(idx);
+        if (g_PpRows[idx].mode != kPpNative)
+            unwatched += std::string(" ") + g_PpRows[idx].name + " (" + g_PpRows[idx].modeText + ");";
+    }
     if (!ProjProbeAttachStat()) {
         Out("projprobe ids: ReturnSpecificStat is " + g_PpStatModeText + " - not armed");
         return;
     }
     g_PpIds.store(true);
-    Out("projprobe ids on (" + std::to_string(kPpIdsBudget) + " lines until `projprobe reset`)");
+    Out("projprobe ids on (one line per new outer/stat pair, " + std::to_string(kPpIdsBudget)
+        + " lines until `projprobe reset`; `projprobe show` lists every pair with its hits and last return)"
+        + (unwatched.empty() ? std::string() : "; NOT watched, their stat reads go unseen:" + unwatched));
 }
 
 static void ProjProbeCommand(const std::string& rest)
@@ -39063,7 +39190,7 @@ static void ProjProbeCommand(const std::string& rest)
     if (sub == "aoe") { ProjProbeAoeCommand(subRest); return; }
     if (sub == "speed") { ProjProbeSpeedCommand(subRest); return; }
     Out("projprobe: usage -> projprobe | hook | show | reset | ids on|off | amount <0..10> | aoe <0..300>"
-        " | speed <1.0..4.0> | speed stat <id> <1.0..4.0>");
+        " | speed <1.0..4.0> | speed stat <id> <1.0..4.0> | speed stat <id> add <0..100>");
 }
 #endif // FORGEPACT_RELEASE (projprobe)
 

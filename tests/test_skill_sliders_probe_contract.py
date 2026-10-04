@@ -23,7 +23,12 @@ These pins hold the properties that would otherwise rot quietly:
    only the copy the caller gets afterwards.
 4. **Off is off.** The levers start at their off values (0, 0, 1.0), each is
    clamped, and only a native install can be armed.
-5. **The marker line Live 1 reads is the one the plan spells.**
+5. **A lever that moved nothing says so.** A multiplier on a native 0 counts
+   as a no-op, not as applied, and the speed lever's stat form can add, so a
+   stat a character does not carry can still be raised from 0.
+6. **`ids` spends its budget on distinct ids**, one line per new (outer row,
+   stat id) pair, and `show` lists every pair with its hits and last return.
+7. **The marker line Live 1 reads is the one the plan spells.**
 
 Self-contained on purpose, as test_bossprobe_object_contract.py is: the
 helpers are duplicated here so the plain `unittest` and `discover -s tests`
@@ -336,6 +341,67 @@ class ProjProbeContractTests(unittest.TestCase):
         self.assertIn("++g_PpSpeedScopeDepth", scope)
         self.assertIn("--g_PpSpeedScopeDepth", scope)
         self.assertIn('"projprobe ids: "', self.region)
+
+    def test_a_lever_that_moved_nothing_says_so(self):
+        # A multiplier on a native 0 (a character with no projectile-speed gear)
+        # leaves 0. That is "ran and did nothing", never an applied boost.
+        after_stat = function_body(self.region, "static void ProjProbeAfterStat(")
+        noop_at = after_stat.index("InterlockedIncrement(&g_PpStatNoop);")
+        self.assertLess(after_stat.index("if (boosted == native) {"), noop_at)
+        self.assertLess(noop_at, after_stat.index("InterlockedIncrement(&g_PpStatApplied);"))
+        self.assertIn("native 0: a multiplier cannot move it", self.region)
+        speed = function_body(self.region, "static void ProjProbeScaleSpeed(")
+        self.assertIn("InterlockedIncrement(&g_PpSpeedNoop);", speed)
+        self.assertIn("deltaMoved || speedMoved", speed)
+        scale_var = function_body(self.region, "static bool ProjProbeScaleVar(")
+        self.assertLess(scale_var.index("if (native == 0.0)"), scale_var.index('"variable_instance_set"'))
+        show = function_body(self.region, "static void ProjProbeShow(")
+        for counter in ("statNoop=", "speedNoop="):
+            self.assertIn(counter, show)
+        reset = function_body(self.region, "static void ProjProbeReset(")
+        for counter in ("g_PpStatNoop", "g_PpSpeedNoop"):
+            self.assertIn("InterlockedExchange(&" + counter + ", 0);", reset)
+
+        # So the stat form can also add, which raises a stat from 0: off at 0,
+        # clamped, stored only after the arm check, and cleared by off.
+        self.assertRegex(self.region, r"static double\s+g_PpSpeedAdd = 0\.0;")
+        self.assertIn("static double ProjProbeClampSpeedAdd(double bonus) { return std::clamp(bonus, 0.0, 100.0); }",
+                      self.region)
+        speed_command = function_body(self.region, "static void ProjProbeSpeedCommand(")
+        self.assertIn('== "add"', speed_command)
+        self.assertLess(speed_command.index("ProjProbeClampSpeedAdd(asked)"), speed_command.index("g_PpSpeedAdd = bonus;"))
+        self.assertLess(speed_command.index("ProjProbeArm("), speed_command.index("g_PpSpeedAdd = bonus;"))
+        self.assertIn("g_PpSpeedAdd = 0.0;", function_body(self.region, "static void ProjProbeSpeedOff("))
+        self.assertIn("ProjProbeAdjust(r, g_PpSpeedAdd, 1.0, native, boosted)", after_stat)
+        self.assertIn("g_PpSpeedAdd != 0.0", after_stat)
+
+    def test_ids_spends_its_budget_on_distinct_ids(self):
+        # One line per new (outer row, stat id) pair, not per call:
+        # LoadProjectileSettings alone makes about 30 dispatcher calls a
+        # projectile, which would spend the line budget before 74/75 appear.
+        after_stat = function_body(self.region, "static void ProjProbeAfterStat(")
+        record_at = after_stat.index("ProjProbeIdsRecord(")
+        self.assertLess(record_at, after_stat.index('"projprobe ids: "'))
+        self.assertLess(record_at, after_stat.index("InterlockedIncrement(&g_PpIdsLogged)"))
+        record = function_body(self.region, "static bool ProjProbeIdsRecord(")
+        self.assertIn("std::lock_guard<std::mutex> lock(g_PpIdsLock);", record)
+        self.assertIn("++e.hits;", record)
+        self.assertIn("e.lastRet = ret;", record)
+        self.assertIn("g_PpIdsSeen.size() >= kPpIdsTableMax", record)
+        self.assertIn("InterlockedIncrement(&g_PpIdsDropped);", record)
+        # `show` lists every pair with no budget, and names a saturated instrument.
+        show = function_body(self.region, "static void ProjProbeShow(")
+        self.assertIn("for (const ProjProbeIdSeen& e : seen)", show)
+        self.assertIn(" hits=", show)
+        self.assertIn(" lastRet=", show)
+        self.assertGreaterEqual(show.count("SATURATED"), 2)
+        reset = function_body(self.region, "static void ProjProbeReset(")
+        self.assertIn("g_PpIdsSeen.clear();", reset)
+        self.assertIn("InterlockedExchange(&g_PpIdsDropped, 0);", reset)
+        # `ids on` names an outer row it cannot watch instead of reporting on.
+        ids = function_body(self.region, "static void ProjProbeIdsCommand(")
+        self.assertIn("if (g_PpRows[idx].mode != kPpNative)", ids)
+        self.assertIn("NOT watched", ids)
 
     def test_status_line_is_the_marker_live_one_reads(self):
         status = function_body(self.region, "static void ProjProbeStatus(")
