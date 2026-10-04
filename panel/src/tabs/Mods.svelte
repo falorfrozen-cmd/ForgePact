@@ -163,7 +163,7 @@
        Density's is. Its child row picks where the countdown shows, like the skill timer's look (the owner, 2026-10-04),
        and is disabled while the switch is off, as Sleep loot's show key is. -->
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Dungeon chest opens early<br><span class="feature-description">The chest at the end of a key dungeon opens once the share set here of all its monsters is dead, counting every monster the dungeon plans at load, spawned yet or not (an estimate). A countdown shows the last 50 kills. Tested live: at 50 % a Pumpkin Cellar chest opened with over 100 monsters left. Off by default.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Dungeon chest opens early<br><span class="feature-description">The chest at the end of a key dungeon opens once the share set here of all its monsters is dead, counting every monster the dungeon plans at load, spawned yet or not (an estimate). A countdown shows the last 50 kills. Off by default.</span></span>
     <label class="switch"><input type="checkbox" id="mod_dungeon_chest" aria-label="Dungeon chest opens early"><span class="sl"></span></label>
     <input type="range" id="dungeon_chest_pct" min="50" max="95" step="5" value="75" aria-label="Share of the dungeon's monsters to kill">
     <span class="val off" id="dcpval" style="width:64px">off</span>

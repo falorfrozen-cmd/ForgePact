@@ -1038,14 +1038,21 @@ from ForgePact `1f563bb`. Of 9 checks, 8 passed and 1 was not observed.
   sat in the region. The capture's own control, the same method on a region
   of moving characters, gave 69 distinct bitmaps in 161 frames. The status
   read `labelFont=__newfont6`, and the owner: "Steady, no jitter".
+  The capture alone does not prove the fix: it was not bracketed by its own
+  `fontSwitches=` reads, and at the measured rate of about 1.2 switches a
+  second a 1.2 s window could hold no switch at all. So "steady" rests as
+  much on `labelFont=__newfont6`, on the label setting its own font on every
+  draw, and on the owner's "Steady, no jitter" (the same owner who reported
+  Live procedure 2's jitter) as on the capture.
 - `font-cause`: pass, readable, so the cause is measured. Both status reads
   showed `inheritedFont=7` and `inheritedUnread=0`. Across the stand-still,
   about 45 s between the two reads, `fontSwitches=` went from 62 to 116 (54
   label draws found a different inherited font from the draw before) while
-  `guiResizes=` stayed 0. The font the game leaves current where the label
-  draws switches from frame to frame and the GUI size does not, which is the
-  cause of Live procedure 2's size flicker. Which of the game's draws leaves
-  the other font current is not established.
+  `guiResizes=` stayed 0. The font left current where the label draws
+  switches from frame to frame and the GUI size does not, which is the cause
+  of Live procedure 2's size flicker. Which draw leaves the other font
+  current, the game's or one of ForgePact's own (only a reading of our code
+  says they restore theirs), is not established.
 - `label-look`: not observed (the owner made no remark on the label's size or
   readability).
 - `latch-exact`: pass. The session's only latch line read `dungeonchest:
