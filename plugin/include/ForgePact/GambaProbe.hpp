@@ -66,7 +66,7 @@ struct BuiltinRow {
 // The last four are Live 1's removal candidates (replan 1): a machine
 // created by `spawn` was cleaned up in the next step with no instance_destroy
 // call from GML, so the runner paths that end or swap an instance are rows too.
-inline constexpr int kBuiltinCount = 12;
+inline constexpr int kBuiltinCount = 15;
 inline constexpr BuiltinRow kBuiltins[kBuiltinCount] = {
     { "irandom",               AnswerKind::Value         },
     { "irandom_range",         AnswerKind::Value         },
@@ -80,10 +80,16 @@ inline constexpr BuiltinRow kBuiltins[kBuiltinCount] = {
     { "layer_destroy_instances",    AnswerKind::NotRng   },
     { "instance_deactivate_object", AnswerKind::NotRng   },
     { "room_goto",                  AnswerKind::NotRng   },
+    // The extension functions Alarm_9 and sCP call by name (builtin
+    // convention) to read and write the machine's protected store.
+    { "GetVariable",              AnswerKind::NotRng      },
+    { "SetVariable",              AnswerKind::NotRng      },
+    { "SetVariableToUndefined",   AnswerKind::NotRng      },
 };
 enum class Builtin : int {
     Irandom, IrandomRange, Random, RandomRange, Choose, InstanceDestroy, InstanceCreateDepth, InstanceCreateLayer,
     InstanceChange, LayerDestroyInstances, InstanceDeactivateObject, RoomGoto,
+    GetVariable, SetVariable, SetVariableToUndefined,
 };
 
 // The rows whose first argument can name what they act on: a call another

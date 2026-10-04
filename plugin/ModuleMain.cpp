@@ -46959,6 +46959,7 @@ struct GpScriptRow {
     GpNs::NameLookup   fullName;
     GpNs::ByName       byname = GpNs::ByName::NotRead;
     std::string        bynameNote;
+    uintptr_t          ownFunction = 0;   // the row's own function, for `fnwalk`'s same/other classification
 };
 
 #define GP_SCRIPT_ENTRY(SAFE, CONSTANT, HOLDER) \
@@ -46983,6 +46984,7 @@ static GpBuiltinRow g_GpBuiltinRows[GpNs::kBuiltinCount];
 static const char* const kGpBuiltinHookIds[GpNs::kBuiltinCount] = {
     "fp_gp_b_irnd", "fp_gp_b_irng", "fp_gp_b_rnd", "fp_gp_b_rrng", "fp_gp_b_chs", "fp_gp_b_idst", "fp_gp_b_icd", "fp_gp_b_icl",
     "fp_gp_b_ichg", "fp_gp_b_ldi", "fp_gp_b_ido", "fp_gp_b_rgo",
+    "fp_gp_b_getv", "fp_gp_b_setv", "fp_gp_b_setu",
 };
 
 static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
@@ -46993,12 +46995,13 @@ static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O,
 GP_BUILTIN_DETOUR(0) GP_BUILTIN_DETOUR(1) GP_BUILTIN_DETOUR(2) GP_BUILTIN_DETOUR(3)
 GP_BUILTIN_DETOUR(4) GP_BUILTIN_DETOUR(5) GP_BUILTIN_DETOUR(6) GP_BUILTIN_DETOUR(7)
 GP_BUILTIN_DETOUR(8) GP_BUILTIN_DETOUR(9) GP_BUILTIN_DETOUR(10) GP_BUILTIN_DETOUR(11)
+GP_BUILTIN_DETOUR(12) GP_BUILTIN_DETOUR(13) GP_BUILTIN_DETOUR(14)
 #undef GP_BUILTIN_DETOUR
 static const TRoutine kGpBuiltinDetours[GpNs::kBuiltinCount] = {
     GpBuiltin_0, GpBuiltin_1, GpBuiltin_2, GpBuiltin_3, GpBuiltin_4, GpBuiltin_5, GpBuiltin_6, GpBuiltin_7,
-    GpBuiltin_8, GpBuiltin_9, GpBuiltin_10, GpBuiltin_11,
+    GpBuiltin_8, GpBuiltin_9, GpBuiltin_10, GpBuiltin_11, GpBuiltin_12, GpBuiltin_13, GpBuiltin_14,
 };
-static_assert(GpNs::kBuiltinCount == 12, "one detour per builtin row");
+static_assert(GpNs::kBuiltinCount == 15, "one detour per builtin row");
 
 // ---- the by-name routines (replan 1) -------------------------------------------------
 // A functions-array routine a script row's name reaches besides the row's own
@@ -47803,6 +47806,56 @@ static int GpByNameSlotOf(uintptr_t routine, const char* name)
     return g_GpByNameSlotCount++;
 }
 
+// Detour the by-name slots from `from` on: one HookBuiltin per routine, only
+// when AddrIsExecutableInModule places it in the game and its name still
+// resolves to the routine first read. `fnwalk` runs this again for the slots
+// it added after the first hook; an attached slot is left as it is.
+static void GpAttachByNameSlots(HMODULE mainMod, int from)
+{
+    for (int s = from; s < g_GpByNameSlotCount; ++s) {
+        GpByNameSlot& b = g_GpByNameSlots[s];
+        if (b.attached) continue;
+        const std::string id = "fp_gp_n_" + std::to_string(s);
+        PVOID now = nullptr;
+        if (!AddrIsExecutableInModule(mainMod, (const void*)b.routine)) {
+            b.status = "the routine is not executable code inside Hero_Siege.exe; not detoured";
+        } else if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(b.name.c_str(), &now)) || (uintptr_t)now != b.routine) {
+            b.status = b.name + " no longer resolves to the routine first read; not detoured";
+        } else if (!HookBuiltin(b.name.c_str(), id.c_str(), (PVOID)kGpByNameDetours[(size_t)s], &b.orig) || !b.orig) {
+            b.status = "HookBuiltin on " + b.name + " failed: see its line above";
+        } else {
+            b.attached = true;
+            b.status.clear();
+        }
+    }
+}
+
+// Recompute each script row's by-name word from its slots: a row whose every
+// routine is attached reads detoured, or shared when one routine is reached
+// from several rows; a row with a failed attachment reads missing.
+static void GpReclassifyByName()
+{
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        GpScriptRow& t = g_GpScriptRows[i];
+        bool hasSlot = false;
+        int sharing = 0;
+        for (int s = 0; s < g_GpByNameSlotCount; ++s) {
+            const GpByNameSlot& b = g_GpByNameSlots[s];
+            if (std::find(b.scripts.begin(), b.scripts.end(), i) == b.scripts.end()) continue;
+            hasSlot = true;
+            if (!b.attached) {
+                t.byname = GpNs::ByName::Missing;
+                GpNoteByName(t, "the by-name routine " + b.name + " was not detoured (" + b.status + ")");
+                sharing = -1;
+                break;
+            }
+            if ((int)b.scripts.size() > sharing) sharing = (int)b.scripts.size();
+        }
+        if (!hasSlot || sharing < 0) continue;
+        t.byname = GpNs::WithSharing(GpNs::ByName::Detoured, sharing);
+    }
+}
+
 // At the first `hook`, before any script row is installed: every row's two
 // lookups, its by-name route, and one HookBuiltin detour per routine a row's
 // name reaches besides the row's own function - only once
@@ -47817,7 +47870,8 @@ static void GpInstallByName(HMODULE mainMod)
         GpScriptRow& t = g_GpScriptRows[i];
         t.shortName = GpLookUpName(t.label, mainMod);
         t.fullName = GpLookUpName(t.sdkName, mainMod);
-        own[(size_t)i] = GpRowFunction(t, mainMod, t.bynameNote);
+        t.ownFunction = GpRowFunction(t, mainMod, t.bynameNote);
+        own[(size_t)i] = t.ownFunction;
         t.byname = GpNs::ClassifyByName(t.shortName, t.fullName, own[(size_t)i]);
         if (t.byname == GpNs::ByName::Missing)
             GpNoteByName(t, !t.fullName.resolved ? std::string(t.sdkName) + " does not resolve"
@@ -47836,38 +47890,8 @@ static void GpInstallByName(HMODULE mainMod)
             if (std::find(rows.begin(), rows.end(), i) == rows.end()) rows.push_back(i);
         }
     }
-    static std::string ids[kGpByNameSlots];
-    for (int s = 0; s < g_GpByNameSlotCount; ++s) {
-        GpByNameSlot& b = g_GpByNameSlots[s];
-        ids[s] = "fp_gp_n_" + std::to_string(s);
-        PVOID now = nullptr;
-        if (!AddrIsExecutableInModule(mainMod, (const void*)b.routine)) {
-            b.status = "the routine is not executable code inside Hero_Siege.exe; not detoured";
-        } else if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(b.name.c_str(), &now)) || (uintptr_t)now != b.routine) {
-            b.status = b.name + " no longer resolves to the routine first read; not detoured";
-        } else if (!HookBuiltin(b.name.c_str(), ids[s].c_str(), (PVOID)kGpByNameDetours[(size_t)s], &b.orig) || !b.orig) {
-            b.status = "HookBuiltin on " + b.name + " failed: see its line above";
-        } else {
-            b.attached = true;
-            b.status.clear();
-        }
-    }
-    for (int i = 0; i < (int)kGpScriptCount; ++i) {
-        GpScriptRow& t = g_GpScriptRows[i];
-        if (t.byname != GpNs::ByName::Detoured) continue;
-        int sharing = 0;
-        for (int s = 0; s < g_GpByNameSlotCount; ++s) {
-            const GpByNameSlot& b = g_GpByNameSlots[s];
-            if (std::find(b.scripts.begin(), b.scripts.end(), i) == b.scripts.end()) continue;
-            if (!b.attached) {
-                t.byname = GpNs::ByName::Missing;
-                GpNoteByName(t, "the by-name routine " + b.name + " was not detoured (" + b.status + ")");
-                break;
-            }
-            if ((int)b.scripts.size() > sharing) sharing = (int)b.scripts.size();
-        }
-        if (t.byname == GpNs::ByName::Detoured) t.byname = GpNs::WithSharing(t.byname, sharing);
-    }
+    GpAttachByNameSlots(mainMod, 0);
+    GpReclassifyByName();
 }
 
 // A script row's hook line: the route and its status as for every row, then
@@ -47880,6 +47904,19 @@ static std::string GpScriptRowLine(const GpScriptRow& t, const std::string& stat
         + GpNs::ByNameText(t.byname, t.shortName, t.fullName);
 }
 
+// One phase's milliseconds on the performance counter; `a`/`b` are the tick
+// counts at its start and end. The timing line is the `hook` freeze's
+// measurement (research), not a fix.
+static long long GpMs(long long a, long long b)
+{
+    static const LARGE_INTEGER freq = []() { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+    return static_cast<long long>((static_cast<double>(b - a) * 1000.0) / static_cast<double>(freq.QuadPart));
+}
+
+// The two phases of GpInstallScripts, timed for the `hook` freeze's line.
+static long long g_GpBynameMs = 0;
+static long long g_GpScriptsMs = 0;
+
 // Script rows. The by-name lookups first, before any row is installed; then
 // a held row by what its holder's saved original is (the block comment
 // above); every other row through HookOneScript, whose own first install
@@ -47887,7 +47924,10 @@ static std::string GpScriptRowLine(const GpScriptRow& t, const std::string& stat
 // detour.
 static void GpInstallScripts(HMODULE mainMod)
 {
+    LARGE_INTEGER a, b, c;
+    QueryPerformanceCounter(&a);
     GpInstallByName(mainMod);
+    QueryPerformanceCounter(&b);
     bool signatureTried = false;
     for (GpScriptRow& t : g_GpScriptRows) {
         if (t.tried && t.route != GpNs::Route::Missing) {
@@ -47928,6 +47968,9 @@ static void GpInstallScripts(HMODULE mainMod)
         if (t.holder) t.status += std::string(native ? "" : "; ") + "its holder, " + holder + ", is not installed";
         Out(GpScriptRowLine(t, t.status));
     }
+    QueryPerformanceCounter(&c);
+    g_GpBynameMs = GpMs(a.QuadPart, b.QuadPart);
+    g_GpScriptsMs = GpMs(b.QuadPart, c.QuadPart);
 }
 
 static void GpInstallBuiltins(HMODULE mainMod)
@@ -48018,11 +48061,18 @@ static void GpInstall()
     }
     GpEnsureRows();
     HMODULE mainMod = GetModuleHandleA(nullptr);
+    // Time each phase, so the `hook` freeze's cause is named (research only).
+    LARGE_INTEGER t0, t1, t2, t3, t4;
+    QueryPerformanceCounter(&t0);
     // The caller walk's names for a frame: read again on every `hook`.
     const size_t codeRows = GpLoadCodeRows(mainMod);
+    QueryPerformanceCounter(&t1);
     GpInstallEvents(mainMod);
+    QueryPerformanceCounter(&t2);
     GpInstallScripts(mainMod);
+    QueryPerformanceCounter(&t3);
     GpInstallBuiltins(mainMod);
+    QueryPerformanceCounter(&t4);
     int rows = 0, missing = 0, detoured = 0, under = 0, shared = 0, tableOnly = 0;
     auto tally = [&](GpNs::Route r) {
         ++rows;
@@ -48047,6 +48097,10 @@ static void GpInstall()
         + " table-only (" + std::to_string(detoured) + " detoured, " + std::to_string(under) + " detoured-under, "
         + std::to_string(shared) + " shared); armed, machine object " + std::to_string(g_GpCore.MachineObject())
         + ", machines now " + GpMachinesText());
+    Out("gambaprobe hook: took " + std::to_string(GpMs(t0.QuadPart, t4.QuadPart)) + " ms (events "
+        + std::to_string(GpMs(t1.QuadPart, t2.QuadPart)) + ", byname " + std::to_string(g_GpBynameMs) + ", scripts "
+        + std::to_string(g_GpScriptsMs) + ", builtins " + std::to_string(GpMs(t3.QuadPart, t4.QuadPart)) + ", table "
+        + std::to_string(GpMs(t0.QuadPart, t1.QuadPart)) + ")");
     if (!blind.empty())
         Out("gambaprobe hook: WARNING - table-only, blind to compiled GML's direct calls: " + blind + ". A `not-observed`"
             " from these rows measures the instrument, not the game.");
@@ -48059,9 +48113,174 @@ static void GpInstall()
         + " missing=" + std::to_string(byname[(int)GpNs::ByName::Missing]) + " (" + std::to_string(attached)
         + " by-name routine(s) detoured); the caller walk names frames by " + std::to_string(codeRows)
         + " compiled-code rows of game code" + (codeRows ? std::string() : std::string(" - NONE: every game frame prints as exe+")));
-    Out("  Next: `gambaprobe selftest` (the irandom row must move by one), then `gambaprobe spawn [depth|game|layer|self]`,"
+    Out("  Next: `gambaprobe selftest` (the irandom row must move by one), then `gambaprobe spawn [depth|game|layer|self|scp|stamp]`,"
         " then `gambaprobe status` - create= and alarm9= must reach 1 and step= climb, or the machine did not survive (the"
         " CleanUp_0-caller lines name who removed it). `gambaprobe trace` right before each measured spin.");
+}
+
+// ---- fnwalk: the functions-array walk --------------------------------------------
+// The runtime's functions array is the dispatch table whose 24-byte entries
+// are (name, routine, argument count) - the layout `citrace dispatchdump`'s
+// notes measured 2026-09-11 and YYTK patch 0004 validates with. The by-name
+// route's GetNamedRoutineIndex returns one index per name, so it cannot show
+// that a same-named `gml_Script_<short>` entry sits in the array besides the
+// script's own function; `fnwalk` walks the array by validation only (never an
+// address) and detours those entries through the by-name slots, so `status`
+// prints the word.
+
+// The dispatch table's entry layout, measured 2026-09-11: a name pointer, then
+// a routine, then an argument count.
+static constexpr size_t kGpFnName = 0;
+static constexpr size_t kGpFnRoutine = 8;
+static constexpr size_t kGpFnArgc = 16;
+static constexpr size_t kGpFnEntry = 24;
+
+// A bounded, graphic-ASCII C string ('!'..'~') at `p`; empty when the read
+// is not one. This is what an entry's first qword points at.
+static std::string GpReadName(const char* p)
+{
+    if (!p || IsBadReadPtr((void*)p, 1)) return {};
+    size_t len = 0;
+    while (len < 128 && !IsBadReadPtr((void*)(p + len), 1) && p[len] != '\0') {
+        const unsigned char c = static_cast<unsigned char>(p[len]);
+        if (c < static_cast<unsigned char>('!') || c > static_cast<unsigned char>('~')) return {};
+        ++len;
+    }
+    if (len == 0 || len >= 128) return {};
+    return std::string(p, len);
+}
+
+// One 24-byte entry at `e`: a terminated graphic-ASCII name, a routine
+// AddrIsExecutableInModule places in Hero_Siege.exe, an argument count 0..16.
+static bool GpEntryValid(const unsigned char* e, HMODULE mainMod)
+{
+    if (GpReadName(*reinterpret_cast<const char* const*>(e + kGpFnName)).empty()) return false;
+    if (!AddrIsExecutableInModule(mainMod, *reinterpret_cast<void* const*>(e + kGpFnRoutine))) return false;
+    const int argc = *reinterpret_cast<const int*>(e + kGpFnArgc);
+    return argc >= 0 && argc <= 16;
+}
+
+// The main module's writable section ranges, [start, end), from its own
+// section headers: where the functions array's entries live.
+static std::vector<std::pair<uintptr_t, uintptr_t>> GpWritableData(HMODULE mod)
+{
+    std::vector<std::pair<uintptr_t, uintptr_t>> ranges;
+    if (!mod) return ranges;
+    const auto base = reinterpret_cast<uintptr_t>(mod);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return ranges;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return ranges;
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE) {
+            const uintptr_t size = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : sec[i].SizeOfRawData;
+            if (size) ranges.emplace_back(base + sec[i].VirtualAddress, base + sec[i].VirtualAddress + size);
+        }
+    }
+    return ranges;
+}
+
+// The routine a name resolves to, or 0; `ok` false when it did not resolve.
+static uintptr_t GpRoutineOf(const char* name, bool& ok)
+{
+    PVOID p = nullptr;
+    try { ok = AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &p)) && p; }
+    catch (...) { ok = false; p = nullptr; }
+    return ok ? reinterpret_cast<uintptr_t>(p) : 0;
+}
+
+// A matching entry to detour once the table has validated, buffered so a
+// failed validation changes nothing.
+struct GpFnWalkOther {
+    uintptr_t   routine;
+    std::string name;
+    int         row;
+};
+
+// `fnwalk`: locate the functions array by validation, walk at most 20,000
+// entries, print one line per entry whose name is a script row's short name or
+// its gml_Script_ form, and detour every `other` routine through the by-name
+// slots. A table that fails any check prints `table not found (<check>)` and
+// changes nothing; no RVA and nothing stored past the command.
+static void GpFnWalk(HMODULE mainMod)
+{
+    bool ok = false;
+    const uintptr_t camera = GpRoutineOf("camera_create", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (camera_create did not resolve)"); return; }
+    const uintptr_t isUndefined = GpRoutineOf("is_undefined", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (is_undefined did not resolve)"); return; }
+    const uintptr_t instanceCreateLayer = GpRoutineOf("instance_create_layer", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (instance_create_layer did not resolve)"); return; }
+
+    // The first entry's `function` qword (at +8) equals camera_create's
+    // routine; scan the writable data for an aligned qword equal to it, and
+    // accept the 24-byte entry around it only when its first eight entries
+    // parse under one layout.
+    unsigned char* base = nullptr;
+    for (const auto& [start, end] : GpWritableData(mainMod)) {
+        // The entry's name field is the qword before its function, so a
+        // candidate is an entry only when that qword is inside the section.
+        for (uintptr_t a = start + 8; a + 8 <= end; a += 8) {
+            if (*reinterpret_cast<const uintptr_t*>(a) != camera) continue;
+            unsigned char* e = reinterpret_cast<unsigned char*>(a - 8);
+            bool valid = true;
+            for (int i = 0; i < 8; ++i) if (!GpEntryValid(e + static_cast<size_t>(i) * kGpFnEntry, mainMod)) { valid = false; break; }
+            if (valid) { base = e; break; }
+        }
+        if (base) break;
+    }
+    if (!base) {
+        Out("gambaprobe fnwalk: table not found (no aligned qword equal to camera_create's routine with eight valid entries)");
+        return;
+    }
+
+    std::unordered_map<std::string, int> byName;
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        byName[g_GpScriptRows[i].label] = i;
+        byName[g_GpScriptRows[i].sdkName] = i;
+    }
+    bool foundIsUndefined = false;
+    bool foundInstanceCreateLayer = false;
+    int walked = 0;
+    std::vector<std::string> lines;
+    std::vector<GpFnWalkOther> others;
+    for (int i = 0; i < 20000; ++i) {
+        unsigned char* e = base + static_cast<size_t>(i) * kGpFnEntry;
+        if (IsBadReadPtr(e, kGpFnEntry)) break;
+        const std::string name = GpReadName(*reinterpret_cast<const char* const*>(e + kGpFnName));
+        if (name.empty()) break;
+        ++walked;
+        const uintptr_t fn = *reinterpret_cast<const uintptr_t*>(e + kGpFnRoutine);
+        if (name == "is_undefined" && fn == isUndefined) foundIsUndefined = true;
+        if (name == "instance_create_layer" && fn == instanceCreateLayer) foundInstanceCreateLayer = true;
+        const auto it = byName.find(name);
+        if (it == byName.end()) continue;
+        const int row = it->second;
+        const uintptr_t own = g_GpScriptRows[row].ownFunction;
+        const bool exe = AddrIsExecutableInModule(mainMod, reinterpret_cast<const void*>(fn));
+        lines.push_back("gambaprobe fnwalk: " + name + " idx=" + std::to_string(i) + " routine="
+                        + (fn == own ? "same" : (exe ? "other" : "not-exe")));
+        if (fn != own && exe) others.push_back({ fn, name, row });
+    }
+    if (!foundIsUndefined || !foundInstanceCreateLayer) {
+        Out("gambaprobe fnwalk: table not found (the other two names were not found by walking)");
+        return;
+    }
+    Out("gambaprobe fnwalk: table at " + std::to_string(walked) + " entries");
+    for (const std::string& line : lines) Out(line);
+    if (others.empty()) return;
+    // Detour every `other` routine through the by-name slots, so `status`
+    // prints `byname=detoured|shared` where the walk found one.
+    const int startSlot = g_GpByNameSlotCount;
+    for (const GpFnWalkOther& o : others) {
+        const int s = GpByNameSlotOf(o.routine, o.name.c_str());
+        if (s < 0) continue;
+        std::vector<int>& rows = g_GpByNameSlots[s].scripts;
+        if (std::find(rows.begin(), rows.end(), o.row) == rows.end()) rows.push_back(o.row);
+    }
+    GpAttachByNameSlots(mainMod, startSlot);
+    GpReclassifyByName();
 }
 
 // ---- spawn, rng, drop, status, off ---------------------------------------------------
@@ -48092,21 +48311,43 @@ static void GpTrace()
         + (g_GpHooked ? std::string() : std::string(" - nothing is hooked yet: `gambaprobe hook` first")));
 }
 
-// `spawn [depth|game|layer|self]`'s routes, each a different creation path
-// (docs/gamba-machine-research.md § Live procedure 2):
+// `spawn [depth|game|layer|self|scp [xyo|oxy]|stamp]`'s routes, each a
+// different creation path (docs/gamba-machine-research.md § Live procedure 2
+// and 3):
 //   depth  instance_create_depth(x, y, 0, machine) - Live 1's call, the control;
 //   game   the game's own instance_create script by name, self = other = the
 //          local player, (x, y, machine) - the call the game's effect case makes;
 //   layer  instance_create_layer(x, y, <the player's own layer value>, machine);
 //   self   instance_create_depth through CallBuiltinEx with the player as self
-//          and other.
-// No route stores an address, a layer name or an effect id.
-static const char* const kGpSpawnRoutes[] = { "depth", "game", "layer", "self" };
+//          and other;
+//   scp    the game's own stamping spawner sCP(x, y, object) by its SDK short
+//          name, (x, y, machine) by default, (machine, x, y) for `oxy`;
+//   stamp  the `game` route's creation, then the pSpwd stamp sCP also sets
+//          (GetVariable/SetVariable by name with the player as self and other).
+// No route stores an address, a layer name, an effect id or a pSpwd key.
+static const char* const kGpSpawnRoutes[] = { "depth", "game", "layer", "self", "scp", "stamp" };
+
+// One extension-function call by name, with the player as self and other, as
+// sCP makes them. `failed` names the step when the call did not run: name not
+// resolved (the function does not exist) or dispatch failed.
+static bool GpExtCall(CInstance* self, const char* name, const std::vector<RValue>& args, RValue& result, std::string& failed)
+{
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(result, name, self, self, args); }
+    catch (...) { failed = std::string("dispatch failed: ") + name + " threw"; return false; }
+    if (!AurieSuccess(st)) {
+        failed = st == AURIE_OBJECT_NOT_FOUND ? std::string("name not resolved: ") + name
+                                              : std::string("dispatch failed: ") + name + ", st=" + std::to_string((int)st);
+        return false;
+    }
+    return true;
+}
 
 // One route's call. `failed` names the step that failed: name not resolved,
-// no player layer, or dispatch failed.
-static void GpSpawnCall(const std::string& route, double x, double y, const RValue& player, CInstance* self, RValue& id,
-                        std::string& failed)
+// no player layer, no pSpwd, or dispatch failed. `stampTail` is the reply's
+// `pSpwd key=<v> before=<v> after=<v>` tail (empty except for `stamp`).
+static void GpSpawnCall(const std::string& route, const std::string& scpOrder, double x, double y, const RValue& player,
+                        CInstance* self, RValue& id, std::string& stampTail, std::string& failed)
 {
     const RValue machine((double)g_GpCore.MachineObject());
     try {
@@ -48126,6 +48367,49 @@ static void GpSpawnCall(const std::string& route, double x, double y, const RVal
             id = g_Yytk->CallBuiltin("instance_create_layer", { RValue(x), RValue(y), layer, machine });
             return;
         }
+        // scp: the game's own stamping spawner sCP(x, y, object), by its SDK
+        // short name, asset_get_index then script_execute (ApCallScript, the
+        // game route's path), (x, y, machine) by default and (machine, x, y)
+        // for `oxy`.
+        if (route == "scp") {
+            const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_sCP);
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+            if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+                failed = std::string("name not resolved: asset_get_index refused ") + script;
+                return;
+            }
+            const std::vector<RValue> args = scpOrder == "oxy"
+                ? std::vector<RValue>{ machine, RValue(x), RValue(y) }
+                : std::vector<RValue>{ RValue(x), RValue(y), machine };
+            if (!ApCallScript(script, self, args, id))
+                failed = std::string("dispatch failed: script_execute of ") + script + " threw or returned a failure status";
+            return;
+        }
+        // stamp: the game route's creation, then the pSpwd stamp sCP sets.
+        if (route == "stamp") {
+            const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_instance_create);
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+            if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+                failed = std::string("name not resolved: asset_get_index refused ") + script;
+                return;
+            }
+            if (!ApCallScript(script, self, { RValue(x), RValue(y), machine }, id))
+                failed = std::string("dispatch failed: script_execute of ") + script + " threw or returned a failure status";
+            if (!failed.empty()) return;
+            // The pSpwd variable holds the key the stamp writes to; read it by
+            // the instance-handle rule, then GetVariable/SetVariable(true)/
+            // GetVariable through the extension functions, as sCP does.
+            RValue pSpwd;
+            try { pSpwd = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("pSpwd") }); }
+            catch (...) { failed = "no pSpwd on the instance: variable_instance_get threw"; return; }
+            if (!IsNumericInstanceRead(pSpwd)) { failed = "no pSpwd on the instance: the `pSpwd` read " + Describe(pSpwd); return; }
+            RValue before, after;
+            if (!GpExtCall(self, "GetVariable", { pSpwd }, before, failed)) return;
+            if (!GpExtCall(self, "SetVariable", { pSpwd, RValue(true) }, after, failed)) return;
+            if (!GpExtCall(self, "GetVariable", { pSpwd }, after, failed)) return;
+            stampTail = " pSpwd key=" + Describe(pSpwd) + " before=" + Describe(before) + " after=" + Describe(after);
+            return;
+        }
         // game: asset_get_index of the script's short name, then script_execute
         // through CallBuiltinEx (ApCallScript, DungeonChestChat's route).
         const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_instance_create);
@@ -48140,15 +48424,18 @@ static void GpSpawnCall(const std::string& route, double x, double y, const RVal
 }
 
 // `spawn [route]`: one machine at the local player through one route (depth
-// when none is named). A new trace window first, so the new machine's
-// Create_0, its caller walk and its first state reads are described.
+// when none is named; scp also takes `xyo`/`oxy`). A new trace window first,
+// so the new machine's Create_0, its caller walk and its first state reads are
+// described.
 static void GpSpawn(const std::vector<std::string>& tail)
 {
     const std::string route = tail.empty() ? std::string(kGpSpawnRoutes[0]) : Lower(tail[0]);
     bool known = false;
     for (const char* r : kGpSpawnRoutes) known = known || route == r;
-    if (!known || tail.size() > 1) {
-        Out("gambaprobe spawn: usage -> spawn [depth|game|layer|self] (default depth); nothing spawned");
+    std::string scpOrder;
+    if (route == "scp" && tail.size() == 2) scpOrder = Lower(tail[1]);
+    if (!known || tail.size() > (route == "scp" ? 2 : 1) || (!scpOrder.empty() && scpOrder != "xyo" && scpOrder != "oxy")) {
+        Out("gambaprobe spawn: usage -> spawn [depth|game|layer|self|scp [xyo|oxy]|stamp] (default depth); nothing spawned");
         return;
     }
     if (GpResolveMachineObject() < 0) {
@@ -48165,7 +48452,8 @@ static void GpSpawn(const std::vector<std::string>& tail)
     g_GpCore.ResetTrace();
     RValue id;
     std::string failed;
-    GpSpawnCall(route, x, y, player, self, id, failed);
+    std::string stampTail;
+    GpSpawnCall(route, scpOrder, x, y, player, self, id, stampTail, failed);
     if (!failed.empty()) { Out("gambaprobe spawn: route=" + route + " refused - " + failed + "; nothing spawned"); return; }
     CInstance* inst = HhResolveInstance(id);
     if (!inst) {
@@ -48174,9 +48462,10 @@ static void GpSpawn(const std::vector<std::string>& tail)
         return;
     }
     const long long n = GpIdOf(id);
+    const int obj = GpObjectIndexOf(id);
     if (GpSelfObject(inst) < 0 && g_GpMachines.size() < (size_t)kGpMaxMachines) g_GpMachines.push_back({ inst, n });
-    Out("gambaprobe spawn: route=" + route + " id=" + std::to_string(n) + " at " + std::to_string((int)x) + ","
-        + std::to_string((int)y) + " (object " + std::to_string(g_GpCore.MachineObject()) + "); trace budget started over");
+    Out("gambaprobe spawn: route=" + route + " id=" + std::to_string(n) + " object=" + std::to_string(obj)
+        + " at " + std::to_string((int)x) + "," + std::to_string((int)y) + stampTail + "; trace budget started over");
     if (g_GpEventRows[(int)GpNs::Event::Create].route == GpNs::Route::Missing)
         Out("gambaprobe spawn: WARNING - the event rows are not detoured (`gambaprobe hook` first), so create= and alarm9= cannot count");
 }
@@ -48399,11 +48688,14 @@ static void GpUsage()
         " byname=same|detoured|shared|missing (the first hook also detours a by-name routine a script's name reaches)."
         " Again: re-arm. Refused while citrace, jumpprobe or jumpscenery holds a builtin");
     Out("  selftest                   one irandom(100) through CallBuiltin: the irandom row's calls= must move by one");
+    Out("  fnwalk                     walk the runtime's functions array by validation and detour a script row's same-named"
+        " entry besides its own function (status then prints byname=detoured|shared where one was found)");
     Out("  trace                      a new trace window: every row's budget and caller walks start over (send it right before"
         " each measured spin)");
-    Out("  spawn [depth|game|layer|self]  one " + GpMachineName() + " at the local player: depth = instance_create_depth"
+    Out("  spawn [depth|game|layer|self|scp [xyo|oxy]|stamp]  one " + GpMachineName() + " at the local player: depth = instance_create_depth"
         " depth 0 (the control, the default), game = the game's instance_create script with the player as self, layer ="
-        " instance_create_layer on the player's layer, self = instance_create_depth with the player as self; starts a new"
+        " instance_create_layer on the player's layer, self = instance_create_depth with the player as self, scp = the game's"
+        " sCP spawner (oxy flips its argument order), stamp = the game route plus the pSpwd stamp; starts a new"
         " trace window. CleanUp_0, Alarm_9 and the window's first Create_0 print a <event>-caller line and its frames");
     Out("  rng <builtin> <value> [count] [args <text>]  answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
         + ") calls of that RNG builtin whose self is a machine - with args, only those whose argument text (exactly as a trace"
@@ -48426,8 +48718,9 @@ static void GpCommand(const std::string& rest)
     const std::vector<std::string> tail(tok.begin() + 1, tok.end());
     if (sub == "hook") { GpInstall(); return; }
     if (sub == "trace") { GpTrace(); return; }
-    if (sub == "spawn") { GpSpawn(tail); return; }
     if (sub == "selftest") { GpSelfTest(); return; }
+    if (sub == "fnwalk") { GpFnWalk(GetModuleHandleA(nullptr)); return; }
+    if (sub == "spawn") { GpSpawn(tail); return; }
     if (sub == "rng") { GpRng(tail); return; }
     if (sub == "drop") { GpDrop(); return; }
     if (sub == "status" || sub == "stat") { GpStatus(); return; }

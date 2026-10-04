@@ -61,7 +61,8 @@ static Seen observe(Probe& p, int row, int self, bool inEvent = false)
 static const Builtin kRngRows[] = { Builtin::Irandom, Builtin::IrandomRange, Builtin::Random, Builtin::RandomRange, Builtin::Choose };
 static const Builtin kOtherRows[] = { Builtin::InstanceDestroy, Builtin::InstanceCreateDepth, Builtin::InstanceCreateLayer,
                                       Builtin::InstanceChange, Builtin::LayerDestroyInstances,
-                                      Builtin::InstanceDeactivateObject, Builtin::RoomGoto };
+                                      Builtin::InstanceDeactivateObject, Builtin::RoomGoto,
+                                      Builtin::GetVariable, Builtin::SetVariable, Builtin::SetVariableToUndefined };
 
 static std::string name(Builtin b) { return std::string(kBuiltins[static_cast<int>(b)].name); }
 static bool onlyCalls(const Counters& c, uint64_t calls)
@@ -78,7 +79,7 @@ int main()
         check("table/events", kEventCount == 5 && kEvents[0].event == "Create_0" && kEvents[1].event == "Alarm_0"
             && kEvents[2].event == "Alarm_9" && kEvents[3].event == "Step_0" && kEvents[4].event == "CleanUp_0"
             && kEvents[0].key == "create" && kEvents[2].key == "alarm9" && kEvents[3].key == "step");
-        bool ok = kBuiltinCount == 12 && kBuiltins[static_cast<int>(Builtin::InstanceChange)].name == "instance_change"
+        bool ok = kBuiltinCount == 15 && kBuiltins[static_cast<int>(Builtin::InstanceChange)].name == "instance_change"
             && kBuiltins[static_cast<int>(Builtin::LayerDestroyInstances)].name == "layer_destroy_instances"
             && kBuiltins[static_cast<int>(Builtin::InstanceDeactivateObject)].name == "instance_deactivate_object"
             && kBuiltins[static_cast<int>(Builtin::RoomGoto)].name == "room_goto";

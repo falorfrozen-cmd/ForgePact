@@ -80,15 +80,20 @@ BLOCK_END = "#endif // FORGEPACT_RELEASE (gambaprobe)"
 GP_SYMBOL = r"\b(?:g_|k)?Gp[A-Z0-9_]\w*"
 MACHINE = "Slot_Machine_01_obj"
 
-# docs/gamba-machine-research.md: the nine headings, in this order.
+# docs/gamba-machine-research.md: the ten headings, in this order.
 DOC_HEADINGS = ("Status", "Static search", "Static reading", "Instrument", "Live procedure 1", "Live procedure 2",
-                "Results", "Decision", "Not established")
+                "Live procedure 3", "Results", "Decision", "Not established")
 
 # What Live procedure 2 runs and the checks it records (replan 1).
 LIVE2_COMMANDS = ("spawn game", "spawn layer", "spawn self", "selftest")
 LIVE2_CHECKS = ("selftest-rng", "byname-resolve", "spawn-depth", "cleanup-caller", "spawn-game", "spawn-layer",
                 "spawn-self", "byname-visible", "rng-rows-live")
-SPAWN_ROUTES = ("depth", "game", "layer", "self")
+SPAWN_ROUTES = ("depth", "game", "layer", "self", "scp", "stamp")
+
+# What Live procedure 3 runs and the checks it records (1c).
+LIVE3_COMMANDS = ("spawn scp", "spawn stamp", "fnwalk", "Slot Machine Spawned")
+LIVE3_CHECKS = ("spawn-scp", "spawn-stamp", "stamp-readback", "natural-machine", "state-rows-live", "byname-visible",
+                "fnwalk", "state-trace", "hook-timing", "ext-rows-hooked")
 
 # The rows the plan's instrument names (context "### The instrument"); the
 # table may carry more, never fewer. The closure is named by its SDK index
@@ -102,7 +107,9 @@ PLAN_EVENTS = ("Create_0", "Alarm_0", "Alarm_9", "Step_0", "CleanUp_0")
 PLAN_BUILTINS = ("irandom", "irandom_range", "random", "random_range", "choose", "instance_destroy",
                  "instance_create_depth", "instance_create_layer",
                  # replan 1: the runner paths that could end or swap a machine
-                 "instance_change", "layer_destroy_instances", "instance_deactivate_object", "room_goto")
+                 "instance_change", "layer_destroy_instances", "instance_deactivate_object", "room_goto",
+                 # 1c: the extension functions Alarm_9 and sCP call by name
+                 "GetVariable", "SetVariable", "SetVariableToUndefined")
 # The rows whose first argument is checked for a machine (machine-arg=).
 ARGUMENT_BUILTINS = ("InstanceDestroy", "InstanceChange", "InstanceDeactivateObject")
 
@@ -606,6 +613,38 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn('"gambaprobe spawn: route=" + route + " id="', spawn)
         self.assertIn('" at " + std::to_string((int)x) + ","', spawn)
 
+    def test_scp_and_stamp_routes_and_the_object_in_the_spawn_reply(self):
+        """`scp` is the game's stamping spawner by name; `stamp` sets pSpwd; the reply reads the created object."""
+        call = self.body("static void GpSpawnCall(")
+        spawn = self.body("static void GpSpawn(")
+        # scp: the SDK constant's short name, asset_get_index, then
+        # script_execute through ApCallScript with the player as self, in both
+        # argument orders; the name is never spelled as a literal.
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_sCP)", call)
+        self.assertIn("gml_Script_sCP", sdk_scripts())
+        self.assertIn('"asset_get_index"', call)
+        self.assertIn("ApCallScript(script, self, args, id)", call)
+        self.assertIn('scpOrder == "oxy"', call)
+        self.assertIn("{ machine, RValue(x), RValue(y) }", call)
+        self.assertIn("{ RValue(x), RValue(y), machine }", call)
+        self.assertNotIn('"sCP"', self.code)
+        # stamp: the game route's creation, then the pSpwd read by the
+        # instance-handle rule and GetVariable/SetVariable by name with the
+        # player as self and other; the reply carries before=/after=.
+        self.assertIn('g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("pSpwd") })', call)
+        self.assertIn('GpExtCall(self, "GetVariable", { pSpwd }, before, failed)', call)
+        self.assertIn('GpExtCall(self, "SetVariable", { pSpwd, RValue(true) }, after, failed)', call)
+        self.assertIn('GpExtCall(self, "GetVariable", { pSpwd }, after, failed)', call)
+        self.assertIn("g_Yytk->CallBuiltinEx(result, name, self, self, args)", self.body("static bool GpExtCall("))
+        self.assertIn('" pSpwd key="', call)
+        self.assertIn('" before="', call)
+        self.assertIn('" after="', call)
+        self.assertIn("no pSpwd on the instance", call)
+        # Every route's reply names the created instance's object index, read
+        # by the instance-handle rule, so a wrong argument order is visible.
+        self.assertIn("GpObjectIndexOf(id)", spawn)
+        self.assertIn('" object=" + std::to_string(obj)', spawn)
+
     # ---- replan 1: the caller walk -----------------------------------------------
 
     def test_the_caller_walk_runs_before_the_original_and_names_frames_by_game_rows(self):
@@ -669,10 +708,14 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("GetNamedRoutineIndex(name, &index)", self.body("static GpNs::NameLookup GpLookUpName("))
         self.assertIn("if (g_GpByNameRead) return;", by_name)
         # Each by-name detour sits behind AddrIsExecutableInModule and the
-        # name still resolving to the routine, through HookBuiltin.
-        self.assertLess(by_name.index("AddrIsExecutableInModule(mainMod, (const void*)b.routine)"), by_name.index("HookBuiltin("))
-        self.assertLess(by_name.index("GetNamedRoutinePointer(b.name.c_str(), &now)"), by_name.index("HookBuiltin("))
-        self.assertEqual(by_name.count("HookBuiltin("), 1)
+        # name still resolving to the routine, through HookBuiltin, in the
+        # shared slot attacher GpInstallByName calls (and fnwalk re-runs).
+        attach = self.body("static void GpAttachByNameSlots(HMODULE mainMod, int from)")
+        self.assertLess(attach.index("AddrIsExecutableInModule(mainMod, (const void*)b.routine)"), attach.index("HookBuiltin("))
+        self.assertLess(attach.index("GetNamedRoutinePointer(b.name.c_str(), &now)"), attach.index("HookBuiltin("))
+        self.assertEqual(attach.count("HookBuiltin("), 1)
+        self.assertIn("GpAttachByNameSlots(mainMod, 0);", by_name)
+        self.assertIn("GpReclassifyByName();", by_name)
         self.assertIn("n.routineIsGameCode = p && AddrIsExecutableInModule(mainMod, p);",
                       self.body("static GpNs::NameLookup GpLookUpName("))
         # status prints it per script row, and a shared routine as its own row.
@@ -686,6 +729,37 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIsNone(re.search(r"\bResult\s*=[^=]", detour), "the by-name detour writes a result")
         self.assertNotIn("DecideRng", detour)
         self.assertIn("if (g_GpBusy ||", detour)
+
+    def test_fnwalk_locates_the_array_by_validation_and_detours_through_the_byname_slots(self):
+        """`fnwalk` resolves three seed names, checks eight entries behind AddrIsExecutableInModule, and never reads an RVA."""
+        walk = self.body("static void GpFnWalk(")
+        # The three seeds resolve by name through GetNamedRoutinePointer.
+        for name in ("camera_create", "is_undefined", "instance_create_layer"):
+            self.assertIn('GpRoutineOf("' + name + '", ok)', walk)
+        self.assertIn("GetNamedRoutinePointer(name, &p)", self.body("static uintptr_t GpRoutineOf("))
+        # The eight-entry validation sits behind AddrIsExecutableInModule.
+        entry = self.body("static bool GpEntryValid(")
+        self.assertIn("AddrIsExecutableInModule(mainMod,", entry)
+        self.assertIn("for (int i = 0; i < 8; ++i)", walk)
+        # A failed validation changes nothing and names the check.
+        self.assertIn('"gambaprobe fnwalk: table not found (', walk)
+        # Detours only through GpInstallByName's by-name slot path: no
+        # HookBuiltin of its own, the shared slot attacher runs it.
+        self.assertNotIn("HookBuiltin(", walk)
+        self.assertIn("GpAttachByNameSlots(mainMod, startSlot)", walk)
+        self.assertIn("GpReclassifyByName();", walk)
+        # citrace dispatchdump's RVA is not a seed: never read here.
+        self.assertNotIn("kCiDispatchTablePtrRvaDefault", walk)
+        self.assertNotIn("kCiDispatchTablePtrRvaDefault", self.code)
+
+    def test_the_hook_timing_line_is_printed_after_the_summary(self):
+        """`hook: took` times each phase with the performance counter, after the rows summary."""
+        install = self.body("static void GpInstall()")
+        self.assertIn("QueryPerformanceCounter(&t0)", install)
+        self.assertIn('"gambaprobe hook: took "', install)
+        for word in ("(events ", ", byname ", ", scripts ", ", builtins ", ", table "):
+            self.assertIn(word, install)
+        self.assertLess(install.index('" rows, "'), install.index('"gambaprobe hook: took "'))
 
     # ---- replan 1: the new rows, the machine-arg rule and selftest ----------------
 
@@ -733,6 +807,14 @@ class GambaProbeContract(unittest.TestCase):
             self.assertIn(command, procedure, command + " is not in Live procedure 2")
         for check in LIVE2_CHECKS:
             self.assertIn(check, procedure, check + " is not a Live procedure 2 check")
+
+    def test_live_procedure_3_names_its_routes_and_checks(self):
+        """Live 3 runs `spawn scp`/`spawn stamp` and `fnwalk` on a surviving machine, and records its checks."""
+        procedure = doc_section(DOC.read_text(encoding="utf-8").replace("\r\n", "\n"), "Live procedure 3")
+        for command in LIVE3_COMMANDS:
+            self.assertIn(command, procedure, command + " is not in Live procedure 3")
+        for check in LIVE3_CHECKS:
+            self.assertIn(check, procedure, check + " is not a Live procedure 3 check")
 
     def test_the_decision_keys_are_pending_or_a_listed_label(self):
         """Six keys, each exactly once in ## Decision.
