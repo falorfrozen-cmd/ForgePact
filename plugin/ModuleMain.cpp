@@ -21795,14 +21795,14 @@ static bool SatZoneCurrentRoomIndex(double& outIdx, std::string& outName)
 // GPV(key) with the local player as self, the shape pcall used live.
 static bool SatZoneReadValue(const RValue& key, double& out)
 {
-    RValue player;
     try {
-        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
-        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
-        if (pid.ToDouble() < 0) { SATZONE_WHY("no player"); return false; }
-        const int32_t id = (int32_t)pid.ToDouble();
-        CInstance* inst = nullptr;
-        g_Yytk->GetInstanceObject(id, inst);
+        // The proven resolver pair: instance_find(Player_obj) hands back a
+        // VALUE_REF on this runner (measured 2026-09-10, the reason
+        // HhResolveLocalPlayer exists), and HhResolveInstance resolves it
+        // through the engine's own @@GetInstance@@ with no struct layout.
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) { SATZONE_WHY("no local player"); return false; }
+        CInstance* inst = HhResolveInstance(player);
         if (!inst) { SATZONE_WHY("player instance unreadable"); return false; }
         RValue res;
         const AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_GPV", inst, inst, { key });
@@ -21816,12 +21816,9 @@ static bool SatZoneReadValue(const RValue& key, double& out)
 static bool SatZoneWriteValue(const RValue& key, int room)
 {
     try {
-        RValue pobj = g_Yytk->CallBuiltin("asset_get_index", { RValue("Player_obj") });
-        RValue pid = g_Yytk->CallBuiltin("instance_find", { pobj, RValue(0.0) });
-        if (pid.ToDouble() < 0) { SATZONE_WHY("no player"); return false; }
-        const int32_t id = (int32_t)pid.ToDouble();
-        CInstance* inst = nullptr;
-        g_Yytk->GetInstanceObject(id, inst);
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) { SATZONE_WHY("no local player"); return false; }
+        CInstance* inst = HhResolveInstance(player);
         if (!inst) { SATZONE_WHY("player instance unreadable"); return false; }
         RValue res;
         const AurieStatus st = g_Yytk->CallGameScriptEx(res, "gml_Script_SPV", inst, inst,

@@ -95,6 +95,19 @@ class SatanicZoneControlPluginTests(unittest.TestCase):
         self.assertNotIn('variable_instance_set", { controller, RValue("satanicZone")',
                          strip_comments(self.plugin))
 
+    def test_player_resolution_uses_the_proven_pair(self):
+        # instance_find(Player_obj) hands back a VALUE_REF on this runner
+        # (measured 2026-09-10); a hand-rolled ToDouble() + GetInstanceObject
+        # path silently resolved no player in the frame tick (live
+        # 2026-10-04: refused=30 "player instance unreadable" while the
+        # command path's pcall worked). Both bodies must use the proven pair,
+        # which resolves the reference through the engine's own
+        # @@GetInstance@@, and must not call GetInstanceObject on it.
+        for body in (strip_comments(self.reader), strip_comments(self.writer)):
+            self.assertIn("HhResolveLocalPlayer(player)", body)
+            self.assertIn("HhResolveInstance(player)", body)
+            self.assertNotIn("GetInstanceObject", body)
+
     def test_pin_refuses_non_act_rooms(self):
         # Towns and sub-areas are not zones: the shape gate is the tracker's
         # IsActZoneRoomName precedent.
