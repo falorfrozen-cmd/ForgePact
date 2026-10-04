@@ -81,8 +81,10 @@ int main()
         check("table/row_layout", EventRowOf(Event::Create) == 0 && BuiltinRowOf(Builtin::Irandom) == kEventCount
             && ScriptRowOf(0) == kEventCount + kBuiltinCount && make().RowCount() == kEventCount + kBuiltinCount + kScripts);
         check("table/route_names", RouteName(Route::Detoured) == "detoured" && RouteName(Route::TableOnly) == "table-only"
-            && RouteName(Route::Shared) == "shared" && RouteName(Route::Missing) == "missing");
-        check("table/trace_budget_is_named", kTraceLinesPerRow == 40 && kRngMinCount == 1 && kRngMaxCount == 50);
+            && RouteName(Route::Shared) == "shared" && RouteName(Route::Missing) == "missing"
+            && RouteName(Route::DetouredUnder) == "detoured-under");
+        check("table/trace_budget_is_named", kTraceLinesPerRow == 40 && kTraceLinesPerKey == 8
+            && kTraceLinesPerKey < kTraceLinesPerRow && kRngMinCount == 1 && kRngMaxCount == 50);
     }
 
     // ---- baseline: the probe idle, the lever off ------------------------------
@@ -225,10 +227,24 @@ int main()
         Probe p = make();
         const int row = ScriptRowOf(0);
         int taken = 0;
-        for (uint64_t i = 0; i < 100; ++i) if (p.TakeTraceLine(row, 0, i)) ++taken;
+        for (uint64_t i = 0; i < 100; ++i) if (p.TakeTraceLine(row, i, i)) ++taken;   // a new key each line
         check("trace/at_most_the_budget_per_row", taken == kTraceLinesPerRow
-            && p.RowCounters(row).logged == static_cast<uint64_t>(kTraceLinesPerRow));
+            && p.RowCounters(row).logged == static_cast<uint64_t>(kTraceLinesPerRow) && p.RowCounters(row).keyCapped == 0);
         check("trace/budget_is_per_row", p.TakeTraceLine(ScriptRowOf(1), 0, 1));
+        // One call shape a machine repeats every frame with a moving result
+        // (an idle irandom, a timer key): its key writes kTraceLinesPerKey
+        // lines and the rest of the row's budget stays for the spin.
+        const int irnd = BuiltinRowOf(Builtin::Irandom);
+        int idle = 0;
+        for (uint64_t frame = 0; frame < 600; ++frame) if (p.TakeTraceLine(irnd, 7, frame)) ++idle;
+        const bool spin = p.TakeTraceLine(irnd, 8, 1);
+        check("trace/one_key_cannot_spend_the_row", idle == kTraceLinesPerKey && spin
+            && p.RowCounters(irnd).logged == static_cast<uint64_t>(kTraceLinesPerKey + 1)
+            && p.RowCounters(irnd).keyCapped == static_cast<uint64_t>(600 - kTraceLinesPerKey) && !p.BudgetSpent(irnd),
+              p.RowText(irnd));
+        check("trace/budget_spent_is_named", p.BudgetSpent(row) && contains(p.RowText(row), "BUDGET SPENT")
+            && !contains(p.RowText(ScriptRowOf(1)), "BUDGET SPENT") && p.SpentRows() == 1
+            && contains(p.StatusLine(), " spent-rows=1 "), p.RowText(row));
         const int gpv = ScriptRowOf(2);
         const bool first = p.TakeTraceLine(gpv, 17, 100);
         const bool repeat = p.TakeTraceLine(gpv, 17, 100);
@@ -237,9 +253,12 @@ int main()
         const bool back = p.TakeTraceLine(gpv, 17, 100);
         check("trace/a_repeat_for_the_same_key_spends_nothing", first && !repeat && otherKey && changed && back
             && p.RowCounters(gpv).logged == 4);
+        const uint64_t calls = p.RowCounters(irnd).calls;
         p.ResetTrace();
         check("trace/hook_again_restores_the_budget", p.RowCounters(row).logged == 0 && p.TakeTraceLine(row, 0, 1)
-            && p.TakeTraceLine(gpv, 17, 100));
+            && p.TakeTraceLine(gpv, 17, 100) && !p.BudgetSpent(row) && p.SpentRows() == 0);
+        check("trace/reset_restores_each_keys_budget", p.TakeTraceLine(irnd, 7, 1000)
+            && p.RowCounters(irnd).calls == calls);
         check("trace/bad_row_refused", !p.TakeTraceLine(-1, 0, 0) && !p.TakeTraceLine(p.RowCount(), 0, 0));
     }
 
@@ -261,12 +280,13 @@ int main()
         p.TakeTraceLine(row, 0, 1);
         const std::string text = p.RowText(row);
         check("status/row_reads_every_counter", text == "calls=4 machine-self=2 in-event=1 other-self=1 logged=1/40"
-            " answered=1 out-of-range=1", text);
+            " key-capped=0 answered=1 out-of-range=1", text);
         check("status/non_rng_rows_omit_the_lever_counters",
-              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/40");
+              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/40 key-capped=0");
         const std::string line = p.StatusLine();
         check("status/line_sums_every_counter", line == "gambaprobe: on machine-object=4644 create=1 alarm0=0 alarm9=1"
-            " step=30 cleanup=0 | calls=36 machine-self=34 in-event=1 other-self=1 logged=1 answered=1 out-of-range=1", line);
+            " step=30 cleanup=0 | calls=36 machine-self=34 in-event=1 other-self=1 logged=1 key-capped=0 spent-rows=0"
+            " answered=1 out-of-range=1", line);
         check("status/rng_line", contains(p.RngLine(), "gambaprobe: rng answered 0 of 1 value=9 remaining=1 out-of-range=1"
             " lever=on"), p.RngLine());
         check("status/number_text", NumberText(98) == "98" && NumberText(-7.25) == "-7.25" && NumberText(0.5) == "0.5");

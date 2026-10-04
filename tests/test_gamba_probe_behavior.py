@@ -135,8 +135,9 @@ class GambaProbeBehaviorTests(unittest.TestCase):
 
     def test_the_trace_budget(self):
         for label in ("trace/at_most_the_budget_per_row", "trace/budget_is_per_row",
+                      "trace/one_key_cannot_spend_the_row", "trace/budget_spent_is_named",
                       "trace/a_repeat_for_the_same_key_spends_nothing", "trace/hook_again_restores_the_budget",
-                      "trace/bad_row_refused"):
+                      "trace/reset_restores_each_keys_budget", "trace/bad_row_refused"):
             self.assertScenario(label)
 
     def test_the_status_line_reads_back_every_counter(self):

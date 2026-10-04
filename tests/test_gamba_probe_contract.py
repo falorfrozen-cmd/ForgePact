@@ -15,11 +15,16 @@ launch, `gambaprobe`, and these tests pin it on comment-stripped source:
   nothing is armed or on;
 - every script row is an hs-game-sdk constant, the expected set derived from
   scripts.hpp and objects.hpp and covering every row the plan names; the
-  machine and its events are named through the SDK's object name; the rows the
-  player build already detours are shared through those hooks, never detoured
-  again; every detour sits behind AddrIsExecutableInModule; no hex or RVA
-  literal reaches a call; and `hook` refuses while citrace, jumpprobe or
-  jumpscenery holds one of its builtins;
+  machine and its events are named through the SDK's object name; the rows
+  another hook already holds go through that hook, never hooked a second time
+  - spliced when the holder's saved original is a trampoline, detoured under
+  it when the holder is table-only and its saved original is still the game's
+  function - and a table-only row is named; every detour sits behind
+  AddrIsExecutableInModule; no hex or RVA literal reaches a call; and `hook`
+  refuses while citrace, jumpprobe or jumpscenery holds one of its builtins;
+- the trace budget is per window: `trace`, `hook` again and `spawn` start it
+  over, a builtin's lines are keyed by their argument text and an event's by
+  its instance, and `status` names a row that has spent its budget;
 - the lever writes a result only when it answers, and then runs no original;
 - the local player and the machine resolve by the instance-handle rule, never
   a kind check;
@@ -69,12 +74,17 @@ PLAN_EVENTS = ("Create_0", "Alarm_0", "Alarm_9", "Step_0", "CleanUp_0")
 PLAN_BUILTINS = ("irandom", "irandom_range", "random", "random_range", "choose", "instance_destroy",
                  "instance_create_depth", "instance_create_layer")
 
-# The rows the player build already detours (context "### Hooks already
-# held"), each with the saved original its hook calls through.
+# The rows another ForgePact hook already holds (context "### Hooks already
+# held", plus the two the research build holds at startup: DropManager's
+# native DropItem hook and the item-inspect table-only hook on
+# LootGroundCreateFromItem), each with the saved original its hook calls
+# through.
 SHARED_SCRIPTS = {
     "GPV": "&g_Orig_GPV_Trace",
     "LootGroundCreate": "&ForgePact::MiningOre::originalLoot",
+    "LootGroundCreateFromItem": "&g_Orig_LootGroundCreateFromItem",
     "CreateItemNew": "&g_Orig_CreateItemNew",
+    "DropItem": "GpDropItemHolder()",
     "GetUniqueRepoStruct": "&g_Orig_GetUniqueRepoStruct",
     "CreateDefaultParams": "&g_Orig_CreateDefaultParams",
 }
@@ -147,7 +157,7 @@ class GambaProbeContract(unittest.TestCase):
         cls.header = strip_comments(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
         table = cls.code[cls.code.index("#define GAMBAPROBE_SCRIPTS(X)"):]
         table = table[:table.index("#define GP_ROW_INDEX")]
-        cls.rows = re.findall(r"X\((\w+),\s*(\w+),\s*([^)\n]+?)\)", table)
+        cls.rows = re.findall(r"(?m)^\s*X\((\w+),\s*(\w+),\s*(.+)\)\s*\\?\s*$", table)
 
     def body(self, signature):
         return strip_comments(function_body(self.plugin, signature))
@@ -286,13 +296,39 @@ class GambaProbeContract(unittest.TestCase):
         install = self.body("static std::string GpInstallScriptHolder(")
         self.assertIn("InstallSignatureAngelicHooks();", install)
         self.assertIn("ForgePact::MiningOre::Install();", install)
+        self.assertIn("ForgePact::DropManager::Instance().InstallHooks();", install)
         self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GPV), "bp_gpvtrace", (PVOID)Hook_GPV_Trace,',
                       install)
-        scripts = self.body("static void GpInstallScripts()")
-        shared = braced_block(scripts, "if (t.holder) {")
-        self.assertNotIn("HookOneScript(", shared, "a shared row is never detoured a second time")
-        self.assertLess(shared.index("GpHolderIsNative("), shared.index("*t.holder = "))
-        self.assertTrue(shared.rstrip().endswith("continue;"))
+        # A second run of the item-inspect installer would re-swap a dozen
+        # table entries: never from here.
+        self.assertNotIn("InstallItemInspectHooks", install)
+        # DropItem's holder is DropManager's own slot, by the SDK name.
+        self.assertIn("ForgePact::DropManager::Instance().ResearchHeldOriginal(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem))",
+                      self.body("static PFUNC_YYGMLScript* GpDropItemHolder()"))
+        scripts = self.body("static void GpInstallScripts(HMODULE mainMod)")
+        held = braced_block(scripts, "if (t.holder && *t.holder) {")
+        self.assertNotIn("HookOneScript(", held, "a held row is never hooked a second time")
+        self.assertTrue(held.rstrip().endswith("continue;"))
+        # The holder's saved original decides: game code -> detour under it;
+        # a trampoline -> splice; this plugin's code -> missing.
+        game = braced_block(held, "if (AddrIsExecutableInModule(mainMod, saved)) {")
+        self.assertIn("GpDetourUnder(t, mainMod, holder);", game)
+        self.assertNotIn("*t.holder = ", game, "a table-only holder is detoured under, never spliced")
+        self.assertTrue(game.rstrip().endswith("continue;"))
+        order = [held.index(s) for s in ("if (AddrIsExecutableInModule(mainMod, saved)) {", "GpHolderIsNative(",
+                                         "*t.holder = ")]
+        self.assertEqual(order, sorted(order))
+        under = self.body("static void GpDetourUnder(")
+        self.assertLess(under.index("if (!AddrIsExecutableInModule(mainMod, fn)) {"), under.index("MmCreateHook("))
+        self.assertIn("TaggedThunks<PFUNC_YYGMLScript>::Tagged(t.hookId,", under)
+        self.assertIn("t.route = GpNs::Route::DetouredUnder;", under)
+        self.assertNotIn("*t.holder =", under, "the holder is left as it is")
+        # A table-only row is named, so a blind row cannot pass as a measured zero.
+        gp_install = self.body("static void GpInstall()")
+        self.assertIn("if (t.route == GpNs::Route::TableOnly) blind +=", gp_install)
+        self.assertIn('" missing, "', gp_install)
+        self.assertIn('" table-only ("', gp_install)
+        self.assertIn("WARNING - table-only, blind to compiled GML's direct calls", gp_install)
         builtins = self.body("static void GpInstallBuiltins(")
         self.assertIn("if (!g_OrigICD || !g_OrigICL) InstallCreateHooks();", builtins)
         for slot in ("&g_OrigICD", "&g_OrigICL", "&g_OrigInstDestroy", "&g_OrigDestroy"):
@@ -301,7 +337,8 @@ class GambaProbeContract(unittest.TestCase):
         self.assertNotIn("HookBuiltin(", spliced)
         self.assertLess(spliced.index("GpHolderIsNative("), spliced.index("*holder = "))
         # Only a trampoline is spliced: game code or this plugin's code there
-        # means the holder is table-only.
+        # means the holder is table-only (a script row detours under game
+        # code before it gets here; a builtin row has no such route).
         native = self.body("static bool GpHolderIsNative(")
         self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved)", native)
         self.assertIn("AddrIsExecutableInModule(GpSelfModule(), saved)", native)
@@ -321,8 +358,10 @@ class GambaProbeContract(unittest.TestCase):
         self.assertLess(builtins.index("if (!AddrIsExecutableInModule(mainMod, p))"), builtins.index("HookBuiltin("))
         self.assertEqual(builtins.count("HookBuiltin("), 1)
         # Script rows only through HookOneScript, which validates its table
-        # entry before its own inline detour.
-        self.assertEqual(self.code.count("MmCreateHook("), 1)
+        # entry before its own inline detour, or under a table-only holder
+        # (GpDetourUnder, pinned with the shared rows above).
+        self.assertEqual(self.code.count("MmCreateHook("), 2)
+        self.assertEqual(self.body("static void GpDetourUnder(").count("MmCreateHook("), 1)
         self.assertNotIn("HookOneScriptTable", self.code)
         self.assertNotIn("HookRawNamedRoutine", self.code)
         hook = strip_comments(function_body(self.plugin, "static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut,\n                          bool* nativeOut)"))
@@ -376,6 +415,35 @@ class GambaProbeContract(unittest.TestCase):
         for guard in ("if (rngRows == 0)", "if (g_GpCore.MachineObject() < 0)", "else if (g_GpMachines.empty())"):
             self.assertIn(guard, lever)
         self.assertEqual(lever.count("WARNING"), 3)
+
+    # ---- the trace window -------------------------------------------------------
+
+    def test_the_trace_budget_starts_over_before_each_measured_spin(self):
+        """A spent row only counts, so every moment a live check reads must get a fresh window."""
+        command = self.body("static void GpCommand(")
+        self.assertIn('if (sub == "trace") { GpTrace(); return; }', command)
+        self.assertIn("g_GpCore.ResetTrace();", self.body("static void GpTrace()"))
+        spawn = self.body("static void GpSpawn()")
+        self.assertLess(spawn.index("g_GpCore.ResetTrace();"), spawn.index('"instance_create_depth"'),
+                        "the new machine's Create_0 must fall in the new window")
+        self.assertIn("g_GpCore.ResetTrace();", self.body("static void GpInstall()"))
+        # A builtin line is keyed by its argument text, an event line by its
+        # instance, so one repeated call shape cannot spend the row.
+        builtin = self.body("static void GpOnBuiltin(")
+        self.assertIn("GpLogCall(row, GpBuiltinName(builtin), selfText, argc, args, args, GpValueText(Result));", builtin)
+        self.assertNotIn("std::string(), GpValueText(Result)", builtin)
+        self.assertIn("g_GpCore.TakeTraceLine(row, (uint64_t)id, (uint64_t)frame)", self.body("static void GpOnEvent("))
+        take = braced_block(self.header, "bool TakeTraceLine(int row, uint64_t key, uint64_t text)\n    {")
+        self.assertIn("kTraceLinesPerKey", take)
+        self.assertIn("++c.keyCapped;", take)
+        # A spent row says so, in the row and above the rows.
+        self.assertIn("BUDGET SPENT", braced_block(self.header, "std::string RowText(int row) const\n    {"))
+        status = self.body("static void GpStatus()")
+        self.assertIn("if (g_GpCore.SpentRows() > 0)", status)
+        self.assertIn("BUDGET SPENT", status)
+        # The procedure re-arms before every spin a check reads.
+        procedure = doc_section(DOC.read_text(encoding="utf-8").replace("\r\n", "\n"), "Live procedure 1")
+        self.assertGreaterEqual(procedure.count("`gambaprobe trace`"), 4)
 
     # ---- who a self is ----------------------------------------------------------
 

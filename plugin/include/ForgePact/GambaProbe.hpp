@@ -83,30 +83,41 @@ inline constexpr int BuiltinRowOf(Builtin b) { return kFirstBuiltinRow + static_
 inline constexpr int ScriptRowOf(int script) { return kFirstScriptRow + script; }
 
 // How `hook` reached a row. Detoured: the probe's own inline detour (both
-// routes for a script). TableOnly: the script-table swap only, blind to
-// compiled GML's direct calls. Shared: another install already detours the
-// function and the probe observes through that detour. Missing: nothing of
-// the probe sees the row.
-enum class Route : int { Missing, Detoured, TableOnly, Shared };
+// routes for a script). DetouredUnder: another ForgePact hook holds the
+// script's table entry table-only, so its saved original is still the game's
+// function, and the probe detoured that function itself - the holder's body
+// and compiled GML's direct calls both reach the probe. TableOnly: the
+// script-table swap only, blind to compiled GML's direct calls. Shared:
+// another install already detours the function and the probe observes
+// through that detour. Missing: nothing of the probe sees the row.
+enum class Route : int { Missing, Detoured, DetouredUnder, TableOnly, Shared };
 
 inline constexpr std::string_view RouteName(Route r)
 {
     switch (r) {
-    case Route::Missing:   return "missing";
-    case Route::Detoured:  return "detoured";
-    case Route::TableOnly: return "table-only";
-    case Route::Shared:    return "shared";
+    case Route::Missing:       return "missing";
+    case Route::Detoured:      return "detoured";
+    case Route::DetouredUnder: return "detoured-under";
+    case Route::TableOnly:     return "table-only";
+    case Route::Shared:        return "shared";
     }
     return "?";
 }
 
 // ---- the trace budget and the lever's limits --------------------------------
 // The first kTraceLinesPerRow lines per row are logged; after that the row
-// only counts. A line identical to the row's previous line for the same key
-// (a script's first argument, e.g. GPV's state key) is not logged and spends
-// nothing, so a machine's idle Step_0 reading the same state every frame does
-// not use the budget a spin needs.
+// only counts, and its status line says BUDGET SPENT. Each line carries a key
+// - what it is about: a script's first argument (GPV's state key), a
+// builtin's argument text, an event's instance id - and one key writes at
+// most kTraceLinesPerKey lines, so one call shape a machine repeats every
+// frame (an idle irandom, a timer key whose value moves) cannot spend the
+// whole row; the lines a key was refused are counted as key-capped. A line
+// identical to the previous line for the same key is not logged and costs
+// nothing. The budget is per window: `gambaprobe trace`, `hook` again and
+// every `spawn` start it over, so the live procedure re-arms it right before
+// each spin it measures.
 inline constexpr int kTraceLinesPerRow = 40;
+inline constexpr int kTraceLinesPerKey = 8;
 inline constexpr int64_t kRngMinCount = 1;
 inline constexpr int64_t kRngMaxCount = 50;
 
@@ -164,8 +175,9 @@ struct Counters {
     uint64_t machineSelf = 0;   // armed or levered: self is a gamba machine
     uint64_t inEvent = 0;       // armed or levered: another self inside a machine's event
     uint64_t otherSelf = 0;     // armed or levered: everything else
-    uint64_t logged = 0;        // lines written (at most kTraceLinesPerRow)
-    uint64_t answered = 0;      // RNG rows: calls the lever answered
+    uint64_t logged = 0;        // lines written this window (at most kTraceLinesPerRow)
+    uint64_t keyCapped = 0;     // new lines refused because their key had written kTraceLinesPerKey
+    uint64_t answered = 0;     // RNG rows: calls the lever answered
     uint64_t outOfRange = 0;    // `choose`: a lever value that named none of the call's arguments
 };
 
@@ -212,8 +224,8 @@ public:
     bool Armed() const { return armed_; }
     bool Active() const { return armed_ || rngOn_; }
 
-    // `hook` again: every row's trace budget and repeat memory start over; the
-    // counts continue.
+    // `trace`, `hook` again or `spawn`: every row's trace budget, its keys'
+    // budgets and its repeat memory start over; the counts continue.
     void ResetTrace()
     {
         for (Counters& c : rows_) c.logged = 0;
@@ -274,21 +286,36 @@ public:
 
     // ---- the trace budget --------------------------------------------------
     // May the row write this line? `key` identifies what the line is about
-    // (a script's first argument, or 0); `text` is the line's content without
-    // its call number or frame. A repeat of the row's last line for the same
-    // key is refused and spends nothing; a new line spends one of the row's
-    // kTraceLinesPerRow.
+    // (a script's first argument, a builtin's argument text, an event's
+    // instance id); `text` is the line's content without its call number or
+    // frame. A repeat of the key's last line is refused and spends nothing; a
+    // new line spends one of the row's kTraceLinesPerRow and one of the key's
+    // kTraceLinesPerKey, and a key that has none left is refused and counted
+    // key-capped.
     bool TakeTraceLine(int row, uint64_t key, uint64_t text)
     {
         if (row < 0 || row >= RowCount()) return false;
         Counters& c = rows_[static_cast<size_t>(row)];
         auto& last = lastLine_[static_cast<size_t>(row)];
         const auto it = last.find(key);
-        if (it != last.end() && it->second == text) return false;
+        if (it != last.end() && it->second.text == text) return false;
         if (c.logged >= static_cast<uint64_t>(kTraceLinesPerRow)) return false;
-        last[key] = text;
+        if (it != last.end() && it->second.lines >= kTraceLinesPerKey) {
+            ++c.keyCapped;
+            return false;
+        }
+        KeyLine& k = last[key];
+        k.text = text;
+        ++k.lines;
         ++c.logged;
         return true;
+    }
+
+    // The row has written its kTraceLinesPerRow lines this window: it only
+    // counts until the budget starts over.
+    bool BudgetSpent(int row) const
+    {
+        return RowCounters(row).logged >= static_cast<uint64_t>(kTraceLinesPerRow);
     }
 
     // ---- the lever -----------------------------------------------------------
@@ -350,17 +377,29 @@ public:
     }
 
     // ---- the status text ------------------------------------------------------
-    // One row's counters, every one of them.
+    // One row's counters, every one of them, and BUDGET SPENT once the row
+    // only counts.
     std::string RowText(int row) const
     {
         const Counters& c = RowCounters(row);
         std::string s = "calls=" + std::to_string(c.calls) + " machine-self=" + std::to_string(c.machineSelf)
             + " in-event=" + std::to_string(c.inEvent) + " other-self=" + std::to_string(c.otherSelf)
-            + " logged=" + std::to_string(c.logged) + "/" + std::to_string(kTraceLinesPerRow);
+            + " logged=" + std::to_string(c.logged) + "/" + std::to_string(kTraceLinesPerRow)
+            + " key-capped=" + std::to_string(c.keyCapped);
         if (row >= kFirstBuiltinRow && row < kFirstScriptRow
             && kBuiltins[row - kFirstBuiltinRow].kind != AnswerKind::NotRng)
             s += " answered=" + std::to_string(c.answered) + " out-of-range=" + std::to_string(c.outOfRange);
+        if (BudgetSpent(row))
+            s += " BUDGET SPENT - counted, not described; `gambaprobe trace` starts it over";
         return s;
+    }
+
+    // How many rows have spent their budget this window.
+    int SpentRows() const
+    {
+        int n = 0;
+        for (int row = 0; row < RowCount(); ++row) if (BudgetSpent(row)) ++n;
+        return n;
     }
 
     // The machine's events, by their status keys: create=.. alarm0=.. ...
@@ -383,13 +422,15 @@ public:
             t.inEvent += c.inEvent;
             t.otherSelf += c.otherSelf;
             t.logged += c.logged;
+            t.keyCapped += c.keyCapped;
             t.answered += c.answered;
             t.outOfRange += c.outOfRange;
         }
         return std::string("gambaprobe: ") + (armed_ ? "on" : "off") + " machine-object=" + std::to_string(machineObject_)
             + " " + EventsText() + " | calls=" + std::to_string(t.calls) + " machine-self=" + std::to_string(t.machineSelf)
             + " in-event=" + std::to_string(t.inEvent) + " other-self=" + std::to_string(t.otherSelf)
-            + " logged=" + std::to_string(t.logged) + " answered=" + std::to_string(t.answered)
+            + " logged=" + std::to_string(t.logged) + " key-capped=" + std::to_string(t.keyCapped)
+            + " spent-rows=" + std::to_string(SpentRows()) + " answered=" + std::to_string(t.answered)
             + " out-of-range=" + std::to_string(t.outOfRange);
     }
 
@@ -407,9 +448,14 @@ public:
     }
 
 private:
+    // One key's memory this window: its last line, and the lines it wrote.
+    struct KeyLine {
+        uint64_t text = 0;
+        int      lines = 0;
+    };
     std::vector<Counters> rows_ = std::vector<Counters>(static_cast<size_t>(kFirstScriptRow));
-    std::vector<std::unordered_map<uint64_t, uint64_t>> lastLine_ =
-        std::vector<std::unordered_map<uint64_t, uint64_t>>(static_cast<size_t>(kFirstScriptRow));
+    std::vector<std::unordered_map<uint64_t, KeyLine>> lastLine_ =
+        std::vector<std::unordered_map<uint64_t, KeyLine>>(static_cast<size_t>(kFirstScriptRow));
     int machineObject_ = -1;
     bool armed_ = false;
     bool rngOn_ = false;

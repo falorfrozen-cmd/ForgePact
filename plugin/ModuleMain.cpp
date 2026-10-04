@@ -46795,26 +46795,37 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 //   - the RNG and instance builtins, by name through HookBuiltin.
 //
 // A function another install already detours is not detoured again. A
-// shared row (GPV, LootGroundCreate, CreateItemNew, GetUniqueRepoStruct,
-// CreateDefaultParams, instance_create_depth/_layer, and instance_destroy
-// while co-op's or destroywatch's hook holds it) has the existing installer
-// run if it has not been, and the probe then observes through that hook: its
-// detour is spliced into the hook's saved original, so the holder's body
-// calls the probe, which calls the trampoline. Only a holder whose saved
-// original is a trampoline (a native detour) is spliced; a table-only holder
-// would see too little and would then read as detoured to its own route
-// check, so that row stays `missing`.
+// shared row (GPV, LootGroundCreate, LootGroundCreateFromItem, CreateItemNew,
+// DropItem, GetUniqueRepoStruct, CreateDefaultParams,
+// instance_create_depth/_layer, and instance_destroy while co-op's or
+// destroywatch's hook holds it) has the existing installer run if it has not
+// been, and the probe then reaches it by what that hook's saved original is:
+//   - a trampoline (the holder detoured natively): the probe's detour is
+//     spliced into the saved original, so the holder's body calls the probe,
+//     which calls the trampoline (`shared`);
+//   - the game's own function (the holder is table-only, as the research
+//     build's item-inspect hooks on LootGroundCreateFromItem and CreateItemNew
+//     are): the probe detours that function itself, behind
+//     AddrIsExecutableInModule, so the holder's body and compiled GML's
+//     direct calls both reach it (`detoured-under`, angelicprobe's Rule 2);
+//   - this plugin's own code (the holder sits behind another table-only
+//     hook): nothing the probe can splice or detour sees every call, so the
+//     row stays `missing` and says why.
+// A script row that comes up `table-only` is blind to direct calls, and
+// `hook` names it.
 //
 // Every row counts its calls. While the probe is armed (`hook`, until `off`)
 // or its lever is on, a call is classified by its self: a gamba machine (an
 // object index equal to Slot_Machine_01_obj's, resolved by name), another
 // self inside a machine's own event, or anything else; the first two are
-// logged, kTraceLinesPerRow lines per row, repeats skipped
-// (plugin/include/ForgePact/GambaProbe.hpp holds those decisions, which
-// tests/gamba_probe_harness.cpp compiles whole). The one lever, `rng <value>
-// [count]`, answers the next `count` RNG builtin calls whose self is a
-// machine with `value` without running the game's function. The one per-frame
-// piece, GpFrameTick, returns at once while nothing is armed or on.
+// logged, kTraceLinesPerRow lines per row and kTraceLinesPerKey per key in
+// one window, repeats skipped (plugin/include/ForgePact/GambaProbe.hpp holds
+// those decisions, which tests/gamba_probe_harness.cpp compiles whole). The
+// window starts over on `trace`, `hook` again and every `spawn`. The one
+// lever, `rng <value> [count]`, answers the next `count` RNG builtin calls
+// whose self is a machine with `value` without running the game's function.
+// The one per-frame piece, GpFrameTick, returns at once while nothing is
+// armed or on.
 #include <ForgePact/GambaProbe.hpp>
 
 namespace GpNs = ForgePact::GambaProbe;
@@ -46839,12 +46850,21 @@ struct GpMachine {
 };
 static std::vector<GpMachine> g_GpMachines;
 
+// DropItem's holder is DropManager's Hook_DropItem (installed at startup in
+// this build by InstallDropMultHooks); the manager hands its saved original
+// out by name to research instruments.
+static PFUNC_YYGMLScript* GpDropItemHolder()
+{
+    return ForgePact::DropManager::Instance().ResearchHeldOriginal(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem));
+}
+
 // ---- the script rows ------------------------------------------------------------
 // One row per script in docs/gamba-machine-research.md § Instrument. SAFE,
 // hs-game-sdk constant, holder: nullptr for a row the probe detours itself,
-// else the saved original of the hook that already detours the script (the
-// row is then shared). The row's name is always the constant's own value -
-// the closure's moves with every game patch and is never spelled here.
+// else the saved original of the hook that already holds the script (the
+// row is then shared or detoured under it). The row's name is always the
+// constant's own value - the closure's moves with every game patch and is
+// never spelled here.
 #define GAMBAPROBE_SCRIPTS(X) \
     /* the machine's Create closure */ \
     X(Closure, gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0, nullptr) \
@@ -46866,10 +46886,10 @@ static std::vector<GpMachine> g_GpMachines;
     X(PlaySound3D, gml_Script_PlaySound3D, nullptr) \
     /* ground placement and item building */ \
     X(LootGroundCreate, gml_Script_LootGroundCreate, &ForgePact::MiningOre::originalLoot) \
-    X(LootGroundCreateFromItem, gml_Script_LootGroundCreateFromItem, nullptr) \
+    X(LootGroundCreateFromItem, gml_Script_LootGroundCreateFromItem, &g_Orig_LootGroundCreateFromItem) \
     X(CreateLootInFreePos, gml_Script_CreateLootInFreePos, nullptr) \
     X(CreateItemNew, gml_Script_CreateItemNew, &g_Orig_CreateItemNew) \
-    X(DropItem, gml_Script_DropItem, nullptr) \
+    X(DropItem, gml_Script_DropItem, GpDropItemHolder()) \
     X(DropUniqueItems, gml_Script_DropUniqueItems, nullptr) \
     /* the unique pick: the pair the Angelic roll uses */ \
     X(GetUniqueRepoStruct, gml_Script_GetUniqueRepoStruct, &g_Orig_GetUniqueRepoStruct) \
@@ -47127,8 +47147,10 @@ static bool GpCanLog(int row)
 }
 
 // One budgeted line for a machine-self or in-event call, after the call so
-// it carries the result. A repeat of the row's last line for the same key
-// spends nothing and prints nothing.
+// it carries the result. `key` is what the line is about (a script's first
+// argument, a builtin's argument text): one key writes at most
+// kTraceLinesPerKey lines a window, and a repeat of its last line spends
+// nothing and prints nothing.
 static void GpLogCall(int row, const std::string& label, const std::string& selfText, int argc,
                       const std::string& args, const std::string& key, const std::string& ret)
 {
@@ -47201,7 +47223,9 @@ static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O,
     g_GpBusy = false;
     if (t.orig) t.orig(Result, S, O, argc, Args);
     g_GpBusy = true;
-    try { GpLogCall(row, GpBuiltinName(builtin), selfText, argc, args, std::string(), GpValueText(Result)); } catch (...) {}
+    // Keyed by the argument text, so one call shape a machine repeats every
+    // frame spends its own kTraceLinesPerKey, not the row.
+    try { GpLogCall(row, GpBuiltinName(builtin), selfText, argc, args, args, GpValueText(Result)); } catch (...) {}
     g_GpBusy = false;
 }
 
@@ -47227,8 +47251,10 @@ static void GpOnEvent(int event, CInstance* S, CInstance* O)
     if (event == (int)GpNs::Event::CleanUp)
         g_GpMachines.erase(std::remove_if(g_GpMachines.begin(), g_GpMachines.end(),
                                           [S](const GpMachine& m) { return m.inst == S; }), g_GpMachines.end());
+    // Keyed by the instance: each machine's Step_0 writes its own
+    // kTraceLinesPerKey lines a window, and the count carries the rest.
     const int64_t frame = (int64_t)g_RuntimeFrame;
-    if (!g_GpCore.TakeTraceLine(row, 0, (uint64_t)frame)) return;
+    if (!g_GpCore.TakeTraceLine(row, (uint64_t)id, (uint64_t)frame)) return;
     Out("gambaprobe event " + std::string(GpNs::kEvents[event].event) + " #" + std::to_string(g_GpCore.RowCounters(row).calls)
         + " id=" + std::to_string(id) + " frame=" + std::to_string(frame));
 }
@@ -47270,6 +47296,14 @@ static std::string GpInstallScriptHolder(PFUNC_YYGMLScript* slot, bool& signatur
         if (!*slot) ForgePact::MiningOre::Install();
         return "the mining-ore reward hook";
     }
+    if (slot == GpDropItemHolder()) {
+        if (!*slot) ForgePact::DropManager::Instance().InstallHooks();   // at x1 pass-through, as goldtrace installs them
+        return "DropManager's Hook_DropItem";
+    }
+    // Installed at startup in this build with a dozen other table hooks;
+    // never run again here, since a second run re-swaps every one of their
+    // table entries. Not installed, the row is the probe's own.
+    if (slot == &g_Orig_LootGroundCreateFromItem) return "Hook_LootGroundCreateFromItem (item inspect)";
     if (!*slot && !signatureTried) {
         signatureTried = true;
         InstallSignatureAngelicHooks();
@@ -47350,9 +47384,37 @@ static void GpInstallEvents(HMODULE mainMod)
     }
 }
 
-// Script rows through HookOneScript, whose own first install validates the
-// table entry with AddrIsExecutableInModule before its inline detour.
-static void GpInstallScripts()
+// Rule 2 (angelicprobe's): a ForgePact hook holds the script's table entry
+// table-only, so its saved original is still the game's own function. The
+// probe detours that function itself, only once AddrIsExecutableInModule says
+// it is game code: the holder's body and compiled GML's direct calls both
+// reach the probe, which calls the trampoline. The holder is left as it is.
+static void GpDetourUnder(GpScriptRow& t, HMODULE mainMod, const std::string& holder)
+{
+    const PVOID fn = (PVOID)*t.holder;
+    if (!AddrIsExecutableInModule(mainMod, fn)) {
+        t.status = "held by " + holder + ", whose saved original is not game code; not detoured";
+        return;
+    }
+    const PFUNC_YYGMLScript tagged = TaggedThunks<PFUNC_YYGMLScript>::Tagged(t.hookId,
+                                                                            reinterpret_cast<PFUNC_YYGMLScript>(t.detour));
+    PVOID tramp = nullptr;
+    const AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, fn, reinterpret_cast<PVOID>(tagged), &tramp);
+    if (!AurieSuccess(hs) || !tramp) {
+        t.status = "held table-only by " + holder + ", and the detour under it failed: MmCreateHook st="
+            + std::to_string((int)hs) + " (another detour on the game's function?)";
+        return;
+    }
+    t.orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+    t.route = GpNs::Route::DetouredUnder;
+    t.status = "under table-only " + holder;
+}
+
+// Script rows. A held row by what its holder's saved original is (the block
+// comment above); every other row through HookOneScript, whose own first
+// install validates the table entry with AddrIsExecutableInModule before its
+// inline detour.
+static void GpInstallScripts(HMODULE mainMod)
 {
     bool signatureTried = false;
     for (GpScriptRow& t : g_GpScriptRows) {
@@ -47361,12 +47423,17 @@ static void GpInstallScripts()
             continue;
         }
         t.tried = true;
-        if (t.holder) {
-            // Shared: run the existing installer, then observe through its
-            // hook - only a native holder is spliced.
-            const std::string holder = GpInstallScriptHolder(t.holder, signatureTried);
+        std::string holder;
+        if (t.holder) holder = GpInstallScriptHolder(t.holder, signatureTried);
+        if (t.holder && *t.holder) {
+            const void* saved = (const void*)*t.holder;
+            if (AddrIsExecutableInModule(mainMod, saved)) {
+                GpDetourUnder(t, mainMod, holder);
+                Out(GpRowLine(std::string("script ") + t.label, t.route, t.status));
+                continue;
+            }
             std::string why;
-            if (!GpHolderIsNative((const void*)*t.holder, why)) {
+            if (!GpHolderIsNative(saved, why)) {
                 t.status = "held by " + holder + ", but " + why + "; not spliced";
                 Out(GpRowLine(std::string("script ") + t.label, t.route, t.status));
                 continue;
@@ -47385,7 +47452,8 @@ static void GpInstallScripts()
             continue;
         }
         t.route = native ? GpNs::Route::Detoured : GpNs::Route::TableOnly;
-        t.status = native ? std::string() : "another install detours it first; only table calls reach this row";
+        t.status = native ? std::string() : "another install holds the table entry; only table calls reach this row";
+        if (t.holder) t.status += std::string(native ? "" : "; ") + "its holder, " + holder + ", is not installed";
         Out(GpRowLine(std::string("script ") + t.label, t.route, t.status));
     }
 }
@@ -47449,7 +47517,7 @@ static void GpInstallBuiltins(HMODULE mainMod)
 }
 
 // `hook`: every row, once; again, it re-arms (every row's trace budget starts
-// over) and names each row's route. Refused while citrace, jumpprobe or
+// over, as `trace` does) and names each row's route. Refused while citrace, jumpprobe or
 // jumpscenery holds one of the probe's builtins.
 static void GpInstall()
 {
@@ -47477,28 +47545,37 @@ static void GpInstall()
     GpEnsureRows();
     HMODULE mainMod = GetModuleHandleA(nullptr);
     GpInstallEvents(mainMod);
-    GpInstallScripts();
+    GpInstallScripts(mainMod);
     GpInstallBuiltins(mainMod);
-    int rows = 0, missing = 0, detoured = 0, shared = 0, tableOnly = 0;
+    int rows = 0, missing = 0, detoured = 0, under = 0, shared = 0, tableOnly = 0;
     auto tally = [&](GpNs::Route r) {
         ++rows;
         if (r == GpNs::Route::Missing) ++missing;
         else if (r == GpNs::Route::Detoured) ++detoured;
+        else if (r == GpNs::Route::DetouredUnder) ++under;
         else if (r == GpNs::Route::Shared) ++shared;
         else ++tableOnly;
     };
+    std::string blind;
     for (const GpEventRow& t : g_GpEventRows) tally(t.route);
-    for (const GpScriptRow& t : g_GpScriptRows) tally(t.route);
+    for (const GpScriptRow& t : g_GpScriptRows) {
+        tally(t.route);
+        if (t.route == GpNs::Route::TableOnly) blind += (blind.empty() ? "" : ", ") + std::string(t.label);
+    }
     for (const GpBuiltinRow& t : g_GpBuiltinRows) tally(t.route);
     g_GpHooked = true;
     g_GpCore.ResetTrace();
     g_GpCore.SetArmed(true);
     GpRefreshMachines();
-    Out("gambaprobe hook: " + std::to_string(rows) + " rows, " + std::to_string(missing) + " missing (" + std::to_string(detoured)
-        + " detoured, " + std::to_string(shared) + " shared, " + std::to_string(tableOnly) + " table-only); armed, machine object "
-        + std::to_string(g_GpCore.MachineObject()) + ", machines now " + GpMachinesText());
+    Out("gambaprobe hook: " + std::to_string(rows) + " rows, " + std::to_string(missing) + " missing, " + std::to_string(tableOnly)
+        + " table-only (" + std::to_string(detoured) + " detoured, " + std::to_string(under) + " detoured-under, "
+        + std::to_string(shared) + " shared); armed, machine object " + std::to_string(g_GpCore.MachineObject())
+        + ", machines now " + GpMachinesText());
+    if (!blind.empty())
+        Out("gambaprobe hook: WARNING - table-only, blind to compiled GML's direct calls: " + blind + ". A `not-observed`"
+            " from these rows measures the instrument, not the game.");
     Out("  Next: `gambaprobe spawn`, then `gambaprobe status` - create= and alarm9= must reach 1 and step= climb, or the event"
-        " rows are blind (INSTRUMENT-BLIND) and nothing from them counts.");
+        " rows are blind (INSTRUMENT-BLIND) and nothing from them counts. `gambaprobe trace` right before each measured spin.");
 }
 
 // ---- spawn, rng, drop, status, off ---------------------------------------------------
@@ -47516,13 +47593,26 @@ static bool GpPlayerXY(double& x, double& y, CInstance** inst)
     } catch (...) { return false; }
 }
 
+// `trace`: a new trace window - every row's and every key's budget starts
+// over, so the spin about to be measured is described; the counts continue.
+static void GpTrace()
+{
+    const int spent = g_GpCore.SpentRows();
+    g_GpCore.ResetTrace();
+    Out("gambaprobe trace: every row's trace budget starts over (" + std::to_string(GpNs::kTraceLinesPerRow) + " lines per row, "
+        + std::to_string(GpNs::kTraceLinesPerKey) + " per key); " + std::to_string(spent) + " row(s) had spent theirs; counts continue"
+        + (g_GpHooked ? std::string() : std::string(" - nothing is hooked yet: `gambaprobe hook` first")));
+}
+
 // `spawn`: one machine at the local player, depth 0 - the positive control
-// for the Create_0 and Alarm_9 rows.
+// for the Create_0 and Alarm_9 rows. A new trace window first, so the new
+// machine's Create_0 and its first state reads are described.
 static void GpSpawn()
 {
     if (GpResolveMachineObject() < 0) { Out("gambaprobe spawn: refused - " + GpMachineName() + " did not resolve by name"); return; }
     double x = 0.0, y = 0.0;
     if (!GpPlayerXY(x, y, nullptr)) { Out("gambaprobe spawn: refused - no local player (load a character)"); return; }
+    g_GpCore.ResetTrace();
     RValue id;
     try {
         id = g_Yytk->CallBuiltin("instance_create_depth", { RValue(x), RValue(y), RValue(0.0), RValue((double)g_GpCore.MachineObject()) });
@@ -47532,7 +47622,7 @@ static void GpSpawn()
     const long long n = GpIdOf(id);
     if (GpSelfObject(inst) < 0 && g_GpMachines.size() < (size_t)kGpMaxMachines) g_GpMachines.push_back({ inst, n });
     Out("gambaprobe spawn: id=" + std::to_string(n) + " at " + std::to_string((int)x) + "," + std::to_string((int)y)
-        + " (object " + std::to_string(g_GpCore.MachineObject()) + ")");
+        + " (object " + std::to_string(g_GpCore.MachineObject()) + "); trace budget started over");
     if (g_GpEventRows[(int)GpNs::Event::Create].route == GpNs::Route::Missing)
         Out("gambaprobe spawn: WARNING - the event rows are not detoured (`gambaprobe hook` first), so create= and alarm9= cannot count");
 }
@@ -47638,14 +47728,18 @@ static void GpShowRow(int row, const std::string& what, GpNs::Route route, bool 
 }
 
 // `status`: the probe's line (on/off, the machine's events, every counter
-// summed), the lever's line, then every row's counters - a row nobody hooked
-// still prints, never left out.
+// summed), the lever's line, then, once `hook` has run, every row's counters
+// and route (a row whose install failed still prints), and which rows have
+// spent their trace budget.
 static void GpStatus()
 {
     Out(g_GpCore.StatusLine());
     Out("gambaprobe: machines=" + GpMachinesText() + " hooked=" + (g_GpHooked ? "yes" : "no"));
     Out(g_GpCore.RngLine());
     if (!g_GpHooked) return;
+    if (g_GpCore.SpentRows() > 0)
+        Out("gambaprobe: BUDGET SPENT on " + std::to_string(g_GpCore.SpentRows()) + " row(s) (marked below): their calls since"
+            " are counted, not described - send `gambaprobe trace` before the next spin");
     for (int i = 0; i < GpNs::kEventCount; ++i) {
         GpEventRow& t = g_GpEventRows[i];
         GpShowRow(GpNs::EventRowOf(static_cast<GpNs::Event>(i)), "event " + std::string(GpNs::kEvents[i].event), t.route, t.tried, t.status, t.lastShown);
@@ -47681,14 +47775,18 @@ static void GpUsage()
 {
     Out("gambaprobe: research instrument for docs/gamba-machine-research.md (research build only); " + g_GpCore.StatusLine());
     Out("  hook                       detour the machine's events (compiled-code table), its scripts (HookOneScript) and the"
-        " RNG/instance builtins (HookBuiltin), share the ones another install holds, and arm; each row ends detoured,"
-        " shared, table-only or missing. Again: re-arm. Refused while citrace, jumpprobe or jumpscenery holds a builtin");
-    Out("  spawn                      one " + GpMachineName() + " at the local player, depth 0 (the Create_0/Alarm_9 control)");
+        " RNG/instance builtins (HookBuiltin), share or detour under the ones another install holds, and arm; each row ends"
+        " detoured, detoured-under, shared, table-only or missing. Again: re-arm. Refused while citrace, jumpprobe or"
+        " jumpscenery holds a builtin");
+    Out("  trace                      a new trace window: every row's budget starts over (send it right before each measured spin)");
+    Out("  spawn                      one " + GpMachineName() + " at the local player, depth 0 (the Create_0/Alarm_9 control);"
+        " starts a new trace window");
     Out("  rng <value> [count]        answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
         + ") RNG builtin calls whose self is a machine with value (choose: its argument #value); rng off | rng");
     Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
     Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)
-        + " new lines per row are logged)");
+        + " new lines per row, " + std::to_string(GpNs::kTraceLinesPerKey) + " per key, are logged each window; BUDGET SPENT"
+        " marks a row that only counts)");
     Out("  off | 0                    disarm and lever off; the hooks stay and only count");
 }
 
@@ -47700,6 +47798,7 @@ static void GpCommand(const std::string& rest)
     const std::string sub = Lower(tok[0]);
     const std::vector<std::string> tail(tok.begin() + 1, tok.end());
     if (sub == "hook") { GpInstall(); return; }
+    if (sub == "trace") { GpTrace(); return; }
     if (sub == "spawn") { GpSpawn(); return; }
     if (sub == "rng") { GpRng(tail); return; }
     if (sub == "drop") { GpDrop(); return; }
