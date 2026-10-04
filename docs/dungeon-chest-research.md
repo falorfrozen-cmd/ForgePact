@@ -860,6 +860,86 @@ fix.
 
 **Attempt 2**: not yet run (the fixed player build, the whole procedure above).
 
+## Live procedure 3
+
+A short session on the player DLL rebuilt after Live procedure 2's two fails
+were fixed: the head label's single-frame size flicker (D14, the label now
+draws in `__newfont6` set by name every draw) and the late latch (D15, the
+kill that reaches the threshold latches). One Pumpkin Cellar run, on at 50 %,
+countdown form `both`.
+
+- build: the ship DLL `modfiles_shipped\BloodPactPlugin.dll`, its SHA-256 the
+  one on disk at dispatch, recorded with the session (Live procedure 2's
+  installed hash was not the first build's, because a later criteria run
+  rebuilt it); the panel from this branch's `panel/dist`.
+- character: save slot 14 (Sorak). Pumpkin Cellar on the Pumpkin Patch map,
+  with a Cellar Key. Live procedure 2 ended with the mod off and form `head`,
+  and restored its backup, so this session starts there.
+- control: `ping` answers `pong…`.
+- marker: `dungeonchest status` prints a line starting `dungeonchest: off`
+  that contains ` labelFont=` and ` latchedAt=0` (this build; Live procedure
+  2's DLL has neither).
+- kill-hook control: `headhunter status` prints `killHook=<n>`.
+- panel route: as in Live procedure 2 (headless Edge through playwright-core
+  on http://127.0.0.1:8780, using `#mod_dungeon_chest`, `#dcpval` and
+  `#dungeon_chest_countdown`). No IPC command is typed for a panel step. The
+  panel is stopped by its PID at teardown.
+- per-frame capture: Live procedure 2's method (its `on-head-steady`
+  per-frame paragraph):
+  - .NET `System.Drawing` `Graphics.CopyFromScreen` of the label's region
+    only, DPI-aware, into in-memory bitmaps for ≥ 1.0 s;
+  - saved to the operator's scratchpad afterwards, never the repository;
+  - per frame, the bounding box of the label's bright text pixels;
+  - scenery pixels that change (Live procedure 2: a torch glow at the label's
+    right end) excluded the way Live procedure 2 did, with the capture saying
+    how.
+- pacing: before the run the owner is asked to stop when told. `status` is
+  read about every 15 s.
+  - First stop: at `remaining=` ≤ 60, then batches of at most 5 kills until
+    the label shows.
+  - Second stop: at `remaining=` ≤ 10.
+- steps:
+  1. Panel: switch on, type 50, Enter; form → both. Expected:
+     `dungeonchest: 50% …` with `countdown=both`.
+  2. Person: Cellar Key at the entrance. `dungeonchest status` → `total=T`
+     with T > 0 and `threshold=ceil(T/2)`. Both recorded.
+  3. First stop, label up:
+     - `dungeonchest status` read, and `labelFont=`, `fontSwitches=` and
+       `guiResizes=` recorded.
+     - Person: stand still for ≥ 10 s.
+     - A screenshot to locate the label, then the per-frame capture
+       (≥ 1.0 s), then `dungeonchest status` again.
+     - `on-head-steady` needs all three:
+       - ≥ 250 frames, and 0 of them with a label width different from the
+         most common width;
+       - `labelFont=` is not `inherited`;
+       - the owner, asked after standing, saw no jitter, flicker, shake or
+         size change.
+     - `font-cause` (research): `fontSwitches=` rose during the stand-still
+       (the inherited font switched under the label: cause measured) or did
+       not (not observed). The `guiResizes=` change is recorded beside it.
+     - `label-look` (research): the owner's words on the label's size and
+       readability.
+  4. Person: kill on to the second stop; `status` read and `threshold=`
+     recorded. Then kill through at a normal pace. Expected:
+     - `latch-exact`: exactly one `out.txt` line `dungeonchest: unlocked early
+       at K/T' alive=N`, where K equals that `threshold=` and N > 0; then
+       `status` → `latched=1 latchedAt=` equal to `threshold=`.
+     - `on-ready-chat`: `chatLines=` rose since the second stop and `chat=ok`
+       is still shown; the owner saw `Chest: ready to open`.
+  5. Person: open the chest while `status` shows `alive=` > 0
+     (`on-opens-early`).
+  6. Panel: form → head; switch off → `dungeonchest: off …`.
+- cases: one ordinary run. The off baseline, the other forms and the census
+  were measured in Live procedure 2 and do not change here.
+- checks: `dll-hash`; `marker`; `control`; `on-head-steady`; `font-cause`;
+  `label-look`; `latch-exact`; `on-ready-chat`; `on-opens-early`.
+- The saves backup is restored after the session, as always.
+
+### Results
+
+Not yet run.
+
 ## Route
 
 How the mod makes the chest openable is chosen by what Live procedure 1
