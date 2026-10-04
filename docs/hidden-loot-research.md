@@ -37,7 +37,7 @@ facts established here are also recorded in the hub's
 | Whether hidden items outlive the zone | No. The zone's end ran Clean Up on 809 of 809 hidden items, and none were left | **Measured**, Live 1's `zone-end-cleanup` and `zone-change-gone` |
 | Whether hidden items reach the save | **Not observed.** `saves-diff`, read with 2,736 hidden items still on the ground and before any zone change, is the check that answers it; its control failed. `reload-none` landed in town | Live 1's `saves-diff` and `reload-none`, both `not-observed` |
 | A mod that hides, sleeps or refuses filtered items | **Sleep loot your filter hides** (`hiddenloot`, part 2b, workorder `forgepact-issue-95-mod`), off by default: a drop the game's filter hides is put to sleep at the end of its frame, and shown while a key is held. It refuses nothing and decides nothing itself. Part 2a (`forgepact-issue-95`) shipped no mod | **Reading of our own code**; harness-verified 2026-09-28 (`tests/test_hidden_loot_behavior.py`); **measured** live on real monster drops, through the hold and release of Left Alt, off, the switch-on walk and the zone's end, in Live 2 of `forgepact-issue-95-mod` (2026-09-28); `LootGroundDrop`, a pickup while shown and the table-only fallback **not observed live** ([Live 2 results](#live-2-results-2026-09-28)); the reduced hook **measured** on real monster drops in Live 3 (2026-10-02, `create-slept`, [Live 3 results](#live-3-results-2026-10-02)) |
-| Which ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee, and no path through it was traced | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept` |
+| Which ground-drop entry points reach `LootGroundInit` | `LootGroundCreateFromItem` and `LootGroundDrop` call it; `LootGroundCreate` names it as a callee, and no path through it was traced. A player's bag drop reaches it | **Static reading**, 2026-09-28 ([The mod](#the-mod)). The hook on it, installed with both routes, fired on the game's own monster drops: **measured**, Live 2's `create-slept`. The bag drop: **measured** 2026-10-04, with `LootGroundDrop`'s detour at 0 ([loot-announcement-research.md](loot-announcement-research.md), Live procedure 2) |
 | Whether a sleeping hidden item outlives the zone | No. With 1,495 items asleep, the zone's end ran Clean Up 1,495 times and Destroy 0 | **Measured**, Live 2's `zone-end-asleep` |
 | What the hook keeps of a drop call past the call | Durable handles only: inside the call a number or a reference is kept, an instance pointer is asked `instance_exists` and replaced by its own `id`, anything else becomes undefined; no raw pointer reaches the frame's end ([The mod](#the-mod)) | **Reading of our own code**; harness-verified 2026-10-02, with a runner that counts every builtin handed a dead instance pointer reading 0. Live 2 ran the earlier hook, which kept the pointers. Live 3 ran this one on real monster drops (`inits=473 slept=462 unidentified=0 errors=0`) and 1,000 `lootspawn` calls, and the runner errors of that session came from another hook of ours, not this one: **measured** ([Live 3 results](#live-3-results-2026-10-02)). Whether `instance_exists` on an item struct is safe on this runtime is **not observed**: argument 1 never arrived as an object, so the hook never asked it ([Not established](#not-established)) |
 | Which argument of `LootGroundInit` carries the new ground item | Argument 0, as a reference, in 1,473 of 1,473 calls (473 monster drops, 1,000 `lootspawn` copies); argument 1 never arrived as an object (its kind read `other`); `self` was a live instance on every monster drop | **Measured**, Live 3's `candidate-slots` and `arg-kinds` ([Which argument carries the item](#which-argument-carries-the-item-candidate-slots-arg-kinds)); the `(instance, item)` order was a **static reading** before it |
@@ -78,8 +78,10 @@ our own words; what the decompiler showed stays on the researcher's machine.
   not number. **Static reading.**
 - **The filter verdict is computed inside `LootGroundInit`.**
   `LootGroundCreateFromItem(x, y, item)` calls `CreateLootInFreePos` to make the
-  instance and then `LootGroundInit(instance, item)`. `LootGroundDrop`, the
-  path of a player dropping an item from the bag, calls `LootGroundInit` too.
+  instance and then `LootGroundInit(instance, item)`. `LootGroundDrop` calls
+  `LootGroundInit` too; this doc read it as the bag drop from its name and its
+  `RemoveItemFromMap` call, which is a reading, not a measurement (see [The
+  mod](#the-mod)).
   `LootGroundInit` reads the bound `m_LootFilter` method off the instance and
   calls it, behind a guard whose condition was not read (`skipLootFilter` is
   the obvious candidate). So by the time `LootGroundCreateFromItem` returns,
@@ -318,12 +320,18 @@ evaluates the filter itself or refuses a drop.
 **The hook point, and why there.** All three ground-drop entry points reach
 `LootGroundInit`, which runs the item's bound filter closure and leaves the
 verdict on the new instance: `LootGroundCreateFromItem` (monster drops) calls
-it once after making the instance, `LootGroundDrop` (an item dropped from the
-bag) calls it at two sites, and `LootGroundCreate`'s body names it as a callee
-once. **Static reading**, 2026-09-28, in the local Ghidra project; the third
-is a listing of callees, not a traced path. So one hook, on `LootGroundInit`,
-covers monster drops and the bag drop, and whichever of `LootGroundCreate`'s
-items pass through it. Which of those items do is not established (see
+it once after making the instance, `LootGroundDrop` calls it at two sites,
+and `LootGroundCreate`'s body names it as a callee once. **Static reading**,
+2026-09-28, in the local Ghidra project; the third is a listing of callees,
+not a traced path. That `LootGroundDrop` is the player's bag drop was read
+from its name and its `RemoveItemFromMap` call only. On 2026-10-04 a bag drop
+reached `LootGroundInit` while `LootGroundDrop`'s both-route detour counted
+0, and that detour has never counted a call live, so "the bag drop goes
+through `LootGroundDrop`" is not observed, not "does not happen"
+([loot-announcement-research.md](loot-announcement-research.md), Live
+procedure 2). So one hook, on `LootGroundInit`, covers monster drops and the
+bag drop (the bag drop now **measured**, by that session), and whichever of
+`LootGroundCreate`'s items pass through it. Which of those items do is not established (see
 [Not established](#not-established)). Live 2 measured the hook only on
 `LootGroundCreateFromItem`'s drops: monster drops and `lootspawn`. Hooking
 the entry points instead would take three hooks, and two of them already
@@ -474,7 +482,7 @@ are pinned by `tests/test_hidden_loot_mod_contract.py`, the panel by
 hook installed with both routes and fired on the game's own monster drops, the
 hold and release of the key under injected input, off, the switch-on walk, and
 Clean Up at the zone's end for sleeping loot. **Not observed live:**
-`LootGroundDrop` (an item dropped from the bag), an item picked up while shown
+`LootGroundDrop` (read as the bag drop, a reading only), an item picked up while shown
 (`gone=` stayed 0), and the table-only fallback pass (the route was `both`);
 the harness alone covers them.
 
@@ -557,7 +565,7 @@ awake ground items only, and `hiddenloot stat`'s `asleep-now` counts the rest.
 - **Which route carried the drop calls was not separated.** `route=both` says
   the detour and the table swap were both in place, and `create-slept` says
   the hook fired on real monster drops; nothing counted the two routes apart.
-- **Not observed live:** `LootGroundDrop` (an item dropped from the bag), an
+- **Not observed live:** `LootGroundDrop` (read as the bag drop, a reading only), an
   item picked up while shown (`gone=` stayed 0 all session), and the
   table-only fallback pass (`passes=0`, the route was `both`). The harness
   covers each; no session has.
