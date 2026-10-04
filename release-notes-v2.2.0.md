@@ -163,6 +163,24 @@ experience.
   relic by one level, left 10/10 relics alone and stayed put when only those
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
+- **Dungeon chest opens early (#31).** A new setting on the Mods tab, under
+  Gameplay, after Bosses: a switch and a slider from 50 to 95 %, or click the
+  number next to the slider and type it. With the switch on, the chest at the
+  end of a key dungeon opens once that share of all of the dungeon's
+  monsters, spawned or not, is dead, instead of every last one, so you no
+  longer hunt down the last few stragglers. The total is every monster the
+  dungeon plans when it loads, so the count of kills left only goes down.
+  That total is an estimate from the dungeon's monster spawners, so in some
+  dungeons the chest may open a little sooner or later than the share you set.
+  When 50 or fewer kills are left, a countdown tells you how many: above your
+  character, in chat, or both, whichever you pick under the switch.
+  It is off by default: turn it on in the panel, and the slider rests at 75 %
+  until you move it. Checked in play on 2026-10-04 in two Pumpkin Cellar runs
+  at 50 %: the chest opened with over 100 monsters left in the dungeon, the
+  countdown showed above the character, in chat and both, as picked, and in
+  the second run, after a fix to the label's font, the label above the
+  character held steady while standing still. A boss
+  dungeon has not been checked yet.
 - **Satanic Zone: choose the zone (#157).** Two new switches in
   World → Satanic Zone, both off by default. **Keep the zone you are in
   satanic** makes wherever you go count as the Satanic Zone, so its modifiers

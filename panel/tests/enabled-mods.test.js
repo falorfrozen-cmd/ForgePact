@@ -96,6 +96,17 @@ test('sleep loot your filter hides is an entry while on, off by default, and its
   assert.deepEqual(enabledControls(cfg({ mod_hidden_loot_key: 0, mod_hidden_loot: true })), ['mod_hidden_loot']);
 });
 
+test('dungeon chest\'s countdown form is never an entry: it rides on the switch, head by default', () => {
+  assert.ok(!BOOLEAN_MODS.includes('dungeon_chest_countdown'));
+  assert.equal(DEFAULTS.dungeon_chest_countdown, 'head');
+  // Another form with the switch off is still nothing on, and with it on
+  // still the switch's one entry.
+  for (const form of ['head', 'chat', 'both']) {
+    assert.deepEqual(enabledControls(cfg({ dungeon_chest_countdown: form })), [], form);
+    assert.deepEqual(enabledControls(cfg({ dungeon_chest_countdown: form, mod_dungeon_chest: true })), ['mod_dungeon_chest'], form);
+  }
+});
+
 test('jump through scenery is an entry while on and off by default', () => {
   assert.ok(BOOLEAN_MODS.includes('mod_jump_scenery'));
   assert.equal(DEFAULTS.mod_jump_scenery, false);
@@ -117,6 +128,20 @@ test('Bosses is an entry while rare or ancient, and off by default', () => {
   assert.deepEqual(enabledControls(cfg({ boss_rarity: 'off' })), []);
   const { boss_rarity, ...older } = cfg();
   assert.deepEqual(enabledControls(older), [], 'an older config without the key reads as off');
+});
+
+test('Dungeon chest opens early is an entry while its switch is on, whatever the percentage, and off by default', () => {
+  assert.equal(DEFAULTS.mod_dungeon_chest, false, 'off by default');
+  assert.equal(DEFAULTS.dungeon_chest_pct, 75);
+  assert.ok(!BOOLEAN_MODS.includes('mod_dungeon_chest'), 'its off is `dungeonchest off`, not a `verb 0` boolean');
+  for (const pct of [50, 75, 95]) {
+    assert.deepEqual(enabledControls(cfg({ mod_dungeon_chest: true, dungeon_chest_pct: pct })), ['mod_dungeon_chest'], pct);
+  }
+  // The percentage rides on the switch's entry: moved with the switch off,
+  // it is still nothing on.
+  assert.deepEqual(enabledControls(cfg({ dungeon_chest_pct: 90 })), []);
+  const { mod_dungeon_chest, dungeon_chest_pct, ...older } = cfg();
+  assert.deepEqual(enabledControls(older), [], 'an older config without the keys reads as off');
 });
 
 test('density is an entry only while switched on above x1, through den_on', () => {
@@ -183,9 +208,11 @@ test('never entries: panel settings, scopes, child options, the theme and the Sa
   assert.deepEqual(enabledControls({ ...c, map_reveal: true }), ['map_reveal']);
 });
 
-test('entries come out in rule order: booleans, skill timer, bosses, density, sliders', () => {
+test('entries come out in rule order: booleans, skill timer, bosses, dungeon chest, density, sliders', () => {
   const c = withSection('stats', 'exp', 5, {
-    beacon: true, map_reveal: true, mod_skill_timer_style: 'arc', boss_rarity: 'ancient', density_on: true, density: 2, rarity_rare: 10,
+    beacon: true, map_reveal: true, mod_skill_timer_style: 'arc', boss_rarity: 'ancient', mod_dungeon_chest: true,
+    density_on: true, density: 2, rarity_rare: 10,
   });
-  assert.deepEqual(enabledControls(c), ['map_reveal', 'beacon', 'mod_skill_timer_style', 'boss_rarity', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
+  assert.deepEqual(enabledControls(c),
+    ['map_reveal', 'beacon', 'mod_skill_timer_style', 'boss_rarity', 'mod_dungeon_chest', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
 });

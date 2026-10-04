@@ -120,6 +120,7 @@ enum class Mod : uint8_t {
     stashmoveall,
     ipc,           // PollCommands: reading and running the panel's commands
     setup,         // the one-time setup at start-up: LoadConfig and InstallHook (D18)
+    dungeonchest,  // Dungeon chest opens early (issue #31): its poll and its countdown draw
     Count
 };
 inline constexpr size_t kModCount = static_cast<size_t>(Mod::Count);
@@ -129,6 +130,7 @@ inline const char* ModName(Mod m) noexcept
     static const char* const names[kModCount] = {
         "none", "frame", "density", "mapreveal", "drops", "autoprospect",
         "hudlabels", "farsleep", "gems", "miner", "stashmoveall", "ipc", "setup",
+        "dungeonchest",
     };
     const size_t i = static_cast<size_t>(m);
     return i < kModCount ? names[i] : "none";

@@ -260,8 +260,11 @@ class FrameProfilerContractTests(unittest.TestCase):
     def test_it_measures_and_changes_nothing(self):
         # No hook, no write into the game: the adapter reads a table entry,
         # named built-ins and three read-only values once a second.
-        adapter = _code(self.plugin[self.plugin.index("// ===== Frame profiler (`frameprof`) ====="):
-                                    self.plugin.rindex("static void RunCommand(const std::string& line)")])
+        # The adapter's region ends at the next `// ===== ` section banner:
+        # later sections (the incident monitor, the dungeon chest probe) sit
+        # between it and RunCommand and are pinned by their own tests.
+        start = self.plugin.index("// ===== Frame profiler (`frameprof`) =====")
+        adapter = _code(self.plugin[start:self.plugin.index("\n// ===== ", start + 1)])
         for forbidden in ("MmCreateHook", "HookOneScript", "SetBuiltin(", "PC_SetVariable"):
             self.assertNotIn(forbidden, adapter, forbidden)
         # A capture writes no shared ForgePact state either: the monster

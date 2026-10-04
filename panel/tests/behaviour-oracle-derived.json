@@ -63,7 +63,10 @@
   "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
   "#sw_drops_mining_ore_rolls",
   "#openreports",
-  "#boss_rarity"
+  "#boss_rarity",
+  "#mod_dungeon_chest",
+  "#dungeon_chest_pct",
+  "#dungeon_chest_countdown"
  ],
  "steps": [
   {
@@ -6065,6 +6068,279 @@
     },
     "cmds": {
      "same": 484
+    }
+   }
+  },
+  {
+   "step": 487,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 75",
+      "dungeonchest countdown head"
+     ]
+    }
+   }
+  },
+  {
+   "step": 488,
+   "control": "#dungeon_chest_pct",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 95
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 95"
+     ]
+    }
+   }
+  },
+  {
+   "step": 489,
+   "control": "#dungeon_chest_pct",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 50
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 50"
+     ]
+    }
+   }
+  },
+  {
+   "step": 490,
+   "control": "#dungeon_chest_pct",
+   "action": "type",
+   "value": "80",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 80
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 80"
+     ]
+    }
+   }
+  },
+  {
+   "step": 491,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest off"
+     ]
+    }
+   }
+  },
+  {
+   "step": 492,
+   "control": "#dungeon_chest_pct",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_pct",
+        "value": 95
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 493,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_dungeon_chest",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest 95",
+      "dungeonchest countdown head"
+     ]
+    }
+   }
+  },
+  {
+   "step": 494,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_dungeon_chest\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 491
+    },
+    "cmds": {
+     "same": 491
+    }
+   }
+  },
+  {
+   "step": 495,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 493
+    },
+    "cmds": {
+     "same": 493
+    }
+   }
+  },
+  {
+   "step": 496,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "chat",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "chat"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown chat"
+     ]
+    }
+   }
+  },
+  {
+   "step": 497,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "both",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "both"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown both"
+     ]
+    }
+   }
+  },
+  {
+   "step": 498,
+   "control": "#dungeon_chest_countdown",
+   "action": "select",
+   "value": "head",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "dungeon_chest_countdown",
+        "value": "head"
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "dungeonchest countdown head"
+     ]
+    }
+   }
+  },
+  {
+   "step": 499,
+   "control": "#mod_dungeon_chest",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 491
+    },
+    "cmds": {
+     "same": 491
     }
    }
   }

@@ -25,7 +25,10 @@ assertions pass on the pre-change panel and on the result.
 `qolCard`/`itemsCard`/`gameplayCard`, in that order, none repeating its
 sub-tab's name as a heading (the strip names them), `qolCard` holding exactly
 the fifteen Quality of Life controls in the assignment table's order, and
-`gameplayCard` holding exactly the Bosses select (`boss_rarity`, issue #44).
+`gameplayCard` holding exactly the Bosses select (`boss_rarity`, issue #44)
+and Dungeon chest opens early's switch, range and countdown form select
+(`mod_dungeon_chest`, `dungeon_chest_pct`, `dungeon_chest_countdown`, issue
+#31), in that order.
 Issue #12 banned the word "gameplay" and the id `gameplayCard`; the owner
 brought them back for the third sub-tab alone (2026-10-02), so "gameplay"
 may appear only as that sub-tab's own id, `aria-controls`/`aria-labelledby`
@@ -88,8 +91,10 @@ QOL_CONTROL_IDS = [
     "mod_skill_timer_style",
 ]
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
-# The Gameplay sub-tab (issue #44) holds the Bosses select and nothing else.
-GAMEPLAY_CONTROL_IDS = ["boss_rarity"]
+# The Gameplay sub-tab holds the Bosses select (issue #44), then Dungeon chest
+# opens early's switch and range and its countdown form's child select (issue
+# #31; the select, the owner's choice of 2026-10-04), and nothing else.
+GAMEPLAY_CONTROL_IDS = ["boss_rarity", "mod_dungeon_chest", "dungeon_chest_pct", "dungeon_chest_countdown"]
 ALL_CONTROL_IDS = QOL_CONTROL_IDS + ITEMS_CONTROL_IDS + GAMEPLAY_CONTROL_IDS
 
 # The files allowed to name the Gameplay panel's id: its markup, the strip,
@@ -101,6 +106,7 @@ PARENT_CHILD_ROWS = [
     ("map_reveal", "map_reveal_packs_row"),
     ("mod_auto_prospect", "mod_auto_prospect_bag_row"),
     ("mod_hidden_loot", "mod_hidden_loot_key_row"),
+    ("mod_dungeon_chest", "dungeon_chest_countdown_row"),
 ]
 
 FORGED_MECHANIC_TEXT = "forged with Mechanic:"
@@ -339,7 +345,7 @@ class ModsCategorySplitTests(unittest.TestCase):
         self.assertNotIn("<h2>Quality of Life</h2>", HTML)
         self.assertNotIn("<h2>Gameplay</h2>", HTML)
 
-    def test_gameplay_card_holds_exactly_the_bosses_control(self):
+    def test_gameplay_card_holds_exactly_the_gameplay_controls(self):
         cards = _mods_cards(HTML)
         body = _card_by_id(cards, "gameplayCard")
         self.assertEqual(re.findall(r'<(?:input|select)\b[^>]*\bid="([^"]+)"', body),
