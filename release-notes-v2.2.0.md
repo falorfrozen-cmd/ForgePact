@@ -163,6 +163,25 @@ experience.
   relic by one level, left 10/10 relics alone and stayed put when only those
   were on screen. The relics in that check were placed by a test command, so
   a relic the game itself drops has not been watched being collected yet.
+- **Satanic Zone: choose the zone (#157).** Two new switches in
+  World → Satanic Zone, both off by default. **Keep the zone you are in
+  satanic** makes wherever you go count as the Satanic Zone, so its modifiers
+  follow you (drops not yet checked); towns and sub-areas are left alone, and
+  the plugin keeps the game's own value in step about four times a second
+  because the game re-rolls it on its own. **Every zone counts as satanic** makes the
+  game's own "is this a Satanic Zone?" answer yes wherever you are. The
+  `satzone` command pins one exact zone instead (`satzone pin here`,
+  `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
+  off the game rolls its zone exactly as before. While on, each switch shows up
+  in **Enabled mods**, with a Turn off button like any other mod. The zone the
+  game keeps is a protected value: the plugin reads and writes it through the
+  game's own `GPV`/`SPV`, never a fixed number. Measured on the research build
+  (2026-10-03): the game asks `LoadSatanicZone` about 150 times a second with
+  the resolved zone's room index, and that value can be written, sticking
+  until the game's next roll. Checked in play on 2026-10-04: with the zone
+  pinned, entering it put the zone's satanic buffs and debuffs on the
+  character, and they showed on the buff bar. Two things are not watched yet:
+  a relic drop in a satanic zone, and the Every zone switch's effect in play.
 - **Jump through scenery (#16).** A new switch in Mods → Quality of Life,
   off by default. Until now a jump aimed across a rock, a fence, a cart or
   other scenery did not move you at all. With this on, the jump carries you
@@ -246,7 +265,6 @@ experience.
   mods list use the same names. What the rows do is unchanged, and the shares
   you set carry over: a share you had on Rare now shows on Ancient, and one you
   had on Ancient shows on Legion.
-
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel

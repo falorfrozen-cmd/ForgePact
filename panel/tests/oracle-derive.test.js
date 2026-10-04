@@ -5,7 +5,8 @@
 // the list can show, one theme step per THEMES entry, after the one step that
 // opens Setup, where the theme is, then the key supplement's slider (Prime
 // Evil Parts), entered on the Loot tab, then the boolean mods no recording
-// has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, then the show
+// has (NATIVE_BOOLEANS - Mods › Quality of Life, with the two Satanic Zone
+// control switches entering the World tab and back), then the show
 // key's select of Sleep loot your filter hides, then the switched sliders no
 // recording has (NATIVE_SLIDERS), entered on Modifiers, and the Loot tab's
 // after them, then the panel's own Incident reports controls (PANEL_BOOLEANS,
@@ -32,9 +33,21 @@ const SUPPLEMENT = JSON.parse(read('./behaviour-oracle-gems.json'));
 const KEY_SUPPLEMENT = JSON.parse(read('./behaviour-oracle-primeevil.json'));
 const SLIDERS = LEGACY.controls.filter((c) => switchIdOf(c));
 const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
-// The native booleans' steps close the file: the Mods tab and its Quality of
-// Life sub-tab once, then on, off, on and Turn off for each.
-const NATIVE_STEPS = 2 + 4 * NATIVE_BOOLEANS.length;
+// The native booleans' steps close the file: one tab step each time the tab
+// changes (the first opens Mods) and one sub-tab step each time the sub-tab
+// changes on it (Quality of Life opens with Mods; the World-tab pair makes
+// Jump through scenery re-enter both), then on, off, on and Turn off for each.
+const NATIVE_NAV = (() => {
+  let count = 0;
+  let tab = null;
+  let sub = null;
+  for (const n of NATIVE_BOOLEANS) {
+    if (n.tab !== tab) { count += 1; tab = n.tab; sub = null; }
+    if (n.sub && n.sub !== sub) { count += 1; sub = n.sub; }
+  }
+  return count;
+})();
+const NATIVE_STEPS = NATIVE_NAV + 4 * NATIVE_BOOLEANS.length;
 // Then the show key's select: its switch on, one select per code, its switch off.
 const KEY_STEPS = 2 + HIDDEN_LOOT_KEY_CODES.length;
 // Then the native sliders': one tab step each time the tab changes (Modifiers,
@@ -115,7 +128,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 68 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 70 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -123,7 +136,7 @@ test('the counts: 132 switch clicks, 68 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2 + NATIVE_SELECTS.length);
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 68);
+  assert.equal(quick.length, 70);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -211,7 +224,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
     ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
-      'mod_jump_scenery']);
+      'satanic_follow', 'satanic_everywhere', 'mod_jump_scenery']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
@@ -237,10 +250,23 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   for (const n of NATIVE_BOOLEANS) assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), n.key);
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
   assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
-  // All of them sit on the Quality of Life sub-tab, so it is entered once and
-  // each boolean's four steps follow in turn.
-  NATIVE_BOOLEANS.forEach(({ key, verb, restate }, i) => {
-    const first = at + 2 + 4 * i;
+  // Each entry's four steps follow in list order, after the navigation steps
+  // the loop emits whenever the tab or sub-tab changes: the World-tab pair
+  // moves the loop to World and back (Jump through scenery re-enters Mods >
+  // Quality of Life).
+  let cursor = at + 2;
+  let tab = 'tab:mods';
+  let sub = 'subtab:qol';
+  for (const { key, tab: entryTab, sub: entrySub, verb, restate } of NATIVE_BOOLEANS) {
+    if (entryTab !== tab) {
+      assert.deepEqual([steps[cursor].control, steps[cursor].action], [entryTab, 'click'], key);
+      cursor += 1; tab = entryTab; sub = null;
+    }
+    if (entrySub && entrySub !== sub) {
+      assert.deepEqual([steps[cursor].control, steps[cursor].action], [entrySub, 'click'], key);
+      cursor += 1; sub = entrySub;
+    }
+    const first = cursor;
     const cb = '#' + key;
     assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action]),
       [[cb, 'click'], [cb, 'click'], [cb, 'click'], [quickDisable(key), 'click']]);
@@ -251,7 +277,10 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
     assert.deepEqual(off.expect, { posts: { is: [{ url: '/api/set', body: { key, value: false } }] }, cmds: { is: [`${verb} 0`] } });
     assert.deepEqual(steps[first + 2].expect, { posts: { same: on.step }, cmds: { same: on.step } });
     assert.deepEqual(steps[first + 3].expect, { posts: { same: off.step }, cmds: { same: off.step } });
-  });
+    cursor += 4;
+  }
+  // The block ends exactly where the show key's select begins.
+  assert.equal(cursor, steps.length - TAIL + NATIVE_STEPS);
 });
 
 test('the show key\'s select follows the native booleans: its switch on, Ctrl, None, Left Alt, its switch off', () => {
@@ -269,7 +298,8 @@ test('the show key\'s select follows the native booleans: its switch on, Ctrl, N
   const [on, off] = [nativeAt, nativeAt + 1];
   assert.equal(steps[on].control, parent);
   // The switch's own steps left it off, and the select is disabled while it
-  // is; the native booleans after it (Jump through scenery) leave it alone.
+  // is; the native booleans after it (the Satanic Zone switches and Jump
+  // through scenery) leave it alone.
   assert.equal(steps[nativeAt + 3].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
   for (let i = nativeAt + 4; i < at; i++) assert.notEqual(steps[i].control, parent, i);

@@ -855,6 +855,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Jump through scenery, the Mods tab's switch (ForgePact #16;
             # test_jump_scenery_mod_contract.py).
             "jumpscenery",
+            # Satanic Zone control (ForgePact #157; test_satanic_zone_control.py).
+            "satzone",
         }
         self.assertEqual(entries, expected)
 
