@@ -18,17 +18,19 @@ public class DerefNear extends GhidraScript {
                 long na = at + d;
                 try {
                     long v = mem.getLong(toAddr(na));
-                    StringBuilder sb = new StringBuilder("  [" + (d >= 0 ? "+" : "") + Long.toHexString(d) + "] 0x" + Long.toHexString(v));
+                    StringBuilder sb = new StringBuilder("  [" + off(d) + "] 0x" + Long.toHexString(v));
                     String s = ascii(v); if (s != null) sb.append("  -> \"" + s + "\"");
                     else if (mem.getBlock(toAddr(v)) != null) {
                         try { long v2 = mem.getLong(toAddr(v)); sb.append("  -> q=0x" + Long.toHexString(v2)); String s2 = ascii(v2); if (s2 != null) sb.append(" -> \"" + s2 + "\"");
                               long v3 = mem.getLong(toAddr(v + 8)); sb.append(" q+8=0x" + Long.toHexString(v3)); String s3 = ascii(v3); if (s3 != null) sb.append(" -> \"" + s3 + "\""); } catch (Exception e) {}
                     }
                     println(sb.toString());
-                } catch (Exception e) { println("  [" + d + "] unreadable"); }
+                } catch (Exception e) { println("  [" + off(d) + "] unreadable"); }
             }
         }
     }
+    private static String off(long d) { return (d >= 0 ? "+" : "-") + Long.toHexString(Math.abs(d)); }
+
     private String ascii(long v) {
         try {
             Address ad = toAddr(v);
