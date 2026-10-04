@@ -9,7 +9,8 @@ loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
-the rocks, fences and carts that stop it.
+the rocks, fences and carts that stop it. A new **Loot announcements** switch,
+off by default, announces a Heroic, Angelic or Unholy drop in the chat.
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -226,6 +227,23 @@ experience.
   check has been seen holding a jump back in play, the check on locked
   doors and zone gates was not reached, and what the game does at the edge
   of the walkable map has not been observed.
+- **Loot announcements (#17).** A new switch in Mods → Quality of Life, off
+  by default. Online, the game announces a great drop in the chat; offline
+  it showed nothing. With this on, a Heroic, Angelic or Unholy item that
+  drops on the ground is announced once in the chat, as a red `SERVER:
+  <your character> found <item name>` line. This is not the game's own
+  online announcement, which could not be made to run offline: ForgePact
+  writes the line itself. Satanic, Mythic and lower items, gold, gems,
+  materials and relics are not announced. An item counts only when the game
+  has just made it, so an item you drop from your bag, or drop again after
+  picking it up, is not announced; in co-op, an item another player drops
+  is made anew on your side and can be. Nothing is sent over the network.
+  Checked in play on 2026-10-04: a placed Heroic and Angelic item were each
+  announced once and a Satanic one was not; the Heroic item, picked up and
+  dropped from the bag, was not announced again; nothing was announced with
+  the switch off; and with Magic Find raised, an item dropped by a monster
+  was announced (which one was not recorded). Dropping several items at
+  once and co-op were not tried.
 
 ## Changed
 
@@ -286,7 +304,7 @@ experience.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, three switches, an Incident reports card and a Gameplay page,
+gained a slider, four switches, an Incident reports card and a Gameplay page,
 so updating only the plugin leaves them out. Your existing settings are
 retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
 before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded
