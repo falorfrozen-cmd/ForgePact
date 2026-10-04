@@ -102,6 +102,10 @@ struct World {
     CInstance* inner = nullptr;         // a LoadAllModifiers that runs inside the outer one
     std::vector<std::string> reads;     // every stat LoadAllModifiers read, as tag:id=value
     std::vector<RValue> built;          // every AoE array the game built, to check it is untouched
+    // asset_get_index: an object name answered otherwise than by its SDK
+    // index (as a reference, undefined, -1), and how often each name was asked.
+    std::map<std::string, RValue> assets;
+    std::map<std::string, int> assetAsks;
 };
 static World world;
 
@@ -120,6 +124,9 @@ struct FakeRunner {
         if (n == "array_get") return (*a[0].items)[(size_t)a[1].ToDouble()];
         if (n == "array_set") { (*a[0].items)[(size_t)a[1].ToDouble()] = a[2]; return RValue(); }
         if (n == "asset_get_index") {
+            ++world.assetAsks[a[0].text];
+            const auto answer = world.assets.find(a[0].text);
+            if (answer != world.assets.end()) return answer->second;
             for (int i = 0; i < 7000; ++i) {
                 const auto object = static_cast<HeroSiege::Objects::GameObject>(i);
                 if (HeroSiege::Objects::GetObjectName(object) == a[0].text) return RValue((double)i);
@@ -297,6 +304,26 @@ static std::string Built() {
     }
     return s;
 }
+// A result as its caller received it: a number, a string as 'text', an array
+// as [..] marked `same` when it is the very array the game returned.
+static std::string Shape(const RValue& r, const RValue& game) {
+    if (r.m_Kind == VALUE_ARRAY) {
+        std::string s = "[";
+        for (size_t i = 0; i < r.items->size(); ++i) {
+            const RValue& e = (*r.items)[i];
+            s += (i ? "," : "") + (e.m_Kind == VALUE_STRING ? "'" + e.text + "'" : Num(e.ToDouble()));
+        }
+        return s + "]" + (r.items == game.items ? ":same" : ":copy");
+    }
+    if (r.m_Kind == VALUE_STRING) return "'" + r.text + "'";
+    return Num(r.ToDouble());
+}
+static std::string SpellShape(CInstance* self) {
+    RValue R;
+    return Shape(Dispatch("ReturnExtraSpellProjectiles", self, { RValue(0.0) }, R), world.spell);
+}
+static RValue Kind(int kind, double number) { RValue v; v.m_Kind = kind; v.number = number; return v; }
+static std::string Asks(const char* name) { return std::to_string(world.assetAsks[name]); }
 static int Installs() {
     int n = 0;
     for (const auto& [name, s] : world.scripts) n += s.installs;
@@ -475,6 +502,62 @@ int main() {
         out += " string=" + s.text + ":" + std::to_string(s.m_Kind);
         world.spell = RValue(6.0);   // the base-6 call that rides along with a cast
         out += " base6=" + Num(Spell(&cast.player));
+        return out;
+    });
+    // An in-scope result AddTo cannot change reaches the game as it was
+    // returned and is counted `skip`, before the first boost and after it.
+    Scenario("skip_unchangeable", [] {
+        Command("projamount 2");
+        world.spell = RValue("text");
+        std::string out = "before=" + SpellShape(&cast.player);
+        Command("list");
+        world.spell = RValue(1.0);
+        out += " number=" + SpellShape(&cast.player);
+        world.spell = RValue("text");
+        out += " string=" + SpellShape(&cast.player);
+        world.spell = RValue::Array({});
+        out += " empty=" + SpellShape(&cast.player);
+        world.spell = RValue::Array({ 0, 9 });
+        (*world.spell.items)[0] = RValue("x");
+        out += " head=" + SpellShape(&cast.player);
+        world.spell = RValue::Array({ 4, 9 });
+        out += " array=" + SpellShape(&cast.player);
+        Command("aoesize 50");
+        world.aoe = {};
+        out += " aoe=" + AoeArray(&cast.player);
+        Command("list");
+        return out;
+    });
+    // asset_get_index answering the player and the double cast as a
+    // reference (the second with a flag bit above the kind): still in scope.
+    Scenario("asset_as_ref", [] {
+        world.assets["Player_obj"] = Kind(VALUE_REF, ObjectIndex(HeroSiege::Objects::GameObject::Player_obj));
+        world.assets["Universal_Double_Cast_obj"] = Kind(VALUE_REF | kKindFlagBit,
+            ObjectIndex(HeroSiege::Objects::GameObject::Universal_Double_Cast_obj));
+        Command("projamount 2");
+        std::string out = "player=" + Num(Spell(&cast.player)) + " double=" + Num(Spell(&cast.doubleCast))
+                        + " merc=" + Num(Spell(&cast.merc));
+        out += " player2=" + Num(Spell(&cast.player));
+        return out + " asks=" + Asks("Player_obj") + "," + Asks("Universal_Double_Cast_obj");
+    });
+    // A name asset_get_index cannot resolve (undefined, -1): every call is
+    // unchanged and counted `other`, the name is asked once per arming and
+    // the unresolved line printed once per arming.
+    Scenario("unresolved_names", [] {
+        world.assets["Player_obj"] = RValue();
+        world.assets["Universal_Double_Cast_obj"] = RValue(-1.0);
+        Command("projamount 2");
+        std::string out = "player=" + Num(Spell(&cast.player));
+        out += "," + Num(Spell(&cast.player));
+        out += "," + Num(Spell(&cast.player));
+        out += " double=" + Num(Spell(&cast.doubleCast));
+        out += " asks1=" + Asks("Player_obj") + "," + Asks("Universal_Double_Cast_obj");
+        Command("list");
+        Command("projamount 3");
+        out += " rearm=" + Num(Spell(&cast.player));
+        out += "," + Num(Spell(&cast.doubleCast));
+        out += " asks2=" + Asks("Player_obj") + "," + Asks("Universal_Double_Cast_obj");
+        Command("list");
         return out;
     });
     // The first boosted call is reported once per arming; an out-of-scope

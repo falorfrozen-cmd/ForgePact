@@ -99,6 +99,9 @@ public:
         }
         state.value = value;
         state.first = kFirstPending;
+        // An object name that did not resolve is asked again, once, per arming.
+        if (m_PlayerIndex == kUnresolved) m_PlayerIndex = -1;
+        if (m_DoubleCastIndex == kUnresolved) m_DoubleCastIndex = -1;
         char b[96];
         sprintf_s(b, "skillslider %s -> +%g", info.key, value);
         Out(b);
@@ -131,6 +134,7 @@ private:
         int first = kFirstIdle;
         double firstNative = 0.0, firstBoosted = 0.0;
         long own = 0, doubleCast = 0, other = 0;   // calls met while the lever is non-zero
+        long skip = 0;                             // in-scope calls whose result AddTo could not change
         int lastOtherIndex = -2;                   // the object `lastOther` names; -1 unreadable
         std::string lastOther = "-";
     };
@@ -156,6 +160,10 @@ private:
 
     ScriptHook m_Hooks[kScriptCount];
     LeverState m_Levers[kLeverCount];
+    // An object index by name: -1 not asked yet, kUnresolved asked this
+    // arming without an answer. Neither can equal a real index (0 or more),
+    // so an unresolved name never matches an unreadable self.
+    static constexpr int kUnresolved = -2;
     int m_PlayerIndex = -1;       // Player_obj's object index, once resolved
     int m_DoubleCastIndex = -1;   // Universal_Double_Cast_obj's
 
@@ -226,10 +234,14 @@ private:
 
     // Adds `value` to the result and, on the first boosted call after
     // arming, prints what the game returned and what it now returns - once,
-    // so a hot path logs nothing further.
+    // so a hot path logs nothing further. A result AddTo cannot change
+    // reaches the game as it was and is counted `skip=`, so a boost that
+    // silently stopped applying shows in the status line.
     void Boost(RValue& r, double value, LeverState& state, int script) {
         double native = 0.0;
-        if (!AddTo(r, value, native)) return;
+        bool added = false;
+        try { added = AddTo(r, value, native); } catch (...) { added = false; }
+        if (!added) { ++state.skip; return; }
         if (state.first != kFirstPending) return;
         state.first = kFirstShown;
         state.firstNative = native;
@@ -298,21 +310,28 @@ private:
         } catch (...) { return -1; }
     }
 
-    // An object's index by its SDK name; asked again until it resolves.
+    // An object's index by its SDK name, which asset_get_index may answer as
+    // a number or a reference. Asked at most once per arming until it
+    // resolves; a name that does not resolve says so once, and the calls
+    // whose self is that object then count as `other`.
     static void Resolve(int& index, HeroSiege::Objects::GameObject object) {
-        if (index >= 0) return;
+        if (index >= 0 || index == kUnresolved) return;
+        const std::string name(HeroSiege::Objects::GetObjectName(object));
+        int resolved = -1;
         try {
-            const RValue v = g_Yytk->CallBuiltin("asset_get_index",
-                { RValue(std::string(HeroSiege::Objects::GetObjectName(object))) });
+            const RValue v = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
             const double n = IsNumber(v) || KindOf(v) == VALUE_REF ? v.ToDouble() : -1.0;
-            index = std::isfinite(n) && n >= 0.0 ? (int)n : -1;
-        } catch (...) { index = -1; }
+            resolved = std::isfinite(n) && n >= 0.0 && n <= 2147483647.0 ? (int)n : -1;
+        } catch (...) { resolved = -1; }
+        if (resolved >= 0) { index = resolved; return; }
+        index = kUnresolved;
+        Out("skillslider: cannot resolve " + name + " by name; its calls count as other");
     }
 
     // Is this call the player's own cast? Player_obj has no child objects and
     // Mercenary_obj's parent is Enemy_Aggroable_obj (SDK parent table), so an
-    // exact index match is the whole test. An unreadable index (-1) never
-    // matches an unresolved one (-1).
+    // exact index match is the whole test. Only a readable index (0 or more)
+    // is compared, so an unreadable self never matches an unresolved name.
     bool InScope(LeverState& state, CInstance* S) {
         const int index = SelfObjectIndex(S);
         if (index >= 0) {
@@ -372,7 +391,7 @@ private:
         return -1;
     }
 
-    // skillslider <lever> +<v> hook=<h> first=<f> own=<n> double=<n> other=<n> last-other=<name>
+    // skillslider <lever> +<v> hook=<h> first=<f> own=<n> double=<n> other=<n> skip=<n> last-other=<name>
     std::string StatusLine(int lever) const {
         const LeverInfo& info = Levers()[lever];
         const LeverState& state = m_Levers[lever];
@@ -396,7 +415,7 @@ private:
         sprintf_s(b, "skillslider %s +%g hook=", info.key, state.value);
         return std::string(b) + hook + " first=" + first + " own=" + std::to_string(state.own)
              + " double=" + std::to_string(state.doubleCast) + " other=" + std::to_string(state.other)
-             + " last-other=" + state.lastOther;
+             + " skip=" + std::to_string(state.skip) + " last-other=" + state.lastOther;
     }
 };
 

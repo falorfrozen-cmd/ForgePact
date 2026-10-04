@@ -58,7 +58,7 @@ def skill_sliders(header):
 
 
 def fresh_line(lever):
-    return f"skillslider {lever} +0 hook=none first=- own=0 double=0 other=0 last-other=-"
+    return f"skillslider {lever} +0 hook=none first=- own=0 double=0 other=0 skip=0 last-other=-"
 
 
 def refusal(script, route):
@@ -186,15 +186,15 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         })
         self.assertEqual(self.status_lines("amount_scope")[0],
                          "skillslider projamount +2 hook=native first=0->2 own=2 double=2 other=7 "
-                         "last-other=Mercenary_obj")
+                         "skip=0 last-other=Mercenary_obj")
 
     def test_baseline_last_other_names_the_object_or_reads_unknown(self):
         lines = [line for line in self.status_lines("last_other_named") if line.startswith("skillslider projamount ")]
         self.assertEqual(lines, [
             "skillslider projamount +1 hook=native first=waiting own=0 double=0 other=2 "
-            "last-other=Aztec_Sword_Skeleton_obj",
-            "skillslider projamount +1 hook=native first=waiting own=0 double=0 other=3 last-other=?",
-            "skillslider projamount +1 hook=native first=waiting own=0 double=0 other=5 last-other=?",
+            "skip=0 last-other=Aztec_Sword_Skeleton_obj",
+            "skillslider projamount +1 hook=native first=waiting own=0 double=0 other=3 skip=0 last-other=?",
+            "skillslider projamount +1 hook=native first=waiting own=0 double=0 other=5 skip=0 last-other=?",
         ])
 
     def test_baseline_speed_outside_the_players_load_all_modifiers_is_unchanged(self):
@@ -213,7 +213,7 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         self.assertIn("skillslider aoesize -> +0", logs)
         self.assertEqual(self.status_lines("table_only_refused")[1],
                          "skillslider aoesize +0 hook=StatAOESkillSize:TABLE-ONLY first=- own=0 double=0 "
-                         "other=0 last-other=-")
+                         "other=0 skip=0 last-other=-")
 
     def test_baseline_one_helper_not_native_refuses_the_whole_lever(self):
         self.assertEqual(self.fields("partial_refused"), {"spell": "0", "ranged": "1"})
@@ -226,7 +226,7 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         self.assertIn(refusal("LoadAllModifiers", "FAILED"), logs)
         self.assertEqual(self.status_lines("not_found_refused")[2],
                          "skillslider projspeed +0 hook=LoadAllModifiers:FAILED first=- own=0 double=0 "
-                         "other=0 last-other=-")
+                         "other=0 skip=0 last-other=-")
         self.assertEqual(logs[-1], "skillslider projspeed -> +0")
 
     # ---- target: each lever, for the player and its double cast ------------
@@ -245,6 +245,57 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         self.assertEqual(fields["undefinedkind"], "5")
         self.assertEqual(fields["string"], "text:1")
 
+    def test_a_result_add_to_cannot_change_reaches_the_game_unchanged_and_counts_skip(self):
+        # A string, an empty array, an array whose element 0 is not a number:
+        # left as the game returned them (the same array, not a copy), each
+        # counted `skip=`, before the first boost and after it. A plain array
+        # beside them is still boosted, on a copy.
+        self.assertEqual(self.fields("skip_unchangeable"), {
+            "before": "'text'", "number": "3", "string": "'text'", "empty": "[]:same",
+            "head": "['x',9]:same", "array": "[6,9]:copy", "aoe": "[]",
+        })
+        self.assertEqual(self.first_call_lines("skip_unchangeable"), [
+            "skillslider ReturnExtraSpellProjectiles: first boosted call 1 -> 3",
+        ])
+        self.assertEqual(self.status_lines("skip_unchangeable"), [
+            "skillslider projamount +2 hook=native first=waiting own=1 double=0 other=0 skip=1 last-other=-",
+            fresh_line("aoesize"),
+            fresh_line("projspeed"),
+            "skillslider projamount +2 hook=native first=1->3 own=6 double=0 other=0 skip=4 last-other=-",
+            "skillslider aoesize +50 hook=native first=waiting own=1 double=0 other=0 skip=1 last-other=-",
+            fresh_line("projspeed"),
+        ])
+
+    def test_the_player_resolved_as_a_reference_is_still_in_scope(self):
+        # asset_get_index may answer an object as VALUE_REF (with a flag bit
+        # above the kind, too); each name is asked once, not on every call.
+        self.assertEqual(self.fields("asset_as_ref"), {
+            "player": "2", "double": "2", "merc": "0", "player2": "2", "asks": "1,1",
+        })
+        self.assertEqual([line for line in self.logs("asset_as_ref") if "cannot resolve" in line], [])
+
+    def test_an_unresolved_name_counts_other_and_says_so_once_per_arming(self):
+        self.assertEqual(self.fields("unresolved_names"), {
+            "player": "0,0,0", "double": "0", "asks1": "1,1", "rearm": "0,0", "asks2": "2,2",
+        })
+        self.assertEqual([line for line in self.logs("unresolved_names") if "cannot resolve" in line], [
+            "skillslider: cannot resolve Player_obj by name; its calls count as other",
+            "skillslider: cannot resolve Universal_Double_Cast_obj by name; its calls count as other",
+            "skillslider: cannot resolve Player_obj by name; its calls count as other",
+            "skillslider: cannot resolve Universal_Double_Cast_obj by name; its calls count as other",
+        ])
+        self.assertEqual(self.status_lines("unresolved_names"), [
+            "skillslider projamount +2 hook=native first=waiting own=0 double=0 other=4 skip=0 "
+            "last-other=Universal_Double_Cast_obj",
+            fresh_line("aoesize"),
+            fresh_line("projspeed"),
+            "skillslider projamount +3 hook=native first=waiting own=0 double=0 other=6 skip=0 "
+            "last-other=Universal_Double_Cast_obj",
+            fresh_line("aoesize"),
+            fresh_line("projspeed"),
+        ])
+        self.assertEqual(self.first_call_lines("unresolved_names"), [])
+
     def test_target_aoe_adds_to_element_zero_of_a_copy(self):
         self.assertEqual(self.fields("aoe_target"), {
             "player": "[50,7,0,0]", "double": "[50,7,0,0]", "merc": "[0,7,0,0]",
@@ -257,7 +308,7 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         self.assertEqual(fields["double"], "double:75=50,double:74=0,double:554=0")
         self.assertEqual(self.status_lines("speed_target")[2],
                          "skillslider projspeed +50 hook=native first=0->50 own=1 double=1 other=2 "
-                         "last-other=Projectile_Player_obj")
+                         "skip=0 last-other=Projectile_Player_obj")
 
     def test_target_the_innermost_load_all_modifiers_decides(self):
         self.assertEqual(self.fields("speed_nested"), {
@@ -322,8 +373,8 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
 
     def test_status_lines_after_arming(self):
         self.assertEqual(self.status_lines("list_after_arming"), [
-            "skillslider projamount +2 hook=native first=0->2 own=1 double=0 other=1 last-other=Mercenary_obj",
-            "skillslider aoesize +50 hook=native first=waiting own=0 double=0 other=0 last-other=-",
+            "skillslider projamount +2 hook=native first=0->2 own=1 double=0 other=1 skip=0 last-other=Mercenary_obj",
+            "skillslider aoesize +50 hook=native first=waiting own=0 double=0 other=0 skip=0 last-other=-",
             fresh_line("projspeed"),
         ])
 
