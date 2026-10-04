@@ -192,6 +192,9 @@ static void InstallCreateHooks() {
     g_OrigICD = fallbackAvailable ? &runner : nullptr;
     g_OrigICL = fallbackAvailable ? &runner : nullptr;
 }
+// The kill hook's third consumer, Dungeon chest opens early's count (ForgePact
+// #31): run natively in test_dungeon_chest_behavior.py, a no-op here.
+static void DungeonChestOnKill(CInstance*) {}
 
 // PRODUCTION_FUNCTIONS
 

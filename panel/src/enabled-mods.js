@@ -3,10 +3,11 @@
 // something, named by the control that turns it off. Pure - it reads only
 // the config - so tests/enabled-mods.test.js runs it under plain node.
 //
-// Never entries: auto_apply (a panel setting), enemy_speed_ct (a scope, not a
+// Never entries: dungeon_chest_pct (it rides on mod_dungeon_chest's entry),
+// auto_apply (a panel setting), enemy_speed_ct (a scope, not a
 // value), the child options map_reveal_packs / map_reveal_spawn /
-// mod_auto_prospect_bag / mod_hidden_loot_key (they ride on their parent's
-// entry), gem_filter (an
+// mod_auto_prospect_bag / mod_hidden_loot_key / dungeon_chest_countdown (they
+// ride on their parent's entry), gem_filter (an
 // option of the Mythic gems entry: it is sent only while that switch is on),
 // game_exe, theme, and the Satanic Zone pools (all on by default, so
 // "enabled" there is the default rather than something the player turned on).
@@ -65,6 +66,10 @@ export function enabledControls(cfg) {
   for (const key of BOOLEAN_MODS) if (cfg[key]) out.push(key);
   if ((cfg.mod_skill_timer_style || 'off') !== 'off') out.push('mod_skill_timer_style');
   if ((cfg.boss_rarity || 'off') !== 'off') out.push('boss_rarity');
+  // Dungeon chest opens early: its switch decides, as den_on does density's.
+  // Not in BOOLEAN_MODS, whose entries the oracle derives as `verb 1` /
+  // `verb 0`: off sends `dungeonchest off`, on the saved percentage.
+  if (cfg.mod_dungeon_chest) out.push('mod_dungeon_chest');
   if (cfg.density_on && Number(cfg.density) > 1) out.push('den_on');
   for (const id of sliderSwitchIds(cfg)) {
     if (switchOn(cfg, id) && sliderValue(cfg, id) > sliderDefault(id)) out.push(switchControlId(id));

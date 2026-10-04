@@ -852,6 +852,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The incident monitor's `incident stat` (ForgePact #76;
             # test_incident_monitor_contract.py).
             "incident",
+            # Dungeon chest opens early (ForgePact #31;
+            # test_dungeon_chest_behavior.py).
+            "dungeonchest",
             # Jump through scenery, the Mods tab's switch (ForgePact #16;
             # test_jump_scenery_mod_contract.py).
             "jumpscenery",
@@ -1257,10 +1260,14 @@ class SkillTimerShipContractTests(unittest.TestCase):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
         # control of record), hidden loot sleep's show key
         # (`#mod_hidden_loot_key`, test_hidden_loot_panel_contract.py pins its
-        # options) and the Mods > Gameplay `#boss_rarity` select (ForgePact
-        # #44) are the page's only other <select>s, so the skill timer is
-        # still the one select with these styles.
-        self.assertEqual(PANEL_PAGE.count("<select"), 4)
+        # options), the Mods > Gameplay `#boss_rarity` select (ForgePact #44)
+        # and Dungeon chest opens early's countdown form
+        # (`#dungeon_chest_countdown`, ForgePact #31) are the page's only
+        # other <select>s, so the skill timer is still the one select with
+        # these styles.
+        self.assertEqual(PANEL_PAGE.count("<select"), 5)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="dungeon_chest_countdown" '
+                                          'aria-label="Where the countdown shows">'), 1)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
         self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
                                           'aria-label="Show hidden loot while held">'), 1)
@@ -2503,6 +2510,9 @@ SKILL_TIMER_DRAW_CALL_LINE = "    SkillTimerDraw();"
 # The Miner's Helmet (1.4.5) draws its cosmetic pulse from the same callback,
 # on the line straight after the countdown's; it is removed the same way.
 MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
+# Dungeon chest opens early (ForgePact #31) draws its countdown from the same
+# callback, on the line straight after the helmet's; removed the same way.
+DUNGEON_CHEST_DRAW_CALL_LINE = "    DungeonChestDraw();"
 INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
 # ForgePact #76, amendment 5: the call into the game's original runs inside the
 # incident monitor's guard, so `hudlabels` counts only our own code.
@@ -2522,7 +2532,11 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     (`IncidentScope`, test_incident_monitor_contract.py) is the body's first
     statement. Exactly that one line is stripped, once, before the compare.
     And once more (amendment 5): the original's call sits inside the monitor's
-    guard; exactly that line is put back to its unguarded form."""
+    guard; exactly that line is put back to its unguarded form.
+
+    NARROWED again for ForgePact #31: the dungeon chest's countdown draw is
+    one more call, on its own line directly after the Miner's Helmet's, and is
+    removed with the other two."""
     lines = new_body.split("\n")
     testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
     lines.remove(INCIDENT_HUD_SCOPE_LINE)
@@ -2533,7 +2547,9 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     testcase.assertEqual(lines[call_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
     testcase.assertEqual(lines.count(MINER_HELMET_DRAW_CALL_LINE), 1, new_body)
     testcase.assertEqual(lines[call_at + 1], MINER_HELMET_DRAW_CALL_LINE, new_body)
-    del lines[call_at:call_at + 2]
+    testcase.assertEqual(lines.count(DUNGEON_CHEST_DRAW_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[call_at + 2], DUNGEON_CHEST_DRAW_CALL_LINE, new_body)
+    del lines[call_at:call_at + 3]
     testcase.assertEqual("\n".join(lines), old_body)
 
 # The research block phase S must not touch at all: the sprite look probe the
@@ -3020,10 +3036,11 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # sleep's switch (test_hidden_loot_mod_contract.py), `miningrolls`
         # is Mining Ore Extra Rolls (ForgePact #36, test_mining_ore_behavior.py),
         # `bossrarity` is the Bosses control (ForgePact #44,
-        # test_boss_rarity_contract.py), and `incident` is the incident
+        # test_boss_rarity_contract.py), `incident` is the incident
         # monitor's `incident stat` (ForgePact #76,
-        # test_incident_monitor_contract.py), and `jumpscenery` is Jump
-        # through scenery's switch (ForgePact #16,
+        # test_incident_monitor_contract.py), `dungeonchest` is Dungeon
+        # chest opens early (ForgePact #31, test_dungeon_chest_behavior.py),
+        # `jumpscenery` is Jump through scenery's switch (ForgePact #16,
         # test_jump_scenery_mod_contract.py), `satzone` is Satanic Zone
         # control (ForgePact #157, test_satanic_zone_control.py), and
         # `skillslider` is the skill sliders (ForgePact #160,
@@ -3034,8 +3051,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "hiddenloot", "bossrarity", "incident", "jumpscenery",
-                                        "satzone", "skillslider"})
+                                        "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
+                                        "jumpscenery", "satzone", "skillslider"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

@@ -149,13 +149,31 @@
 </div>
 
 <div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">
-  <div class="hint">Change how the monsters you meet are made, in every zone. Settings apply immediately while the game is running.</div>
+  <div class="hint">Change how the monsters you meet are made, and when a key dungeon's chest opens. Settings apply immediately while the game is running.</div>
   <div class="row" style="border:none">
     <span class="lbl" style="width:auto;flex:1">Bosses<br><span class="feature-description">While this is on, a boss the game spawns is given Rare ("uber") or Ancient ("uber uber") rarity as it is set up. Tested in a live game at Ancient, a boss came out far stronger, with about five times its health. Bosses the game already made champion, rare or ancient, and bosses another monster creates (phases, clones), are left alone. Off by default.</span></span>
     <select class="style-select" id="boss_rarity" aria-label="Bosses">
       <option value="off">Normal (the game's own)</option>
       <option value="rare">Rare &mdash; "uber" boss</option>
       <option value="ancient">Ancient &mdash; "uber uber" boss</option>
+    </select>
+  </div>
+  <!-- Dungeon chest opens early (issue #31): the percentage is a switch and a slider, never a select (the owner,
+       2026-10-03). The value beside the slider is typable (panel.js typable()); "off" while the switch is off, as Monster
+       Density's is. Its child row picks where the countdown shows, like the skill timer's look (the owner, 2026-10-04),
+       and is disabled while the switch is off, as Sleep loot's show key is. -->
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Dungeon chest opens early<br><span class="feature-description">The chest at the end of a key dungeon opens once the share set here of all its monsters is dead, counting every monster the dungeon plans at load, spawned yet or not (an estimate). A countdown shows the last 50 kills. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_dungeon_chest" aria-label="Dungeon chest opens early"><span class="sl"></span></label>
+    <input type="range" id="dungeon_chest_pct" min="50" max="95" step="5" value="75" aria-label="Share of the dungeon's monsters to kill">
+    <span class="val off" id="dcpval" style="width:64px">off</span>
+  </div>
+  <div class="row" id="dungeon_chest_countdown_row">
+    <span class="lbl" style="width:auto;flex:1">Where the countdown shows<br><span class="feature-description">The last 50 kills before the chest opens are counted down above your character, as chat lines, or both.</span></span>
+    <select class="style-select" id="dungeon_chest_countdown" aria-label="Where the countdown shows">
+      <option value="head">Above your character</option>
+      <option value="chat">In chat</option>
+      <option value="both">Both</option>
     </select>
   </div>
 </div>
