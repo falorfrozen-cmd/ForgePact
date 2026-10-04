@@ -172,14 +172,16 @@ experience.
   game's own "is this a Satanic Zone?" answer yes wherever you are. The
   `satzone` command pins one exact zone instead (`satzone pin here`,
   `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
-  off the game rolls its zone exactly as before. The zone the game keeps is a
-  protected value: the plugin reads and writes it through the game's own
-  `GPV`/`SPV`, never a fixed number. Measured on the research build
+  off the game rolls its zone exactly as before. While on, each switch shows up
+  in **Enabled mods**, with a Turn off button like any other mod. The zone the
+  game keeps is a protected value: the plugin reads and writes it through the
+  game's own `GPV`/`SPV`, never a fixed number. Measured on the research build
   (2026-10-03): the game asks `LoadSatanicZone` about 150 times a second with
   the resolved zone's room index, and that value can be written, sticking
-  until the game's next roll. **Not yet confirmed in a live game**: forcing
-  the answer true changed nothing visible in town, and a real zone where a
-  kill can drop a relic has not been tested yet.
+  until the game's next roll. Checked in play on 2026-10-04: with the zone
+  pinned, entering it put the zone's satanic buffs and debuffs on the
+  character, and they showed on the buff bar. Two things are not watched yet:
+  a relic drop in a satanic zone, and the Every zone switch's effect in play.
 - **Jump through scenery (#16).** A new switch in Mods → Quality of Life,
   off by default. Until now a jump aimed across a rock, a fence, a cart or
   other scenery did not move you at all. With this on, the jump carries you

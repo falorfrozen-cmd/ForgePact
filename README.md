@@ -205,7 +205,7 @@ turned on, with its current value, and says how many are on (**Nothing is on**
 when none are). Each entry has a **Turn off** button that switches that mod
 off exactly as its own control would, and the entry disappears. Settings that
 are only options of another mod (map population, the auto-prospect material
-move, the gem mod filter) and the Satanic Zone modifiers are not listed.
+move, the gem mod filter) and the Satanic Zone modifier pools are not listed.
 
 Every slider now has its own on/off switch, like Monster Density's. Turning a
 slider off keeps the value you set, while the game plays as if the slider were
@@ -543,7 +543,8 @@ and live findings are in
 
 **World → Satanic Zone** (under the mods card) decides which zone the game treats as
 satanic. Both switches are off by default, and with both off nothing changes: the game
-rolls its own zone exactly as before.
+rolls its own zone exactly as before. While on, each switch is an entry in
+**Enabled mods** with a **Turn off** button, like any other mod.
 
 - **Keep the zone you are in satanic** (`satzone follow 1` / `satzone follow 0`):
   wherever you go, the game treats the zone you are in as the Satanic Zone, so its
@@ -561,11 +562,13 @@ rolls its own zone exactly as before.
   with the game's own `GPV` and writes it with the game's own `SPV`, reading the key
   from the live game, so nothing is hardcoded.
 
-Measured live 2026-10-03 (research build): the game asks `LoadSatanicZone` about 150
+Measured live 2026-10-04 (research build): the game asks `LoadSatanicZone` about 150
 times a second with the resolved zone's room index, that value can be written and the
-write sticks until the game's next roll, and forcing the answer true for every call
-changed nothing visible in town. The in-zone confirmation is still outstanding —
-see [`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md) "Live 3".
+write sticks until the game's next roll, and with the zone pinned, entering it put the
+zone's satanic buffs and debuffs on the character (seen in play). Two things are not
+watched yet: a relic drop in a satanic zone, and the Every zone switch's effect in play.
+The world map's red marker is a separate layer this switch does not drive — see
+[`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md) "Live 4".
 
 ## Remove owned relics from drop pool
 

@@ -123,6 +123,7 @@ class SatanicZoneControlPanelTests(unittest.TestCase):
         cls.forgepact = (ROOT / "src" / "forgepact.py").read_text(encoding="utf-8", errors="replace")
         cls.world = (ROOT / "panel" / "src" / "tabs" / "World.svelte").read_text(encoding="utf-8", errors="replace")
         cls.panel = (ROOT / "panel" / "src" / "panel.js").read_text(encoding="utf-8", errors="replace")
+        cls.mods = (ROOT / "panel" / "src" / "enabled-mods.js").read_text(encoding="utf-8", errors="replace")
         cls.readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     def test_defaults_are_off(self):
@@ -155,6 +156,14 @@ class SatanicZoneControlPanelTests(unittest.TestCase):
             self.assertIn(f'id="{ident}"', self.world)
         self.assertIn("Keep the zone you are in satanic", self.world)
         self.assertIn("Every zone counts as satanic", self.world)
+
+    def test_switches_are_enabled_mods_entries(self):
+        # Off by default and each sends its line while on, so the Enabled
+        # mods list shows them like any other mod: the pools' exclusion
+        # (all-on by default) does not apply to the switches (#157).
+        body = re.search(r"BOOLEAN_MODS\s*=\s*\[(?P<body>.*?)\];", self.mods, re.DOTALL).group("body")
+        for key in ("satanic_follow", "satanic_everywhere"):
+            self.assertIn(f"'{key}'", body)
 
     def test_readme_documents_the_command(self):
         self.assertIn("satzone", self.readme)
