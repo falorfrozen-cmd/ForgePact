@@ -719,63 +719,129 @@ only while the switch is on. `none` stays a plugin word only.
 ## Live procedure 2
 
 On the player DLL (`plugin_build\build.bat release`, which refreshes
-`modfiles_shipped\BloodPactPlugin.dll`; its SHA-256 recorded with the
-session), with the panel served from this branch's build.
+`modfiles_shipped\BloodPactPlugin.dll`, the same bytes as
+`plugin_build\BloodPactPlugin_ship.dll`; its SHA-256 recorded with the
+session), with the panel served from this branch's `panel/dist`. Attempt 1
+(below) ran this procedure on the round-4 player build and stopped at the
+first kill; attempt 2 re-runs it in full on the fixed build, with one check
+added at the first kills (`on-kills-count`).
 
-- character: save slot 14 (Sorak). Two Pumpkin Cellar runs: run A with the
-  mod on at 50 %, run B off (a second Cellar Key; or, with one, stopping the
-  game, restoring the saves backup and relaunching — a backend step, with the
-  panel's switch turned off before it, since its state survives in
-  `forgepact.json`).
-- dungeon: Pumpkin Cellar on the Pumpkin Patch map (the 1.3 map), as Live 1.
+- character: save slot 14 (Sorak). Pumpkin Cellar on the Pumpkin Patch map
+  (the 1.3 map), as Live 1, with Cellar Keys (the owner has plenty). Run A
+  with the mod on at 50 %, run B off.
 - control: `ping` → `pong…`. Marker: `dungeonchest status` → a line starting
-  `dungeonchest: off`.
+  `dungeonchest: off` and containing ` notEnemy=0` (only the fixed build
+  prints `notEnemy=`). Kill-hook control: `headhunter status` (a status read;
+  it does not arm Headhunter) prints `killHook=<n>`, the kill hook's own call
+  count.
+- panel route (the operator cannot click the native window): from the hub
+  root start `py -3 ForgePact/src/forgepact.py` (it serves `ForgePact/panel/dist`
+  on http://127.0.0.1:8780 and re-sends the owner's saved mods, which is the
+  configuration under test) and drive the real page in headless Edge through
+  playwright-core: Mods tab → Gameplay sub-tab; click `#mod_dungeon_chest`'s
+  switch; click `#dcpval`, type the value, Enter; `selectOption` on
+  `#dungeon_chest_countdown`. No IPC command is typed for a panel step. The
+  panel is stopped by its PID at teardown.
+- pacing: before run A the owner is asked to stop whenever told. `status` is
+  read about every 15 s; at `remaining=` ≤ 80 the owner stops, and from there
+  kills come in batches of at most 5 with a `status` read between, so
+  `remaining=50`, the next chat milestones and the latch are each seen before
+  they pass.
 - steps:
-  1. Panel: Mods → Gameplay → switch "Dungeon chest opens early" on, click the
-     value beside the slider and type 50, Enter. Expected in `out.txt`:
-     `dungeonchest: 50% …` and the `HOOK INSTALLED` lines (`on-status`).
-  2. Person: run A — Cellar Key at the Pumpkin Cellar entrance. `dungeonchest
-     status` within 2 s → `total=T threshold=ceil(T/2) remaining=…
-     latched=0` with T > 0 from the build's planned source, the estimate
-     (`on-total`; T, `creators=`, `pending=` and `unreadable=` are recorded
-     against Live procedure 1b's kills to clear).
-  3. Person: kill until `status` shows `remaining=50`; screenshot: `Chest: 50
+  1. Panel: switch on, type 50, Enter. Expected in `out.txt`: `dungeonchest:
+     50% …` and the two `HOOK INSTALLED` lines (`on-status`).
+  2. Person: run A, Cellar Key at the entrance. `dungeonchest status` →
+     `total=T threshold=ceil(T/2) remaining=… latched=0`, T > 0 (`on-total`;
+     T, `creators=`, `pending=` and `unreadable=` recorded).
+  3. `headhunter status` (note `killHook=`); person: kill about 5; then
+     `headhunter status` and `dungeonchest status`. Expected: `killHook=`
+     rose, `kills=` ≥ 1 and close to the owner's count, `notEnemy=0`
+     (`on-kills-count`). If `kills=` is still 0, `notEnemy=` and `killHook=`
+     are recorded and the session stops here (nothing after can pass), with
+     the saves restored.
+  4. Person: kill until `remaining=50` (pacing above); screenshot: `Chest: 50
      kills to go` over the character, no chat line (`on-countdown-head`).
-     Person: stand still about 10 s without killing, then kill one: the label
-     neither blinks nor jumps and its number changes only at the kill
-     (`on-head-steady`; the owner's words recorded).
-  4. Panel: Mods → Gameplay, the countdown form select ("Where the countdown
-     shows") → In chat. Expected in `cmd.txt`/`out.txt`: `dungeonchest
-     countdown chat` and `countdown=chat` (`on-form-control`); kill to the
-     next milestone; screenshot: the chat line, no label (`on-countdown-chat`).
-  5. Panel: the form → Both; at the next milestone one screenshot with both
-     (the both-form note under `on-countdown-chat`).
-  6. Person: kill to the threshold. Expected: `dungeonchest: unlocked early at
+     Person: stand still about 10 s, then kill one: the label neither blinks
+     nor jumps and changes only at the kill (`on-head-steady`; the owner's
+     words recorded).
+  5. Panel: countdown form → chat. Expected `dungeonchest countdown chat` and
+     `countdown=chat` (`on-form-control`); kill to the next milestone;
+     screenshot: the chat line, no label (`on-countdown-chat`).
+  6. Panel: form → both; at the next milestone one screenshot with both.
+  7. Person: kill to the threshold. Expected `dungeonchest: unlocked early at
      T'/T' alive=N` (N > 0), the label gone, `Chest: ready to open` in chat;
-     `status` → `kills=` equals the threshold, `answered=` > 0
-     (`no-double-count`: `kills=` equals the threshold exactly at the latch
-     line, and never exceeds the births plus `alive0` the research run saw).
-  7. Person: open the chest while `status` shows `alive=` > 0
+     `status` → `kills=` equals the threshold at the latch line, `answered=`
+     > 0, `notEnemy=0` (`no-double-count`).
+  8. Person: open the chest while `status` shows `alive=` > 0
      (`on-opens-early`).
-  8. Panel: the form → Above your character (`dungeonchest countdown head`;
-     the select is greyed while the switch is off).
-  9. Panel: switch off → `dungeonchest: off …`.
-  10. Person: run B (off): the chest does not open with monsters alive; kill
+  9. Panel: form → head; switch off → `dungeonchest: off …`.
+  10. Person: run B (off): the chest stays shut with monsters alive; kill
       all; it opens (`off-baseline`).
-- cases: run A on at 50 % (head, chat, both), run B off; outlier
-  `boss-dungeon` as Live procedure 1b.
+- cases: run A on at 50 % (head, chat, both) with the owner's saved mods
+  active, run B off; outlier `boss-dungeon` (not observed while only Cellar
+  Keys are at hand).
 - checks: `dll-hash`; `marker`; `control`; `on-status`; `on-total`;
-  `on-countdown-head`; `on-head-steady`; `on-form-control`;
-  `on-countdown-chat` (not-observed only if the chat form is refused);
+  `on-kills-count`; `on-countdown-head`; `on-head-steady`; `on-form-control`;
+  `on-countdown-chat` (not observed only if the chat form is refused);
   `on-opens-early`; `off-baseline`; `no-double-count`; `boss-dungeon`.
-- Restore the saves backup after the session, as always.
+- The saves backup is restored after the session, as always.
 
 ### Results
 
-Not yet run. The countdown form is already the player's choice
-(`countdown-form: choice`, the owner, 2026-10-04, recorded under [Live
-procedure 1b](#live-procedure-1b)); this session checks the control and each
-form.
+**Attempt 1** (2026-10-04, 06:57-07:08 UTC; capture
+`forgepact-issue-31-dungeon-chest-b-live-2.md`, player DLL SHA-256
+`b1f4f75f205f6fa01eb7f4f464b10260ba47f76c7339539b0fcdd7a5c085d85c`, built
+from the round-4 tree). Measured: `dll-hash`, `marker`, `control`, `on-status`
+and `on-total` passed. The panel's switch, typed value and select worked
+through headless Edge (the switch first sent the default 75, then the typed
+50), and the owner's saved mods were re-sent with it (relicfilter, orbpickup,
+petquest, petunstick, autoprospect, toggleborder, toggleguard, restartanytime,
+craftmats, stashmoveall, farsleep, densityroll, gemmythic, skilltimer,
+satmods). In the Pumpkin Cellar the first status read `total=646 creators=122
+pending=122 unreadable=0 alive=42 threshold=323`: the estimate with all 122
+spawners pending at the chest's first sight, 641 for them plus the 5 alive
+then (`alive=` had risen to 42 by the read).
+Then `kills=0` on every read while the owner killed: alive went 139 → 135 →
+129, the HUD DPS meter rose from 2 861 980 to 6 852 391, the owner reported
+"already killed most of monsters, killed some now" and then "killed 3 or 4",
+with `hook=ok unlock=ok` and `answered=0` throughout. `on-countdown-head`
+failed (the count never moved); the session stopped there, so
+`on-head-steady`, `on-form-control`, `on-countdown-chat`, `on-opens-early`,
+`off-baseline`, `no-double-count` and `boss-dungeon` are not observed. The
+owner: "it did work on previous live session, something must have broke".
+
+The cause (a static reading, backed by that session's log). The kill consumer
+counts a call only when its `self` passes the plugin's shared enemy check,
+which compared the object against `Enemy_Parent_obj`'s index held in a global
+that only the create-hook installer fills. The research build runs that
+installer at load; the player build runs it only for a feature that needs the
+create hooks (Monster Density's special content, Headhunter, Tyrant, pack
+markers with map reveal, necro balance), and the owner's saved mods held none
+of them. So in the player build `Enemy_Parent_obj`'s index was never
+resolved, the check answered "not an enemy" for every kill call, and it
+cached that answer per object for the rest of the session. The game's
+`out.txt` for that session has no `Enemy_Parent_obj index =` and no `density
+creators cached` line, while both research sessions earlier in the same file
+print them. Live procedures 1 and 1b counted kills because both ran the
+research build; the player build had never counted one. The poll's own reads
+(`alive=`, the unlock's argument check) use the SDK's `Enemy_Parent_obj`
+index rather than that global, which is why `alive=` and the total looked
+right while `kills=` stayed 0. Neither test could see it: the header's harness
+never runs the enemy check, and the Headhunter dispatch harness stubs it as
+always resolvable.
+
+The fix: the enemy check resolves `Enemy_Parent_obj` by name on demand when no
+installer has, never writes the global the create hooks own, and never caches
+an answer computed while the index is unknown (`IsEnemyParentIndex`,
+`IsEnemyObject`). The `dungeonchest` status line now prints `notEnemy=<n>`
+after `kills=`, the room's kill-hook calls refused as not an enemy `self`, in
+both builds: in attempt 1 that count existed only in the research probe's
+status, so `kills=0` could not say whether the hook fired. Pinned by
+`tests/test_dungeon_chest_adapter.py`, whose target scenarios fail on the
+round-4 tree (tag `forgepact-issue-31-dungeon-chest-c-base`) and pass on the
+fix.
+
+**Attempt 2**: not yet run (the fixed player build, the whole procedure above).
 
 ## Route
 
