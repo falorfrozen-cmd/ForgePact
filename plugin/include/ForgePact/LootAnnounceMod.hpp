@@ -19,21 +19,32 @@ namespace ForgePact {
 //
 // The rule this header decides, once per ground item the shared
 // LootGroundInit detour saw:
-//   - off: nothing is announced, counted or remembered.
-//   - a bag drop (the item arrived while the LootGroundDrop detour's window
-//     was open: the player dropping it from the bag) is not announced.
+//   - off: nothing is announced, counted or remembered, and no creation is
+//     noted.
+//   - the creation guard: an item counts only when the game built its item
+//     struct through CreateItemNew in the frame it reached the ground or the
+//     frame before (RUNTIME_DATA_MODELS.md section 16.1: the outermost return
+//     is the finished item). The adapter notes each CreateItemNew return's
+//     keys from the shared Hook_CreateItemNew; a bag drop, a re-drop after a
+//     pickup, or anything else that puts an existing struct on the ground
+//     finds no recent note and is held (held-bag-drop). This replaced a
+//     "bag-drop window" around LootGroundDrop, whose detour counted 0 while
+//     Live procedure 1's bag drop reached LootGroundInit and was announced.
 //   - the rarity is itemInfoStruct["27"] (RUNTIME_DATA_MODELS.md section
 //     16.4). Only kAnnouncedRarities announce; anything else, and a rarity
 //     that could not be read as a number (kRarityUnread), does not.
-//   - each item announces once: the memory is the ground instance id and the
-//     item's itemTimeStamp (itemDataHash is not an identity, section 16.5).
+//   - each item announces once: the memory is the item's itemType and its
+//     itemTimeStamp when the stamp is real (not empty, "0" or "undefined"),
+//     otherwise the ground instance id with the stamp (itemDataHash is not an
+//     identity, section 16.5).
 //
-// It is game-independent by contract - rarity codes, instance ids and time
-// stamps as text, never an instance or an RValue - so
-// tests/loot_announce_harness.cpp compiles it whole. The adapter in
-// ModuleMain.cpp reads the item off the ground instance by name, opens the
-// bag-drop window around LootGroundDrop's original, and runs the sink the
-// verdict asks for.
+// It is game-independent by contract - rarity codes, instance ids, item keys
+// as integers, types and time stamps as text, never an instance or an RValue
+// - so tests/loot_announce_harness.cpp compiles it whole. The adapter in
+// ModuleMain.cpp derives an item's key (a struct by its object pointer, a
+// reference by the value it holds; compared, never followed), reads the item
+// off the ground instance by name, ages the creation window once per frame
+// after its batch, and runs the sink the verdict asks for.
 class LootAnnounceMod {
 public:
     // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy. Heroic sits above
@@ -47,6 +58,19 @@ public:
     static constexpr int kRarityUnread = -1;
     // Items remembered at most; the oldest is forgotten first.
     static constexpr std::size_t kMemoryCap = 4096;
+    // Item keys one creation window holds at most (one frame's notes); a note
+    // past it is counted in create-overflow and not kept.
+    static constexpr std::size_t kCreationCap = 4096;
+
+    // An item struct's key, as the adapter derives it at both ends: the kind
+    // of value (a struct or a reference) and the pointer or reference value.
+    static constexpr int kKeyStruct = 1;
+    static constexpr int kKeyReference = 2;
+    struct ItemKey {
+        int kind;
+        std::uint64_t value;
+        bool operator<(const ItemKey& o) const { return kind != o.kind ? kind < o.kind : value < o.value; }
+    };
 
     // How the adapter shows the line (docs/loot-announcement-research.md,
     // "Route"). kShippedSink is the one the mod runs: `server`
@@ -69,21 +93,10 @@ public:
         long long heldRarity = 0;    // a rarity that is not announced
         long long heldNoRarity = 0;  // no numeric rarity to read
         long long heldDuplicate = 0; // the same item seen again
-        long long heldBagDrop = 0;   // dropped from the bag
+        long long heldBagDrop = 0;   // not built this frame or the last: a bag drop, a re-drop, a restored item
         long long sinkRefused = 0;   // a line asked for that the sink could not show
-    };
-
-    // The bag-drop window, held open by the LootGroundDrop detour for the
-    // duration of the game's original. Nested calls nest.
-    class BagDropScope {
-    public:
-        explicit BagDropScope(LootAnnounceMod& mod) : m_Mod(mod) { m_Mod.BeginBagDrop(); }
-        ~BagDropScope() { m_Mod.EndBagDrop(); }
-        BagDropScope(const BagDropScope&) = delete;
-        BagDropScope& operator=(const BagDropScope&) = delete;
-
-    private:
-        LootAnnounceMod& m_Mod;
+        long long created = 0;       // item keys noted into the creation window
+        long long createOverflow = 0; // notes past kCreationCap, not kept
     };
 
     static constexpr bool IsAnnouncedRarity(int code)
@@ -119,24 +132,65 @@ public:
 
     bool Enabled() const { return m_Enabled; }
     // Switching off keeps the memory and the counters, so an item still lying
-    // there is not announced again when the switch comes back on.
-    void SetEnabled(bool on) { m_Enabled = on; }
-
-    void BeginBagDrop() { ++m_BagDropDepth; }
-    void EndBagDrop()
+    // there is not announced again when the switch comes back on; it clears
+    // the creation window, so nothing built while off counts as new.
+    void SetEnabled(bool on)
     {
-        if (m_BagDropDepth > 0) --m_BagDropDepth;
+        m_Enabled = on;
+        if (!on) {
+            m_CreatedNow.clear();
+            m_CreatedBefore.clear();
+        }
     }
-    bool BagDropActive() const { return m_BagDropDepth > 0; }
 
-    // One ground item. `isBagDrop` is BagDropActive() as it stood inside the
-    // game's LootGroundInit call, which the adapter captures there; the rest
-    // is read off the ground instance afterwards.
-    Verdict Decide(int rarityCode, bool isBagDrop, int64_t instanceId, const std::string& timeStamp)
+    // A CreateItemNew return (or its argument 0), noted while on. A key
+    // already in this frame's window is not counted again.
+    void NoteCreated(const ItemKey& key)
+    {
+        if (!m_Enabled || m_CreatedNow.count(key)) return;
+        if (m_CreatedNow.size() >= kCreationCap) {
+            ++m_Stats.createOverflow;
+            return;
+        }
+        m_CreatedNow.insert(key);
+        ++m_Stats.created;
+    }
+
+    // Noted before this tick's decisions, in this frame or the one before.
+    bool RecentlyCreated(const ItemKey& key) const
+    {
+        return m_CreatedNow.count(key) != 0 || m_CreatedBefore.count(key) != 0;
+    }
+
+    // Once per tick, after its decisions: this frame's notes become the
+    // previous frame's, and the previous frame's are forgotten.
+    void AgeCreationWindow()
+    {
+        m_CreatedBefore.swap(m_CreatedNow);
+        m_CreatedNow.clear();
+    }
+
+    // The memory's identity of an item: its itemType and a real itemTimeStamp,
+    // else the ground instance id with whatever stamp it carries.
+    static bool IsRealStamp(const std::string& timeStamp)
+    {
+        return !timeStamp.empty() && timeStamp != "0" && timeStamp != "undefined";
+    }
+    static std::string Identity(int64_t instanceId, const std::string& itemType, const std::string& timeStamp)
+    {
+        if (IsRealStamp(timeStamp)) return "item:" + itemType + ":" + timeStamp;
+        return "ground:" + std::to_string(instanceId) + ":" + timeStamp;
+    }
+
+    // One ground item. `recentlyCreated` is RecentlyCreated() for the key of
+    // the item struct it holds (false when it gave no key); the rest is read
+    // off the ground instance.
+    Verdict Decide(int rarityCode, bool recentlyCreated, int64_t instanceId, const std::string& itemType,
+                   const std::string& timeStamp)
     {
         if (!m_Enabled) return Verdict::Off;
         ++m_Stats.seen;
-        if (isBagDrop) {
+        if (!recentlyCreated) {
             ++m_Stats.heldBagDrop;
             return Verdict::HeldBagDrop;
         }
@@ -148,7 +202,7 @@ public:
             ++m_Stats.heldRarity;
             return Verdict::HeldRarity;
         }
-        Key key{ instanceId, timeStamp };
+        std::string key = Identity(instanceId, itemType, timeStamp);
         if (m_Seen.count(key)) {
             ++m_Stats.heldDuplicate;
             return Verdict::HeldDuplicate;
@@ -184,17 +238,18 @@ public:
         s += " held-bag-drop=" + std::to_string(m_Stats.heldBagDrop);
         s += " sink-refused=" + std::to_string(m_Stats.sinkRefused);
         s += " remembered=" + std::to_string(m_Order.size());
+        s += " created=" + std::to_string(m_Stats.created);
+        s += " create-overflow=" + std::to_string(m_Stats.createOverflow);
         return s;
     }
 
 private:
-    using Key = std::pair<int64_t, std::string>;
-
     bool m_Enabled = false;
-    int m_BagDropDepth = 0;
     Counters m_Stats;
-    std::set<Key> m_Seen;
-    std::deque<Key> m_Order;
+    std::set<std::string> m_Seen;
+    std::deque<std::string> m_Order;
+    std::set<ItemKey> m_CreatedNow;    // noted since the last tick
+    std::set<ItemKey> m_CreatedBefore; // noted in the frame before
 };
 
 } // namespace ForgePact

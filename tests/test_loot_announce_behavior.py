@@ -2,17 +2,21 @@
 
 `lootann 1` (ForgePact #17) announces in chat a ground item of Heroic (9),
 Angelic (7) or Unholy (10) rarity, read from `itemInfoStruct["27"]`, once per
-item (the ground instance id and the item's `itemTimeStamp`), and never an
-item the player drops from the bag (the `LootGroundDrop` detour's window).
-These scenarios pin the decision ModuleMain.cpp's adapter takes from
+item (its `itemType` and a real `itemTimeStamp`, else the ground instance id),
+and only when the game built the item's struct through `CreateItemNew` in that
+frame or the one before (the creation guard): a bag drop or a re-drop after a
+pickup puts an existing struct on the ground and is not announced. These
+scenarios pin the decision ModuleMain.cpp's adapter takes from
 plugin/include/ForgePact/LootAnnounceMod.hpp, compiled whole.
 
 Baseline: with the switch off a Heroic item, and every other rarity, is not
-announced, and nothing is counted or remembered. Target: with it on, Heroic,
-Angelic and Unholy announce once; Satanic, Mythic, Common and every other
-code, and an unreadable rarity, do not; a second sight of the same item does
-not; a bag drop does not; the memory is kept across off/on and capped; the
-stat line counts what happened.
+announced, and nothing is counted, remembered or noted as created. Target:
+with it on, a just-built Heroic, Angelic or Unholy item announces once;
+Satanic, Mythic, Common and every other code, and an unreadable rarity, do
+not; an item not built in this frame or the last does not; an identity
+already announced does not; off clears the creation window; the window and
+the memory are capped; the stat line counts what happened; and Live procedure
+1's steps replay with the bag drop held.
 """
 import os
 import shutil
@@ -108,14 +112,27 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
                              "target/held_counted_never_announced_never_remembered")
 
     def test_a_second_sight_of_the_same_item_does_not(self):
-        self.assertScenarios("target/second_sight_not_announced", "target/key_is_ground_id_and_time_stamp",
-                             "target/memory_kept_across_off_on")
+        self.assertScenarios("target/second_sight_not_announced", "target/identity_is_item_type_and_time_stamp",
+                             "target/identity_without_a_stamp_is_the_ground_id", "target/memory_kept_across_off_on")
 
-    def test_a_bag_drop_does_not(self):
-        self.assertScenarios("target/bag_drop_window_closed_at_start", "target/bag_drop_window_open_in_scope",
-                             "target/bag_drop_not_announced", "target/bag_drop_window_nests",
-                             "target/bag_drop_window_closes", "target/bag_drop_not_remembered",
-                             "target/after_bag_drop_a_game_drop_announces", "target/bag_drop_window_never_negative")
+    # The creation guard (Replan 1, after Live procedure 1's bag drop was
+    # announced through the old LootGroundDrop window). Every label the plan's
+    # criterion lists must print PASS.
+    CREATION_GUARD_SCENARIOS = (
+        "baseline/off_notes_no_creation",
+        "target/created_this_tick_announced",
+        "target/created_previous_tick_announced",
+        "target/created_two_ticks_ago_held",
+        "target/redrop_after_pickup_held",
+        "target/same_stamp_new_ground_id_held",
+        "target/off_clears_creation_window",
+        "target/creation_window_cap",
+        "target/live1_replay",
+    )
+
+    def test_an_item_not_built_this_frame_or_the_last_does_not(self):
+        self.assertScenarios(*self.CREATION_GUARD_SCENARIOS)
+        self.assertScenarios("target/creation_window_cap_is_per_window", "target/key_kind_is_part_of_the_key")
 
     def test_the_memory_is_capped_oldest_first(self):
         self.assertScenarios("memory/capped", "memory/oldest_forgotten_first")
