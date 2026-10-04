@@ -22,6 +22,10 @@ public class FindWrites extends GhidraScript {
         int chunk = 4 << 20, overlap = 128;
         byte[] buf = new byte[chunk + overlap];
         int hits = 0;
+        // A REX form (48 89 05 ...) also matches its plain form one byte later,
+        // with the same target; remember the last REX hit, across chunks, to
+        // count it once.
+        long lastRexHit = Long.MIN_VALUE;
         for (long off = 0; off < size; off += chunk) {
             int n = (int) Math.min(buf.length, size - off);
             mem.getBytes(toAddr(start + off), buf, 0, n);
@@ -40,6 +44,8 @@ public class FindWrites extends GhidraScript {
                 long disp = (long) ((buf[dispAt] & 0xff) | (buf[dispAt + 1] & 0xff) << 8 | (buf[dispAt + 2] & 0xff) << 16 | (buf[dispAt + 3] & 0xff) << 24);
                 long target = ip + len + disp;
                 if (!targets.contains(target)) continue;
+                if (len == 7 || len == 11) lastRexHit = ip;
+                else if (ip - 1 == lastRexHit) continue;
                 if (kind.endsWith("mov reg,[rip]")) continue; // loads only; leas are reported
                 hits++;
                 StringBuilder sb = new StringBuilder();

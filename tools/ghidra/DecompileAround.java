@@ -57,12 +57,13 @@ public class DecompileAround extends GhidraScript {
                 // memory block; YYC event bodies run to hundreds of KB.
                 MemoryBlock mb = mem.getBlock(siteAd);
                 if (mb == null) { println("DecompileAround: " + siteAd + " is in no memory block"); continue; }
-                lo = Math.max(cand - (8L << 20), mb.getStart().getOffset());
+                lo = Math.min(cand, Math.max(cand - (8L << 20), mb.getStart().getOffset()));
                 blk = new byte[(int) (cand - lo)];
                 mem.getBytes(toAddr(lo), blk);
             }
-            while (fn == null && tries < 200) {
-                cand -= 16;
+            // Test the site's own 16-byte boundary first, then step back; the
+            // decrement sits in the for header so a `continue` still advances.
+            for (; fn == null && tries < 200; cand -= 16) {
                 int off = (int) (cand - lo);
                 if (off < 2) break;
                 if ((blk[off - 1] & 0xff) != 0xCC || (blk[off - 2] & 0xff) != 0xCC) continue;
