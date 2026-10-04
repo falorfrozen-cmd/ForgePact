@@ -50456,7 +50456,9 @@ static void DungeonProbeCommand(const std::string& rest)
 //                   beside the player through the game's own
 //                   LootGroundCreateFromItem, built the way `sigdrop` builds
 //                   one (InitItemFromJson, then itemInfoStruct["27"] written).
-//   methods       - the newest ground item's method variables, by name.
+//   methods       - the newest ground item's method variables, by name,
+//                   then `anon rows resolved: <k> of <n>`, the anon control
+//                   (LaProbeAnonControl): k = 0 means the listing is blind.
 //   try <n>       - the loot announcement adapter's sink n (1 method, 2
 //                   netsend with a0 undefined, 3 netsend with the player's
 //                   id, 4 chatadd, 5 server) against the newest ground item.
@@ -50790,6 +50792,40 @@ static void LaProbePlace(const std::string& which)
     } catch (...) { Out(std::string("lootannprobe place ") + which + ": EXCEPTION at " + stage); }
 }
 
+// The anon control for `lootannprobe methods`. s_lootDrawData is a named
+// method and resolved under the broken probe too, so it cannot tell a
+// working listing from a blind one; only an anon@ row can. Loot_Ground_obj's
+// Create event binds m_LootFilter and m_LootGroundDeActiveStep to anon@
+// closures (dev2-bug-batch-research.md "#95 part 1", static reading;
+// CiTryResolveMethod resolved m_LootGroundDeActiveStep to one, 2026-09-11).
+// `listed` counts those two variables in LaFindClosure's listing, `resolved`
+// the ones whose name came back as an anon@ closure of that Create event.
+// resolved = 0 means the listing is INSTRUMENT-BLIND: a missing SDK closure
+// row then says nothing about the game.
+static void LaProbeAnonControl(const std::string& listing, int& resolved, int& listed)
+{
+    resolved = 0;
+    listed = 0;
+    // "@gml_Object_Loot_Ground_obj_Create_0", spelled by the SDK closure's own name.
+    const std::string closure = kLaClosureShort;
+    const size_t second = closure.find('@', closure.find('@') + 1);
+    const std::string createEvent = second == std::string::npos ? closure : closure.substr(second);
+    size_t pos = 0;
+    while (pos < listing.size()) {
+        size_t end = listing.find(", ", pos);
+        if (end == std::string::npos) end = listing.size();
+        const std::string row = listing.substr(pos, end - pos);
+        pos = end + 2;
+        const size_t arrow = row.find(" -> ");
+        if (arrow == std::string::npos) continue;
+        const std::string var = row.substr(0, arrow);
+        if (var != "m_LootFilter" && var != "m_LootGroundDeActiveStep") continue;
+        ++listed;
+        const std::string script = row.substr(arrow + 4);
+        if (script.find("anon@") != std::string::npos && script.find(createEvent) != std::string::npos) ++resolved;
+    }
+}
+
 static void LaProbeMethods()
 {
     std::string how;
@@ -50799,6 +50835,9 @@ static void LaProbeMethods()
     std::string variable, listing;
     const bool found = LaFindClosure(loot, method, variable, listing);
     Out("lootannprobe methods on " + how + ": " + (listing.empty() ? std::string("no method variables") : listing));
+    int anonResolved = 0, anonListed = 0;
+    LaProbeAnonControl(listing, anonResolved, anonListed);
+    Out("lootannprobe methods: anon rows resolved: " + std::to_string(anonResolved) + " of " + std::to_string(anonListed));
     Out(std::string("lootannprobe methods: SDK closure ") + kLaClosureShort + " "
         + (found ? "found as variable " + variable : std::string("not found")));
 }

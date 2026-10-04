@@ -222,8 +222,23 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   name that does not resolve still prints its index (`<undefined>#<n>`), and
   an index that is not a number prints `#(<kind>)`. Live procedure 1's build
   passed the raw value instead and could name no `anon@` method (Results).
-  `s_lootDrawData`, which resolved even then, is the positive control in
-  the same listing. Then it prints `lootannprobe methods: SDK closure
+  After the listing it prints the anon control, `lootannprobe methods: anon
+  rows resolved: <k> of <n>`: `n` counts the listed method variables named
+  `m_LootFilter` or `m_LootGroundDeActiveStep`, and `k` those of them whose
+  name resolved to an `anon@<m>@gml_Object_Loot_Ground_obj_Create_0` closure.
+  Those two are the control because `Loot_Ground_obj`'s Create event binds
+  both to `anon@` closures (static reading, `dev2-bug-batch-research.md`
+  "#95 part 1"), and `CiTryResolveMethod` resolved `m_LootGroundDeActiveStep`
+  to an `anon@` closure on this runner (`anon@5164`, on a quest item;
+  measured, 2026-09-11, `pet-quest-collector-c-research.md`), so a working
+  resolver can name one. **The listing is INSTRUMENT-BLIND
+  when `k` is 0**: a missing SDK closure row then says nothing about the
+  game, and `method-found` is recorded `not-observed (instrument-blind)`,
+  never `fail`. Only with `k` ≥ 1 and no row naming `anon@1138` is it a
+  `fail`. `s_lootDrawData` resolves in either case: it is a *named* method,
+  so it is the control for named methods only and cannot tell a working
+  listing from a blind one, since the failure being fixed touched only
+  `anon@` methods. Then it prints `lootannprobe methods: SDK closure
   anon@1138@gml_Object_Loot_Ground_obj_Create_0 found as variable <var>` or
   `not found`. The newest ground item is `place`'s return or `LootGroundInit`'s
   argument 0 while it is still a live `Loot_Ground_obj`, else the room's last
@@ -299,10 +314,12 @@ What the session established, measured:
 - `NetworkSendChatMessageIngame` and `GetItemDropMessage` refused when
   called by name from ForgePact with the shapes supplied above, and neither
   counted a `PacketSend`. Only one item argument was ever supplied, the
-  ground item's `itemInstance` struct; in tries 2 and 3 `GetItemDropMessage`
-  counted 1 from inside `NetworkSendChatMessageIngame`'s own body before the
-  call failed, so the item argument is the likelier cause than the by-name
-  route or `self`. Whether another item shape (an item save struct, as
+  ground item's `itemInstance` struct. In tries 2 and 3 `GetItemDropMessage`'s
+  hook counted +1 during the try (measured); its hook does not record its
+  caller, so that the call came from inside `NetworkSendChatMessageIngame`'s
+  own body is inference, and so is reading the item argument as the likelier
+  cause than the by-name route or `self`. Whether another item shape (an
+  item save struct, as
   `ChatSendItem` passes per the static reading) would be accepted was not
   tried.
 - `ChatAddServerMessage` with our own text is the route that shows a line,

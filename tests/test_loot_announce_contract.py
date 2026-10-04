@@ -33,7 +33,12 @@ EXPECTED_ROUTE = "server"
 
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
-                       "LaProbeNoteDrop", "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay")
+                       "LaProbeNoteDrop", "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay",
+                       "LaProbeAnonControl")
+
+# The lootannprobe research block's own bounds in ModuleMain.cpp.
+PROBE_START = "#ifndef FORGEPACT_RELEASE\n// ===== lootannprobe:"
+PROBE_END = "#endif // FORGEPACT_RELEASE (lootannprobe)"
 
 
 def _body(source: str, signature: str) -> str:
@@ -247,6 +252,36 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('"#" + std::to_string(scriptIdx)', find)
         # The SDK closure is matched on the resolved name, never the index.
         self.assertIn("const bool match = script == shortName || script == fullName;", find)
+
+    def test_the_methods_listing_carries_the_anon_control(self):
+        # Live procedure 1's listing resolved the named s_lootDrawData while
+        # every anon@ method came back `<undefined>`, so a named row cannot
+        # tell a working listing from a blind one. The control counts the two
+        # Create-bound anon@ variables and how many resolved; 0 resolved
+        # makes the listing INSTRUMENT-BLIND (docs/loot-announcement-research.md).
+        start = self.plugin.find(PROBE_START)
+        end = self.plugin.find(PROBE_END)
+        self.assertGreaterEqual(start, 0, "the lootannprobe research block's start is missing")
+        self.assertGreater(end, start, "the lootannprobe research block's end is missing")
+        probe = self.plugin[start:end]
+        self.assertIn('"lootannprobe methods: anon rows resolved: "', probe)
+        control = _code(_body(probe, "static void LaProbeAnonControl("))
+        self.assertIn('"m_LootFilter"', control)
+        self.assertIn('"m_LootGroundDeActiveStep"', control)
+        self.assertIn('"anon@"', control)
+        # The Create event is spelled through the SDK closure's name.
+        self.assertIn("kLaClosureShort", control)
+        self.assertNotIn("s_lootDrawData", control)
+        methods = _code(_body(probe, "static void LaProbeMethods()"))
+        listed = methods.index('"lootannprobe methods on "')
+        counted = methods.index("LaProbeAnonControl(listing, anonResolved, anonListed);")
+        line = methods.index('"lootannprobe methods: anon rows resolved: "')
+        self.assertLess(methods.index("LaFindClosure(loot, method, variable, listing)"), counted)
+        self.assertLess(listed, line)
+        self.assertLess(counted, line)
+        # Research build only; the shared resolver the mod calls is untouched.
+        self.assertNotIn("anon rows resolved", self.player)
+        self.assertNotIn("m_LootFilter", _code(_body(self.plugin, "static bool LaFindClosure(")))
 
     def test_no_address_no_destroy_in_the_adapter(self):
         self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", self.adapter))
