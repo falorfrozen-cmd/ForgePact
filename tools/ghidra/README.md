@@ -2,8 +2,9 @@
 
 Our own Ghidra scripts for reading the game's executable locally. `ImportSymbols.java`
 names the stripped `Hero_Siege.exe` once; every other script here only reads the
-named project and prints, or writes files to a directory you give it. None of them
-saves anything to the project.
+named project and prints, or writes files to a directory you give it. Run them with
+`-readOnly`, and none of them saves anything to the project: `DecompileTo*` and
+`DecompileAround` create functions in the session, which `-readOnly` discards.
 
 Until 2026-10-04 the reading scripts lived in one researcher's `ghidra_scripts`
 folder, so nobody else could repeat a reading. They are here so that a second
@@ -19,7 +20,7 @@ researcher can run the same reads.
 | `DecompileToHuge.java` | `DecompileToLong.java` with the decompiler's instruction and payload limits raised too. Prefer the defaults: see "Limits" below. |
 | `DecompileAround.java` | Decompiles the function that contains each given address (a call site inside a region the `-noanalysis` import left without a function), by trying function starts back from it. |
 | `ListCallsIn.java` | For a region the decompiler cannot finish, lists every call target in it (by name where the project has one) and the strings its instructions reference, to a file. Produces no decompiled text. |
-| `FindCallers.java` | Lists the direct `call rel32` and `jmp rel32` sites that reach a named function or address, with the function that contains each. Calls through the script table are not direct sites and are not listed. |
+| `FindCallers.java` | Lists the direct `call rel32` and `jmp rel32` sites that reach a named function or address, with the function that contains each. The hits are candidate sites: it scans bytes, not decoded instructions, so a hit may fall inside another instruction; confirm one with `DecompileAround.java` before relying on it. A zero means no direct site was found, not that the function is never called: before reading it as "not called", run `FindCallers.java` in the same project on a function known to have a direct caller (a positive control), and remember that calls through the script table, a pointer global or a method value are invisible to it. |
 | `FindSlotNames.java` | Recovers the variable-slot and builtin-pointer globals from the startup code that registers them by name, and writes global, name and site to a CSV. |
 | `FindWrites.java` | Lists the instructions that store to, or take the address of, a given global, with the bytes around each site. |
 | `FindPointers.java` | Finds where an address is stored in the initialised data (a registration table entry) and prints the neighbouring entries. |

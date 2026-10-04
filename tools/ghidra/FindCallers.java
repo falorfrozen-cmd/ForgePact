@@ -5,7 +5,12 @@
 // with -noanalysis and so carries no cross-references. YYC compiles a script's
 // direct call to another script as `call rel32`, which is what this finds; a
 // call through the script table (a pointer) is not a direct site and is not
-// reported here. Usage: -postScript FindCallers.java <name|0xADDR> ...
+// reported here. The hits are candidate sites: this is a byte scan, not
+// instruction-aligned, so confirm a site with DecompileAround.java before relying
+// on it. A zero means no direct site was found, not "not called": run this in the
+// same project on a function known to have a direct caller (a positive control)
+// first, and remember that table, pointer-global and method-value calls are
+// invisible to it. Usage: -postScript FindCallers.java <name|0xADDR> ...
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;

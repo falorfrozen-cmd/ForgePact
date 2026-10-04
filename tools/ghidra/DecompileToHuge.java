@@ -82,7 +82,7 @@ public class DecompileToHuge extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            println("DecompileTo: usage -> <outdir> <name|+name|0xADDR> ...");
+            println("DecompileToHuge: usage -> <outdir> <name|+name|0xADDR> ...");
             return;
         }
         outDir = new File(args[0]);
@@ -97,7 +97,7 @@ public class DecompileToHuge extends GhidraScript {
         decomp.toggleSyntaxTree(false);
         decomp.setSimplificationStyle("decompile");
         if (!decomp.openProgram(currentProgram)) {
-            println("DecompileTo: decompiler failed to open the program: " + decomp.getLastMessage());
+            println("DecompileToHuge: decompiler failed to open the program: " + decomp.getLastMessage());
             return;
         }
 
@@ -123,9 +123,9 @@ public class DecompileToHuge extends GhidraScript {
             }
         }
         decomp.dispose();
-        println("DecompileTo: done, " + done.size() + " function(s) written under " + outDir);
+        println("DecompileToHuge: done, " + done.size() + " function(s) written under " + outDir);
         // Printed only: the record step runs from the toolkit checkout, not from here.
-        println("DecompileTo: record it, from the toolkit checkout's root: py -3 tools/decomp_index.py scan \""
+        println("DecompileToHuge: record it, from the toolkit checkout's root: py -3 tools/decomp_index.py scan \""
                 + outDir.getAbsolutePath() + "\"");
     }
 
