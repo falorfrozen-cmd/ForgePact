@@ -104,6 +104,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # plugin's own counters, changes nothing in the game
     # (test_incident_monitor_contract.py pins it).
     "incident",
+    # Satanic Zone control (ForgePact #157): the World tab's two switches
+    # and the exact-zone pin (test_satanic_zone_control.py pins it).
+    "satzone",
 }
 
 

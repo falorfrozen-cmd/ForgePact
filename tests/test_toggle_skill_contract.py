@@ -849,6 +849,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The incident monitor's `incident stat` (ForgePact #76;
             # test_incident_monitor_contract.py).
             "incident",
+            # Satanic Zone control (ForgePact #157; test_satanic_zone_control.py).
+            "satzone",
         }
         self.assertEqual(entries, expected)
 
