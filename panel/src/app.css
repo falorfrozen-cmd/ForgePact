@@ -236,6 +236,8 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
    in one column (below). The colour sits on every group after the first so the rule is only a width. */
 .modifier-group+.modifier-group{border-top:0 solid var(--color-border-subtle)}
 .modifier-group:nth-child(n+3){border-top-width:1px;padding-top:var(--space-8)}
+/* An odd last group (Skills, the fifth) spans both columns rather than sitting alone in a half row (#172 review). */
+.modifier-group:last-child:nth-child(odd){grid-column:1/-1}
 .group-title{margin-bottom:var(--space-2);color:var(--color-text-muted);font-size:var(--font-size-sm);font-weight:var(--font-weight-medium)}
 .setting-entry{position:relative;min-width:0}
 .setting-entry>.note{margin:calc(var(--space-2) * -1) 0 var(--space-4)}

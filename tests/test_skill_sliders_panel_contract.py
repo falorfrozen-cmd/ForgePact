@@ -135,9 +135,17 @@ class PanelSourceTests(unittest.TestCase):
     def test_the_rows_are_drawn_in_a_skills_group_on_modifiers(self):
         self.assertIn("document.getElementById('skillstats').innerHTML=percentRows(['projspeed','projamount','aoesize']);",
                       self.panel)
-        group = re.search(r'<div class="modifier-group">\s*<div class="group-title[^"]*">Skills</div>\s*'
+        group = re.search(r'<div class="modifier-group">\s*<div class="group-title[^"]*" data-icon="projectile-amount">Skills</div>\s*'
                           r'<div id="skillstats"></div>\s*</div>', self.modifiers)
         self.assertIsNotNone(group, "no Skills group holding #skillstats in Modifiers.svelte")
+        # Each group title names its own icon, so adding or moving a group cannot
+        # shift icons onto the wrong heading (#172 review).
+        titles = re.findall(r'<div class="group-title[^"]*"([^>]*)>', self.modifiers)
+        self.assertEqual(len(titles), 5)
+        self.assertTrue(all('data-icon="' in a for a in titles), titles)
+        self.assertIn("decorateIconLabel(label,label.dataset.icon)", self.panel)
+        css = panel_file("app.css")
+        self.assertIn(".modifier-group:last-child:nth-child(odd){grid-column:1/-1}", css)
         self.assertIn('data-tab="modifiers"', self.modifiers)
 
     def test_speed_reads_as_a_percentage_the_others_as_a_count(self):

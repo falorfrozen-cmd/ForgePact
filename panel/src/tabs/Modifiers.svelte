@@ -8,23 +8,23 @@
   </div>
   <div class="modifier-grid">
     <div class="modifier-group">
-      <div class="group-title sustain">Utility</div>
+      <div class="group-title sustain" data-icon="experience">Utility</div>
       <div id="stats"></div>
     </div>
     <div class="modifier-group">
-      <div class="group-title offense">Offense</div>
+      <div class="group-title offense" data-icon="damage">Offense</div>
       <div id="offensivestats"></div>
     </div>
     <div class="modifier-group">
-      <div class="group-title sustain">Defense &amp; Sustain</div>
+      <div class="group-title sustain" data-icon="defense">Defense &amp; Sustain</div>
       <div id="sustainstats"></div>
     </div>
     <div class="modifier-group">
-      <div class="group-title critical">Critical Strikes</div>
+      <div class="group-title critical" data-icon="critical-chance">Critical Strikes</div>
       <div id="criticalstats"></div>
     </div>
     <div class="modifier-group">
-      <div class="group-title offense">Skills</div>
+      <div class="group-title offense" data-icon="projectile-amount">Skills</div>
       <div id="skillstats"></div>
     </div>
   </div>
