@@ -26,7 +26,7 @@ public class FindWrites extends GhidraScript {
             int n = (int) Math.min(buf.length, size - off);
             mem.getBytes(toAddr(start + off), buf, 0, n);
             int limit = Math.min(n, chunk);
-            for (int i = 0; i + 10 <= limit; i++) {
+            for (int i = 0; i < limit && i + 10 <= n; i++) {
                 long ip = start + off + i;
                 int len = 0; String kind = null;
                 // modrm 05 = [rip+disp32] with reg field 0; other reg fields: 0D,15,1D,25,2D,35,3D
@@ -40,7 +40,7 @@ public class FindWrites extends GhidraScript {
                 long disp = (long) ((buf[dispAt] & 0xff) | (buf[dispAt + 1] & 0xff) << 8 | (buf[dispAt + 2] & 0xff) << 16 | (buf[dispAt + 3] & 0xff) << 24);
                 long target = ip + len + disp;
                 if (!targets.contains(target)) continue;
-                if (kind.contains("reg,[rip]")) continue;
+                if (kind.endsWith("mov reg,[rip]")) continue; // loads only; leas are reported
                 hits++;
                 StringBuilder sb = new StringBuilder();
                 sb.append("HIT target=0x").append(Long.toHexString(target)).append(" site=0x").append(Long.toHexString(ip)).append(" kind=").append(kind).append("\n  before:");

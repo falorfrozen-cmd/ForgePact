@@ -27,7 +27,7 @@ public class FindPointers extends GhidraScript {
             for (long off = 0; off < size; off += chunk) {
                 int n = (int) Math.min(buf.length, size - off);
                 mem.getBytes(toAddr(start + off), buf, 0, n);
-                int limit = Math.min(n - 8, chunk);
+                int limit = Math.min(n, chunk);
                 for (int i = 0; i + 8 <= limit; i += 8) {
                     long q = 0;
                     for (int k = 7; k >= 0; k--) q = (q << 8) | (buf[i + k] & 0xff);

@@ -53,28 +53,32 @@ public class FindSlotNames extends GhidraScript {
                 int n = (int) Math.min(buf.length, size - off);
                 mem.getBytes(toAddr(start + off), buf, 0, n);
                 int limit = Math.min(n, chunk);
-                for (int i = 0; i + 7 <= limit; i++) {
+                for (int i = 0; i < limit && i + 7 <= n; i++) {
                     // shape A: lea rcx,[rip+str] ; (up to 16 bytes) ; call ; mov [rip+g],eax|rax
+                    // No `continue` out of shape A: a lea rcx that is not shape A
+                    // may still start shape B's reverse order (rcx = global first).
                     if (buf[i] == 0x48 && buf[i + 1] == (byte) 0x8D && buf[i + 2] == 0x0D) {
                         long ip = start + off + i;
                         long strAddr = ip + 7 + rel32(buf, i + 3);
                         String s = stringAt(strAddr);
-                        if (s == null) continue;
                         int callAt = -1;
-                        for (int k = i + 7; k <= i + 7 + 16 && k + 5 <= n; k++) {
-                            if (buf[k] == (byte) 0xE8) { callAt = k; break; }
+                        if (s != null) {
+                            for (int k = i + 7; k <= i + 7 + 16 && k + 5 <= n; k++) {
+                                if (buf[k] == (byte) 0xE8) { callAt = k; break; }
+                            }
                         }
-                        if (callAt < 0) continue;
-                        int m = callAt + 5;
-                        long g = -1; String shape = null;
-                        if (m + 6 <= n && buf[m] == (byte) 0x89 && buf[m + 1] == 0x05) {
-                            g = (start + off + m) + 6 + rel32(buf, m + 2); shape = "A-eax";
-                        } else if (m + 7 <= n && buf[m] == 0x48 && buf[m + 1] == (byte) 0x89 && buf[m + 2] == 0x05) {
-                            g = (start + off + m) + 7 + rel32(buf, m + 3); shape = "A-rax";
-                        }
-                        if (g >= dataStart && g <= dataEnd) {
-                            w.println("0x" + Long.toHexString(g) + "," + csv(s) + ",0x" + Long.toHexString(ip) + "," + shape);
-                            found++;
+                        if (callAt >= 0) {
+                            int m = callAt + 5;
+                            long g = -1; String shape = null;
+                            if (m + 6 <= n && buf[m] == (byte) 0x89 && buf[m + 1] == 0x05) {
+                                g = (start + off + m) + 6 + rel32(buf, m + 2); shape = "A-eax";
+                            } else if (m + 7 <= n && buf[m] == 0x48 && buf[m + 1] == (byte) 0x89 && buf[m + 2] == 0x05) {
+                                g = (start + off + m) + 7 + rel32(buf, m + 3); shape = "A-rax";
+                            }
+                            if (g >= dataStart && g <= dataEnd) {
+                                w.println("0x" + Long.toHexString(g) + "," + csv(s) + ",0x" + Long.toHexString(ip) + "," + shape);
+                                found++;
+                            }
                         }
                     }
                     // shape B: lea rdx,[rip+str] then lea rcx,[rip+g] (or the reverse) then call

@@ -26,6 +26,7 @@ import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.util.task.ConsoleTaskMonitor;
 
 import java.io.File;
@@ -49,11 +50,17 @@ public class DecompileAround extends GhidraScript {
             Function fn = getFunctionContaining(siteAd);
             int tries = 0;
             long cand = site & ~0xFL;
-            // One read of the 8 MB before the site; YYC event bodies run to hundreds of KB.
-            int span = 8 << 20;
-            long lo = cand - span;
-            byte[] blk = new byte[span];
-            mem.getBytes(toAddr(lo), blk);
+            long lo = cand;
+            byte[] blk = new byte[0];
+            if (fn == null) {
+                // One read of up to 8 MB before the site, clamped to the site's
+                // memory block; YYC event bodies run to hundreds of KB.
+                MemoryBlock mb = mem.getBlock(siteAd);
+                if (mb == null) { println("DecompileAround: " + siteAd + " is in no memory block"); continue; }
+                lo = Math.max(cand - (8L << 20), mb.getStart().getOffset());
+                blk = new byte[(int) (cand - lo)];
+                mem.getBytes(toAddr(lo), blk);
+            }
             while (fn == null && tries < 200) {
                 cand -= 16;
                 int off = (int) (cand - lo);

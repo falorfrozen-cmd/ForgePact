@@ -68,7 +68,7 @@ public class FindCallers extends GhidraScript {
             int n = (int) Math.min(buf.length, size - off);
             mem.getBytes(toAddr(start + off), buf, 0, n);
             int limit = Math.min(n, chunk);
-            for (int i = 0; i + 5 <= limit; i++) {
+            for (int i = 0; i < limit && i + 5 <= n; i++) {
                 int op = buf[i] & 0xff;
                 if (op != 0xE8 && op != 0xE9) continue;
                 long ip = start + off + i;
