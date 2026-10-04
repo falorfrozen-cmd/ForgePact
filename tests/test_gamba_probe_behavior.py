@@ -17,6 +17,15 @@ and a machine call of another builtin or with other arguments are untouched,
 the last two counted as passed; a lever its target never reached is named
 INERT; moving keys cannot spend a row's trace budget within a spin; the status
 line reads back every counter.
+
+Replan 1 (after Live 1 found every spawned machine removed before its first
+Step_0): a call of instance_destroy, instance_change or
+instance_deactivate_object whose first argument names a machine is counted
+(`machine-arg=`) while its own self is anything else, and nothing else is; the
+caller walk prints at most its budget per window and counts the rest; a
+frame's text names the gml row, the runner, this plugin, another module or
+nothing; and a script row's by-name route reads same, detoured, shared or
+missing from its two name lookups.
 """
 import os
 import shutil
@@ -175,6 +184,35 @@ class GambaProbeBehaviorTests(unittest.TestCase):
 
     def test_off_disarms_and_keeps_the_counts(self):
         self.assertScenario("off/disarms_and_lever_off_counts_stay")
+
+    # ---- replan 1: who removes the machine, and the by-name route ----------
+
+    def test_a_call_whose_first_argument_names_a_machine_is_counted(self):
+        """instance_destroy(<machine>) from another self is a removal the self filter alone would miss."""
+        for label in ("machinearg/only_the_target_taking_rows", "machinearg/names_a_machine",
+                      "machinearg/names_nothing_else", "machinearg/unresolved_machine_names_nothing",
+                      "machinearg/another_selfs_call_naming_a_machine_is_counted", "machinearg/status_reads_it_back",
+                      "machinearg/bad_row_refused"):
+            self.assertScenario(label)
+
+    def test_the_caller_walk_budget(self):
+        for label in ("walk/budgets", "walk/first_four_per_row_then_counted", "walk/status_reads_it_back",
+                      "walk/a_new_window_starts_the_walks_over"):
+            self.assertScenario(label)
+
+    def test_the_frame_text(self):
+        """A frame is a gml row, a runner frame, this plugin, another module or unknown."""
+        for label in ("walk/rows_sorted_by_function", "walk/frame_in_a_gml_row", "walk/runner_frame_above_a_row_is_exe",
+                      "walk/runner_frame_below_every_row_is_exe", "walk/plugin_frame", "walk/other_module_frame",
+                      "walk/unknown_frame_and_no_rows"):
+            self.assertScenario(label)
+
+    def test_the_byname_route(self):
+        for label in ("byname/words", "byname/index_kinds", "byname/both_names_the_script_is_same",
+                      "byname/a_routine_that_is_the_rows_own_function_is_same", "byname/another_game_routine_is_detoured",
+                      "byname/full_name_unresolved_is_missing", "byname/an_undetourable_routine_is_missing",
+                      "byname/several_rows_on_one_routine_share_it", "byname/status_text_ends_with_the_word"):
+            self.assertScenario(label)
 
     def test_the_decision_keys(self):
         for label in ("decision/six_keys_in_order", "decision/listed_labels_valid", "decision/pending_only_before_live_1",

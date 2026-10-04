@@ -28,9 +28,31 @@ launch, `gambaprobe`, and these tests pin it on comment-stripped source:
 - the lever writes a result only when it answers, and then runs no original;
 - the local player and the machine resolve by the instance-handle rule, never
   a kind check;
-- the research document carries its eight headings in order and the six
-  Decision keys, each `pending` or one of its listed labels, and `pending` is
-  refused once `### Live 1 results` exists.
+- the research document carries its nine headings in order (Live procedure 2
+  between Live procedure 1 and Results) and the six Decision keys, each
+  `pending` or one of its listed labels, and `pending` is refused once `###
+  Live 2 results` exists (Live 1 measured nothing: INSTRUMENT-BLIND).
+
+Replan 1, after Live 1 found every spawned machine cleaned up in the step after
+its Create_0:
+
+- `spawn [depth|game|layer|self]` carries four routes - `spawn game` calls the
+  game's instance_create script by its hs-game-sdk constant through the
+  by-name route DungeonChestChat uses, `spawn layer` uses the player's own
+  layer value - and no route spells a layer name or an effect id; every
+  refusal names the step that failed;
+- the caller walk (`cleanup-caller` in Live procedure 2) runs at CleanUp_0,
+  Alarm_9 and the window's first Create_0 before the original, prints its
+  frames through the header's FrameText and names game frames only by rows
+  whose function AddrIsExecutableInModule places in the game;
+- the by-name route (`byname-resolve`, `byname-visible`) is read for every
+  script row before any is installed, printed at the end of every script
+  row's hook line and on `status`, and its detours sit behind
+  AddrIsExecutableInModule and never answer;
+- instance_change, layer_destroy_instances, instance_deactivate_object and
+  room_goto are named builtin rows, a call whose first argument names a
+  machine counts as `machine-arg=`, and `selftest` calls irandom outside the
+  busy guard.
 
 GambaProbe.hpp's decision itself is exercised by test_gamba_probe_behavior.py.
 """
@@ -58,9 +80,15 @@ BLOCK_END = "#endif // FORGEPACT_RELEASE (gambaprobe)"
 GP_SYMBOL = r"\b(?:g_|k)?Gp[A-Z0-9_]\w*"
 MACHINE = "Slot_Machine_01_obj"
 
-# docs/gamba-machine-research.md: the eight headings, in this order.
-DOC_HEADINGS = ("Status", "Static search", "Static reading", "Instrument", "Live procedure 1", "Results",
-                "Decision", "Not established")
+# docs/gamba-machine-research.md: the nine headings, in this order.
+DOC_HEADINGS = ("Status", "Static search", "Static reading", "Instrument", "Live procedure 1", "Live procedure 2",
+                "Results", "Decision", "Not established")
+
+# What Live procedure 2 runs and the checks it records (replan 1).
+LIVE2_COMMANDS = ("spawn game", "spawn layer", "spawn self", "selftest")
+LIVE2_CHECKS = ("selftest-rng", "byname-resolve", "spawn-depth", "cleanup-caller", "spawn-game", "spawn-layer",
+                "spawn-self", "byname-visible", "rng-rows-live")
+SPAWN_ROUTES = ("depth", "game", "layer", "self")
 
 # The rows the plan's instrument names (context "### The instrument"); the
 # table may carry more, never fewer. The closure is named by its SDK index
@@ -72,7 +100,11 @@ PLAN_SCRIPT_ROWS = ("anon@1474", "GPV", "SPV", "InitPV", "FPV", "GetGoldAmount",
                     "CreateDefaultParams", "cpr_irandom", "cpr_rand32")
 PLAN_EVENTS = ("Create_0", "Alarm_0", "Alarm_9", "Step_0", "CleanUp_0")
 PLAN_BUILTINS = ("irandom", "irandom_range", "random", "random_range", "choose", "instance_destroy",
-                 "instance_create_depth", "instance_create_layer")
+                 "instance_create_depth", "instance_create_layer",
+                 # replan 1: the runner paths that could end or swap a machine
+                 "instance_change", "layer_destroy_instances", "instance_deactivate_object", "room_goto")
+# The rows whose first argument is checked for a machine (machine-arg=).
+ARGUMENT_BUILTINS = ("InstanceDestroy", "InstanceChange", "InstanceDeactivateObject")
 
 # The rows another ForgePact hook already holds (context "### Hooks already
 # held", plus the two the research build holds at startup: DropManager's
@@ -232,9 +264,13 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other) return t.orig ? t.orig(S, O, R, argc, A) : R;",
                       script)
         builtin = self.body("static void GpOnBuiltin(")
-        idle = braced_block(builtin, "if (d.seen == GpNs::Seen::Idle || d.seen == GpNs::Seen::Other || !GpCanLog(row)) {")
+        idle = braced_block(builtin, "if (d.seen == GpNs::Seen::Idle) {")
         self.assertEqual([line.strip() for line in idle.split("\n") if line.strip()],
                          ["if (t.orig) t.orig(Result, S, O, argc, Args);", "return;"])
+        # The by-argument read happens only after the idle return.
+        self.assertLess(builtin.index("if (d.seen == GpNs::Seen::Idle) {"), builtin.index("GpMachineArg("))
+        by_name = self.body("static void GpOnByName(")
+        self.assertIn("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {", by_name)
         event = self.body("static void GpOnEvent(")
         self.assertIn("if (seen != GpNs::Seen::Machine) { if (t.orig) t.orig(S, O); return; }", event)
 
@@ -247,8 +283,11 @@ class GambaProbeContract(unittest.TestCase):
             self.assertIn(constant, sdk, constant + " is not an hs-game-sdk script constant")
             self.assertTrue(sdk[constant].startswith("gml_Script_"), constant + ": SdkShortScriptName needs the prefix")
         # The table's names reach the runtime only through the constants.
-        self.assertIn('{ SdkShortScriptName(HeroSiege::Scripts::CONSTANT), "fp_gp_" #SAFE, (PVOID)GpDetour_##SAFE, HOLDER },',
-                      self.code)
+        self.assertIn('{ SdkShortScriptName(HeroSiege::Scripts::CONSTANT), "fp_gp_" #SAFE, (PVOID)GpDetour_##SAFE, HOLDER, \\\n'
+                      '      HeroSiege::Scripts::CONSTANT.data() },', self.code)
+        # The by-name lookup's second name is the constant's own value, never
+        # composed from the short one.
+        self.assertNotIn('"gml_Script_" +', self.code)
         for _, constant, _ in self.rows:
             for spelled in (short_name(sdk[constant]), sdk[constant]):
                 self.assertNotIn('"' + spelled + '"', self.code, constant + " is spelled outside its row")
@@ -376,7 +415,8 @@ class GambaProbeContract(unittest.TestCase):
     def test_hook_refuses_while_citrace_jumpprobe_or_jumpscenery_holds_a_builtin(self):
         install = self.body("static void GpInstall()")
         first = install.index("GpInstallEvents(mainMod);")
-        for holder in ("JpCitraceHolders()", "g_OrigCi_InstanceDestroy", "GpJumpProbeHolders()", "JumpSceneryHeldHooks()"):
+        for holder in ("JpCitraceHolders()", "g_OrigCi_InstanceDestroy", "g_OrigCi_InstanceChange",
+                       "g_OrigCi_InstanceDeactivateObject", "GpJumpProbeHolders()", "JumpSceneryHeldHooks()"):
             self.assertLess(install.index(holder), first, holder + " is checked after a row is installed")
         for who in ("citrace", "jumpprobe", "jumpscenery"):
             self.assertIn('"gambaprobe hook: refused - ' + who + ' holds "', install)
@@ -456,9 +496,9 @@ class GambaProbeContract(unittest.TestCase):
         command = self.body("static void GpCommand(")
         self.assertIn('if (sub == "trace") { GpTrace(); return; }', command)
         self.assertIn("g_GpCore.ResetTrace();", self.body("static void GpTrace()"))
-        spawn = self.body("static void GpSpawn()")
-        self.assertLess(spawn.index("g_GpCore.ResetTrace();"), spawn.index('"instance_create_depth"'),
-                        "the new machine's Create_0 must fall in the new window")
+        spawn = self.body("static void GpSpawn(")
+        self.assertLess(spawn.index("g_GpCore.ResetTrace();"), spawn.index("GpSpawnCall("),
+                        "the new machine's Create_0 must fall in the new window, whichever route made it")
         self.assertIn("g_GpCore.ResetTrace();", self.body("static void GpInstall()"))
         # A builtin line is keyed by its argument text, an event line by its
         # instance, so one repeated call shape cannot spend the row.
@@ -511,7 +551,7 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("CInstance* inst = HhResolveInstance(handle);", machines)
         self.assertIn("g_GpCore.IsMachine(GpObjectIndexOf(handle))", machines)
         self.assertIn("N1ObjectIndex(", self.body("static int GpObjectIndexOf("))
-        self.assertIn("HhResolveInstance(id)", self.body("static void GpSpawn()"))
+        self.assertIn("HhResolveInstance(id)", self.body("static void GpSpawn("))
         for word in ("m_Kind", "VALUE_OBJECT", "VALUE_REF"):
             self.assertNotIn(word, self.code, word + ": a raw kind check in gambaprobe would silently disable it")
         machine = braced_block(self.header, "bool IsMachine(int object) const {")
@@ -530,25 +570,181 @@ class GambaProbeContract(unittest.TestCase):
     def test_the_behavior_test_declares_no_parallel_group(self):
         self.assertNotIn("PARALLEL_GROUP", BEHAVIOR.read_text(encoding="utf-8"))
 
+    # ---- replan 1: the spawn routes -----------------------------------------------
+
+    def test_spawn_carries_four_routes_and_spawn_game_calls_the_games_script_by_its_constant(self):
+        """`spawn game` reproduces the game's own creation call; no route spells a layer name or an effect id."""
+        routes = re.search(r"kGpSpawnRoutes\[\]\s*=\s*\{([^}]*)\}", self.code)
+        self.assertIsNotNone(routes)
+        self.assertEqual(tuple(re.findall(r'"(\w+)"', routes.group(1))), SPAWN_ROUTES)
+        self.assertIn('if (sub == "spawn") { GpSpawn(tail); return; }', self.body("static void GpCommand("))
+        call = self.body("static void GpSpawnCall(")
+        # game: the SDK constant's short name, asset_get_index, then
+        # script_execute through ApCallScript (DungeonChestChat's route), with
+        # the local player as self and (x, y, machine).
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_instance_create)", call)
+        self.assertIn("gml_Script_instance_create", sdk_scripts())
+        self.assertIn('"asset_get_index"', call)
+        self.assertIn("ApCallScript(script, self, { RValue(x), RValue(y), machine }, id)", call)
+        self.assertNotIn('"instance_create"', self.code, "the game's script is named through its SDK constant")
+        # layer: the player's own layer value, read by name at the call.
+        self.assertIn('g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("layer") })', call)
+        self.assertIn('g_Yytk->CallBuiltin("instance_create_layer", { RValue(x), RValue(y), layer, machine })', call)
+        # self: the player as self and other.
+        self.assertIn('g_Yytk->CallBuiltinEx(id, "instance_create_depth", self, self,', call)
+        # depth: Live 1's call, the control.
+        self.assertIn('g_Yytk->CallBuiltin("instance_create_depth", { RValue(x), RValue(y), RValue(0.0), machine })', call)
+        # Nothing stored, and no layer name or effect id anywhere.
+        for word in ("layer_get_id", "layer_create", "ClientCreateEffect", "effect_create"):
+            self.assertNotIn(word, self.code, word)
+        self.assertIsNone(re.search(r"static\s+[^;(]*\blayer\w*\s*=", self.code), "a stored layer")
+        # Every refusal names its step, and the line names the route.
+        spawn = self.body("static void GpSpawn(")
+        for step in ("no player", "name not resolved", "result not an instance"):
+            self.assertIn(step, spawn + call, step)
+        self.assertIn("dispatch failed", call)
+        self.assertIn('"gambaprobe spawn: route=" + route + " id="', spawn)
+        self.assertIn('" at " + std::to_string((int)x) + ","', spawn)
+
+    # ---- replan 1: the caller walk -----------------------------------------------
+
+    def test_the_caller_walk_runs_before_the_original_and_names_frames_by_game_rows(self):
+        """`cleanup-caller` is read from these lines: they must print before CleanUp_0 runs, from what the instance is."""
+        event = self.body("static void GpOnEvent(")
+        walk = "if (g_GpCore.TakeCallerWalk(static_cast<GpNs::Event>(event))) GpCallerWalk(event, S, id);"
+        self.assertIn(walk, event)
+        self.assertLess(event.index(walk), event.index("if (t.orig) t.orig(S, O);\n    }"))
+        self.assertLess(event.index("if (seen != GpNs::Seen::Machine)"), event.index(walk))
+        caller = self.body("static void GpCallerWalk(")
+        self.assertIn('"-caller id="', caller)
+        for value in ("object_index", "x", "y", "layer", "depth"):
+            self.assertIn('GpInstanceNumber(self, "' + value + '")', caller)
+        self.assertIn('" alarm9="', caller)
+        self.assertIn('" alarm11="', caller)
+        self.assertIn("RtlCaptureStackBackTrace(1, GpNs::kCallerWalkFrames, frames, nullptr)", caller)
+        self.assertIn("GpNs::FrameText(", caller)
+        # Printed only: the walk keeps nothing but the busy flag it sets.
+        self.assertEqual(set(re.findall(r"\b(g_Gp\w+)\s*(?:=[^=]|\.push_back|\.emplace)", caller)), {"g_GpBusy"})
+        self.assertIn("variable_instance_get", self.body("static std::string GpInstanceNumber("))
+        # The rows a frame is named by are game code only, read on every hook
+        # before any row is installed.
+        rows = self.body("static size_t GpLoadCodeRows(")
+        self.assertLess(rows.index("AddrIsExecutableInModule(mainMod, e->function)"), rows.index("rows.push_back("))
+        self.assertIn("FrameProfGmlAnchor()", rows)
+        self.assertIn("GpNs::SortCodeRows(rows);", rows)
+        install = self.body("static void GpInstall()")
+        self.assertLess(install.index("GpLoadCodeRows(mainMod)"), install.index("GpInstallEvents(mainMod);"))
+        # The budget and the frame text are the header's, tested whole there.
+        for name in ("kCallerWalksPerRow = 4", "kCreateWalksPerWindow = 1", "kCallerWalkFrames = 24"):
+            self.assertIn("inline constexpr int " + name + ";", self.header)
+        frame = braced_block(self.header, "const CodeModule& game, const CodeModule& plugin, const CodeModule& other)\n{")
+        for prefix in ('"gml:"', '"exe+"', '"forgepact+"', '"?"'):
+            self.assertIn(prefix, frame)
+        self.assertIn("c.walked = 0;", braced_block(self.header, "void ResetTrace()\n    {"))
+
+    # ---- replan 1: the by-name route ---------------------------------------------
+
+    def test_the_byname_route_is_read_and_printed_for_every_script_row(self):
+        """`byname-resolve` reads every script row's hook line; it must end with the by-name word."""
+        scripts = self.body("static void GpInstallScripts(HMODULE mainMod)")
+        # Read before any row is installed.
+        first = scripts.index("GpInstallByName(mainMod);")
+        for later in ("GpInstallScriptHolder(", "HookOneScript(", "GpDetourUnder("):
+            self.assertLess(first, scripts.index(later), later)
+        # Every script row line goes through the one formatter, which ends
+        # with idx=<short>/<gml_Script_> byname=<word>.
+        self.assertGreater(scripts.count("Out("), 3)
+        self.assertEqual(scripts.count("Out("), scripts.count("Out(GpScriptRowLine(t, "))
+        line = self.body("static std::string GpScriptRowLine(")
+        self.assertTrue(line.rstrip().rstrip(";").rstrip().endswith("GpNs::ByNameText(t.byname, t.shortName, t.fullName)"), line)
+        text = braced_block(self.header, "const NameLookup& shortName, const NameLookup& fullName)\n{")
+        self.assertIn('" byname=" + std::string(ByNameWord(b))', text)
+        self.assertTrue(text.strip().startswith('return "idx=" + IndexText(shortName) + "/" + IndexText(fullName)'), text)
+        for word in ("same", "detoured", "shared", "missing"):
+            self.assertIn('return "' + word + '";', self.header)
+        # Both names: the short one and the SDK constant's own value.
+        by_name = self.body("static void GpInstallByName(")
+        self.assertIn("t.shortName = GpLookUpName(t.label, mainMod);", by_name)
+        self.assertIn("t.fullName = GpLookUpName(t.sdkName, mainMod);", by_name)
+        self.assertIn("GetNamedRoutineIndex(name, &index)", self.body("static GpNs::NameLookup GpLookUpName("))
+        self.assertIn("if (g_GpByNameRead) return;", by_name)
+        # Each by-name detour sits behind AddrIsExecutableInModule and the
+        # name still resolving to the routine, through HookBuiltin.
+        self.assertLess(by_name.index("AddrIsExecutableInModule(mainMod, (const void*)b.routine)"), by_name.index("HookBuiltin("))
+        self.assertLess(by_name.index("GetNamedRoutinePointer(b.name.c_str(), &now)"), by_name.index("HookBuiltin("))
+        self.assertEqual(by_name.count("HookBuiltin("), 1)
+        self.assertIn("n.routineIsGameCode = p && AddrIsExecutableInModule(mainMod, p);",
+                      self.body("static GpNs::NameLookup GpLookUpName("))
+        # status prints it per script row, and a shared routine as its own row.
+        status = self.body("static void GpStatus()")
+        self.assertIn("GpByNameStatusTail(i)", status)
+        self.assertIn("GpByNameLabel(s)", status)
+        self.assertIn("GpNs::ByNameText(t.byname, t.shortName, t.fullName)", self.body("static std::string GpByNameStatusTail("))
+        self.assertIn('"byname-shared "', self.body("static std::string GpByNameLabel("))
+        # A by-name call is counted and described, never answered.
+        detour = self.body("static void GpOnByName(")
+        self.assertIsNone(re.search(r"\bResult\s*=[^=]", detour), "the by-name detour writes a result")
+        self.assertNotIn("DecideRng", detour)
+        self.assertIn("if (g_GpBusy ||", detour)
+
+    # ---- replan 1: the new rows, the machine-arg rule and selftest ----------------
+
+    def test_the_new_rows_are_named_builtins_and_count_a_machine_argument(self):
+        rows = re.findall(r'\{\s*"(\w+)",\s*AnswerKind::(\w+)\s*\}', self.header)
+        for name in PLAN_BUILTINS[8:]:
+            self.assertIn((name, "NotRng"), rows, name + " is not a never-answered builtin row")
+        self.assertEqual(len(re.findall(r'"fp_gp_b_\w+"', self.code)), len(PLAN_BUILTINS), "one hook id per builtin row")
+        checks = braced_block(self.header, "inline constexpr bool BuiltinChecksArgument(Builtin b)\n{")
+        self.assertEqual(sorted(re.findall(r"Builtin::(\w+)", checks)), sorted(ARGUMENT_BUILTINS))
+        # The argument is read before the original runs (instance_destroy may
+        # end it), and only off the idle path.
+        builtin = self.body("static void GpOnBuiltin(")
+        logged = builtin[builtin.index("const bool byArg"):]
+        self.assertLess(logged.index("GpMachineArg("), logged.index("if (t.orig) t.orig(Result, S, O, argc, Args);"))
+        arg = self.body("static GpNs::ArgTarget GpArgTarget(")
+        self.assertIn('"object_is_ancestor"', arg)
+        self.assertIn("GpObjectIndexOf(", arg)
+        self.assertIn("NoteMachineArg(row, seen, g_GpCore.ArgNamesMachine(target))", self.body("static bool GpMachineArg("))
+        self.assertIn('" machine-arg="', braced_block(self.header, "std::string RowText(int row) const\n    {"))
+
+    def test_selftest_calls_irandom_outside_the_busy_guard(self):
+        """`selftest-rng`: the irandom row must see the probe's own call, so it may not be the probe's busy call."""
+        self.assertIn('if (sub == "selftest") { GpSelfTest(); return; }', self.body("static void GpCommand("))
+        test = self.body("static void GpSelfTest()")
+        self.assertNotIn("g_GpBusy", test)
+        self.assertIn('g_Yytk->CallBuiltin("irandom", { RValue(100.0) })', test)
+        self.assertIn('"gambaprobe selftest: irandom row calls=" + std::to_string(before) + " -> " + std::to_string(after)', test)
+        self.assertLess(test.index("const uint64_t before"), test.index('CallBuiltin("irandom"'))
+        self.assertLess(test.index('CallBuiltin("irandom"'), test.index("const uint64_t after"))
+
     # ---- the research document --------------------------------------------------
 
-    def test_the_research_doc_has_its_eight_headings_in_order(self):
+    def test_the_research_doc_has_its_nine_headings_in_order(self):
         text = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
         positions = [text.find("\n## " + heading + "\n") for heading in DOC_HEADINGS]
         self.assertTrue(all(p >= 0 for p in positions), list(zip(DOC_HEADINGS, positions)))
         self.assertEqual(positions, sorted(positions))
         self.assertIn("gambaprobe", text)
 
+    def test_live_procedure_2_names_its_routes_and_checks(self):
+        """Live 2 runs `spawn game` and its siblings, `selftest`, and records cleanup-caller and the byname checks."""
+        procedure = doc_section(DOC.read_text(encoding="utf-8").replace("\r\n", "\n"), "Live procedure 2")
+        for command in LIVE2_COMMANDS:
+            self.assertIn(command, procedure, command + " is not in Live procedure 2")
+        for check in LIVE2_CHECKS:
+            self.assertIn(check, procedure, check + " is not a Live procedure 2 check")
+
     def test_the_decision_keys_are_pending_or_a_listed_label(self):
         """Six keys, each exactly once in ## Decision.
 
-        Before Live 1 a key reads `pending`; once ## Results carries `### Live
-        1 results`, `pending` is no longer an answer and every key names one of
-        its labels (drop-route: the script or builtin that placed the prize).
+        Before Live 2 a key reads `pending` (Live 1 measured nothing: its
+        instrument was blind); once ## Results carries `### Live 2 results`,
+        `pending` is no longer an answer and every key names one of its labels
+        (drop-route: the script or builtin that placed the prize).
         """
         text = DOC.read_text(encoding="utf-8").replace("\r\n", "\n")
         decision = doc_section(text, "Decision")
-        live1 = "\n### Live 1 results" in doc_section(text, "Results")
+        live2 = "\n### Live 2 results" in doc_section(text, "Results")
         keys = header_decision_keys(self.header)
         self.assertEqual([k for k, _, _, _ in keys],
                          ["roll-route", "explosion-rule", "drop-route", "counter-route", "fallback-drop", "pity-design"])
@@ -556,8 +752,8 @@ class GambaProbeContract(unittest.TestCase):
             found = re.findall(r"(?m)^[-*\s]*`?" + re.escape(key) + r"`?:\s*`?([\w@-]+)`?", decision)
             self.assertEqual(len(found), 1, key + ": must appear exactly once in ## Decision")
             answer = found[0]
-            if live1:
-                self.assertNotEqual(answer, "pending", "Live 1 has run; `pending` is no longer an answer for " + key)
+            if live2:
+                self.assertNotEqual(answer, "pending", "Live 2 has run; `pending` is no longer an answer for " + key)
             if answer != "pending":
                 if open_name:
                     self.assertRegex(answer, r"^[A-Za-z0-9_@]+$|^not-observed$", key)

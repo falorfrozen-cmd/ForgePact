@@ -59,7 +59,9 @@ static Seen observe(Probe& p, int row, int self, bool inEvent = false)
 }
 
 static const Builtin kRngRows[] = { Builtin::Irandom, Builtin::IrandomRange, Builtin::Random, Builtin::RandomRange, Builtin::Choose };
-static const Builtin kOtherRows[] = { Builtin::InstanceDestroy, Builtin::InstanceCreateDepth, Builtin::InstanceCreateLayer };
+static const Builtin kOtherRows[] = { Builtin::InstanceDestroy, Builtin::InstanceCreateDepth, Builtin::InstanceCreateLayer,
+                                      Builtin::InstanceChange, Builtin::LayerDestroyInstances,
+                                      Builtin::InstanceDeactivateObject, Builtin::RoomGoto };
 
 static std::string name(Builtin b) { return std::string(kBuiltins[static_cast<int>(b)].name); }
 static bool onlyCalls(const Counters& c, uint64_t calls)
@@ -76,7 +78,10 @@ int main()
         check("table/events", kEventCount == 5 && kEvents[0].event == "Create_0" && kEvents[1].event == "Alarm_0"
             && kEvents[2].event == "Alarm_9" && kEvents[3].event == "Step_0" && kEvents[4].event == "CleanUp_0"
             && kEvents[0].key == "create" && kEvents[2].key == "alarm9" && kEvents[3].key == "step");
-        bool ok = kBuiltinCount == 8;
+        bool ok = kBuiltinCount == 12 && kBuiltins[static_cast<int>(Builtin::InstanceChange)].name == "instance_change"
+            && kBuiltins[static_cast<int>(Builtin::LayerDestroyInstances)].name == "layer_destroy_instances"
+            && kBuiltins[static_cast<int>(Builtin::InstanceDeactivateObject)].name == "instance_deactivate_object"
+            && kBuiltins[static_cast<int>(Builtin::RoomGoto)].name == "room_goto";
         std::string bad;
         for (Builtin b : kRngRows) if (kBuiltins[static_cast<int>(b)].kind == AnswerKind::NotRng) { ok = false; bad += name(b) + " "; }
         for (Builtin b : kOtherRows) if (kBuiltins[static_cast<int>(b)].kind != AnswerKind::NotRng) { ok = false; bad += name(b) + " "; }
@@ -409,7 +414,7 @@ int main()
         const std::string line = p.StatusLine();
         check("status/line_sums_every_counter", line == "gambaprobe: on machine-object=4644 create=1 alarm0=0 alarm9=1"
             " step=30 cleanup=0 | calls=37 machine-self=35 in-event=1 other-self=1 logged=1 key-capped=0 repeats=0 spent-rows=0"
-            " answered=1 out-of-range=1 passed=1", line);
+            " answered=1 out-of-range=1 passed=1 machine-arg=0 caller-walks=0 walks-skipped=0", line);
         check("status/rng_line", contains(p.RngLine(), "gambaprobe: rng answered 0 of 1 target=choose value=9 remaining=1"
             " out-of-range=1 passed=1 (other builtin 1, other args 0) lever=on"), p.RngLine());
         check("status/number_text", NumberText(98) == "98" && NumberText(-7.25) == "-7.25" && NumberText(0.5) == "0.5");
@@ -426,6 +431,144 @@ int main()
         check("off/disarms_and_lever_off_counts_stay", !p.Armed() && !p.RngOn() && !p.Active() && !d.answer
             && d.seen == Seen::Idle && p.RowCounters(BuiltinRowOf(Builtin::Irandom)).calls == 2
             && p.RowCounters(BuiltinRowOf(Builtin::Irandom)).answered == 1 && p.StatusLine().rfind("gambaprobe: off", 0) == 0);
+    }
+
+    // ---- the by-argument rule (replan 1) ---------------------------------------------
+    {
+        // Baseline: the rule is off for every row but the three that take a
+        // target, and an idle probe or a machine-self call is never a
+        // machine-arg call.
+        bool rows = BuiltinChecksArgument(Builtin::InstanceDestroy) && BuiltinChecksArgument(Builtin::InstanceChange)
+            && BuiltinChecksArgument(Builtin::InstanceDeactivateObject);
+        for (Builtin b : { Builtin::Irandom, Builtin::Choose, Builtin::InstanceCreateDepth, Builtin::InstanceCreateLayer,
+                           Builtin::LayerDestroyInstances, Builtin::RoomGoto })
+            if (BuiltinChecksArgument(b)) rows = false;
+        check("machinearg/only_the_target_taking_rows", rows);
+        Probe p = make();
+        const ArgTarget machine{ ArgKind::Instance, kMachine, false };
+        const ArgTarget machineObject{ ArgKind::Object, kMachine, false };
+        const ArgTarget parent{ ArgKind::Object, 959, true };
+        const ArgTarget all{ ArgKind::All, -1, false };
+        const ArgTarget player{ ArgKind::Instance, kPlayer, false };
+        const ArgTarget enemyObject{ ArgKind::Object, kEnemy, false };
+        const ArgTarget none{};
+        check("machinearg/names_a_machine", p.ArgNamesMachine(machine) && p.ArgNamesMachine(machineObject)
+            && p.ArgNamesMachine(parent) && p.ArgNamesMachine(all));
+        // Negative control: another instance, another object, nothing read.
+        check("machinearg/names_nothing_else", !p.ArgNamesMachine(player) && !p.ArgNamesMachine(enemyObject)
+            && !p.ArgNamesMachine(none) && !p.ArgNamesMachine(ArgTarget{ ArgKind::Instance, -1, false }));
+        Probe u = make();
+        u.SetMachineObject(-1);
+        check("machinearg/unresolved_machine_names_nothing", !u.ArgNamesMachine(machine) && !u.ArgNamesMachine(all)
+            && !u.ArgNamesMachine(parent));
+        const int row = BuiltinRowOf(Builtin::InstanceDestroy);
+        const Seen idle = observe(p, row, kPlayer);
+        const bool idleNoted = p.NoteMachineArg(row, idle, true);
+        p.SetArmed(true);
+        const Seen other = observe(p, row, kPlayer);
+        const bool otherNoted = p.NoteMachineArg(row, other, true);
+        const Seen inEvent = observe(p, row, kPlayer, true);
+        const bool inEventNoted = p.NoteMachineArg(row, inEvent, true);
+        const Seen self = observe(p, row, kMachine);
+        const bool selfNoted = p.NoteMachineArg(row, self, true);
+        const bool unrelated = p.NoteMachineArg(row, observe(p, row, kEnemy), false);
+        check("machinearg/another_selfs_call_naming_a_machine_is_counted", !idleNoted && otherNoted && inEventNoted
+            && !selfNoted && !unrelated && p.RowCounters(row).machineArg == 2 && p.RowCounters(row).machineSelf == 1
+            && p.RowCounters(row).calls == 5, p.RowText(row));
+        check("machinearg/status_reads_it_back", contains(p.RowText(row), " machine-arg=2")
+            && !contains(p.RowText(BuiltinRowOf(Builtin::RoomGoto)), "machine-arg")
+            && !contains(p.RowText(BuiltinRowOf(Builtin::Irandom)), "machine-arg")
+            && contains(p.StatusLine(), " machine-arg=2 "), p.RowText(row));
+        check("machinearg/bad_row_refused", !p.NoteMachineArg(-1, Seen::Other, true)
+            && !p.NoteMachineArg(p.RowCount(), Seen::Other, true));
+    }
+
+    // ---- the caller walk (replan 1) ---------------------------------------------------
+    {
+        check("walk/budgets", CallerWalkBudget(Event::CleanUp) == 4 && CallerWalkBudget(Event::Alarm9) == 4
+            && CallerWalkBudget(Event::Create) == 1 && CallerWalkBudget(Event::Step) == 0
+            && CallerWalkBudget(Event::Alarm0) == 0 && kCallerWalkFrames == 24 && kCallerWalksPerRow == 4);
+        Probe p = make();
+        int cleanups = 0, creates = 0, steps = 0;
+        for (int i = 0; i < 10; ++i) {
+            if (p.TakeCallerWalk(Event::CleanUp)) ++cleanups;
+            if (p.TakeCallerWalk(Event::Create)) ++creates;
+            if (p.TakeCallerWalk(Event::Step)) ++steps;
+        }
+        const Counters& c = p.RowCounters(EventRowOf(Event::CleanUp));
+        check("walk/first_four_per_row_then_counted", cleanups == 4 && creates == 1 && steps == 0 && c.walked == 4
+            && c.walkSkipped == 6 && p.RowCounters(EventRowOf(Event::Create)).walkSkipped == 9
+            && p.RowCounters(EventRowOf(Event::Step)).walkSkipped == 0, p.RowText(EventRowOf(Event::CleanUp)));
+        check("walk/status_reads_it_back", contains(p.RowText(EventRowOf(Event::CleanUp)), " caller-walks=4/4 walks-skipped=6")
+            && contains(p.RowText(EventRowOf(Event::Create)), " caller-walks=1/1 walks-skipped=9")
+            && !contains(p.RowText(EventRowOf(Event::Step)), "caller-walks")
+            && contains(p.StatusLine(), " caller-walks=5 walks-skipped=15"), p.StatusLine());
+        p.ResetTrace();
+        check("walk/a_new_window_starts_the_walks_over", p.TakeCallerWalk(Event::CleanUp) && p.TakeCallerWalk(Event::Create)
+            && !p.TakeCallerWalk(Event::Create) && p.RowCounters(EventRowOf(Event::CleanUp)).walked == 1
+            && p.RowCounters(EventRowOf(Event::CleanUp)).walkSkipped == 6);
+    }
+    {
+        // The frame formatter: a pure function of the frame, the function the
+        // unwind table puts it in, the sorted rows and the module spans.
+        std::vector<CodeRow> rows = { { 0x14000a000, "gml_Object_Slot_Machine_01_obj_CleanUp_0" },
+                                      { 0x140001000, "gml_Script_InitPV" },
+                                      { 0x140005000, "gml_Object_Zone_obj_Step_0" } };
+        SortCodeRows(rows);
+        const CodeModule game{ 0x140000000, 0x150000000, "Hero_Siege.exe" };
+        const CodeModule plugin{ 0x7ff800000000, 0x7ff800100000, "BloodPactPlugin.dll" };
+        const CodeModule kernel{ 0x7ffa00000000, 0x7ffa00200000, "KERNEL32.DLL" };
+        const CodeModule none{};
+        check("walk/rows_sorted_by_function", rows[0].function == 0x140001000 && rows[2].function == 0x14000a000
+            && NearestRow(rows, 0x140005010) == &rows[1] && NearestRow(rows, 0x140000fff) == nullptr
+            && NearestRow(rows, 0x140005000) == &rows[1]);
+        const std::string gml = FrameText(3, 0x140005234, 0, rows, game, plugin, none);
+        const std::string gmlUnwind = FrameText(3, 0x140005234, 0x140005000, rows, game, plugin, none);
+        check("walk/frame_in_a_gml_row", gml == "  #3 gml:gml_Object_Zone_obj_Step_0+0x234" && gmlUnwind == gml, gml);
+        const std::string runner = FrameText(4, 0x140007000, 0x140006f00, rows, game, plugin, none);
+        check("walk/runner_frame_above_a_row_is_exe", runner == "  #4 exe+0x7000 (runner code; nearest row below"
+            " gml:gml_Object_Zone_obj_Step_0+0x2000)", runner);
+        const std::string below = FrameText(5, 0x140000500, 0, rows, game, plugin, none);
+        check("walk/runner_frame_below_every_row_is_exe", below == "  #5 exe+0x500", below);
+        const std::string own = FrameText(0, 0x7ff800012345, 0, rows, game, plugin, none);
+        check("walk/plugin_frame", own == "  #0 forgepact+0x12345", own);
+        const std::string module = FrameText(9, 0x7ffa00001010, 0, rows, game, plugin, kernel);
+        check("walk/other_module_frame", module == "  #9 KERNEL32.DLL+0x1010", module);
+        const std::string unknown = FrameText(10, 0x50000, 0, rows, game, plugin, none);
+        const std::string emptyRows = FrameText(1, 0x140005234, 0, {}, game, plugin, none);
+        check("walk/unknown_frame_and_no_rows", unknown == "  #10 ?" && emptyRows == "  #1 exe+0x5234", unknown + " | " + emptyRows);
+    }
+
+    // ---- the by-name route (replan 1) -----------------------------------------------
+    {
+        const uintptr_t fn = 0x140001000;
+        const NameLookup script{ true, kScriptIndexBase + 17, 0, false };
+        const NameLookup unresolved{};
+        const NameLookup routine{ true, 2900, 0x140200000, true };
+        const NameLookup ownRoutine{ true, 2900, fn, true };
+        const NameLookup foreign{ true, 2900, 0x7ff800001000, false };
+        const NameLookup noPointer{ true, 2900, 0, false };
+        check("byname/words", ByNameWord(ByName::Same) == "same" && ByNameWord(ByName::Detoured) == "detoured"
+            && ByNameWord(ByName::Shared) == "shared" && ByNameWord(ByName::Missing) == "missing"
+            && ByNameWord(ByName::NotRead) == "not-read" && kScriptIndexBase == 100000);
+        check("byname/index_kinds", NamesScript(script) && !NamesRoutine(script) && NamesRoutine(routine)
+            && !NamesScript(routine) && !NamesScript(unresolved) && !NamesRoutine(unresolved));
+        check("byname/both_names_the_script_is_same", ClassifyByName(script, script, fn) == ByName::Same);
+        check("byname/a_routine_that_is_the_rows_own_function_is_same", ClassifyByName(script, ownRoutine, fn) == ByName::Same);
+        check("byname/another_game_routine_is_detoured", ClassifyByName(script, routine, fn) == ByName::Detoured
+            && ClassifyByName(routine, script, fn) == ByName::Detoured);
+        check("byname/full_name_unresolved_is_missing", ClassifyByName(script, unresolved, fn) == ByName::Missing
+            && ClassifyByName(routine, unresolved, fn) == ByName::Missing);
+        check("byname/an_undetourable_routine_is_missing", ClassifyByName(script, foreign, fn) == ByName::Missing
+            && ClassifyByName(noPointer, script, fn) == ByName::Missing);
+        check("byname/several_rows_on_one_routine_share_it", WithSharing(ByName::Detoured, 3) == ByName::Shared
+            && WithSharing(ByName::Detoured, 1) == ByName::Detoured && WithSharing(ByName::Same, 3) == ByName::Same
+            && WithSharing(ByName::Missing, 2) == ByName::Missing);
+        const std::string text = ByNameText(ByName::Same, script, NameLookup{ true, kScriptIndexBase + 17, 0, false });
+        const std::string missing = ByNameText(ByName::Missing, script, unresolved);
+        check("byname/status_text_ends_with_the_word", text == "idx=100017/100017 byname=same"
+            && missing == "idx=100017/none byname=missing"
+            && ByNameText(ByName::Shared, routine, routine) == "idx=2900/2900 byname=shared", text + " | " + missing);
     }
 
     // ---- the decision keys ------------------------------------------------------------

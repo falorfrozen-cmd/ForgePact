@@ -63,7 +63,10 @@ struct BuiltinRow {
     std::string_view name;
     AnswerKind       kind;
 };
-inline constexpr int kBuiltinCount = 8;
+// The last four are Live 1's removal candidates (replan 1): a machine
+// created by `spawn` was cleaned up in the next step with no instance_destroy
+// call from GML, so the runner paths that end or swap an instance are rows too.
+inline constexpr int kBuiltinCount = 12;
 inline constexpr BuiltinRow kBuiltins[kBuiltinCount] = {
     { "irandom",               AnswerKind::Value         },
     { "irandom_range",         AnswerKind::Value         },
@@ -73,10 +76,25 @@ inline constexpr BuiltinRow kBuiltins[kBuiltinCount] = {
     { "instance_destroy",      AnswerKind::NotRng        },
     { "instance_create_depth", AnswerKind::NotRng        },
     { "instance_create_layer", AnswerKind::NotRng        },
+    { "instance_change",            AnswerKind::NotRng   },
+    { "layer_destroy_instances",    AnswerKind::NotRng   },
+    { "instance_deactivate_object", AnswerKind::NotRng   },
+    { "room_goto",                  AnswerKind::NotRng   },
 };
 enum class Builtin : int {
     Irandom, IrandomRange, Random, RandomRange, Choose, InstanceDestroy, InstanceCreateDepth, InstanceCreateLayer,
+    InstanceChange, LayerDestroyInstances, InstanceDeactivateObject, RoomGoto,
 };
+
+// The rows whose first argument can name what they act on: a call another
+// self makes still concerns a machine when that argument names one
+// (`machine-arg=`, ArgNamesMachine). instance_change's argument is the object
+// its self becomes, so there it counts a call that turns something into a
+// machine.
+inline constexpr bool BuiltinChecksArgument(Builtin b)
+{
+    return b == Builtin::InstanceDestroy || b == Builtin::InstanceChange || b == Builtin::InstanceDeactivateObject;
+}
 
 inline constexpr int kFirstBuiltinRow = kEventCount;
 inline constexpr int kFirstScriptRow = kEventCount + kBuiltinCount;
@@ -106,6 +124,86 @@ inline constexpr std::string_view RouteName(Route r)
     return "?";
 }
 
+// ---- the by-name route (replan 1) ------------------------------------------------
+// Live 1 counted no InitPV, SPV or FPV call while the machine's Create_0 and
+// CleanUp_0 ran to their end, and the local reading says compiled GML calls
+// those scripts by name through the runtime's functions array, not through
+// the script's own function. So at the first `hook`, before any script row
+// is installed, the adapter looks each row's short name and its
+// `gml_Script_<short>` name up (GetNamedRoutineIndex, then
+// GetNamedRoutinePointer) and this decides what the row's by-name route is:
+//   same      no name reaches a routine other than the row's own function;
+//   detoured  a name reaches another routine of the game, which the adapter
+//             detours as a second attachment feeding the row's counters;
+//   shared    that routine is reached from several rows: detoured once, as
+//             its own `byname-shared` row;
+//   missing   the `gml_Script_` name does not resolve, or a name's routine is
+//             nothing the probe can detour (no pointer, not game code, or
+//             its detour failed).
+// The runner numbers scripts from kScriptIndexBase: an index below it names
+// an entry of the functions array.
+enum class ByName : int { NotRead, Same, Detoured, Shared, Missing };
+inline constexpr int kScriptIndexBase = 100000;
+
+inline constexpr std::string_view ByNameWord(ByName b)
+{
+    switch (b) {
+    case ByName::NotRead:  return "not-read";
+    case ByName::Same:     return "same";
+    case ByName::Detoured: return "detoured";
+    case ByName::Shared:   return "shared";
+    case ByName::Missing:  return "missing";
+    }
+    return "?";
+}
+
+// One name's lookup, as the adapter read it. `routine` and
+// `routineIsGameCode` matter only for a functions-array index.
+struct NameLookup {
+    bool      resolved = false;          // GetNamedRoutineIndex answered an index >= 0
+    int       index = -1;
+    uintptr_t routine = 0;               // a functions-array index: the routine GetNamedRoutinePointer returned
+    bool      routineIsGameCode = false; // ... executable inside Hero_Siege.exe
+};
+
+inline bool NamesScript(const NameLookup& n) { return n.resolved && n.index >= kScriptIndexBase; }
+inline bool NamesRoutine(const NameLookup& n) { return n.resolved && n.index >= 0 && n.index < kScriptIndexBase; }
+
+// The routine a name reaches besides the row's own function, or 0.
+inline uintptr_t OtherRoutine(const NameLookup& n, uintptr_t rowFunction)
+{
+    return NamesRoutine(n) && n.routine && n.routine != rowFunction ? n.routine : 0;
+}
+
+// The row's by-name route from its two lookups, before sharing is known.
+inline ByName ClassifyByName(const NameLookup& shortName, const NameLookup& fullName, uintptr_t rowFunction)
+{
+    if (!fullName.resolved || fullName.index < 0) return ByName::Missing;
+    bool other = false;
+    for (const NameLookup* n : { &shortName, &fullName }) {
+        if (NamesRoutine(*n) && !n->routine) return ByName::Missing;
+        if (!OtherRoutine(*n, rowFunction)) continue;
+        if (!n->routineIsGameCode) return ByName::Missing;
+        other = true;
+    }
+    return other ? ByName::Detoured : ByName::Same;
+}
+
+// A detoured row whose routine other rows reach too is shared.
+inline ByName WithSharing(ByName b, int rowsOnRoutine)
+{
+    return b == ByName::Detoured && rowsOnRoutine > 1 ? ByName::Shared : b;
+}
+
+inline std::string IndexText(const NameLookup& n) { return n.resolved ? std::to_string(n.index) : std::string("none"); }
+
+// What a script row's hook and status lines end with:
+// `idx=<short>/<gml_Script_> byname=<word>`.
+inline std::string ByNameText(ByName b, const NameLookup& shortName, const NameLookup& fullName)
+{
+    return "idx=" + IndexText(shortName) + "/" + IndexText(fullName) + " byname=" + std::string(ByNameWord(b));
+}
+
 // ---- the trace budget and the lever's limits --------------------------------
 // Each line carries a key - what it is about: a script's first argument
 // (GPV's state key), a builtin's argument text, an event's instance id - and
@@ -130,6 +228,93 @@ static_assert(kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow, "a row'
 inline constexpr int kPendingRepeatKeysShown = 8;
 inline constexpr int64_t kRngMinCount = 1;
 inline constexpr int64_t kRngMaxCount = 50;
+
+// ---- the caller walk (replan 1) ---------------------------------------------------
+// Live 1 could not say who removes a spawned machine. At CleanUp_0 and
+// Alarm_9 (and the window's first Create_0), before the original runs, the
+// adapter prints the instance's state and its return-address stack, each
+// frame named by FrameText. kCallerWalksPerRow walks per row per window
+// (Create_0: kCreateWalksPerWindow); the count carries the rest
+// (`walks-skipped=`).
+inline constexpr int kCallerWalksPerRow = 4;
+inline constexpr int kCreateWalksPerWindow = 1;
+inline constexpr int kCallerWalkFrames = 24;
+
+inline constexpr int CallerWalkBudget(Event e)
+{
+    return e == Event::Create ? kCreateWalksPerWindow
+        : (e == Event::Alarm9 || e == Event::CleanUp) ? kCallerWalksPerRow : 0;
+}
+
+// One compiled-code table row the walk can name a frame by: its function and
+// its `gml_` name. The adapter copies the rows whose function is game code,
+// once per `hook`, and sorts them (SortCodeRows).
+struct CodeRow {
+    uintptr_t   function = 0;
+    std::string name;
+};
+
+// A module's image, [base, end); `name` as a frame prints it.
+struct CodeModule {
+    uintptr_t   base = 0;
+    uintptr_t   end = 0;
+    std::string name;
+    bool Contains(uintptr_t a) const { return base != 0 && a >= base && a < end; }
+};
+
+inline void SortCodeRows(std::vector<CodeRow>& rows)
+{
+    std::sort(rows.begin(), rows.end(), [](const CodeRow& a, const CodeRow& b) { return a.function < b.function; });
+}
+
+// The row with the greatest function address not above `frame`, or null.
+inline const CodeRow* NearestRow(const std::vector<CodeRow>& sorted, uintptr_t frame)
+{
+    const auto it = std::upper_bound(sorted.begin(), sorted.end(), frame,
+                                     [](uintptr_t a, const CodeRow& r) { return a < r.function; });
+    return it == sorted.begin() ? nullptr : &*(it - 1);
+}
+
+inline std::string HexText(uintptr_t v)
+{
+    char b[24];
+    std::snprintf(b, sizeof(b), "0x%llx", static_cast<unsigned long long>(v));
+    return b;
+}
+
+// One frame of a walk. Inside the game's image the frame is named by the
+// nearest row below it (`gml:<row>+0x<off>`) - unless `functionStart`, the
+// start of the function holding the frame as the image's unwind table says
+// (0 when it does not say), is another function, which makes it runner code
+// above a row: `exe+0x<off>`, with the nearest row named after it. Inside
+// this plugin `forgepact+0x<off>`, inside another module `<module>+0x<off>`,
+// else `?`.
+inline std::string FrameText(int k, uintptr_t frame, uintptr_t functionStart, const std::vector<CodeRow>& sorted,
+                             const CodeModule& game, const CodeModule& plugin, const CodeModule& other)
+{
+    const std::string head = "  #" + std::to_string(k) + " ";
+    if (game.Contains(frame)) {
+        const CodeRow* row = NearestRow(sorted, frame);
+        if (row && (functionStart == 0 || functionStart == row->function))
+            return head + "gml:" + row->name + "+" + HexText(frame - row->function);
+        std::string s = head + "exe+" + HexText(frame - game.base);
+        if (row) s += " (runner code; nearest row below gml:" + row->name + "+" + HexText(frame - row->function) + ")";
+        return s;
+    }
+    if (plugin.Contains(frame)) return head + "forgepact+" + HexText(frame - plugin.base);
+    if (other.Contains(frame) && !other.name.empty()) return head + other.name + "+" + HexText(frame - other.base);
+    return head + "?";
+}
+
+// ---- what an instance builtin's first argument names -----------------------------
+// As the adapter read it: an instance (with its object_index), an object
+// index (and whether that object is an ancestor of the machine's), or `all`.
+enum class ArgKind : int { None, Instance, Object, All };
+struct ArgTarget {
+    ArgKind kind = ArgKind::None;
+    int     object = -1;
+    bool    machineAncestor = false;
+};
 
 // ---- the decision keys ------------------------------------------------------
 // docs/gamba-machine-research.md § Decision carries one line per key, `pending`
@@ -191,6 +376,9 @@ struct Counters {
     uint64_t answered = 0;      // RNG rows: calls the lever answered
     uint64_t outOfRange = 0;    // `choose`: a lever value that named none of the call's arguments
     uint64_t passed = 0;        // RNG rows: machine-self calls the armed lever let through (not its target)
+    uint64_t machineArg = 0;    // BuiltinChecksArgument rows: another self's call whose first argument names a machine
+    uint64_t walked = 0;        // walk rows: caller walks printed this window (at most CallerWalkBudget)
+    uint64_t walkSkipped = 0;   // walk rows: walks the window's budget refused
 };
 
 // A builtin's row by its name (`irandom`, `choose`, ...); false for a name
@@ -265,12 +453,14 @@ public:
     bool Active() const { return armed_ || rngOn_; }
 
     // `trace`, `hook` again or `spawn`: every row's trace budget, its keys'
-    // budgets and its repeat memory start over; the counts continue.
+    // budgets, its repeat memory and its caller walks start over; the counts
+    // continue.
     void ResetTrace()
     {
         for (Counters& c : rows_) {
             c.logged = 0;
             c.repeats = 0;
+            c.walked = 0;
         }
         for (auto& m : lastLine_) m.clear();
         takenRepeats_ = 0;
@@ -292,6 +482,52 @@ public:
         if (inMachineEvent) { ++c.inEvent; return Seen::InEvent; }
         ++c.otherSelf;
         return Seen::Other;
+    }
+
+    // ---- the by-argument rule ----------------------------------------------
+    // Does a call's first argument name a machine? An instance whose
+    // object_index is the machine's, the machine's object or one of its
+    // ancestors (instance_destroy(<object>) ends every instance of it and of
+    // its children), or `all`. Nothing when the machine did not resolve.
+    bool ArgNamesMachine(const ArgTarget& a) const
+    {
+        if (machineObject_ < 0) return false;
+        switch (a.kind) {
+        case ArgKind::Instance: return a.object == machineObject_;
+        case ArgKind::Object:   return a.object == machineObject_ || a.machineAncestor;
+        case ArgKind::All:      return true;
+        case ArgKind::None:     break;
+        }
+        return false;
+    }
+
+    // A BuiltinChecksArgument row's call Observe did not find to be a
+    // machine's own, whose first argument names one: counted as
+    // `machine-arg=` and to be logged. An idle probe or a machine-self call
+    // (already counted and logged as one) is not.
+    bool NoteMachineArg(int row, Seen seen, bool argNamesMachine)
+    {
+        if (row < 0 || row >= RowCount() || seen == Seen::Idle || seen == Seen::Machine || !argNamesMachine) return false;
+        ++rows_[static_cast<size_t>(row)].machineArg;
+        return true;
+    }
+
+    // ---- the caller walk ---------------------------------------------------
+    // May this machine event print its caller walk? Within the window's
+    // CallerWalkBudget, else the refusal is counted.
+    bool TakeCallerWalk(Event e)
+    {
+        const int row = EventRowOf(e);
+        if (row < 0 || row >= RowCount()) return false;
+        const int budget = CallerWalkBudget(e);
+        if (budget <= 0) return false;
+        Counters& c = rows_[static_cast<size_t>(row)];
+        if (c.walked >= static_cast<uint64_t>(budget)) {
+            ++c.walkSkipped;
+            return false;
+        }
+        ++c.walked;
+        return true;
     }
 
     // One RNG builtin call: Observe, then the lever. Answered only for a
@@ -511,6 +747,12 @@ public:
             && kBuiltins[row - kFirstBuiltinRow].kind != AnswerKind::NotRng)
             s += " answered=" + std::to_string(c.answered) + " out-of-range=" + std::to_string(c.outOfRange)
                 + " passed=" + std::to_string(c.passed);
+        if (row >= kFirstBuiltinRow && row < kFirstScriptRow
+            && BuiltinChecksArgument(static_cast<Builtin>(row - kFirstBuiltinRow)))
+            s += " machine-arg=" + std::to_string(c.machineArg);
+        if (row >= 0 && row < kEventCount && CallerWalkBudget(static_cast<Event>(row)) > 0)
+            s += " caller-walks=" + std::to_string(c.walked) + "/" + std::to_string(CallerWalkBudget(static_cast<Event>(row)))
+                + " walks-skipped=" + std::to_string(c.walkSkipped);
         const std::string held = PendingRepeatsText(row);
         if (!held.empty()) s += " unlogged-repeats: " + held;
         if (BudgetSpent(row))
@@ -551,13 +793,18 @@ public:
             t.answered += c.answered;
             t.outOfRange += c.outOfRange;
             t.passed += c.passed;
+            t.machineArg += c.machineArg;
+            t.walked += c.walked;
+            t.walkSkipped += c.walkSkipped;
         }
         return std::string("gambaprobe: ") + (armed_ ? "on" : "off") + " machine-object=" + std::to_string(machineObject_)
             + " " + EventsText() + " | calls=" + std::to_string(t.calls) + " machine-self=" + std::to_string(t.machineSelf)
             + " in-event=" + std::to_string(t.inEvent) + " other-self=" + std::to_string(t.otherSelf)
             + " logged=" + std::to_string(t.logged) + " key-capped=" + std::to_string(t.keyCapped)
             + " repeats=" + std::to_string(t.repeats) + " spent-rows=" + std::to_string(SpentRows()) + " answered=" + std::to_string(t.answered)
-            + " out-of-range=" + std::to_string(t.outOfRange) + " passed=" + std::to_string(t.passed);
+            + " out-of-range=" + std::to_string(t.outOfRange) + " passed=" + std::to_string(t.passed)
+            + " machine-arg=" + std::to_string(t.machineArg) + " caller-walks=" + std::to_string(t.walked)
+            + " walks-skipped=" + std::to_string(t.walkSkipped);
     }
 
     // What the lever is aimed at: `irandom` or `irandom args="a0=real:100.000000"`
