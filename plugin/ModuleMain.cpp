@@ -542,6 +542,10 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/JumpScenery.hpp>
 static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
 #include <ForgePact/StatsManager.hpp>
+// Skill sliders (`skillslider`, #160): projectile amount, AoE size and
+// projectile speed for the player's own casts. Nothing is hooked until a
+// lever is first set above 0.
+#include <ForgePact/SkillSlidersMod.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
 #include <ForgePact/RestartAnytimeMod.hpp>
@@ -21932,15 +21936,17 @@ static void NAddrAll()
         "EnemyCalculateExperience",
         // ForgePact::StatsManager's `statadd` table (StatFasterCastRate is above).
         "StatSpellHaste", "StatAllSkills",
+        // ForgePact::SkillSlidersMod's five scripts (`skillslider`, #160).
+        // projprobe hooks them too, in the research build.
+        "ReturnExtraSpellProjectiles", "ReturnExtraProjectilesRanged",
+        "StatAOESkillSize", "LoadAllModifiers", "ReturnSpecificStat",
 #ifndef FORGEPACT_RELEASE
-        // `projprobe`'s rows and its `ids` hook (research build, issue #160).
-        // Guarded like projprobe itself, so the player DLL is unchanged.
-        "StatAOESkillSize", "StatExplosionAOE", "ReturnExtraSpellProjectiles",
-        "ReturnExtraProjectilesRanged", "LoadProjectileSettings", "LoadProjectile",
+        // `projprobe`'s other rows (research build, issue #160). Guarded like
+        // projprobe itself, so the player DLL lists only what it hooks.
+        "StatExplosionAOE", "LoadProjectileSettings", "LoadProjectile",
         "LoadAOEModifiers", "CreatePhysicalProjectile", "CA_playerProjectile",
         "TalentUseSetSpeed", "GetProjectileGravity", "AddAoeIndicatorSize",
-        "CreateAoeIndicator", "LoadAllModifiers", "CA_enemyProjectile",
-        "ClientCreateEnemyProjectile", "ReturnSpecificStat",
+        "CreateAoeIndicator", "CA_enemyProjectile", "ClientCreateEnemyProjectile",
 #endif
     };
 
@@ -50981,7 +50987,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery"
+        "jumpscenery", "skillslider"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -51145,6 +51151,9 @@ static void RunCommand(const std::string& line)
     // Dungeon chest opens early (Mods > Gameplay): the switch-and-slider's
     // command and the countdown form, the same early return.
     if (lc == "dungeonchest") { DungeonChestCommand(rest); return; }
+    // Skill sliders (Modifiers > Skills, #160): `skillslider <lever> <value>`
+    // and `skillslider list`; the same standalone early return.
+    if (lc == "skillslider") { ForgePact::SkillSlidersMod::Instance().HandleCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }

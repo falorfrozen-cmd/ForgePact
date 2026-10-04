@@ -766,7 +766,9 @@ async function opensSetup({ page }) {
 }
 
 async function groupsSeparated({ browser }) {
-  for (const [width, bordered] of [[1280, [2, 3]], [900, [1, 2, 3]]]) {
+  // Five groups since ForgePact #160 added Skills: every group past the first
+  // row carries the rule (two columns at 1280, one at 900).
+  for (const [width, bordered] of [[1280, [2, 3, 4]], [900, [1, 2, 3, 4]]]) {
     await withPage(browser, { viewport: VIEWPORTS[width] }, async ({ page }) => {
       await tab(page, 'modifiers');
       const subtle = await token(page, '--color-border-subtle', 'border-top-color');
@@ -775,7 +777,7 @@ async function groupsSeparated({ browser }) {
         return { top: cs.borderTopStyle !== 'none' ? parseFloat(cs.borderTopWidth) : 0, color: cs.borderTopColor,
           others: ['right', 'bottom', 'left'].some((s) => cs.getPropertyValue(`border-${s}-style`) !== 'none' && parseFloat(cs.getPropertyValue(`border-${s}-width`)) > 0) };
       }));
-      assert(got.length === 4, `${width}: ${got.length} modifier groups`);
+      assert(got.length === 5, `${width}: ${got.length} modifier groups`);
       got.forEach((g, i) => {
         const want = bordered.includes(i);
         assert(!g.others, `${width}: group ${i} has a side or bottom border`);

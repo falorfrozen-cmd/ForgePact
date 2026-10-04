@@ -194,13 +194,20 @@ class ProjProbeContractTests(unittest.TestCase):
 
         k_names = self.code.split("static void NAddrAll()", 1)[1].split("std::ofstream", 1)[0]
         for name in HOOKED + ENEMY_ROWS + ("ReturnSpecificStat",):
-            self.assertIn('"' + name + '"', k_names, name + " missing from NAddrAll's kNames")
+            self.assertEqual(k_names.count('"' + name + '"'), 1, name + " is not listed once in NAddrAll's kNames")
         # `naddrall` is reachable in the player build, so projprobe's names sit
-        # inside a research guard there and the player DLL stays unchanged.
+        # inside a research guard there, except the five the player build
+        # hooks itself for the skill sliders (SkillSlidersMod.hpp).
+        sliders = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillSlidersMod.hpp").read_text(encoding="utf-8-sig")
+        PLAYER_HOOKED = set(re.findall(r"SdkShortScriptName\(HeroSiege::Scripts::gml_Script_(\w+)\)", strip_comments(sliders)))
+        self.assertEqual(len(PLAYER_HOOKED), 5, "the skill sliders' script table was not found")
         guard_at = k_names.index("#ifndef FORGEPACT_RELEASE")
         guarded = k_names[guard_at:k_names.index("#endif", guard_at)]
         for name in HOOKED + ENEMY_ROWS + ("ReturnSpecificStat",):
-            self.assertIn('"' + name + '"', guarded, name + " is outside NAddrAll's research guard")
+            if name in PLAYER_HOOKED:
+                self.assertNotIn('"' + name + '"', guarded, name + " is hooked by the player build")
+            else:
+                self.assertIn('"' + name + '"', guarded, name + " is outside NAddrAll's research guard")
         # statadd's pin on the same list still holds, outside the guard.
         self.assertIn('"StatSpellHaste", "StatAllSkills",', k_names[:guard_at])
 

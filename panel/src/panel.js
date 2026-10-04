@@ -43,7 +43,7 @@ function decoratePanelIcons(){
       decorateIconLabel(button,name);
     }
   }
-  document.querySelectorAll('.group-title').forEach((label,i)=>decorateIconLabel(label,['experience','damage','defense','critical-chance'][i]));
+  document.querySelectorAll('.group-title').forEach((label)=>decorateIconLabel(label,label.dataset.icon));
   decorateIconLabel(document.querySelector('.modifier-card h2'),'damage');
 }
 // The toast rises in and sinks out (app.css), except after a keyboard action:
@@ -224,7 +224,7 @@ function paintRollsNote(pm){
 }
 function sliderOff(sec,v){return sec==='percent_stats'?v<=0:v<=1}
 // All Skills adds whole skill levels, not a percentage.
-const LEVEL_PERCENT_STATS=new Set(['allskills']);
+const LEVEL_PERCENT_STATS=new Set(['allskills','projamount','aoesize']);
 export function sliderText(sec,v,key){return sliderOff(sec,v)?'off':(sec==='percent_stats'?'+'+v+(LEVEL_PERCENT_STATS.has(key)?'':'%'):'x'+v)}
 // A slider's on/off switch (Monster Density's #den_on, for every other
 // slider): off keeps the value in the range and the saved config, and the
@@ -339,6 +339,9 @@ function percentStatNote(key,v){
   if(key==='castrate') return `adds ${v} Faster Cast Rate points to the current value`;
   if(key==='skillhaste') return `adds ${v} Skill Haste points to the current value, so cooldowns recover faster (the game counts at most 200 in total: cooldowns at half their time)`;
   if(key==='allskills') return `adds ${v} to All Skills: every skill with at least one point goes up ${v} level${v===1?'':'s'}`;
+  if(key==='projspeed') return `your own skills' projectiles fly ${v}% faster`;
+  if(key==='projamount') return `your own skills fire ${v} more projectile${v===1?'':'s'} per cast`;
+  if(key==='aoesize') return `adds ${v} to the Area of Effect of your own skills (a few skills keep their own size)`;
   if(key==='critchance'||key==='spellcritchance') return `increases the current Critical Strike Chance by ${v}% (the game's own cap still applies)`;
   return `adds ${v}% to the final value`;
 }
@@ -528,6 +531,7 @@ async function boot(){
   document.getElementById('offensivestats').innerHTML=percentRows(['damage','attackspeed','castrate','skillhaste','allskills']);
   document.getElementById('sustainstats').innerHTML=percentRows(['lifereplenish','manareplenish','defense']);
   document.getElementById('criticalstats').innerHTML=percentRows(['critdamage','critchance','spellcritdamage','spellcritchance']);
+  document.getElementById('skillstats').innerHTML=percentRows(['projspeed','projamount','aoesize']);
   paintSwitches(c);
   document.getElementById('theme').value=applyTheme(c.theme);
   paintIncidents(ST.incidents);

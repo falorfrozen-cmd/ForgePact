@@ -33,7 +33,7 @@ class PercentStatRowTests(unittest.TestCase):
         # total (measured, #114 Live 1), so a larger bonus changes nothing.
         self.assertEqual(percent_row("skillhaste"), ("skillhaste", "Skill Haste", 200, 5, "add"))
         self.assertEqual(percent_row("allskills"), ("allskills", "All Skills", 100, 1, "add"))
-        self.assertEqual(forgepact.WHOLE_PERCENT_STATS, frozenset({"allskills"}))
+        self.assertEqual(forgepact.WHOLE_PERCENT_STATS, frozenset({"allskills", "projamount"}))
 
     def test_both_default_to_off(self):
         self.assertEqual(forgepact.DEFAULTS["percent_stats"]["skillhaste"], 0)
@@ -139,7 +139,7 @@ class PanelSourceTests(unittest.TestCase):
         self.assertIn("percentRows(['damage','attackspeed','castrate','skillhaste','allskills'])", self.panel)
 
     def test_all_skills_reads_as_levels_not_a_percentage(self):
-        self.assertIn("const LEVEL_PERCENT_STATS=new Set(['allskills']);", self.panel)
+        self.assertIn("const LEVEL_PERCENT_STATS=new Set(['allskills','projamount','aoesize']);", self.panel)
         self.assertIn("LEVEL_PERCENT_STATS.has(key)?'':'%'", self.panel)
         # every place that paints a percent value passes the row's key
         self.assertEqual(re.findall(r"sliderText\((?:sec,val|r\.dataset\.sec,v)\)", self.panel), [])

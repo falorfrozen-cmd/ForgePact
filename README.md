@@ -36,7 +36,7 @@ none of these diagnostic hooks or the recorder. See
 | **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP, quest progress and the floating XP text are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
-| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
+| **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)), and for your own skills Projectile Speed, Projectile Amount and Area of Effect, each off by default ([Skill sliders](#skill-sliders-projectile-speed-projectile-amount-and-area-of-effect)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
 | **Pet Collects Quest Items** | While your pet is out it walks to pick-up quest items on screen and collects them one at a time, crediting the objective through the game's own collect, and moves on from an item it cannot collect. Pick-up items only; activate/break/talk objectives are left alone |
@@ -155,7 +155,7 @@ taken from the test sandbox, which reports the game open without the mod plugin
 (hence the warning icon).
 
 ![The Modifiers tab](assets/panel/modifiers-1280.png)
-**Modifiers**: the character multipliers in four groups (Utility, Offense, Defense & Sustain, Critical Strikes), each slider with its own switch.
+**Modifiers**: the character multipliers in four groups (Utility, Offense, Defense & Sustain, Critical Strikes), each slider with its own switch. A fifth group, **Skills** (Projectile Speed, Projectile Amount, Area of Effect), came after this screenshot was taken.
 
 ![The World tab](assets/panel/world-1280.png)
 **World**: Monster Density, Monster Rarity and Enemy Movement Speed beside the Satanic Zone mods.
@@ -1489,6 +1489,56 @@ gear and buffs still count underneath.
 
 The first time the game reads a boosted value, the log says so, for example
 `statadd StatSpellHaste: first boosted call 40 -> 140`.
+
+## Skill sliders: Projectile Speed, Projectile Amount and Area of Effect
+
+Modifiers → **Skills** → **Projectile Speed**, **Projectile Amount** and
+**Area of Effect** (plugin command `skillslider projspeed <percent>`,
+`skillslider projamount <count>`, `skillslider aoesize <points>`, and
+`skillslider list` for all three). Each is off by default, with its own switch.
+Like Skill Haste, each **adds** to what the game has already worked out for
+your skill, after it has counted your gear and buffs.
+
+- **Projectile Speed** (up to +100%): your skills' projectiles fly that much
+  faster. The plugin adds to the projectile-speed percent the game reads while
+  it sets up your skill, so +50% makes a projectile 1.5 times as fast.
+- **Projectile Amount** (up to +5, whole): each cast fires that many more
+  projectiles. It adds to the count the game's two shared projectile helpers
+  return, for spells and for ranged skills.
+- **Area of Effect** (up to +100): adds to your skills' Area of Effect stat.
+  **Healing Zone keeps its own size**: it does not take the game's skill
+  modifiers and caps its own scale, so the slider does not grow it.
+- **Whose casts.** Your own character's, and the repeat a double-cast effect
+  makes of them; the plugin decides on each call, from what is casting. Your
+  mercenary and the enemies are left exactly as the game made them.
+  The sliders are not built to change your basic attack, but that has **not
+  been observed** for any of the three (no basic attack was seen in the
+  research sessions).
+- **An item effect may get the extra projectiles too.** Many casts make a
+  second projectile count of 6 alongside the skill's own, which the research
+  takes to be an item effect. The plugin cannot tell it from the skill's own
+  count, so Projectile Amount raises it as well (6 to 8 at +2).
+- **Checked in play** on 2026-10-04 on a White Mage, with a development build
+  of this plugin: +2 projectiles turned one Shadow Bolt into three; +50% speed
+  took a Shadow Bolt's speed from 2.916667 to 4.375; +50 Area of Effect grew a
+  Soul Spurn from 7.5 to 8.0. At the top of each slider, +5 made six bolts,
+  +100% doubled the speed and +100 grew the Soul Spurn to 8.5. With the sliders
+  back at 0, the speed and the size were the game's own again. A Healing Zone
+  at +50 did not grow. The mercenary's calls reached the plugin and were left
+  alone; no enemy was seen reaching it. A basic attack was not cast, so its
+  being unchanged is by design and not yet seen in play.
+- **A Shadow Bolt sometimes makes 2 or 3 bolts on its own.** In the same
+  check, single casts with every slider off made 1, 1, 1, 1, 2, 3, 2, 1 bolts,
+  so an extra bolt now and then at 0 is the game, not the slider.
+- **If the plugin cannot set a slider up** on your game, the slider stays at 0
+  and the log says which game function it could not reach, for example
+  `skillslider: ReturnExtraSpellProjectiles hook is TABLE-ONLY - the game calls
+  it directly, so the bonus could never apply; not armed`.
+
+The first time a boosted value reaches the game, the log says so, for example
+`skillslider ReturnExtraSpellProjectiles: first boosted call 1 -> 3`.
+`skillslider list` shows each slider's value, whether its hooks went in, and
+how many calls it met from you, from a double cast and from anything else.
 
 ## Sleep loot your filter hides (lighter frames under hidden loot)
 
