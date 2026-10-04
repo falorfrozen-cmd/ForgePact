@@ -10,8 +10,8 @@ LootGroundDrop detour holds the bag-drop window around its original; the
 frame tick costs nothing while off and runs before hidden loot's; the rarity is
 read by name from itemInfoStruct["27"]; the research instrument `lootannprobe`
 and its count-only hook table never reach the player build; the shipped sink
-is the one the research doc's `announce-route:` names (before Live procedure 1
-picks one, `server`); and the modstate object and the line formats the live
+is the one the research doc's `announce-route:` names (`server`, picked by
+Live procedure 1); and the modstate object and the line formats the live
 operator reads.
 """
 import re
@@ -27,7 +27,7 @@ ADAPTER_START = "// ---- Loot announcements (LootAnnounceMod.hpp): the adapter"
 ADAPTER_END = "// ---- end of the loot announcement adapter"
 
 # The route Live procedure 1 picked (`announce-route:` in the research doc's
-# "Route"); `server` until it picks one. Join step J4 changes this with the
+# "Route"): `server`, 2026-10-04. A later route changes this together with the
 # header's kShippedSink.
 EXPECTED_ROUTE = "server"
 

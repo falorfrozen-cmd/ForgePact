@@ -64,12 +64,19 @@ reading, not a measurement, and no decompiled line is kept in this repository.
   The closure reads the rarity of its ground item's item (`itemInstance`,
   `kGroundItemInstanceField` in `hs-game-sdk/cpp/include/hs_game_sdk/player.hpp`)
   and announces the drop by sending a chat line through
-  `NetworkSendChatMessageIngame`, with a different colour per rarity. That the
-  key it reads is `"27"` (`docs/RUNTIME_DATA_MODELS.md` § 16.4) is an inference
-  from the rarity codes it handles, not a reading; `lootannprobe status` after
-  a `place` shows what the closure's hooks saw. The part of it that reaches
-  other players runs nothing offline: `Chat_obj` was counted at 0 in an
-  offline game (measured, dungeon-chest Live 1).
+  `NetworkSendChatMessageIngame`, with a different colour per rarity. The
+  rarities it handles are Satanic (6) as well as Angelic (7), Heroic (9) and
+  Unholy (10), which is why Live procedure 1 also tries a Satanic item. That
+  the key it reads is `"27"` (`docs/RUNTIME_DATA_MODELS.md` § 16.4) is an
+  inference from the rarity codes it handles, not a reading; `lootannprobe
+  status` after a `place` shows what the closure's hooks saw. It can also
+  reach `ChatSendServerMessage` (through `Chat_obj` instances) and
+  `ReportClient` (through `Menu_Controller_obj` instances). Measured offline:
+  `Chat_obj` 0 and `Menu_Controller_obj` 1 (Live procedure 1, and `Chat_obj`
+  0 in dungeon-chest Live 1), and `ChatSendServerMessage`, `ReportClient` and
+  `PacketSend` counted 0 in Live procedure 1. The closure itself never ran in
+  that session, so those zeros do not say whether its network-facing calls
+  run offline; that is not established.
 - **Static reading: `GetRareDropAnnouncement(a, b, c)`** answers true for
   Angelic (7) and Unholy (10), and for some material and socketable ids.
   Heroic (9) is not decided there; the closure handles it itself. Whether the
@@ -238,34 +245,90 @@ the workorder): the call-route control, `lootannprobe on`, `place heroic` and
 `status` (does the game run its own announcement for a placed Heroic item
 offline?), `methods`, `try 1` to `try 5` with a screenshot each, `place
 satanic` with `try 1`, and two minutes of kills to see whether a natural drop
-reaches `LootGroundInit` and the closure. Results are appended here after the
-session.
+reaches `LootGroundInit` and the closure.
+
+### Results
+
+Session 2026-10-04 14:15-15:03 UTC, research build (sha256
+`29ae0c00…eded`, matched the lease), slot 14 Sorak, Town of Inoya, then the
+Outskirts of Inoya and Chilling Lake for the kills. Saves restored afterwards.
+Every check, with what was supplied and what was seen:
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `marker` | `lootannprobe status` before `on` | `lootannprobe: off rows=16 attached=0` | pass |
+| `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
+| `chat-call-control` | `dungeonprobe chat control` | `PASS defined->true undefined->false` | pass |
+| (install) | `lootannprobe on` | 16 of 16 rows attached, none `not installed`; `LootGroundInit` counted through `fp_hiddenloot_init` (both routes, shared), `LootGroundDrop` through `fp_lootann_drop` (both), `LootGroundCreateFromItem` detoured under the table-only `Hook_LootGroundCreateFromItem`. Census: `Loot_Ground_obj` 0, `Ingame_Chat_obj` 1, `Chat_obj` 0, `Menu_Controller_obj` 1 | recorded |
+| `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@6032` 1 with `self` `Loot_Ground_obj` | pass |
+| `closure-fires-offline` | the same placement, then about 450 natural drops | the closure 0, `GetRareDropAnnouncement` 0, `NetworkSendChatMessageIngame` 0; no line in chat | not observed |
+| `method-found` | `lootannprobe methods` on the placed item | method-valued variables `m_AngelicMessage`, `m_LootFilter` and `m_LootGroundDeActiveStep` all `undefined`, `s_lootDrawData` bound to `Pickup_Parent_obj`'s Create method; no variable holds the SDK closure | fail |
+| `route-method` | `try 1`: the closure by name, `self` the ground item, no arguments | `refused: method` (no variable names it), no hook moved, no line | fail |
+| `route-netsend` | `try 2` / `try 3`: `NetworkSendChatMessageIngame`, `self` the ground item, arguments `undefined` (try 2) or the player reference (try 3), then real 18687, the item struct, a colour real, int64 3 | `script_execute` threw or returned a failure status both times; the script's and `GetItemDropMessage`'s hooks each counted 1 per try, `PacketSend` 0, no line | fail |
+| `route-chatadd` | `try 4`: `GetItemDropMessage(item)`, `self` the local `Player_obj` | `script_execute` refused; its hook counted 1, no line | fail |
+| `route-server` | `try 5`: `ChatAddServerMessage("Sorak found Heavy Belt of Balance")`, `self` the local `Player_obj` | dispatched, returned `undefined`; the game called `ChatAddMessage` with sender `"SERVER"` and a `[16:17]` stamp; red line `[16:17] SERVER: Sorak found Heavy Belt of Balance` | pass |
+| `below-heroic-method` | `place satanic` (`"27"`=6), then `try 1` | the same `refused: method`, no line | not observed |
+| `natural-drop-init` | two minutes of kills outside town | `LootGroundInit` 1 → 450 (last `self` `Zombie_Passive_obj`, arguments ref, bool), `Loot_Ground_obj` census 437; the closure, `GetRareDropAnnouncement`, `PacketSend`, `ChatSendServerMessage`, `ReportClient`, `ChatAddIngameMessageFiltered`, `CA_chatIngame` and `LootGroundDrop` all 0 | pass |
+
+What the session established, measured:
+
+- The game does not announce a drop offline on its own: neither a placed
+  Heroic item nor about 450 natural drops (Heavy Belt of Balance placed;
+  Ymir's Frozen Shroud, Pitfiend's Thorn and others dropped, rarity not read)
+  moved the closure's or `GetRareDropAnnouncement`'s count off 0.
+- The announcement closure is not bound on the offline ground item. The
+  ground item's method variables are the four listed above, and the
+  closure's name is held by none of them; `m_AngelicMessage`, the one named
+  for an announcement, is `undefined`.
+- `NetworkSendChatMessageIngame` and `GetItemDropMessage` cannot be called
+  by name from ForgePact with the shapes supplied above: each refused, and
+  neither counted a `PacketSend`.
+- `ChatAddServerMessage` with our own text is the route that shows a line,
+  and the player's `name` holds the character's name (`Sorak`).
+- Every natural drop seen reached `LootGroundInit` with a ground item
+  reference as argument 0, as the hidden-loot research measured. The
+  session did not read the rarity of any natural drop, so whether a natural
+  Heroic, Angelic or Unholy drop reaches it is still not observed (Live
+  procedure 2 tries again).
+- `LootGroundDrop` stayed at 0 through the kills: the game's own drops do
+  not pass through it.
 
 ## Route
 
-Not chosen yet. Live procedure 1 picks, in this order: `method` if its try
-showed a drop line naming the item; else `netsend`; else `chatadd`; else
-`server`. A sink whose try made the game log an error or count `PacketSend`
-ships only if the owner accepts it. The chosen route is written here as an
-`announce-route: <name>` line, and the header's `kShippedSink` and
-`tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` follow it. Until
-then the mod ships `server`, the floor.
+announce-route: server
+
+Chosen 2026-10-04 from Live procedure 1, in the order `method`, `netsend`,
+`chatadd`, `server`: the first three showed no line offline (the ground item
+carries no announcement method; the sender and the drop-message script refuse
+a call by name), and `server` showed the red
+`SERVER: <character> found <item name>` line with no error and no
+`PacketSend`. The owner approved shipping it (2026-10-04); a plain
+`ChatAddMessage` line without the `SERVER:` prefix is a possible follow-up,
+not part of this change. The header's `kShippedSink` and
+`tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` name the same
+route.
 
 ## Not established
 
-- Who invokes the announcement closure, and whether anything does offline.
+- Who invokes the announcement closure online, and what binds it on a
+  ground item there. Offline it was not bound and never ran (Live
+  procedure 1: 0 calls over a placed Heroic item and about 450 natural
+  drops); that is "not observed offline", not "cannot run offline".
 - Which global the closure reads before giving up on a drop
-  `GetRareDropAnnouncement` refuses, and whether the closure refuses a Heroic
-  item offline.
+  `GetRareDropAnnouncement` refuses, and whether the closure would refuse a
+  Heroic item offline if something did bind it.
 - What `NetworkSendChatMessageIngame`'s first argument holds, and whether its
-  `PacketSend` block runs offline.
-- Whether `GetItemDropMessage(item)` answers text for an item called from
-  ForgePact, and which `self` it wants.
-- Whether the player's `name` variable holds the character's name on this
-  build (the `server` and `chatadd` sinks fall back to `You`).
+  `PacketSend` block runs offline. Called by name with `undefined` or the
+  player reference first, it refused before counting a `PacketSend`; why it
+  refused (the argument, `self`, or a state the game sets up online) is not
+  established.
+- Which `self` and arguments `GetItemDropMessage(item)` wants from a caller
+  outside the game's own chat code: with `self` the local `Player_obj` and the
+  item struct it refused.
 - Whether a natural Heroic, Angelic or Unholy drop reaches `LootGroundInit`
   the way placed items and ordinary drops do (`raredrop heroic` does not make
-  kills drop Heroic items, so the live cases are placed).
+  kills drop Heroic items, so the live cases are placed; Live procedure 1
+  saw 450 natural drops reach it but read none of their rarities).
 - Whether a filter-hidden drop of these rarities should be announced: the
   mod decides before hidden loot sleep puts it to sleep, so it is.
 - The `method` sink calls through `InvokeMethodValue`, which also updates the

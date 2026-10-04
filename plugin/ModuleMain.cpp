@@ -47828,7 +47828,7 @@ static void JumpSceneryCommand(const std::string& rest)
 // The sink: one function, LootAnnounceSink, runs the body
 // ForgePact::LootAnnounceMod::kShippedSink names. All four bodies are here so
 // the research build's `lootannprobe try <n>` runs exactly the code the mod
-// would ship; Live procedure 1 picks one (the research doc's "Route").
+// would ship; Live procedure 1 picked `server` (the research doc's "Route").
 static PFUNC_YYGMLScript g_Orig_LootGroundDropLa = nullptr;
 static bool g_LaInstallTried = false;
 static const char* g_LaDropRoute = "not-installed";

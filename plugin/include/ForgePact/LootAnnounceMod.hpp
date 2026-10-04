@@ -49,9 +49,11 @@ public:
     static constexpr std::size_t kMemoryCap = 4096;
 
     // How the adapter shows the line (docs/loot-announcement-research.md,
-    // "Route"). Live procedure 1 picks one; kShippedSink is the one the mod
-    // runs. `server` (ChatAddServerMessage, measured to show a line offline)
-    // is the floor and the default until a session picks another.
+    // "Route"). kShippedSink is the one the mod runs: `server`
+    // (ChatAddServerMessage, measured to show a line offline). Live procedure
+    // 1 (2026-10-04) found the other three unreachable offline: the ground
+    // item carries no announcement method, and NetworkSendChatMessageIngame
+    // and GetItemDropMessage refuse a call by name.
     enum class Sink : int { Method, NetSend, ChatAdd, Server };
     static constexpr Sink kShippedSink = Sink::Server;
 
