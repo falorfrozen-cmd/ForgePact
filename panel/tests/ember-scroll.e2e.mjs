@@ -261,21 +261,28 @@ try {
     await page.reload(); await waitBooted(page);
     if (await page.locator('#enabledMods').getAttribute('data-form') === 'tray')
       await page.locator('.enabled-mods-toggle').click();
-    await page.locator('#enabledMods .quick-disable').click();
-    await frames(page);
-    // Measure the toasts at rest: #toast rises in on a transform transition,
-    // and on a CI runner a mid-flight box read as overlapping Undo at 900 px
-    // (PR run 36374509937).
-    await page.waitForFunction(() => ['.undo-toast', '#toast'].every((s) => {
-      const el = document.querySelector(s);
-      return !el || el.getAnimations().every((a) => a.playState !== 'running');
-    }), null, { timeout: 5000, polling: 20 });
-    const toast = await page.locator('.undo-toast').boundingBox(), pane = await wrap.boundingBox();
-    assert.ok(toast.y >= pane.y + pane.height - 1 && toast.y + toast.height <= height, `${width}: Undo covers content or leaves viewport`);
-    const status = await page.locator('#toast.show').boundingBox();
-    if (status) assert.ok(status.y >= pane.y + pane.height - 1 &&
+    // Read Undo, the status message and the pane in one moment, while both
+    // toasts are shown and at rest (a mid-flight box once read as overlapping
+    // Undo at 900 px, PR run 36374509937). The status message comes only when
+    // the setting's POST returns and leaves 2.2 s later, and in Ember it is a
+    // footer row, so the footer, Undo and the pane's bottom move with it.
+    // Read one call at a time, a slow runner compared two layouts or waited
+    // for a message already gone (#135). The wait runs in the page from the
+    // click on, so a stalled test process cannot miss the message either.
+    const [boxes] = await Promise.all([
+      page.waitForFunction(() => {
+        const undo = document.querySelector('.undo-toast'), status = document.querySelector('#toast.show');
+        if (!undo || !status || [undo, status].some((el) => el.getAnimations().some((a) => a.playState === 'running'))) return null;
+        const box = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
+        return { toast: box(undo), status: box(status), pane: box(document.getElementById('wrap')) };
+      }, null, { timeout: 15000, polling: 20 }).then((handle) => handle.jsonValue()),
+      page.locator('#enabledMods .quick-disable').click(),
+    ]);
+    const { toast, status, pane } = boxes;
+    assert.ok(toast.y >= pane.y + pane.height - 1 && toast.y + toast.height <= height, `${width}: Undo covers content or leaves viewport ${JSON.stringify(boxes)}`);
+    assert.ok(status.y >= pane.y + pane.height - 1 &&
       (status.y + status.height <= toast.y + 1 || toast.y + toast.height <= status.y + 1),
-      `${width}: status toast overlaps settings or Undo`);
+      `${width}: status toast overlaps settings or Undo ${JSON.stringify(boxes)}`);
     await assertNotCovered('.undo-toast-button');
     await assertNotCovered('#applyall');
     await page.screenshot({ path: `artifacts/ember-scroll/undo-${width}.png` });

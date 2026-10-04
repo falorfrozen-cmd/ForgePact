@@ -101,7 +101,11 @@ including a 1093x614 CSS viewport (1366x768 at 125% scaling), 640x400 and mobile
 The thumb drag presses the thumb where a screenshot shows Edge drew it. Edge's
 compositor hit-tests a scrollbar press against the last frame it finished, so
 a point computed from the DOM right after a page switch could land on the
-previous page's track on a slow runner (ForgePact#133).
+previous page's track on a slow runner (ForgePact#133). The Undo check reads
+Undo, the status message and the pane in one page-side moment while both
+toasts are shown. The message comes only after the setting's POST returns,
+leaves 2.2 s later and resizes the footer. Separate reads on a slow runner
+compared two layouts or waited for a message already gone (ForgePact#135).
 `tests/test_panel_e2e_ember_scroll.py` includes it in the release browser-test group.
 The form suite explicitly seeds Ledger for its original 1280px inline-width
 contract; Ember's narrower content area correctly switches three long names to
