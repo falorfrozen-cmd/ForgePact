@@ -509,7 +509,8 @@ public:
             + " out-of-range=" + std::to_string(t.outOfRange) + " passed=" + std::to_string(t.passed);
     }
 
-    // What the lever is aimed at: `irandom` or `irandom args="a0=100"`.
+    // What the lever is aimed at: `irandom` or `irandom args="a0=real:100.000000"`
+    // (the argument text as a trace line prints it, kind prefix and all).
     std::string RngTargetText() const
     {
         std::string s(kBuiltins[static_cast<int>(rngTarget_)].name);

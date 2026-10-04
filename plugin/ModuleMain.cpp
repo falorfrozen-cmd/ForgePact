@@ -47642,13 +47642,14 @@ static void GpSpawn()
 
 // `rng <builtin> <value> [count] [args <text>]` / `rng off` / `rng`. The
 // lever is aimed at one RNG builtin and, with `args`, at one argument text -
-// everything after `args`, as a trace line prints it (`a0=100 a1=5`) - so an
+// everything after `args`, as a trace line prints it (`a0=real:100.000000
+// a1=real:5.000000`: GpValueText's kind prefix and std::to_string digits) - so an
 // idle per-frame call or a reel roll the machine makes before the prize roll
 // cannot take the answer.
 static void GpRng(const std::vector<std::string>& tail)
 {
     const std::string usage = "gambaprobe rng: usage -> rng <irandom|irandom_range|random|random_range|choose> <value> [count 1.."
-        + std::to_string(GpNs::kRngMaxCount) + ", default 1] [args <argument text from a trace line, e.g. a0=100 a1=5>] | rng off | rng";
+        + std::to_string(GpNs::kRngMaxCount) + ", default 1] [args <argument text exactly as a trace line prints it, e.g. a0=real:100.000000 a1=real:5.000000>] | rng off | rng";
     if (tail.empty()) { Out(g_GpCore.RngLine()); return; }
     if (Lower(tail[0]) == "off") { g_GpCore.RngOff(); Out("gambaprobe rng: off - " + g_GpCore.RngLine()); return; }
     GpNs::Builtin target = GpNs::Builtin::Irandom;
@@ -47814,8 +47815,8 @@ static void GpUsage()
     Out("  spawn                      one " + GpMachineName() + " at the local player, depth 0 (the Create_0/Alarm_9 control);"
         " starts a new trace window");
     Out("  rng <builtin> <value> [count] [args <text>]  answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
-        + ") calls of that RNG builtin whose self is a machine - with args, only those whose argument text (as a trace line"
-        " prints it) matches - with value (choose: its argument #value); other machine-self RNG calls pass and are counted;"
+        + ") calls of that RNG builtin whose self is a machine - with args, only those whose argument text (exactly as a trace"
+        " line prints it, e.g. args a0=real:100.000000 a1=real:5.000000) matches - with value (choose: its argument #value); other machine-self RNG calls pass and are counted;"
         " rng off | rng");
     Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
     Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)

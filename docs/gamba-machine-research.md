@@ -324,7 +324,9 @@ kind check, and a call from any other object passes through untouched.
     depend on: a reel roll each spin, possibly an idle call every frame. An
     unaimed lever would hand its one answer to the first of them. With
     `args`, only a call whose argument text is `<text>` is answered. The text
-    is everything after `args`, copied from a trace line (`a0=100 a1=5`), and
+    is everything after `args`, copied character for character from a trace
+    line, which prints each argument with its kind and `std::to_string`
+    digits (`a0=real:100.000000 a1=real:5.000000`, never `a0=100 a1=5`), and
     runs of spaces do not matter.
   - Every other machine-self RNG call the armed lever sees, whether another
     builtin's or the target's with other arguments, runs the game's own
@@ -426,11 +428,20 @@ repeated here whole.
      builtin and argument text with the idle calls step 2 recorded. If an
      idle call has the same builtin and the same text, the lever cannot be
      aimed at the prize roll alone: skip the forced roll and record
-     `forced-head` as not run, naming that call. Otherwise `gambaprobe spawn`
-     a machine; then, before each spin, `gambaprobe trace` and
-     `gambaprobe rng <builtin> <value> 1 args <text>` (the builtin and text
-     from step 4, and the value that selects base 98); person: one spin;
-     then `gambaprobe status`. Repeat until the machine explodes. If step 4
+     `forced-head` as not run, naming that call. Likewise, if step 4's trace
+     shows the same builtin with the same argument text firing earlier within
+     the exploding spin, before the call that decided the prize, the armed
+     lever would answer that earlier call: record its ordinal in the spin and
+     that `forced-head` is not aimable by shape alone (an input to the
+     phase-2 Decision), and do not spend the forced roll. Otherwise
+     `gambaprobe spawn` a machine; then, before each spin, `gambaprobe trace`
+     and `gambaprobe rng <builtin> <value> 1 args <text>` (the builtin and
+     text from step 4, the text exactly as its trace line prints it, e.g.
+     `args a0=real:100.000000 a1=real:5.000000`, and the value that selects
+     base 98), and check that the `gambaprobe rng: ON target=...` echo
+     matches the trace line's builtin and argument text character for
+     character before the spin; person: one spin; then `gambaprobe status`.
+     Repeat until the machine explodes. If step 4
      showed that the explosion comes on a spin the machine's state predicts
      (`explosion-rule` gold or spins), arm the lever only before that spin
      and spin the others unarmed. Record every `gambaprobe rng: answered`
