@@ -355,7 +355,7 @@ The shell is a grid with three bands. At the top is a 56px rail with the brand, 
 Inside the page, the order is: the enabled-mods row, the page heading with its actions (auto-apply, Apply all, the plugin warning), an optional search toolbar with a segmented filter, then the workspace. The workspace is a two-column grid with 16px row gaps and 24px column gaps. Cards span both columns. Content inside a card lays out as rows:
 
 - **Rows** are 44px minimum, with a 16px gap: label column, switch, slider, then a 32px value stepper.
-- **Modifiers** splits into two columns of groups (20px row gap, 32px column gap), with a 1px subtle rule above each group that has another group above it.
+- **Modifiers** splits into two columns of groups (20px row gap, 32px column gap), with a 1px subtle rule above each group that has another group above it. An odd last group (Skills) spans both columns, its rows capped at one column's width so the ranges keep the rhythm of the groups above; in one column (≤1100px) nothing is capped.
 - **World** splits 500fr to 692fr: settings on the left, and the Satanic pool spanning four rows on the right.
 - **Mods** is two flex columns, each mod its own raised block, with child features indented 20px. The indent alone marks a child; no glyph does. In the Miner's Helmet block, "Vein Resonance:" starts its own line.
 
