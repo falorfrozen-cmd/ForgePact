@@ -256,6 +256,7 @@ input[type=range]::-moz-range-thumb{width:6px;height:18px;border:0;border-radius
    .off). It keeps its words: the toast after a rarity change reads them. */
 #rarityCard:has(#rarityrareval.off):has(#rarityancval.off)>#raritynote{display:none}
 .sat-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-7)}
+.sat-zonecontrol{display:flex;flex-direction:column;gap:var(--space-2);margin:var(--space-6) 0}
 .sat-intro{margin:var(--space-6) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
 .sat-intro span{display:block;margin-top:var(--space-2);color:var(--color-text-faint);font-size:var(--font-size-xs)}
 .sat-button{display:inline-flex;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-4);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font-size:var(--font-size-sm);white-space:nowrap;cursor:pointer}
