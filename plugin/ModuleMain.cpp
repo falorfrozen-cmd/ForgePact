@@ -19488,10 +19488,13 @@ static bool DungeonChestChat(const std::string& line)
 // spawns). A creator whose state cannot be read is counted (`unreadable=` on
 // status), and the census then refuses: counted as spawned it would lower the
 // total, and the header's clamp (kills plus the monsters alive) does not stop
-// a total of a few percent of the dungeon. So a failed census (the family
-// unresolved, no creators, any creator unreadable; the header's
-// EstimateFromCensus, owner D13) answers 0: total=unavailable, the share is
-// not applied and the game's own rule stays.
+// a total of a few percent of the dungeon. So a failed census answers 0,
+// total=unavailable(<why>), the share is not applied and the game's own rule
+// stays: the family unresolved (`family-unresolved`), a creator object that
+// instance_number could not count (`count-failed`), no creators
+// (`no-creators`), any creator unreadable (`unreadable=<u>/<c>`, owner D13);
+// the header's TotalFromCensus names the cause and the room's first refusal
+// prints one `dungeonchest: no planned total in this room (` line.
 //
 // The creator family to count: kKnownDensityCreatorObjects resolved by name,
 // less any that descends from another listed one (instance_number and
@@ -19519,9 +19522,14 @@ static long DungeonChestEstimateTotal(long alive, ForgePact::DungeonChest::Censu
 {
     namespace DC = ForgePact::DungeonChest;
     census = DC::Census{};
-    for (int obj : DungeonChestCreatorObjects()) {
+    const std::vector<int>& family = DungeonChestCreatorObjects();
+    for (int obj : family) {
         long n = 0;
-        try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue((double)obj) }).ToDouble(); } catch (...) { continue; }
+        // A creator object that cannot be counted refuses the whole census
+        // (`count-failed`): skipped, its creators would be neither counted nor
+        // unreadable, and the total would shrink without a sign.
+        try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue((double)obj) }).ToDouble(); }
+        catch (...) { census.countFailed = true; break; }
         for (long k = 0; k < n; ++k) {
             ++census.creators;
             try {
@@ -19532,7 +19540,12 @@ static long DungeonChestEstimateTotal(long alive, ForgePact::DungeonChest::Censu
             } catch (...) { ++census.unreadable; }
         }
     }
-    return DC::EstimateFromCensus(!DungeonChestCreatorObjects().empty(), alive, census);
+    const long total = DC::TotalFromCensus(!family.empty(), alive, census);
+    // A refusal is otherwise silent outside `status`: the room's first one
+    // prints one line naming the cause (the source is asked again every poll
+    // while it answers 0, so never once per poll).
+    if (census.refusal != DC::Refusal::None && DC::NoteRefusal(DC::state)) Out(DC::RefusalLogLine(census));
+    return total;
 }
 static ForgePact::DungeonChest::TotalSource g_DcBuildTotalSource = &DungeonChestEstimateTotal;
 

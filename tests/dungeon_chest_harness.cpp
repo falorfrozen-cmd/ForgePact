@@ -57,7 +57,7 @@ static long Source(long alive, DC::Census& census) {
     return sourceAnswer < 0 ? alive : sourceAnswer;
 }
 // The build's source as ModuleMain answers it: the census it took, run through
-// the header's EstimateFromCensus. `censusCreators` creators, two of them
+// the header's TotalFromCensus (which names a refusal, then EstimateFromCensus). `censusCreators` creators, two of them
 // still to spawn when enough are readable, `censusUnreadable` of them whose
 // state could not be read; `censusFamily` false is a creator family that
 // resolved no object, so the census loop never ran.
@@ -72,7 +72,7 @@ static long CensusSource(long alive, DC::Census& census) {
         census.unreadable = censusUnreadable;
         census.pending = censusCreators - censusUnreadable >= 2 ? 2 : 0;
     }
-    return DC::EstimateFromCensus(censusFamily, alive, census);
+    return DC::TotalFromCensus(censusFamily, alive, census);
 }
 static void ResetRecorders() {
     unlockCalls = 0; chatLines.clear(); chatFailures = 0; sourceAnswer = -1; sourceCalls = 0;
@@ -337,7 +337,7 @@ int main() {
         check("target/total-census-refused",
             predicate && oneLatched == 0 && !one.tally.latched && one.tally.total == 0 && DC::HeadText(one).empty()
                 && oneLine.find(" total=unavailable(unreadable=1/4) creators=4 ") != std::string::npos
-                && !lost.tally.latched && lostLine.find(" total=unavailable creators=0 ") != std::string::npos
+                && !lost.tally.latched && lostLine.find(" total=unavailable(family-unresolved) creators=0 ") != std::string::npos
                 && okEarly == 0 && okLatch == 1 && ok.tally.total == 31 && ok.tally.threshold == 16 && ok.tally.latched,
             "1/4: " + oneLine + " | family unresolved: " + lostLine + " | readable: " + Tally(ok));
     }

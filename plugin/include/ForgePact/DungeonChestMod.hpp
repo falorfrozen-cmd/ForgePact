@@ -35,7 +35,8 @@ namespace ForgePact::DungeonChest {
 //     player build's source is the estimate below (EstimatedTotal, workorder
 //     token `total-route: estimate`): the creators still to spawn, counted
 //     at first sight, times a mean Live procedure 1b measured, and 0 for a
-//     census with any creator unreadable (EstimateFromCensus).
+//     census that refuses, each refusal named (TotalFromCensus: the family
+//     unresolved, a count that failed, no creators, any creator unreadable).
 //   - `unlock`: called once, when the threshold latches; it answers whether
 //     the game's own chest can now be let open, which for this route (the
 //     `instance_exists` detour, workorder token `unlock-route: builtin`)
@@ -92,24 +93,88 @@ inline long EstimatedTotal(long alive, long pending)
     return static_cast<long>(a + (p * kEstimateKills + kEstimatePendingCreators - 1) / kEstimatePendingCreators);
 }
 
+// Why a census refused the estimate, each with its own word on the status line
+// (`total=unavailable(<word>)`) and in the room's one log line:
+//   - FamilyUnresolved (`family-unresolved`): no creator object resolved by
+//     name, a build or SDK problem rather than a fact about the room;
+//   - CountFailed (`count-failed`): instance_number failed for a creator
+//     object, so its creators were neither counted nor read;
+//   - NoCreators (`no-creators`): the family resolved and the room holds none;
+//   - Unreadable (`unreadable=<u>/<c>`): a creator's state could not be read.
+// None: the census estimated, or no census was taken (a source that answers 0
+// without one leaves `total=unavailable` bare).
+enum class Refusal : int { None = 0, FamilyUnresolved, CountFailed, NoCreators, Unreadable };
+
 // What the total source saw of the room's creators when it answered, kept for
 // `status`: every creator-family instance, those still to spawn, and those
-// whose state could not be read (any of which refuses the estimate).
+// whose state could not be read (any of which refuses the estimate), whether
+// a creator object could not be counted at all, and the refusal it led to.
 struct Census {
     long creators = 0;
     long pending = 0;
     long unreadable = 0;
+    bool countFailed = false;
+    Refusal refusal = Refusal::None;
 };
 
+// The census's refusal, first cause first: an unresolved family takes no
+// census, and a count that failed may leave no creators counted.
+inline Refusal CensusRefusal(bool familyResolved, const Census& c)
+{
+    if (!familyResolved) return Refusal::FamilyUnresolved;
+    if (c.countFailed) return Refusal::CountFailed;
+    if (c.creators <= 0) return Refusal::NoCreators;
+    if (c.unreadable > 0) return Refusal::Unreadable;
+    return Refusal::None;
+}
+
 // The build's total from one census, or 0 (`total=unavailable`) when the
-// census cannot be trusted: the creator family did not resolve, the room has
-// no creators, or any creator's state could not be read. One unreadable
-// creator would be counted as spawned and shrink T below the share the player
-// picked, so the estimate refuses rather than guess (owner, 2026-10-04, D13).
+// census cannot be trusted: the creator family did not resolve, a creator
+// object could not be counted, the room has no creators, or any creator's
+// state could not be read. One uncounted or unreadable creator would be
+// counted as spawned and shrink T below the share the player picked, so the
+// estimate refuses rather than guess (owner, 2026-10-04, D13).
 inline long EstimateFromCensus(bool familyResolved, long alive, const Census& c)
 {
+    if (c.countFailed) return 0;
     if (!familyResolved || c.creators <= 0 || c.unreadable > 0) return 0;
     return EstimatedTotal(alive, c.pending);
+}
+
+// The adapter's one call after a census: records why it refused, if it did,
+// for `status` and the log line, and answers EstimateFromCensus's total.
+inline long TotalFromCensus(bool familyResolved, long alive, Census& c)
+{
+    c.refusal = CensusRefusal(familyResolved, c);
+    return EstimateFromCensus(familyResolved, alive, c);
+}
+
+// The refusal's word, "" for none.
+inline std::string RefusalWord(const Census& c)
+{
+    switch (c.refusal) {
+    case Refusal::FamilyUnresolved: return "family-unresolved";
+    case Refusal::CountFailed: return "count-failed";
+    case Refusal::NoCreators: return "no-creators";
+    case Refusal::Unreadable: return "unreadable=" + std::to_string(c.unreadable) + "/" + std::to_string(c.creators);
+    default: return std::string();
+    }
+}
+
+// The one line a room's first refused census prints: its word, what it means,
+// and that the share is not applied there.
+inline std::string RefusalLogLine(const Census& c)
+{
+    std::string cause;
+    switch (c.refusal) {
+    case Refusal::FamilyUnresolved: cause = "no monster spawner object resolved by name (a build or SDK problem)"; break;
+    case Refusal::CountFailed: cause = "counting a monster spawner object failed"; break;
+    case Refusal::NoCreators: cause = "the room holds no monster spawners"; break;
+    case Refusal::Unreadable: cause = "a monster spawner's state could not be read"; break;
+    default: cause = "no census"; break;
+    }
+    return "dungeonchest: no planned total in this room (" + RefusalWord(c) + "): " + cause
+        + "; the share is not applied here and the game's own rule stays (the chest opens when every monster is dead)";
 }
 
 // ---- the countdown's form ---------------------------------------------------
@@ -248,6 +313,7 @@ struct Tally {
     long alive0 = 0;              // Enemy_Parent_obj instances when the chest was first seen
     long total = 0;               // the planned total, fixed once known; 0 = unknown
     Census census;                // what the total source last saw of the room's creators
+    bool refusalLogged = false;   // this room's refused census has printed its one log line
     long threshold = 0;           // the threshold at the last evaluation
     bool latched = false;         // reached in this room: stays reached until the room changes
     bool unlocked = false;        // the unlock action answered at the latch that the chest can open
@@ -406,6 +472,16 @@ inline void CountNotEnemy(State& s)
 {
     if (!Tracking(s) || !s.tally.active) return;
     ++s.tally.notEnemy;
+}
+
+// Whether a refused census should print its log line now: true once per room
+// (the tally resets on a room change), so a total source re-asked every poll
+// while it refuses logs the first refusal only.
+inline bool NoteRefusal(State& s)
+{
+    if (s.tally.refusalLogged) return false;
+    s.tally.refusalLogged = true;
+    return true;
 }
 
 // A chat line the callback could not send switches the chat forms off for the
@@ -574,7 +650,8 @@ inline LabelSpot PlaceHeadLabel(HeadLabel& l, double x, double y, double top, do
 // refused as not an enemy `self` (CountNotEnemy), so `kills=0` beside a rising
 // `notEnemy=` says the hook fired and the enemy check refused it, and both at
 // 0 says the hook did not fire. `total` is the total the decision uses, or
-// `unavailable` while it is unknown; `creators`, `pending` and `unreadable`
+// `unavailable` while it is unknown, with the census's refusal word in
+// parentheses when a census refused (RefusalWord); `creators`, `pending` and `unreadable`
 // are what the total source last saw of the room's creators (all, still to
 // spawn, state unreadable). `latched` is the decision; `unlocked` is the
 // unlock action's answer, which opens the detour's view; `answered` is what
@@ -587,8 +664,7 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
         + " | kills=" + std::to_string(t.kills)
         + " notEnemy=" + std::to_string(t.notEnemy)
         + " total=" + (total > 0 ? std::to_string(total) : std::string("unavailable")
-            + (t.census.unreadable > 0 ? "(unreadable=" + std::to_string(t.census.unreadable) + "/"
-                + std::to_string(t.census.creators) + ")" : std::string()))
+            + (t.census.refusal != Refusal::None ? "(" + RefusalWord(t.census) + ")" : std::string()))
         + " creators=" + std::to_string(t.census.creators)
         + " pending=" + std::to_string(t.census.pending)
         + " unreadable=" + std::to_string(t.census.unreadable)

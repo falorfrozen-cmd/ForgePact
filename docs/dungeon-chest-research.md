@@ -121,7 +121,7 @@ The chat candidates' static reading is recorded under [Chat route](#chat-route).
 ### `dungeonchest` (both builds)
 
 The player command. Every form answers one status line that reports what was
-*done*: `dungeonchest: <pct>%|off | kills=<k> notEnemy=<n> total=<T|unavailable[(unreadable=<u>/<c>)]>
+*done*: `dungeonchest: <pct>%|off | kills=<k> notEnemy=<n> total=<T|unavailable[(<why>)]>
 creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
@@ -159,12 +159,21 @@ those pending spawners times 614 / 117, rounded up (`EstimatedTotal` and its
 two named constants in `DungeonChestMod.hpp`; the inputs are run A of Live
 procedure 1b, curated as the hub's DC19). A spawner whose state cannot be read
 is counted (`unreadable=`) and refuses the estimate, as do an unresolved
-spawner family and a room with no spawners (`EstimateFromCensus`;
-`total=unavailable(unreadable=<u>/<c>)`): counted as fired, an unread spawner
-would shrink T below the share the player set, and the clamp (kills plus the
+spawner family, a spawner object `instance_number` could not count, and a room
+with no spawners: counted as fired, an unread or uncounted spawner would
+shrink T below the share the player set, and the clamp (kills plus the
 monsters alive) does not stop a total of a few percent of the dungeon. The
 owner chose "refuse if any unreadable" on 2026-10-04, after round 3 had
-refused only when every spawner was unreadable.
+refused only when every spawner was unreadable. Each refusal names itself
+(`TotalFromCensus`): `total=unavailable(family-unresolved)` (no spawner object
+resolved by name, a build or SDK problem), `(count-failed)`, `(no-creators)`
+(a fact about the room) and `(unreadable=<u>/<c>)`; `total=unavailable` with
+no word means no census was taken (no source, or the mode off). The room's
+first refusal also prints one `dungeonchest: no planned total in this room
+(<why>): <cause>; the share is not applied here and the game's own rule stays
+...` line, once per room however many polls re-ask the source. Before this
+change an `instance_number` failure skipped that object's spawners
+silently, and a refused census printed nothing outside `status`.
 
 **The head label** (D12). Live procedure 1b's owner report: the label "felt
 jerky and was blinking very fast as it was updating every frame". The header
