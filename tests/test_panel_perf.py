@@ -39,8 +39,12 @@ class PanelPerfSuiteTests(unittest.TestCase):
         # raise --runs, never the budgets (forgepact-ui-responsive, D10).
         code, out = _npm("e2e:perf")
         lines = [l for l in out.splitlines() if l.startswith("e2e-perf: ")]
-        self.assertEqual(code, 0, out[-4000:])
-        self.assertTrue(lines and re.fullmatch(r"e2e-perf: (\d+)/\1 checks passed", lines[-1]), out[-4000:])
+        # The verdict lines first: `out` is stdout then the sandboxes' stderr,
+        # so a long stderr can push every FAIL line out of the tail.
+        verdict = "\n".join(l for l in out.splitlines() if l.startswith(("FAIL ", "e2e-perf: ")))
+        message = f"{verdict}\n--- tail ---\n{out[-4000:]}"
+        self.assertEqual(code, 0, message)
+        self.assertTrue(lines and re.fullmatch(r"e2e-perf: (\d+)/\1 checks passed", lines[-1]), message)
 
 
 if __name__ == "__main__":

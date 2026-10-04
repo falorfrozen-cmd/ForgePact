@@ -62,7 +62,7 @@ test('Setup: Install Mod Plugin is primary while the chain is incomplete, Launch
 });
 
 test('an entry\'s tooltip names its section, unless there is none or it says the same', () => {
-  assert.equal(entryTitle('Monster Rarity', 'Rare'), `Monster Rarity${ENTRY_TITLE_JOINER}Rare`);
+  assert.equal(entryTitle('Monster Rarity', 'Ancient'), `Monster Rarity${ENTRY_TITLE_JOINER}Ancient`);
   assert.equal(entryTitle('Monster Density', 'Monster Density'), 'Monster Density');
   assert.equal(entryTitle('', 'Headhunter buffs on rare kills'), 'Headhunter buffs on rare kills');
   assert.equal(entryTitle(null, 'Gold'), 'Gold');

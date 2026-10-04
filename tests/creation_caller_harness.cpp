@@ -35,6 +35,7 @@ static bool RarityFloorActive(){return rarity;}
 static bool TyrantActive(){return tyrant;}
 static bool CallerIsEnemyInstance(CInstance* s){return IsEnemyObject(CallerObjectIndex(s));}
 namespace ForgePact {struct DensityManager {double Mult=4;static DensityManager& Instance(){static DensityManager d;return d;}};}
+namespace ForgePact {struct BossRarity {static bool Active(){return false;}};}
 // PRODUCTION_CALLER_INFO
 // PRODUCTION_BIRTH_SCOPE
 // PRODUCTION_ENEMY_SCOPE

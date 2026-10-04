@@ -21,16 +21,20 @@ the grouping condition's id, and the `SECTION_ICONS` key). It names no card
 id except `itemsCard`, because the other card's id changes - so the same
 assertions pass on the pre-change panel and on the result.
 
-`ModsCategorySplitTests` pins the result: two Mods-tab cards named
-`qolCard`/`itemsCard`, in that order, neither repeating its sub-tab's name as
-a heading (the strip names them), `qolCard` holding exactly the fourteen Quality
-of Life controls in the assignment table's
-order, and no remaining "gameplay" wording or `gameplayCard` id anywhere in
-either source file.
+`ModsCategorySplitTests` pins the result: three Mods-tab cards named
+`qolCard`/`itemsCard`/`gameplayCard`, in that order, none repeating its
+sub-tab's name as a heading (the strip names them), `qolCard` holding exactly
+the fifteen Quality of Life controls in the assignment table's order, and
+`gameplayCard` holding exactly the Bosses select (`boss_rarity`, issue #44).
+Issue #12 banned the word "gameplay" and the id `gameplayCard`; the owner
+brought them back for the third sub-tab alone (2026-10-02), so "gameplay"
+may appear only as that sub-tab's own id, `aria-controls`/`aria-labelledby`
+and label, `gameplayCard` only in the files that draw that panel, never in
+`forgepact.py` or `PAGE_INFO.mods`.
 
 `ModsSubtabMarkupTests` and `ModsSubtabBehaviourTests` (round 1, the same
-issue's follow-up) pin the Quality of Life | Items sub-tab strip added on top
-of the split above: the strip's and buttons' markup, each card's `role`/
+issue's follow-up) pin the Quality of Life | Items | Gameplay sub-tab strip
+added on top of the split above: the strip's and buttons' markup, each card's `role`/
 `aria-labelledby`, the `.subtabbar`/`.subtabbtn` CSS, and that `boot`/
 `preparePanelUI` wire the sub-tabs up. `ModsSubtabBehaviourTests` runs the
 page's real `openTab`, `openModsSubtab`, `bindModsSubtabs`, `PAGE_INFO` and
@@ -54,7 +58,7 @@ import unittest
 # `py -3 -m unittest tests.test_mods_categories` from the ForgePact root puts
 # the root, not tests/, on the path; discovery puts tests/ there itself.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from panel_source import panel_file, panel_source  # noqa: E402
+from panel_source import PANEL_SRC, panel_file, panel_files, panel_source  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PANEL_DIR = pathlib.Path(os.environ.get("FORGEPACT_TEST_PANEL_DIR", str(ROOT / "src")))
@@ -79,10 +83,18 @@ QOL_CONTROL_IDS = [
     # Sleep loot your filter hides and its show key (forgepact-issue-95-mod).
     "mod_hidden_loot",
     "mod_hidden_loot_key",
+    # Jump through scenery (forgepact-16-jump-scenery-mod).
+    "mod_jump_scenery",
     "mod_skill_timer_style",
 ]
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
-ALL_CONTROL_IDS = QOL_CONTROL_IDS + ITEMS_CONTROL_IDS
+# The Gameplay sub-tab (issue #44) holds the Bosses select and nothing else.
+GAMEPLAY_CONTROL_IDS = ["boss_rarity"]
+ALL_CONTROL_IDS = QOL_CONTROL_IDS + ITEMS_CONTROL_IDS + GAMEPLAY_CONTROL_IDS
+
+# The files allowed to name the Gameplay panel's id: its markup, the strip,
+# the two flat-panel CSS rules, the mods-grid loop and its section icon.
+GAMEPLAY_CARD_FILES = {"App.svelte", "tabs/Mods.svelte", "app.css", "panel.js", "icons.js"}
 
 # (parent control id, child row id) pairs; the child shares its parent's card.
 PARENT_CHILD_ROWS = [
@@ -291,9 +303,9 @@ class ModsCategoryBaselineTests(unittest.TestCase):
                 f"{cid}'s hint does not end with the standard sentence",
             )
 
-    def test_data_tab_mods_occurs_exactly_three_times(self):
-        # The sidebar button plus the two Mods-tab cards - never a third.
-        self.assertEqual(HTML.count('data-tab="mods"'), 3)
+    def test_data_tab_mods_occurs_exactly_four_times(self):
+        # The sidebar button plus the three Mods-tab cards - never a fourth.
+        self.assertEqual(HTML.count('data-tab="mods"'), 4)
 
     def test_open_tab_toolbar_list_is_loot_and_modifiers(self):
         match = re.search(r"controlToolbar'\)\.hidden=!\[([^\]]*)\]\.includes\(name\)", HTML)
@@ -309,21 +321,36 @@ class ModsCategorySplitTests(unittest.TestCase):
     """Pins the result of the split."""
 
     def test_mods_card_ids_in_order(self):
+        # Gameplay goes third, so the slices other tests take between qolCard
+        # and itemsCard keep holding.
         self.assertEqual(
             [cid for cid, _ in _mods_cards(HTML)],
-            ["qolCard", "itemsCard"],
+            ["qolCard", "itemsCard", "gameplayCard"],
         )
 
     def test_mods_panels_repeat_no_subtab_label(self):
-        # The sub-tab strip names each panel ("Quality of Life", "Items"); the
-        # panels themselves carry no heading repeating it (owner, 2026-09-25).
+        # The sub-tab strip names each panel ("Quality of Life", "Items",
+        # "Gameplay"); the panels themselves carry no heading repeating it
+        # (owner, 2026-09-25).
         cards = _mods_cards(HTML)
-        for cid in ("qolCard", "itemsCard"):
+        for cid in ("qolCard", "itemsCard", "gameplayCard"):
             body = _card_by_id(cards, cid)
             self.assertNotIn("<h2", body, f"{cid} still has a heading")
         self.assertNotIn("<h2>Quality of Life</h2>", HTML)
+        self.assertNotIn("<h2>Gameplay</h2>", HTML)
 
-    def test_qol_card_controls_are_exactly_the_fourteen_qol_ids_in_order(self):
+    def test_gameplay_card_holds_exactly_the_bosses_control(self):
+        cards = _mods_cards(HTML)
+        body = _card_by_id(cards, "gameplayCard")
+        self.assertEqual(re.findall(r'<(?:input|select)\b[^>]*\bid="([^"]+)"', body),
+                         GAMEPLAY_CONTROL_IDS)
+        for control_id in QOL_CONTROL_IDS + ITEMS_CONTROL_IDS:
+            self.assertNotIn(f'id="{control_id}"', body)
+        for cid, other in cards:
+            if cid != "gameplayCard":
+                self.assertNotIn('id="boss_rarity"', other, f"boss_rarity found in {cid!r}")
+
+    def test_qol_card_controls_are_exactly_the_fifteen_qol_ids_in_order(self):
         body = _card_by_id(_mods_cards(HTML), "qolCard")
         positions = []
         for control_id in QOL_CONTROL_IDS:
@@ -335,16 +362,31 @@ class ModsCategorySplitTests(unittest.TestCase):
         for control_id in ITEMS_CONTROL_IDS:
             self.assertNotIn(f'id="{control_id}"', body)
 
-    def test_no_gameplay_wording_remains(self):
+    def test_gameplay_wording_names_only_the_new_subtab(self):
+        # Issue #12's ban, narrowed (owner, 2026-10-02): "gameplay" is the
+        # Gameplay sub-tab's own id, aria-controls/aria-labelledby and label,
+        # and nothing a Mods card or the strip says besides.
+        allowed_in_card = ('id="gameplayCard"', 'aria-labelledby="subtab-gameplay"')
         for cid, body in _mods_cards(HTML):
-            self.assertNotIn("gameplay", body.lower(), f"{cid} still says 'gameplay'")
+            for allowed in allowed_in_card:
+                body = body.replace(allowed, "")
+            self.assertNotIn("gameplay", body.lower(), f"{cid} says 'gameplay'")
+        strip = _SUBTAB_STRIP_RE.search(HTML)
+        self.assertIsNotNone(strip, "#modsSubtabs strip not found")
+        rest = strip.group(1)
+        for allowed in ('id="subtab-gameplay"', 'aria-controls="gameplayCard"', ">Gameplay</button>"):
+            self.assertEqual(rest.count(allowed), 1, allowed)
+            rest = rest.replace(allowed, "")
+        self.assertNotIn("gameplay", rest.lower())
         page_info_match = re.search(r"mods:\[([^\]]*)\]", HTML)
         self.assertIsNotNone(page_info_match, "PAGE_INFO.mods not found")
         self.assertNotIn("gameplay", page_info_match.group(1).lower())
 
-    def test_gameplay_card_id_is_gone(self):
-        self.assertNotIn("gameplayCard", HTML)
-        self.assertNotIn("gameplayCard", ICONS_SOURCE)
+    def test_gameplay_card_id_only_in_the_files_that_draw_it(self):
+        named = {path.relative_to(PANEL_SRC).as_posix() for path in panel_files()
+                 if "gameplayCard" in path.read_text(encoding="utf-8")}
+        self.assertEqual(named, GAMEPLAY_CARD_FILES)
+        self.assertEqual(list(_section_icons(ICONS_SOURCE)).count("gameplayCard"), 1)
         self.assertNotIn("gameplayCard", PYTHON_SOURCE)
 
 
@@ -443,8 +485,8 @@ class ModsSubtabMarkupTests(unittest.TestCase):
 
     def test_subtab_buttons_order_ids_controls_labels_and_initial_state(self):
         buttons = _SUBTAB_BUTTON_RE.findall(HTML)
-        self.assertEqual(len(buttons), 2, "expected exactly two sub-tab buttons")
-        (qol_attrs, qol_label), (items_attrs, items_label) = buttons
+        self.assertEqual(len(buttons), 3, "expected exactly three sub-tab buttons")
+        (qol_attrs, qol_label), (items_attrs, items_label), (gameplay_attrs, gameplay_label) = buttons
         self.assertIn('id="subtab-qol"', qol_attrs)
         self.assertIn('aria-controls="qolCard"', qol_attrs)
         self.assertIn('aria-selected="true"', qol_attrs)
@@ -457,6 +499,12 @@ class ModsSubtabMarkupTests(unittest.TestCase):
         self.assertIn('tabindex="-1"', items_attrs)
         self.assertEqual(items_label, "Items")
         self.assertNotIn("tabbtn", items_attrs)
+        self.assertIn('id="subtab-gameplay"', gameplay_attrs)
+        self.assertIn('aria-controls="gameplayCard"', gameplay_attrs)
+        self.assertIn('aria-selected="false"', gameplay_attrs)
+        self.assertIn('tabindex="-1"', gameplay_attrs)
+        self.assertEqual(gameplay_label, "Gameplay")
+        self.assertNotIn("tabbtn", gameplay_attrs)
 
     def test_subtab_aria_controls_equals_the_mods_card_ids(self):
         controls = set(re.findall(r'class="subtabbtn"[^>]*aria-controls="([^"]+)"', HTML))
@@ -466,6 +514,7 @@ class ModsSubtabMarkupTests(unittest.TestCase):
     def test_mods_cards_have_role_tabpanel_and_aria_labelledby(self):
         self.assertIn('id="qolCard" role="tabpanel" aria-labelledby="subtab-qol"', HTML)
         self.assertIn('id="itemsCard" role="tabpanel" aria-labelledby="subtab-items"', HTML)
+        self.assertIn('id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay"', HTML)
 
     def test_subtabbar_css_spans_the_grid(self):
         match = re.search(r"\.subtabbar\{([^}]*)\}", HTML)
@@ -566,6 +615,7 @@ makeElement({class:'tab-card',id:'dropsCard','data-tab':'loot'});
 makeElement({class:'tab-card',id:'modifierCard','data-tab':'modifiers'});
 makeElement({class:'tab-card',id:'qolCard','data-tab':'mods'});
 makeElement({class:'tab-card',id:'itemsCard','data-tab':'mods'});
+makeElement({class:'tab-card',id:'gameplayCard','data-tab':'mods'});
 makeElement({id:'workspace'});
 makeElement({id:'pageTitle'});
 makeElement({id:'pageDescription'});
@@ -575,6 +625,7 @@ makeElement({id:'controlSearch'});
 makeElement({id:'modsSubtabs',class:'subtabbar',hidden:true});
 makeElement({class:'subtabbtn',id:'subtab-qol','aria-controls':'qolCard'});
 makeElement({class:'subtabbtn',id:'subtab-items','aria-controls':'itemsCard'});
+makeElement({class:'subtabbtn',id:'subtab-gameplay','aria-controls':'gameplayCard'});
 """
 
 # (a)-(h) from context "Round 1: tests". Each step's DOM/state snapshot is
@@ -588,10 +639,13 @@ out.a={
   stripHidden: document.getElementById('modsSubtabs').hidden,
   qolActive: document.getElementById('qolCard').classList.contains('active'),
   itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  gameplayActive: document.getElementById('gameplayCard').classList.contains('active'),
   qolSelected: document.getElementById('subtab-qol').getAttribute('aria-selected'),
   itemsSelected: document.getElementById('subtab-items').getAttribute('aria-selected'),
+  gameplaySelected: document.getElementById('subtab-gameplay').getAttribute('aria-selected'),
   qolTabIndex: document.getElementById('subtab-qol').tabIndex,
   itemsTabIndex: document.getElementById('subtab-items').tabIndex,
+  gameplayTabIndex: document.getElementById('subtab-gameplay').tabIndex,
   toolbarHidden: document.getElementById('controlToolbar').hidden,
   title: document.getElementById('pageTitle').textContent
 };
@@ -600,6 +654,7 @@ openModsSubtab('itemsCard');
 out.b={
   qolActive: document.getElementById('qolCard').classList.contains('active'),
   itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  gameplayActive: document.getElementById('gameplayCard').classList.contains('active'),
   qolSelected: document.getElementById('subtab-qol').getAttribute('aria-selected'),
   itemsSelected: document.getElementById('subtab-items').getAttribute('aria-selected'),
   stored: sessionStorage.getItem('forgepact_mods_subtab')
@@ -609,7 +664,8 @@ openTab('loot');
 out.c={
   stripHidden: document.getElementById('modsSubtabs').hidden,
   qolActive: document.getElementById('qolCard').classList.contains('active'),
-  itemsActive: document.getElementById('itemsCard').classList.contains('active')
+  itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  gameplayActive: document.getElementById('gameplayCard').classList.contains('active')
 };
 
 openTab('mods');
@@ -638,12 +694,23 @@ out.g={
 
 openTab('mods');
 bindModsSubtabs();
+document.getElementById('subtab-gameplay').click();
+out.hClickGameplay={
+  qolActive: document.getElementById('qolCard').classList.contains('active'),
+  itemsActive: document.getElementById('itemsCard').classList.contains('active'),
+  gameplayActive: document.getElementById('gameplayCard').classList.contains('active'),
+  stored: sessionStorage.getItem('forgepact_mods_subtab')
+};
 document.getElementById('subtab-items').click();
 out.hClick={itemsActive: document.getElementById('itemsCard').classList.contains('active')};
 
 let prevented=false;
 document.getElementById('subtab-items').onkeydown({key:'ArrowRight',preventDefault(){prevented=true}});
 out.hArrowRight={activeButton: document.activeElement.id, prevented};
+
+prevented=false;
+document.getElementById('subtab-gameplay').onkeydown({key:'ArrowRight',preventDefault(){prevented=true}});
+out.hArrowRightWrap={activeButton: document.activeElement.id, prevented};
 
 prevented=false;
 document.getElementById('subtab-qol').onkeydown({key:'ArrowLeft',preventDefault(){prevented=true}});
@@ -694,10 +761,13 @@ class ModsSubtabBehaviourTests(unittest.TestCase):
         self.assertFalse(a["stripHidden"])
         self.assertTrue(a["qolActive"])
         self.assertFalse(a["itemsActive"])
+        self.assertFalse(a["gameplayActive"])
         self.assertEqual(a["qolSelected"], "true")
         self.assertEqual(a["itemsSelected"], "false")
+        self.assertEqual(a["gameplaySelected"], "false")
         self.assertEqual(a["qolTabIndex"], 0)
         self.assertEqual(a["itemsTabIndex"], -1)
+        self.assertEqual(a["gameplayTabIndex"], -1)
         self.assertTrue(a["toolbarHidden"])
         self.assertEqual(a["title"], "Mods")
 
@@ -705,6 +775,7 @@ class ModsSubtabBehaviourTests(unittest.TestCase):
         b = self._results()["b"]
         self.assertFalse(b["qolActive"])
         self.assertTrue(b["itemsActive"])
+        self.assertFalse(b["gameplayActive"])
         self.assertEqual(b["qolSelected"], "false")
         self.assertEqual(b["itemsSelected"], "true")
         self.assertEqual(b["stored"], "itemsCard")
@@ -714,6 +785,7 @@ class ModsSubtabBehaviourTests(unittest.TestCase):
         self.assertTrue(c["stripHidden"])
         self.assertFalse(c["qolActive"])
         self.assertFalse(c["itemsActive"])
+        self.assertFalse(c["gameplayActive"])
 
     def test_d_open_tab_mods_again_restores_items(self):
         d = self._results()["d"]
@@ -736,20 +808,28 @@ class ModsSubtabBehaviourTests(unittest.TestCase):
 
     def test_h_click_selects_its_card(self):
         self.assertTrue(self._results()["hClick"]["itemsActive"])
+        gameplay = self._results()["hClickGameplay"]
+        self.assertTrue(gameplay["gameplayActive"])
+        self.assertFalse(gameplay["qolActive"])
+        self.assertFalse(gameplay["itemsActive"])
+        self.assertEqual(gameplay["stored"], "gameplayCard")
 
-    def test_h_arrow_right_wraps_and_focuses(self):
+    def test_h_arrow_right_moves_on_wraps_and_focuses(self):
         result = self._results()["hArrowRight"]
+        self.assertEqual(result["activeButton"], "subtab-gameplay")
+        self.assertTrue(result["prevented"])
+        result = self._results()["hArrowRightWrap"]
         self.assertEqual(result["activeButton"], "subtab-qol")
         self.assertTrue(result["prevented"])
 
     def test_h_arrow_left_wraps_and_focuses(self):
         result = self._results()["hArrowLeft"]
-        self.assertEqual(result["activeButton"], "subtab-items")
+        self.assertEqual(result["activeButton"], "subtab-gameplay")
         self.assertTrue(result["prevented"])
 
     def test_h_home_and_end_jump(self):
         end_result = self._results()["hEnd"]
-        self.assertEqual(end_result["activeButton"], "subtab-items")
+        self.assertEqual(end_result["activeButton"], "subtab-gameplay")
         self.assertTrue(end_result["prevented"])
         home_result = self._results()["hHome"]
         self.assertEqual(home_result["activeButton"], "subtab-qol")

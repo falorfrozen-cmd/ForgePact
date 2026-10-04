@@ -100,10 +100,16 @@ EXPECTED_PLAYER_COMMANDS = {
     # Mining Ore Extra Rolls, the Loot tab's second mining row (ForgePact
     # #36; test_mining_ore_behavior.py and test_mining_ore_panel.py pin it).
     "miningrolls",
+    # The Bosses control, Mods > Gameplay (ForgePact #44;
+    # test_boss_rarity_contract.py and test_boss_rarity_panel.py pin it).
+    "bossrarity",
     # The incident monitor's `incident stat` (ForgePact #76): reads the
     # plugin's own counters, changes nothing in the game
     # (test_incident_monitor_contract.py pins it).
     "incident",
+    # Jump through scenery, the Mods tab's switch (ForgePact #16;
+    # test_jump_scenery_mod_contract.py).
+    "jumpscenery",
     # Satanic Zone control (ForgePact #157): the World tab's two switches
     # and the exact-zone pin (test_satanic_zone_control.py pins it).
     "satzone",

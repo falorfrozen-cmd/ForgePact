@@ -41,6 +41,20 @@ def between(text, start, end):
     return text[i:text.index(end, i)]
 
 
+# The outermost-create guard owns the pre-call slot. #74 put the signature seed
+# in the same slot, so the guard governs a braced block: the gem swap first,
+# then SignatureBeforeCreate. The swap must be the guard's own statement and
+# the only GemsBeforeCreate in the macro, so a call outside it still fails.
+GEM_SWAP_GUARD = re.compile(
+    r'if \(_final && g_TruthDepth == 0\) '
+    r'(?:GemsBeforeCreate\(argc, A\);'
+    r'|\{ GemsBeforeCreate\(argc, A\); SignatureBeforeCreate\(argc, A\); \})')
+
+
+def gem_swap_guarded(macro):
+    return macro.count('GemsBeforeCreate(') == 1 and GEM_SWAP_GUARD.search(macro) is not None
+
+
 DOC = (ROOT / 'docs/incarnation-gems-research.md').read_text(encoding='utf-8')
 PANEL = panel_source()
 
@@ -92,11 +106,24 @@ class PluginWiringTests(unittest.TestCase):
         macro = between(MAIN, '#define ITEM_CREATE_HOOK(NAME)', 'ITEM_CREATE_HOOK(CreateItemNew)')
         swap = macro.index('GemsBeforeCreate(argc, A)')
         self.assertLess(swap, macro.index('g_Orig_##NAME(S, O, R, argc, A)'))
-        self.assertIn('if (_final && g_TruthDepth == 0) GemsBeforeCreate(argc, A);', macro)
+        self.assertTrue(gem_swap_guarded(macro), 'the swap runs only under _final && g_TruthDepth == 0')
         before = between(MAIN, 'static void GemsBeforeCreate(', '\n}\n')
         self.assertIn('g_GemDropDepth <= 0', before)
         self.assertIn('g_GemTableBuilding', before)
         self.assertIn('DropSeed(g_Gems, g_GemTables, true,', before)
+
+    def test_swap_guard_pin_refuses_a_call_outside_the_guard(self):
+        guard = 'if (_final && g_TruthDepth == 0) '
+        both = '{ GemsBeforeCreate(argc, A); SignatureBeforeCreate(argc, A); }'
+        self.assertTrue(gem_swap_guarded(guard + both))
+        self.assertTrue(gem_swap_guarded(guard + 'GemsBeforeCreate(argc, A);'))
+        for wrong in (
+            'GemsBeforeCreate(argc, A); ' + guard + '{ SignatureBeforeCreate(argc, A); }',
+            'if (_final) { GemsBeforeCreate(argc, A); SignatureBeforeCreate(argc, A); }',
+            guard + '{ SignatureBeforeCreate(argc, A); GemsBeforeCreate(argc, A); }',
+            guard + both + ' GemsBeforeCreate(argc, A);',
+        ):
+            self.assertFalse(gem_swap_guarded(wrong), wrong)
 
     def test_dress_runs_on_the_finished_item_before_item_truth_records_it(self):
         macro = between(MAIN, '#define ITEM_CREATE_HOOK(NAME)', 'ITEM_CREATE_HOOK(CreateItemNew)')

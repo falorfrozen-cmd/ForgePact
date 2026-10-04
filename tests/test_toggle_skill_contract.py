@@ -846,9 +846,15 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Mining Ore Extra Rolls (ForgePact #36; test_mining_ore_behavior.py
             # and test_mining_ore_panel.py).
             "miningrolls",
+            # The Bosses control (ForgePact #44; test_boss_rarity_contract.py
+            # and test_boss_rarity_panel.py).
+            "bossrarity",
             # The incident monitor's `incident stat` (ForgePact #76;
             # test_incident_monitor_contract.py).
             "incident",
+            # Jump through scenery, the Mods tab's switch (ForgePact #16;
+            # test_jump_scenery_mod_contract.py).
+            "jumpscenery",
             # Satanic Zone control (ForgePact #157; test_satanic_zone_control.py).
             "satzone",
         }
@@ -1247,14 +1253,17 @@ class SkillTimerShipContractTests(unittest.TestCase):
 
     def test_html_has_one_select_with_five_styles_in_order(self):
         # The Setup tab's `#theme` select (hidden under the ThemePicker, the
-        # control of record) and hidden loot sleep's show key
+        # control of record), hidden loot sleep's show key
         # (`#mod_hidden_loot_key`, test_hidden_loot_panel_contract.py pins its
-        # options) are the page's only other <select>s, so the skill timer is
+        # options) and the Mods > Gameplay `#boss_rarity` select (ForgePact
+        # #44) are the page's only other <select>s, so the skill timer is
         # still the one select with these styles.
-        self.assertEqual(PANEL_PAGE.count("<select"), 3)
+        self.assertEqual(PANEL_PAGE.count("<select"), 4)
         self.assertEqual(PANEL_PAGE.count('<select id="theme" class="theme-picker-native"'), 1)
         self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="mod_hidden_loot_key" '
                                           'aria-label="Show hidden loot while held">'), 1)
+        self.assertEqual(PANEL_PAGE.count('<select class="style-select" id="boss_rarity" '
+                                          'aria-label="Bosses">'), 1)
         # Named by its row's label, since the visible label is a <span>.
         m = re.search(
             r'<select class="style-select" id="mod_skill_timer_style" '
@@ -3008,15 +3017,19 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # (test_rolling_density_contract.py), `hiddenloot` is hidden loot
         # sleep's switch (test_hidden_loot_mod_contract.py), `miningrolls`
         # is Mining Ore Extra Rolls (ForgePact #36, test_mining_ore_behavior.py),
-        # and `incident` is the incident monitor's `incident stat` (ForgePact
-        # #76, test_incident_monitor_contract.py).
+        # `bossrarity` is the Bosses control (ForgePact #44,
+        # test_boss_rarity_contract.py), and `incident` is the incident
+        # monitor's `incident stat` (ForgePact #76,
+        # test_incident_monitor_contract.py), and `jumpscenery` is Jump
+        # through scenery's switch (ForgePact #16,
+        # test_jump_scenery_mod_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
                                         "skillstate", "talentalloc",
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
-                                        "densityroll", "hiddenloot", "incident"})
+                                        "densityroll", "hiddenloot", "bossrarity", "incident", "jumpscenery"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

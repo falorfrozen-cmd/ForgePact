@@ -7,10 +7,25 @@ pay out up to ten times, including more chances at the rare finds a dig can
 give. A new **Sleep loot your filter hides** switch, off by default, puts the
 loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key. A new **Pet collects relics** switch,
-also off by default, has your pet pick up the relics lying around you. And
-when the game crashes, freezes or drops frames badly, ForgePact now saves a
+also off by default, has your pet pick up the relics lying around you. A new
+**Jump through scenery** switch, off by default, lets your jump carry you over
+the rocks, fences and carts that stop it.
+And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
+
+**Headhunter** and **Tyrant's Crown** now drop the way the game's own Angelic
+items do: from the game's Angelic roll, as one more entry in its list, and only
+while that item's switch is on. The **Angelic / Unholy Drops** slider no longer
+drops them. With both switches off, the default, neither one ever drops, even
+if you have forged it.
+
+A new **Bosses** setting, off by default, on a new **Gameplay** page of the Mods
+tab, makes every boss come as a Rare ("uber") or Ancient ("uber uber") boss.
+Measured in a live game on one boss, a Karp King spawned from the research
+console: set to Ancient, with the rarity and the affixes the mod added, it had
+about five times its usual health, about twice its damage and 6.25 times its
+experience.
 
 ## New
 
@@ -55,6 +70,38 @@ the panel's Setup tab.
   the game took about 7.5 ms a frame with them asleep, against 14 to 18 ms
   with them awake. This version of the switch has been tested both outside
   the game and in a live game.
+- **Bosses: "uber" and "uber uber" bosses (#44).** The Mods tab has a third
+  page, **Gameplay**, after Quality of Life and Items, with one setting:
+  **Bosses**. Pick **Rare — "uber" boss** or **Ancient — "uber uber" boss** and
+  the plugin asks the game, through the hook the Monster Rarity sliders already
+  use, to set up every boss that spawns while it is on as a rare or an ancient
+  one, and asks for the same extra affixes the sliders give a monster they raise
+  (up to two on a rare, three on an ancient). It is off by default (**Normal
+  (the game's own)**): choose a setting to use it. Bosses the game itself
+  already made champion, rare or ancient are left alone, and so are the
+  monsters and phases a boss creates during its fight; that is how the
+  setting is built, and neither case has come up in a live game yet. Ordinary
+  monsters are not affected, and the Monster Rarity sliders on the World tab
+  still leave bosses alone. With Tyrant's Crown also on, a boss this setting
+  raised to Rare can also get the crown's extra affix. If the plugin cannot
+  set it up on your game, choosing Rare or Ancient is refused and bosses stay
+  as the game makes them: the log shows `bossrarity: refused` with
+  `hook=failed`. If `bossrarity status` shows `hook=table-only`, bosses the
+  game creates through its compiled code's direct calls are not raised.
+  What was measured in a live game, on 2026-10-02: on the research build, a
+  Karp King set to Rare and to Ancient, and Damien, Uber Damien and Uber Anubis
+  set to Ancient, each came out at the rarity chosen with its extra affixes. On
+  an Ancient Karp King, spawned from the research console, the game then built
+  a stronger boss from the rarity and the affixes the mod added: about 4.7 to
+  5.7 times its usual health (two sessions), about 2.1 times its damage and
+  6.25 times its experience, and its death rolled its loot at the ancient rank
+  instead of the normal one. Those numbers come from that one boss. Not seen in those sessions: an ancient look (its
+  name bar looked the same), more or better loot (one kill at each rank, too
+  few to tell), or extra boss gems, runes or parts; and what Rare changes on a
+  boss beyond its rarity was not measured. On the release plugin, the panel
+  turned the setting on and off in a running game and the hook went in on
+  both routes; no boss was fought on that build, so the raise itself was
+  measured on the research build.
 - **Incident reports (#76).** When the game crashes or freezes, ForgePact
   saves a report folder under `bp_ipc\reports\` in the game's `bin` folder.
   A significant FPS drop (a single frame that takes over a quarter of a
@@ -133,14 +180,98 @@ the panel's Setup tab.
   until the game's next roll. **Not yet confirmed in a live game**: forcing
   the answer true changed nothing visible in town, and a real zone where a
   kill can drop a relic has not been tested yet.
+- **Jump through scenery (#16).** A new switch in Mods → Quality of Life,
+  off by default. Until now a jump aimed across a rock, a fence, a cart or
+  other scenery did not move you at all. With this on, the jump carries you
+  over it. Before letting a jump through, the mod also checks where it would
+  land, and is meant to keep the jump blocked when that spot is inside
+  scenery or outside the room's rectangle. That landing check has been
+  tested outside the game only. The room's rectangle can be larger than the
+  part of a zone you can walk in, so the check does not hold back a jump
+  towards the edge of the walkable map. Locked doors and zone gates are
+  meant to keep blocking the jump. The mod learns how far your jump goes
+  from a jump you make in the open, so after loading a character, make one
+  jump on open ground first: until then, a jump into scenery stays blocked.
+  Make one again after a big change to your Jump Power, because until then
+  the mod checks the landing at your old jump distance. Some jumps stay
+  refused even with the switch on, such as one aimed at a horse carriage in
+  our test: what stops them is not something the mod changes. Only your
+  universal jump is affected, not leap, dash or charge skills, and in co-op
+  only your own character. Checked in play on 2026-10-03: with the switch
+  off a jump at a prop in the Town of Inoya did not move the character, and
+  with it on the same jump carried them over it, to open ground. At the
+  carriage, the landing and room checks ran and let the jump through, and
+  the character still did not move. Where that jump would have landed was
+  not recorded, so whether it lay inside the carriage is not known. Neither
+  check has been seen holding a jump back in play, the check on locked
+  doors and zone gates was not reached, and what the game does at the edge
+  of the walkable map has not been observed.
 
+## Changed
+
+- **Headhunter and Tyrant's Crown drop only from the game's own Angelic roll.**
+  - Before, they were two more items in the **Angelic / Unholy Drops** slider's
+    pool: ForgePact's own die dropped them whatever their switches said, and
+    the game's own Angelic roll never did.
+  - Now the game decides. When a Blood Pact or dungeon "Angelic item drop
+    chance" effect is active, the game's Angelic roll picks one unique from its
+    own list and rolls that unique's drop rate. While a switch is on, its item
+    is one more entry in that list for the length of each roll, and is taken
+    out again as soon as the roll is over, so merchants, shrines and crafting
+    never see it.
+  - Each item stands in through a real Angelic unique of the same kind and is
+    exactly as rare as it: Headhunter as rare as **Liquor Holster**, Tyrant's
+    Crown as rare as the more common of **Lucifer's Crown** and **Mask of the
+    Celestial**, the one with the lower drop-rate number (the log names which
+    one when you turn the switch on; in our testing it was Mask of the Celestial). Those
+    uniques keep their own chance to drop.
+  - When the game's roll lands on the item, the game itself builds it and drops
+    it where the monster died: one item per hit, in place of what that roll
+    would otherwise have dropped.
+  - Only while that item's switch (**Mods → Items → Headhunter** or
+    **Tyrant's Crown**) is on. Forging the item in the Custom Forge still turns
+    its mechanic on, as in earlier versions, but not this drop: a forged
+    Headhunter or Tyrant's Crown with its switch off never drops from the
+    game's Angelic roll.
+  - Both switches are off by default, so a default install drops neither item,
+    forged or not, and the game's roll and its list are left as they are.
+  - ForgePact adds no chance of its own for these two and does not change the
+    game's Angelic chance. If the plugin cannot find the game's list on your
+    game, turning a switch on says so in the log and the roll stays the game's
+    own.
+  - Checked in a live session on 2026-10-02, with the game's Angelic chance
+    raised so that hits came quickly and the item given many entries instead
+    of one so that hits would fall to it: every hit that fell to the item
+    became the item, 48 of 48 for Headhunter and 11 of 11 for Tyrant's Crown,
+    each built by the game where the monster died, one per hit, and with both
+    switches off every hit stayed the game's own. Not yet watched: a hit at the
+    game's normal Angelic chance, which is about one in several thousand rolls.
+    How often the item drops with the single entry a normal install adds is
+    worked out from that session, not measured.
+- **The Angelic / Unholy Drops slider's pool is the game's real Angelic and
+  Unholy uniques again**, with no signature items in it.
+- `sigdrop crown|belt|off|status` is still a test command that makes every kill
+  drop the named item.
+
+## Fixed
+
+- **The two Monster Rarity rows are named for the monsters they make (#159).**
+  On the World tab, the row called **Rare** raised normal monsters to what the
+  game shows as an Ancient (yellow name), and the row called **Ancient** raised
+  them to a Legion: each name was one tier too low. The rows are now called
+  **Ancient** and **Legion**, and the card's note, its hint and the Enabled
+  mods list use the same names. What the rows do is unchanged, and the shares
+  you set carry over: a share you had on Rare now shows on Ancient, and one you
+  had on Ancient shows on Legion.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
-gained a slider, two switches and an Incident reports card, so updating only
-the plugin leaves them out. Your existing settings are retained. Source users
-can run `Prepare-Plugin.bat` if plugin files are missing before using **Install
-Mod Plugin**. The plugin changed too, so press **Install Mod Plugin** once
-after updating - updating only the panel leaves the old plugin in place.
+gained a slider, three switches, an Incident reports card and a Gameplay page,
+so updating only the plugin leaves them out. Your existing settings are
+retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
+before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded
+Game** brings it up to date for you. If you start the game from Steam instead,
+or ForgePact's warning asks for it, press **Install Mod Plugin** once after
+updating.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

@@ -35,7 +35,7 @@ none of these diagnostic hooks or the recorder. See
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
 | **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP, quest progress and the floating XP text are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
-| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of its 49 real Angelic / Unholy uniques, or (since 1.4.5) Tyrant's Crown or Headhunter. x2 = 1 in 7,500 kills, each step adds a die, typable |
+| **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)) |
 | **Character Stats** | Experience, Magic Find and Movement Speed use the character's current total value, including equipment bonuses |
 | **Full Map Reveal** | Clears fog of war in every zone, so waypoints, dungeon entrances, chests, shrines and mining nodes show immediately (toggleable; F5 in-game also toggles it). Its sub-toggle marks every monster pack on the map: most packs do not exist until you walk near them, so the map shows one marker per pack, by pack kind, without creating a single monster; the pack is born by the game when you get close and its real dots replace the marker. A second, off-by-default sub-toggle keeps the old behaviour of really spawning every pack on arrival, which costs frame time for the whole zone at high density. Markers are small icons by pack kind (ivory skull normal, hooded face ambush, magenta horned mask ancient, cyan helmet champion, gold chest colossal chest, amber skull trio legion, crowned crimson skull mini boss); spawners closer than ~96 px to each other, such as density copies, share one icon with a count badge. The icons are written to `<game>\bin\bp_ipc\packmarks\<kind>.png` on first use and never overwritten, so you can replace any of them with your own PNG (any size, transparent background; `packmarks reload` picks it up in a running game). Plugin command `packmarks` (`stat`, `icons 0|1`, `iconscale <mult>`, `reload`, `cluster <world px|0>`, `badge 0|1`, `style <kind|all> <subimage> <r> <g> <b>`, `radius <kind|all> <px>`, `fill <kind|all> 0|1`, `outline 0|1 [px]`, `alpha`, `ring 0|1`, `scale`, `list`) adjusts the look live; dots by kind are the fallback when an icon cannot be loaded |
@@ -46,6 +46,7 @@ none of these diagnostic hooks or the recorder. See
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
+| **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
@@ -55,6 +56,7 @@ none of these diagnostic hooks or the recorder. See
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
+| **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 | **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
@@ -166,6 +168,9 @@ taken from the test sandbox, which reports the game open without the mod plugin
 ![The Mods tab, Items](assets/panel/mods-items-1280.png)
 **Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
 
+![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
+**Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made.
+
 Every slider has **− / +** buttons and an editable value. Click the value, or focus
 it and press Enter, to type an exact number; Enter applies and Escape cancels.
 Saved decimal values are retained after reopening the panel. Disabled Monster
@@ -182,12 +187,13 @@ embedded locally and stays sharp at different display scales.
 
 **Mods** groups related switches in cards. The sidebar shows only the five
 main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
-has two sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
+has three sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
-toggle marker/guard and the timed skill countdown), and **Items**, the custom
+toggle marker/guard and the timed skill countdown), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon). Quality of Life opens first; clicking the other sub-tab (or
+Crown, Beacon), and **Gameplay**, which holds the Bosses setting. Quality of
+Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
 the one you last had open until you close it. Map population depends on
 Reveal full map; its switch is unavailable while the parent is off. All
@@ -253,17 +259,105 @@ zone vanilla; goblins and online client movement use their own movement code and
 touched. Command: `enemyspeed <multiplier> [ct|all]` (`enemyspeed 1.5 ct`), `enemyspeed` alone
 prints the status with path-start and applied counters.
 
+### Bosses: "uber" and "uber uber" bosses
+**Mods › Gameplay → Bosses** picks how the bosses you meet are made: **Normal (the game's
+own)**, the default, which changes nothing; **Rare — "uber" boss**; or **Ancient — "uber
+uber" boss**. While it is set to Rare or Ancient, every boss that spawns comes at that
+rarity, its rarity set just before the game's own setup runs, through the same
+`EnemyRaritySettings` hook the Monster Rarity sliders and Tyrant's Crown use. A raised boss
+gets the same affix top-up the sliders give a monster they raise: up to two affixes on a
+rare, three on an ancient.
+
+- **Left alone:** a boss the game already made champion, rare or ancient keeps its own
+  rarity; the monsters, phases and clones a boss creates during its fight keep theirs;
+  ordinary monsters are never touched by this setting. The Monster Rarity sliders on the
+  World tab still leave every boss alone. The first two are how the setting is built and
+  have not come up in a live game yet: every status line captured so far read
+  `notRank1=0` and `enemyBorn=0`.
+- **With Tyrant's Crown:** the crown is not kept off bosses. With it on, a boss this setting
+  raised to Rare can also get the crown's extra affix ([Tyrant's Crown](#tyrants-crown-custom-forge-mechanic)).
+- **Measured in a live game (2026-10-02, research build):** a Karp King set to Rare and to
+  Ancient, and Damien, Uber Damien and Uber Anubis set to Ancient, each came out at that
+  rarity with its extra affixes. On an Ancient Karp King, spawned from the research
+  console, the game built a stronger boss from the rarity and the affixes the mod added:
+  about 4.7 times its rank-1 health in one session and 5.7 times in another, about 2.1
+  times its damage, exactly 6.25 times its experience, and its death handed the drop roll
+  rank 4 instead of 1. Those numbers come from that one boss.
+- **Not observed:** an ancient look (its name bar and body looked the same), more or better
+  loot (one kill at each rank, 10 against 12 items, too few to tell), extra boss gems, runes
+  or parts, and what Rare changes on a boss beyond its rarity. Not observed is not "does not
+  happen" ([research and test scope](docs/boss-rarity-research.md)).
+- **The shipped plugin (2026-10-02, release build `b235c9fd…5c81`):** the panel turned
+  the setting to Ancient and back off in a running game, `bossrarity status` followed it
+  (`hook=ok`) and the hook installed on both routes. No boss was fought on that build, so
+  the raise itself was measured on the research build.
+- **Commands:** the panel sends `bossrarity rare`, `bossrarity ancient` or
+  `bossrarity off`. `bossrarity status` (or `bossrarity` alone) prints the mode, how many
+  bosses were raised and seen, how many were left alone and why, and whether the hook is
+  in (`hook=ok`). `hook=table-only` means bosses the game creates through its compiled
+  code's direct calls are not raised. If the hook could not be installed at all, choosing
+  Rare or Ancient is refused: the plugin answers `bossrarity: refused <mode> hook=failed`
+  and the setting stays as it was.
+
 ### Signature drops
-Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) are two more items in the **Angelic /
-Unholy Drops** pool above: they drop from the very same die as every other item in it, such as
-**Liquor Holster**, at exactly the same rate - so they never drop while that slider is off (the
-default), and more often as it is raised, along with everything else in the pool. They are not
-part of the game's own Angelic roll (the Blood Pact / dungeon "Angelic item drop chance" effect) -
-only ForgePact's own die drops them. They arrive as SS-tier Unholy items, fully set up, and the
-plugin recognises them on every load even without the Item Editor. `sigdrop status`,
-`sigdrop crown`, `sigdrop belt` and `sigdrop off` are a test command that forces every kill
-to drop the named item (or turns that off); it does not change the normal drop rate, which
-always follows the Angelic / Unholy Drops slider.
+Tyrant's Crown (Great Helm) and Headhunter (Heavy Belt) drop only from the game's own
+Angelic roll - the one a Blood Pact or dungeon "Angelic item drop chance" effect turns on - and only while
+that item's switch (**Mods → Items → Headhunter** / **Tyrant's Crown**) is on. Forging the item in
+the Custom Forge turns its mechanic on, as before, but not this drop: with its switch off, a forged
+Headhunter or Tyrant's Crown never drops from the game's roll.
+
+How it drops: the game's Angelic roll picks one entry from its own list of Angelic and Unholy
+uniques and then rolls that unique's own drop rate. For the length of each roll, ForgePact adds
+one entry to that list for each item whose switch is on, and takes it out again as soon as the
+roll is over, so between rolls the list is exactly the game's and nothing else that reads it
+(merchants, shrines, crafting, the other drop routines) ever sees the extra entry. The game's
+picker and the game's die decide. Each added entry stands in through a real Angelic unique of
+the same item type, and drops at that unique's rate: Headhunter through **Liquor Holster**, and
+Tyrant's Crown through the more common of the Angelic helmets the plugin finds in the game's pool (**Lucifer's
+Crown** or **Mask of the Celestial**, whichever has the lower drop-rate number; the switch-on line in the
+log names the one chosen). So the item is exactly as rare as its stand-in, and the stand-in keeps
+its own share. A hit can fall to the added entry only when the game's roll landed on the stand-in
+itself: ForgePact reads which unique the roll looked up for that hit, and only when that is the
+stand-in - its item type included, so another unique that happens to share its other numbers
+never counts - does the hit go to the signature item, with the added entry's share (one in two
+when the game's own list holds the stand-in once). A hit ForgePact cannot identify stays the
+game's own drop. When a hit does fall to the added entry, the game itself builds the signature
+item and places it where the monster died: one item per hit, in place of what that roll would
+otherwise have dropped. The plugin's Custom Forge hook recognises it the same way it recognises
+one from `sigdrop`.
+
+Verified in a live session (Live 3, 2026-10-02) on the research build, with the roll's chance
+raised so that hits came quickly and 200 entries added per roll so that they fell to the item:
+48 of 48 hits that fell to Headhunter's entry (46 with Headhunter alone on, 2 more with both on)
+and 11 of 11 that fell to Tyrant's Crown's were built
+by the game as that item, one per hit (`ourHits=` and `built=` grew together, `refused=0`), and
+with both switches off every hit stayed the game's own and the list was left as it was. Not
+observed: a hit at the game's natural chance (about one in several thousand rolls), and the share
+the player build's single entry gets, which is arithmetic on that session, not a measurement.
+That session ran the build from before the list check's kind gate (the check now refuses, before
+converting it, a value that can never be a list handle). The player path hands the check only
+the game's list, a ref, and a later live session (Live 4, 2026-10-02) on the gated build measured
+that the list is still accepted and that the research scan no longer raises runner errors.
+Record: [`docs/angelic-roll-hook-research.md`](docs/angelic-roll-hook-research.md) § "Session 5:
+the id on the built item (issue #74)" and § "Session 6: the scan and the runner errors (issue #74)".
+
+ForgePact adds no die of its own for them and does not change the game's Angelic chance. With
+both switches off (the default), no entry is added, neither item drops, forged or not, and the
+game's roll is left alone. If the plugin cannot find the game's list on your game, the switch
+logs one line saying so and the roll stays the game's own (`list=missing` below). The **Angelic /
+Unholy Drops** slider never drops them: its pool is the real uniques only.
+
+`sigdrop status`, `sigdrop crown`, `sigdrop belt` and `sigdrop off` stay a test command that
+forces every kill to drop the named item (or turns that off); it does not change the normal drop
+rate. `sigdrop status` also reports the game's Angelic roll: `gameRolls=` and `gameHits=` (the
+game's own rolls and hits), `injected=` (entries added, over all rolls), `ourHits=` (hits that
+fell to a signature item), `untyped=` (hits ForgePact could not identify, which stayed the game's
+own), `built=`, `crown=` and `belt=` (the signature items the game built), `anomalies=` (rolls
+where the added entry did not show in the list, so that roll carried nothing extra, or where the
+list had changed by the time the plugin came to take its entry out, so it left the list as it
+found it), `list=` (the game's list by name and length; `none` before the first look, `missing`
+when it was not found), `gate=`
+(which switch is on), and `cdpCalls=` / `detect=` (whether the plugin can see the game's hits).
 
 ### Tier (Custom Forge)
 A forged item can carry a Tier letter (`tier=1` C … `tier=5` SS in the runtime file; the Item
@@ -271,7 +365,7 @@ Editor 2.15.3 offers it under Appearance). It is the letter the tooltip prints a
 filters use.
 
 ### Headhunter (Custom Forge mechanic)
-Forge any item in the Item Editor with **Mechanic: Headhunter** and switch on **World →
+Forge any item in the Item Editor with **Mechanic: Headhunter** and switch on **Mods → Items →
 Headhunter** in the panel. Killing a **rare or champion** monster then grants its affixes to
 you as 20-second buffs, through the game's own on-kill dispatcher and `BuffAdd`:
 
@@ -302,12 +396,16 @@ resolution. Commands: `hhlabel on|off`, `hhlabeloffset <px>` (height above the h
 Commands: `headhunter on|off|force|status`, `hhdur <seconds>`, `hhmap <affix> <buffId> [v0] [v1]`,
 `hhdefault <buffId>|off`. The panel sends `headhunter force` at every game start while the switch
 is on; `force` also stands in for the equipped-item check, which is not finished yet.
+The same switch gates the Headhunter belt's own drop: only while it is on can the game's Angelic
+roll drop one. A forged Headhunter turns the buff mechanic on but not the drop ([Signature drops](#signature-drops)).
 
 ### Tyrant's Crown (Custom Forge mechanic)
-Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **World →
-Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
+Forge a helmet in the Item Editor with **Mechanic: Tyrant's Crown** and switch on **Mods →
+Items → Tyrant's Crown** in the panel. While it is on, monsters that spawn near you rise from normal to
 **rare** with a 30 % chance (they get two affixes), and every rare or champion carries **one more
-affix**. Ancients and bosses are never touched.
+affix**. Ancients are never touched. Bosses are not excluded: by a reading of our own code
+(not observed live), the crown can raise a rank-1 boss to rare and give a rare or champion
+boss its extra affix, including a boss the **Bosses** setting raised to Rare.
 
 How: `EnemyRaritySettings(typeId)` runs from `Enemy_Parent_obj` Alarm 4 with the monster as
 self, after the spawner decided `enemyRarity` and filled `enemyAffix` / `affixList`, but before
@@ -325,7 +423,10 @@ vanilla rules. Live check 2026-09-05 at the default 15 %: 243 monsters seen, 30 
 
 Commands: `tyrant on|off|force|status`, `tyrantchance <pct>` (normal → rare, default 30),
 `tyrantaffix <pct>` (extra affix on rares/champions, default 100). The panel sends `tyrant force`
-at every game start while its switch is on. Research build: `raritytrace <n>` logs entry/exit
+at every game start while its switch is on. The same switch gates the crown's own drop: only
+while it is on can the game's Angelic roll drop one. A forged Tyrant's Crown turns the rare
+mechanic on but not the drop ([Signature drops](#signature-drops)).
+Research build: `raritytrace <n>` logs entry/exit
 state of the next n monsters.
 
 ### Beacon (Custom Forge mechanic)
@@ -1225,6 +1326,50 @@ density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
 
 Measurements, the rules and what is not known yet:
 [`docs/far-sleep-research.md`](docs/far-sleep-research.md).
+
+## Jump through scenery (jump over the props that stop it)
+
+Mods → Quality of Life → **Jump through scenery** (plugin command
+`jumpscenery 1|0`, `jumpscenery stat` for its state). Off by default.
+
+A universal jump aimed across a rock, a fence, a cart or another prop does not
+move the player at all: in its take-off frame the game checks a line of points
+along the jump, and one blocked point stops the whole jump. With this on, the
+player's own collision queries during a jump answer "no collision" for the
+game's collision family, so the jump crosses, but only when the jump would land
+on open ground inside the room. Otherwise the game's own answers stand and the
+jump behaves as without the mod.
+
+- **Where it lands.** Each jump is decided once, at its first blocked query:
+  the landing is the take-off point plus the jump's reach in the jump's
+  direction. That point, and the points 16 px before and after it, must be
+  inside the room and free of the collision family; if not, the jump is
+  refused and stays blocked.
+- **The reach is learned, not guessed.** It comes from a recent jump of at
+  least 32 px that crossed nothing. Until the player has made one after
+  loading a character, every jump into scenery stays blocked.
+- **Still blocked.** Locked doors (`Lock_obj`) and zone gates
+  (`Gate_Parent_obj`) keep the game's answer. A jump the game refuses by a
+  route these queries do not cover (one aimed to land inside a carriage, for
+  example) stays refused.
+- **Only the local player's universal jump.** Not walking, not leap, dash or
+  charge skills, and other players in co-op get the game's own answers.
+- **Cost.** Five collision builtins and the jump script are hooked on the first
+  `jumpscenery 1`, by name; while the mod is off each hook returns the game's
+  own answer at once.
+- **Checked in play** on 2026-10-03 (slot 14, Town of Inoya): with the mod
+  off, a jump at a prop did not move the player; with it on, the same jump
+  crossed the prop (125 px) and the player never ended inside scenery. The
+  learned reach (178 px) matched an open-ground jump of about 175 px. A jump
+  aimed to land inside a horse carriage did not move the player even with the
+  mod on, and no room edge could be reached, so neither the landing check nor
+  the room check has been seen working in play; both are tested outside the
+  game only.
+
+`jumpscenery stat` prints the reach and the counters: jumps, `granted=`,
+`answered=`, the refusals by reason, `landed-inside=`, `excluded=` and the room
+size the guard uses. Measurements, the mechanism and what is not known yet:
+[`docs/jump-scenery-research.md`](docs/jump-scenery-research.md) § Phase 2.
 
 ## Extra packs as you approach (lighter frames at high density)
 

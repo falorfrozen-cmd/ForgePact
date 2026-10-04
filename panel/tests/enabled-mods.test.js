@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 20);
+  assert.equal(BOOLEAN_MODS.length, 21);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -86,11 +86,27 @@ test('sleep loot your filter hides is an entry while on, off by default, and its
   assert.deepEqual(enabledControls(cfg({ mod_hidden_loot_key: 0, mod_hidden_loot: true })), ['mod_hidden_loot']);
 });
 
+test('jump through scenery is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_jump_scenery'));
+  assert.equal(DEFAULTS.mod_jump_scenery, false);
+  assert.deepEqual(enabledControls(cfg({ mod_jump_scenery: true })), ['mod_jump_scenery']);
+});
+
 test('the skill timer is an entry for any style but off', () => {
   for (const style of ['arc', 'bar', 'number', 'fade']) {
     assert.deepEqual(enabledControls(cfg({ mod_skill_timer_style: style })), ['mod_skill_timer_style'], style);
   }
   assert.deepEqual(enabledControls(cfg({ mod_skill_timer_style: 'off' })), []);
+});
+
+test('Bosses is an entry while rare or ancient, and off by default', () => {
+  assert.equal(DEFAULTS.boss_rarity, 'off', 'off by default');
+  for (const mode of ['rare', 'ancient']) {
+    assert.deepEqual(enabledControls(cfg({ boss_rarity: mode })), ['boss_rarity'], mode);
+  }
+  assert.deepEqual(enabledControls(cfg({ boss_rarity: 'off' })), []);
+  const { boss_rarity, ...older } = cfg();
+  assert.deepEqual(enabledControls(older), [], 'an older config without the key reads as off');
 });
 
 test('density is an entry only while switched on above x1, through den_on', () => {
@@ -157,9 +173,9 @@ test('never entries: panel settings, scopes, child options, the theme and the Sa
   assert.deepEqual(enabledControls({ ...c, map_reveal: true }), ['map_reveal']);
 });
 
-test('entries come out in rule order: booleans, skill timer, density, sliders', () => {
+test('entries come out in rule order: booleans, skill timer, bosses, density, sliders', () => {
   const c = withSection('stats', 'exp', 5, {
-    beacon: true, map_reveal: true, mod_skill_timer_style: 'arc', density_on: true, density: 2, rarity_rare: 10,
+    beacon: true, map_reveal: true, mod_skill_timer_style: 'arc', boss_rarity: 'ancient', density_on: true, density: 2, rarity_rare: 10,
   });
-  assert.deepEqual(enabledControls(c), ['map_reveal', 'beacon', 'mod_skill_timer_style', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
+  assert.deepEqual(enabledControls(c), ['map_reveal', 'beacon', 'mod_skill_timer_style', 'boss_rarity', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
 });

@@ -10,8 +10,11 @@ episode of the right kind (the targets). A freeze is judged once frames come
 back: a gap the first frames after it explain with a room change is a load and
 produces nothing, a gap that begins in a menu room is a load however long it
 lasts (D17), and any other gap that never ends is reported at 15 s. The per-mod
-accounting and the installer's tag thunks run for real against the clock, and
-the username scrub and the next-load crash check are pure functions over text.
+accounting and the installer's tag thunks run for real against the clock (the
+accounting scenarios run at raised priority and are retried up to ten times,
+since a preempted thread is
+charged its descheduled time and preemption only ever adds), and the username
+scrub and the next-load crash check are pure functions over text.
 The accounting charges a mod only for ForgePact's own code (the owner,
 2026-10-02): the game original a hook wraps runs inside the guard and is
 charged to nobody, and every row, `frame` included, is self time.
@@ -33,6 +36,9 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
+
+# per-mod-accounting times wall-clock spins, which a full parallel run preempts (2 of 6 failed on 87d890e under 24 busy loops; final gate 2026-10-03).
+PARALLEL_EXCLUSIVE = True
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build" / "incident-monitor-behavior"

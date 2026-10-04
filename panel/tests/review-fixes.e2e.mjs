@@ -482,7 +482,7 @@ async function switches(ctx) {
 
   await only(page, ['headhunter'], [{ key: 'rarity_rare', value: 25 }]);
   const titles = await $(page, () => Object.fromEntries([...document.querySelectorAll('#enabledMods li.enabled-mod')].map((li) => [li.dataset.for, li.title])));
-  assert(titles.sw_rarity_rare === `Monster Rarity${ENTRY_TITLE_JOINER}Rare`, 'Rare\'s title: ' + titles.sw_rarity_rare);
+  assert(titles.sw_rarity_rare === `Monster Rarity${ENTRY_TITLE_JOINER}Ancient`, 'Ancient\'s title: ' + titles.sw_rarity_rare);
   assert(titles.headhunter === `Items${ENTRY_TITLE_JOINER}Headhunter buffs on rare kills`, 'Headhunter\'s title: ' + titles.headhunter);
   passed.push('entry-title-full-path');
 }

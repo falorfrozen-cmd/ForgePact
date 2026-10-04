@@ -38,8 +38,6 @@ class HeadhunterDispatchTests(unittest.TestCase):
             # The kill drops, real: the kill hook below calls them.
             'static void SignatureDropOnKill(',
             'static void AngelicDropOnKill(',
-            # Headhunter/Tyrant's Crown joining the Angelic pool (#63) - absent pre-#63.
-            'static void AppendSignatureCandidates(',
             'static RValue& Hook_EnemyDestroyKillProc(',
             'static RValue& Hook_HhDeathEffects(',
             'static void EnableHeadhunter()',
@@ -47,8 +45,6 @@ class HeadhunterDispatchTests(unittest.TestCase):
         ))
         if 'static void EnableHeadhunter()' in source:
             functions = '#define HAS_ENABLE_HEADHUNTER\n' + functions
-        if 'static void AppendSignatureCandidates(std::vector<AngelicCandidate>& pool)' in source:
-            functions = '#define HAS_APPENDSIGNATURECANDIDATES\n' + functions
         output = ROOT / 'build/headhunter-native-tests'
         output.mkdir(parents=True, exist_ok=True)
         code = (ROOT / 'tests/headhunter_dispatch_harness.cpp').read_text(encoding='utf-8')
@@ -109,11 +105,11 @@ class HeadhunterDispatchTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_signature_drop_target(self):
-        # Headhunter and Tyrant's Crown join the Angelic/Unholy pool (#63) instead of rolling
-        # on their own die; every one of these fails against the pre-#63 source.
+        # #74: Headhunter and Tyrant's Crown left the Angelic/Unholy pool again (they drop from
+        # the game's own Angelic roll, test_angelic_hit_behavior.py), so the slider's pick never
+        # spawns one; `sigdrop crown|belt` still forces one on every kill (#63's test command).
         for scenario in (
-            'signature_pool_append', 'angelic_pick_crown_spawns_signature',
-            'angelic_pick_belt_spawns_signature', 'signature_equal_share',
+            'angelic_pool_pick_never_signature',
             'sigdrop_force_belt', 'sigdrop_force_no_alternation',
         ):
             with self.subTest(scenario=scenario):

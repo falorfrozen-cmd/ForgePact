@@ -8,15 +8,16 @@
 // has (NATIVE_BOOLEANS), entered on Mods › Quality of Life, then the show
 // key's select of Sleep loot your filter hides, then the switched sliders no
 // recording has (NATIVE_SLIDERS), entered on Modifiers, and the Loot tab's
-// after them, and last the panel's own Incident reports controls
-// (PANEL_BOOLEANS, PANEL_BUTTONS), entered on Setup.
+// after them, then the panel's own Incident reports controls (PANEL_BOOLEANS,
+// PANEL_BUTTONS), entered on Setup, and last of all the selects no recording
+// has (NATIVE_SELECTS, the Bosses select), entered again on Mods › Gameplay.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, NATIVE_SLIDERS, PANEL_BOOLEANS, PANEL_BUTTONS, derive, derivedFromPath,
-  quickDisable, serialise, switchIdOf, tableRange,
+  HIDDEN_LOOT_KEY_CODES, HIDDEN_LOOT_KEY_PARENT, NATIVE_BOOLEANS, NATIVE_SELECTS, NATIVE_SLIDERS, PANEL_BOOLEANS, PANEL_BUTTONS, derive,
+  derivedFromPath, quickDisable, serialise, switchIdOf, tableRange,
 } from './oracle-derive.mjs';
 import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../src/hidden-loot-keys.js';
 import { BOOLEAN_MODS } from '../src/enabled-mods.js';
@@ -45,8 +46,12 @@ const NATIVE_SLIDER_STEPS = NATIVE_SLIDER_TABS + 8 * NATIVE_SLIDERS.length;
 const PANEL_CONTROLS = [...PANEL_BOOLEANS, ...PANEL_BUTTONS];
 const PANEL_TABS = PANEL_CONTROLS.filter((n, i) => n.tab !== (i === 0 ? NATIVE_SLIDERS.at(-1).tab : PANEL_CONTROLS[i - 1].tab)).length;
 const PANEL_STEPS = PANEL_TABS + 2 * PANEL_BOOLEANS.length + PANEL_BUTTONS.length;
+// Then, last, the native selects': the Mods tab and its Gameplay sub-tab once
+// (the panel's own controls left Setup open), then raised, off, raised and
+// Turn off for each.
+const NATIVE_SELECT_STEPS = 2 + 4 * NATIVE_SELECTS.length;
 // Everything after the key supplement's slider.
-const TAIL = NATIVE_STEPS + KEY_STEPS + NATIVE_SLIDER_STEPS + PANEL_STEPS;
+const TAIL = NATIVE_STEPS + KEY_STEPS + NATIVE_SLIDER_STEPS + PANEL_STEPS + NATIVE_SELECT_STEPS;
 
 test('the committed file is byte-identical to a fresh derivation', () => {
   const fresh = serialise(derive(JSON.parse(LEGACY_TEXT), 'tests/behaviour-oracle.json', SUPPLEMENT, 'tests/behaviour-oracle-gems.json',
@@ -110,15 +115,15 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 66 Turn off buttons, one theme step per theme', () => {
+test('the counts: 132 switch clicks, 68 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
   const theme = steps.filter((s) => s.control === '#theme');
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
-  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2);
+  assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2 + NATIVE_SELECTS.length);
   assert.equal(switches.length, 132);
-  assert.equal(quick.length, 66);
+  assert.equal(quick.length, 68);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -151,8 +156,8 @@ test('the theme steps come after one tab:setup step, and only the key supplement
   // The theme moved from the status bar to the Setup tab's Appearance card:
   // one navigation step with no expectation opens Setup, then one step per
   // theme; only the key supplement's slider, the native booleans, the
-  // native sliders and the panel's Incident reports controls (appended
-  // later) come after them, so no earlier step moved.
+  // native sliders, the panel's Incident reports controls and the native
+  // selects (appended later) come after them, so no earlier step moved.
   const steps = DERIVED.steps;
   const first = steps.findIndex((s) => s.control === '#theme');
   assert.equal(steps[first - 1].control, 'tab:setup');
@@ -195,16 +200,18 @@ test('the key supplement\'s slider gets the eight slider steps, entered on the L
   assert.equal(steps[at + 5].expect.cmds.same, at + 3);
 });
 
-test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, the show key, each native slider and its switch, then the panel\'s own controls', () => {
+test('every control is covered: the switches in legacy order, the theme, the key supplement\'s switch, the native booleans, the show key, each native slider and its switch, the panel\'s own controls, then the native selects', () => {
   assert.deepEqual(DERIVED.controls, [...SLIDERS.map((c) => '#sw_' + switchIdOf(c).replace('.', '_')), '#theme', '#sw_keys_primeevil',
     ...NATIVE_BOOLEANS.map((n) => '#' + n.key), '#mod_hidden_loot_key',
     ...NATIVE_SLIDERS.flatMap((n) => [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`]),
-    ...PANEL_BOOLEANS.map((n) => '#' + n.key), ...PANEL_BUTTONS.map((b) => '#' + b.id)]);
+    ...PANEL_BOOLEANS.map((n) => '#' + n.key), ...PANEL_BUTTONS.map((b) => '#' + b.id),
+    ...NATIVE_SELECTS.map((n) => '#' + n.key)]);
 });
 
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
-    ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot']);
+    ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
+      'mod_jump_scenery']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
@@ -254,15 +261,18 @@ test('the show key\'s select follows the native booleans: its switch on, Ctrl, N
   for (const code of HIDDEN_LOOT_KEY_CODES) assert.ok(offered.includes(code), code);
   assert.equal(HIDDEN_LOOT_KEY_CODES.at(-1), HIDDEN_LOOT_KEY_DEFAULT);
   const steps = DERIVED.steps;
-  // The native sliders come after it, on the Modifiers tab, and the panel's
-  // own controls after them.
-  const at = steps.length - PANEL_STEPS - NATIVE_SLIDER_STEPS - KEY_STEPS;
+  // The native sliders come after it, on the Modifiers tab, then the panel's
+  // own controls, then the native selects.
+  const at = steps.length - NATIVE_SELECT_STEPS - PANEL_STEPS - NATIVE_SLIDER_STEPS - KEY_STEPS;
   const parent = '#' + HIDDEN_LOOT_KEY_PARENT;
   const nativeAt = steps.length - TAIL + 2 + 4 * NATIVE_BOOLEANS.findIndex((n) => n.key === HIDDEN_LOOT_KEY_PARENT);
   const [on, off] = [nativeAt, nativeAt + 1];
   assert.equal(steps[on].control, parent);
-  // The switch's own steps left it off, and the select is disabled while it is.
-  assert.equal(steps[at - 1].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  // The switch's own steps left it off, and the select is disabled while it
+  // is; the native booleans after it (Jump through scenery) leave it alone.
+  assert.equal(steps[nativeAt + 3].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
+  assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
+  for (let i = nativeAt + 4; i < at; i++) assert.notEqual(steps[i].control, parent, i);
   assert.deepEqual(steps[at], { step: at, control: parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
   HIDDEN_LOOT_KEY_CODES.forEach((code, i) => {
     assert.deepEqual(steps[at + 1 + i], {
@@ -297,7 +307,7 @@ test('a native slider\'s contract is literal and last: each end posts its value 
   assert.deepEqual(NATIVE_SLIDERS.map((n) => `${n.section}.${n.key}`),
     ['percent_stats.skillhaste', 'percent_stats.allskills', 'drops.mining_ore_rolls']);
   const steps = DERIVED.steps;
-  const at = steps.length - NATIVE_SLIDER_STEPS - PANEL_STEPS;
+  const at = steps.length - NATIVE_SLIDER_STEPS - PANEL_STEPS - NATIVE_SELECT_STEPS;
   for (const n of NATIVE_SLIDERS) {
     for (const c of [tableRange(n.section, n.key), `#sw_${n.section}_${n.key}`]) {
       assert.ok(!LEGACY.controls.includes(c) && !SUPPLEMENT.controls.includes(c) && !KEY_SUPPLEMENT.controls.includes(c),
@@ -341,20 +351,21 @@ test('a native slider\'s contract is literal and last: each end posts its value 
     assert.deepEqual(steps[first + 7].expect, { posts: { same: first + 1 }, cmds: { same: first + 1 } });
     first += 8;
   }
-  // Only the panel's own controls' steps follow.
-  assert.equal(first, steps.length - PANEL_STEPS);
+  // Only the panel's own controls' steps and the native selects' follow.
+  assert.equal(first, steps.length - PANEL_STEPS - NATIVE_SELECT_STEPS);
   // Mining Ore Extra Rolls: max sends `miningrolls 10`, min (its default, 1)
   // `miningrolls 1`.
   const rolls = NATIVE_SLIDERS.find((n) => n.key === 'mining_ore_rolls');
   assert.deepEqual([rolls.tab, rolls.min, rolls.max, rolls.atMin, rolls.atMax], ['tab:loot', 1, 10, 'miningrolls 1', 'miningrolls 10']);
-  // The last native control listed is the last native slider's switch, and
-  // the last native step is its slider back at its minimum.
+  // The last native slider's switch is listed just before the panel's own
+  // controls (and the native selects after them), and its slider back at its
+  // minimum is the step before theirs.
   const last = NATIVE_SLIDERS.at(-1);
-  assert.equal(DERIVED.controls.at(-1 - PANEL_CONTROLS.length), `#sw_${last.section}_${last.key}`);
-  assert.equal(steps.at(-1 - PANEL_STEPS).control, tableRange(last.section, last.key));
+  assert.equal(DERIVED.controls.at(-1 - PANEL_CONTROLS.length - NATIVE_SELECTS.length), `#sw_${last.section}_${last.key}`);
+  assert.equal(steps.at(-1 - PANEL_STEPS - NATIVE_SELECT_STEPS).control, tableRange(last.section, last.key));
 });
 
-test('the panel\'s own Incident reports control is last: the button once, posting its literal and sending nothing', () => {
+test('the panel\'s own Incident reports control follows the native sliders: the button once, posting its literal and sending nothing', () => {
   // The FPS-drop switch went (an FPS drop is recorded without a notice, the
   // owner, 2026-10-02), so the card has no panel switch left.
   assert.deepEqual(PANEL_BOOLEANS, []);
@@ -364,14 +375,44 @@ test('the panel\'s own Incident reports control is last: the button once, postin
       `${c}: a recording lists it: derive it from there instead`);
   }
   const steps = DERIVED.steps;
-  const at = steps.length - PANEL_STEPS;
+  const at = steps.length - PANEL_STEPS - NATIVE_SELECT_STEPS;
   // The last native slider left the Loot tab open, so Setup is entered again.
   assert.equal(steps[at - 1].control, tableRange(NATIVE_SLIDERS.at(-1).section, NATIVE_SLIDERS.at(-1).key));
-  assert.deepEqual(steps.slice(at), [
+  assert.deepEqual(steps.slice(at, at + PANEL_STEPS), [
     { step: at, control: 'tab:setup', action: 'click' },
     { step: at + 1, control: '#openreports', action: 'click',
       expect: { posts: { is: [{ url: '/api/openreports', body: {} }] }, cmds: { is: [] } } },
   ]);
-  assert.equal(DERIVED.controls.at(-1), '#openreports');
-  assert.equal(steps.at(-1).control, '#openreports');
+  // Only the native selects come after it.
+  assert.equal(DERIVED.controls.at(-1 - NATIVE_SELECTS.length), '#openreports');
+  assert.equal(steps.at(-1 - NATIVE_SELECT_STEPS).control, '#openreports');
+});
+
+test('a native select\'s contract is literal and last: raised and off post the value and send the verb with it, its Turn off repeats the off', () => {
+  assert.deepEqual(NATIVE_SELECTS, [{ key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' }]);
+  const steps = DERIVED.steps;
+  const at = steps.length - NATIVE_SELECT_STEPS;
+  for (const n of NATIVE_SELECTS) {
+    const sel = '#' + n.key;
+    assert.ok(!LEGACY.controls.includes(sel) && !SUPPLEMENT.controls.includes(sel) && !KEY_SUPPLEMENT.controls.includes(sel),
+      `${sel}: a recording lists it: derive it from there instead`);
+    assert.ok(!steps.slice(0, at).some((s) => s.control.includes(n.key)), `${sel} appears before the native selects`);
+  }
+  // The panel's own controls' last step (Open reports folder, on Setup) comes
+  // first, so none of their indexes moved, and Mods › Gameplay is entered again.
+  assert.equal(steps[at - 1].control, '#openreports');
+  assert.deepEqual(steps.slice(at, at + 2), [
+    { step: at, control: 'tab:mods', action: 'click' }, { step: at + 1, control: 'subtab:gameplay', action: 'click' }]);
+  NATIVE_SELECTS.forEach(({ key, on: raised, verb }, i) => {
+    const first = at + 2 + 4 * i;
+    const sel = '#' + key;
+    assert.deepEqual(steps.slice(first, first + 4).map((s) => [s.control, s.action, s.value]),
+      [[sel, 'select', raised], [sel, 'select', 'off'], [sel, 'select', raised], [quickDisable(key), 'click', undefined]]);
+    assert.deepEqual(steps[first].expect, { posts: { is: [{ url: '/api/set', body: { key, value: raised } }] }, cmds: { is: [`${verb} ${raised}`] } });
+    assert.deepEqual(steps[first + 1].expect, { posts: { is: [{ url: '/api/set', body: { key, value: 'off' } }] }, cmds: { is: [`${verb} off`] } });
+    assert.deepEqual(steps[first + 2].expect, { posts: { same: first }, cmds: { same: first } });
+    assert.deepEqual(steps[first + 3].expect, { posts: { same: first + 1 }, cmds: { same: first + 1 } });
+  });
+  assert.equal(DERIVED.controls.at(-1), '#' + NATIVE_SELECTS.at(-1).key);
+  assert.equal(steps.at(-1).control, quickDisable(NATIVE_SELECTS.at(-1).key));
 });

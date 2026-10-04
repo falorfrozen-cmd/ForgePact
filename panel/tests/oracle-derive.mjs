@@ -69,6 +69,13 @@
 // after the native sliders, so no earlier step's index moves, and each is in
 // `controls`.
 //
+// NATIVE_SELECTS are selects no recorded page ever had (the Bosses select of
+// the Mods tab's Gameplay sub-tab, issue #44): raised, off, raised again and
+// Turn off, each post and line written out as a literal, entered on their tab
+// and Mods sub-tab (Mods, then Gameplay, since the panel buttons leave Setup
+// open). They come after the panel controls, last of all, so no earlier
+// step's index moves.
+//
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
 // renamed in src/theme.js is a re-run of `npm run oracle:derive`, never an
@@ -112,6 +119,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'density_rolling', tab: 'tab:mods', sub: 'subtab:qol', verb: 'densityroll' },
   { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
+  { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
 // child row), derived as #mod_skill_timer_style is but with literals, since no
@@ -141,10 +149,21 @@ export const NATIVE_SLIDERS = [
 ];
 // Panel settings and actions no recorded page ever had, which send the plugin
 // nothing (issue #76's Incident reports card on Setup): a switch's key, tab
-// and default (none now), and a button's id, tab and route. Appended last.
+// and default (none now), and a button's id, tab and route. Appended after the
+// native sliders; only NATIVE_SELECTS come after them.
 export const PANEL_BOOLEANS = [];
 export const PANEL_BUTTONS = [
   { id: 'openreports', tab: 'tab:setup', url: '/api/openreports' },
+];
+// Selects no recorded page ever had (the Bosses select, issue #44, the only
+// control of the Mods tab's Gameplay sub-tab): the config key, where it sits,
+// the value it is raised to, and the plugin verb src/forgepact.py sends with
+// the chosen value. The legacy #mod_skill_timer_style branch above walks only
+// the recording's controls, so these are written out as literals - raised,
+// off, raised again, then the Turn off button, which sends what off sends -
+// after the panel controls, last of all, so no earlier step's index moves.
+export const NATIVE_SELECTS = [
+  { key: 'boss_rarity', tab: 'tab:mods', sub: 'subtab:gameplay', on: 'ancient', verb: 'bossrarity' },
 ];
 export const tableRange = (section, key) => `input[type=range][data-sec="${section}"][data-key="${key}"]`;
 const setPost = (body) => [{ url: '/api/set', body }];
@@ -321,6 +340,18 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     controls.push(selector);
     if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
     push(selector, 'click', { expect: { posts: { is: [{ url, body: {} }] }, cmds: { is: [] } } });
+  }
+  // The selects no recording has: their literal contract, last of all (after
+  // the panel controls, so Mods and its Gameplay sub-tab are entered again).
+  for (const { key, tab, sub, on: raised, verb } of NATIVE_SELECTS) {
+    const selector = '#' + key;
+    controls.push(selector);
+    if (tab !== open.tab) { push(tab, 'click'); open = { tab, sub: null }; }
+    if (sub && sub !== open.sub) { push(sub, 'click'); open.sub = sub; }
+    const on = push(selector, 'select', { value: raised, expect: { posts: { is: setPost({ key, value: raised }) }, cmds: { is: [`${verb} ${raised}`] } } });
+    const off = push(selector, 'select', { value: 'off', expect: { posts: { is: setPost({ key, value: 'off' }) }, cmds: { is: [`${verb} off`] } } });
+    push(selector, 'select', { value: raised, expect: { posts: { same: on }, cmds: { same: on } } });
+    push(quickDisable(key), 'click', { expect: { posts: { same: off }, cmds: { same: off } } });
   }
   return {
     derivedFrom, legacyRecordedAt: legacy.recordedAt, ...(supplement ? { supplementFrom } : {}),

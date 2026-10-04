@@ -53,10 +53,12 @@ function stubDom() {
   make({ class: 'tab-card', id: 'dropsCard', 'data-tab': 'loot' });
   make({ class: 'tab-card', id: 'qolCard', 'data-tab': 'mods' });
   make({ class: 'tab-card', id: 'itemsCard', 'data-tab': 'mods' });
+  make({ class: 'tab-card', id: 'gameplayCard', 'data-tab': 'mods' });
   for (const id of ['workspace', 'pageTitle', 'pageDescription', 'breadcrumbPage', 'controlToolbar', 'controlSearch']) make({ id });
   make({ id: 'modsSubtabs', hidden: true });
   make({ class: 'subtabbtn', id: 'subtab-qol', 'aria-controls': 'qolCard' });
   make({ class: 'subtabbtn', id: 'subtab-items', 'aria-controls': 'itemsCard' });
+  make({ class: 'subtabbtn', id: 'subtab-gameplay', 'aria-controls': 'gameplayCard' });
   return document;
 }
 
@@ -118,6 +120,11 @@ test('the Mods sub-tabs switch cards only while Mods is open', () => {
   assert.equal($('itemsCard').classList.contains('active'), false);
   nav.openTab('mods');
   assert.equal($('itemsCard').classList.contains('active'), true, 'the chosen sub-tab comes back');
+  nav.openModsSubtab('gameplayCard');
+  assert.equal($('gameplayCard').classList.contains('active'), true);
+  assert.equal($('itemsCard').classList.contains('active'), false);
+  assert.equal($('qolCard').classList.contains('active'), false);
+  assert.equal(nav.store.forgepact_mods_subtab, 'gameplayCard');
 });
 
 test('arrow keys wrap between the sub-tabs and move focus', () => {
@@ -127,8 +134,16 @@ test('arrow keys wrap between the sub-tabs and move focus', () => {
   nav.bindModsSubtabs();
   let prevented = false;
   $('subtab-qol').onkeydown({ key: 'ArrowLeft', preventDefault() { prevented = true; } });
-  assert.equal(nav.document.activeElement.id, 'subtab-items');
+  assert.equal(nav.document.activeElement.id, 'subtab-gameplay', 'left of the first is the third');
   assert.equal(prevented, true);
+  $('subtab-items').onkeydown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(nav.document.activeElement.id, 'subtab-gameplay');
+  $('subtab-gameplay').onkeydown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(nav.document.activeElement.id, 'subtab-qol', 'right of the last wraps to the first');
+  $('subtab-qol').onkeydown({ key: 'End', preventDefault() {} });
+  assert.equal(nav.document.activeElement.id, 'subtab-gameplay');
+  $('subtab-gameplay').onkeydown({ key: 'Home', preventDefault() {} });
+  assert.equal(nav.document.activeElement.id, 'subtab-qol');
   prevented = false;
   $('subtab-items').onkeydown({ key: 'ArrowDown', preventDefault() { prevented = true; } });
   assert.equal(prevented, false, 'an unrelated key is left alone');

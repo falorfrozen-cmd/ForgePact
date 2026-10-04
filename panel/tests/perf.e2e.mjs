@@ -146,7 +146,7 @@ async function reveal(page, id) {
   const where = await $(page, (i) => {
     const el = document.getElementById(i);
     const card = el?.closest('.tab-card');
-    return { tab: card?.dataset.tab, sub: el?.closest('#qolCard') ? 'subtab-qol' : el?.closest('#itemsCard') ? 'subtab-items' : null };
+    return { tab: card?.dataset.tab, sub: el?.closest('#qolCard') ? 'subtab-qol' : el?.closest('#itemsCard') ? 'subtab-items' : el?.closest('#gameplayCard') ? 'subtab-gameplay' : null };
   }, id);
   await openTab(page, where.tab);
   if (where.sub && await $(page, (s) => document.getElementById(s).getAttribute('aria-selected') !== 'true', where.sub)) {
@@ -487,7 +487,7 @@ async function findThreshold(page) {
       base: rects[0].left - head.left,
       gap: rects.length > 1 ? rects[1].left - rects[0].right : 0,
       widths: Object.fromEntries(items.map((li, i) => [li.dataset.for, rects[i].width])),
-      onMods: Object.fromEntries(items.map((li) => [li.dataset.for, !!document.getElementById(li.dataset.for)?.closest('#qolCard, #itemsCard')])),
+      onMods: Object.fromEntries(items.map((li) => [li.dataset.for, !!document.getElementById(li.dataset.for)?.closest('#qolCard, #itemsCard, #gameplayCard')])),
     };
     box.removeAttribute('data-measure');
     return out;

@@ -16,8 +16,8 @@ export const BOOLEAN_MODS = [
   'map_reveal', 'headhunter', 'tyrant', 'beacon', 'mod_filter_max_relics',
   'mod_orb_pickup_radius', 'mod_pet_quest_pickup', 'mod_pet_relic_pickup', 'mod_pet_loot_unstick', 'mod_auto_prospect',
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
-  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_gem_mythic',
-  'mod_gem_maxroll',
+  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery',
+  'mod_gem_mythic', 'mod_gem_maxroll',
 ];
 
 // The sliders that carry an on/off switch, in the order src/forgepact.py's
@@ -61,6 +61,7 @@ export function enabledControls(cfg) {
   const out = [];
   for (const key of BOOLEAN_MODS) if (cfg[key]) out.push(key);
   if ((cfg.mod_skill_timer_style || 'off') !== 'off') out.push('mod_skill_timer_style');
+  if ((cfg.boss_rarity || 'off') !== 'off') out.push('boss_rarity');
   if (cfg.density_on && Number(cfg.density) > 1) out.push('den_on');
   for (const id of sliderSwitchIds(cfg)) {
     if (switchOn(cfg, id) && sliderValue(cfg, id) > sliderDefault(id)) out.push(switchControlId(id));

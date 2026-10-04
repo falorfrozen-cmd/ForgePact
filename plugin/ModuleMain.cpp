@@ -466,6 +466,44 @@ static unsigned char* FindAngelicGate();
 // both builds, before any hook swaps their script-table entries; the Angelic
 // gate finder scans that record. Defined with FindAngelicGate.
 static void CaptureAngelicScriptCode();
+// #74: the game-roll detection Headhunter's and Tyrant's Crown's panel switches install (the
+// `headhunter force` / `tyrant force` commands; the research build's hit levers too).
+// Never the auto-arm from a forged item (owner, 2026-10-02). Defined after HookAngelicChance.
+static void InstallSignatureAngelicHooks();
+// #74: whether a signature item's panel switch has the drop on (0 = crown, 1 = belt); the
+// auto-arm log lines read it. Defined with the signature drops, as are the two below.
+static bool SignatureSwitchOn(int which);
+// #74: why SignatureSwitchOn says off while the switch itself is on, for those log lines.
+static std::string SignatureOffReason(int which);
+// #74: whether an item's rewrite was refused this session, which latches it off: SignatureOffReason
+// then answers `rewrite refused: <why>` and `angelicDrops=` reads `refused`.
+static bool SignatureRefused(int which);
+// #74: the Custom Forge hook reports each item it recognised on CreateItemNew's own return, so
+// `built=` counts what the game built from the rewritten record, not what was asked of it.
+static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
+// #74: the rewrite point, in the same hook's pre-call slot beside GemsBeforeCreate: CreateItemNew's
+// entry, where the item's definition is the record the game builds from.
+static void SignatureBeforeCreate(int argc, RValue** A);
+#ifndef FORGEPACT_RELEASE
+// #74 research: the same hook's final pass, for typing's independent control (typeAgree= /
+// typeDisagree=, builtType= on the hit line). Defined with the signature drops.
+static void SignatureNoteBuiltType(const RValue& item);
+// #74 research: whether `angelicprobe on`'s unique-repo row already holds a detour on
+// GetUniqueRepoStruct, in which case the typing hook refuses rather than stack a second one.
+// Defined with the probe's rows.
+static bool ApRollHoldsUniqueRepo();
+#endif
+// Set by InstallSignatureAngelicHooks: true only when all three of its hooks are inline detours,
+// the one route the roll's direct calls reach. The signature gate (SignatureSwitchOn) reads it,
+// so a switch never reports these drops on while the detection cannot see or type a hit.
+static bool g_SigDetectNative = false;
+// What InstallSignatureAngelicHooks got: "detoured" only when CreateDefaultParams,
+// DropItemAngelicChance and GetUniqueRepoStruct all are; otherwise the first that is not -
+// CreateDefaultParams' route bare ("TABLE-ONLY" or "not found"), the other two as
+// "<script>:<route>" - and "off" before any install. Both status lines print it as `detect=`,
+// beside `cdpCalls=` (g_SigCdpCalls), so a live session can tell an unreachable hook from a roll
+// that never hit.
+static std::string g_SigDetectRoute = "off";
 
 // HookOneScript/HookOneScriptTable prepend "gml_Script_" themselves, so a
 // closure hooked by an hs-game-sdk constant needs the prefix peeled back off.
@@ -496,7 +534,12 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/PackMarkers.hpp>
 #include <ForgePact/PackMarkerIcons.hpp>
 #include <ForgePact/FarSleep.hpp>
+#include <ForgePact/BossRarityMod.hpp>
 #include <ForgePact/HiddenLootMod.hpp>
+// Jump through scenery (`jumpscenery`, ForgePact #16): the decision core. Its
+// adapter sits after hidden loot sleep's; the mod state reads the switch.
+#include <ForgePact/JumpScenery.hpp>
+static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
 #include <ForgePact/StatsManager.hpp>
 #include <ForgePact/RelicFilterMod.hpp>
 #include <ForgePact/ToggleSkillMod.hpp>
@@ -1484,11 +1527,10 @@ static int ToplamOrnek()
 }
 
 
-#ifdef FORGEPACT_RELEASE
-// The player build detaches the game from YYToolkit's "YYToolkit Log"
-// console instead of hiding its window (#58). YYToolkit opens that console
-// inside the game's own process (AllocConsole), which makes it the game's
-// standard output, so GameMaker writes every runtime warning to it
+// Both builds detach the game from YYToolkit's "YYToolkit Log" console
+// instead of hiding its window (#58). YYToolkit opens that console inside the
+// game's own process (AllocConsole), which makes it the game's standard
+// output, so GameMaker writes every runtime warning and error to it
 // synchronously - hidden or not. Underground Garden's zone generation
 // (entered from Misty Swamp) emits thousands of "tilemap_get() - couldn't find
 // specified tilemap" warnings, and writing them to the console froze the load
@@ -1496,12 +1538,18 @@ static int ToplamOrnek()
 // main thread sat in WriteFile, called from the game's own code, for the whole
 // freeze, and the console buffer held nothing but that warning. The unmodded
 // game has no console, so there those writes fail at once; detaching restores
-// that. Players never saw this console, and the research build keeps it.
+// that. The second case, 2026-10-02 (#44, Live 1, research build): right after
+// a raw Karp King spawn the game froze while the console filled with the
+// runner's own YYError lines from timer_system_update ("Unable to find any
+// instance for object index ...", a different id each line) - observed by the
+// owner in the console, not instrumented, and none of it in out.txt, so no
+// ForgePact print was involved. Nothing either build prints needs the
+// console: every Out() line goes to out.txt first, and YYToolkit's own lines
+// go to bin\YYToolkit.log.
 static void DetachConsole()
 {
     if (GetConsoleWindow()) FreeConsole();
 }
-#endif
 
 static void KuyrukIsle()
 {
@@ -1801,17 +1849,26 @@ static bool TyrantActive();
 static bool g_CreatingFromEnemy = false;             // true while a monster runs instance_create
 static std::unordered_set<int> g_EnemyBornIds;       // monsters created by a monster, by instance id
 static volatile LONG g_EnemyBornSeen = 0, g_RarSkippedEnemyBorn = 0;
+// The kinds the runtime produces for an instance's `object_index` or `id`: a number, or
+// an asset/instance reference. RValue::ToDouble() is the runner's REAL_RValue, which on
+// any other kind raises the runner's own error instead of throwing, so `catch (...)`
+// never sees it: a `cb` spawn (a `self` with no object_index) raised "REAL argument
+// incorrect type undefined" here in the Live 1 rerun (issue #44). Anything else is unknown.
+static bool IsNumericInstanceRead(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF;
+}
 static int CallerObjectIndex(CInstance* S)
 {
     if (!S) return -1;
-    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return (int)oi.ToDouble(); } catch (...) { return -1; }
+    try { RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") }); return IsNumericInstanceRead(oi) ? (int)oi.ToDouble() : -1; } catch (...) { return -1; }
 }
 static bool CallerIsEnemyInstance(CInstance* S) { return IsEnemyObject(CallerObjectIndex(S)); }
 // The built-in `id` is not a struct member: variable_struct_get gives undefined for it (the
 // enemy-born match was silently dead, 2026-09-07: 1261 births recorded, 0 matched).
 static double InstanceIdOf(const RValue& inst)
 {
-    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return v.ToDouble(); } catch (...) { return -1.0; }
+    try { RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }); return IsNumericInstanceRead(v) ? v.ToDouble() : -1.0; } catch (...) { return -1.0; }
 }
 // Shared only by guards in one create-hook invocation, before native code runs.
 // Never cache an instance pointer or classification across native calls/frames.
@@ -1892,7 +1949,7 @@ struct EnemyBornScope
     EnemyBornScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
     {
         try { if (argc >= 4) objIdx = (int)Args[3].ToDouble(); } catch (...) {}
-        if (!(RarityFloorActive() || TyrantActive() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
+        if (!(RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active() || ForgePact::DensityManager::Instance().Mult > 1.0)) return;
         if (!(IsEnemyObject(objIdx) || IsCachedCreatorObject(objIdx))) return;
         if (!IsEnemyObject(caller.ObjectIndex())) return;   // only a real monster starts a chain
         active = true; prevCreating = g_CreatingFromEnemy; prevCaller = g_CallerIsEnemy;
@@ -4365,10 +4422,14 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
         if (finalPass) {
             RValue recorded = g_Yytk->CallBuiltin("variable_struct_exists", { *candidate, RValue("fp_recorded") });
             if (!recorded.ToBoolean()) { RecordItemStats(*candidate, stats); g_Yytk->CallBuiltin("variable_struct_set", { *candidate, RValue("fp_recorded"), RValue(true) }); }
+#ifndef FORGEPACT_RELEASE
+            SignatureNoteBuiltType(*candidate);   // #74 research: the built item's itemType against the hit's typing
+#endif
         }
 
         for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
             if (!CustomForgeMatches(entry, *candidate, definition)) continue;
+            if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
                 if (names.m_Kind == VALUE_ARRAY) {
@@ -7577,6 +7638,9 @@ static long g_RarSkippedBoss = 0;
 #endif
 static bool RarityFloorActive() { return g_RarRarePct > 0.0 || g_RarAncientPct > 0.0; }
 static bool g_TyHookInstalled = false, g_TyHookAttempted = false;
+// HookOneScript answers true for a TABLE-ONLY install too; this says whether
+// the inline detour went in, so `bossrarity` can report a blind hook.
+static bool g_TyHookNative = false;
 static PFUNC_YYGMLScript g_Orig_EnemyRaritySettings = nullptr;
 // enemyAffix indices whose meaning is live-confirmed (see kHhAffixNames); 0 = champion marker.
 // Left out on purpose (2026-09-07 player reports "the more I kill, the more there are"):
@@ -7647,8 +7711,10 @@ static std::string TyInstName(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        if (!IsNumericInstanceRead(oi)) return "?";   // object_get_name would convert it
         RValue nm = g_Yytk->CallBuiltin("object_get_name", { oi });
         RValue id = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") });
+        if (!IsNumericInstanceRead(id)) return nm.ToString() + "#?";
         return nm.ToString() + "#" + std::to_string((long long)id.ToDouble());
     } catch (...) { return "?"; }
 }
@@ -7682,6 +7748,28 @@ static std::string RarState(const RValue& inst)
     return s;
 }
 #endif
+// Bosses control (`bossrarity`, BossRarityMod.hpp): raises a boss the hook
+// already identified, through the sliders' own writes - enemyRarity first,
+// then the affix top-up from kTyAffixPool - so the original that runs next
+// builds the boss as if it had rolled that tier. The decision and the
+// counters live in the header, where tests/boss_rarity_harness.cpp runs them.
+static void BossRarityRaise(const RValue& inst, bool enemyBorn)
+{
+    namespace BR = ForgePact::BossRarity;
+    double rar = -1.0;
+    try {
+        RValue rv = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("enemyRarity") });
+        if (rv.m_Kind == VALUE_REAL || rv.m_Kind == VALUE_INT32 || rv.m_Kind == VALUE_INT64) rar = rv.ToDouble();
+    } catch (...) {}
+    BR::RaiseBoss(BR::counters, BR::CurrentMode(), rar, /*isBoss=*/true, enemyBorn, [&](int tier, int wantAffixes) {
+        try {
+            g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue((double)tier) });
+            const int add = BR::AffixesToAdd(wantAffixes, TyCountAffixes(inst));
+            if (add > 0) TyAddAffixes(inst, add);
+            return true;
+        } catch (...) { return false; }
+    });
+}
 // Bosses (Anubis, Damien, Cthulhu, the Uber_* variants, and the rest of the
 // Enemy_Child_Boss_obj family - hs-game-sdk's OBJECT_PARENT_INDEX confirms
 // Anubis_obj's own chain runs Anubis_obj -> Enemy_Child_Boss_obj ->
@@ -7696,6 +7784,9 @@ static bool RarInstanceIsBoss(const RValue& inst)
 {
     try {
         RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+        // Runs for every enemy while Bosses is on: a ToDouble on a kind with no
+        // number raises the runner's error, which catch (...) never sees.
+        if (!IsNumericInstanceRead(oi)) return false;
         return HeroSiege::Objects::IsDescendantOf((int32_t)oi.ToDouble(), (int32_t)HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj);
     } catch (...) { return false; }
 }
@@ -7711,10 +7802,15 @@ static RValue& Hook_EnemyRaritySettings(CInstance* S, CInstance* O, RValue& R, i
     if (g_RarPreLeft > 0 && S) { --g_RarPreLeft; try { g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("enemyRarity"), RValue(g_RarPreVal) }); Out("   -> enemyRarity pre-set to " + std::to_string((int)g_RarPreVal)); } catch (...) {} }
 #endif
     bool enemyBorn = g_CreatingFromEnemy;
-    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive())) {
+    if (!enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) {
         try { const double id = InstanceIdOf(inst); if (id >= 0.0 && g_EnemyBornIds.erase((int)id)) enemyBorn = true; } catch (...) {}
     }
-    if (enemyBorn && S && (RarityFloorActive() || TyrantActive())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    if (enemyBorn && S && (RarityFloorActive() || TyrantActive() || ForgePact::BossRarity::Active())) InterlockedIncrement(&g_RarSkippedEnemyBorn);
+    // Bosses control: a boss, judged here at the point of use, is raised to
+    // the chosen tier when the game rolled it at rarity 1 and no monster made
+    // it (BossRarityMod.hpp decides and counts). It runs before the sliders'
+    // own boss check below, which still leaves every boss alone.
+    if (S && ForgePact::BossRarity::Active() && RarInstanceIsBoss(inst)) BossRarityRaise(inst, enemyBorn);
     if (S && !enemyBorn && RarityFloorActive() && RarInstanceIsBoss(inst)) {
 #ifndef FORGEPACT_RELEASE
         InterlockedIncrement(&g_RarSkippedBoss);
@@ -7764,8 +7860,45 @@ static void InstallTyrantHook()
 {
     if (g_TyHookAttempted) return;
     g_TyHookAttempted = true;
-    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings);
+    g_TyHookInstalled = HookOneScript("EnemyRaritySettings", "fp_tyrant_rarity", (PVOID)Hook_EnemyRaritySettings, &g_Orig_EnemyRaritySettings, &g_TyHookNative);
     InstallCreateHooks();   // enemy-born tracking rides the instance_create hooks
+}
+// The shared hook as `bossrarity` reports it. `table-only` is HookOneScript's
+// TABLE-ONLY fallback: installed, but blind to compiled GML's direct calls,
+// so a boss mode reporting it is armed and does nothing on those paths.
+static const char* BossRarityHookState()
+{
+    if (!g_TyHookAttempted) return "none";
+    if (!g_TyHookInstalled) return "failed";
+    return g_TyHookNative ? "ok" : "table-only";
+}
+// `bossrarity off|rare|ancient|status` - the panel's Mods > Gameplay > Bosses
+// select. `rare` / `ancient` install the shared hook (once); `off` leaves it in
+// place and only turns the mode off, so the sliders and the crown keep theirs.
+// A hook that failed to install refuses `rare` / `ancient` and leaves the mode
+// as it was (BossRarityMod.hpp's StoresMode), as Tyrant's Crown refuses in that
+// case; `table-only` keeps the mode. Every form answers one `bossrarity:` line.
+static void BossRarityCommand(const std::string& rest)
+{
+    namespace BR = ForgePact::BossRarity;
+    const std::string v = Lower(TrimCopy(rest));
+    if (v.empty() || v == "status" || v == "stat") {
+        Out(BR::StatusLine(BR::CurrentMode(), BR::counters, BossRarityHookState()));
+        return;
+    }
+    BR::Mode m = BR::CurrentMode();
+    if (!BR::ParseMode(v, m)) {
+        Out("bossrarity: usage bossrarity off|rare|ancient|status (unchanged: " + std::string(BR::ModeName(BR::CurrentMode())) + ")");
+        return;
+    }
+    if (m != BR::Mode::Off) InstallTyrantHook();
+    const char* hook = BossRarityHookState();
+    if (!BR::StoresMode(m, hook)) {
+        Out(BR::RefusedLine(m, BR::CurrentMode(), hook));
+        return;
+    }
+    BR::SetMode(m);
+    Out(BR::StatusLine(m, BR::counters, hook));
 }
 static void TyrantAutoArm()
 {
@@ -7780,16 +7913,209 @@ static void TyrantAutoArm()
     InstallTyrantHook();
     InstallBeaconHook();   // "Rare monsters hunt you": rares use the Beacon's scan/leash/wake hooks
     g_TyEnabled.store(g_TyHookInstalled);
-    Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)");
+    Out(std::string("tyrant: ") + (g_TyHookInstalled ? "armed" : "hook failed") + " (rare " + std::to_string((int)g_TyRarePct) + " pct, extra affix " + std::to_string((int)g_TyAffixPct) + " pct)"
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(0) ? std::string("on") : g_TyForced.load() ? "off (" + SignatureOffReason(0) + ")" : std::string("off (no 'force' received yet - the panel sends it at launch when the switch is on)")));
 }
 static void TyrantStatus()
 {
     Out(std::string("tyrant: ") + (g_TyEnabled.load() ? "ON" : "off") + (g_TyForced.load() ? " (forced)" : "")
         + " hook=" + (g_TyHookInstalled ? "yes" : "no") + " active=" + (TyrantActive() ? "yes" : "no")
+        + " angelicDrops=" + (g_TyForced.load() ? (SignatureSwitchOn(0) ? "on" : SignatureRefused(0) ? "refused" : g_SigDetectNative ? "not-resolved" : "no-detection") : "off")
         + " rarePct=" + std::to_string((int)g_TyRarePct) + " affixPct=" + std::to_string((int)g_TyAffixPct)
         + " seen=" + std::to_string(g_TySeen) + " upgraded=" + std::to_string(g_TyUpgraded) + " extraAffix=" + std::to_string(g_TyAffixed)
         + " itemLoaded=" + (TyrantItemLoaded() ? "yes" : "no") + " worn=" + (MechanicWorn("tyrant") ? "yes" : "no"));
 }
+
+#ifndef FORGEPACT_RELEASE
+// --- Bosses control research probes (issue #44, docs/boss-rarity-research.md) ---
+// `bossprobe`: one line per live boss (an Enemy_Parent_obj instance that
+// RarInstanceIsBoss accepts): its name, rarity, forceRarity, affixes and
+// health bar (RarState), then every instance variable whose name carries one
+// of the words below. A number that could be a protected-store handle is read
+// through the getter the control line proved and printed as
+// `<name>=<key>-><value>`.
+//
+// Three guards, because a handle carries no tag that says it is one:
+// - Range. The store holds 262,144 records and a -1 handle passed into it
+//   faulted the game (docs/RUNTIME_DATA_MODELS.md 5.8). The plugin builds
+//   with /EHsc, so catch (...) does not catch that access violation: only a
+//   finite whole number in [0, 262144) is ever handed to a getter, anything
+//   else prints `->not-key` and is not read.
+// - Control. Before any boss, both PC_GetVariableGMLWrapper and the proven
+//   GPV (gatestats, the Shadow Realm gate) read gDataProtected[177], a slot
+//   whose key equals its index and whose value is the heroic chance (28
+//   unmodded). The wrapper is used only when it answers the same non-zero
+//   number GPV does; GPV is used when only it answers; with neither, every
+//   key prints `->unread`, so a failed read names the call shape, not "no key".
+// - Identity. Only `enemy_hp` is a proven key (the kill route in
+//   tools/boss_drop_trial.py zeroes the record it names and the boss dies). Any other in-range number may be a bar width or a
+//   chance, and the record it names is someone else's: its read prints as
+//   `->?<value>`, which is what that record holds IF the number is a key.
+static const char* const kBossProbeWords[] = { "hp", "health", "damage", "dmg", "exp", "slots", "chance", "dropmult", "droptable" };
+static const char* const kBossProbeProvenKeys[] = { "enemy_hp" };
+static const double kProtStoreRecords = 262144.0;
+static const double kBossProbeControlSlot = 177.0;
+enum class BossProbeGetter { None, Wrapper, Gpv };
+static bool BossProbeIsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+static bool BossProbeKeyInRange(const RValue& v)
+{
+    if (!BossProbeIsNumber(v)) return false;
+    const double d = v.ToDouble();
+    return std::isfinite(d) && d >= 0.0 && d < kProtStoreRecords && d == std::floor(d);
+}
+static BossProbeGetter BossProbeGetterControl()
+{
+    std::string line = "bossprobe control: gDataProtected[177]=";
+    BossProbeGetter route = BossProbeGetter::None;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= (int)kBossProbeControlSlot) {
+            line += "missing (len=" + std::to_string(len) + ") getter=unproven";
+        } else {
+            RValue h = g_Yytk->CallBuiltin("array_get", { arr, RValue(kBossProbeControlSlot) });
+            line += Describe(h);
+            if (!BossProbeKeyInRange(h)) {
+                line += " not-key getter=unproven";
+            } else {
+                RValue gpv, wrap; bool gpvOk = false, wrapOk = false;
+                try { gpv = g_Yytk->CallGameScript("gml_Script_GPV", { h }); gpvOk = BossProbeIsNumber(gpv); line += " GPV->" + Describe(gpv); }
+                catch (...) { line += " GPV->EXC"; }
+                try { wrap = g_Yytk->CallGameScript("gml_Script_PC_GetVariableGMLWrapper", { h }); wrapOk = BossProbeIsNumber(wrap); line += " PC_GetVariableGMLWrapper->" + Describe(wrap); }
+                catch (...) { line += " PC_GetVariableGMLWrapper->EXC"; }
+                if (gpvOk && wrapOk && wrap.ToDouble() == gpv.ToDouble() && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Wrapper; line += " getter=PC_GetVariableGMLWrapper (agrees with GPV)";
+                } else if (gpvOk && gpv.ToDouble() != 0.0) {
+                    route = BossProbeGetter::Gpv; line += " getter=GPV (wrapper did not agree)";
+                } else {
+                    line += " getter=unproven";
+                }
+            }
+        }
+    } catch (...) { line += " EXC getter=unproven"; route = BossProbeGetter::None; }
+    Out(line);
+    return route;
+}
+// One probe line for one live instance: `bossprobe #<n> <Obj>#<id> <RarState> |`
+// then the matching variables under the read rules above. Both forms of the
+// command print through it, so a boss and an ordinary monster are read the
+// same way.
+static std::string BossProbeLine(int n, const RValue& id, BossProbeGetter getter)
+{
+    std::string line = "bossprobe #" + std::to_string(n) + " " + TyInstName(id) + RarState(id) + " |";
+    try {
+        RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { id });
+        const int count = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string vars;
+        for (int i = 0; i < count; ++i) {
+            RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            const std::string s = nm.ToString(), ls = Lower(s);
+            bool hit = false;
+            for (const char* w : kBossProbeWords) if (ls.find(w) != std::string::npos) { hit = true; break; }
+            if (!hit) continue;
+            RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, nm });
+            std::string d = Describe(v); if (d.size() > 80) d = d.substr(0, 80) + "...";
+            vars += " " + s + "=" + d;
+            if (!BossProbeIsNumber(v)) continue;
+            if (!BossProbeKeyInRange(v)) { vars += "->not-key"; continue; }
+            if (getter == BossProbeGetter::None) { vars += "->unread"; continue; }
+            bool proven = false;
+            for (const char* k : kBossProbeProvenKeys) if (s == k) { proven = true; break; }
+            try {
+                RValue got = g_Yytk->CallGameScript(getter == BossProbeGetter::Wrapper ? "gml_Script_PC_GetVariableGMLWrapper" : "gml_Script_GPV",
+                                                    { RValue(v.ToDouble()) });
+                std::string g = Describe(got); if (g.size() > 80) g = g.substr(0, 80) + "...";
+                vars += std::string(proven ? "->" : "->?") + g;
+            } catch (...) { vars += "->EXC"; }
+        }
+        line += vars.empty() ? std::string(" (no matching vars)") : vars;
+    } catch (...) { line += " (vars exc)"; }
+    return line;
+}
+// `bossprobe <object index>`: the argument is a non-negative whole number,
+// digits only (at most 9, so it fits an int). Anything else is refused.
+static bool BossProbeParseObjectIndex(const std::string& arg, int& objIdx)
+{
+    if (arg.empty() || arg.size() > 9) return false;
+    for (char c : arg) if (c < '0' || c > '9') return false;
+    objIdx = std::atoi(arg.c_str());
+    return true;
+}
+// `bossprobe` reads every live boss. `bossprobe <object index>` reads every
+// live enemy whose own object_index is that number, boss or not, through the
+// same control line, line and read rules: Live procedure 1b's identity control
+// reads an ordinary monster this way before a boss's damage or XP counts.
+static void BossProbeCommand(const std::string& rest)
+{
+    const std::string arg = TrimCopy(rest);
+    int objIdx = -1;
+    const bool byObject = !arg.empty();
+    if (byObject && !BossProbeParseObjectIndex(arg, objIdx)) {
+        Out("bossprobe: usage: bossprobe [<object index>] - a non-negative whole number; nothing probed");
+        return;
+    }
+    try {
+        const BossProbeGetter getter = BossProbeGetterControl();
+        const RValue eobj((double)(int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { eobj }).ToDouble();
+        if (byObject) {
+            std::string objName = "?";
+            try { objName = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString(); } catch (...) {}
+            int found = 0;
+            for (int n = 0; n < total && n < 2000; ++n) {
+                RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+                RValue oi;
+                try { oi = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("object_index") }); } catch (...) { continue; }
+                if (!IsNumericInstanceRead(oi)) continue;   // a ToDouble on `undefined` raises a runner error
+                if ((int)oi.ToDouble() != objIdx) continue;
+                Out(BossProbeLine(found++, id, getter));
+            }
+            Out("bossprobe: " + std::to_string(found) + " instance(s) of " + objName + " among " + std::to_string(total) + " enemies");
+            return;
+        }
+        int bosses = 0;
+        for (int n = 0; n < total && n < 2000; ++n) {
+            RValue id = g_Yytk->CallBuiltin("instance_find", { eobj, RValue((double)n) });
+            if (!RarInstanceIsBoss(id)) continue;
+            Out(BossProbeLine(bosses++, id, getter));
+        }
+        Out("bossprobe: " + std::to_string(bosses) + " boss(es) among " + std::to_string(total) + " enemies");
+    } catch (...) { Out("bossprobe: EXC"); }
+}
+// `droptrace <n>`: the next n DropItem / DropItemBoss calls through
+// DropManager's hooks, one line each with the dropping instance and the
+// arguments (DropItem's first argument is the drop rank,
+// docs/RUNTIME_DATA_MODELS.md 13.7). Noted from ApRollDropScopeEnter, which
+// every DropManager hook body enters first in this build.
+static std::atomic<int> g_DropTraceLeft{ 0 };
+static void DropTraceNote(const char* hookName, CInstance* S, int argc, RValue** A)
+{
+    if (!hookName || g_DropTraceLeft.load(std::memory_order_relaxed) <= 0) return;
+    const std::string_view fn(hookName);
+    if (fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem)
+        && fn != SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemBoss)) return;
+    if (g_DropTraceLeft.fetch_sub(1, std::memory_order_relaxed) <= 0) return;
+    RValue self; bool haveSelf = false;
+    try { if (S) { self = S->ToRValue(); haveSelf = true; } } catch (...) {}
+    Out("droptrace: " + std::string(fn) + " self=" + (haveSelf ? TyInstName(self) : std::string("none"))
+        + " argc=" + std::to_string(argc) + TyArgs(argc, A));
+}
+static void DropTraceCommand(const std::string& rest)
+{
+    const std::string v = Lower(TrimCopy(rest));
+    int n = 20;
+    if (v == "off" || v == "0") n = 0;
+    else if (!v.empty()) { try { n = std::stoi(v); } catch (...) { n = 20; } }
+    if (n < 0) n = 0;
+    if (n > 500) n = 500;
+    if (n > 0) ForgePact::DropManager::Instance().InstallHooks();   // idempotent; the research build has them from startup
+    g_DropTraceLeft.store(n, std::memory_order_relaxed);
+    Out("droptrace -> next " + std::to_string(n) + " DropItem / DropItemBoss calls through DropManager's hooks");
+}
+#endif
 
 #ifndef FORGEPACT_RELEASE
 // --- monster AI target trace (Beacon amulet groundwork) ------------------------------
@@ -11173,10 +11499,23 @@ static void Hook_Ci_VariableInstanceSet(RValue& Result, CInstance* S, CInstance*
     } catch (...) {}
 }
 
+// The hooks `jumpscenery 1` put in (five builtins and skillsLeap), by name;
+// "" when it has none. Defined with the jumpscenery adapter below.
+static std::string JumpSceneryHeldHooks();
+
 static bool g_CiHooksInstalled = false;
-static void InstallCiTraceHooks()
+// false when citrace refused and hooked nothing: two of jumpscenery's builtins
+// are citrace's too, a builtin detours once, and a second MmCreateHook would
+// fail with a console line while citrace counted that row's zero as real.
+static bool InstallCiTraceHooks()
 {
-    if (g_CiHooksInstalled) return;
+    if (g_CiHooksInstalled) return true;
+    const std::string jumpscenery = JumpSceneryHeldHooks();
+    if (!jumpscenery.empty()) {
+        Out("citrace: refused - jumpscenery holds " + jumpscenery + " (a builtin detours once, and its hooks"
+            " stay in once installed); nothing hooked. Relaunch without turning `jumpscenery` on to run citrace.");
+        return false;
+    }
     g_CiHooksInstalled = true;
     ResolveCiProfileManagerIdx();
     ResolveCiPlayerId();
@@ -11251,6 +11590,7 @@ static void InstallCiTraceHooks()
     HookRawNamedRoutine("gml_Object_Profile_Manager_obj_Step_0",        "fp_ci_pmstep", (PVOID)Hook_Ci_PmStep,       &g_OrigCi_PmStep);
     HookRawNamedRoutine("gml_Object_Player_obj_Step_0",                 "fp_ci_plstep", (PVOID)Hook_Ci_PlayerStep,  &g_OrigCi_PlayerStep);
     HookRawNamedRoutine("gml_Object_Player_obj_Mouse_3",                "fp_ci_plm3",   (PVOID)Hook_Ci_PlayerMouse3, &g_OrigCi_PlayerMouse3);
+    return true;
 }
 
 static void CiTraceStats()
@@ -11570,17 +11910,204 @@ static void InstallEquipTraceHooks()
 // self = the DYING ENEMY and argument 2 = the killing Player_obj (the earlier reading had
 // the roles swapped, which is why no kill ever showed enemy data).
 // ---- signature drops ----------------------------------------------------------------------
-// Headhunter and Tyrant's Crown now roll in the Angelic/Unholy pool itself (#63): they are
-// appended to it by AppendSignatureCandidates below, so every setting that changes Liquor
-// Holster's chance (kAngelicBases row belts_liquor_holster) changes theirs identically, by
-// construction - no fixed rate, no separate pity/alternation.  SpawnSignatureItem builds the
-// item through the game's own loader (InitItemFromJson(json, "region-account-timestamp-type"))
-// and drops it where the monster died (LootGroundCreateFromItem).  The forge hooks fire inside
-// InitItemFromJson -> CreateItemNew, so the built-in entry above dresses the item.
+// Headhunter and Tyrant's Crown come from the game's own Angelic roll, and only while their
+// panel switch is on (#74, owner-directed 2026-10-02: "list injection first").  For the length
+// of each roll (DropItemAngelicChance, HookAngelicChance below) the game's own Angelic list -
+// a variable of the first Controller_obj instance holding [type, sub, b] entries (static
+// reading, docs/angelic-roll-hook-research.md Session 3) - carries one more entry per enabled
+// item: a stand-in, a real Angelic unique of the item's own type taken from kAngelicBases, so
+// the game's picker and die decide exactly as for its own uniques.  A hit is typed from the
+// definition the roll read for it (Hook_GetUniqueRepoStruct, the latest read inside the roll
+// whose sub and b are CreateDefaultParams' own) and is a candidate only when that whole entry
+// [type, sub, b] is the stand-in's; a hit no read agrees with stays the game's (`untyped=`).  A
+// candidate is ours with one entry's share, 1 in (n + 1) when the vanilla list holds the stand-in
+// n times; on ours the parameter struct CreateDefaultParams returned is rewritten to the item's
+// own definition, and the game itself builds and places it - one item per hit, in place of the
+// stand-in, never beside it.  The entries come off again when the roll returns, a throw
+// included (SignatureInjectGuard), so between rolls the list is the game's own and nothing else
+// that reads it (merchants, shrines, crafting, the other drop routines) ever sees them.
+// ForgePact adds no die of its own: #63 had put the items into the slider's pool, #74 took them
+// out again.  SpawnSignatureItem builds an item through the game's own loader
+// (InitItemFromJson(json, "region-account-timestamp-type")) and drops it at x, y
+// (LootGroundCreateFromItem); only `sigdrop` (and the research build's replace mode) uses it.
 static long g_SigDropRolls = 0, g_SigDropHits = 0, g_SigDropFails = 0;
 static int g_SigDropForce = -1;   // -1 off (default); 0 force Tyrant's Crown, 1 force Headhunter
                                    // every monster kill - test command only (`sigdrop`); the
-                                   // normal drop rate follows the Angelic/Unholy slider.
+                                   // normal drop comes from the game's own Angelic roll.
+// The game-roll path's counters, printed by `sigdrop status` (the live procedure reads them):
+// every HookAngelicChance original call (extra rolls included), every detected hit, every entry
+// pushed onto the list, every hit that fell to a mod item, every such item the game built (seen
+// by the Custom Forge hook while the roll ran), by item, every list change the removal or the held
+// read-back found, and every hit no GetUniqueRepoStruct read could type (left to the game).
+static volatile long g_SigGameRolls = 0, g_SigGameHits = 0, g_SigInjected = 0, g_SigOurHits = 0;
+static volatile long g_SigBuilt = 0, g_SigBuiltCrown = 0, g_SigBuiltBelt = 0, g_SigAnomalies = 0;
+static volatile long g_SigUntyped = 0;
+// The mod items (#74): each joins the game's Angelic list while its panel switch is on.  The row
+// index is the switch (`which`: 0 = Tyrant's Crown, g_TyForced; 1 = Headhunter, g_HhForced); `t`
+// is the item's own itemType, which the stand-in has to share because the roll passes the picked
+// entry's type, not the parameters'; `a` and `b` are the item's own definition (c 0, j 0), the
+// selector its built-in Custom Forge entry recognises.  The stand-in is named by its kAngelicBases
+// name, or nullptr for the validated type-`t` entry with the lowest droprate.base (the owner's
+// default for the crown, 2026-10-02, reversible: one cell).  Miner's Helmet has no panel switch
+// and is not here; adding an item is one row.
+struct SignatureItem { const char* name; int which; int t; double a, b; const char* standIn; };
+static constexpr SignatureItem kSignatureItems[] = {
+    { "Tyrant's Crown", 0, 0, 777001.0, 7.0, nullptr },           // a Great Helm; stand-in: the default above
+    { "Headhunter",     1, 8, 777002.0, 2.0, "Liquor Holster" },  // a Heavy Belt; the owner's words in #74
+};
+static_assert(kSignatureItems[0].which == 0 && kSignatureItems[1].which == 1, "row index is the switch");
+// What each row's stand-in resolved to against the validated pool (SignatureResolveStandIns): its
+// sub and b (with the row's t, the whole entry a hit must be typed as), its name, and n, how many
+// times the game's own list holds that same [t, sub, b] (counted whenever the list's length changes).
+struct SignatureStandIn { bool ok = false; int sub = 0, b = 0, n = 0; double base = 0.0; std::string name, why; };
+static SignatureStandIn g_SigStandIn[2];
+static bool g_SigStandInsResolved = false;
+// The game's list, by name and index.  The roll draws from one element of a Controller_obj array
+// variable - the constant index 5, the sixth element (static reading, replan 2: lootListUnique[5])
+// - and that element is a ds_list whose entries are [type, sub, b] arrays; the outer array is
+// never the list.  The name and index are the ones Live 2's `reach` proved (2026-10-02:
+// lootListUnique[5], a ref ds_list of 380 triples, p1 = 65/80 at copies 200); a variable the
+// instance lacks, or an element that fails the gate, still refuses with `list=missing`.
+static const char* kAngelicListVar = "lootListUnique";
+static std::string g_SigListName = kAngelicListVar;   // the research build's inject lever may name another
+static const int kAngelicListIndex = 5;               // the element the roll reads (static reading)
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_SigListIndex = kAngelicListIndex;
+#else
+static int g_SigListIndex = kAngelicListIndex;        // `angelicprobe inject at <k>` (0..31) moves it
+#endif
+static const int kSigListMinSize = 10;               // a sub-list of fewer entries is not the unique list
+static bool g_SigListOk = false;
+static bool g_SigListTried = false;
+static int g_SigListLen = -1;                        // the sub-list's vanilla size at the last full check
+static double g_SigListId = -1.0;                    // the sub-list's ds_list id at the last full check
+static std::string g_SigListWhy;                     // why the last resolution refused
+static double g_SigControllerIdx = -2.0;             // Controller_obj's index; -2 not asked yet
+// How many copies of its stand-in each enabled item pushes per roll: the constant 1 in the player
+// build (one entry's share); the research build's copies lever (1..400) sets
+// it, so a live session can tell whether the roll reads what the plugin pushes (`reach`).
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_SigCopies = 1;
+#else
+static int g_SigCopies = 1;
+#endif
+// The current roll's injection: the outer variable as read, the ds_list the entries went onto
+// (its handle as read) and its index, the sub-list's size before, how many, and how many copies
+// of whose.  Set by SignatureInjectPush, cleared by SignatureInjectRemove (or by the push itself
+// when the held read-back refuses); game thread only.
+static RValue g_SigRollList;
+static RValue g_SigRollListId;
+static int g_SigRollIndex = -1;
+static int g_SigRollBefore = -1, g_SigRollPushed = 0;
+static int g_SigRollCopies[2] = { 0, 0 };
+static int g_SigInjectDepth = 0;
+static bool g_SigHeldMissLogged = false;   // the read-back's refusal is logged once per change
+// The current hit, between Hook_CreateDefaultParams and the line HookAngelicChance logs after the
+// game's roll returned: which item it fell to (-1 none), the coin (n + m), whether the hit reached
+// the rewrite point (CreateItemNew's entry) and the record was rewritten there, why not, and how
+// many rewritten items the Custom Forge hook has not yet seen built.
+// The coin is g_SigHitShare in g_SigHitCoin: m·k of the stand-in's n + m·k entries are ours.
+static int g_SigHitItem = -1, g_SigHitCoin = 0, g_SigHitShare = 0, g_SigHitStandIn = -1;
+static bool g_SigHitRewritten = false;
+static bool g_SigHitAtPoint = false;
+static std::string g_SigHitWhy;
+static int g_SigPending[2] = { 0, 0 };
+// The refusal latch (both builds).  An item whose rewrite is refused once is off for the rest of
+// the session: SignatureSwitchOn says no, so no more of its copies are pushed (a pushed copy whose
+// hits are all refused only doubles a vanilla unique's share), SignatureOffReason says
+// `rewrite refused: <why>`, and `sigdrop status` counts every refusal as `refused=`.
+static bool g_SigRefused[2] = { false, false };
+static std::string g_SigRefusedWhy[2];
+static volatile long g_SigRefusals = 0;
+// Hit detection.  The game's Angelic roll returns undefined on a hit exactly as on a miss
+// (static reading, docs/angelic-roll-hook-research.md Session 2), so a hit cannot be read from
+// the return.  Only a hit calls CreateDefaultParams, and nothing else inside the roll does, so a
+// CreateDefaultParams call while the roll is in progress IS a hit.  HookAngelicChance raises the
+// roll-in-progress depth (SignatureRollScope, so a throw from the game's roll lowers it again) and
+// clears the hit-seen flag before each original call; Hook_CreateDefaultParams sets the flag.
+// Thread-local like the research depths: the game calls both on its own thread.
+static PFUNC_YYGMLScript g_Orig_CreateDefaultParams = nullptr;
+// Every CreateDefaultParams call that reaches Hook_CreateDefaultParams, a roll in progress or not:
+// the detection's own positive control.  Ordinary drops build their params through the same
+// function (measured in session 1: 14 and 49 calls inside DropItem), so a few kills move it
+// whenever the hook is reachable; 0 after kills means the roll's direct call cannot reach the
+// hook either, and gameHits=0 then says nothing about the roll.
+static volatile long g_SigCdpCalls = 0;
+static thread_local int g_SigRollDepth = 0;
+static thread_local bool g_SigHitSeen = false;
+static double g_SigLastSub = -1.0, g_SigLastB = -1.0;   // the hit's sub/b, as CreateDefaultParams got them
+// Typing the hit.  The roll reads each picked entry's definition through GetUniqueRepoStruct
+// (type, sub, b) before its die (measured in Session 1: called inside the roll about eight times
+// per roll, its own detour sees them); Hook_GetUniqueRepoStruct keeps the latest such read while
+// the roll is in progress, SignatureHitReset clears it before each original call.  That the
+// latest read before CreateDefaultParams is the picked entry's is a static reading, not measured:
+// so a hit is typed only when the read's sub and b are CreateDefaultParams' own, and otherwise
+// it is untyped - never attributed, never rewritten, counted.
+static PFUNC_YYGMLScript g_Orig_GetUniqueRepoStruct = nullptr;
+static bool g_SigRepoSeen = false;
+static double g_SigRepoType = -1.0, g_SigRepoSub = -1.0, g_SigRepoB = -1.0;
+static bool g_SigHitTyped = false;
+static double g_SigHitType = -1.0;
+struct SignatureRollScope {
+    SignatureRollScope() { ++g_SigRollDepth; }
+    ~SignatureRollScope() { --g_SigRollDepth; }
+    SignatureRollScope(const SignatureRollScope&) = delete;
+    SignatureRollScope& operator=(const SignatureRollScope&) = delete;
+};
+#ifndef FORGEPACT_RELEASE
+// Research levers for one live session (`angelicprobe hit` / `angelicprobe inject`, defined beside
+// HookAngelicChance): a natural hit is about one in several thousand rolls, so these make one
+// observable, and the replace mode is the measured fallback if the game will not build our item.
+static double g_AngHitChance = -1.0;     // < 0 off; else every roll's chance argument (when real)
+static bool g_SigReplaceMode = false;    // `inject mode replace`: remove the placed stand-in, spawn ours
+static volatile long g_SigRemoved = 0;   // stand-ins the replace mode removed
+// `angelicprobe hit show <k>`: the next k hits inside the roll print their record at the rewrite
+// point (`angelic hit record: vanilla|before|after <json>`) and the built item's definition on
+// the forge hook's final pass (`angelic hit built:`); g_SigHitShow marks the current hit as one.
+static long g_SigShowLeft = 0;
+static bool g_SigHitShow = false;
+static bool g_SigHitReplace = false;     // the current our-hit is left to the replace mode
+static int g_SigLootBefore = -1;         // Loot_Ground_obj instances before the current original call
+static std::vector<double> g_SigLootIds; // their ids, replace mode only
+// The controls Live 1 judges reach and typing by (`angelicprobe inject status`):
+//   standinPicks= hits inside the roll whose CreateDefaultParams pair is a validated stand-in's,
+//                 whether or not anything was pushed and whatever the typing said - the reach
+//                 counter, keyed on the pair on purpose so it does not rest on the typing;
+//   heldMiss=     pushes the held read-back did not see through Controller_obj.<name>;
+//   typeAgree= / typeDisagree= on a hit that was not rewritten, the built item's itemType
+//                 (the Custom Forge hook's final pass, the roll in progress) against the type
+//                 the GetUniqueRepoStruct record gave the hit.
+static volatile long g_SigStandinPicks = 0, g_SigHeldMiss = 0, g_SigTypeAgree = 0, g_SigTypeDisagree = 0;
+static double g_SigHitBuiltType = -1.0;  // the current hit's built itemType, for builtType=
+static bool g_SigHitTypeNoted = false;   // the current hit's first built item was compared
+#endif
+// Which signature item's panel switch (Mods -> Items -> Tyrant's Crown / Headhunter) is on:
+// 0 = Tyrant's Crown, 1 = Headhunter.  The panel sends `tyrant force` / `headhunter force` for an
+// ON switch and `off` clears it, so the forced flags are the switch.  Owner, 2026-10-02 ("Panel
+// switch only"): the enabled state does not count, because a forged item's auto-arm sets it at
+// every launch with the switch off - forging turns the mechanic on, never the drop.  Never on
+// while the detection is not three inline detours (g_SigDetectNative: a hit would be invisible
+// or untypable),
+// while the game's list has not resolved by name, while the item's stand-in is not validated, or
+// once a rewrite of that item was refused this session (the latch).
+static bool SignatureSwitchOn(int which)
+{
+    if (!g_SigDetectNative || !g_SigListOk) return false;
+    if (which < 0 || which > 1 || !g_SigStandIn[which].ok || g_SigRefused[which]) return false;
+    return which == 0 ? g_TyForced.load() : g_HhForced.load();
+}
+static bool SignatureRefused(int which)
+{
+    return which >= 0 && which <= 1 && g_SigRefused[which];
+}
+static std::string SignatureOffReason(int which)
+{
+    if (which >= 0 && which <= 1 && g_SigRefused[which]) return "rewrite refused: " + g_SigRefusedWhy[which];
+    if (!g_SigDetectNative) return "detection not installed";
+    if (!g_SigListOk) return "the game's Angelic list not resolved";
+    if (which < 0 || which > 1 || !g_SigStandIn[which].ok) return "stand-in not validated";
+    return "switch off";
+}
 static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 {
     const double seed = which == 0 ? kSigCrownSeed : kSigBeltSeed;
@@ -11630,7 +12157,7 @@ static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 // LootGroundCreateFromItem) with c=1 (unique repo).  Each row is validated once against the
 // game's unique repo: the name key must match and the base's info flag 40 (hidden / dev item,
 // which the game's own picker skips) must NOT be set - live 2026-09-07: exactly the nine dev
-// and joke items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 49 real ones do not.
+// and joke items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 47 real ones do not.
 struct AngelicBase { int type, sub, b; const char* key; const char* name; bool angelic; };
 static const AngelicBase kAngelicBases[] = {
     { 0, 0, 85, "helmet_lucifers_crown", "Lucifer's Crown", true },
@@ -11692,33 +12219,33 @@ static const AngelicBase kAngelicBases[] = {
     { 18, 0, 5, "consumable_elixir_of_unworldly_cognition", "Elixir of Unworldly Cognition", false },
     { 18, 0, 8, "consumable_gold_inlaid_mysterious_potion", "Gold Inlaid Mysterious Potion", true },
 };
-// signature: -1 = an ordinary validated unique (SpawnAngelicItem); 0/1 = a signature entry
-// (Tyrant's Crown / Headhunter, spawned through SpawnSignatureItem instead) appended by
-// AppendSignatureCandidates below (#63).  Default member initializer so existing
-// {type, sub, b, "name", angelic} initializers still compile unchanged.
-struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; int signature = -1; };
+// A validated real Angelic/Unholy unique.  The pool holds only these: Headhunter and Tyrant's
+// Crown left it with #74 and drop from the game's own Angelic roll instead.
+struct AngelicCandidate { int type, sub, b; std::string name; bool angelic; };
 static std::vector<AngelicCandidate> g_AngelicPool;
-static bool g_AngelicPoolBuilt = false;
+static bool g_AngelicPoolBuilt = false;   // set only by a build that found candidates (BuildAngelicPool)
 static double g_AngelicDropOneIn = 0.0;   // 0 = off; N = one angelic drop per N kills on average
 static volatile long g_AngelicDropRolls = 0, g_AngelicDropHits = 0, g_AngelicDropFails = 0;
-// Headhunter and Tyrant's Crown join the pool only once it holds at least one validated
-// unique - an empty pool stays empty, so `angelicdrop` still turns itself off rather than
-// making a signature item a 1-in-2 drop when every unique fails validation (#63).
-static void AppendSignatureCandidates(std::vector<AngelicCandidate>& pool)
-{
-    if (pool.empty()) return;
-    pool.push_back({ 0, 0, 0, "Tyrant's Crown", true, 0 });
-    pool.push_back({ 0, 0, 0, "Headhunter", true, 1 });
-}
 static std::string StructKey(const RValue& st, const char* field)
 {
     try { RValue v = g_Yytk->CallBuiltin("variable_struct_get", { st, RValue(field) }); if (v.m_Kind == VALUE_STRING) return v.ToString(); } catch (...) {}
     return std::string();
 }
+// Only a build that finds candidates is kept.  One that comes back empty - the game's unique data
+// not loaded yet, as when the panel applies a Headhunter / Tyrant's Crown switch at the main menu
+// (#74 review) - is tried again by the next caller (a roll, through SignatureResolveStandIns, or a
+// switch-on), but no sooner than kRetryMs after the last try, since a build makes about 58
+// InitItemFromJson calls; its line is logged once, not per retry.  `angeliclist` (verbose)
+// rebuilds at once, as before.
 static void BuildAngelicPool(bool verbose)
 {
+    static constexpr unsigned long long kRetryMs = 5000;
+    static unsigned long long nextTry = 0;
+    static bool emptyLogged = false;
     if (g_AngelicPoolBuilt) return;
-    g_AngelicPoolBuilt = true;
+    const unsigned long long now = GetTickCount64();
+    if (!verbose && now < nextTry) return;
+    nextTry = now + kRetryMs;
     g_AngelicPool.clear();
     int rejected = 0;
     for (const AngelicBase& base : kAngelicBases) {
@@ -11753,11 +12280,11 @@ static void BuildAngelicPool(bool verbose)
         else ++rejected;
         if (verbose) Out(std::string("angeliclist: ") + base.name + " (" + std::to_string(base.type) + "/" + std::to_string(base.sub) + "/" + std::to_string(base.b) + ") -> " + (why.empty() ? "ok" : why));
     }
-    const size_t beforeSignature = g_AngelicPool.size();
-    AppendSignatureCandidates(g_AngelicPool);
-    if (verbose) for (size_t i = beforeSignature; i < g_AngelicPool.size(); ++i)
-        Out(std::string("angeliclist: ") + g_AngelicPool[i].name + " (signature) -> ok");
-    Out("angelic pool: " + std::to_string(g_AngelicPool.size()) + " candidates, " + std::to_string(rejected) + " rejected");
+    g_AngelicPoolBuilt = !g_AngelicPool.empty();
+    if (g_AngelicPoolBuilt || verbose || !emptyLogged)
+        Out("angelic pool: " + std::to_string(g_AngelicPool.size()) + " candidates, " + std::to_string(rejected) + " rejected"
+            + (g_AngelicPoolBuilt ? std::string() : std::string(" - tried again, at most every 5 s, until the game's unique data is loaded")));
+    if (!g_AngelicPoolBuilt) emptyLogged = true;
 }
 static bool SpawnAngelicItem(const AngelicCandidate& c, double x, double y, CInstance* ctx)
 {
@@ -11800,7 +12327,7 @@ static void AngelicDropOnKill(CInstance* S)
         const size_t pick = (size_t)std::uniform_int_distribution<int>(0, (int)g_AngelicPool.size() - 1)(TyRng());
         const AngelicCandidate& c = g_AngelicPool[pick];
         const double x = HhReadNumber(enemy, "x", 0.0), y = HhReadNumber(enemy, "y", 0.0);
-        const bool ok = c.signature >= 0 ? SpawnSignatureItem(c.signature, x, y, S) : SpawnAngelicItem(c, x, y, S);
+        const bool ok = SpawnAngelicItem(c, x, y, S);
         if (ok) InterlockedIncrement(&g_AngelicDropHits); else InterlockedIncrement(&g_AngelicDropFails);
     } catch (...) { InterlockedIncrement(&g_AngelicDropFails); Out("angelicdrop: EXCEPTION"); }
 }
@@ -11812,8 +12339,8 @@ static void AngelicDropStatus()
 }
 
 // Test command only (#63) - forces Tyrant's Crown or Headhunter on every monster kill, for
-// live verification without waiting on the Angelic/Unholy die.  The normal drop rate no
-// longer lives here at all; it follows `angelicdrop` like every other item in the pool.
+// live verification without waiting on a game Angelic hit.  The normal drop does not live
+// here at all; it comes from the game's own Angelic roll, switch-gated (#74).
 static void SignatureDropOnKill(CInstance* S)
 {
     if (g_SigDropForce < 0 || !S) return;
@@ -11826,11 +12353,802 @@ static void SignatureDropOnKill(CInstance* S)
         SpawnSignatureItem(g_SigDropForce, x, y, S);
     } catch (...) {}
 }
+// A number the game stored, whichever numeric kind the runner handed back.
+static bool SigNumber(const RValue& v, double& out)
+{
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    try { out = v.ToDouble(); } catch (...) { return false; }
+    return std::isfinite(out);
+}
+// A value of a kind that can never be a data-structure handle: an array, a string, a struct, an
+// undefined or a null.  A deny-list, never an allow-list: the runner hands a live handle back as a
+// real or a reference, and whatever else a handle may arrive as is not on this list, so no handle is
+// ever refused by it.  Asked before ToDouble because converting one of these is the runner's own
+// REAL conversion failing, which raises a runner error (`REAL argument incorrect type array`, the
+// YYError summary's report#2) even when a C++ catch then swallows the failure (#74).
+static bool SigNeverAHandle(const RValue& v)
+{
+    switch (v.m_Kind) {
+    case VALUE_ARRAY: case VALUE_STRING: case VALUE_OBJECT: case VALUE_UNDEFINED: case VALUE_NULL: return true;
+    default: return false;
+    }
+}
+// Whether `v` is a live ds_list, and its handle value in `id` for the "same list" checks.  The
+// route the pet loot collector proved on a pet's lootList: first refuse a value SigNeverAHandle
+// names (array, string, struct, undefined, null), before any conversion, since converting one
+// raises a runner error a catch cannot take back (#74, report#2); then ToDouble only to refuse a
+// handle value that is unreadable, non-finite or negative, then ds_exists (2 = ds_type_list) asked
+// of the value as it was read.  Real and reference values, and every other kind, go on to those
+// steps: a live ds handle can arrive as VALUE_REF on current runners, so nothing here allows only
+// the kinds a handle is known to take.  On a refusal `why` names the value's kind and the step that
+// refused: `kind=<k>, never a handle`, `kind=<k>, id unreadable`, `kind=<k>, id <v>`,
+// `kind=<k>, ds_exists threw` or `kind=<k>, ds_exists false`.
+static bool SigListHandle(const RValue& v, double& id, std::string& why)
+{
+    const auto refuse = [&](const std::string& step) {
+        std::string kind;
+        switch (v.m_Kind) {
+        case VALUE_REAL:      kind = "real"; break;
+        case VALUE_INT32:     kind = "int32"; break;
+        case VALUE_INT64:     kind = "int64"; break;
+        case VALUE_BOOL:      kind = "bool"; break;
+        case VALUE_STRING:    kind = "string"; break;
+        case VALUE_OBJECT:    kind = "struct"; break;
+        case VALUE_ARRAY:     kind = "array"; break;
+        case VALUE_PTR:       kind = "ptr"; break;
+        case VALUE_UNDEFINED: kind = "undefined"; break;
+        case VALUE_NULL:      kind = "null"; break;
+        case VALUE_REF:       kind = "ref"; break;
+        default:              kind = "kind" + std::to_string((int)v.m_Kind); break;
+        }
+        why = "kind=" + kind + ", " + step;
+        return false;
+    };
+    id = -1.0;
+    why.clear();
+    if (SigNeverAHandle(v)) return refuse("never a handle");
+    double value = -1.0;
+    try { value = v.ToDouble(); } catch (...) { return refuse("id unreadable"); }
+    if (!std::isfinite(value)) return refuse("id non-finite");
+    if (value < 0.0) {
+        char b[48];
+        std::snprintf(b, sizeof b, "id %g", value);   // %g of a finite double, bounded (Known Limitations item 10)
+        return refuse(b);
+    }
+    bool live = false;
+    try { live = g_Yytk->CallBuiltin("ds_exists", { v, RValue(2.0) }).ToBoolean(); }
+    catch (...) { return refuse("ds_exists threw"); }
+    if (!live) return refuse("ds_exists false");
+    id = value;
+    return true;
+}
+// Entry i of a ds_list as [type, sub, b]: an array of exactly three numbers, else false.  The
+// shape check, the tail check, the scan and the dump all read the entries through it.
+static bool SigEntry(const RValue& sub, int i, double out[3])
+{
+    try {
+        const RValue e = g_Yytk->CallBuiltin("ds_list_find_value", { sub, RValue((double)i) });
+        if (e.m_Kind != VALUE_ARRAY) return false;
+        if ((int)g_Yytk->CallBuiltin("array_length", { e }).ToDouble() != 3) return false;
+        for (int k = 0; k < 3; ++k)
+            if (!SigNumber(g_Yytk->CallBuiltin("array_get", { e, RValue((double)k) }), out[k])) return false;
+        return true;
+    } catch (...) { return false; }
+}
+// The first Controller_obj instance: the scope the roll reads its unique list from (static
+// reading, #74).  Resolved through the SDK's name for the object, never a number of our own.
+static bool SignatureController(RValue& instance, std::string& why)
+{
+    if (g_SigControllerIdx < 0.0) {
+        try {
+            g_SigControllerIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) }).ToDouble();
+        } catch (...) { g_SigControllerIdx = -1.0; }
+    }
+    if (g_SigControllerIdx < 0.0) { why = "Controller_obj not found (asset_get_index)"; return false; }
+    int count = 0;
+    try { count = (int)g_Yytk->CallBuiltin("instance_number", { RValue(g_SigControllerIdx) }).ToDouble(); } catch (...) { count = 0; }
+    if (count < 1) { why = "no live Controller_obj instance"; return false; }
+    try { instance = g_Yytk->CallBuiltin("instance_find", { RValue(g_SigControllerIdx), RValue(0.0) }); }
+    catch (...) { why = "instance_find threw for Controller_obj"; return false; }
+    return true;
+}
+// Whether `outer` is shaped like the game's Angelic list - an array whose element at `index` is
+// a live ds_list of at least `minSize` [type, sub, b] entries - and, when it is, that element
+// (`sub`, its number in `id`), its size, and how many of its entries equal each resolved stand-in
+// (counts[which], over that element only).  `why` names the first step that failed, worded to
+// follow `Controller_obj.<name>`: `is not an array`, `has <L> elements, none at [<i>]`,
+// `[<i>] is not a ds_list (kind=<k>, <step>)`, `[<i>] has <s> entries, fewer than <min>`,
+// `[<i>] entry <k> is not three numbers`.  The ds_list refusal carries SigListHandle's reason - the
+// element's kind by name and the step that refused it (id unreadable, a non-finite or negative id,
+// ds_exists threw, ds_exists false) - so a live ref ds_exists turned away reads as one.
+static bool SignatureListShape(const RValue& outer, int index, RValue& sub, double& id, int& size, int counts[2],
+                               std::string& why, int minSize)
+{
+    counts[0] = counts[1] = 0;
+    size = -1;
+    id = -1.0;
+    const std::string at = "[" + std::to_string(index) + "]";
+    if (outer.m_Kind != VALUE_ARRAY) { why = "is not an array"; return false; }
+    int len = -1;
+    try { len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble(); } catch (...) { why = "array_length threw"; return false; }
+    if (index < 0 || index >= len) { why = "has " + std::to_string(len) + " elements, none at " + at; return false; }
+    try { sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) }); }
+    catch (...) { why = at + " array_get threw"; return false; }
+    std::string step;
+    if (!SigListHandle(sub, id, step)) { why = at + " is not a ds_list (" + step + ")"; return false; }
+    try { size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble(); } catch (...) { why = at + " ds_list_size threw"; return false; }
+    if (size < minSize) { why = at + " has " + std::to_string(size) + " entries, fewer than " + std::to_string(minSize); return false; }
+    for (int i = 0; i < size; ++i) {
+        double e[3] = { 0.0, 0.0, 0.0 };
+        if (!SigEntry(sub, i, e)) { why = at + " entry " + std::to_string(i) + " is not three numbers"; return false; }
+        for (int w = 0; w < 2; ++w) {
+            const SignatureStandIn& s = g_SigStandIn[w];
+            if (s.ok && e[0] == (double)kSignatureItems[w].t && e[1] == (double)s.sub && e[2] == (double)s.b) ++counts[w];
+        }
+    }
+    return true;
+}
+// Each item's stand-in as `<item>:<stand-in>(n=<count>)`, Headhunter first, `(not validated)` when
+// the pool did not accept it; `reasons` adds why.
+static std::string SignatureStandInsText(bool reasons)
+{
+    std::string s;
+    for (int w = 1; w >= 0; --w) {
+        const SignatureStandIn& st = g_SigStandIn[w];
+        s += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + (st.name.empty() ? std::string("?") : st.name);
+        if (st.ok) s += "(n=" + std::to_string(st.n) + ")";
+        else s += reasons && !st.why.empty() ? "(not validated: " + st.why + ")" : std::string("(not validated)");
+    }
+    return s;
+}
+// `list=` on `sigdrop status` (and the research build's inject status): `none` until a switch (or the
+// research build's inject lever) has asked for the game's list, then `<name>[<index>]:<size>`
+// (`lootListUnique[5]:58`, the sub-list's size), or `missing` after a refusal.
+static std::string SignatureListText()
+{
+    if (!g_SigListTried) return "none";
+    if (!g_SigListOk) return "missing";
+    return g_SigListName + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(g_SigListLen);
+}
+// One line naming the list and the stand-ins, or why the drop stays off.
+static std::string SignatureListLine()
+{
+    if (g_SigListOk)
+        return "list " + SignatureListText() + " stand-ins " + SignatureStandInsText(true);
+    return "list missing (" + g_SigListWhy + ") - Headhunter / Tyrant's Crown stay off the game's Angelic roll; stand-ins "
+        + SignatureStandInsText(true);
+}
+static bool g_SigListRecount = true;   // the stand-ins changed: count n again on the next resolution
+// Resolves the game's list by name and index - element g_SigListIndex of g_SigListName on the
+// first Controller_obj instance - into `list` (the outer array) and `subOut` (the element, a
+// ds_list handle), shape-checked in full (and n counted, over that element only) whenever the
+// element's id or size differs from the last check, the stand-ins changed, or `full` asks; never
+// by shape alone.  Records the outcome for the gate and `list=`; unless `quiet`, logs one line
+// when the outcome changes, never one per roll.
+static bool SignatureListResolve(RValue& list, bool full, bool quiet, RValue* subOut = nullptr)
+{
+    std::string why;
+    int size = -1;
+    double id = -1.0;
+    bool ok = false;
+    RValue instance, sub;
+    const int index = g_SigListIndex;
+    if (g_SigListName.empty()) why = "no list variable named yet";
+    else if (SignatureController(instance, why)) {
+        bool has = false;
+        try { has = g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(g_SigListName) }).ToBoolean(); } catch (...) { has = false; }
+        if (!has) why = "Controller_obj has no variable " + g_SigListName;
+        else {
+            try { list = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) }); ok = true; }
+            catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; }
+            if (ok) {
+                // Every roll: the element at the index, asked whether it is a live ds_list
+                // (SigListHandle's ds_exists, before any ds_list_size), and that list's size.  A
+                // refusal here leaves size at -1, and the full check below words it.
+                try {
+                    if (list.m_Kind == VALUE_ARRAY && index < (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble()) {
+                        sub = g_Yytk->CallBuiltin("array_get", { list, RValue((double)index) });
+                        std::string step;
+                        if (SigListHandle(sub, id, step))
+                            size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+                    }
+                } catch (...) { size = -1; }
+                if (full || g_SigListRecount || !g_SigListOk || size < 0 || size != g_SigListLen || id != g_SigListId) {
+                    int counts[2] = { 0, 0 };
+                    ok = SignatureListShape(list, index, sub, id, size, counts, why, kSigListMinSize);
+                    if (ok) { g_SigStandIn[0].n = counts[0]; g_SigStandIn[1].n = counts[1]; g_SigListRecount = false; }
+                    else why = "Controller_obj." + g_SigListName + (!why.empty() && why[0] == '[' ? "" : " ") + why;
+                }
+            }
+        }
+    }
+    const bool changed = !g_SigListTried || ok != g_SigListOk || (ok && (size != g_SigListLen || id != g_SigListId));
+    g_SigListTried = true;
+    g_SigListOk = ok;
+    g_SigListLen = ok ? size : -1;
+    g_SigListId = ok ? id : -1.0;
+    g_SigListWhy = ok ? std::string() : why;
+    if (ok && subOut) *subOut = sub;
+    if (changed && !quiet) Out("signature drops: " + SignatureListLine());
+    return ok;
+}
+// Whether the ds_list `sub` ends with exactly this roll's entries: `before + pushed` entries in
+// all, the last `pushed` of them each enabled item's stand-in [t, sub, b], g_SigRollCopies[w]
+// times, in push order.  `len` is the size read.  The removal and the held read-back both ask it.
+static bool SignatureTailHolds(const RValue& sub, int before, int pushed, int& len)
+{
+    len = -1;
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { return false; }
+    if (len != before + pushed) return false;
+    int at = before;
+    for (int w = 0; w < 2; ++w) {
+        for (int c = 0; c < g_SigRollCopies[w]; ++c) {
+            double e[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(sub, at++, e) || e[0] != (double)kSignatureItems[w].t
+                || e[1] != (double)g_SigStandIn[w].sub || e[2] != (double)g_SigStandIn[w].b) return false;
+        }
+    }
+    return at == len;
+}
+// The held read-back, right after the push: the variable read again by name off the first
+// Controller_obj instance - a fresh variable_instance_get, never the handle just pushed onto -
+// must hold, at the same index, the same ds_list id, and that list the push (size and tail).  A
+// ds_list id is a handle into the runtime's own store, so a copy cannot hide the push inside the
+// list itself; what this catches is an outer array that a fresh read hands back with another
+// element there.  Light on purpose: the id, the size and the pushed tail only, never
+// SignatureListResolve's full walk.  It cannot show that the roll reads this list (`reach`).
+// `seen` says what the fresh read held.
+static bool SignatureHeldReadBack(const RValue& pushedOnto, int index, int before, int pushed, std::string& seen)
+{
+    seen = "nothing";
+    RValue instance, held;
+    std::string why;
+    double want = -1.0, got = -1.0;
+    if (!SigListHandle(pushedOnto, want, why)) { seen = "nothing (the list pushed onto: " + why + ")"; return false; }
+    if (!SignatureController(instance, why)) return false;
+    try {
+        held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (held.m_Kind != VALUE_ARRAY || index >= (int)g_Yytk->CallBuiltin("array_length", { held }).ToDouble()) {
+            seen = "no element [" + std::to_string(index) + "]";
+            return false;
+        }
+        const RValue sub = g_Yytk->CallBuiltin("array_get", { held, RValue((double)index) });
+        // Same list = equal handle values, whatever kind either read arrived as.
+        if (!SigListHandle(sub, got, why)) { seen = "another value at [" + std::to_string(index) + "] (" + why + ")"; return false; }
+        if (got != want) { seen = "another value at [" + std::to_string(index) + "] (another ds_list)"; return false; }
+        int len = -1;
+        const bool tail = SignatureTailHolds(sub, before, pushed, len);
+        seen = len < 0 ? std::string("no ds_list") : std::to_string(len) + " entries";
+        return tail;
+    } catch (...) { seen = "a read that threw"; return false; }
+}
+// A pool unique's droprate.base, read off its repository definition by name (the rate the
+// research build's `hit rate` lever overrides).  False when the definition carries no number.
+static bool SigUniqueDropBase(const AngelicCandidate& c, double& base)
+{
+    try {
+        RValue def = g_Yytk->CallGameScript("gml_Script_GetUniqueRepoStruct",
+                                            { RValue((double)c.type), RValue((double)c.sub), RValue((double)c.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        RValue rate = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("droprate") });
+        if (rate.m_Kind != VALUE_OBJECT) return false;
+        return SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { rate, RValue("base") }), base);
+    } catch (...) { return false; }
+}
+// Resolves each row's stand-in against the validated pool (BuildAngelicPool) once - again only
+// while the pool is empty, which BuildAngelicPool then retries at most every 5 s.  Another unique sharing the stand-in's sub and b (Liquor Holster's
+// 0/51 is also Supreme Elemelon's, type 10) is no reason to refuse: a hit is typed from the
+// whole [type, sub, b] the roll read for it (Hook_GetUniqueRepoStruct), so that other unique's
+// hits are never the stand-in's.
+static void SignatureResolveStandIns()
+{
+    if (g_SigStandInsResolved) return;
+    BuildAngelicPool(false);
+    for (int w = 0; w < 2; ++w) {
+        const SignatureItem& item = kSignatureItems[w];
+        SignatureStandIn s;
+        s.name = item.standIn ? item.standIn : "";
+        const AngelicCandidate* pick = nullptr;
+        if (g_AngelicPool.empty()) s.why = "the Angelic pool is empty";
+        else if (item.standIn) {
+            for (const AngelicCandidate& c : g_AngelicPool) if (c.type == item.t && c.name == item.standIn) { pick = &c; break; }
+            if (!pick) s.why = "not in the validated pool";
+        } else {
+            for (const AngelicCandidate& c : g_AngelicPool) {
+                double base = 0.0;
+                if (c.type != item.t || !SigUniqueDropBase(c, base)) continue;
+                if (!pick || base < s.base) { pick = &c; s.base = base; }
+            }
+            if (!pick) s.why = "no validated type " + std::to_string(item.t) + " unique with a droprate.base";
+        }
+        if (pick) { s.name = pick->name; s.ok = true; s.sub = pick->sub; s.b = pick->b; }
+        g_SigStandIn[w] = s;
+    }
+    g_SigStandInsResolved = !g_AngelicPool.empty();
+    g_SigListRecount = true;
+}
+// Before the game's roll (from SignatureInjectGuard): with a panel switch on, push g_SigCopies
+// stand-in entries [t, sub, b] per enabled item (one in the player build) onto the end of the
+// game's own list - the ds_list at the list's index, never the outer array - then read the list
+// back by name (SignatureHeldReadBack).  A push the fresh read does not show comes off the
+// ds_list it went onto again, is logged once per change and counted (`anomalies=`), and the roll
+// carries nothing, so no hit is attributed.  With both switches off it makes no call at all, so
+// the roll is the game's own.
+static void SignatureInjectPush()
+{
+    g_SigRollPushed = 0;
+    g_SigRollCopies[0] = g_SigRollCopies[1] = 0;
+    if (!g_SigDetectNative || (!g_TyForced.load() && !g_HhForced.load())) return;
+    {
+        // A pool build retried here (BuildAngelicPool, while the pool is empty) calls the game's
+        // GetUniqueRepoStruct and InitItemFromJson; it runs outside the roll's scope, so no call
+        // it makes is taken for the roll's read or a hit.
+        struct OutsideRoll {
+            int depth = g_SigRollDepth;
+            OutsideRoll() { g_SigRollDepth = 0; }
+            ~OutsideRoll() { g_SigRollDepth = depth; }
+        } outside;
+        SignatureResolveStandIns();
+    }
+    RValue list, sub;
+    if (!SignatureListResolve(list, false, false, &sub)) return;
+    g_SigRollList = list;
+    g_SigRollListId = sub;
+    g_SigRollIndex = g_SigListIndex;
+    g_SigRollBefore = g_SigListLen;
+    bool threw = false;
+    for (int w = 0; w < 2 && !threw; ++w) {
+        if (!SignatureSwitchOn(w)) continue;
+        for (int c = 0; c < g_SigCopies && !threw; ++c) {
+            try {
+                RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)kSignatureItems[w].t) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)g_SigStandIn[w].sub) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)g_SigStandIn[w].b) });
+                g_Yytk->CallBuiltin("ds_list_add", { sub, entry });
+            } catch (...) { Out(std::string("inject: pushing ") + kSignatureItems[w].name + "'s stand-in threw"); threw = true; continue; }
+            ++g_SigRollPushed;
+            ++g_SigRollCopies[w];
+        }
+    }
+    if (g_SigRollPushed == 0) { g_SigRollList = RValue(); g_SigRollListId = RValue(); return; }
+    std::string seen;
+    if (SignatureHeldReadBack(g_SigRollListId, g_SigRollIndex, g_SigRollBefore, g_SigRollPushed, seen)) {
+        g_SigHeldMissLogged = false;
+        for (int i = 0; i < g_SigRollPushed; ++i) InterlockedIncrement(&g_SigInjected);
+        return;
+    }
+    // Not visible through Controller_obj.<name>[<index>]: off the ds_list it went onto again
+    // (only while its tail is still ours), and this roll carries nothing.
+    int len = -1;
+    try {
+        if (SignatureTailHolds(g_SigRollListId, g_SigRollBefore, g_SigRollPushed, len))
+            for (int i = 0; i < g_SigRollPushed; ++i)
+                g_Yytk->CallBuiltin("ds_list_delete", { g_SigRollListId, RValue((double)(len - 1 - i)) });
+    } catch (...) {}
+    InterlockedIncrement(&g_SigAnomalies);
+#ifndef FORGEPACT_RELEASE
+    InterlockedIncrement(&g_SigHeldMiss);
+#endif
+    if (!g_SigHeldMissLogged) {
+        g_SigHeldMissLogged = true;
+        Out("inject: push not visible through Controller_obj." + g_SigListName + "[" + std::to_string(g_SigRollIndex)
+            + "] (a fresh read holds " + seen + ", expected the same ds_list with "
+            + std::to_string(g_SigRollBefore + g_SigRollPushed) + " entries ending in the " + std::to_string(g_SigRollPushed)
+            + " pushed) - taken off again; rolls carry nothing until a push reads back");
+    }
+    g_SigRollPushed = 0;
+    g_SigRollCopies[0] = g_SigRollCopies[1] = 0;
+    g_SigRollList = RValue();
+    g_SigRollListId = RValue();
+}
+// After the game's roll, extra rolls included, and on a throw too: take the entries off the
+// ds_list they went onto again, one ds_list_delete of its last entry per pushed entry - but only
+// while its tail still holds exactly them (every copy, SignatureTailHolds), else leave it as
+// found, say so once and count it (`anomalies=`), since an entry the game itself added must
+// never be cut off.
+static void SignatureInjectRemove()
+{
+    if (g_SigRollPushed <= 0) return;
+    const int pushed = g_SigRollPushed, before = g_SigRollBefore;
+    const RValue sub = g_SigRollListId;
+    g_SigRollPushed = 0;
+    g_SigRollList = RValue();
+    g_SigRollListId = RValue();
+    int len = -1;
+    bool tail = false;
+    try {
+        tail = SignatureTailHolds(sub, before, pushed, len);
+        if (tail) {
+            for (int i = 0; i < pushed; ++i)
+                g_Yytk->CallBuiltin("ds_list_delete", { sub, RValue((double)(len - 1 - i)) });
+            len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+            if (len == before) return;
+        }
+    } catch (...) {}
+    InterlockedIncrement(&g_SigAnomalies);
+    Out(tail ? "inject: removing the entries did not take - list size " + std::to_string(len) + ", expected " + std::to_string(before)
+             : "inject: list changed during the roll, left as found (size " + std::to_string(before) + " + "
+               + std::to_string(pushed) + " pushed, now " + std::to_string(len) + ")");
+}
+// HookAngelicChance holds the injection with this guard, declared before its first original call
+// and living to the end of the function: the entries are on the list for every original call of
+// one invocation (extra rolls included) and come off on every way out, a throw from the game's
+// roll included.  An invocation nested inside another adds nothing.
+struct SignatureInjectGuard {
+    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} } }
+    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { SignatureInjectRemove(); } catch (...) {} } }
+    SignatureInjectGuard(const SignatureInjectGuard&) = delete;
+    SignatureInjectGuard& operator=(const SignatureInjectGuard&) = delete;
+};
+// A struct as the game's own JSON, bounded, for the refusal line.
+static std::string SigJson(const RValue& v)
+{
+    try {
+        CInstance* g = nullptr; g_Yytk->GetGlobalInstance(&g);
+        RValue js; if (g) g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { v });
+        if (js.m_Kind == VALUE_STRING) return js.ToString().substr(0, 420);
+    } catch (...) {}
+    return "<not printable>";
+}
+// Our hit: the record the game builds the item from becomes the mod item's own definition - a,
+// b, c 0, j 0, the item record's fields (hub docs/RUNTIME_DATA_MODELS.md § 13.4) - read back
+// after the write.  `params` is that record: the item instance's itemDefinitionStruct at
+// CreateItemNew's entry, which is the struct CreateDefaultParams returned ({j, b, c}, no `a`,
+// measured in Live 2) after LootGroundCreate stored its own `a` into it (static reading,
+// docs/angelic-roll-hook-research.md Session 5).  A field the record lacks is created, not
+// refused; a value that does not read back is a refusal, and then every field is put back - a
+// field this call created removed again - and the game builds its own stand-in.
+static bool SignatureRewriteParams(RValue& params, const SignatureItem& item, std::string& why)
+{
+    static const char* const kFields[4] = { "a", "b", "c", "j" };
+    const double want[4] = { item.a, item.b, 0.0, 0.0 };
+    RValue old[4];
+    bool had[4] = { false, false, false, false };
+    bool wrote = false;
+    auto restore = [&]() {
+        if (!wrote) return;
+        for (int k = 0; k < 4; ++k) {
+            try {
+                if (had[k]) g_Yytk->CallBuiltin("variable_struct_set", { params, RValue(kFields[k]), old[k] });
+                else g_Yytk->CallBuiltin("variable_struct_remove", { params, RValue(kFields[k]) });
+            } catch (...) {}
+        }
+    };
+    try {
+        if (params.m_Kind != VALUE_OBJECT) { why = "the record is not a struct"; return false; }
+        for (int k = 0; k < 4; ++k) {
+            had[k] = g_Yytk->CallBuiltin("variable_struct_exists", { params, RValue(kFields[k]) }).ToBoolean();
+            if (had[k]) old[k] = g_Yytk->CallBuiltin("variable_struct_get", { params, RValue(kFields[k]) });
+        }
+        wrote = true;
+        for (int k = 0; k < 4; ++k) g_Yytk->CallBuiltin("variable_struct_set", { params, RValue(kFields[k]), RValue(want[k]) });
+        for (int k = 0; k < 4; ++k) {
+            double v = 0.0;
+            if (SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue(kFields[k]) }), v) && v == want[k]) continue;
+            why = std::string("field ") + kFields[k] + " did not read back";
+            restore();
+            return false;
+        }
+        return true;
+    } catch (...) { why = "the rewrite threw"; restore(); return false; }
+}
+// A refused rewrite of item `which` (SignatureBeforeCreate, or SignatureAfterHit when the hit never
+// reached the rewrite point): one `inject:` line with the reason and the record as it was left,
+// `refused=` counted, and the item latched off for the session - its copies are no longer pushed,
+// so a switch whose hits are all refused cannot go on inflating a vanilla unique's share while
+// its status reads on.  The first refusal's reason is the one the status keeps.
+static void SignatureRefuse(int which, const std::string& record)
+{
+    if (which < 0 || which > 1) return;
+    InterlockedIncrement(&g_SigRefusals);
+    const bool first = !g_SigRefused[which];
+    if (first) { g_SigRefused[which] = true; g_SigRefusedWhy[which] = g_SigHitWhy; }
+    Out(std::string("inject: ") + kSignatureItems[which].name + " refused (" + g_SigHitWhy + "), the record left vanilla: " + record
+        + (first ? std::string("; ") + kSignatureItems[which].name + " stays off for this session (rewrite refused)" : std::string()));
+}
+// A typed hit inside the roll (Hook_CreateDefaultParams, once the game's CreateDefaultParams
+// returned).  When its whole entry [type, sub, b] is the stand-in of an item this roll pushed,
+// the picker cannot have told our entries from the vanilla ones: m items sharing that stand-in
+// with k copies each hold m·k of its n + m·k entries, so a uniform draw below m·k picks an item
+// (the copies it falls in) - one entry's share, 1 in (n + 1), in the player build - and anything
+// else is the game's own stand-in.  A same-pair entry of another type is no candidate at all.
+// Ours is handed to the rewrite point (g_SigHitItem): CreateDefaultParams' struct has no `a`, and
+// one written here would not survive LootGroundCreate's own store (Session 5), so the record is
+// rewritten at CreateItemNew's entry, SignatureBeforeCreate.
+static void SignatureAttributeHit()
+{
+    int match[2] = { -1, -1 }, m = 0, n = 0, share = 0;
+    for (int w = 0; w < 2; ++w) {
+        if (g_SigRollCopies[w] <= 0 || g_SigHitType != (double)kSignatureItems[w].t) continue;
+        if ((double)g_SigStandIn[w].sub != g_SigLastSub || (double)g_SigStandIn[w].b != g_SigLastB) continue;
+        match[m++] = w;
+        share += g_SigRollCopies[w];
+        n = g_SigStandIn[w].n;
+    }
+    if (m == 0) return;   // a unique that is no stand-in: the game's own
+    g_SigHitStandIn = match[0];
+    g_SigHitShare = share;
+    g_SigHitCoin = n + share;
+    int draw = std::uniform_int_distribution<int>(0, n + share - 1)(TyRng());
+    if (draw >= share) return;   // the game's own stand-in
+    int which = match[0];
+    for (int i = 0; i < m; ++i) {
+        if (draw < g_SigRollCopies[match[i]]) { which = match[i]; break; }
+        draw -= g_SigRollCopies[match[i]];
+    }
+    g_SigHitItem = which;
+    InterlockedIncrement(&g_SigOurHits);
+#ifndef FORGEPACT_RELEASE
+    if (g_SigReplaceMode) g_SigHitReplace = true;   // the game places the stand-in; HookAngelicChance swaps it
+#endif
+}
+// CreateItemNew's entry, from Hook_CreateItemNew's pre-call slot beside GemsBeforeCreate: the
+// rewrite point (static reading, Session 5).  By now LootGroundCreate has stored its own `a` into
+// the record and handed CreateItemNew an item instance whose itemDefinitionStruct is that same
+// record and whose itemType is the picked entry's type; CreateItemNew reads a, b, c, j from it
+// and stores none of them, so what is written here is what the item is built from.  Acts once
+// per hit - the first outermost call while the roll is in progress and a hit was seen - and on
+// ours (attributed by SignatureAttributeHit) rewrites the record; a refusal latches the item off.
+// The call is direct, so only a detoured CreateItemNew hook reaches this; the installer counts
+// that route into the gate (InstallSignatureAngelicHooks).
+static void SignatureBeforeCreate(int argc, RValue** A)
+{
+    if (g_SigRollDepth <= 0 || !g_SigHitSeen || g_SigHitAtPoint) return;
+    g_SigHitAtPoint = true;
+    RValue record;
+    std::string missing;
+    try {
+        if (argc < 1 || !A || !A[0]) missing = "CreateItemNew had no item argument";
+        else record = g_Yytk->CallBuiltin("variable_struct_get", { *A[0], RValue("itemDefinitionStruct") });
+    } catch (...) { missing = "the item's itemDefinitionStruct could not be read"; }
+    const int which = g_SigHitItem;
+#ifndef FORGEPACT_RELEASE
+    if (g_SigShowLeft > 0) { --g_SigShowLeft; g_SigHitShow = true; }
+    if (g_SigHitShow && (which < 0 || g_SigHitReplace))
+        Out("angelic hit record: vanilla " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
+    if (g_SigHitReplace) return;
+#endif
+    if (which < 0) return;   // the game's own hit: its record is never touched
+#ifndef FORGEPACT_RELEASE
+    if (g_SigHitShow) Out("angelic hit record: before " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
+#endif
+    if (missing.empty()) {
+        g_SigHitRewritten = SignatureRewriteParams(record, kSignatureItems[which], g_SigHitWhy);
+    } else {
+        g_SigHitWhy = missing;
+        g_SigHitRewritten = false;
+    }
+    if (g_SigHitRewritten) ++g_SigPending[which];
+    else SignatureRefuse(which, missing.empty() ? SigJson(record) : "<" + missing + ">");
+#ifndef FORGEPACT_RELEASE
+    if (g_SigHitShow) Out("angelic hit record: after " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
+#endif
+}
+// From the Custom Forge hook (TryApplyCustomForge on CreateItemNew's own return): an item that
+// matches a mod item's selector was built.  It counts as built by the game (`built=`) only while
+// that item's rewritten record is pending, i.e. inside the roll that rewrote it.
+static void SignatureNoteBuilt(const std::map<std::string, double>& selector)
+{
+    auto at = [&](const char* key) { const auto it = selector.find(key); return it == selector.end() ? -1.0 : it->second; };
+    for (int w = 0; w < 2; ++w) {
+        const SignatureItem& item = kSignatureItems[w];
+        if (g_SigPending[w] <= 0 || at("t") != (double)item.t || at("a") != item.a || at("b") != item.b) continue;
+        --g_SigPending[w];
+        InterlockedIncrement(&g_SigBuilt);
+        InterlockedIncrement(w == 0 ? &g_SigBuiltCrown : &g_SigBuiltBelt);
+    }
+}
+#ifndef FORGEPACT_RELEASE
+// Research build, from the same hook's final pass: typing's independent control.  The first item
+// built after a hit that was not rewritten is the game's own pick, so its itemType should be the
+// type the GetUniqueRepoStruct record gave the hit: typeAgree= / typeDisagree= (typed hits only),
+// and builtType= on the hit line either way.  On a hit `angelicprobe hit show` marked, the same
+// first built item's definition is printed whole: `angelic hit built: itemType=<t> definition=<json>`.
+static void SignatureNoteBuiltType(const RValue& item)
+{
+    if (g_SigRollDepth <= 0 || !g_SigHitSeen || g_SigHitTypeNoted) return;
+    double t = 0.0;
+    if (!TryStructNumber(item, "itemType", t)) return;
+    g_SigHitTypeNoted = true;
+    g_SigHitBuiltType = t;
+    if (g_SigHitShow) {
+        std::string definition = "<not readable>";
+        try { definition = SigJson(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") })); } catch (...) {}
+        Out("angelic hit built: itemType=" + (std::isfinite(t) && std::fabs(t) < 1e9 ? std::to_string((long long)t) : std::string("?"))
+            + " definition=" + definition);
+    }
+    if (!g_SigHitTyped || g_SigHitRewritten) return;
+    InterlockedIncrement(t == g_SigHitType ? &g_SigTypeAgree : &g_SigTypeDisagree);
+}
+#endif
+// Before each original call of the game's roll: no hit seen, nothing typed, nothing attributed,
+// nothing pending, and no GetUniqueRepoStruct read recorded yet.
+static void SignatureHitReset()
+{
+    g_SigHitSeen = false;
+    g_SigHitItem = -1; g_SigHitCoin = 0; g_SigHitShare = 0; g_SigHitStandIn = -1;
+    g_SigHitRewritten = false; g_SigHitAtPoint = false; g_SigHitWhy.clear();
+    g_SigPending[0] = g_SigPending[1] = 0;
+    g_SigLastSub = -1.0; g_SigLastB = -1.0;
+    g_SigRepoSeen = false; g_SigRepoType = g_SigRepoSub = g_SigRepoB = -1.0;
+    g_SigHitTyped = false; g_SigHitType = -1.0;
+#ifndef FORGEPACT_RELEASE
+    g_SigHitReplace = false; g_SigHitShow = false;
+    g_SigHitBuiltType = -1.0; g_SigHitTypeNoted = false;
+#endif
+}
+#ifndef FORGEPACT_RELEASE
+// Research build: Loot_Ground_obj by its SDK name, for `lootDelta=` and the replace mode.
+static double SigLootIndex()
+{
+    static double idx = -1.0;
+    if (idx < 0.0) {
+        try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble(); }
+        catch (...) { idx = -1.0; }
+    }
+    return idx;
+}
+static int SigLootCount()
+{
+    const double idx = SigLootIndex();
+    if (idx < 0.0) return -1;
+    try { return (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { return -1; }
+}
+static double SigInstanceId(const RValue& handle)
+{
+    try { return g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }).ToDouble(); } catch (...) { return -1.0; }
+}
+// Before each original call: how many ground items there are (`lootDelta=`) and, in the replace
+// mode with entries pushed, which ones - the new one after our hit is the stand-in the roll placed.
+static void SigResearchBeforeCall()
+{
+    g_SigLootBefore = SigLootCount();
+    g_SigLootIds.clear();
+    if (!g_SigReplaceMode || g_SigRollPushed <= 0 || g_SigLootBefore <= 0) return;
+    const double idx = SigLootIndex();
+    for (int i = 0; i < g_SigLootBefore; ++i) {
+        try { g_SigLootIds.push_back(SigInstanceId(g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }))); } catch (...) {}
+    }
+}
+// The replace mode's swap (the measured fallback, research build only): destroy the one
+// Loot_Ground_obj instance the roll created - present now, absent before the call - and spawn
+// the mod item at the roll's x, y instead.
+static std::string SigReplaceStandIn(int which, double x, double y, CInstance* S)
+{
+    const double idx = SigLootIndex();
+    const int now = SigLootCount();
+    std::vector<RValue> fresh;
+    for (int i = 0; i < now; ++i) {
+        RValue h;
+        try { h = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)i) }); } catch (...) { continue; }
+        const double id = SigInstanceId(h);
+        if (std::find(g_SigLootIds.begin(), g_SigLootIds.end(), id) == g_SigLootIds.end()) fresh.push_back(h);
+    }
+    if (fresh.size() != 1) return "not replaced (" + std::to_string(fresh.size()) + " new ground items, expected 1)";
+    try { g_Yytk->CallBuiltin("instance_destroy", { fresh[0] }); } catch (...) { return "not replaced (instance_destroy threw)"; }
+    InterlockedIncrement(&g_SigRemoved);
+    if (!SpawnSignatureItem(which, x, y, S)) return "removed stand-in, spawning FAILED";
+    return std::string("removed stand-in, spawned ") + kSignatureItems[which].name;
+}
+#endif
+// After the game's roll returned with a hit (HookAngelicChance): one `angelic hit:` line naming
+// the typed entry (`picked <type>/<sub>/<b>`, or `picked untyped <sub>/<b>`) and saying where it
+// went - vanilla, or our item, the odds, and whether the Custom Forge hook saw the game build it.
+static void SignatureAfterHit(CInstance* S, double x, double y)
+{
+    auto whole = [](double v) { return std::isfinite(v) && std::fabs(v) < 1e9 ? std::to_string((long long)v) : std::string("?"); };
+    const std::string picked = g_SigHitTyped ? whole(g_SigHitType) + "/" + whole(g_SigLastSub) + "/" + whole(g_SigLastB)
+                                             : "untyped " + whole(g_SigLastSub) + "/" + whole(g_SigLastB);
+    std::string line = "angelic hit: picked " + picked
+        + " at " + std::to_string((int)x) + "," + std::to_string((int)y)
+        + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off");
+    std::string outcome = "vanilla";
+    const int which = g_SigHitItem;
+    const std::string odds = std::to_string(g_SigHitShare) + " in " + std::to_string(g_SigHitCoin);
+    if (!g_SigHitTyped) {
+        outcome += " (untyped: no definition read inside the roll named this sub/b, never ours)";
+    } else if (which < 0) {
+        if (g_SigHitStandIn >= 0)
+            outcome += " (stand-in " + g_SigStandIn[g_SigHitStandIn].name + ", ours " + odds + ", not this time)";
+    } else {
+        const std::string who = std::string(kSignatureItems[which].name) + " (stand-in " + g_SigStandIn[which].name
+            + ", " + odds + ")";
+        bool replaced = false;
+#ifndef FORGEPACT_RELEASE
+        replaced = g_SigHitReplace;
+#endif
+        // Ours, but no CreateItemNew call reached the rewrite point during the roll: nothing was
+        // written, so this is a refusal too, and it latches the item off like one.
+        if (!replaced && !g_SigHitAtPoint) {
+            g_SigHitWhy = "CreateItemNew did not run for it during the roll";
+            SignatureRefuse(which, "<no record seen>");
+        }
+        if (!g_SigHitRewritten) outcome = who + " refused (" + g_SigHitWhy + "), the game placed its own stand-in";
+        else if (g_SigPending[which] == 0) outcome = who + " built by the game";
+        else outcome = who + " handed to the game, not seen built during the roll";
+#ifndef FORGEPACT_RELEASE
+        if (g_SigHitReplace) outcome = who + " " + SigReplaceStandIn(which, x, y, S);
+#endif
+    }
+#ifndef FORGEPACT_RELEASE
+    line += " lootDelta=" + (g_SigLootBefore >= 0 ? std::to_string(SigLootCount() - g_SigLootBefore) : std::string("?"));
+    line += " builtType=" + (g_SigHitTypeNoted ? whole(g_SigHitBuiltType) : std::string("?"));
+#endif
+    g_SigPending[0] = g_SigPending[1] = 0;
+    (void)S;
+    Out(line + " -> " + outcome);
+}
 static void SigDropStatus()
 {
     const std::string force = g_SigDropForce < 0 ? std::string("off") : (g_SigDropForce == 0 ? std::string("crown") : std::string("belt"));
     Out("sigdrop: force " + force + " | rolls=" + std::to_string(g_SigDropRolls) + " drops=" + std::to_string(g_SigDropHits)
-        + " fails=" + std::to_string(g_SigDropFails) + " | the normal rate follows angelicdrop");
+        + " fails=" + std::to_string(g_SigDropFails)
+        + " | game roll: gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
+        + " injected=" + std::to_string(g_SigInjected) + " ourHits=" + std::to_string(g_SigOurHits)
+        + " refused=" + std::to_string(g_SigRefusals)
+        + " untyped=" + std::to_string(g_SigUntyped)
+        + " built=" + std::to_string(g_SigBuilt) + " crown=" + std::to_string(g_SigBuiltCrown) + " belt=" + std::to_string(g_SigBuiltBelt)
+        + " anomalies=" + std::to_string(g_SigAnomalies)
+        + " list=" + SignatureListText()
+        + " gate=tyrant:" + (SignatureSwitchOn(0) ? "on" : "off") + ",headhunter:" + (SignatureSwitchOn(1) ? "on" : "off")
+        + " cdpCalls=" + std::to_string(g_SigCdpCalls) + " detect=" + g_SigDetectRoute);
+}
+// CreateDefaultParams, installed by name from InstallSignatureAngelicHooks: HookOneScript's first
+// install of it carries the inline detour, which sees the roll's direct call.  Always calls
+// through; marks a hit only while HookAngelicChance holds the roll-in-progress depth, types it
+// from the latest GetUniqueRepoStruct read when that read's sub and b are this call's own (else
+// the hit is untyped and counted), and only for a typed hit in a roll that carries injected
+// entries attributes it.  It no longer rewrites what returned: that struct has no `a`, and the
+// record is rewritten where the item is built from it (SignatureBeforeCreate, CreateItemNew).
+static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    InterlockedIncrement(&g_SigCdpCalls);   // before the roll check: every call that reaches the hook
+    if (g_SigRollDepth > 0) {
+        g_SigHitSeen = true;
+        bool sub = false, b = false;
+        try {
+            double v = 0.0;
+            if (argc > 0 && A && A[0] && SigNumber(*A[0], v)) { g_SigLastSub = v; sub = true; }
+            if (argc > 1 && A && A[1] && SigNumber(*A[1], v)) { g_SigLastB = v; b = true; }
+        } catch (...) {}
+        g_SigHitTyped = sub && b && g_SigRepoSeen && g_SigRepoSub == g_SigLastSub && g_SigRepoB == g_SigLastB;
+        g_SigHitType = g_SigHitTyped ? g_SigRepoType : -1.0;
+        if (!g_SigHitTyped) InterlockedIncrement(&g_SigUntyped);
+#ifndef FORGEPACT_RELEASE
+        // The reach counter: the pair alone, pushed or not, typed or not.
+        for (int w = 0; w < 2; ++w) {
+            if (!g_SigStandIn[w].ok || !sub || !b || (double)g_SigStandIn[w].sub != g_SigLastSub || (double)g_SigStandIn[w].b != g_SigLastB) continue;
+            InterlockedIncrement(&g_SigStandinPicks);
+            break;
+        }
+#endif
+    }
+    RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
+    if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0) {
+        try { SignatureAttributeHit(); } catch (...) {}
+    }
+    return r;
+}
+// GetUniqueRepoStruct, installed by name from InstallSignatureAngelicHooks beside the other two
+// (HookOneScript's first install carries the inline detour, which sees the roll's direct calls).
+// Always calls through; only while HookAngelicChance holds the roll-in-progress depth it records
+// the (type, sub, b) it was asked for - three numbers, else the record is cleared - so the hit
+// that follows can be typed (Hook_CreateDefaultParams).  Outside a roll it does nothing else.
+static RValue& Hook_GetUniqueRepoStruct(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_SigRollDepth > 0) {
+        try {
+            double t = 0.0, s = 0.0, b = 0.0;
+            g_SigRepoSeen = argc > 2 && A && A[0] && A[1] && A[2] && SigNumber(*A[0], t) && SigNumber(*A[1], s) && SigNumber(*A[2], b);
+            if (g_SigRepoSeen) { g_SigRepoType = t; g_SigRepoSub = s; g_SigRepoB = b; }
+        } catch (...) { g_SigRepoSeen = false; }
+    }
+    return g_Orig_GetUniqueRepoStruct ? g_Orig_GetUniqueRepoStruct(S, O, R, argc, A) : R;
 }
 
 // Resolve through the runner rather than YYTK 4's version-dependent room layout.
@@ -17897,7 +19215,8 @@ static void HeadhunterAutoArm()
     for (const CustomForgeEntry& e : g_CustomForgeEntries) if (!e.builtin && e.mechanic == "headhunter") { wanted = true; break; }
     if (!wanted) return;
     EnableHeadhunter();
-    Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)");
+    Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "armed" : "hook failed") + " (" + std::to_string(g_HhDurationSec) + " s, " + std::to_string(g_HhMap.size()) + " mapped affixes)"
+        + "; drops from the game's Angelic roll " + (SignatureSwitchOn(1) ? std::string("on") : g_HhForced.load() ? "off (" + SignatureOffReason(1) + ")" : std::string("off (no 'force' received yet - the panel sends it at launch when the switch is on)")));
 }
 
 static void HeadhunterStatus(bool includeMap = true)
@@ -17906,6 +19225,7 @@ static void HeadhunterStatus(bool includeMap = true)
     if (includeMap) for (const auto& kv : g_HhMap) m += kv.first + "->" + std::to_string((long long)kv.second.id) + " ";
     Out(std::string("headhunter: ") + (g_HhEnabled.load() ? "ON" : "off") + (g_HhForced.load() ? " (forced)" : "")
         + " hook=" + (g_HhHookInstalled ? "yes" : "no") + " dur=" + std::to_string(g_HhDurationSec) + "s"
+        + " angelicDrops=" + (g_HhForced.load() ? (SignatureSwitchOn(1) ? "on" : SignatureRefused(1) ? "refused" : g_SigDetectNative ? "not-resolved" : "no-detection") : "off")
         + " kills=" + std::to_string(g_HhKills) + " rare=" + std::to_string(g_HhRareKills)
         + " rarityFlag=" + std::to_string(g_HhRarityKills) + " withAffixData=" + std::to_string(g_HhAffixKills)
         + " buffs=" + std::to_string(g_HhBuffsApplied) + " skippedNoBelt=" + std::to_string(g_HhSkippedNotEquipped)
@@ -17955,7 +19275,8 @@ static void HeadhunterActivityTick()
 // CreateItemNew is the one constructor whose return is a finished item, so it
 // alone is the final pass: the Custom Forge dressing applies there, and Item
 // Truth records the outermost call (before the dressing when a forge entry can
-// match, and after it - what the game will show).
+// match, and after it - what the game will show). Its entry is also #74's rewrite point
+// (SignatureBeforeCreate): the record the item is about to be built from.
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -17965,7 +19286,7 @@ static void HeadhunterActivityTick()
         HH_CREATE_TRACE(NAME); \
         constexpr bool _final = std::string_view(#NAME) == std::string_view("CreateItemNew"); \
         RValue* _resp = &R; \
-        if (_final && g_TruthDepth == 0) GemsBeforeCreate(argc, A); \
+        if (_final && g_TruthDepth == 0) { GemsBeforeCreate(argc, A); SignatureBeforeCreate(argc, A); } \
         { \
             TruthDepthGuard _depth(_final); \
             if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
@@ -19962,7 +21283,7 @@ static void InstallHook()
     HeadhunterAutoArm(); SetupLap("HeadhunterAutoArm");
     TyrantAutoArm(); SetupLap("TyrantAutoArm");
     BeaconAutoArm(); SetupLap("BeaconAutoArm");
-    if (g_AngelicDropOneIn > 0.0) { InstallHeadhunterHook(); SetupLap("InstallHeadhunterHook"); }   // kill hook carries the angelic drops (Headhunter/Tyrant's Crown included, #63)
+    if (g_AngelicDropOneIn > 0.0) { InstallHeadhunterHook(); SetupLap("InstallHeadhunterHook"); }   // kill hook carries the angelic drops (real uniques only since #74)
 
 #ifdef FORGEPACT_RELEASE
     // Yayin derlemesi: arastirma kancasi ve teshis gunlugu yok.
@@ -20752,23 +22073,540 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
     // counted as inside it. The guard lowers it again on every way out.
     ApRollNoteChance(S, argc, A);
     ApRollChanceDepthScope apChanceDepth;
+    // Research lever `angelicprobe hit chance <n>`: the roll's chance argument, only when it
+    // arrives as a real, so the game's own die is below it and a hit can be seen in a session.
+    if (g_AngHitChance >= 0.0 && argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) *A[2] = RValue(g_AngHitChance);
 #endif
+    // #74: the roll is in progress from here to the end of the function, extra rolls included,
+    // so a CreateDefaultParams call inside any of the original calls below is a hit.  The guard
+    // lowers the depth on every way out, a throw from the game's roll included.
+    SignatureRollScope sigRoll;
+    // #74: while a panel switch is on, the game's own Angelic list holds one stand-in entry per
+    // enabled item for every original call below, extra rolls included; the guard takes them off
+    // again on every way out.  With both switches off it does nothing at all.
+    SignatureInjectGuard sigInject;
+    // After each original call: one `angelic hit:` line per hit, saying whether it fell to a
+    // mod item the game built.  At the roll's x, y (arguments 0 and 1, when real), else the
+    // monster's own.  Never lets a failure reach the game's roll.
+    auto afterOriginal = [&]() {
+        if (!g_SigHitSeen) return;
+        g_SigHitSeen = false;
+        InterlockedIncrement(&g_SigGameHits);
+        try {
+            double x = 0.0, y = 0.0;
+            if (argc > 1 && A && A[0] && A[1] && A[0]->m_Kind == VALUE_REAL && A[1]->m_Kind == VALUE_REAL) {
+                x = A[0]->ToDouble(); y = A[1]->ToDouble();
+            } else if (S) {
+                RValue self = S->ToRValue();
+                x = HhReadNumber(self, "x", 0.0); y = HhReadNumber(self, "y", 0.0);
+            }
+            SignatureAfterHit(S, x, y);
+        } catch (...) {}
+    };
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
     // drops, 2026-09-05).  Since 1.3.13 the multiplier is a number of ROLLS: every extra roll
     // is the game's own function with the game's own chance, so x2 really is two 1-in-N dice.
+    InterlockedIncrement(&g_SigGameRolls);
+    SignatureHitReset();
+#ifndef FORGEPACT_RELEASE
+    SigResearchBeforeCall();   // lootDelta=, and the replace mode's view of the ground
+#endif
     RValue& r = g_OrigAngChance ? g_OrigAngChance(S, O, R, argc, A) : R;
 #ifndef FORGEPACT_RELEASE
     ApRollNoteChanceReturn(r);   // the game's own roll's result: kind, and value if numeric
 #endif
+    afterOriginal();
     const int extra = (int)std::lround(g_AngelicRateMult) - 1;   // rate x1 = the game's roll only
     if (!g_InAngelicExtra && extra > 0 && g_OrigAngChance) {
         g_InAngelicExtra = true;
-        for (int i = 0; i < extra && i < 9; ++i) { RValue t; try { g_OrigAngChance(S, O, t, argc, A); } catch (...) {} }
+        for (int i = 0; i < extra && i < 9; ++i) {
+            RValue t;
+            InterlockedIncrement(&g_SigGameRolls);
+            SignatureHitReset();
+#ifndef FORGEPACT_RELEASE
+            SigResearchBeforeCall();
+#endif
+            try { g_OrigAngChance(S, O, t, argc, A); } catch (...) {}
+            afterOriginal();
+        }
         g_InAngelicExtra = false;
         InterlockedIncrement(&g_AngRateHits);
     }
     return r;
 }
+
+// Installs what detects and types a game Angelic hit (#74): Hook_CreateDefaultParams by name (a
+// first install, so HookOneScript adds the inline detour that sees the roll's direct call),
+// HookAngelicChance on DropItemAngelicChance unless `raredrop angelic` / `angelicwatch` already
+// hold it, Hook_GetUniqueRepoStruct by its SDK name (the definition reads a hit is typed from),
+// and Hook_CreateItemNew by its SDK name unless the Custom Forge or Item Truth already hold it
+// (the same hook either way; its entry is the rewrite point, SignatureBeforeCreate).  Called
+// when Headhunter's or Tyrant's Crown's panel switch turns on (the `headhunter
+// force` / `tyrant force` paths) and by the research build's hit levers - never at startup and
+// never by the auto-arm from a forged item (owner, 2026-10-02: forging turns the mechanic on, not
+// the drop), so with both switches off the game's roll is not touched.  Idempotent; switching off
+// installs nothing and the hooks pass through.
+//
+// A hit is visible, typable and rewritable only when ALL FOUR hooks are inline detours: the game
+// reaches the roll, the roll reaches CreateDefaultParams and GetUniqueRepoStruct, and
+// LootGroundCreate reaches CreateItemNew, by direct calls, which a table-only hook never sees.
+// Each
+// hook's route is read from HookOneScript's own `nativeOut` on a first install; a hook installed
+// earlier (by this function, `raredrop angelic`, `angelicwatch`, the Custom Forge, Item Truth or
+// the research build's item-inspect hooks) is detoured exactly when its saved original is not the
+// game's own code, since the table-only fallback saves the table entry.
+// The outcome goes into g_SigDetectNative, which the gate reads, and one line per switch-on names
+// it - so a switch never reports these drops on while nothing can see a hit.
+static void InstallSignatureAngelicHooks()
+{
+    auto savedRoute = [](PFUNC_YYGMLScript orig) {
+        return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig) ? "TABLE-ONLY" : "detoured";
+    };
+    const char* cdpRoute = "detoured";
+    const char* rollRoute = "detoured";
+    bool native = false;
+    if (!g_Orig_CreateDefaultParams) {
+        if (!HookOneScript("CreateDefaultParams", "fp_sig_cdparams", (PVOID)Hook_CreateDefaultParams, &g_Orig_CreateDefaultParams, &native))
+            cdpRoute = "not found";
+        else if (!native)
+            cdpRoute = "TABLE-ONLY";
+    } else {
+        cdpRoute = savedRoute(g_Orig_CreateDefaultParams);
+    }
+    native = false;
+    if (!g_OrigAngChance) {
+        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemAngelicChance), "fp_angch",
+                           (PVOID)HookAngelicChance, &g_OrigAngChance, &native))
+            rollRoute = "not found";
+        else if (!native)
+            rollRoute = "TABLE-ONLY";
+    } else {
+        rollRoute = savedRoute(g_OrigAngChance);
+    }
+    // The typing hook (#74 replan 1), by its SDK name, beside the other two.  In the research
+    // build the probe's unique-repo row may hold a detour on the same script already; this hook
+    // then refuses rather than stack a second one (and that row refuses in turn when this hook
+    // came first), so the gate stays off and says why.
+    const char* repoRoute = "detoured";
+    native = false;
+    bool probeHolds = false;
+#ifndef FORGEPACT_RELEASE
+    probeHolds = !g_Orig_GetUniqueRepoStruct && ApRollHoldsUniqueRepo();
+    if (probeHolds) repoRoute = "held-by-angelicprobe";
+#endif
+    if (!probeHolds && !g_Orig_GetUniqueRepoStruct) {
+        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct), "fp_sig_urepo",
+                           (PVOID)Hook_GetUniqueRepoStruct, &g_Orig_GetUniqueRepoStruct, &native))
+            repoRoute = "not found";
+        else if (!native)
+            repoRoute = "TABLE-ONLY";
+    } else if (!probeHolds) {
+        repoRoute = savedRoute(g_Orig_GetUniqueRepoStruct);
+    }
+    // The rewrite point (#74, Session 5): CreateItemNew's entry, by its SDK name beside the other
+    // three.  LootGroundCreate calls it directly, so only a detour reaches the record there.
+    const char* itemRoute = "detoured";
+    native = false;
+    if (!g_Orig_CreateItemNew) {
+        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_sig_citemnew",
+                           (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew, &native))
+            itemRoute = "not found";
+        else if (!native)
+            itemRoute = "TABLE-ONLY";
+    } else {
+        itemRoute = savedRoute(g_Orig_CreateItemNew);
+    }
+    const std::string detoured = "detoured";
+    g_SigDetectNative = detoured == cdpRoute && detoured == rollRoute && detoured == repoRoute && detoured == itemRoute;
+    g_SigDetectRoute = detoured != cdpRoute ? std::string(cdpRoute)
+        : detoured != rollRoute ? std::string("DropItemAngelicChance:") + rollRoute
+        : detoured != repoRoute ? std::string("GetUniqueRepoStruct:") + repoRoute
+        : detoured != itemRoute ? std::string("CreateItemNew:") + itemRoute
+        : detoured;
+    Out(std::string("signature drops: game-roll detection ") + (g_SigDetectNative ? "ON" : "NOT installed")
+        + " (CreateDefaultParams " + cdpRoute + ", DropItemAngelicChance " + rollRoute + ", GetUniqueRepoStruct " + repoRoute
+        + ", CreateItemNew " + itemRoute + ")"
+        + (g_SigDetectNative ? "" : " - Headhunter / Tyrant's Crown will not drop from the game's Angelic roll"));
+    // The list and the stand-ins, checked in full, so the switch-on names what the drop will use
+    // (the crown's default stand-in included) or the one reason it stays off.  A list that is not
+    // there yet (no game loaded) is asked for again on every roll and logged when it resolves.
+    SignatureResolveStandIns();
+    RValue list;
+    SignatureListResolve(list, true, true);
+    Out("signature drops: " + SignatureListLine());
+}
+
+#ifndef FORGEPACT_RELEASE
+// #74 research levers, `angelicprobe hit chance|rate|show|share|off|status` (research build only;
+// a subcommand of the probe verb, so RunCommand gains no branch).  A natural game Angelic hit
+// is about one in several thousand rolls (chance 1195-1526 against rates in the millions), so
+// one live session needs a way to make one:
+//   chance <n>  every roll's chance argument becomes n before the game's call (only when it
+//               arrives as a real) - checked live as `force-hit`, not assumed: a 2026-09-05
+//               note says scaling the chance in place broke the game's check, never understood;
+//   rate <n>    every validated pool definition's droprate.base becomes n (remembered; the
+//               plausible reading of the rate the die uses, unmeasured);
+//   show <k>    the next k hits (0..50, default 3) print the record at the rewrite point
+//               (`angelic hit record: vanilla|before|after <json>`) and the built item's
+//               definition (`angelic hit built: itemType=<t> definition=<json>`) - Live 3's
+//               `record` check; it changes nothing in the game;
+//   share       no longer a lever: with list injection the game's own picker gives the mod
+//               items one entry's share, so it says so and changes nothing;
+//   off         every remembered base restored, every override cleared;
+//   status      one line naming each lever (show=<k> remaining) and whether detection is installed.
+// Any lever turning on installs the detection, so gameHits= counts with both switches off.
+struct AngelicHitBase { RValue droprate; RValue base; };
+static std::vector<AngelicHitBase> g_AngHitBases;   // remembered by `rate`, restored by `off`
+static double g_AngHitRate = -1.0;                  // < 0 off
+
+static std::string AngelicHitNumber(double v)
+{
+    char b[48];
+    sprintf_s(b, "%g", v);   // bounded, unlike %f (Known Limitations item 10)
+    return b;
+}
+
+static void AngelicHitStatus()
+{
+    const bool cdp = g_Orig_CreateDefaultParams != nullptr, roll = g_OrigAngChance != nullptr, repo = g_Orig_GetUniqueRepoStruct != nullptr;
+    const bool item = g_Orig_CreateItemNew != nullptr;
+    Out("angelicprobe hit: chance " + (g_AngHitChance >= 0.0 ? AngelicHitNumber(g_AngHitChance) : std::string("off"))
+        + " | rate " + (g_AngHitRate >= 0.0 ? AngelicHitNumber(g_AngHitRate) + " (" + std::to_string(g_AngHitBases.size()) + " bases held)" : std::string("off"))
+        + " | show=" + std::to_string(g_SigShowLeft)
+        + " | detection " + (g_SigDetectNative ? "installed" : (cdp && roll && repo && item ? "not installed (not all four detoured)" : "not installed"))
+        + " (CreateDefaultParams " + (cdp ? "hooked" : "not hooked") + ", DropItemAngelicChance " + (roll ? "hooked" : "not hooked")
+        + ", GetUniqueRepoStruct " + (repo ? "hooked" : "not hooked") + ", CreateItemNew " + (item ? "hooked" : "not hooked") + ")"
+        + " | gameRolls=" + std::to_string(g_SigGameRolls) + " gameHits=" + std::to_string(g_SigGameHits)
+        + " cdpCalls=" + std::to_string(g_SigCdpCalls) + " detect=" + g_SigDetectRoute);
+}
+
+// Puts every remembered droprate.base back; returns how many were restored.
+static size_t AngelicHitRestoreBases(size_t& failed)
+{
+    size_t restored = 0;
+    failed = 0;
+    for (const AngelicHitBase& h : g_AngHitBases) {
+        try { g_Yytk->CallBuiltin("variable_struct_set", { h.droprate, RValue("base"), h.base }); ++restored; }
+        catch (...) { ++failed; }
+    }
+    g_AngHitBases.clear();
+    g_AngHitRate = -1.0;
+    return restored;
+}
+
+static void AngelicHitSetRate(double n)
+{
+    size_t failed = 0;
+    if (!g_AngHitBases.empty()) AngelicHitRestoreBases(failed);   // remember the game's own values, not a lever's
+    BuildAngelicPool(false);
+    size_t set = 0, noRate = 0, threw = 0;
+    std::string first;
+    for (const AngelicCandidate& c : g_AngelicPool) {
+        try {
+            RValue def = g_Yytk->CallGameScript("gml_Script_GetUniqueRepoStruct",
+                                                { RValue((double)c.type), RValue((double)c.sub), RValue((double)c.b) });
+            RValue rate = def.m_Kind == VALUE_OBJECT ? g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("droprate") }) : RValue();
+            if (rate.m_Kind != VALUE_OBJECT) { ++noRate; continue; }
+            RValue base = g_Yytk->CallBuiltin("variable_struct_get", { rate, RValue("base") });
+            g_AngHitBases.push_back({ rate, base });
+            g_Yytk->CallBuiltin("variable_struct_set", { rate, RValue("base"), RValue(n) });
+            if (first.empty()) first = c.name + " base was " + Describe(base);
+            ++set;
+        } catch (...) { ++threw; }
+    }
+    g_AngHitRate = set ? n : -1.0;
+    Out("angelicprobe hit rate: droprate.base -> " + AngelicHitNumber(n) + " on " + std::to_string(set) + " of "
+        + std::to_string(g_AngelicPool.size()) + " pool definitions (" + std::to_string(noRate) + " without a droprate struct, "
+        + std::to_string(threw) + " threw)" + (first.empty() ? std::string() : "; first: " + first.substr(0, 80)));
+}
+
+static void AngelicHitCommand(const std::string& args)
+{
+    const std::string a = Lower(TrimCopy(args));
+    const size_t space = a.find(' ');
+    const std::string lever = a.substr(0, space);
+    const std::string value = space == std::string::npos ? std::string() : TrimCopy(a.substr(space + 1));
+    double n = -1.0;
+    try { if (!value.empty()) n = std::stod(value); } catch (...) { n = -1.0; }
+    const bool number = std::isfinite(n) && n >= 0.0;
+    if (lever == "share") {
+        Out("angelicprobe hit share: a no-op since list injection (#74) - the game's own picker gives each mod item one entry's share; nothing changed");
+    } else if (lever == "show") {
+        int k = 3;   // the default: the first three hits
+        if (!value.empty()) {
+            try { size_t used = 0; k = std::stoi(value, &used); if (used != value.size()) k = -1; } catch (...) { k = -1; }
+        }
+        if (k < 0 || k > 50) {
+            Out("angelicprobe hit show: needs a whole number 0..50 - nothing changed");
+        } else {
+            g_SigShowLeft = k;
+            Out("angelicprobe hit show: the next " + std::to_string(k) + " hit(s) inside the roll print `angelic hit record:` at"
+                " CreateItemNew's entry and `angelic hit built:` on the forge hook's final pass (show=" + std::to_string(k) + ")");
+        }
+    } else if (lever == "chance" || lever == "rate") {
+        if (!number) { Out("angelicprobe hit " + lever + ": needs a number >= 0 - nothing changed"); AngelicHitStatus(); return; }
+        InstallSignatureAngelicHooks();
+        if (lever == "chance") {
+            g_AngHitChance = n;
+            Out("angelicprobe hit chance: override on - every game roll's chance argument (when real) set to " + AngelicHitNumber(n));
+        } else {
+            AngelicHitSetRate(n);
+        }
+    } else if (lever == "off") {
+        size_t failed = 0;
+        const size_t held = g_AngHitBases.size();
+        const size_t restored = AngelicHitRestoreBases(failed);
+        g_AngHitChance = -1.0;
+        Out("angelicprobe hit off: chance off, " + std::to_string(restored) + " of " + std::to_string(held)
+            + " bases restored" + (failed ? " (" + std::to_string(failed) + " failed)" : std::string(" (every base restored)"))
+            + "; detection stays installed and passes through");
+    } else if (lever != "status" && !lever.empty()) {
+        Out("angelicprobe hit: chance <n> | rate <n> | show <k> | share (no-op) | off | status");
+    }
+    AngelicHitStatus();
+}
+
+// #74 list-injection research (research build only; the probe verb's `list` and `inject`
+// subcommands, so RunCommand gains no branch).
+//
+// Every array variable of the first Controller_obj instance shaped like the game's Angelic list
+// (an array whose element at the current index, g_SigListIndex, is a live ds_list of at least
+// kSigListMinSize [type, sub, b] entries; SignatureListShape), printed with its outer length, the
+// index, the sub-list's size, its first three entries and how many entries of it equal each
+// stand-in when `print`; returns lootListUnique when that is a candidate, else the candidate with
+// the largest sub-list (its size in bestLen), or "" - what `inject auto` names.  When printing it
+// also says how many names the instance read gave (`names=`, the positive control on that read:
+// 0 means the read failed, not that no list exists), one `rejected` line per array that failed
+// the shape (its outer length and the reason, as the gate words it), and the other variables
+// counted by kind.  The instance may come back VALUE_REF or VALUE_OBJECT and the numbers
+// VALUE_REAL, VALUE_INT32 or VALUE_INT64 (SigNumber); none of them makes the read empty.
+static std::string ApRollKindName(int kind);   // the probe's kind names, defined with its rows
+static std::string SigListScan(bool print, int* bestLen)
+{
+    SignatureResolveStandIns();
+    RValue instance;
+    std::string why, best;
+    int bestN = -1, candidates = 0, instances = 0;
+    const bool found = SignatureController(instance, why);
+    if (g_SigControllerIdx >= 0.0) {
+        try { instances = (int)g_Yytk->CallBuiltin("instance_number", { RValue(g_SigControllerIdx) }).ToDouble(); } catch (...) { instances = 0; }
+    }
+    RValue names;
+    int count = 0;
+    if (found) {
+        try {
+            names = g_Yytk->CallBuiltin("variable_instance_get_names", { instance });
+            count = names.m_Kind == VALUE_ARRAY ? (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble() : 0;
+        } catch (...) { count = 0; }
+    }
+    if (print) Out("angelicprobe list: Controller_obj instances=" + std::to_string(instances)
+        + (found ? " names=" + std::to_string(count) + " (first instance, kind " + ApRollKindName((int)instance.m_Kind) + ")"
+                 : " names=0 (" + why + ")"));
+    std::map<std::string, int> byKind;
+    if (found) {
+        for (int i = 0; i < count; ++i) {
+            std::string name;
+            RValue value;
+            try {
+                name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                value = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(name) });
+            } catch (...) { ++byKind["unreadable"]; continue; }
+            if (value.m_Kind != VALUE_ARRAY) { ++byKind[ApRollKindName((int)value.m_Kind)]; continue; }
+            int outer = -1, size = -1, counts[2] = { 0, 0 };
+            double id = -1.0;
+            RValue sub;
+            std::string shape;
+            try { outer = (int)g_Yytk->CallBuiltin("array_length", { value }).ToDouble(); } catch (...) { outer = -1; }
+            if (!SignatureListShape(value, g_SigListIndex, sub, id, size, counts, shape, kSigListMinSize)) {
+                if (print) Out("angelicprobe list: rejected " + name + " array_length=" + std::to_string(outer) + " why=" + shape);
+                continue;
+            }
+            ++candidates;
+            const bool named = name == "lootListUnique";
+            if (best != "lootListUnique" && (named || size > bestN)) { best = name; bestN = size; }
+            if (!print) continue;
+            std::string first;
+            for (int k = 0; k < 3 && k < size; ++k) {
+                double e[3] = { 0.0, 0.0, 0.0 };
+                SigEntry(sub, k, e);
+                first += "[" + AngelicHitNumber(e[0]) + "," + AngelicHitNumber(e[1]) + "," + AngelicHitNumber(e[2]) + "]";
+            }
+            std::string standIns;
+            for (int w = 1; w >= 0; --w)
+                standIns += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + g_SigStandIn[w].name
+                    + (g_SigStandIn[w].ok ? "(n=" + std::to_string(counts[w]) + ")" : std::string("(not validated)"));
+            Out("angelicprobe list: candidate " + name + " array_length=" + std::to_string(outer) + " at=" + std::to_string(g_SigListIndex)
+                + " ds_list_size=" + std::to_string(size) + " first=" + first + " standins=" + standIns);
+        }
+    }
+    if (print) {
+        std::string kinds;
+        for (const auto& kv : byKind) kinds += " " + kv.first + "=" + std::to_string(kv.second);
+        Out("angelicprobe list: other variables by kind:" + (kinds.empty() ? std::string(" none") : kinds));
+        Out("angelicprobe list: candidates=" + std::to_string(candidates) + " best="
+            + (best.empty() ? std::string("none") : best + "[" + std::to_string(g_SigListIndex) + "]:" + std::to_string(bestN)));
+    }
+    if (bestLen) *bestLen = bestN;
+    return best;
+}
+
+// `angelicprobe list dump [<var>]` (replan 2; Live 2's positive control on the layout): reads
+// Controller_obj.<var> (lootListUnique when no name is given) and prints its shape two levels
+// down - no injection and no shape rule.  The first line names the variable, its kind and its
+// array_length (or says it is not an array, and stops); then, per element up to 32, its kind,
+// whether it is a live ds_list and its size, how many of its entries are [type, sub, b] arrays,
+// its first three entries (a non-triple one by its kind) and how many entries of that element
+// equal each stand-in's whole triple; a ds_list is read up to 2000 entries.  The last line counts
+// the elements, the ds_lists and the lists whose every entry is a triple.  A throw ends it.
+static void SigListDump(const std::string& var)
+{
+    SignatureResolveStandIns();
+    const std::string name = var.empty() ? std::string("lootListUnique") : var;
+    const std::string head = "angelicprobe list dump: ";
+    RValue instance, outer;
+    std::string why;
+    if (!SignatureController(instance, why)) { Out(head + "Controller_obj." + name + " not read (" + why + ")"); return; }
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(name) }).ToBoolean()) {
+            Out(head + "Controller_obj has no variable " + name);
+            return;
+        }
+        outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(name) });
+    } catch (...) { Out(head + "EXCEPTION reading Controller_obj." + name); return; }
+    if (outer.m_Kind != VALUE_ARRAY) {
+        Out(head + "Controller_obj." + name + " kind=" + ApRollKindName((int)outer.m_Kind) + ", not an array");
+        return;
+    }
+    int len = 0, lists = 0, tripleLists = 0, i = 0;
+    try {
+        len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        Out(head + "Controller_obj." + name + " kind=array array_length=" + std::to_string(len));
+        for (i = 0; i < len && i < 32; ++i) {
+            const RValue e = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)i) });
+            const std::string line = head + "[" + std::to_string(i) + "] kind=" + ApRollKindName((int)e.m_Kind);
+            double id = -1.0;
+            std::string step;
+            if (!SigListHandle(e, id, step)) {   // the kind-free gate: ds_exists on the element as read
+                Out(line + " ds_list=no");
+                continue;
+            }
+            ++lists;
+            const int size = (int)g_Yytk->CallBuiltin("ds_list_size", { e }).ToDouble();
+            const int read = size < 2000 ? size : 2000;
+            int triples = 0, n[2] = { 0, 0 };
+            std::string first;
+            for (int k = 0; k < read; ++k) {
+                double t[3] = { 0.0, 0.0, 0.0 };
+                if (SigEntry(e, k, t)) {
+                    ++triples;
+                    for (int w = 0; w < 2; ++w) {
+                        const SignatureStandIn& s = g_SigStandIn[w];
+                        if (s.ok && t[0] == (double)kSignatureItems[w].t && t[1] == (double)s.sub && t[2] == (double)s.b) ++n[w];
+                    }
+                    if (k < 3) first += "[" + AngelicHitNumber(t[0]) + "," + AngelicHitNumber(t[1]) + "," + AngelicHitNumber(t[2]) + "]";
+                } else if (k < 3) {
+                    first += "entry" + std::to_string(k) + "="
+                        + ApRollKindName((int)g_Yytk->CallBuiltin("ds_list_find_value", { e, RValue((double)k) }).m_Kind);
+                }
+            }
+            if (read > 0 && triples == read) ++tripleLists;
+            std::string standIns;
+            for (int w = 1; w >= 0; --w)
+                standIns += std::string(w == 1 ? "" : ",") + kSignatureItems[w].name + ":" + g_SigStandIn[w].name
+                    + (g_SigStandIn[w].ok ? "(n=" + std::to_string(n[w]) + ")" : std::string("(not validated)"));
+            Out(line + " ds_list=yes:" + std::to_string(size) + " triples=" + std::to_string(triples) + "/" + std::to_string(size)
+                + " first=" + first + " standins=" + standIns);
+        }
+    } catch (...) { Out(head + "EXCEPTION at [" + std::to_string(i) + "]"); return; }
+    Out(head + name + " elements=" + std::to_string(len) + " ds_lists=" + std::to_string(lists)
+        + " triple-lists=" + std::to_string(tripleLists));
+}
+
+// Design step 7's line, the counters Live 1 reads: copies=, the list (`<name>[<index>]:<size>`),
+// each stand-in's n, then the pushes, our hits, the untyped hits, the reach and typing controls,
+// what was built and removed, and the anomalies.
+static void SigInjectStatus()
+{
+    Out(std::string("angelicprobe inject: mode=") + (g_SigReplaceMode ? "replace" : "inject")
+        + " copies=" + std::to_string(g_SigCopies)
+        + " list=" + (g_SigListOk ? SignatureListText() : std::string("none"))
+        + " standins=" + SignatureStandInsText(false)
+        + " injected=" + std::to_string(g_SigInjected) + " ourHits=" + std::to_string(g_SigOurHits)
+        + " untyped=" + std::to_string(g_SigUntyped)
+        + " standinPicks=" + std::to_string(g_SigStandinPicks) + " heldMiss=" + std::to_string(g_SigHeldMiss)
+        + " typeAgree=" + std::to_string(g_SigTypeAgree) + " typeDisagree=" + std::to_string(g_SigTypeDisagree)
+        + " built=" + std::to_string(g_SigBuilt) + " removed=" + std::to_string(g_SigRemoved)
+        + " anomalies=" + std::to_string(g_SigAnomalies));
+}
+
+// `angelicprobe inject auto | name <var> | at <k> | copies <k> | mode inject|replace | status`:
+// `auto` names the scan's best candidate (SigListScan); `name` sets the Controller_obj variable
+// the plugin resolves the list by (case kept) and refuses the value `auto`, so a slip can never
+// set the literal name "auto"; `at` sets the index of the element the list is (0..31, default
+// kAngelicListIndex, the player build's constant) and resolves again;
+// `copies` sets how many stand-in entries each enabled item pushes per
+// roll (1..400, default 1; the player build pushes exactly one); `mode` picks the shipped path
+// (inject, default) or the measured fallback (replace: the game places the stand-in, which is
+// removed and the item spawned in its place).
+static void SigInjectCommand(const std::string& args)
+{
+    const std::string a = TrimCopy(args);
+    const size_t space = a.find(' ');
+    const std::string lever = Lower(a.substr(0, space));
+    const std::string value = space == std::string::npos ? std::string() : TrimCopy(a.substr(space + 1));
+    if (lever == "name" && Lower(value) == "auto") {
+        Out("angelicprobe inject name: `auto` is not a variable name - the scan is spelled `angelicprobe inject auto`; nothing changed");
+    } else if (lever == "name" || lever == "auto") {
+        std::string name = value;
+        if (lever == "auto") name = SigListScan(false, nullptr);
+        if (name.empty()) {
+            Out("angelicprobe inject " + lever + (lever == "auto" ? ": no Controller_obj variable shaped like the list" : ": needs a variable name")
+                + " - nothing changed");
+        } else {
+            g_SigListName = name;
+            SignatureResolveStandIns();
+            RValue list;
+            SignatureListResolve(list, true, true);
+            Out("angelicprobe inject " + lever + ": " + SignatureListLine());
+        }
+    } else if (lever == "at") {
+        int k = -1;
+        try { size_t used = 0; k = std::stoi(value, &used); if (used != value.size()) k = -1; } catch (...) { k = -1; }
+        if (k < 0 || k > 31) {
+            Out("angelicprobe inject at: needs a whole number 0..31 - nothing changed");
+        } else {
+            g_SigListIndex = k;
+            SignatureResolveStandIns();
+            RValue list;
+            SignatureListResolve(list, true, true);
+            Out("angelicprobe inject at: " + SignatureListLine());
+        }
+    } else if (lever == "mode") {
+        const std::string m = Lower(value);
+        if (m == "inject" || m == "replace") {
+            g_SigReplaceMode = m == "replace";
+            Out("angelicprobe inject mode: " + m + (g_SigReplaceMode
+                ? " - on our hit the game places the stand-in, which is removed and the item spawned in its place"
+                : " - on our hit the game builds the item from the record rewritten at CreateItemNew's entry"));
+        } else {
+            Out("angelicprobe inject mode: inject | replace - nothing changed");
+        }
+    } else if (lever == "copies") {
+        int k = 0;
+        try { size_t used = 0; k = std::stoi(value, &used); if (used != value.size()) k = 0; } catch (...) { k = 0; }
+        if (k < 1 || k > 400) {
+            Out("angelicprobe inject copies: needs a whole number 1..400 - nothing changed");
+        } else {
+            g_SigCopies = k;
+            Out("angelicprobe inject copies: " + std::to_string(k) + " stand-in entr" + (k == 1 ? "y" : "ies")
+                + " per enabled item per roll (the player build pushes 1)");
+        }
+    } else if (lever != "status" && !lever.empty()) {
+        Out("angelicprobe inject: name <var> | auto | at <k> | copies <k> | mode inject|replace | status");
+    }
+    SigInjectStatus();
+}
+#endif
 
 #ifndef FORGEPACT_RELEASE
 // Research instrument for docs/angelic-roll-hook-research.md (issue #64):
@@ -20870,6 +22708,16 @@ static ApRollRow g_ApRollRows[] = {
     { "rare-announce",    SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetRareDropAnnouncement),  false, nullptr, nullptr, "fp_ap_rareann", (PVOID)ApRollDetour16 },
 };
 static_assert(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0]) == 17, "one row per candidate, ApRollDetour0..16");
+
+// #74: the unique-repo row and the typing hook (Hook_GetUniqueRepoStruct) never both detour
+// GetUniqueRepoStruct - whichever comes second refuses and says so.  This is the question the
+// typing hook's installer asks; ApRollAttach asks the other way round.
+static bool ApRollHoldsUniqueRepo()
+{
+    for (const ApRollRow& r : g_ApRollRows)
+        if (std::string_view(r.id) == "unique-repo") return r.tramp != nullptr;
+    return false;
+}
 
 static std::atomic<bool> g_ApRollAttached{ false };
 // Baselines, so `reset` zeroes what `show` prints without touching the
@@ -20976,6 +22824,9 @@ static RValue& ApRollDetourBody(int idx, CInstance* S, CInstance* O, RValue& R, 
 // hook body returns.
 static bool ApRollDropScopeEnter(const char* hookName, CInstance* S, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    DropTraceNote(hookName, S, argc, A);   // `droptrace` (the Bosses research); off unless asked for
+#endif
     if (!hookName || !g_ApRollAttached.load(std::memory_order_relaxed)) return false;
     for (int i = 0; i < (int)(sizeof(g_ApRollRows) / sizeof(g_ApRollRows[0])); ++i) {
         ApRollRow& r = g_ApRollRows[i];
@@ -21025,6 +22876,13 @@ static void ApRollSetRoute(ApRollRow& r, long route, const std::string& text)
 // The route rule above, in order; tgprobe's TgProbeAttach is the precedent.
 static void ApRollAttach(ApRollRow& r)
 {
+    // #74: the typing hook installed first holds GetUniqueRepoStruct; this row refuses rather
+    // than stack a second detour on it (ApRollHoldsUniqueRepo is the other half of the rule).
+    if (std::string_view(r.id) == "unique-repo" && g_Orig_GetUniqueRepoStruct) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the #74 typing hook (Hook_GetUniqueRepoStruct) already holds this script - "
+            "its own counters (untyped=, typeAgree=, typeDisagree=) are the measure");
+        return;
+    }
     const std::string full = "gml_Script_" + std::string(r.script);
     PVOID p = nullptr;
     const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
@@ -21236,50 +23094,86 @@ static std::string ApRollShape(const RValue& v)
     return ApRollKindName((int)v.m_Kind);
 }
 
-// `angelicprobe list`: the game's own unique loot list, read by name and
-// read-only. A missing object, instance or variable prints one refusal line.
-static void ApRollList()
+// `angelicprobe list`: the game's own unique loot list, read-only. The roll
+// reads one element of a variable of the first Controller_obj instance
+// (static reading, #74 Sessions 3 and 4: lootListUnique, element 5, a
+// ds_list), so the Controller_obj half (SigListScan) prints every variable
+// shaped like that and the best candidate. The two scopes the first live
+// session asked - the global scope and the Loot_Manager_obj instance, both by
+// the name lootListUnique - are reported first, one line each when absent, so
+// the Controller_obj summary (`candidates=<k> best=<name>[<i>]:<size>`) is the
+// last line. `angelicprobe list dump [<var>]` prints one variable's layout
+// two levels down instead (SigListDump).
+static void ApRollList(const std::string& args)
 {
-    const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Manager_obj));
-    double idx = -1.0;
-    try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1.0; }
-    if (idx < 0.0) { Out("angelicprobe list: " + objName + " not found (asset_get_index) - nothing read"); return; }
-    int total = 0;
-    try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { total = 0; }
-    if (total < 1) { Out("angelicprobe list: no live " + objName + " instance (instance_number=" + std::to_string(total) + ") - nothing read"); return; }
-    RValue handle;
-    try { handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) }); }
-    catch (...) { Out("angelicprobe list: instance_find threw for " + objName + " - nothing read"); return; }
-    if (!HhResolveInstance(handle)) { Out("angelicprobe list: " + objName + " instance 0 is not a live instance (HhResolveInstance) - nothing read"); return; }
-    bool has = false;
-    try { has = g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue("lootListUnique") }).ToBoolean(); } catch (...) { has = false; }
-    if (!has) { Out("angelicprobe list: " + objName + " carries no lootListUnique (variable_instance_exists false) - nothing read"); return; }
-    RValue list;
-    try { list = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("lootListUnique") }); }
-    catch (...) { Out("angelicprobe list: reading lootListUnique threw - nothing read"); return; }
+    const std::string a = TrimCopy(args);
+    const size_t space = a.find(' ');
+    if (Lower(a.substr(0, space)) == "dump") {
+        SigListDump(space == std::string::npos ? std::string() : TrimCopy(a.substr(space + 1)));   // the name keeps its case
+        return;
+    }
+    if (!a.empty()) { Out("angelicprobe list: list | list dump [<var>] - nothing read"); return; }
+    // One list's kind, then its length and the first eight entries' shape.
+    auto show = [](const RValue& list, const std::string& scope) {
+        Out("angelicprobe list: scope=" + scope + " lootListUnique kind=" + ApRollKindName((int)list.m_Kind));
+        try {
+            if (list.m_Kind == VALUE_ARRAY) {
+                const int len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
+                for (int i = 0; i < len && i < 8; ++i)
+                    Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) })));
+                Out("angelicprobe list: array_length=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+                return;
+            }
+            double id = 0.0;
+            // ds_type_list is 2. A number here may be a ds_list id; ask before reading.
+            if (ApRollNumeric(list, id) && g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) }).ToBoolean()) {
+                const int len = (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
+                for (int i = 0; i < len && i < 8; ++i)
+                    Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("ds_list_find_value", { RValue(id), RValue((double)i) })));
+                Out("angelicprobe list: ds_list " + ApRollNum(id) + " ds_list_size=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
+                return;
+            }
+            Out("  " + ApRollShape(list));
+            Out("angelicprobe list: not an array or a ds_list - shape above, no entries read");
+        } catch (...) { Out("angelicprobe list: EXCEPTION while reading the entries"); }
+    };
+    // The two scopes Session 2 asked, each `return` ending only this part.
+    auto earlierScopes = [&]() {
+        // First: the global scope.
+        bool global = false;
+        try { global = g_Yytk->CallBuiltin("variable_global_exists", { RValue("lootListUnique") }).ToBoolean(); } catch (...) { global = false; }
+        if (global) {
+            RValue list;
+            bool read = true;
+            try { list = g_Yytk->CallBuiltin("variable_global_get", { RValue("lootListUnique") }); } catch (...) { read = false; }
+            if (read) { show(list, "global"); return; }
+            Out("angelicprobe list: variable_global_get(lootListUnique) threw - trying the Loot_Manager_obj instance");
+        } else {
+            Out("angelicprobe list: no global lootListUnique (variable_global_exists false) - trying the Loot_Manager_obj instance");
+        }
 
-    Out("angelicprobe list: " + objName + " (" + std::to_string(total) + " instance(s)) lootListUnique kind="
-        + ApRollKindName((int)list.m_Kind));
-    try {
-        if (list.m_Kind == VALUE_ARRAY) {
-            const int len = (int)g_Yytk->CallBuiltin("array_length", { list }).ToDouble();
-            for (int i = 0; i < len && i < 8; ++i)
-                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("array_get", { list, RValue((double)i) })));
-            Out("angelicprobe list: array_length=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
-            return;
-        }
-        double id = 0.0;
-        // ds_type_list is 2. A number here may be a ds_list id; ask before reading.
-        if (ApRollNumeric(list, id) && g_Yytk->CallBuiltin("ds_exists", { RValue(id), RValue(2.0) }).ToBoolean()) {
-            const int len = (int)g_Yytk->CallBuiltin("ds_list_size", { RValue(id) }).ToDouble();
-            for (int i = 0; i < len && i < 8; ++i)
-                Out("  [" + std::to_string(i) + "] " + ApRollShape(g_Yytk->CallBuiltin("ds_list_find_value", { RValue(id), RValue((double)i) })));
-            Out("angelicprobe list: ds_list " + ApRollNum(id) + " ds_list_size=" + std::to_string(len) + " (" + std::to_string(len < 8 ? len : 8) + " shown)");
-            return;
-        }
-        Out("  " + ApRollShape(list));
-        Out("angelicprobe list: not an array or a ds_list - shape above, no entries read");
-    } catch (...) { Out("angelicprobe list: EXCEPTION while reading the entries"); }
+        // Second: an instance variable of the live Loot_Manager_obj.
+        const std::string objName(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Manager_obj));
+        double idx = -1.0;
+        try { idx = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) }).ToDouble(); } catch (...) { idx = -1.0; }
+        if (idx < 0.0) { Out("angelicprobe list: " + objName + " not found (asset_get_index) - neither scope answered, nothing read"); return; }
+        int total = 0;
+        try { total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble(); } catch (...) { total = 0; }
+        if (total < 1) { Out("angelicprobe list: no live " + objName + " instance (instance_number=" + std::to_string(total) + ") - neither scope answered, nothing read"); return; }
+        RValue handle;
+        try { handle = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) }); }
+        catch (...) { Out("angelicprobe list: instance_find threw for " + objName + " - neither scope answered, nothing read"); return; }
+        if (!HhResolveInstance(handle)) { Out("angelicprobe list: " + objName + " instance 0 is not a live instance (HhResolveInstance) - neither scope answered, nothing read"); return; }
+        bool has = false;
+        try { has = g_Yytk->CallBuiltin("variable_instance_exists", { handle, RValue("lootListUnique") }).ToBoolean(); } catch (...) { has = false; }
+        if (!has) { Out("angelicprobe list: " + objName + " carries no lootListUnique (variable_instance_exists false) - neither scope answered, nothing read"); return; }
+        RValue list;
+        try { list = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("lootListUnique") }); }
+        catch (...) { Out("angelicprobe list: reading lootListUnique threw - neither scope answered, nothing read"); return; }
+        show(list, objName + " instance (" + std::to_string(total) + " instance(s))");
+    };
+    earlierScopes();
+    SigListScan(true, nullptr);   // Controller_obj, the scope the roll reads; its summary is the last line
 }
 
 static void ApRollUsage()
@@ -21288,7 +23182,10 @@ static void ApRollUsage()
     Out("  angelicprobe on    - attach every candidate row once (and the kill control), print each row's route");
     Out("  angelicprobe show  - per row: route, calls=, insideDropItem=, insideAngelicChance= (calls=n/a when the row has no route)");
     Out("  angelicprobe reset - zero the counters; routes stay attached");
-    Out("  angelicprobe list  - read-only: Loot_Manager_obj's lootListUnique, kind, length and the first eight entries' shape");
+    Out("  angelicprobe list  - read-only: lootListUnique in the global scope and on Loot_Manager_obj, then every Controller_obj variable: names=, each one whose element at the inject index is a ds_list shaped like the Angelic list (outer length, index, ds_list size, first three entries, stand-in counts), each array rejected and why, the rest by kind, and the best candidate last");
+    Out("  angelicprobe list dump [<var>] - read-only: Controller_obj.<var> (lootListUnique by default) two levels down: each element's kind, ds_list size, triple count, first entries and stand-in counts");
+    Out("  angelicprobe hit chance <n> | rate <n> | share (no-op) | off | status - the #74 levers that make a game Angelic hit observable");
+    Out("  angelicprobe inject auto | name <var> | at <k> | copies <k> | mode inject|replace | status - the #74 list the stand-ins are injected into (variable and element index), how many copies each item pushes, and the path an our-hit takes");
 }
 
 static void ApRollCommand(const std::string& rest)
@@ -21297,7 +23194,9 @@ static void ApRollCommand(const std::string& rest)
     if (sub == "on") ApRollOn();
     else if (sub == "show") ApRollShow();
     else if (sub == "reset") { ApRollReset(); Out("angelicprobe reset: counters zeroed, routes kept"); }
-    else if (sub == "list") ApRollList();
+    else if (sub == "list" || sub.rfind("list ", 0) == 0) ApRollList(TrimCopy(rest).substr(4));   // a variable name keeps its case
+    else if (sub == "hit" || sub.rfind("hit ", 0) == 0) AngelicHitCommand(sub.substr(3));
+    else if (sub == "inject" || sub.rfind("inject ", 0) == 0) SigInjectCommand(TrimCopy(rest).substr(6));   // a variable name keeps its case
     else ApRollUsage();
 }
 #endif // FORGEPACT_RELEASE (angelicprobe)
@@ -21655,6 +23554,16 @@ static const int kSatanicDebuffCount = 26;
 // arrays) so Phase 0 can see call cadence directly in out.txt, not just infer
 // it from g_SatModsHits (which only moves when a disabled id was present).
 static volatile long g_SatLoadTraceLeft = 40;
+// `satforce` (research build only, issue #155): -1 keeps the game's own
+// answer, 0/1 makes every LoadSatanicZone call return false/true to its
+// caller. The forcing happens after the trace line (which keeps logging the
+// game's own result) and before the return, so the game's own consumers see
+// the forced value. Live research 2026-10-03: the game calls
+// LoadSatanicZone(the protected store's value) about twice a frame; see
+// docs/satanic-zone-mods-research.md.
+#ifndef FORGEPACT_RELEASE
+static volatile long g_SatForceReturn = -1;
+#endif
 
 // Resolves the single Controller_obj instance (same pattern as ObjVarJson).
 static bool ResolveControllerObj(RValue& out)
@@ -21758,9 +23667,15 @@ static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int ar
                 debuffsBefore = Describe(dv);
             } catch (...) {}
         }
+        std::string forceNote;
+#ifndef FORGEPACT_RELEASE
+        if (g_SatForceReturn >= 0)
+            forceNote = std::string(" | FORCING -> ") + (g_SatForceReturn ? "true" : "false");
+#endif
         Out("satmods TRACE: LoadSatanicZone call#" + std::to_string(g_SatLoadCalls) + " argc=" + std::to_string(argc)
             + (argc >= 1 && A && A[0] ? " arg0=" + Describe(*A[0]) : "")
             + " -> " + Describe(r)
+            + forceNote
             + " | before filter: buffs=" + buffsBefore + " debuffs=" + debuffsBefore);
     }
     if (!g_SatDisabledBuffs.empty() || !g_SatDisabledDebuffs.empty()) {
@@ -21784,6 +23699,9 @@ static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int ar
     // for this room?" and gets true for every room while the switch is on. The
     // mod arrays and the resolved value itself are untouched.
     if (g_SatEverywhere.load()) r = RValue(true);
+#ifndef FORGEPACT_RELEASE
+    if (g_SatForceReturn >= 0) r = RValue(g_SatForceReturn == 1);
+#endif
     return r;
 }
 
@@ -24523,6 +26441,7 @@ static void FlushModState(uint32_t frame)
             body += ",\"held\":"; body += hl.Held() ? "true" : "false";
             body += ",\"errors\":" + std::to_string(hl.StatsRef().errors) + "}";
         }
+        body += ",\"jumpScenery\":{\"enabled\":"; body += g_JumpScenery.Enabled() ? "true" : "false"; body += "}";
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
         body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
@@ -30723,7 +32642,10 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
 {
     if (lc == "headhunter") {
         std::string on = Lower(TrimCopy(rest));
-        if (on == "on" || on == "1" || on == "force") { g_HhForced.store(on == "force"); EnableHeadhunter(); }
+        // `force` is the panel switch: only it turns on (and installs) the belt's drop from the
+        // game's Angelic roll (#74, owner 2026-10-02); `on` arms the mechanic alone.
+        if (on == "force") { g_HhForced.store(true); EnableHeadhunter(); InstallSignatureAngelicHooks(); }
+        else if (on == "on" || on == "1") { g_HhForced.store(false); EnableHeadhunter(); }
         else if (on == "off" || on == "0") { g_HhEnabled.store(false); g_HhForced.store(false); }
         HeadhunterStatus();
     } else if (lc == "hhdur") {
@@ -30842,7 +32764,9 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         std::string v = Lower(TrimCopy(rest));
         if (v == "status" || v.empty()) { TyrantStatus(); return true; }
         if (v == "off") { g_TyEnabled = false; g_TyForced = false; Out("tyrant: off"); return true; }
-        if (v == "force") g_TyForced = true;
+        // `force` is the panel switch: only it turns on (and installs) the crown's drop from the
+        // game's Angelic roll (#74, owner 2026-10-02); `on` arms the mechanic alone.
+        if (v == "force") { g_TyForced = true; InstallSignatureAngelicHooks(); }
         InstallTyrantHook(); InstallBeaconHook(); g_TyEnabled.store(g_TyHookInstalled);
         TyrantStatus();
     } else if (lc == "beacon") {
@@ -31225,7 +33149,7 @@ static bool HandleHeadhunterCommand(const std::string& lc, const std::string& re
         else if (v == "off" || v == "0") { g_SigDropForce = -1; SigDropStatus(); }
         else if (v == "crown") { g_SigDropForce = 0; InstallHeadhunterHook(); SigDropStatus(); }
         else if (v == "belt") { g_SigDropForce = 1; InstallHeadhunterHook(); SigDropStatus(); }
-        else Out("sigdrop: usage -> sigdrop crown | belt | off | status - the normal rate follows the Angelic / Unholy slider (angelicdrop)");
+        else Out("sigdrop: usage -> sigdrop crown | belt | off | status - a test command; the normal drop is the game's own Angelic roll while the item's panel switch is on");
     } else if (lc == "hhlabelmax") {
         try { long v = std::stol(TrimCopy(rest)); if (v >= 1 && v <= 40) g_HhLabelMax = (size_t)v; } catch (...) {}
         while (g_HhStolen.size() > g_HhLabelMax) g_HhStolen.erase(g_HhStolen.begin());
@@ -42651,6 +44575,914 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
 }
 
 #ifndef FORGEPACT_RELEASE
+// ---- jumpprobe: the jump-through-scenery phase 1 instrument (ForgePact #16) ----
+// docs/jump-scenery-research.md holds the static search, the readings, the
+// live procedure and the decision this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleJumpProbeCommand;
+// this comment sits inside the guard so the verb's name vanishes from a
+// player build.
+//
+// How the game decides that the universal jump is blocked by scenery is
+// unmeasured. Every candidate the static search found is a row: the jump's
+// scripts (CA_playerJump, PlayerForceJump, playerJumpGravity, StatJumpPower),
+// the movement relays beside them, the leap/blink/charge skills, the named
+// collision scripts, the enemies' jump as the negative control and
+// CheckTalentUse (once per frame) as the own-detour control. Each script row
+// is native-detoured by one `hook` the way skillprobe attaches: MmCreateHook
+// at the function's own address, only once AddrIsExecutableInModule has said
+// the address is game code, because a table-only hook is blind to this
+// build's direct `call rel32` sites. A function another install already
+// detours is reported `held` and never detoured a second time.
+//
+// Object events do not resolve by name on this build, so the player's own
+// Step collision is reached through the builtins it calls: one HookBuiltin
+// per collision builtin, position_meeting being the builtin control. A
+// builtin detours once, so `hook` refuses while citrace's spatial builtin
+// hooks are in place, naming them.
+//
+// `pass` is the one research lever (plugin/include/ForgePact/
+// JumpSceneryProbe.hpp holds its decision, which tests/
+// jump_scenery_harness.cpp compiles whole): while it is on, the local
+// player's own CA_playerJump / PlayerForceJump entry opens a window of
+// `frames` frames, and inside it a hooked builtin called by the local player
+// against Collision_Prop_obj (or, with `all`, Collision_Parent_obj) - decided
+// through object_is_ancestor by name - is answered "no collision" without
+// running the game's function. Everything else runs the original. The one
+// per-frame piece, JpFrameTick, returns at once while nothing is armed,
+// traced or on.
+#include <ForgePact/JumpSceneryProbe.hpp>
+
+namespace JpNs = ForgePact::JumpScenery;
+
+static constexpr long kJpDefaultBudget = 5;      // logged calls per row unless `arm <n>`
+static constexpr long kJpMaxBudget = 500;        // out.txt stays readable
+static constexpr size_t kJpValueMax = 120;       // one value's text in a trace or state line
+
+static JpNs::Probe g_JpCore;
+static CInstance* g_JpPlayer = nullptr;   // the local player, refreshed each frame while the probe is active
+static long g_JpBudget = 0;               // calls per row `arm` asked to log; 0 = not armed
+static bool g_JpBusy = false;             // game thread only: the probe's own reads inside a detour
+static bool g_JpFamiliesResolved = false;
+
+// The row roles: a plain row only counts and logs; a window row's entry
+// opens the lever's window; a lever row is one of the `scripts` flag's three.
+static constexpr int kJpRolePlain = -2;
+static constexpr int kJpRoleOpensWindow = -1;
+static constexpr int kJpRoleCanMove = (int)JpNs::ScriptLever::CanMove;
+static constexpr int kJpRoleInstancePlaceTallest = (int)JpNs::ScriptLever::InstancePlaceTallest;
+static constexpr int kJpRoleTilePlaceMeeting = (int)JpNs::ScriptLever::TilePlaceMeeting;
+
+// One row per script in docs/jump-scenery-research.md § Static search. SAFE,
+// label, SDK constant, role. The runtime name is always the hs-game-sdk
+// constant's own value - never retyped here. Three are spelled without the
+// gml_Script_ prefix in the SDK; `hook` resolves each by that name and then
+// with the prefix, and a row neither finds is reported `not found`.
+#define JUMPPROBE_TARGETS(X) \
+    /* the universal jump: the first two open the lever's window */ \
+    X(CAPlayerJump, "CA_playerJump", gml_Script_CA_playerJump, kJpRoleOpensWindow) \
+    X(PlayerForceJump, "PlayerForceJump", gml_Script_PlayerForceJump, kJpRoleOpensWindow) \
+    X(PlayerJumpGravity, "playerJumpGravity", gml_Script_playerJumpGravity, kJpRolePlain) \
+    X(StatJumpPower, "StatJumpPower", gml_Script_StatJumpPower, kJpRolePlain) \
+    /* the movement relays beside the jump's */ \
+    X(CAPlayerMove, "CA_playerMove", gml_Script_CA_playerMove, kJpRolePlain) \
+    X(CAPlayerSetMoveDirection, "CA_playerSetMoveDirection", gml_Script_CA_playerSetMoveDirection, kJpRolePlain) \
+    /* skill-shaped movement */ \
+    X(SkillsLeap, "skillsLeap", gml_Script_skillsLeap, kJpRolePlain) \
+    X(SkillsBlink, "skillsBlink", gml_Script_skillsBlink, kJpRolePlain) \
+    X(SkillsCharge, "skillsCharge", gml_Script_skillsCharge, kJpRolePlain) \
+    /* the named collision scripts; the first three are the `scripts` flag's rows */ \
+    X(CanMove, "CanMove", gml_Script_CanMove, kJpRoleCanMove) \
+    X(InstancePlaceTallest, "InstancePlaceTallest", gml_Script_InstancePlaceTallest, kJpRoleInstancePlaceTallest) \
+    X(TilePlaceMeeting, "TilePlaceMeeting", gml_Script_TilePlaceMeeting, kJpRoleTilePlaceMeeting) \
+    X(CanMoveFuncs, "CanMoveFuncs", CanMoveFuncs, kJpRolePlain) \
+    X(CheckCollisionLine, "CheckCollisionLine", gml_Script_CheckCollisionLine, kJpRolePlain) \
+    X(CheckPath, "CheckPath", gml_Script_CheckPath, kJpRolePlain) \
+    X(GetClosestCollisionDir, "getClosestCollisionDir", getClosestCollisionDir, kJpRolePlain) \
+    X(CollisionsFunc, "CollisionsFunc", CollisionsFunc, kJpRolePlain) \
+    X(CollisionNormal, "collision_normal", gml_Script_collision_normal, kJpRolePlain) \
+    /* negative control: the enemies' jump, never passed through anything */ \
+    X(CAEnemyJump, "CA_enemyJump", gml_Script_CA_enemyJump, kJpRolePlain) \
+    /* own-detour control: runs once per frame */ \
+    X(CheckTalentUse, "CheckTalentUse", gml_Script_CheckTalentUse, kJpRolePlain)
+
+#define JP_ROW_INDEX(SAFE, LABEL, CONSTANT, ROLE) kJpRow_##SAFE,
+enum JpRowIndex : int { JUMPPROBE_TARGETS(JP_ROW_INDEX) kJpRowCount };
+#undef JP_ROW_INDEX
+
+static RValue& JpOnScript(int row, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+
+#define JP_DEFINE_DETOUR(SAFE, LABEL, CONSTANT, ROLE) \
+    static RValue& JpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        return JpOnScript(kJpRow_##SAFE, S, O, R, argc, A); \
+    }
+JUMPPROBE_TARGETS(JP_DEFINE_DETOUR)
+#undef JP_DEFINE_DETOUR
+
+struct JpRow {
+    const char*        label;
+    const char*        safe;          // the row's identifier, for its hook id
+    const char*        runtimeName;   // the SDK constant's value, used as-is
+    const char*        hookId;
+    PVOID              detour;
+    int                role;
+    PFUNC_YYGMLScript  orig = nullptr;
+    volatile long      calls = 0;
+    volatile long      logged = 0;
+    volatile long      otherSelf = 0;   // calls, while the probe is active, whose self is not the local player
+    long               lastShown = 0;
+    bool               installed = false;
+    std::string        resolvedName;
+    std::string        heldBy;          // who detours the function instead, when `hook` found it held
+    volatile long*     heldCalls = nullptr;
+    std::string        status;          // the last `hook`'s answer for this row
+};
+
+#define JP_ENTRY(SAFE, LABEL, CONSTANT, ROLE) \
+    { LABEL, #SAFE, HeroSiege::Scripts::CONSTANT.data(), "fp_jp_" #SAFE, (PVOID)JpDetour_##SAFE, ROLE },
+static JpRow g_JpRows[] = {
+    JUMPPROBE_TARGETS(JP_ENTRY)
+};
+#undef JP_ENTRY
+#undef JUMPPROBE_TARGETS
+static_assert(sizeof(g_JpRows) / sizeof(g_JpRows[0]) == (size_t)kJpRowCount, "one jumpprobe row per target");
+
+// The builtin rows, in JumpSceneryProbe.hpp's kBuiltins order.
+struct JpBuiltinRow {
+    TRoutine      orig = nullptr;
+    volatile long calls = 0;
+    volatile long logged = 0;
+    volatile long otherSelf = 0;
+    long          lastShown = 0;
+    bool          installed = false;
+    std::string   status;
+};
+static JpBuiltinRow g_JpBuiltinRows[JpNs::kBuiltinCount];
+static const char* const kJpBuiltinHookIds[JpNs::kBuiltinCount] = {
+    "fp_jp_b_pmt", "fp_jp_b_plm", "fp_jp_b_plf", "fp_jp_b_ipl", "fp_jp_b_ipo",
+    "fp_jp_b_cpt", "fp_jp_b_cln", "fp_jp_b_crc", "fp_jp_b_ccr", "fp_jp_b_tgp",
+};
+
+static void JpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+#define JP_BUILTIN_DETOUR(I) \
+    static void JpBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
+        JpOnBuiltin(I, Result, S, O, argc, Args); \
+    }
+JP_BUILTIN_DETOUR(0) JP_BUILTIN_DETOUR(1) JP_BUILTIN_DETOUR(2) JP_BUILTIN_DETOUR(3) JP_BUILTIN_DETOUR(4)
+JP_BUILTIN_DETOUR(5) JP_BUILTIN_DETOUR(6) JP_BUILTIN_DETOUR(7) JP_BUILTIN_DETOUR(8) JP_BUILTIN_DETOUR(9)
+#undef JP_BUILTIN_DETOUR
+static const PVOID kJpBuiltinDetours[JpNs::kBuiltinCount] = {
+    (PVOID)JpBuiltin_0, (PVOID)JpBuiltin_1, (PVOID)JpBuiltin_2, (PVOID)JpBuiltin_3, (PVOID)JpBuiltin_4,
+    (PVOID)JpBuiltin_5, (PVOID)JpBuiltin_6, (PVOID)JpBuiltin_7, (PVOID)JpBuiltin_8, (PVOID)JpBuiltin_9,
+};
+static_assert(JpNs::kBuiltinCount == 10, "one detour per builtin row");
+
+static bool JpIsOwnControl(const JpRow& t)
+{
+    return std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_CheckTalentUse;
+}
+static constexpr int kJpBuiltinControl = (int)JpNs::Builtin::PositionMeeting;
+
+static std::string JpBuiltinName(int i) { return std::string(JpNs::kBuiltins[i].name); }
+
+// The value a lever answer writes in place of the game's own result.
+static RValue JpAnswerValue(JpNs::Answer a)
+{
+    switch (a) {
+    case JpNs::Answer::Noone: return RValue(JpNs::kNoone);
+    case JpNs::Answer::False: return RValue(false);
+    case JpNs::Answer::Zero:  return RValue(0.0);
+    case JpNs::Answer::True:  return RValue(true);
+    default:                  return RValue();
+    }
+}
+
+// The object index a builtin's object argument names: an object index as it
+// is, an instance (id or reference) by its own object_index; -1 for `all`,
+// `noone` or anything else - the lever then runs the original.
+static int JpObjectIndexOf(const RValue& v)
+{
+    try {
+        int n = -1;
+        if (!N1ObjectIndex(v, n)) return -1;
+        if (g_Yytk->CallBuiltin("object_exists", { RValue((double)n) }).ToBoolean()) return n;
+        if (!g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()) return -1;
+        int obj = -1;
+        if (N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), obj)) return obj;
+    } catch (...) {}
+    return -1;
+}
+
+static std::string JpObjectName(int obj)
+{
+    if (obj < 0) return "-";
+    try { return g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) }).ToString(); }
+    catch (...) { return "#" + std::to_string(obj); }
+}
+
+// The local player's position for an armed line, read from the call's self.
+static std::string JpSelfXY(CInstance* S)
+{
+    std::string xy;
+    for (const char* v : { "x", "y" }) {
+        std::string text = "unreadable";
+        try { text = MenuLayoutValueText(g_Yytk->CallBuiltin("variable_instance_get", { S->ToRValue(), RValue(v) })); } catch (...) {}
+        xy += std::string(" ") + v + "=" + text;
+    }
+    return xy;
+}
+
+static std::string JpBuiltinArgs(int argc, RValue* Args)
+{
+    std::string a;
+    for (int i = 0; Args && i < argc && i < 8; ++i) {
+        std::string d = Describe(Args[i]);
+        if (d.size() > 200) d = d.substr(0, 200) + "...";
+        a += " a" + std::to_string(i) + "=" + d;
+    }
+    return a;
+}
+
+// One budgeted line per call of a row whose self is the local player, after
+// the call, so it carries the return: the armed-line shape of skillprobe
+// (PpDescribeSelf, AggroArgs, PpRetText) plus the position and the frame.
+static bool JpTakeLogSlot(volatile long* logged)
+{
+    const long limit = g_JpBudget;
+    if (!g_JpCore.Armed() || limit <= 0 || *logged >= limit) return false;
+    return InterlockedIncrement(logged) <= limit;
+}
+
+static RValue& JpOnScript(int row, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    JpRow& t = g_JpRows[row];
+    const long n = InterlockedIncrement(&t.calls);
+    if (g_JpBusy || !g_JpCore.Active()) return t.orig ? t.orig(S, O, R, argc, A) : R;
+    const bool player = S && S == g_JpPlayer;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    if (!player) InterlockedIncrement(&t.otherSelf);
+    if (t.role == kJpRoleOpensWindow && g_JpCore.OnJumpEntry(frame, player)) {
+        if (g_JpCore.Holding())
+            Out(std::string("jumpprobe pass: jump entry at frame ") + std::to_string(frame) + " by " + t.label
+                + " (window held open: `hold`)");
+        else
+            Out(std::string("jumpprobe pass: window opened at frame ") + std::to_string(frame) + " by " + t.label
+                + " for " + std::to_string(g_JpCore.Frames()) + " frames");
+    }
+    JpNs::Answer answer = JpNs::Answer::RunOriginal;
+    if (t.role >= 0) answer = g_JpCore.DecideScript(static_cast<JpNs::ScriptLever>(t.role), frame, player);
+    if (answer != JpNs::Answer::RunOriginal) {
+        R = JpAnswerValue(answer);
+        if (player && JpTakeLogSlot(&t.logged)) {
+            g_JpBusy = true;
+            try {
+                Out(std::string("jumpprobe ") + t.label + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                    + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + " ret=" + PpRetText(R) + " answered="
+                    + std::string(JpNs::AnswerName(answer)) + JpSelfXY(S) + " frame=" + std::to_string(frame));
+            } catch (...) {}
+            g_JpBusy = false;
+        }
+        return R;
+    }
+    RValue& r = t.orig ? t.orig(S, O, R, argc, A) : R;
+    if (player && JpTakeLogSlot(&t.logged)) {
+        g_JpBusy = true;
+        try {
+            Out(std::string("jumpprobe ") + t.label + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                + " argc=" + std::to_string(argc) + AggroArgs(argc, A) + " ret=" + PpRetText(r) + JpSelfXY(S)
+                + " frame=" + std::to_string(frame));
+        } catch (...) {}
+        g_JpBusy = false;
+    }
+    return r;
+}
+
+static void JpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    JpBuiltinRow& t = g_JpBuiltinRows[row];
+    const long n = InterlockedIncrement(&t.calls);
+    if (g_JpBusy || !g_JpCore.Active()) { if (t.orig) t.orig(Result, S, O, argc, Args); return; }
+    const bool player = S && S == g_JpPlayer;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    if (!player) InterlockedIncrement(&t.otherSelf);
+    const int objArg = JpNs::kBuiltins[row].objectArg;
+    int object = -1;
+    bool objectRead = false;
+    JpNs::Answer answer = JpNs::Answer::RunOriginal;
+    g_JpBusy = true;
+    try {
+        answer = g_JpCore.DecideBuiltin(static_cast<JpNs::Builtin>(row), frame, player, [&]() {
+            objectRead = true;
+            object = (objArg >= 0 && objArg < argc && Args) ? JpObjectIndexOf(Args[objArg]) : -1;
+            return object;
+        });
+    } catch (...) { answer = JpNs::Answer::RunOriginal; }
+    g_JpBusy = false;
+    if (answer != JpNs::Answer::RunOriginal) {
+        Result = JpAnswerValue(answer);
+        if (player && JpTakeLogSlot(&t.logged)) {
+            g_JpBusy = true;
+            try {
+                Out(std::string("jumpprobe ") + JpBuiltinName(row) + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                    + " argc=" + std::to_string(argc) + JpBuiltinArgs(argc, Args) + " object=" + JpObjectName(object)
+                    + " ret=" + PpRetText(Result) + " answered=" + std::string(JpNs::AnswerName(answer)) + JpSelfXY(S)
+                    + " frame=" + std::to_string(frame));
+            } catch (...) {}
+            g_JpBusy = false;
+        }
+        return;
+    }
+    if (t.orig) t.orig(Result, S, O, argc, Args);
+    if (player && JpTakeLogSlot(&t.logged)) {
+        g_JpBusy = true;
+        try {
+            if (!objectRead && objArg >= 0 && objArg < argc && Args) object = JpObjectIndexOf(Args[objArg]);
+            Out(std::string("jumpprobe ") + JpBuiltinName(row) + " #" + std::to_string(n) + " self=" + PpDescribeSelf(S)
+                + " argc=" + std::to_string(argc) + JpBuiltinArgs(argc, Args) + " object=" + JpObjectName(object)
+                + " ret=" + PpRetText(Result) + JpSelfXY(S) + " frame=" + std::to_string(frame));
+        } catch (...) {}
+        g_JpBusy = false;
+    }
+}
+
+// ---- the local player, the families -----------------------------------------
+
+static void JpRefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    g_JpBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    g_JpBusy = false;
+    g_JpPlayer = inst;
+}
+
+static std::string JpPlayerText()
+{
+    if (!g_JpPlayer) return "none (no local player resolved)";
+    g_JpBusy = true;
+    std::string d;
+    try { d = PpDescribeSelf(g_JpPlayer); } catch (...) { d = "(unresolved)"; }
+    g_JpBusy = false;
+    return d;
+}
+
+// Collision_Prop_obj and Collision_Parent_obj by name, through the SDK's own
+// names; the family rule then asks object_is_ancestor, by name, per object.
+static void JpResolveFamilies()
+{
+    if (g_JpFamiliesResolved) return;
+    int prop = -1, parent = -1;
+    try {
+        prop = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Collision_Prop_obj))) }).ToDouble();
+        parent = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Collision_Parent_obj))) }).ToDouble();
+    } catch (...) {}
+    g_JpCore.SetFamilies(prop, parent);
+    g_JpCore.SetIsAncestor([](int object, int ancestor) {
+        return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+    });
+    g_JpFamiliesResolved = prop >= 0 && parent >= 0;
+}
+
+// ---- hook ----------------------------------------------------------------------
+
+// By name only: the SDK value, then - for a constant the SDK spells without
+// it - the same name with gml_Script_ in front.
+static bool JpResolveName(const JpRow& t, std::string& name, PVOID& p, AurieStatus& st)
+{
+    name = t.runtimeName;
+    p = nullptr;
+    st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    if ((!AurieSuccess(st) || !p) && name.rfind("gml_Script_", 0) != 0) {
+        name = "gml_Script_" + name;
+        p = nullptr;
+        st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+    }
+    return AurieSuccess(st) && p;
+}
+
+// Which other install detours this script now: skillprobe's table, then
+// every holder skillprobe itself knows (SpHolder). "" when none does.
+static std::string JpHolder(std::string_view name, volatile long*& calls)
+{
+    calls = nullptr;
+    for (SpTarget& t : g_SpTargets)
+        if (t.installed.load() && name == t.runtimeName) { calls = t.calls; return "skillprobe hook"; }
+    return SpHolder(name, calls);
+}
+
+// citrace's spatial builtin hooks, by name, that are installed now.
+static std::string JpCitraceHolders()
+{
+    std::string held;
+    const struct { const char* name; TRoutine* orig; } kCi[] = {
+        { "instance_position", &g_OrigCi_InstancePosition }, { "instance_place", &g_OrigCi_InstancePlace },
+        { "collision_point", &g_OrigCi_CollisionPoint }, { "point_in_rectangle", &g_OrigCi_PointInRectangle },
+        { "distance_to_point", &g_OrigCi_DistanceToPoint }, { "instance_nearest", &g_OrigCi_InstanceNearest },
+        { "point_in_circle", &g_OrigCi_PointInCircle }, { "position_meeting", &g_OrigCi_PositionMeeting },
+    };
+    for (const auto& c : kCi) if (*c.orig) held += (held.empty() ? "" : ", ") + std::string(c.name);
+    return held;
+}
+
+static void JpInstall()
+{
+    const std::string citrace = JpCitraceHolders();
+    if (!citrace.empty()) {
+        Out("jumpprobe hook: refused - citrace holds " + citrace + " (a builtin detours once, and its hook would read"
+            " as this probe's zero); nothing hooked. Relaunch without `citrace` to run jumpprobe.");
+        return;
+    }
+    const std::string jumpscenery = JumpSceneryHeldHooks();
+    if (!jumpscenery.empty()) {
+        Out("jumpprobe hook: refused - jumpscenery holds " + jumpscenery + " (a builtin detours once, and its hooks"
+            " stay in once installed); nothing hooked. Relaunch without turning `jumpscenery` on to run jumpprobe.");
+        return;
+    }
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    int ok = 0, failed = 0, held = 0, builtins = 0, builtinsFailed = 0;
+    for (JpRow& t : g_JpRows) {
+        if (t.installed) { Out(std::string("jumpprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        t.heldBy.clear();
+        t.heldCalls = nullptr;
+        volatile long* holderCalls = nullptr;
+        const std::string holder = JpHolder(t.runtimeName, holderCalls);
+        if (!holder.empty()) {
+            t.heldBy = holder;
+            t.heldCalls = holderCalls;
+            t.status = "held by " + holder;
+            Out(std::string("jumpprobe hook: ") + t.label + " held by " + holder + " (its install owns this function; neither"
+                " detoured nor failed here - " + (holderCalls ? "`show` reads that probe's count" : "its own `stat` counts it") + ")");
+            ++held;
+            continue;
+        }
+        std::string name;
+        PVOID p = nullptr;
+        AurieStatus st = AURIE_SUCCESS;
+        if (!JpResolveName(t, name, p, st)) {
+            t.status = "failed (not found by name: " + std::string(t.runtimeName)
+                + (std::string_view(t.runtimeName).rfind("gml_Script_", 0) != 0 ? ", nor with gml_Script_ in front" : "")
+                + ", st=" + std::to_string((int)st) + ")";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        t.resolvedName = name;
+        CScript* sc = reinterpret_cast<CScript*>(p);
+        if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))
+            || !sc->m_Functions->m_ScriptFunction) {
+            t.status = "failed (name resolved, but not to a readable script record with a function)";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        PVOID src = (PVOID)sc->m_Functions->m_ScriptFunction;
+        if (!AddrIsExecutableInModule(mainMod, src)) {
+            // A hook of this plugin took the table entry: the function is
+            // that hook's, and the row is held, never detoured on top.
+            t.heldBy = "a ForgePact hook (the table entry is not game code)";
+            t.status = "held by " + t.heldBy;
+            Out(std::string("jumpprobe hook: ") + t.label + " held by " + t.heldBy + " - neither detoured nor failed here");
+            ++held;
+            continue;
+        }
+        PVOID tramp = nullptr;
+        AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, src, t.detour, &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            t.status = "failed (MmCreateHook st=" + std::to_string((int)hs) + ")";
+            Out(std::string("jumpprobe hook: ") + t.label + " " + t.status);
+            ++failed;
+            continue;
+        }
+        t.orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+        t.installed = true;
+        t.status = "detoured";
+        char b[320];
+        sprintf_s(b, "jumpprobe hook: detoured %s at exe+0x%llX", t.label, (unsigned long long)((char*)src - (char*)mainMod));
+        Out(std::string(b) + (name != t.runtimeName ? " as " + name : std::string()));
+        ++ok;
+    }
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+        JpBuiltinRow& t = g_JpBuiltinRows[i];
+        const std::string name = JpBuiltinName(i);
+        if (t.installed) { Out("jumpprobe hook: builtin " + name + " already hooked"); ++builtins; continue; }
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+        if (!AurieSuccess(st) || !p) {
+            t.status = "failed (not found by name, st=" + std::to_string((int)st) + ")";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        if (!AddrIsExecutableInModule(mainMod, p)) {
+            t.status = "failed (the builtin is not executable code inside Hero_Siege.exe - another hook may hold it)";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        if (!HookBuiltin(name.c_str(), kJpBuiltinHookIds[i], kJpBuiltinDetours[i], &t.orig) || !t.orig) {
+            t.status = "failed (HookBuiltin: see its line above)";
+            Out("jumpprobe hook: builtin " + name + " " + t.status);
+            ++builtinsFailed;
+            continue;
+        }
+        t.installed = true;
+        t.status = "hooked";
+        ++builtins;
+    }
+    Out("jumpprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed, " + std::to_string(held)
+        + " held, " + std::to_string(builtins) + " builtins"
+        + (builtinsFailed ? ", " + std::to_string(builtinsFailed) + " builtins failed" : std::string()));
+    Out("  Next: `jumpprobe show` twice while walking - CheckTalentUse and position_meeting must climb, or nothing here counts."
+        " Nothing is logged until `jumpprobe arm`.");
+}
+
+// ---- arm, show, pass ------------------------------------------------------------
+
+static void JpArm(const std::vector<std::string>& tail)
+{
+    if (!tail.empty() && Lower(tail[0]) == "off") {
+        g_JpCore.SetArmed(false);
+        g_JpBudget = 0;
+        Out("jumpprobe arm: off - no row logs; the counts continue");
+        return;
+    }
+    long n = kJpDefaultBudget;
+    if (!tail.empty()) {
+        try { n = std::stol(tail[0]); } catch (...) { Out("jumpprobe arm: n must be a whole number; nothing armed"); return; }
+        if (n < 1 || n > kJpMaxBudget) { Out("jumpprobe arm: n must be 1.." + std::to_string(kJpMaxBudget) + "; nothing armed"); return; }
+    }
+    for (JpRow& t : g_JpRows) InterlockedExchange(&t.logged, 0);
+    for (JpBuiltinRow& t : g_JpBuiltinRows) InterlockedExchange(&t.logged, 0);
+    g_JpBudget = n;
+    g_JpCore.SetArmed(true);
+    JpRefreshPlayer();
+    Out("jumpprobe arm: the next " + std::to_string(n) + " calls per row whose self is the local player are logged"
+        " (player=" + JpPlayerText() + "); calls from other selves count under other-self=. Then `jumpprobe show`.");
+}
+
+static bool JpCallsOf(const JpRow& t, long& calls)
+{
+    if (t.installed) { calls = t.calls; return true; }
+    if (!t.heldBy.empty() && t.heldCalls) { calls = *t.heldCalls; return true; }
+    return false;
+}
+
+static void JpShowRow(JpRow& t, const std::string& prefix)
+{
+    long calls = 0;
+    if (!JpCallsOf(t, calls)) {
+        Out(prefix + t.label + " calls=n/a (" + (t.status.empty() ? std::string("not hooked: `jumpprobe hook` first") : t.status) + ")");
+        return;
+    }
+    std::string line = prefix + t.label + " calls=" + std::to_string(calls - t.lastShown) + " total=" + std::to_string(calls);
+    if (t.installed) {
+        const long logged = g_JpBudget > 0 ? (std::min)((long)t.logged, g_JpBudget) : 0;
+        line += " logged=" + std::to_string(logged) + (g_JpBudget > 0 ? "/" + std::to_string(g_JpBudget) : std::string(" (not armed)"))
+            + " other-self=" + std::to_string(t.otherSelf);
+    } else {
+        line += " (held by " + t.heldBy + ": that probe's count)";
+    }
+    t.lastShown = calls;
+    Out(line);
+}
+
+static void JpShowBuiltin(int i, const std::string& prefix)
+{
+    JpBuiltinRow& t = g_JpBuiltinRows[i];
+    if (!t.installed) {
+        Out(prefix + JpBuiltinName(i) + " calls=n/a (" + (t.status.empty() ? std::string("not hooked: `jumpprobe hook` first") : t.status) + ")");
+        return;
+    }
+    const long calls = t.calls;
+    const long logged = g_JpBudget > 0 ? (std::min)((long)t.logged, g_JpBudget) : 0;
+    Out(prefix + JpBuiltinName(i) + " calls=" + std::to_string(calls - t.lastShown) + " total=" + std::to_string(calls)
+        + " logged=" + std::to_string(logged) + (g_JpBudget > 0 ? "/" + std::to_string(g_JpBudget) : std::string(" (not armed)"))
+        + " other-self=" + std::to_string(t.otherSelf));
+    t.lastShown = calls;
+}
+
+// The lever is on and the local player's calls arrive, but no jump script
+// opened a window for them, so every one ran the game's own function. Named
+// on `pass stat` and `show`, so an inert lever is never read as a lever that
+// answered and changed nothing.
+static void JpWarnIfInert(const std::string& prefix)
+{
+    if (!g_JpCore.Inert()) return;
+    Out(prefix + "INERT - the lever is ON but no window has opened (windows-opened=0, outside-window="
+        + std::to_string(g_JpCore.OutsideWindowTotal()) + "): neither CA_playerJump nor PlayerForceJump ran with the"
+        " local player as self, so every call ran the game's own function. Nothing from this run says what blocks"
+        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all> hold`");
+}
+
+// Every row's calls since the previous `show`, the two controls first. A
+// held row's count is its holder's; a row nobody counts prints calls=n/a,
+// never 0, and is never left out.
+static void JpShow()
+{
+    int detoured = 0, held = 0, builtins = 0;
+    for (const JpRow& t : g_JpRows) { if (t.installed) ++detoured; else if (!t.heldBy.empty()) ++held; }
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
+    Out("jumpprobe show: " + std::to_string(detoured) + "/" + std::to_string((int)kJpRowCount) + " rows detoured, "
+        + std::to_string(held) + " held, " + std::to_string(builtins) + "/" + std::to_string(JpNs::kBuiltinCount)
+        + " builtins hooked; player=" + (g_JpCore.Active() ? JpPlayerText() : std::string("not resolved (nothing armed)")));
+    JpWarnIfInert("  pass: ");
+    for (JpRow& t : g_JpRows) {
+        if (!JpIsOwnControl(t)) continue;
+        if (!t.installed) {
+            Out(std::string("  own-detour control ") + t.label + " not detoured by jumpprobe ("
+                + (t.status.empty() ? std::string("not hooked") : t.status) + ") - nothing proves jumpprobe's own detours,"
+                " so every count below from a jumpprobe detour is unproven: INSTRUMENT-BLIND");
+            continue;
+        }
+        JpShowRow(t, "  own-detour control ");
+    }
+    JpShowBuiltin(kJpBuiltinControl, "  builtin control ");
+    for (JpRow& t : g_JpRows) if (!JpIsOwnControl(t)) JpShowRow(t, "  ");
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) if (i != kJpBuiltinControl) JpShowBuiltin(i, "  builtin ");
+}
+
+static std::string JpCountersText(const JpNs::Counters& c)
+{
+    return "passed=" + std::to_string(c.passed) + " passthrough=" + std::to_string(c.passthrough)
+        + " outside-window=" + std::to_string(c.outsideWindow) + " other-self=" + std::to_string(c.otherSelf)
+        + " other-family=" + std::to_string(c.otherFamily);
+}
+
+static void JpPassStat()
+{
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    std::string window = g_JpCore.Holding() ? std::string("held open (hold)")
+        : g_JpCore.WindowOpen(frame)
+        ? "open since frame " + std::to_string(g_JpCore.WindowStart()) + " (now " + std::to_string(frame) + ")"
+        : std::string("closed");
+    Out(std::string("jumpprobe pass: ") + (g_JpCore.LeverOn() ? "ON" : "OFF") + " frames=" + std::to_string(g_JpCore.Frames())
+        + " rule=" + std::string(JpNs::FamilyName(g_JpCore.Rule())) + " scripts=" + (g_JpCore.ScriptsOn() ? "on" : "off")
+        + " hold=" + (g_JpCore.Holding() ? "on" : "off")
+        + " window=" + window + " windows-opened=" + std::to_string(g_JpCore.WindowsOpened())
+        + " families: Collision_Prop_obj=" + std::to_string(g_JpCore.PropFamily())
+        + " Collision_Parent_obj=" + std::to_string(g_JpCore.AllFamily()));
+    JpWarnIfInert("jumpprobe pass: ");
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+        const auto row = static_cast<JpNs::Builtin>(i);
+        Out("  " + JpBuiltinName(i) + " " + JpCountersText(g_JpCore.BuiltinCounters(row)) + " (answer "
+            + std::string(JpNs::AnswerName(JpNs::kBuiltins[i].answer))
+            + (JpNs::kBuiltins[i].objectArg < 0 ? ", no object argument: answered only under `all`" : "")
+            + (g_JpBuiltinRows[i].installed ? std::string(")") : std::string("; not hooked)")));
+    }
+    for (const JpRow& t : g_JpRows) {
+        if (t.role < 0) continue;
+        const auto lever = static_cast<JpNs::ScriptLever>(t.role);
+        Out(std::string("  ") + t.label + " (scripts) " + JpCountersText(g_JpCore.ScriptCounters(lever)) + " (answer "
+            + std::string(JpNs::AnswerName(JpNs::kScriptAnswers[t.role])) + (t.installed ? ")" : "; not detoured)"));
+    }
+}
+
+// `pass 1 [frames] [props|all] [scripts] [hold]` / `pass 0` / `pass stat`.
+static void JpPass(const std::vector<std::string>& tail)
+{
+    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat";
+    if (tail.empty() || Lower(tail[0]) == "stat") { JpPassStat(); return; }
+    const std::string v = Lower(tail[0]);
+    if (v == "0" || v == "off") {
+        g_JpCore.LeverOff();
+        Out("jumpprobe pass: OFF - every call runs the game's own function; `pass stat` keeps the counts");
+        return;
+    }
+    if (v != "1" && v != "on") { Out(usage); return; }
+    int64_t frames = JpNs::kDefaultFrames;
+    JpNs::FamilyRule rule = JpNs::FamilyRule::Props;
+    bool scripts = false;
+    bool hold = false;
+    for (size_t i = 1; i < tail.size(); ++i) {
+        const std::string a = Lower(tail[i]);
+        if (a == "props") rule = JpNs::FamilyRule::Props;
+        else if (a == "all") rule = JpNs::FamilyRule::All;
+        else if (a == "scripts") scripts = true;
+        else if (a == "hold") hold = true;
+        else {
+            try { size_t used = 0; frames = std::stoll(a, &used); if (used != a.size()) throw 0; }
+            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts|hold; nothing changed"); return; }
+        }
+    }
+    JpResolveFamilies();
+    if (!g_JpFamiliesResolved) {
+        Out("jumpprobe pass: refused - Collision_Prop_obj or Collision_Parent_obj did not resolve by name ("
+            + std::to_string(g_JpCore.PropFamily()) + ", " + std::to_string(g_JpCore.AllFamily()) + "); nothing changed");
+        return;
+    }
+    if (!g_JpCore.SetLever(frames, rule, scripts, hold)) {
+        Out("jumpprobe pass: frames must be " + std::to_string(JpNs::kMinFrames) + ".." + std::to_string(JpNs::kMaxFrames) + "; nothing changed");
+        return;
+    }
+    JpRefreshPlayer();
+    bool opener = false;
+    int builtins = 0;
+    for (const JpRow& t : g_JpRows) if (t.role == kJpRoleOpensWindow && t.installed) opener = true;
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
+    Out("jumpprobe pass: ON frames=" + std::to_string(frames) + " rule=" + std::string(JpNs::FamilyName(rule))
+        + " scripts=" + (scripts ? "on" : "off") + " hold=" + (hold ? "on" : "off") + " player=" + JpPlayerText()
+        + " builtins=" + std::to_string(builtins) + "/" + std::to_string(JpNs::kBuiltinCount) + " - counters zeroed; "
+        + (hold ? "the window is held open until `pass 0`, jump or no jump"
+                : "the local player's CA_playerJump/PlayerForceJump entry opens the window"));
+    // Each of these leaves the lever ON and answering nothing; say so now
+    // rather than let `ON` read as armed.
+    if (!hold && !opener)
+        Out("jumpprobe pass: WARNING - neither CA_playerJump nor PlayerForceJump is detoured by jumpprobe, so no window can"
+            " open: `jumpprobe hook` first, or add `hold`");
+    if (builtins == 0)
+        Out("jumpprobe pass: WARNING - no collision builtin is hooked by jumpprobe, so no builtin can be answered:"
+            " `jumpprobe hook` first");
+    if (!g_JpPlayer)
+        Out("jumpprobe pass: WARNING - no local player resolved, so no call counts as the player's: load a character");
+}
+
+// ---- state and trace (hook-free) ------------------------------------------------
+
+static bool JpIsStateName(const std::string& name)
+{
+    static const char* const kWords[] = { "jump", "air", "grav", "land", "fall", "height", "zpos", "hover", "fly" };
+    const std::string l = Lower(name);
+    for (const char* w : kWords) if (l.find(w) != std::string::npos) return true;
+    return false;
+}
+
+// Every instance variable of the player whose name says jump, air, gravity,
+// landing, falling, height, z, hover or flight. False when they could not be
+// listed.
+static bool JpStateNames(const RValue& player, std::vector<std::string>& names)
+{
+    names.clear();
+    try {
+        const RValue all = g_Yytk->CallBuiltin("variable_instance_get_names", { player });
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { all }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            try {
+                const std::string nm = g_Yytk->CallBuiltin("array_get", { all, RValue((double)i) }).ToString();
+                if (JpIsStateName(nm)) names.push_back(nm);
+            } catch (...) {}
+        }
+        std::sort(names.begin(), names.end());
+        return true;
+    } catch (...) { return false; }
+}
+
+static std::string JpShort(std::string s)
+{
+    if (s.size() > kJpValueMax) s = s.substr(0, kJpValueMax) + "...(cut)";
+    return s;
+}
+
+static std::string JpVarText(const RValue& inst, const std::string& name)
+{
+    try { return JpShort(SpValueText(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) }))); }
+    catch (...) { return "unreadable"; }
+}
+
+// `state`: the local player's x, y, sprite and every state-shaped variable,
+// each read by name in its own try; `unreadable` per item, never a default.
+// Nothing is installed or written.
+static void JpState()
+{
+    RValue player;
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) { Out("jumpprobe state: unreadable (no local player)"); return; }
+    Out("jumpprobe state: player via " + how);
+    Out("  x=" + JpVarText(player, "x") + " y=" + JpVarText(player, "y"));
+    std::string sprite = "unreadable";
+    try {
+        const RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("sprite_index") });
+        const double s = spr.ToDouble();
+        sprite = s < 0 ? std::string("none")
+            : MenuLayoutOneLine(g_Yytk->CallBuiltin("sprite_get_name", { RValue(s) }).ToString());
+    } catch (...) {}
+    Out("  sprite_index=" + sprite);
+    std::vector<std::string> names;
+    if (!JpStateNames(player, names)) { Out("  variables=unreadable (variable_instance_get_names failed)"); return; }
+    for (const std::string& nm : names) Out("  " + nm + "=" + JpVarText(player, nm));
+    Out("jumpprobe state: " + std::to_string(names.size())
+        + " variable(s) whose name contains jump, air, grav, land, fall, height, zpos, hover or fly");
+}
+
+static std::vector<std::string> g_JpTraceNames;
+static CInstance* g_JpTracePlayer = nullptr;
+static std::string g_JpTraceLast;
+static bool g_JpTraceCapped = false;
+
+static void JpTrace(const std::vector<std::string>& tail)
+{
+    const std::string v = tail.empty() ? std::string() : Lower(tail[0]);
+    if (v == "0" || v == "off") {
+        g_JpCore.SetTrace(false);
+        Out("jumpprobe trace: off (" + std::to_string(g_JpCore.TraceLines()) + " of " + std::to_string(JpNs::kTraceMaxLines)
+            + " lines this session)");
+        return;
+    }
+    if (v != "1" && v != "on") { Out("jumpprobe trace: usage -> trace 1 | trace 0"); return; }
+    if (g_JpTraceCapped) { Out("jumpprobe trace: refused - the session's " + std::to_string(JpNs::kTraceMaxLines) + " lines are spent"); return; }
+    g_JpTracePlayer = nullptr;
+    g_JpTraceLast.clear();
+    g_JpCore.SetTrace(true);
+    JpRefreshPlayer();
+    Out("jumpprobe trace: on - one line per frame in which x, y or a state variable changed (player=" + JpPlayerText()
+        + "), at most " + std::to_string(JpNs::kTraceMaxLines) + " a session");
+}
+
+// One sample: a line only when x, y or a state variable changed since the
+// last line. The variable names are listed again whenever the player changes.
+static void JpTraceSample(int64_t frame)
+{
+    if (!g_JpPlayer) return;
+    g_JpBusy = true;
+    std::string body;
+    try {
+        const RValue p = g_JpPlayer->ToRValue();
+        if (g_JpTracePlayer != g_JpPlayer) {
+            if (!JpStateNames(p, g_JpTraceNames)) g_JpTraceNames.clear();
+            g_JpTracePlayer = g_JpPlayer;
+        }
+        body = " x=" + JpVarText(p, "x") + " y=" + JpVarText(p, "y");
+        for (const std::string& nm : g_JpTraceNames) body += " " + nm + "=" + JpVarText(p, nm);
+    } catch (...) { body = " unreadable"; }
+    g_JpBusy = false;
+    if (body == g_JpTraceLast) return;
+    g_JpTraceLast = body;
+    if (!g_JpCore.TakeTraceLine()) {
+        g_JpTraceCapped = true;
+        g_JpCore.SetTrace(false);
+        Out("jumpprobe trace: the session's " + std::to_string(JpNs::kTraceMaxLines) + " lines are spent; trace off");
+        return;
+    }
+    Out("jumpprobe trace frame=" + std::to_string(frame) + body);
+}
+
+// The one per-frame piece, from FrameCallback: closes an expired window,
+// refreshes the local player the detours compare their self against, and
+// samples the trace. Returns at once while nothing is armed, traced or on.
+static void JpFrameTick()
+{
+    if (!g_JpCore.Active()) return;
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    g_JpCore.Tick(frame);
+    JpRefreshPlayer();
+    if (g_JpCore.Tracing()) JpTraceSample(frame);
+}
+
+static void JpUsage()
+{
+    int hooked = 0, held = 0, builtins = 0;
+    for (const JpRow& t : g_JpRows) { if (t.installed) ++hooked; else if (!t.heldBy.empty()) ++held; }
+    for (const JpBuiltinRow& t : g_JpBuiltinRows) if (t.installed) ++builtins;
+    Out("jumpprobe: rows=" + std::to_string((int)kJpRowCount) + " hooked=" + std::to_string(hooked) + " held=" + std::to_string(held)
+        + " builtins=" + std::to_string(builtins) + " - research instrument for docs/jump-scenery-research.md (research build only)");
+    Out("  hook                              native-detour every script row and HookBuiltin every collision builtin;"
+        " a row another install detours is `held`; refused while citrace's spatial builtin hooks are in place");
+    Out("  arm [n] | arm off                 log the next n (default " + std::to_string(kJpDefaultBudget) + ", at most "
+        + std::to_string(kJpMaxBudget) + ") calls per row whose self is the local player; counts run regardless");
+    Out("  show                              calls since the previous show per row, the CheckTalentUse own-detour control and"
+        " the position_meeting builtin control first; a row nobody counts prints calls=n/a");
+    Out("  state                             hook-free: the player's x, y, sprite and every variable naming jump, air, grav,"
+        " land, fall, height, zpos, hover or fly");
+    Out("  trace 1|0                         one line per frame in which x, y or a state variable changed (at most "
+        + std::to_string(JpNs::kTraceMaxLines) + " a session)");
+    Out("  pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
+        " opens a window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision"
+        " builtins against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites"
+        " CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open until pass 0, jump or no jump");
+}
+
+static void JpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { JpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { JpInstall(); return; }
+    if (sub == "arm") { JpArm(tail); return; }
+    if (sub == "show") { JpShow(); return; }
+    if (sub == "state") { JpState(); return; }
+    if (sub == "trace") { JpTrace(tail); return; }
+    if (sub == "pass") { JpPass(tail); return; }
+    JpUsage();
+}
+#endif // FORGEPACT_RELEASE (jumpprobe)
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand; answers false in the player build.
+static bool HandleJumpProbeCommand(const std::string& lc, const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    if (lc == "jumpprobe") { JpCommand(rest); return true; }
+#endif
+    (void)lc; (void)rest;
+    return false;
+}
+
+#ifndef FORGEPACT_RELEASE
 // `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
 // sits above LogDrop.
 static void GoldTraceCommand(const std::string& rest)
@@ -43274,6 +46106,385 @@ static void HiddenLootCommand(const std::string& rest)
     Out("hiddenloot: usage hiddenloot 1 | 0 | stat | key <vk>");
 }
 // ---- end of the hidden loot sleep adapter
+
+// ---- Jump through scenery (JumpScenery.hpp): the adapter -------------------
+// `jumpscenery 1|0|stat` (ForgePact #16, the Mods tab's switch). The universal
+// jump stops at scenery because, in its take-off frame, the game walks the
+// jump's direction asking collision builtins about the player, and a blocked
+// step stops it (docs/jump-scenery-research.md, Live 1). While the player's
+// jump is airborne, this adapter hands each of the five builtins that crossed
+// a jump in Live 1's J3 to the core in JumpScenery.hpp, which says whether to
+// keep the game's answer or write the measured "no collision" instead.
+//
+// Six hooks, all by name and all installed on the first `jumpscenery 1`:
+// skillsLeap through HookOneScript and its SDK constant (its entry opens the
+// window, before the original runs, so a walk nested in that first call is
+// inside it), and the five builtins through HookBuiltin. While the mod is off
+// each detour's first act is to run the original and return. While it is on,
+// the original still runs first, and only a call whose self is the local
+// player reaches the core. The objects are named through the SDK and resolved
+// with asset_get_index; the family test asks object_is_ancestor once per
+// object (the core keeps the table). Gates and locks keep blocking (owner,
+// 2026-10-03): a granted query is re-run, same arguments and self, against
+// each excluded object, and if one of them is there the real answer stands.
+// No address, no struct read. In the research build citrace and jumpprobe
+// hook some of the same builtins, and a builtin detours once, so each side
+// refuses while the other holds them: `jumpscenery 1` while citrace or
+// jumpprobe holds one (JumpSceneryResearchHolders), and `citrace 1`
+// (InstallCiTraceHooks) and `jumpprobe hook` (JpInstall) while jumpscenery
+// holds any of its six (JumpSceneryHeldHooks).
+namespace JsNs = ForgePact::JumpSceneryMod;
+
+static constexpr HeroSiege::Objects::GameObject kJsFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
+// The objects a jump never passes, with their descendants.
+static constexpr HeroSiege::Objects::GameObject kJsExcluded[] = {
+    HeroSiege::Objects::GameObject::Gate_Parent_obj,
+    HeroSiege::Objects::GameObject::Lock_obj,
+};
+
+static TRoutine g_JsOrig[JsNs::kBuiltinCount] = {};   // in JumpScenery.hpp's kBuiltins order
+static PFUNC_YYGMLScript g_JsOrigLeap = nullptr;
+static bool g_JsLeapNative = false;     // skillsLeap got its inline detour, not only the table swap
+static bool g_JsConfigured = false;     // the objects resolved and the core's callbacks set
+static bool g_JsBusy = false;           // game thread only: the adapter's own calls inside a detour
+static CInstance* g_JsPlayer = nullptr; // the local player, refreshed each frame while the mod is on
+static int g_JsFamilyIdx = -1;
+static std::vector<int> g_JsExcludedIdx;
+
+static const char* const kJsBuiltinHookIds[JsNs::kBuiltinCount] = {
+    "fp_jumpscenery_pmt", "fp_jumpscenery_plm", "fp_jumpscenery_ipo", "fp_jumpscenery_cln", "fp_jumpscenery_ccr",
+};
+static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+#define JS_BUILTIN_DETOUR(I) \
+    static void JsBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
+        JsOnBuiltin(I, Result, S, O, argc, Args); \
+    }
+JS_BUILTIN_DETOUR(0) JS_BUILTIN_DETOUR(1) JS_BUILTIN_DETOUR(2) JS_BUILTIN_DETOUR(3) JS_BUILTIN_DETOUR(4)
+#undef JS_BUILTIN_DETOUR
+static const PVOID kJsBuiltinDetours[JsNs::kBuiltinCount] = {
+    (PVOID)JsBuiltin_0, (PVOID)JsBuiltin_1, (PVOID)JsBuiltin_2, (PVOID)JsBuiltin_3, (PVOID)JsBuiltin_4,
+};
+static_assert(JsNs::kBuiltinCount == 5, "one detour per builtin row");
+
+static bool JsNumber(const RValue& v)
+{
+    return v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64;
+}
+
+// Is this result "blocked"? A meeting query's true; an instance query's
+// instance (the game's own `noone` comes back as a ref to instance -4). A
+// value of any other kind is `unknown`: free for a hooked call, so the game's
+// answer stands, and blocked for the landing check, so the jump is refused.
+static bool JsBlocked(JsNs::Answer form, const RValue& r, bool unknown)
+{
+    try {
+        if (form == JsNs::Answer::False) {
+            if (r.m_Kind == VALUE_BOOL || JsNumber(r)) return r.ToBoolean();
+            return unknown;
+        }
+        if (r.m_Kind == VALUE_OBJECT) return true;
+        if (r.m_Kind == VALUE_REF || JsNumber(r)) return r.ToDouble() >= 0.0;
+    } catch (...) {}
+    return unknown;
+}
+
+// The measured "no collision" (Live 1's J3, the forms jumpprobe's lever wrote).
+static RValue JsAnswerValue(JsNs::Answer a)
+{
+    return a == JsNs::Answer::Noone ? RValue(JsNs::kNoone) : RValue(false);
+}
+
+// The object index a builtin's object argument names: an object index as it
+// is, an instance (id or reference) by its own object_index; -1 for `all`,
+// `noone` or anything else, which the core leaves alone.
+static int JsObjectIndexOf(const RValue& v)
+{
+    try {
+        int n = -1;
+        if (!N1ObjectIndex(v, n)) return -1;
+        if (g_Yytk->CallBuiltin("object_exists", { RValue((double)n) }).ToBoolean()) return n;
+        if (!g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()) return -1;
+        int obj = -1;
+        if (N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), obj)) return obj;
+    } catch (...) {}
+    return -1;
+}
+
+// The local player, by the VALUE_REF-safe resolver every player feature uses.
+// A different player (another character loaded) makes the core forget the
+// reach it learned.
+static void JsRefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    double id = -1.0;
+    g_JsBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+        if (inst && inst != g_JsPlayer)
+            id = g_Yytk->CallBuiltin("variable_instance_get", { inst->ToRValue(), RValue("id") }).ToDouble();
+    } catch (...) { inst = nullptr; }
+    g_JsBusy = false;
+    if (inst && inst != g_JsPlayer && id >= 0.0) g_JumpScenery.NotePlayer((int64_t)id);
+    g_JsPlayer = inst;
+}
+
+static bool JsPlayerPosition(double& x, double& y)
+{
+    if (!g_JsPlayer) return false;
+    const bool busy = g_JsBusy;
+    g_JsBusy = true;
+    bool ok = false;
+    try {
+        const RValue p = g_JsPlayer->ToRValue();
+        const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") });
+        const RValue vy = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("y") });
+        if (JsNumber(vx) && JsNumber(vy)) {
+            x = vx.ToDouble();
+            y = vy.ToDouble();
+            ok = std::isfinite(x) && std::isfinite(y);
+        }
+    } catch (...) { ok = false; }
+    g_JsBusy = busy;
+    return ok;
+}
+
+// room_width / room_height are built-in variables: variable_global_get cannot
+// see them, GetBuiltin can (hhlabelprobe's route).
+static bool JsRoomSize(double& w, double& h)
+{
+    try {
+        RValue rw, rh;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room_width", nullptr, NULL_INDEX, rw))
+            || !AurieSuccess(g_Yytk->GetBuiltin("room_height", nullptr, NULL_INDEX, rh))) return false;
+        if (!JsNumber(rw) || !JsNumber(rh)) return false;
+        w = rw.ToDouble();
+        h = rh.ToDouble();
+        return std::isfinite(w) && std::isfinite(h) && w > 0.0 && h > 0.0;
+    } catch (...) {}
+    return false;
+}
+
+// The landing check: the original place_meeting(x, y, Collision_Parent_obj)
+// with the player as self. Anything unreadable counts as blocked.
+static bool JsFamilyAt(double x, double y)
+{
+    const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    if (!orig || !g_JsPlayer || g_JsFamilyIdx < 0) return true;
+    RValue args[3] = { RValue(x), RValue(y), RValue((double)g_JsFamilyIdx) };
+    RValue r;
+    orig(r, g_JsPlayer, g_JsPlayer, 3, args);
+    return JsBlocked(JsNs::Answer::False, r, true);
+}
+
+// Does a gate or a lock block this query? The same original, same arguments
+// and self, with the object argument swapped for each excluded object.
+static bool JsExcludedBlocks(TRoutine orig, const JsNs::BuiltinRow& b, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!orig || !Args || b.objectArg < 0 || b.objectArg >= argc) return true;
+    std::vector<RValue> copy(Args, Args + argc);
+    for (int e : g_JsExcludedIdx) {
+        copy[b.objectArg] = RValue((double)e);
+        RValue r;
+        orig(r, S, O, argc, copy.data());
+        if (JsBlocked(b.answer, r, true)) return true;
+    }
+    return false;
+}
+
+// Builtins whose free answer outside a window must still reach the core.
+// collision_circle feeds walk-before-open=; filtering it out would leave that
+// counter seeing only blocked circles, and a walk that runs before skillsLeap
+// would read the same as a failed family test.
+static constexpr bool JsFreeAnswerReachesCore(int row)
+{
+    return row == (int)JsNs::Builtin::CollisionCircle;
+}
+static_assert(JsFreeAnswerReachesCore((int)JsNs::Builtin::CollisionCircle),
+              "walk-before-open= needs free collision_circle answers outside the window");
+
+static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!g_JumpScenery.Enabled() || g_JsBusy) { if (g_JsOrig[row]) g_JsOrig[row](Result, S, O, argc, Args); return; }
+    const TRoutine orig = g_JsOrig[row];
+    if (!orig) return;
+    // The original first, always: a free answer is returned as it is.
+    orig(Result, S, O, argc, Args);
+    if (!S || S != g_JsPlayer) return;
+    const JsNs::BuiltinRow& b = JsNs::kBuiltins[row];
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    const bool blocked = JsBlocked(b.answer, Result, false);
+    // A free answer outside a window still matters for collision_circle: the
+    // core counts every family circle, blocked or not, for walk-before-open=,
+    // the positive control on the window. Other free answers outside a window
+    // change nothing in the core, so they skip the object lookup.
+    if (!blocked && !JsFreeAnswerReachesCore(row) && !g_JumpScenery.WindowOpen(frame)) return;
+    JsNs::Answer answer = JsNs::Answer::Real;
+    g_JsBusy = true;
+    try {
+        JsNs::Query q{};
+        q.builtin = static_cast<JsNs::Builtin>(row);
+        q.frame = frame;
+        q.playerSelf = true;
+        q.object = (Args && b.objectArg < argc) ? JsObjectIndexOf(Args[b.objectArg]) : -1;
+        q.reallyBlocked = blocked;
+        if (q.builtin == JsNs::Builtin::CollisionCircle && Args && argc >= 2 && JsNumber(Args[0]) && JsNumber(Args[1])) {
+            q.x = Args[0].ToDouble();
+            q.y = Args[1].ToDouble();
+        }
+        answer = g_JumpScenery.OnQuery(q, [&]() { return JsExcludedBlocks(orig, b, S, O, argc, Args); });
+    } catch (...) { answer = JsNs::Answer::Real; }
+    g_JsBusy = false;
+    if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);
+}
+
+static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);
+    // Before the original: a take-off walk nested in this first call is then
+    // inside the window it opens.
+    g_JsBusy = true;
+    try { g_JumpScenery.OnLeapEntry((int64_t)g_RuntimeFrame, S && S == g_JsPlayer); } catch (...) {}
+    g_JsBusy = false;
+    return g_JsOrigLeap(S, O, R, argc, A);
+}
+
+#ifndef FORGEPACT_RELEASE
+// citrace's and jumpprobe's hooks on the builtins (and script) this mod
+// needs, by name; "" when neither holds one.
+static std::string JumpSceneryResearchHolders()
+{
+    std::string citrace;
+    const struct { const char* name; TRoutine* orig; } kCi[] = {
+        { "instance_position", &g_OrigCi_InstancePosition }, { "position_meeting", &g_OrigCi_PositionMeeting },
+    };
+    for (const auto& c : kCi) if (*c.orig) citrace += (citrace.empty() ? "" : ", ") + std::string(c.name);
+    if (!citrace.empty()) return "citrace holds " + citrace;
+    std::string jumpprobe;
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+        if (!g_JpBuiltinRows[i].installed) continue;
+        for (const JsNs::BuiltinRow& b : JsNs::kBuiltins)
+            if (b.name == JpNs::kBuiltins[i].name) jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(b.name);
+    }
+    if (g_JpRows[kJpRow_SkillsLeap].installed)
+        jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    if (!jumpprobe.empty()) return "jumpprobe holds " + jumpprobe;
+    return "";
+}
+
+static std::string JumpSceneryHeldHooks()
+{
+    std::string held;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i)
+        if (g_JsOrig[i]) held += (held.empty() ? "" : ", ") + std::string(JsNs::kBuiltins[i].name);
+    if (g_JsOrigLeap)
+        held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    return held;
+}
+#endif
+
+// The one install path, from `jumpscenery 1`: "" when every hook is in and
+// the core is configured, otherwise why the mod stays off. Hooks that went
+// in stay in, and their detours return the original while the mod is off.
+static std::string JumpSceneryInstall()
+{
+#ifndef FORGEPACT_RELEASE
+    const std::string holders = JumpSceneryResearchHolders();
+    if (!holders.empty())
+        return holders + " (a builtin detours once); the mod stays off. Relaunch without it to use jumpscenery.";
+#endif
+    if (!g_JsConfigured) {
+        int family = -1;
+        std::vector<int> excluded;
+        std::string missing;
+        try {
+            family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kJsFamily))) }).ToDouble();
+            if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kJsFamily));
+            for (const HeroSiege::Objects::GameObject obj : kJsExcluded) {
+                const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
+                if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
+                excluded.push_back(idx);
+            }
+        } catch (...) { missing = "the objects"; }
+        if (!missing.empty()) return missing + " did not resolve by name; the mod stays off";
+        g_JsFamilyIdx = family;
+        g_JsExcludedIdx = excluded;
+        g_JumpScenery.SetIsAncestor([](int object, int ancestor) {
+            return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+        });
+        g_JumpScenery.SetFamily(family, excluded);
+        g_JumpScenery.SetPlaceMeeting(&JsFamilyAt);
+        g_JumpScenery.SetRoomSize(&JsRoomSize);
+        g_JumpScenery.SetPlayerPosition(&JsPlayerPosition);
+        g_JsConfigured = true;
+    }
+    if (!g_JsOrigLeap) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap), "fp_jumpscenery_leap", (PVOID)JsHookLeap, &g_JsOrigLeap, &native);
+        g_JsLeapNative = native;
+    }
+    if (!g_JsOrigLeap) return "skillsLeap was not found by name, so nothing could open a jump's window; the mod stays off";
+    // Table-only, the game's own direct calls would pass the hook by and the
+    // mod would report on while doing nothing.
+    if (!g_JsLeapNative) return "skillsLeap is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+    std::string failed;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i) {
+        if (g_JsOrig[i]) continue;
+        const char* name = JsNs::kBuiltins[i].name.data();
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
+        if (!AurieSuccess(st) || !p) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not found by name)";
+            continue;
+        }
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not game code)";
+            continue;
+        }
+        if (!HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i]) || !g_JsOrig[i]) {
+            g_JsOrig[i] = nullptr;
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (HookBuiltin failed)";
+        }
+    }
+    if (!failed.empty()) return failed + " not hooked; the mod stays off";
+    return "";
+}
+
+// The per-frame tick: housekeeping only (JumpScenery.hpp's Tick). Returns at
+// once while the mod is off.
+static void JumpSceneryTick()
+{
+    if (!g_JumpScenery.Enabled()) return;
+    JsRefreshPlayer();
+    g_JsBusy = true;
+    try { g_JumpScenery.Tick((int64_t)g_RuntimeFrame); } catch (...) {}
+    g_JsBusy = false;
+}
+
+// `jumpscenery 1|0` (the panel's switch); bare `jumpscenery` or `stat` prints
+// the counters the live procedure reads.
+static void JumpSceneryCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg == "1" || arg == "on") {
+        if (!g_JumpScenery.Enabled()) {
+            const std::string why = JumpSceneryInstall();
+            if (!why.empty()) { Out("jumpscenery: refused - " + why); return; }
+            JsRefreshPlayer();
+            g_JumpScenery.SetEnabled(true);
+        }
+        Out(g_JumpScenery.StatusLine());
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        g_JumpScenery.SetEnabled(false);
+        Out(g_JumpScenery.StatusLine());
+        return;
+    }
+    if (arg.empty() || arg == "stat") { Out(g_JumpScenery.StatLine()); return; }
+    Out("jumpscenery: usage jumpscenery 1 | 0 | stat");
+}
+// ---- end of the jump through scenery adapter
 
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
@@ -44297,7 +47508,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "incident"
+        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "jumpscenery"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -44379,6 +47590,7 @@ static void RunCommand(const std::string& line)
     if (HandleCraftCommand(lc, rest)) return;
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
+    if (HandleJumpProbeCommand(lc, rest)) return;
     if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
@@ -44400,6 +47612,9 @@ static void RunCommand(const std::string& line)
     // standalone early returns.
     if (lc == "zonecensus") { ZoneCensusCommand(rest); return; }
     if (lc == "evcount") { EvCountCommand(rest); return; }
+    // Bosses control research (issue #44): the same standalone early returns.
+    if (lc == "bossprobe") { BossProbeCommand(rest); return; }
+    if (lc == "droptrace") { DropTraceCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -44437,11 +47652,15 @@ static void RunCommand(const std::string& line)
     if (lc == "incident") { IncidentCommand(rest); return; }
     // Far sleep: the Mods tab's switch, the same standalone early return.
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
+    // Jump through scenery: the Mods tab's switch, the same early return.
+    if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
     if (lc == "densityroll") { DensityRollCommand(rest); return; }
     // Hidden loot sleep: the Mods tab's switch and its show key, the same
     // standalone early return.
     if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
+    // Bosses (Mods > Gameplay): the select's command, the same early return.
+    if (lc == "bossrarity") { BossRarityCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -44501,6 +47720,34 @@ static void RunCommand(const std::string& line)
     // everywhere mode. Both builds; a standalone early return for the same
     // C1061 reason as `restartanytime` above.
     if (lc == "satzone") { SatZoneCmd(rest); return; }
+    // Satanic Zone research (issue #155): force LoadSatanicZone's answer so
+    // the game's own consumers see "the player is in the satanic zone" (or
+    // not) wherever the character stands. Installs the satmods diagnostic
+    // hook if the filter never did. A standalone early return for the same
+    // C1061 reason as `restartanytime` above; research build only.
+#ifndef FORGEPACT_RELEASE
+    if (lc == "satforce") {
+        const std::string v = Lower(TrimCopy(rest));
+        if (v.empty() || v == "stat" || v == "status") {
+            Out(std::string("satforce stat: ") + (g_SatForceReturn < 0 ? "off (the game's own answers)"
+                : (g_SatForceReturn ? "every call -> true" : "every call -> false"))
+                + " g_SatLoadCalls=" + std::to_string(g_SatLoadCalls));
+        } else if (v == "off" || v == "no") {
+            g_SatForceReturn = -1;
+            Out("satforce -> off (the game's own answers)");
+        } else if (v == "on" || v == "true" || v == "1" || v == "yes" || v == "0" || v == "false") {
+            // `0`/`false` force false; only `off`/`no` disable the forcing
+            // (review of #156 caught `0` falling into the off branch).
+            g_SatForceReturn = (v == "0" || v == "false") ? 0 : 1;
+            const bool hooked = EnsureSatanicZoneHook();
+            Out(std::string("satforce -> every call returns ") + (g_SatForceReturn ? "true" : "false")
+                + (hooked ? " (LoadSatanicZone hook on)" : " (HOOK COULD NOT INSTALL)"));
+        } else {
+            Out("satforce: usage -> satforce 1|0|off  (no argument = status)");
+        }
+        return;
+    }
+#endif
     // Toggle-skill active indicator (issue #11, Track B). A standalone early
     // return, not one more `else if` below: that chain is already at MSVC's
     // block-nesting limit (C1061) - the same reason the research command
@@ -44981,8 +48228,8 @@ static void RunCommand(const std::string& line)
             return;
         }
         bool enable = (subLc == "1" || subLc == "true" || subLc == "on");
+        if (enable && !InstallCiTraceHooks()) { g_CiTraceOn.store(false); return; }
         g_CiTraceOn.store(enable);
-        if (enable) InstallCiTraceHooks();
         CiTraceStats();
 #endif
     } else if (lc == "reloadcfg") {
@@ -45660,6 +48907,7 @@ void FrameCallback(FWFrame& FrameContext)
     KuyrukIsle();
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
+    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
 #endif
 
     // one-time setup once the runner is fully alive: load config + install hook
@@ -45868,6 +49116,12 @@ void FrameCallback(FWFrame& FrameContext)
     // it is off.
     if (g_Setup) HiddenLootTick();
 
+    // Jump through scenery, toggled by `jumpscenery 1`: housekeeping only -
+    // the local player refreshed, and a jump whose window has closed recorded
+    // (JumpScenery.hpp). The decisions happen inside the hooked calls, at the
+    // point of use. Returns at once while it is off.
+    if (g_Setup) JumpSceneryTick();
+
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll
     // (Route B), which reads nothing until `stashmoveall probe sort` or
@@ -46060,9 +49314,7 @@ EXPORTED AurieStatus ModuleInitialize(
     ForgePact::ModManager::Instance().Initialize();
     HeroSiege::RewardScope::RegisterForgePact();
     LoadStartup();   // oyun kodu calismadan once uygulanmasi gereken ayarlar
-#ifdef FORGEPACT_RELEASE
     DetachConsole();
-#endif
 
     AurieStatus st = g_Yytk->CreateCallback(Module, EVENT_FRAME, (PVOID)FrameCallback, 0);
     InstallHeadLabelHook();

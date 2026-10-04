@@ -2,7 +2,7 @@
   import { HIDDEN_LOOT_KEYS, HIDDEN_LOOT_KEY_DEFAULT } from '../hidden-loot-keys.js';
 </script>
 
-<!-- Mods tab: the Quality of Life and Items panels, switched by App.svelte's sub-tab strip. Neither repeats its
+<!-- Mods tab: the Quality of Life, Items and Gameplay panels, switched by App.svelte's sub-tab strip. None repeats its
      sub-tab's name as a heading; each mod is drawn as a card of its own (app.css), and a panel is not drawn as one.
      A child row is marked by its indent (app.css .feature-with-child), never by a glyph (finish review F6). -->
 <div class="card tab-card" data-tab="mods" id="qolCard" role="tabpanel" aria-labelledby="subtab-qol">
@@ -104,6 +104,11 @@
         </select>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Jump through scenery<br><span class="feature-description">Your jump can carry you over rocks, fences, carts and other scenery that would stop it, but only when it would land on open ground inside the area; otherwise the jump works as it always has. Locked doors and zone gates still block it. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_jump_scenery"><span class="sl"></span></label>
+        <span class="val" id="mjsval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style" aria-label="Timed skill countdown">
             <option value="off">Off</option>
@@ -127,12 +132,12 @@
     </div>
   </div>
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span class="feature-description">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Headhunter buffs on rare kills<br><span class="feature-description">For an item forged with Mechanic: Headhunter. While on, killing a rare or champion monster grants its affixes to you as 20-second buffs (Extra Fast &rarr; movement speed, Berserker/Raging/Enraged &rarr; attack speed, Vampiric &rarr; life replenish, elemental Enchanted &rarr; cast rate, others &rarr; movement speed for now). The equipped-belt check is still in progress, so the effect is active whenever this switch is on and the forged item exists. While this switch is on, Headhunter can also drop from the game's own Angelic roll, the way the game's Angelic uniques do: one item, in place of what that roll would have dropped. Off by default; forging the item alone never turns that drop on.</span></span>
     <label class="switch"><input type="checkbox" id="headhunter"><span class="sl"></span></label>
     <span class="val" id="hhval">on</span>
   </div>
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Tyrant's Crown: more rares, richer rares<br><span class="feature-description">For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Tyrant's Crown: more rares, richer rares<br><span class="feature-description">For an item forged with Mechanic: Tyrant's Crown. While on, normal monsters near you rise to rare more often (15% each) and every rare or champion carries one extra affix. Pairs with Headhunter: more rares, more affixes to steal. While this switch is on, Tyrant's Crown can also drop from the game's own Angelic roll, the way the game's Angelic uniques do: one item, in place of what that roll would have dropped. Off by default; forging the item alone never turns that drop on.</span></span>
     <label class="switch"><input type="checkbox" id="tyrant"><span class="sl"></span></label>
     <span class="val" id="tyval">on</span>
   </div>
@@ -140,5 +145,17 @@
     <span class="lbl" style="width:auto;flex:1">Beacon: every monster hunts you<br><span class="feature-description">For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange &lt;px&gt; caps the distance.</span></span>
     <label class="switch"><input type="checkbox" id="beacon"><span class="sl"></span></label>
     <span class="val" id="beval">on</span>
+  </div>
+</div>
+
+<div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">
+  <div class="hint">Change how the monsters you meet are made, in every zone. Settings apply immediately while the game is running.</div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Bosses<br><span class="feature-description">While this is on, a boss the game spawns is given Rare ("uber") or Ancient ("uber uber") rarity as it is set up. Tested in a live game at Ancient, a boss came out far stronger, with about five times its health. Bosses the game already made champion, rare or ancient, and bosses another monster creates (phases, clones), are left alone. Off by default.</span></span>
+    <select class="style-select" id="boss_rarity" aria-label="Bosses">
+      <option value="off">Normal (the game's own)</option>
+      <option value="rare">Rare &mdash; "uber" boss</option>
+      <option value="ancient">Ancient &mdash; "uber uber" boss</option>
+    </select>
   </div>
 </div>
