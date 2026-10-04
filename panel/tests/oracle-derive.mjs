@@ -39,8 +39,9 @@
 // the stash, Extra packs as you approach, Pet collects relics (#124), Sleep
 // loot your filter hides - whose show-key select is derived after them, so it
 // stays last - the two Satanic Zone control switches (#157, on the World
-// tab), and Jump through scenery): the same on, off, on and Turn off shape the
-// legacy recording holds for #mod_pet_quest_pickup, but nothing recorded
+// tab), Jump through scenery and Loot announcements (#17)): the same on, off,
+// on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
+// but nothing recorded
 // stands for them, so their contract is written out here as literals - on
 // posts the mod's key with true and sends its plugin verb with 1, off posts
 // false and sends the verb with 0, on again repeats the first, and its Turn
@@ -155,6 +156,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'satanic_follow', tab: 'tab:world', verb: 'satzone follow' },
   { key: 'satanic_everywhere', tab: 'tab:world', verb: 'satzone everywhere' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
+  { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
 // child row), derived as #mod_skill_timer_style is but with literals, since no
