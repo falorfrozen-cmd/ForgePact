@@ -758,7 +758,10 @@ added at the first kills (`on-kills-count`).
      rose, `kills=` ≥ 1 and close to the owner's count, `notEnemy=0`
      (`on-kills-count`). If `kills=` is still 0, `notEnemy=` and `killHook=`
      are recorded and the session stops here (nothing after can pass), with
-     the saves restored.
+     the saves restored. Whether this session's `bp_ipc\out.txt` holds an
+     `Enemy_Parent_obj index =` line (the create hooks' log line) is
+     recorded: `on-kills-count` credits the player build's by-name path only
+     when it is absent, and the capture states which.
   4. Person: kill until `remaining=50` (pacing above); screenshot: `Chest: 50
      kills to go` over the character, no chat line (`on-countdown-head`).
      Person: stand still about 10 s, then kill one: the label neither blinks
