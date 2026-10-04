@@ -8,14 +8,14 @@
 // has (NATIVE_BOOLEANS - Mods › Quality of Life, with the two Satanic Zone
 // control switches entering the World tab and back), then the show
 // key's select of Sleep loot your filter hides, then the switched sliders no
-// recording has (NATIVE_SLIDERS), entered on Modifiers, and the Loot tab's
-// after them, then the panel's own Incident reports controls (PANEL_BOOLEANS,
-// PANEL_BUTTONS), entered on Setup, then the selects no recording has
-// (NATIVE_SELECTS, the Bosses select), entered again on Mods › Gameplay, and
-// last of all the switch-plus-range pairs no recording has
-// (NATIVE_SWITCHED_RANGES, Dungeon chest opens early), on the same sub-tab,
-// followed by their child selects (NATIVE_CHILD_SELECTS, where its countdown
-// shows).
+// recording has (NATIVE_SLIDERS), entered on Modifiers, the Loot tab's after
+// them and the skill sliders back on Modifiers, then the panel's own Incident
+// reports controls (PANEL_BOOLEANS, PANEL_BUTTONS), entered on Setup, then the
+// selects no recording has (NATIVE_SELECTS, the Bosses select), entered again
+// on Mods › Gameplay, and last of all the switch-plus-range pairs no recording
+// has (NATIVE_SWITCHED_RANGES, Dungeon chest opens early), on the same
+// sub-tab, followed by their child selects (NATIVE_CHILD_SELECTS, where its
+// countdown shows).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -57,7 +57,8 @@ const NATIVE_STEPS = NATIVE_NAV + 4 * NATIVE_BOOLEANS.length;
 // Then the show key's select: its switch on, one select per code, its switch off.
 const KEY_STEPS = 2 + HIDDEN_LOOT_KEY_CODES.length;
 // Then the native sliders': one tab step each time the tab changes (Modifiers,
-// then Loot), then a slider's eight steps each.
+// then Loot, then Modifiers again for the skill sliders), then a slider's
+// eight steps each.
 const NATIVE_SLIDER_TABS = NATIVE_SLIDERS.filter((n, i) => i === 0 || n.tab !== NATIVE_SLIDERS[i - 1].tab).length;
 const NATIVE_SLIDER_STEPS = NATIVE_SLIDER_TABS + 8 * NATIVE_SLIDERS.length;
 // Then the panel's own controls: one tab step each time the tab changes
@@ -145,7 +146,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 132 switch clicks, 71 Turn off buttons, one theme step per theme', () => {
+test('the counts: 141 switch clicks, 74 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -156,9 +157,10 @@ test('the counts: 132 switch clicks, 71 Turn off buttons, one theme step per the
   // The dungeon chest switch's id has no `sw_` prefix: it adds a Turn off
   // button and no `#sw_` click. Jump through scenery's native boolean adds
   // one more Turn off button, and the two Satanic Zone control switches two
-  // more.
-  assert.equal(switches.length, 132);
-  assert.equal(quick.length, 71);
+  // more. The three skill sliders (#160) add three switch clicks and one
+  // Turn off button each.
+  assert.equal(switches.length, 141);
+  assert.equal(quick.length, 74);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -358,7 +360,8 @@ test('each control runs on the tab the legacy walk first reached it on', () => {
 
 test('a native slider\'s contract is literal and last: each end posts its value and sends its line, its switch sends the ends', () => {
   assert.deepEqual(NATIVE_SLIDERS.map((n) => `${n.section}.${n.key}`),
-    ['percent_stats.skillhaste', 'percent_stats.allskills', 'drops.mining_ore_rolls']);
+    ['percent_stats.skillhaste', 'percent_stats.allskills', 'drops.mining_ore_rolls',
+      'percent_stats.projspeed', 'percent_stats.projamount', 'percent_stats.aoesize']);
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_SLIDER_STEPS - PANEL_STEPS - NATIVE_SELECT_STEPS - NATIVE_RANGE_STEPS;
   for (const n of NATIVE_SLIDERS) {
@@ -377,7 +380,8 @@ test('a native slider\'s contract is literal and last: each end posts its value 
   // switch's off click) come first, so none of their indexes moved.
   assert.equal(steps[at - 1].control, '#' + HIDDEN_LOOT_KEY_PARENT);
   // Each slider's eight steps follow in list order, after one tab step
-  // whenever the tab changes (Modifiers, then Loot for Mining Ore Extra Rolls).
+  // whenever the tab changes (Modifiers, then Loot for Mining Ore Extra Rolls,
+  // then Modifiers again for the skill sliders).
   let first = at;
   let tab = null;
   for (const { section, key, tab: sliderTab, min, max, atMin, atMax } of NATIVE_SLIDERS) {

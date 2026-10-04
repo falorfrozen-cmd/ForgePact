@@ -860,6 +860,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "jumpscenery",
             # Satanic Zone control (ForgePact #157; test_satanic_zone_control.py).
             "satzone",
+            # Skill sliders (ForgePact #160; test_skill_sliders_contract.py).
+            "skillslider",
         }
         self.assertEqual(entries, expected)
 
@@ -3039,8 +3041,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # test_incident_monitor_contract.py), `dungeonchest` is Dungeon
         # chest opens early (ForgePact #31, test_dungeon_chest_behavior.py),
         # `jumpscenery` is Jump through scenery's switch (ForgePact #16,
-        # test_jump_scenery_mod_contract.py), and `satzone` is the Satanic
-        # Zone control (ForgePact #157).
+        # test_jump_scenery_mod_contract.py), `satzone` is Satanic Zone
+        # control (ForgePact #157, test_satanic_zone_control.py), and
+        # `skillslider` is the skill sliders (ForgePact #160,
+        # test_skill_sliders_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3048,7 +3052,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone"})
+                                        "jumpscenery", "satzone", "skillslider"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

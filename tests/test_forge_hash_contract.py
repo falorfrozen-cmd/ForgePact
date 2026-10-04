@@ -116,6 +116,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Satanic Zone control (ForgePact #157): the World tab's two switches
     # and the exact-zone pin (test_satanic_zone_control.py pins it).
     "satzone",
+    # Skill sliders (ForgePact #160): the Modifiers tab's Skills group
+    # (test_skill_sliders_contract.py pins it).
+    "skillslider",
 }
 
 

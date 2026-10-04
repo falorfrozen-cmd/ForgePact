@@ -119,6 +119,10 @@ export const ICONS = {
   'critical-chance': circle(16, 16, 10, DARK, RED) + circle(16, 16, 5, DARK, RED) + path('M16 1v9m0 12v9M1 16h9m12 0h9', 'none', GOLD) + circle(16, 16, 1.5, GOLD, GOLD),
   'spell-damage': path('m7 25 17-17', 'none', METAL, SW('3')) + star(20, 12, VIOLET) + path('m5 19-2 8 9-2', 'none', VIOLET),
   'spell-chance': circle(16, 16, 11, DARK, VIOLET) + star(16, 16, VIOLET) + path('M16 1v4m0 22v4M1 16h4m22 0h4', 'none', GOLD),
+  // The skill sliders (#160): a fast bolt, a volley of three, a widening ring.
+  'projectile-speed': path('M9 16h13', 'none', METAL, SW('2')) + path('m20 10 9 6-9 6Z', '#745643', GOLD) + path('M2 11h8M4 16h3M2 21h8', 'none', BLUE, SW('1.5')),
+  'projectile-amount': path('M3 8h16M3 16h19M3 24h16', 'none', METAL, SW('1.8')) + path('m18 4 6 4-6 4Zm3 8 7 4-7 4Zm-3 8 6 4-6 4Z', '#745643', GOLD),
+  'skill-area': circle(16, 16, 12, 'none', VIOLET) + circle(16, 16, 7, '#453449', VIOLET) + star(16, 16, GOLD) + path('M16 1v3m0 24v3M1 16h3m24 0h3', 'none', VIOLET),
   'density': '<g transform="translate(0 1) scale(.72)">' + skull() + '</g><g transform="translate(10 9) scale(.72)">' + skull(RED) + '</g>',
   'rare': crown(),
   'ancient': skull('#e7c8b0') + path('M7 5 5 1l7 4m13 0 2-4-7 4', 'none', GOLD),
@@ -166,8 +170,8 @@ export const CONTROL_ICONS = {
   'keys': zip(['dungeon', 'angelic', 'chaos', 'bifrost', 'relic', 'rune', 'stone', 'bossgem', 'orb', 'scrollofra', 'dimshard', 'battlefrag', 'colosfrag', 'primeevil', 'ruby'],
               ['dungeon-key', 'angelic-key', 'crystal-key', 'bifrost-key', 'relic', 'rune', 'gem', 'boss-gem', 'orb', 'scroll', 'shard', 'battle-fragment', 'colosseum-fragment', 'prime-evil-part', 'ruby-key']),
   'stats': { 'exp': 'experience', 'magicfind': 'magic-find', 'movespeed': 'boots' },
-  'percent_stats': zip(['damage', 'attackspeed', 'castrate', 'skillhaste', 'allskills', 'lifereplenish', 'manareplenish', 'defense', 'critdamage', 'critchance', 'spellcritdamage', 'spellcritchance'],
-                       ['damage', 'attack-speed', 'cast-speed', 'clock', 'skills', 'life', 'mana', 'defense', 'critical-damage', 'critical-chance', 'spell-damage', 'spell-chance']),
+  'percent_stats': zip(['damage', 'attackspeed', 'castrate', 'skillhaste', 'allskills', 'lifereplenish', 'manareplenish', 'defense', 'critdamage', 'critchance', 'spellcritdamage', 'spellcritchance', 'projspeed', 'projamount', 'aoesize'],
+                       ['damage', 'attack-speed', 'cast-speed', 'clock', 'skills', 'life', 'mana', 'defense', 'critical-damage', 'critical-chance', 'spell-damage', 'spell-chance', 'projectile-speed', 'projectile-amount', 'skill-area']),
 };
 export const STATIC_ICONS = {
   'den': 'density', 'enemyspeed': 'boots', 'enemyspeed_ct': 'chaos-tower',

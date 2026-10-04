@@ -86,7 +86,10 @@
   "critdamage": 0,
   "critchance": 0,
   "spellcritdamage": 0,
-  "spellcritchance": 0
+  "spellcritchance": 0,
+  "projspeed": 0,
+  "projamount": 0,
+  "aoesize": 0
  },
  "satanic_mods": {
   "buff": {

@@ -153,9 +153,10 @@ class SliderSwitchTests(unittest.TestCase):
                     + ["rarity_rare", "rarity_ancient", "angelic_items", "enemy_speed"])
         self.assertEqual(list(ids), expected)
         # 41 before #114 added Skill Haste and All Skills to percent_stats,
-        # and #36 added Mining Ore Extra Rolls to drops.
-        self.assertEqual(len(ids), 44)
-        self.assertEqual(len(set(ids)), 44)
+        # and #36 added Mining Ore Extra Rolls to drops; #160 added the three
+        # skill sliders to percent_stats.
+        self.assertEqual(len(ids), 47)
+        self.assertEqual(len(set(ids)), 47)
         self.assertEqual(ids.index("drops.mining_ore") + 1, ids.index("drops.mining_ore_rolls"))
         for excluded in ("density", "density_on", "enemy_speed_ct"):
             self.assertNotIn(excluded, ids)
