@@ -48205,6 +48205,10 @@ struct GpFnWalkOther {
 // changes nothing; no RVA and nothing stored past the command.
 static void GpFnWalk(HMODULE mainMod)
 {
+    if (!g_GpByNameRead) {
+        Out("gambaprobe fnwalk: refused - run `gambaprobe hook` first (a row's own function is unknown otherwise)");
+        return;
+    }
     bool ok = false;
     const uintptr_t camera = GpRoutineOf("camera_create", ok);
     if (!ok) { Out("gambaprobe fnwalk: table not found (camera_create did not resolve)"); return; }
