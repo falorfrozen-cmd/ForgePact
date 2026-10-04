@@ -1,11 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ForgePact::GambaProbe {
@@ -116,13 +118,16 @@ inline constexpr std::string_view RouteName(Route r)
 // SPV's row during a spin's animation and leave the keys written at the
 // spin's end undescribed. A row past it only counts, and its status line says
 // BUDGET SPENT. A line identical to the previous line for the same key is not
-// logged and costs nothing. The budget is per window: `gambaprobe trace`,
+// logged and costs nothing, but is counted (`repeats=`) and named until the
+// key's next line carries it (TakeTraceLine). The budget is per window: `gambaprobe trace`,
 // `hook` again and every `spawn` start it over, so the live procedure re-arms
 // it right before each spin it measures.
 inline constexpr int kTraceLinesPerKey = 8;
 inline constexpr int kTraceKeysPerRow = 64;
 inline constexpr int kTraceLinesPerRow = 512;
 static_assert(kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow, "a row's budget covers kTraceKeysPerRow full keys");
+// How many keys holding unlogged repeats one row's `status` names.
+inline constexpr int kPendingRepeatKeysShown = 8;
 inline constexpr int64_t kRngMinCount = 1;
 inline constexpr int64_t kRngMaxCount = 50;
 
@@ -182,6 +187,7 @@ struct Counters {
     uint64_t otherSelf = 0;     // armed or levered: everything else
     uint64_t logged = 0;        // lines written this window (at most kTraceLinesPerRow)
     uint64_t keyCapped = 0;     // new lines refused because their key had written kTraceLinesPerKey
+    uint64_t repeats = 0;       // this window: lines identical to their key's last line, folded into it, not logged
     uint64_t answered = 0;      // RNG rows: calls the lever answered
     uint64_t outOfRange = 0;    // `choose`: a lever value that named none of the call's arguments
     uint64_t passed = 0;        // RNG rows: machine-self calls the armed lever let through (not its target)
@@ -200,7 +206,7 @@ inline bool BuiltinByName(std::string_view name, Builtin& out)
 }
 
 // A call's argument text as the lever compares it: trimmed, every run of
-// whitespace one space. The adapter's text (` a0=1 a1=100`) and what the
+// whitespace one space. The adapter's text (` a0=real:1.000000 a1=real:100.000000`) and what the
 // operator types after `args` (copied from a trace line) meet here.
 inline std::string ArgsKey(std::string_view text)
 {
@@ -262,8 +268,12 @@ public:
     // budgets and its repeat memory start over; the counts continue.
     void ResetTrace()
     {
-        for (Counters& c : rows_) c.logged = 0;
+        for (Counters& c : rows_) {
+            c.logged = 0;
+            c.repeats = 0;
+        }
         for (auto& m : lastLine_) m.clear();
+        takenRepeats_ = 0;
     }
 
     // One call of any row. `selfObject()` returns the object index of the
@@ -343,27 +353,65 @@ public:
     // May the row write this line? `key` identifies what the line is about
     // (a script's first argument, a builtin's argument text, an event's
     // instance id); `text` is the line's content without its call number or
-    // frame. A repeat of the key's last line is refused and spends nothing; a
-    // new line spends one of the row's kTraceLinesPerRow and one of the key's
+    // frame; `keyText` is the key as the operator reads it (a builtin's
+    // argument text), kept for `status`. A repeat of the key's last line is
+    // refused and spends nothing, but it is never silent: the row counts it
+    // as `repeats=`, the key holds it until its next line, which carries it
+    // (TakenRepeats), and until then `status` names the key and how many
+    // calls it folded. Without that, a later call with the earlier call's
+    // arguments and result - the prize roll after a same-shape reel roll -
+    // would vanish and the earlier call read as the decider. A new line
+    // spends one of the row's kTraceLinesPerRow and one of the key's
     // kTraceLinesPerKey, and a key that has none left is refused and counted
     // key-capped.
-    bool TakeTraceLine(int row, uint64_t key, uint64_t text)
+    bool TakeTraceLine(int row, uint64_t key, uint64_t text, std::string_view keyText = {})
     {
+        takenRepeats_ = 0;
         if (row < 0 || row >= RowCount()) return false;
         Counters& c = rows_[static_cast<size_t>(row)];
         auto& last = lastLine_[static_cast<size_t>(row)];
         const auto it = last.find(key);
-        if (it != last.end() && it->second.text == text) return false;
+        if (it != last.end() && it->second.text == text) {
+            ++c.repeats;
+            ++it->second.repeats;
+            return false;
+        }
         if (c.logged >= static_cast<uint64_t>(kTraceLinesPerRow)) return false;
         if (it != last.end() && it->second.lines >= kTraceLinesPerKey) {
             ++c.keyCapped;
             return false;
         }
         KeyLine& k = last[key];
+        if (k.lines == 0) k.keyText = ArgsKey(keyText);
+        takenRepeats_ = k.repeats;
+        k.repeats = 0;
         k.text = text;
         ++k.lines;
         ++c.logged;
         return true;
+    }
+
+    // The repeats of its key's previous line that the line TakeTraceLine just
+    // took folded in: the adapter prints them on that line. Zero after any
+    // refused line.
+    uint64_t TakenRepeats() const { return takenRepeats_; }
+
+    // The keys of a row holding repeats no later line has carried yet, as
+    // `+<n> "<key>"`, so a call that only repeated an earlier line is named
+    // at `status` even when its key never logged again this window.
+    std::string PendingRepeatsText(int row) const
+    {
+        if (row < 0 || row >= RowCount()) return {};
+        std::vector<std::pair<std::string, uint64_t>> held;
+        for (const auto& [key, k] : lastLine_[static_cast<size_t>(row)])
+            if (k.repeats > 0) held.emplace_back(k.keyText, k.repeats);
+        std::sort(held.begin(), held.end());
+        std::string s;
+        for (size_t i = 0; i < held.size() && i < static_cast<size_t>(kPendingRepeatKeysShown); ++i)
+            s += (i ? ", +" : "+") + std::to_string(held[i].second) + " \"" + held[i].first + "\"";
+        if (held.size() > static_cast<size_t>(kPendingRepeatKeysShown))
+            s += ", and " + std::to_string(held.size() - static_cast<size_t>(kPendingRepeatKeysShown)) + " more key(s)";
+        return s;
     }
 
     // The row has written its kTraceLinesPerRow lines this window: it only
@@ -458,11 +506,13 @@ public:
         std::string s = "calls=" + std::to_string(c.calls) + " machine-self=" + std::to_string(c.machineSelf)
             + " in-event=" + std::to_string(c.inEvent) + " other-self=" + std::to_string(c.otherSelf)
             + " logged=" + std::to_string(c.logged) + "/" + std::to_string(kTraceLinesPerRow)
-            + " key-capped=" + std::to_string(c.keyCapped);
+            + " key-capped=" + std::to_string(c.keyCapped) + " repeats=" + std::to_string(c.repeats);
         if (row >= kFirstBuiltinRow && row < kFirstScriptRow
             && kBuiltins[row - kFirstBuiltinRow].kind != AnswerKind::NotRng)
             s += " answered=" + std::to_string(c.answered) + " out-of-range=" + std::to_string(c.outOfRange)
                 + " passed=" + std::to_string(c.passed);
+        const std::string held = PendingRepeatsText(row);
+        if (!held.empty()) s += " unlogged-repeats: " + held;
         if (BudgetSpent(row))
             s += " BUDGET SPENT - counted, not described; `gambaprobe trace` starts it over";
         return s;
@@ -497,6 +547,7 @@ public:
             t.otherSelf += c.otherSelf;
             t.logged += c.logged;
             t.keyCapped += c.keyCapped;
+            t.repeats += c.repeats;
             t.answered += c.answered;
             t.outOfRange += c.outOfRange;
             t.passed += c.passed;
@@ -505,7 +556,7 @@ public:
             + " " + EventsText() + " | calls=" + std::to_string(t.calls) + " machine-self=" + std::to_string(t.machineSelf)
             + " in-event=" + std::to_string(t.inEvent) + " other-self=" + std::to_string(t.otherSelf)
             + " logged=" + std::to_string(t.logged) + " key-capped=" + std::to_string(t.keyCapped)
-            + " spent-rows=" + std::to_string(SpentRows()) + " answered=" + std::to_string(t.answered)
+            + " repeats=" + std::to_string(t.repeats) + " spent-rows=" + std::to_string(SpentRows()) + " answered=" + std::to_string(t.answered)
             + " out-of-range=" + std::to_string(t.outOfRange) + " passed=" + std::to_string(t.passed);
     }
 
@@ -536,14 +587,19 @@ public:
     }
 
 private:
-    // One key's memory this window: its last line, and the lines it wrote.
+    // One key's memory this window: its last line, the lines it wrote, the
+    // repeats of its last line no later line has carried yet, and the key as
+    // the operator reads it.
     struct KeyLine {
-        uint64_t text = 0;
-        int      lines = 0;
+        uint64_t    text = 0;
+        int         lines = 0;
+        uint64_t    repeats = 0;
+        std::string keyText;
     };
     std::vector<Counters> rows_ = std::vector<Counters>(static_cast<size_t>(kFirstScriptRow));
     std::vector<std::unordered_map<uint64_t, KeyLine>> lastLine_ =
         std::vector<std::unordered_map<uint64_t, KeyLine>>(static_cast<size_t>(kFirstScriptRow));
+    uint64_t takenRepeats_ = 0;
     int machineObject_ = -1;
     bool armed_ = false;
     bool rngOn_ = false;

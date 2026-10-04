@@ -348,6 +348,38 @@ int main()
         check("trace/every_key_of_a_full_row_writes_its_lines", all == kTraceLinesPerRow && q.BudgetSpent(gpv)
             && !q.TakeTraceLine(gpv, static_cast<uint64_t>(kTraceKeysPerRow), 0), q.RowText(gpv));
     }
+    {
+        // Two calls of one shape with one result in a window - a reel roll,
+        // then the prize roll - write one line. The second must not vanish:
+        // the row counts it, status names its key, and the key's next line
+        // carries it. A call with another key and the same result is no
+        // repeat (the negative control).
+        Probe p = make();
+        const int irnd = BuiltinRowOf(Builtin::Irandom);
+        const std::string shape = " a0=real:100.000000 a1=real:5.000000";
+        const bool reel = p.TakeTraceLine(irnd, 41, 7, shape);
+        const uint64_t reelCarried = p.TakenRepeats();
+        const bool prize = p.TakeTraceLine(irnd, 41, 7, shape);
+        check("trace/a_same_shape_repeat_is_one_line_and_counted", reel && reelCarried == 0 && !prize
+            && p.RowCounters(irnd).logged == 1 && p.RowCounters(irnd).repeats == 1
+            && contains(p.RowText(irnd), " repeats=1 ") && contains(p.StatusLine(), " repeats=1 "), p.RowText(irnd));
+        check("trace/status_names_the_key_a_repeat_folded_into",
+              contains(p.RowText(irnd), "unlogged-repeats: +1 \"a0=real:100.000000 a1=real:5.000000\""), p.RowText(irnd));
+        const bool other = p.TakeTraceLine(irnd, 42, 7, " a0=real:3.000000");
+        check("trace/another_key_with_the_same_result_is_no_repeat", other && p.TakenRepeats() == 0
+            && p.RowCounters(irnd).repeats == 1 && p.RowCounters(irnd).logged == 2, p.RowText(irnd));
+        const bool next = p.TakeTraceLine(irnd, 41, 9, shape);
+        check("trace/the_keys_next_line_carries_its_repeats", next && p.TakenRepeats() == 1
+            && !contains(p.RowText(irnd), "unlogged-repeats") && p.RowCounters(irnd).repeats == 1, p.RowText(irnd));
+        const bool after = p.TakeTraceLine(irnd, 41, 10, shape);
+        const bool refused = p.TakeTraceLine(irnd, 41, 10, shape);
+        check("trace/carried_repeats_are_taken_once", after && p.TakenRepeats() == 0 && !refused
+            && p.RowCounters(irnd).repeats == 2, p.RowText(irnd));
+        p.ResetTrace();
+        check("trace/a_new_window_starts_repeats_over", p.RowCounters(irnd).repeats == 0 && p.TakenRepeats() == 0
+            && !contains(p.RowText(irnd), "unlogged-repeats") && p.TakeTraceLine(irnd, 41, 10, shape)
+            && p.TakenRepeats() == 0, p.RowText(irnd));
+    }
 
     // ---- the status text reads back every counter ---------------------------------
     {
@@ -368,15 +400,15 @@ int main()
         p.TakeTraceLine(row, 0, 1);
         const std::string text = p.RowText(row);
         check("status/row_reads_every_counter", text == "calls=4 machine-self=2 in-event=1 other-self=1 logged=1/512"
-            " key-capped=0 answered=1 out-of-range=1 passed=0", text);
+            " key-capped=0 repeats=0 answered=1 out-of-range=1 passed=0", text);
         check("status/passed_is_counted_on_its_own_row", p.RowText(BuiltinRowOf(Builtin::Irandom))
-            == "calls=1 machine-self=1 in-event=0 other-self=0 logged=0/512 key-capped=0 answered=0 out-of-range=0 passed=1",
+            == "calls=1 machine-self=1 in-event=0 other-self=0 logged=0/512 key-capped=0 repeats=0 answered=0 out-of-range=0 passed=1",
               p.RowText(BuiltinRowOf(Builtin::Irandom)));
         check("status/non_rng_rows_omit_the_lever_counters",
-              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/512 key-capped=0");
+              p.RowText(EventRowOf(Event::Step)) == "calls=30 machine-self=30 in-event=0 other-self=0 logged=0/512 key-capped=0 repeats=0");
         const std::string line = p.StatusLine();
         check("status/line_sums_every_counter", line == "gambaprobe: on machine-object=4644 create=1 alarm0=0 alarm9=1"
-            " step=30 cleanup=0 | calls=37 machine-self=35 in-event=1 other-self=1 logged=1 key-capped=0 spent-rows=0"
+            " step=30 cleanup=0 | calls=37 machine-self=35 in-event=1 other-self=1 logged=1 key-capped=0 repeats=0 spent-rows=0"
             " answered=1 out-of-range=1 passed=1", line);
         check("status/rng_line", contains(p.RngLine(), "gambaprobe: rng answered 0 of 1 target=choose value=9 remaining=1"
             " out-of-range=1 passed=1 (other builtin 1, other args 0) lever=on"), p.RngLine());

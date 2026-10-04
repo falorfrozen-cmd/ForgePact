@@ -466,9 +466,25 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("GpLogCall(row, GpBuiltinName(builtin), selfText, argc, args, args, GpValueText(Result));", builtin)
         self.assertNotIn("std::string(), GpValueText(Result)", builtin)
         self.assertIn("g_GpCore.TakeTraceLine(row, (uint64_t)id, (uint64_t)frame)", self.body("static void GpOnEvent("))
-        take = braced_block(self.header, "bool TakeTraceLine(int row, uint64_t key, uint64_t text)\n    {")
+        take = braced_block(self.header,
+                            "bool TakeTraceLine(int row, uint64_t key, uint64_t text, std::string_view keyText = {})\n    {")
         self.assertIn("kTraceLinesPerKey", take)
         self.assertIn("++c.keyCapped;", take)
+        # A repeat of a key's last line is not logged, but never silent: a
+        # prize roll repeating a reel roll's line would otherwise vanish and
+        # the reel roll read as the decider. The row counts it, the key holds
+        # it for status, and the key's next line carries it.
+        self.assertIn("++c.repeats;", take)
+        self.assertIn("++it->second.repeats;", take)
+        self.assertIn("takenRepeats_ = k.repeats;", take)
+        row_text = braced_block(self.header, "std::string RowText(int row) const\n    {")
+        self.assertIn('" repeats="', row_text)
+        self.assertIn("PendingRepeatsText(row)", row_text)
+        self.assertIn('" repeats="', braced_block(self.header, "std::string StatusLine() const\n    {"))
+        self.assertIn("c.repeats = 0;", braced_block(self.header, "void ResetTrace()\n    {"))
+        log_call = self.body("static void GpLogCall(")
+        self.assertIn("GpHash(args + \" ret=\" + ret), key)", log_call)
+        self.assertIn("g_GpCore.TakenRepeats()", log_call)
         # The row's cap covers kTraceKeysPerRow full keys, so the protected
         # store's moving keys cannot spend GPV's or SPV's row within a spin.
         self.assertIn("static_assert(kTraceLinesPerRow == kTraceLinesPerKey * kTraceKeysPerRow,", self.header)

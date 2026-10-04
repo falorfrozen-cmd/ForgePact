@@ -286,6 +286,13 @@ within a budget that is per **window**:
 - A line identical to its key's last line is not logged and costs nothing.
   That is all the deduplication guarantees: a key whose value or result
   changes spends a line each time it changes, until its 8 are gone.
+- A call folded that way is never silent. The row counts it as `repeats=`
+  (per window, and summed on the status line), the row's `status` line names
+  each key still holding such calls as `unlogged-repeats: +<n> "<key>"`, and
+  the key's next logged line carries them, prefixed `(+<n> repeat(s) of this
+  key's previous line, not logged)`. Without this, a prize roll with the
+  same arguments and result as a reel roll earlier in the spin would leave no
+  line, and the reel roll would read as the call that decided the prize.
 - `gambaprobe trace`, `gambaprobe hook` again and every `gambaprobe spawn`
   start a new window, and § Live procedure 1 sends `gambaprobe trace` right
   before each spin a check reads. A per-frame call with the same arguments
@@ -423,15 +430,23 @@ repeated here whole.
      call that decided the prize, record its builtin and its argument text
      exactly as its trace line prints them (`a0=... a1=...`), and whether the
      same builtin with the same text also fired on a spin that did not
-     explode.
+     explode. Record too that call's row `repeats=` from the explosion's
+     `status`, and whether its key holds repeats: an `unlogged-repeats:`
+     entry naming its argument text on that row, or a trace line of that key
+     in the exploding spin prefixed `(+<n> repeat(s) ...)`. Repeats on the
+     decider's key mean a call of the same shape and result was folded into
+     one line, so which of them decided the prize cannot be told from the
+     trace: step 5 counts that as the shape firing earlier within the
+     exploding spin.
   5. If step 4 showed one RNG builtin call deciding the prize, compare its
      builtin and argument text with the idle calls step 2 recorded. If an
      idle call has the same builtin and the same text, the lever cannot be
      aimed at the prize roll alone: skip the forced roll and record
      `forced-head` as not run, naming that call. Likewise, if step 4's trace
      shows the same builtin with the same argument text firing earlier within
-     the exploding spin, before the call that decided the prize, the armed
-     lever would answer that earlier call: record its ordinal in the spin and
+     the exploding spin, before the call that decided the prize, or step 4
+     found repeats on the decider's key, the armed lever would answer the
+     earlier call: record its ordinal in the spin (or the repeat count) and
      that `forced-head` is not aimable by shape alone (an input to the
      phase-2 Decision), and do not spend the forced roll. Otherwise
      `gambaprobe spawn` a machine; then, before each spin, `gambaprobe trace`
@@ -447,7 +462,11 @@ repeated here whole.
      and spin the others unarmed. Record every `gambaprobe rng: answered`
      line with its spin number, and the lever line's `passed=` count after
      each spin: an answer on a spin that did not explode means that call
-     shape is not the prize roll alone. Expected at the explosion:
+     shape is not the prize roll alone. An answer on the exploding spin, then
+     a trace line of the same shape after it and no Goburin's Head, means an
+     earlier call of that shape took the answer: record `forced-head` as not
+     aimable by shape alone, not as evidence that the prize roll cannot be
+     forced. Expected at the explosion:
      `gambaprobe: rng answered 1` and Goburin's Head on the ground
      (screenshot; `GetUniqueRepoStruct` arguments `10, 0, 98`). If step 4
      showed no such call, send `gambaprobe rng irandom 0 1` anyway and record

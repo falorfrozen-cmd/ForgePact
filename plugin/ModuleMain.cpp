@@ -47154,12 +47154,16 @@ static bool GpCanLog(int row)
 // it carries the result. `key` is what the line is about (a script's first
 // argument, a builtin's argument text): one key writes at most
 // kTraceLinesPerKey lines a window, and a repeat of its last line spends
-// nothing and prints nothing.
+// nothing and prints nothing then: it is counted (`repeats=`), named by
+// `status` and carried by the key's next line as `(+<n> repeat(s) ...)`.
 static void GpLogCall(int row, const std::string& label, const std::string& selfText, int argc,
                       const std::string& args, const std::string& key, const std::string& ret)
 {
-    if (!g_GpCore.TakeTraceLine(row, GpHash(key), GpHash(args + " ret=" + ret))) return;
-    Out("gambaprobe " + label + " #" + std::to_string(g_GpCore.RowCounters(row).calls) + " self=" + selfText + " argc="
+    if (!g_GpCore.TakeTraceLine(row, GpHash(key), GpHash(args + " ret=" + ret), key)) return;
+    const uint64_t folded = g_GpCore.TakenRepeats();
+    const std::string carried = folded
+        ? "(+" + std::to_string(folded) + " repeat(s) of this key's previous line, not logged) " : std::string();
+    Out("gambaprobe " + carried + label + " #" + std::to_string(g_GpCore.RowCounters(row).calls) + " self=" + selfText + " argc="
         + std::to_string(argc) + args + " ret=" + ret + " frame=" + std::to_string((int64_t)g_RuntimeFrame));
 }
 
@@ -47821,7 +47825,8 @@ static void GpUsage()
     Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
     Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)
         + " new lines per row, " + std::to_string(GpNs::kTraceLinesPerKey) + " per key, are logged each window; BUDGET SPENT"
-        " marks a row that only counts)");
+        " marks a row that only counts; repeats= counts lines identical to their key's last, unlogged-repeats names"
+        " the keys holding them)");
     Out("  off | 0                    disarm and lever off; the hooks stay and only count");
 }
 

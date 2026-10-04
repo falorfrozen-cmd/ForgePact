@@ -158,6 +158,15 @@ class GambaProbeBehaviorTests(unittest.TestCase):
                       "trace/every_key_of_a_full_row_writes_its_lines"):
             self.assertScenario(label)
 
+    def test_a_repeated_line_is_counted_and_named_never_silent(self):
+        """A prize roll whose line repeats a reel roll's must not vanish from the trace."""
+        for label in ("trace/a_same_shape_repeat_is_one_line_and_counted",
+                      "trace/status_names_the_key_a_repeat_folded_into",
+                      "trace/another_key_with_the_same_result_is_no_repeat",
+                      "trace/the_keys_next_line_carries_its_repeats", "trace/carried_repeats_are_taken_once",
+                      "trace/a_new_window_starts_repeats_over"):
+            self.assertScenario(label)
+
     def test_the_status_line_reads_back_every_counter(self):
         for label in ("status/events_by_key", "status/row_reads_every_counter", "status/passed_is_counted_on_its_own_row",
                       "status/non_rng_rows_omit_the_lever_counters", "status/line_sums_every_counter",
