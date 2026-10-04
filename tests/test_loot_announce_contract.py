@@ -231,6 +231,23 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         process = _code(_body(self.plugin, "static void LaProcess(const LaPending& p)"))
         self.assertIn("g_LootAnnounce.NoteSinkRefused();", process)
 
+    def test_the_closure_is_resolved_by_number_and_listed_with_its_index(self):
+        # Live procedure 1 listed three method variables as `<undefined>`:
+        # script_get_name was handed method_get_index's raw value. The proven
+        # resolver (CiTryResolveMethod) converts it to a number first, which a
+        # VALUE_REF index needs too, and every row prints `#<index>` so a name
+        # that does not resolve still shows what it was asked about.
+        find = _code(_body(self.plugin, "static bool LaFindClosure("))
+        self.assertIn('CallBuiltin("method_get_index", { v })', find)
+        # IsNumericInstanceRead accepts a REAL, an INT32/INT64 or a VALUE_REF.
+        self.assertIn("if (!IsNumericInstanceRead(idx))", find)
+        self.assertIn("(int)idx.ToDouble()", find)
+        self.assertIn('CallBuiltin("script_get_name", { RValue((double)scriptIdx) })', find)
+        self.assertNotIn('CallBuiltin("script_get_name", { idx })', find)
+        self.assertIn('"#" + std::to_string(scriptIdx)', find)
+        # The SDK closure is matched on the resolved name, never the index.
+        self.assertIn("const bool match = script == shortName || script == fullName;", find)
+
     def test_no_address_no_destroy_in_the_adapter(self):
         self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", self.adapter))
         self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*\+\s*(?:0x[0-9A-Fa-f]+)", self.adapter))

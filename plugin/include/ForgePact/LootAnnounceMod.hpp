@@ -51,9 +51,13 @@ public:
     // How the adapter shows the line (docs/loot-announcement-research.md,
     // "Route"). kShippedSink is the one the mod runs: `server`
     // (ChatAddServerMessage, measured to show a line offline). Live procedure
-    // 1 (2026-10-04) found the other three unreachable offline: the ground
-    // item carries no announcement method, and NetworkSendChatMessageIngame
-    // and GetItemDropMessage refuse a call by name.
+    // 1 (2026-10-04) showed no line from the other three, and none of them is
+    // settled: `method` was refused because the probe of that build could not
+    // name any anon@ method (it handed script_get_name an unconverted index),
+    // so whether the ground item holds the announcement closure is not
+    // established; NetworkSendChatMessageIngame and GetItemDropMessage
+    // refused with the one item argument supplied (the itemInstance struct).
+    // Live procedure 2 retests `method` with the fixed probe.
     enum class Sink : int { Method, NetSend, ChatAdd, Server };
     static constexpr Sink kShippedSink = Sink::Server;
 

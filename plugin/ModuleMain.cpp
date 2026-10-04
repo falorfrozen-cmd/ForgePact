@@ -47840,8 +47840,9 @@ static int g_LaLootIndex = -2;           // asset_get_index of Loot_Ground_obj; 
 static long g_LaRefusalLogs = 0;
 
 // netsend's first argument (the closure passes a runtime-filled value whose
-// meaning is not established): undefined, or the local player's id. Set with
-// kShippedSink when Live procedure 1 picks `netsend` (try 2 or try 3).
+// meaning is not established): undefined, or the local player's id. Only
+// `lootannprobe try 2|3` and a shipped `netsend` use it; with `server`
+// shipped, the player build passes it along unused.
 static constexpr bool kLaNetSendA0IsPlayer = false;
 // netsend's second and fourth arguments, as the closure's call sites supply
 // them (static reading): the real 18687, and a colour literal one branch uses.
@@ -48081,7 +48082,14 @@ static std::string LaClockStamp()
 // The method variable of a ground item whose function's name is the SDK's
 // announcement closure: variable_instance_get_names, is_method,
 // method_get_index and script_get_name, all by name. `listing` receives
-// every method variable seen, `name -> script`.
+// every method variable seen, `name -> script#index`.
+//
+// method_get_index is taken as a number before script_get_name sees it, the
+// way CiTryResolveMethod does (it can come back a REAL or a VALUE_REF).
+// Live procedure 1's build handed script_get_name the raw value and got
+// "<undefined>" for every anon@ method while the named s_lootDrawData
+// resolved; the index printed beside each name keeps an unresolved row
+// readable instead of looking like an unbound variable.
 static constexpr const char* kLaClosureShort = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0);
 static bool LaFindClosure(CInstance* lootInst, RValue& method, std::string& variable, std::string& listing)
 {
@@ -48101,13 +48109,22 @@ static bool LaFindClosure(CInstance* lootInst, RValue& method, std::string& vari
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
             if (!g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) continue;
             std::string script = "?";
+            std::string index = "#?";
             try {
                 const RValue idx = g_Yytk->CallBuiltin("method_get_index", { v });
-                const RValue sn = g_Yytk->CallBuiltin("script_get_name", { idx });
-                if (sn.m_Kind == VALUE_STRING) script = sn.ToString();
+                if (!IsNumericInstanceRead(idx)) {
+                    index = "#(" + Describe(idx) + ")";
+                } else {
+                    const int scriptIdx = (int)idx.ToDouble();
+                    index = "#" + std::to_string(scriptIdx);
+                    if (scriptIdx >= 0) {
+                        const RValue sn = g_Yytk->CallBuiltin("script_get_name", { RValue((double)scriptIdx) });
+                        if (sn.m_Kind == VALUE_STRING) script = sn.ToString();
+                    }
+                }
             } catch (...) { script = "(unreadable)"; }
             const bool match = script == shortName || script == fullName;
-            listing += (listing.empty() ? "" : ", ") + var + " -> " + script + (match ? " [SDK closure]" : "");
+            listing += (listing.empty() ? "" : ", ") + var + " -> " + script + index + (match ? " [SDK closure]" : "");
             if (match && !found) { method = v; variable = var; found = true; }
         }
     } catch (...) { listing += (listing.empty() ? "" : ", ") + std::string("(read threw)"); }

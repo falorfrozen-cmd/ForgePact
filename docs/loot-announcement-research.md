@@ -215,8 +215,15 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   <r>: "27"=<n> "28"=<name> itemType=<n> instance=<kind> id=<id> at <x>,<y>`,
   and the item becomes the newest ground item.
 - **`lootannprobe methods`** lists the newest ground item's method variables
-  (`lootannprobe methods on <which>: <var> -> <script>, ...`, the SDK closure
-  marked `[SDK closure]`), then `lootannprobe methods: SDK closure
+  (`lootannprobe methods on <which>: <var> -> <script>#<index>, ...`, the
+  SDK closure marked `[SDK closure]`). The index is `method_get_index`'s
+  value taken as a number (a REAL or a `VALUE_REF`), and the name is
+  `script_get_name` of that number, as `CiTryResolveMethod` resolves one; a
+  name that does not resolve still prints its index (`<undefined>#<n>`), and
+  an index that is not a number prints `#(<kind>)`. Live procedure 1's build
+  passed the raw value instead and could name no `anon@` method (Results).
+  `s_lootDrawData`, which resolved even then, is the positive control in
+  the same listing. Then it prints `lootannprobe methods: SDK closure
   anon@1138@gml_Object_Loot_Ground_obj_Create_0 found as variable <var>` or
   `not found`. The newest ground item is `place`'s return or `LootGroundInit`'s
   argument 0 while it is still a live `Loot_Ground_obj`, else the room's last
@@ -251,7 +258,9 @@ reaches `LootGroundInit` and the closure.
 
 Session 2026-10-04 14:15-15:03 UTC, research build (sha256
 `29ae0c00…eded`, matched the lease), slot 14 Sorak, Town of Inoya, then the
-Outskirts of Inoya and Chilling Lake for the kills. Saves restored afterwards.
+Outskirts of Inoya and Chilling Lake for the kills. The saves were restored
+afterwards by the driver from the session's backup, not by the operator
+(`hs_saves_inspect` after the restore: 0 changed, added or missing).
 Every check, with what was supplied and what was seen:
 
 | Check | Supplied | Seen | Result |
@@ -262,8 +271,8 @@ Every check, with what was supplied and what was seen:
 | (install) | `lootannprobe on` | 16 of 16 rows attached, none `not installed`; `LootGroundInit` counted through `fp_hiddenloot_init` (both routes, shared), `LootGroundDrop` through `fp_lootann_drop` (both), `LootGroundCreateFromItem` detoured under the table-only `Hook_LootGroundCreateFromItem`. Census: `Loot_Ground_obj` 0, `Ingame_Chat_obj` 1, `Chat_obj` 0, `Menu_Controller_obj` 1 | recorded |
 | `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@6032` 1 with `self` `Loot_Ground_obj` | pass |
 | `closure-fires-offline` | the same placement, then about 450 natural drops | the closure 0, `GetRareDropAnnouncement` 0, `NetworkSendChatMessageIngame` 0; no line in chat | not observed |
-| `method-found` | `lootannprobe methods` on the placed item | method-valued variables `m_AngelicMessage`, `m_LootFilter` and `m_LootGroundDeActiveStep` all `undefined`, `s_lootDrawData` bound to `Pickup_Parent_obj`'s Create method; no variable holds the SDK closure | fail |
-| `route-method` | `try 1`: the closure by name, `self` the ground item, no arguments | `refused: method` (no variable names it), no hook moved, no line | fail |
+| `method-found` | `lootannprobe methods` on the placed item | four method-valued variables (each passed `is_method`): `m_AngelicMessage`, `m_LootFilter` and `m_LootGroundDeActiveStep` printed `<undefined>`, the string `script_get_name` returned for `method_get_index`'s raw, unconverted value; `s_lootDrawData` resolved to `Pickup_Parent_obj`'s Create method. No row matched the SDK closure's name | uninterpretable (instrument) |
+| `route-method` | `try 1`: the closure by name, `self` the ground item, no arguments | `refused: method` (no listed name matched), nothing called, no hook moved, no line | uninterpretable (instrument) |
 | `route-netsend` | `try 2` / `try 3`: `NetworkSendChatMessageIngame`, `self` the ground item, arguments `undefined` (try 2) or the player reference (try 3), then real 18687, the item struct, a colour real, int64 3 | `script_execute` threw or returned a failure status both times; the script's and `GetItemDropMessage`'s hooks each counted 1 per try, `PacketSend` 0, no line | fail |
 | `route-chatadd` | `try 4`: `GetItemDropMessage(item)`, `self` the local `Player_obj` | `script_execute` refused; its hook counted 1, no line | fail |
 | `route-server` | `try 5`: `ChatAddServerMessage("Sorak found Heavy Belt of Balance")`, `self` the local `Player_obj` | dispatched, returned `undefined`; the game called `ChatAddMessage` with sender `"SERVER"` and a `[16:17]` stamp; red line `[16:17] SERVER: Sorak found Heavy Belt of Balance` | pass |
@@ -272,17 +281,30 @@ Every check, with what was supplied and what was seen:
 
 What the session established, measured:
 
-- The game does not announce a drop offline on its own: neither a placed
+- A drop announcement by the game itself was not observed offline: neither a placed
   Heroic item nor about 450 natural drops (Heavy Belt of Balance placed;
   Ymir's Frozen Shroud, Pitfiend's Thorn and others dropped, rarity not read)
   moved the closure's or `GetRareDropAnnouncement`'s count off 0.
-- The announcement closure is not bound on the offline ground item. The
-  ground item's method variables are the four listed above, and the
-  closure's name is held by none of them; `m_AngelicMessage`, the one named
-  for an announcement, is `undefined`.
-- `NetworkSendChatMessageIngame` and `GetItemDropMessage` cannot be called
-  by name from ForgePact with the shapes supplied above: each refused, and
-  neither counted a `PacketSend`.
+- The placed ground item carries four method-valued variables. Three of
+  them, `m_AngelicMessage` (the one named for an announcement) among them,
+  could not be named by this build's probe: it handed `script_get_name`
+  `method_get_index`'s raw value instead of a number, and got `<undefined>`
+  back for every `anon@` method, while the named `s_lootDrawData` resolved.
+  The variables hold methods; which functions they are was not read. So
+  whether `m_AngelicMessage` wraps `anon@1138` is not established, and
+  `method-found` and `route-method` measured the probe, not the game (the
+  instrument-blindness review of round 2). The probe now converts the index
+  first, as `CiTryResolveMethod` does, and prints `#<index>` beside each
+  name; Live procedure 2 retests both.
+- `NetworkSendChatMessageIngame` and `GetItemDropMessage` refused when
+  called by name from ForgePact with the shapes supplied above, and neither
+  counted a `PacketSend`. Only one item argument was ever supplied, the
+  ground item's `itemInstance` struct; in tries 2 and 3 `GetItemDropMessage`
+  counted 1 from inside `NetworkSendChatMessageIngame`'s own body before the
+  call failed, so the item argument is the likelier cause than the by-name
+  route or `self`. Whether another item shape (an item save struct, as
+  `ChatSendItem` passes per the static reading) would be accepted was not
+  tried.
 - `ChatAddServerMessage` with our own text is the route that shows a line,
   and the player's `name` holds the character's name (`Sorak`).
 - Every natural drop seen reached `LootGroundInit` with a ground item
@@ -290,30 +312,40 @@ What the session established, measured:
   session did not read the rarity of any natural drop, so whether a natural
   Heroic, Angelic or Unholy drop reaches it is still not observed (Live
   procedure 2 tries again).
-- `LootGroundDrop` stayed at 0 through the kills: the game's own drops do
-  not pass through it.
+- `LootGroundDrop` stayed at 0 through the kills: a game drop passing
+  through it was not observed. Its hook has not yet counted a call live, so
+  this zero has no positive control; Live procedure 2's `bag-drop-silent`
+  is the first.
 
 ## Route
 
 announce-route: server
 
 Chosen 2026-10-04 from Live procedure 1, in the order `method`, `netsend`,
-`chatadd`, `server`: the first three showed no line offline (the ground item
-carries no announcement method; the sender and the drop-message script refuse
-a call by name), and `server` showed the red
-`SERVER: <character> found <item name>` line with no error and no
-`PacketSend`. The owner approved shipping it (2026-10-04); a plain
-`ChatAddMessage` line without the `SERVER:` prefix is a possible follow-up,
-not part of this change. The header's `kShippedSink` and
+`chatadd`, `server`: the first three showed no line offline, and `server`
+showed the red `SERVER: <character> found <item name>` line with no error and
+no `PacketSend`. The owner approved shipping it (2026-10-04), on the recorded
+reason that the ground item carries no announcement method. That reason was a
+probe artifact (Results, above): `method` was refused because the probe could
+not name any `anon@` method, so it is uninterpretable, not failed. `netsend`
+and `chatadd` refused with the one item argument supplied, not a call by name
+as such. After the round-2 review the owner chose to fix the probe and retest
+`method` inside Live procedure 2 (step 2a, `method-found-2` and
+`route-method-2`), then choose `method` or `server`; `server` stays shipped
+until then. A plain `ChatAddMessage` line without the `SERVER:` prefix is a
+possible follow-up, not part of this change. The header's `kShippedSink` and
 `tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` name the same
 route.
 
 ## Not established
 
 - Who invokes the announcement closure online, and what binds it on a
-  ground item there. Offline it was not bound and never ran (Live
-  procedure 1: 0 calls over a placed Heroic item and about 450 natural
-  drops); that is "not observed offline", not "cannot run offline".
+  ground item there. Offline it never ran (Live procedure 1: 0 calls over
+  a placed Heroic item and about 450 natural drops); that is "not observed
+  offline", not "cannot run offline". Whether it is bound on the offline
+  ground item is not established either (Results: the probe could not name
+  the `anon@` methods it found); 0 calls fits "bound, but nothing invokes
+  it offline" as well as "not bound".
 - Which global the closure reads before giving up on a drop
   `GetRareDropAnnouncement` refuses, and whether the closure would refuse a
   Heroic item offline if something did bind it.
