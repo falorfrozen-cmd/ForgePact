@@ -146,6 +146,7 @@ class PanelSourceTests(unittest.TestCase):
         self.assertIn("decorateIconLabel(label,label.dataset.icon)", self.panel)
         css = panel_file("app.css")
         self.assertIn(".modifier-group:last-child:nth-child(odd){grid-column:1/-1}", css)
+        self.assertIn(".modifier-group:last-child:nth-child(odd)>:not(.group-title){max-width:calc((100% - var(--space-10)) / 2)}", css)
         self.assertIn('data-tab="modifiers"', self.modifiers)
 
     def test_speed_reads_as_a_percentage_the_others_as_a_count(self):
