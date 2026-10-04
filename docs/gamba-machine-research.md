@@ -320,15 +320,14 @@ reader's machine.
   true)` by name with the caller as `self`, and returns the instance. No
   early return, no other check. `hs-game-sdk` names it `gml_Script_sCP`
   (index 474).
-- **Static reading, not verified:** the argument order contradicts
+- **Static reading; measured (Live 3):** the argument order contradicts
   `S10-special-content-notes.md` ("object ref, x, y") and
   `RUNTIME_DATA_MODELS.md` § 14.3's bullet copied from it. This reading
   follows the argument list the local reading builds (the first and second
   arguments copied into the builtin's x and y slots, the third into its
-  object slot). UNVERIFIED until Live 3: `spawn scp` defaults to `(x, y,
-  object)` and offers `oxy` for the other order, and the reply prints the
-  created instance's `object_index`, which is 4644 only when the order was
-  right (a wrong order creates whatever object index `y` names, at `(object,
+  object slot). Live 3's `spawn scp` answered `object=4644` with the default
+  `(x, y, object)` order, confirming it (the `oxy` order was never needed; a
+  wrong order would create whatever object index `y` names, at `(object,
   x)`: harmless in a research session that restores its saves).
 - **Static reading, not followed:** the effect route the game uses
   (`ClientCreateEffect`'s machine case) was rejected in 1b and stays
