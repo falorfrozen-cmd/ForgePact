@@ -153,7 +153,10 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   It replaced a window the mod held open around a count-only
   `LootGroundDrop` detour, which counted 0 while Live procedure 2's bag drop
   reached `LootGroundInit` and was announced. The guard does not need to know
-  which script the bag drop runs through.
+  which script the bag drop runs through. Live procedure 3 measured it hold
+  the owner's bag drop and pass 215 of the game's own drops (below); it would
+  not hold a bag drop whose ground struct was a copy built through
+  `CreateItemNew` in that frame or the one before.
 - **Inside `LootGroundInit`'s call** (`LootAnnounceOnInit`, after the game's
   original and after hidden loot's consumer): argument 0 and `self` are
   reduced to durable handles (a number or reference as it is; an instance
@@ -347,8 +350,8 @@ What the session established, measured:
   `method-found` and `route-method` measured the probe, not the game (the
   instrument-blindness review of round 2). The probe now converts the index
   first, as `CiTryResolveMethod` does, and prints `#<index>` beside each
-  name; Live procedure 3 retests both (Live procedure 2 ended before it got
-  there).
+  name. Live procedure 3 retested both (Live procedure 2 ended before it got
+  there): the fixed probe still named no `anon@` method (below).
 - `NetworkSendChatMessageIngame` and `GetItemDropMessage` refused when
   called by name from ForgePact with the shapes supplied above, and neither
   counted a `PacketSend`. Only one item argument was ever supplied, the
@@ -365,8 +368,8 @@ What the session established, measured:
 - Every natural drop seen reached `LootGroundInit` with a ground item
   reference as argument 0, as the hidden-loot research measured. The
   session did not read the rarity of any natural drop, so whether a natural
-  Heroic, Angelic or Unholy drop reaches it is still not observed (Live
-  procedure 3 tries again).
+  Heroic, Angelic or Unholy drop reaches it was not observed here (Live
+  procedure 3 counted one announced, below).
 - `LootGroundDrop` stayed at 0 through the kills: a game drop passing
   through it was not observed. Its hook had not counted a call live, so this
   zero had no positive control; Live procedure 2's bag drop, the call it was
@@ -414,15 +417,19 @@ make. The same log shows the game's own drops built this session with a
 fresh numeric `itemTimeStamp` through the detoured `CreateItemNew`.
 
 **Why the guard changed.** A window opened by a hook that never sees the bag
-drop cannot hold it. "Built by `CreateItemNew` this frame or the last"
-separates a new drop from an existing struct put back on the ground without
-knowing the bag drop's script, so the mod now asks that (The mod, above),
-and Live procedure 3 measures it: `create-hook`, the bag drop again with
+drop cannot hold it. "Built by `CreateItemNew` this frame or the last" was
+chosen to separate a new drop from an existing struct put back on the ground
+without knowing the bag drop's script, so the mod now asks that (The mod,
+above). It is a design inference, not a measurement: a bag drop would pass
+it if the ground received a copy built through `CreateItemNew` in that frame
+or the one before, or if a rebuild at the drop were handed the existing
+struct as argument 0 (the adapter notes argument 0 as well as the return).
+Live procedure 3 measured it (below): `create-hook`, the bag drop again with
 `created` noted around the pickup and the drop, and `natural-fresh`, the
 guard's positive control on the game's own drops. The owner accepted on
 2026-10-04 that a bag drop announcing again is acceptable if research does
-not show a way: `bag-drop-silent` and `no-duplicate` are recorded there, not
-required, and a fail ships as a Known Limitation.
+not show a way: `bag-drop-silent` and `no-duplicate` were recorded there, not
+required, and a fail would have shipped as a Known Limitation.
 
 **The game's exit, as recorded.** About 44 s after `out.txt`'s last line
 (the boost commands' own output, nothing after it), the game exited with
@@ -433,8 +440,88 @@ time; the Application event log had no Hero Siege record. The cause is not
 established. The owner reported afterwards that Steam was not running; the
 explanation, "steam was not running, it could be the cause", is a
 hypothesis, not a finding (the session did not record Steam's state); Live
-procedure 3 checks that Steam is running before launch and records it
-(`steam-running`).
+procedure 3 checked that Steam was running before launch (`steam-running`),
+and that session's game did not exit. One session does not establish the
+cause.
+
+## Live procedure 3
+
+The creation guard through the panel, the steps Live procedure 2 never
+reached, then the `method` retest with the fixed probe. Run by
+`live-operator`; the full procedure is in the workorder.
+
+### Results
+
+Session 2026-10-04 17:43-17:53 UTC, research build sha256 `d1538a0f…1c62`
+(built at ForgePact `765026d`, matched the lease's `dll_sha256`), slot 14
+Sorak, the Town of Inoya for the placements and the bag drop, then the
+Outskirts of Inoya (zone level 243) for the kills and the retest. Steam was
+running before launch (`steam.exe` listed). The mod was switched through the
+panel (served headless from this branch, switched by its own `/api/set`).
+Boosts: none in step 7(a); Magic Find x10 for step 7(b), with the Angelic /
+Unholy Drops multiplier left at its saved 1, so any Angelic seen was the
+game's own; both restored to the saved values afterwards. The game did not
+exit; it was stopped at the end. The saves were restored afterwards from the
+session's backup (`hs_saves_inspect` after the restore: 0 changed, added or
+missing).
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `dll-hash` | the lease's `dll_sha256` against the build's | equal | pass |
+| `marker` | `lootann stat` before the switch | `lootann: off route=server seen=0 ... created=0 create-overflow=0 init-hook=not-installed create-hook=not-installed ...` | pass |
+| `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
+| `steam-running` | `tasklist` before launch | `steam.exe` listed | pass |
+| `create-hook` | panel `mod_loot_announce` true | `HOOK INSTALLED on LootGroundInit`; `lootann: on route=server init-hook=both create-hook=both`; modstate `lootAnnounce.on` true | pass |
+| `on-announce-heroic` | `lootannprobe place heroic` (`"27"`=9, Swift Heavy Belt, itemType 8, ground id 262136) | red `[19:44] SERVER: Sorak found Swift Heavy Belt`; `seen=1 announced=1 held-bag-drop=0 created=1` | pass |
+| `on-announce-angelic` | `lootannprobe place angelic` (`"27"`=7, Headhunter) | red `SERVER: Sorak found Headhunter`; `announced=2 created=2` | pass |
+| `on-no-announce-satanic` | `lootannprobe place satanic` (`"27"`=6, Wanderer Heavy Belt) | no new line; `held-rarity` 0 → 1, `created=3` | pass |
+| `bag-drop-silent` | the owner picked up the placed Heroic belt (a), then dropped it from the bag (b), `lootann stat` after each | after (a) nothing moved (`seen=3`, `created=3`); after (b) `seen` 3 → 4, `held-bag-drop` 0 → 1, `announced` stayed 2, `created` 3 → 5; no line in the screenshot (taken when the owner's reply arrived, possibly more than 5 s after the drop) and the owner saw none | pass |
+| `no-duplicate` | the same steps 2-5 | `announced=2` after (b); the two lines of steps 2 and 3, none at the bag drop (the owner gave no total count) | pass |
+| `off-no-announce` | panel switch off, `lootannprobe place heroic` (Heavy Belt of Swiftcast, `"27"`=9) | `lootann: off`; no line; counts unchanged (`seen=4 announced=2 created=5`) | pass |
+| `natural-fresh` | panel switch on; the owner killed monsters in one zone for about five minutes (minimap clock), no boost, no bag drop, no portal | `seen` 4 → 219 (+215), `created` 5 → 220 (+215), `held-bag-drop` 1 → 1, `held-rarity` 1 → 216, `announced` unchanged | pass |
+| `natural-announce` | Magic Find x10 through the panel, Angelic / Unholy Drops at its saved 1; the owner played on in the same zone | `announced` 2 → 3 with no placement (`seen` 219 → 446, `held-rarity` 216 → 442, `held-no-rarity`, `held-duplicate` 0, `held-bag-drop` 1); the owner saw a red `SERVER:` line; the screenshot came after the line had gone, so the item and its rarity were not recorded | pass |
+| `anon-control` | `lootannprobe on` (16 of 16 rows attached, none table-only or missing; `LootGroundDrop` through its own count-only detour), `lootannprobe place heroic` (Heavy Belt of Wholeness), `lootannprobe methods` | `m_AngelicMessage -> ?#-1, m_LootFilter -> ?#-1, m_LootGroundDeActiveStep -> ?#-1, s_lootDrawData -> s_lootDrawData@gml_Object_Pickup_Parent_obj_Create_0#105134`; `anon rows resolved: 0 of 2`; `unresolved rows: 3 of 4`; `SDK closure ... not found` | fail |
+| `method-found-2` | the same listing | no row names `anon@1138` | not observed (instrument-blind: the three `anon@` rows read `?#-1`) |
+| `route-method-2` | `lootannprobe try 1` on the placed Heroic, switch off | `supplied script=anon@1138@gml_Object_Loot_Ground_obj_Create_0 self=Loot_Ground_obj args=none -> dispatched=0 ret=none refused: method`; `deltas: none`; no line; no game error | not observed (method not found) |
+| `route-method-angelic-2` | `lootannprobe place angelic` (Headhunter), `lootannprobe try 1` | the same refusal, `deltas: none`, no line | not observed (method not found) |
+
+What the session established, measured:
+
+- **The creation guard holds a bag drop.** The owner's bag drop reached
+  `LootGroundInit` (`seen` +1) and was held as not recently created
+  (`held-bag-drop` +1), with no line. One bag drop of one item was tried;
+  dropping several items at once, or dropping in the frame of a pickup, was
+  not.
+- **The guard passes the game's own drops** (`natural-fresh`, its positive
+  control): over 215 natural drops `created` rose by exactly as much as
+  `seen`, and none was held as a bag drop. Each placement raised `created`
+  by 1 too.
+- **The drop from the bag builds through `CreateItemNew`; the pickup does
+  not.** `created` stayed at 3 across the pickup and rose by 2 at the drop,
+  and the ground item still read as not recently created, so neither key
+  noted at the drop was the struct that reached the ground. That this is
+  the same rebuild Live procedure 2's `itemdrops.jsonl` showed (same belt,
+  `itemTimeStamp` 0) is inference: this session did not read that log.
+- **A natural drop of an announced rarity reaches `LootGroundInit` and is
+  announced**: `announced` rose by 1 with no placement, and the owner saw
+  the red line. Which item it was, and so whether it was Heroic, Angelic or
+  Unholy, was not recorded.
+- **The fixed probe still names no `anon@` method.** It now takes
+  `method_get_index`'s value as a number: for `m_AngelicMessage`,
+  `m_LootFilter` and `m_LootGroundDeActiveStep` the conversion returned
+  without throwing and gave -1, so `script_get_name` was not asked, while
+  the named `s_lootDrawData` gave 105134 and resolved. So the open question
+  of the previous round, whether taking a `VALUE_REF` index as a number is
+  safe, is answered for safety (no throw, no `(unreadable)` row) but not for
+  meaning: the probe does not print the index's kind, so whether -1 is
+  `method_get_index`'s own answer for these methods or the conversion's
+  reading of a reference is not established. `CiTryResolveMethod` named
+  `m_LootGroundDeActiveStep` as an `anon@` closure on a quest item on
+  2026-09-11; why the same read gives -1 on this ground item is not
+  established. The listing stays instrument-blind, so whether the ground
+  item holds `anon@1138` is still not known, and `method` was not called.
+- `route-method-2` did not pass, so by the owner's rule `server` stays the
+  shipped route (Route, below).
 
 ## Route
 
@@ -445,14 +532,23 @@ Chosen 2026-10-04 from Live procedure 1, in the order `method`, `netsend`,
 showed the red `SERVER: <character> found <item name>` line with no error and
 no `PacketSend`. The owner approved shipping it (2026-10-04), on the recorded
 reason that the ground item carries no announcement method. That reason was a
-probe artifact (Results, above): `method` was refused because the probe could
-not name any `anon@` method, so it is uninterpretable, not failed. `netsend`
-and `chatadd` refused with the one item argument supplied, not a call by name
-as such. After the round-2 review the owner chose to fix the probe and retest
-`method` in the next session (`method-found-2` and `route-method-2`), then
-choose `method` or `server`; `server` stays shipped until then. Live
-procedure 2 ended before its retest step, so Live procedure 3 runs it. A plain `ChatAddMessage` line without the `SERVER:` prefix is a
-possible follow-up, not part of this change. The header's `kShippedSink` and
+probe artifact (Live procedure 1's Results, above): `method` was refused
+because the probe could not name any `anon@` method, so it is
+uninterpretable, not failed. `netsend` and `chatadd` refused with the one
+item argument supplied, not a call by name as such. After the round-2 review
+the owner chose to fix the probe, retest `method`, and then choose: `method`
+only if `route-method-2` passed with no `PacketSend` count and no game error
+line, else `server`.
+
+Live procedure 3 ran the retest (Live procedure 2 ended before it).
+`route-method-2` and `route-method-angelic-2` were not observed: the fixed
+probe still resolved no `anon@` method (`anon rows resolved: 0 of 2`), and
+`try 1` refused before calling anything. So `server` stays shipped, by the
+owner's rule, with nothing left to ask. The `VALUE_REF` finding that goes
+with it: taking `method_get_index`'s value as a number did not throw, but
+gave -1 for every `anon@` method (Live procedure 3's Results). A plain
+`ChatAddMessage` line without the `SERVER:` prefix is a possible follow-up,
+not part of this change. The header's `kShippedSink` and
 `tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` name the same
 route.
 
@@ -462,9 +558,14 @@ route.
   ground item there. Offline it never ran (Live procedure 1: 0 calls over
   a placed Heroic item and about 450 natural drops); that is "not observed
   offline", not "cannot run offline". Whether it is bound on the offline
-  ground item is not established either (Results: the probe could not name
-  the `anon@` methods it found); 0 calls fits "bound, but nothing invokes
-  it offline" as well as "not bound".
+  ground item is not established either (Live procedure 1's probe could not
+  name the `anon@` methods it found, and Live procedure 3's fixed probe read
+  each of their indexes as -1); 0 calls fits "bound, but nothing invokes it
+  offline" as well as "not bound".
+- What `method_get_index` returns for the ground item's `anon@` methods on
+  this runner: Live procedure 3's probe took the value as a number and got
+  -1 without printing its kind, so whether -1 is the runtime's answer or a
+  reference read as a number is not established.
 - Which global the closure reads before giving up on a drop
   `GetRareDropAnnouncement` refuses, and whether the closure would refuse a
   Heroic item offline if something did bind it.
@@ -476,19 +577,26 @@ route.
 - Which `self` and arguments `GetItemDropMessage(item)` wants from a caller
   outside the game's own chat code: with `self` the local `Player_obj` and the
   item struct it refused.
-- Whether a natural Heroic, Angelic or Unholy drop reaches `LootGroundInit`
-  the way placed items and ordinary drops do (`raredrop heroic` does not make
-  kills drop Heroic items, so the live cases are placed; Live procedure 1
-  saw 450 natural drops reach it but read none of their rarities, and Live
-  procedure 2 ended before it read one).
+- Which rarity the natural drop Live procedure 3 announced had, and so
+  whether each of Heroic, Angelic and Unholy reaches the mod from a kill
+  (`raredrop heroic` does not make kills drop Heroic items, so the cases
+  read by rarity are placed; Live procedure 3 counted one natural drop
+  announced and the owner saw its line, but the item was not recorded).
 - Which script the player's bag drop runs through. Live procedure 2 measured
   that it reaches `LootGroundInit` and that `LootGroundDrop`'s both-route
-  detour did not count it; which caller it is, and whether the struct on the
-  ground is the one picked up or a copy, are not established (the creation
-  guard does not depend on either).
-- Whether the creation guard holds a bag drop and passes the game's own
-  drops live (`bag-drop-silent`, `natural-fresh`): Live procedure 3.
+  detour did not count it; Live procedure 3 measured that the drop (not the
+  pickup) raises `created` by 2 and that the struct on the ground was not
+  one of those keys. Which caller it is, and whether the struct on the
+  ground is the one picked up or a copy made outside `CreateItemNew`, are
+  not established. The guard depends on the second: a copy built through
+  `CreateItemNew` at the drop would be announced again.
+- Whether every bag drop is held: Live procedure 3 held one drop of one
+  item. Several items dropped at once, a stack, a drop in the frame of a
+  pickup, and a co-op peer's drop (built anew on this client, so announced
+  by design) were not tried.
 - Why the game exited in Live procedure 2 (exit code 1, no fault record).
+  Live procedure 3, with Steam running, did not exit; one session does not
+  settle the owner's Steam hypothesis.
 - Whether a filter-hidden drop of these rarities should be announced: the
   mod decides before hidden loot sleep puts it to sleep, so it is.
 - The `method` sink calls through `InvokeMethodValue`, which also updates the
