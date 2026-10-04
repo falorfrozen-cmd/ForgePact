@@ -251,9 +251,20 @@ Same ship as Live 3, on the research build with the control feature:
   two-thirds of the target. With `SetProcessDpiAwareness(2)` before injecting,
   the flow works end to end (`Town_01_rm` -> `Act_01_01`). Worth carrying into
   the hs-drive input docs.
-- **The in-zone effect capture is still outstanding.** The test character
-  (`HCSSF`, level 54) died in `Outskirts of Inoya / Nightmare / Zone Level
-  170` while the commands ran - twice (the zone's own mobs; the backup copy
-  was re-injected between runs). The state query above and the map-layer
-  finding are what this session established; a HUD or buff difference with the
-  pin on was not photographed.
+- **The in-zone effect is confirmed in the same session.** Entering
+  `Act_01_01` a second time with `satzone pin 1` already set (so the game's own
+  per-frame `LoadSatanicZone(1)` was true from the room load) added five new
+  permanent buff objects to the player (`Draw_Player_Buff_obj`, `buffType`
+  368/371/385/401/411) - the same slots read `-4` (empty) in the entry made
+  with the pin off. The zone's own arrays that session held 3 buffs + 2
+  debuffs, and the player, watching their buff bar, confirmed the satanic
+  buffs and debuffs are showing. Releasing the pin mid-zone did not remove the
+  objects already applied. So the pinned room's state is not just a query
+  answer: the game applies the zone's effects in the room the pin names. The
+  map icon remains its own layer (above).
+- **The earlier attempt's deaths, for the record.** The HCSSF test character
+  (level 54) died in the same zone while the commands ran - twice (the zone's
+  own Nightmare mobs; the backup copy was re-injected between runs) - which is
+  why that attempt could not photograph the effect; the strong character's
+  session above established it without a screenshot (the buff objects read off
+  the game and the player's own report).
