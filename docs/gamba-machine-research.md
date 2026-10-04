@@ -50,13 +50,14 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   created it. No spin was measured, so every spin key in § Decision reads
   `not-observed`, and `pity-design` reads `blocked` until a machine can be
   measured.
-- **Next:** phase 1c, a separate workorder on the same branch (owner's
-  decision, 2026-10-04): read locally what `Alarm_9` checks before it removes
-  the machine, build a spawn that meets it, and fall back to a machine the
-  game placed itself.
+- **Next:** phase 2, the pity mod, is now planned (a spin was measured in
+  Live 3; the roll is a script, so the design is `force-script` per §
+  Decision).
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
-  § Instrument); § Live procedure 3 is written and not yet run.
+  § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
+  results`): no spawn route survived, but a natural machine spun; the state
+  route and the by-name route are both blind.
 - **Owner's decisions (2026-10-04):** the pity counts explosions, with the gold
   equivalent shown; the session character (slot 14 "Sorak") has enough gold
   for the full procedure; measure first, then plan the mod.
@@ -1191,26 +1192,107 @@ name § Live procedure 2 gives it.
   machine, builds a spawn that meets that check, and falls back to a machine the
   game placed itself.
 
+### Live 3 results
+
+**A natural machine spun; no spawn route survived; the state route is blind**
+(2026-10-04, the Town of Inoya and the Fields of Battle; slot 14 "Sorak"; the
+research DLL built from this branch, SHA-256
+`1ee2b7542445ff08477c189eefb802dda6dcd75b81509f09d553211df66f5379`). The
+capture is the toolkit's
+`.claude/workorders/forgepact-goburins-head-pity-1c-live-3.md`, a local working
+note not copied here. Each finding names the check it comes from, under the name
+§ Live procedure 3 gives it.
+
+- **Measured, the instrument:** `gambaprobe hook` installed 44 rows: 0
+  table-only, and the only 3 missing are the three extension-function builtin
+  rows (`hook-installed`: pass), in `8612 ms` (events 424, byname 2, scripts
+  2022, builtins 828, table 5334) (`hook-timing`: pass); `selftest` moved the
+  `irandom` row 0 -> 1 (`selftest-rng`: pass).
+- **Measured, the extension functions do not resolve by name:** `GetVariable`,
+  `SetVariable` and `SetVariableToUndefined` all read `(not found by name, st=4)
+  missing` (`ext-rows-hooked`: fail). The static reading's state route is not a
+  name-resolvable builtin in the table YYTK's lookup reads, so
+  `state-route: blind`, and the `stamp` route cannot work either.
+- **Measured, `fnwalk`:** `gambaprobe fnwalk: table not found (no aligned qword
+  equal to camera_create's routine with eight valid entries)`. The validation
+  seed does not locate the functions array, so no `byname=detoured|shared` row
+  was made and the walk answered nothing about the store scripts (`fnwalk`:
+  fail).
+- **Measured, the `scp` spawn:** `spawn scp` created a machine
+  (`route=scp id=262068 object=4644 at 912,822`, with the game's own `sCP` frame
+  in its caller walk, so the `(x, y, object)` order is the right one), yet the
+  machine was gone at its first step (`create=1 alarm9=1 step=1 cleanup=1`,
+  `machines=0`, a `CleanUp_0-caller` line) (`spawn-scp`: fail; `spawn-scp-oxy`:
+  not-observed, the order was not wrong). The `stamp` route was refused before
+  it could read anything: `route=stamp refused - dispatch failed: GetVariable,
+  st=4` (`spawn-stamp`: fail, `stamp-readback`: not-observed). So
+  `spawn-route: natural` — only a machine the game placed itself survived.
+- **Measured, the natural machine:** playing zones from the Inoya portal
+  produced a machine that survived and spun: `machines=2 (id 494622,494624)`,
+  `step=14219` (`natural-machine`: pass). Over that machine's `Create_0` the
+  `InitPV` row still read `machine-self=0` and no `byname-shared` row existed
+  (`byname-visible`: fail), so the by-name store route stays blind
+  (`byname-route: blind`).
+- **Measured, the spin (`spin-trace`, `gold-debit`):** each spin debits 10,000
+  gold through `PickUpGoldCheck` with the machine as `self`
+  (`a1=real:-10000.000000`, one call per spin; `GetGoldAmount` with the machine
+  as `self` read `1001114 -> 991114 -> 981114 -> 971114 -> 1011114 -> ...`).
+  Sixteen `PickUpGoldCheck` calls fired over the window, with no
+  `instance_destroy` carrying a machine argument.
+- **Measured, the payout (`explosion-trace`, `prize-trace`, `roll-identity`):**
+  the prize roll is the script `GetUniqueRepoStruct` with the machine as `self`
+  (`argc=3 a0=real:1.000000 a1=int64:0 a2=real:72.000000`, not `10, 0, 98`),
+  whose randomness goes through the `cpr_irandom` and `cpr_rand32` script rows
+  (`scope=machine-event`), not a builtin. The prize is built by
+  `CreateDefaultParams` (`(0,72,true)` then `(0,11,undefined)`) and placed by
+  `LootGroundCreate` -> `CreateLootInFreePos` -> `instance_create_layer`
+  (`Loot_Ground_obj`, plus `Coin_obj`, `Loot_Pillar_obj`, `Impact_Sound_obj`,
+  `Visual_Effect_Simple_obj`). The machine object is not destroyed by a payout:
+  `machines=2` (the same two ids) before and after.
+- **Measured, the roll is a script, not a builtin:** the `irandom` lever armed
+  for the prize roll never saw a machine-self builtin RNG call
+  (`gambaprobe rng: ... lever=on INERT - armed, but no machine-self irandom call
+  has reached it`; `forced-head`: not-observed). `state-trace` is not-observed
+  (the `SetVariable` row reads `missing`).
+- **Not observed:** a second machine's fresh state (`second-machine`), since no
+  `gambaprobe spawn` route survived; and the loader-route drop
+  (`fallback-drop`), since `gambaprobe drop` was refused by the auto-mode
+  permission classifier before it was sent, and was not worked around.
+
+Live 3 labels the six § Decision keys for the first time (below).
+
 ## Decision
 
-roll-route: not-observed
+roll-route: script
 
-explosion-rule: not-observed
+explosion-rule: random
 
-drop-route: not-observed
+drop-route: LootGroundCreate
 
-counter-route: not-observed
+counter-route: both
 
 fallback-drop: not-run
 
-pity-design: blocked
+pity-design: force-script
 
-Live 2 measured no spin, because no spawned machine lived past its first step
-(§ Results). So the four spin keys read `not-observed`, and `fallback-drop`
-reads `not-run`, since the procedure runs it only on a surviving machine.
-`pity-design` reads `blocked`: with no roll, no script result and no drop
-measured, none of the three designs is available yet. The owner's way on is
-phase 1c (§ Status), which opens each key again on a machine that lives.
+Live 3 measured a natural machine's spin and payout (the `scp` and `stamp`
+spawn routes both failed, so no spawned machine could be spun). The prize roll
+is the script `GetUniqueRepoStruct` with the machine as `self` (arguments `1, 0,
+72`), whose randomness goes through the `cpr_irandom`/`cpr_rand32` script rows —
+no builtin RNG fires with the machine as `self` (the `irandom` lever stayed
+`INERT`), so `roll-route` is `script`. The payout comes on that random roll and
+the machine is not destroyed by it (`machines=2` before and after), so
+`explosion-rule` is `random`; the prize is placed by `LootGroundCreate` ->
+`CreateLootInFreePos` -> `instance_create_layer`, so `drop-route` is
+`LootGroundCreate`. A pity counter can count both events from the machine-self
+hooks that fired — spins through `PickUpGoldCheck` (`a1=-10000`, one per spin)
+and payouts through `GetUniqueRepoStruct`/`LootGroundCreate` — so
+`counter-route` is `both`. `fallback-drop` is `not-run` (the `gambaprobe drop`
+command was refused by the auto-mode permission classifier before it was sent,
+and was not worked around). With the roll a script and the drop a script, phase
+2 forces a named script's result rather than answering a builtin RNG, so
+`pity-design` is `force-script`; `drop-ourselves` (the loader route) is the
+fallback.
 
 - **`roll-route`** (`roll-identity`): which call, with the machine as `self`,
   decides the prize. `builtin`, `script`, `method` or `not-observed`.
@@ -1232,40 +1314,32 @@ phase 1c (§ Status), which opens each key again on a machine that lives.
 
 Live 1 was meant to settle these and, INSTRUMENT-BLIND, settled none of them.
 Live 2 settled who removes a spawned machine (its own `Alarm_9`, on every
-route) and that no spawn route of the four survives; its spin half never ran,
-so the rest stays open for phase 1c.
+route) and that no spawn route of the four survives. Live 3 measured a natural
+machine's spin and payout and answered several of the rest; what stays open:
 
-- **The spin's gold debit path.** `PickUpGoldCheck` is the only balance writer
-  per `RUNTIME_DATA_MODELS.md` § 13.10, but no event calls it directly.
-- **Whether the prize roll is per spin or per explosion.**
-- **The explosion threshold**, and whether it is gold, a spin count or random.
+- **Why a machine `sCP` creates still dies.** `spawn scp` created a machine
+  (object 4644, the game's own `sCP` frame in its caller walk) that its own
+  `Alarm_9` removed in its first step, so `sCP`'s `SetVariable(key, true)` stamp
+  did not take effect — consistent with the extension functions not resolving by
+  name. Whether the reading of `sCP`'s stamp is wrong, or the stamp uses a route
+  the probe's rows cannot see, is open.
+- **How `Alarm_9` reaches the machine's state.** The static reading put it
+  through `GetVariable`/`SetVariable`/`SetVariableToUndefined` by name, but none
+  of the three resolves by name from the plugin (`state-route: blind`), so the
+  real state route is still unobserved (`state-trace`: not-observed).
+- **Where the functions array is.** `fnwalk` did not locate it by validation
+  (`table not found`), so whether it holds same-named entries for the store
+  scripts is still open, and how the by-name store calls reach `InitPV`, `SPV`,
+  `GPV` and `FPV` without passing the inline detour at the script's own entry
+  (`byname=same`, `machine-self=0`) is still open (`byname-route: blind`).
 - **What the three unique picks and seven parameter builds in `Step_0`
-  correspond to** (prize tiers?).
-- **The ground placement**: which script or builtin puts the prize on the
-  ground.
+  correspond to** (prize tiers?). `GetUniqueRepoStruct` ran with arguments
+  `1, 0, 72` and `CreateDefaultParams` built `(0,72,true)` and `(0,11,
+  undefined)`, but the mapping to the picks and builds was not read.
 - **The machine's state keys** in the protected store (spin count, gold spent,
-  threshold).
-- **Whether `GetVariable` and `SetVariable` resolve by name from the
-  plugin**: the `stamp` route's `before=`/`after=` read-back is its own
-  control, and `pet-relic-collector-research.md` left `GetVariable`'s
-  `undefined` result open; `state-rows-live` measures it.
-- **Whether a machine `sCP` creates behaves as a game-spawned one past its
-  first step**: the `scp` route meets `Alarm_9`'s `pSpwd` guard, but nothing
-  yet shows the machine then spins like the game's own.
-- **The `sCP` argument order** (`(x, y, object)` against `(object, x, y)`),
-  until Live 3 reads the created instance's `object_index`.
-- **Whether the functions array holds same-named entries for the store
-  scripts**: `gambaprobe fnwalk` walks the array and answers it.
-- **How the by-name store calls reach `InitPV`, `SPV`, `GPV` and `FPV`**
-  without passing the inline detour at the script's own entry, when both
-  names resolve to the script (`byname=same`, `machine-self=0` over four
-  `Create_0` runs).
-- **Whether a machine the game placed itself behaves differently** from a
-  spawned one: none was measured.
-- **Whether the machine's prize roll passes `cpr_irandom` or `cpr_rand32`**,
-  the script rows combat's rolls pass in Live 2, or a builtin RNG row.
-- **The charm's rarity code** (7 Angelic or 10 Unholy, or neither).
-- **Where the price and the odds live.** Neither 10,000 nor 750 appears as a
-  literal in the `Create_0`, `Alarm_0` or closure bodies read, so they are in
-  the constant tables or the protected store, and only the trace will show
-  them.
+  threshold): the state rows were blind, so no key was read.
+- **The charm's rarity code** (7 Angelic or 10 Unholy, or neither):
+  `fallback-drop` did not run.
+- **Where the odds live.** The price is measured at 10,000 gold a spin (the
+  gold debit through `PickUpGoldCheck`); the 750 (or whichever odds constant)
+  was not seen, and neither appears as a literal in the bodies read.
