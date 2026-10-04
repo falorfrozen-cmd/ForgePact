@@ -510,14 +510,26 @@ Every row's `hook` and `status` line prints both indices
   once, as a `byname-shared` row that logs `argc` and the described arguments
   under the machine-self filter (`InitPV`, `SPV` and `GPV` differ in argument
   count).
-- `byname=missing`: the `gml_Script_` name does not resolve.
+- `byname=missing`: no attachment by name, for one of five reasons, printed
+  in the row's `[...]` note: the `gml_Script_` name does not resolve; a
+  name's functions-array routine has no pointer; that routine is not game
+  code; no by-name slot was left; or the routine's `HookBuiltin` detour was
+  not installed (not executable in the exe, no longer the routine first read,
+  or `HookBuiltin` failed). Only the first means the name does not exist;
+  read the note before reading the word.
 
 Its positive control is free: a spawned machine's `Create_0` makes about 28
 `InitPV` calls with the machine as `self`, whether or not the machine then
-survives (`byname-visible`). If both names resolve to the script
-(`byname=same`) and the counts stay at 0, the route is something else again:
-`byname-route: blind` is then the finding, phase 2 must not lean on the store
-trace, and the question goes to a consultant, not to another rebuild.
+survives (`byname-visible`). Where those calls are counted depends on the
+word `hook` printed for `InitPV`: on the `InitPV` row itself for `same` and
+`detoured`, and for `shared` only on the `byname-shared <name> (rows
+InitPV,...)` row that lists it, never on the `InitPV` row, so `InitPV
+machine-self=0` alone proves nothing then. "The counts stay at 0" means the
+`InitPV` row and, when `InitPV` prints `byname=shared`, that `byname-shared`
+row both read `machine-self=0` while `Create_0` counted. Only then is the
+route something else again: `byname-route: blind` is the finding, phase 2
+must not lean on the store trace, and the question goes to a consultant, not
+to another rebuild.
 
 One per-frame tick returns at once while nothing is armed; nothing else of the
 probe is on the frame path.
@@ -714,8 +726,11 @@ machine that survives.
      when at least one `CleanUp_0-caller` line with at least one `gml:` or
      `exe+` frame printed; fail when CleanUp_0 counted and no caller line
      printed). From `status`: `InitPV machine-self=` and `SPV machine-self=`
-     (`byname-visible`: pass if `InitPV machine-self>=1`; fail if 0 while
-     `Create_0 calls>=1`).
+     and, when step 1 recorded `byname=shared` for `InitPV`, the
+     `machine-self=` of the `byname-shared <name> (rows InitPV,...)` row that
+     lists it (`byname-visible`: pass if `InitPV machine-self>=1`, or, when
+     `InitPV` prints `byname=shared`, that `byname-shared` row reads
+     `machine-self>=1`; fail only if both read 0 while `Create_0 calls>=1`).
   4. `gambaprobe spawn game` -> `gambaprobe spawn: route=game id=<n> at
      <x>,<y>` (a refusal line names what failed: record it). Within a second
      `gambaprobe status`: `step>=30`, `machines=1`; screenshot shows the
