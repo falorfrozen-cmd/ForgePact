@@ -34,7 +34,7 @@ EXPECTED_ROUTE = "server"
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
                        "LaProbeNoteDrop", "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay",
-                       "LaProbeAnonControl")
+                       "LaProbeAnonControl", "LaProbeUnresolvedRows")
 
 # The lootannprobe research block's own bounds in ModuleMain.cpp.
 PROBE_START = "#ifndef FORGEPACT_RELEASE\n// ===== lootannprobe:"
@@ -279,8 +279,22 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertLess(methods.index("LaFindClosure(loot, method, variable, listing)"), counted)
         self.assertLess(listed, line)
         self.assertLess(counted, line)
+        # A passing control does not make every row readable: `fail` needs
+        # every listed method row resolved, so the probe counts the rows that
+        # did not (`<undefined>#<n>`, `?#?`, `#(<kind>)`, an unreadable read)
+        # on a line of their own, after the anon control.
+        self.assertIn('"lootannprobe methods: unresolved rows: "', probe)
+        unresolved = _code(_body(probe, "static void LaProbeUnresolvedRows("))
+        for marker in ('"<undefined>"', '"?#"', '"#("', '"(unreadable)"'):
+            self.assertIn(marker, unresolved)
+        tallied = methods.index("LaProbeUnresolvedRows(listing, unresolvedRows, methodRows, unresolvedText);")
+        unresolvedLine = methods.index('"lootannprobe methods: unresolved rows: "')
+        self.assertLess(methods.index("LaFindClosure(loot, method, variable, listing)"), tallied)
+        self.assertLess(tallied, unresolvedLine)
+        self.assertLess(line, unresolvedLine)
         # Research build only; the shared resolver the mod calls is untouched.
         self.assertNotIn("anon rows resolved", self.player)
+        self.assertNotIn("unresolved rows", self.player)
         self.assertNotIn("m_LootFilter", _code(_body(self.plugin, "static bool LaFindClosure(")))
 
     def test_no_address_no_destroy_in_the_adapter(self):

@@ -234,8 +234,17 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   resolver can name one. **The listing is INSTRUMENT-BLIND
   when `k` is 0**: a missing SDK closure row then says nothing about the
   game, and `method-found` is recorded `not-observed (instrument-blind)`,
-  never `fail`. Only with `k` ≥ 1 and no row naming `anon@1138` is it a
-  `fail`. `s_lootDrawData` resolves in either case: it is a *named* method,
+  never `fail`. A passing control proves the resolver can name the two
+  control rows, not every row: the closure can sit on another row
+  (`m_AngelicMessage`, say) that still came back unnamed. So the listing
+  then prints `lootannprobe methods: unresolved rows: <u> of <total>`,
+  where `total` counts every listed row and `u` those with no name
+  (`<undefined>#<n>`, `?#?`, `?#(<kind>)`, `(unreadable)`, an empty name,
+  or a `(read threw)` entry), followed by those rows in parentheses with
+  their indexes. `method-found` is a `fail` only when `k` ≥ 1, `u` is 0
+  (every listed row resolved to a name) and no row names `anon@1138`;
+  with `k` ≥ 1 and `u` > 0 it is recorded `not-observed (row unresolved:
+  <each unresolved row with its #index>)`. `s_lootDrawData` resolves in either case: it is a *named* method,
   so it is the control for named methods only and cannot tell a working
   listing from a blind one, since the failure being fixed touched only
   `anon@` methods. Then it prints `lootannprobe methods: SDK closure

@@ -50458,7 +50458,9 @@ static void DungeonProbeCommand(const std::string& rest)
 //                   one (InitItemFromJson, then itemInfoStruct["27"] written).
 //   methods       - the newest ground item's method variables, by name,
 //                   then `anon rows resolved: <k> of <n>`, the anon control
-//                   (LaProbeAnonControl): k = 0 means the listing is blind.
+//                   (LaProbeAnonControl): k = 0 means the listing is blind;
+//                   then `unresolved rows: <u> of <total>` (LaProbeUnresolvedRows):
+//                   u > 0 means a missing SDK closure is not a fail.
 //   try <n>       - the loot announcement adapter's sink n (1 method, 2
 //                   netsend with a0 undefined, 3 netsend with the player's
 //                   id, 4 chatadd, 5 server) against the newest ground item.
@@ -50826,6 +50828,41 @@ static void LaProbeAnonControl(const std::string& listing, int& resolved, int& l
     }
 }
 
+// The second half of the rule for a missing SDK closure. A passing anon
+// control proves the resolver can name the control rows, not that every row
+// was read: the closure can sit on a row that still came back unnamed
+// (m_AngelicMessage, say). `total` counts every row of LaFindClosure's
+// listing, `unresolved` the rows with no name - `<undefined>#<n>`, `?#?`,
+// `?#(<kind>)`, `(unreadable)#...`, an empty name, or a `(read threw)` entry
+// that is no row at all - and `text` lists those rows as printed, index
+// included. unresolved > 0 means no row naming anon@1138 is `not-observed`,
+// never `fail`.
+static void LaProbeUnresolvedRows(const std::string& listing, int& unresolved, int& total, std::string& text)
+{
+    unresolved = 0;
+    total = 0;
+    text.clear();
+    size_t pos = 0;
+    while (pos < listing.size()) {
+        size_t end = listing.find(", ", pos);
+        if (end == std::string::npos) end = listing.size();
+        const std::string row = listing.substr(pos, end - pos);
+        pos = end + 2;
+        ++total;
+        const size_t arrow = row.find(" -> ");
+        const std::string script = arrow == std::string::npos ? std::string() : row.substr(arrow + 4);
+        const bool unnamed = arrow == std::string::npos
+            || script.rfind("<undefined>", 0) == 0
+            || script.rfind("?#", 0) == 0
+            || script.rfind("(unreadable)", 0) == 0
+            || script.rfind("#", 0) == 0
+            || script.find("#(") != std::string::npos;
+        if (!unnamed) continue;
+        ++unresolved;
+        text += (text.empty() ? "" : "; ") + row;
+    }
+}
+
 static void LaProbeMethods()
 {
     std::string how;
@@ -50838,6 +50875,11 @@ static void LaProbeMethods()
     int anonResolved = 0, anonListed = 0;
     LaProbeAnonControl(listing, anonResolved, anonListed);
     Out("lootannprobe methods: anon rows resolved: " + std::to_string(anonResolved) + " of " + std::to_string(anonListed));
+    int unresolvedRows = 0, methodRows = 0;
+    std::string unresolvedText;
+    LaProbeUnresolvedRows(listing, unresolvedRows, methodRows, unresolvedText);
+    Out("lootannprobe methods: unresolved rows: " + std::to_string(unresolvedRows) + " of " + std::to_string(methodRows)
+        + (unresolvedText.empty() ? std::string() : " (" + unresolvedText + ")"));
     Out(std::string("lootannprobe methods: SDK closure ") + kLaClosureShort + " "
         + (found ? "found as variable " + variable : std::string("not found")));
 }
