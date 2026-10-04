@@ -232,7 +232,7 @@ experience.
   it showed nothing. With this on, a Heroic, Angelic or Unholy item that
   drops on the ground is announced once in the chat, as a red `SERVER:
   <your character> found <item name>` line. This is not the game's own
-  online announcement, which could not be made to run offline: ForgePact
+  online announcement, which does not run offline: ForgePact
   writes the line itself. Satanic, Mythic and lower items, gold, gems,
   materials and relics are not announced. An item counts only when the game
   has just made it, so an item you drop from your bag, or drop again after
