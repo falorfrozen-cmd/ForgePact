@@ -24,7 +24,7 @@ player moves, so that sum starts near 44 in a dungeon of 600 (see
 variable that holds the count, so T is an estimate: the monsters alive at the
 chest's first sight plus the spawners still to fire then, times a mean that
 session measured (`total-route: estimate`, [Live procedure 1b](#live-procedure-1b)).
-A build with no source for T refuses the share (`total=unavailable`). The arithmetic is written out in the hub's
+A build with no source for T, or whose spawner census failed (the spawner family unresolved, no spawners, or any spawner unreadable), refuses the share (`total=unavailable`). The arithmetic is written out in the hub's
 [`docs/models/dungeon-chest-spec.md`](../../docs/models/dungeon-chest-spec.md)
 and modelled in `hs-game-sdk/python/hs_game_sdk/dungeon_chest_model.py`.
 
@@ -153,8 +153,13 @@ yet (Live procedure 1b, `creator-state`). T is the monsters alive then plus
 those pending spawners times 614 / 117, rounded up (`EstimatedTotal` and its
 two named constants in `DungeonChestMod.hpp`; the inputs are run A of Live
 procedure 1b, curated as the hub's DC19). A spawner whose state cannot be read
-counts as fired (`unreadable=`); the clamp keeps T at or above the kills plus
-the monsters alive.
+is counted (`unreadable=`) and refuses the estimate, as do an unresolved
+spawner family and a room with no spawners (`EstimateFromCensus`;
+`total=unavailable(unreadable=<u>/<c>)`): counted as fired, an unread spawner
+would shrink T below the share the player set, and the clamp (kills plus the
+monsters alive) does not stop a total of a few percent of the dungeon. The
+owner chose "refuse if any unreadable" on 2026-10-04, after round 3 had
+refused only when every spawner was unreadable.
 
 **The head label** (D12). Live procedure 1b's owner report: the label "felt
 jerky and was blinking very fast as it was updating every frame". The header
@@ -179,7 +184,9 @@ detour as a second consumer, because a second `HookBuiltin` on one builtin
 comes up table-only.
 
 A share is stored only with the kill hook on both routes (`hook=ok`), the
-detour installed (`unlock=ok`) and a total source present; otherwise it is
+detour installed (`unlock=ok`) and a total source present (a source whose
+census then fails leaves the mode stored but answers `total=unavailable`, so
+the share never latches and the game's rule stays); otherwise it is
 refused with the reason (`hook=table-only`, `hook=failed`, the same for
 `unlock=`, or `total=unavailable`) and the mode stays as it was. `hook=` and
 `unlock=` are what the installers answered, not an inference from where a

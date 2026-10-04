@@ -56,13 +56,28 @@ static long Source(long alive, DC::Census& census) {
     census = DC::Census{};
     return sourceAnswer < 0 ? alive : sourceAnswer;
 }
-// The build's source when every creator's state was unreadable: it refuses (0).
-static long UnreadableSource(long, DC::Census& census) {
+// The build's source as ModuleMain answers it: the census it took, run through
+// the header's EstimateFromCensus. `censusCreators` creators, two of them
+// still to spawn when enough are readable, `censusUnreadable` of them whose
+// state could not be read; `censusFamily` false is a creator family that
+// resolved no object, so the census loop never ran.
+static bool censusFamily = true;
+static long censusCreators = 4;
+static long censusUnreadable = 0;
+static long CensusSource(long alive, DC::Census& census) {
+    ++sourceCalls;
     census = DC::Census{};
-    census.creators = 4; census.unreadable = 4;
-    return 0;
+    if (censusFamily) {
+        census.creators = censusCreators;
+        census.unreadable = censusUnreadable;
+        census.pending = censusCreators - censusUnreadable >= 2 ? 2 : 0;
+    }
+    return DC::EstimateFromCensus(censusFamily, alive, census);
 }
-static void ResetRecorders() { unlockCalls = 0; chatLines.clear(); chatFailures = 0; sourceAnswer = -1; sourceCalls = 0; }
+static void ResetRecorders() {
+    unlockCalls = 0; chatLines.clear(); chatFailures = 0; sourceAnswer = -1; sourceCalls = 0;
+    censusFamily = true; censusCreators = 4; censusUnreadable = 0;
+}
 
 // One dungeon as the poll reads it. Every kill the game makes moves one
 // monster from alive to dead; `Kill` hands it to the kill hook's path.
@@ -273,7 +288,8 @@ int main() {
         none.totalSource = nullptr;
         DC::State blind;
         Arm(blind, 50, false);
-        blind.totalSource = &UnreadableSource;
+        blind.totalSource = &CensusSource;
+        censusUnreadable = 4;
         Dungeon b; b.alive = 5;
         Poll(blind, b);
         const std::string blindLine = DC::StatusLine(blind, "ok", "ok");
@@ -283,6 +299,47 @@ int main() {
                 && !DC::TotalAvailable(none) && DC::StatusLine(none, "ok", "ok").find(" total=unavailable ") != std::string::npos
                 && blind.tally.total == 0 && blindLine.find(" total=unavailable(unreadable=4/4) ") != std::string::npos,
             refused + " | before: " + before + " | after: " + after + " | blind: " + blindLine);
+    }
+    {
+        // total-census-refused (owner, D13): the build's estimate refuses a
+        // census with any creator unreadable - 1 of 4 as well as 4 of 4 - and
+        // one whose family resolved nothing or that found no creators. The
+        // control beside it: the same census with every creator readable
+        // estimates 20 alive + 2 pending x 614/117 = 31 and latches at 16.
+        const DC::Census oneOf4{4, 2, 1}, allOf4{4, 0, 4}, readable{4, 2, 0}, empty{};
+        const bool predicate = DC::EstimateFromCensus(true, 20, oneOf4) == 0
+            && DC::EstimateFromCensus(true, 20, allOf4) == 0
+            && DC::EstimateFromCensus(true, 20, empty) == 0
+            && DC::EstimateFromCensus(false, 20, readable) == 0
+            && DC::EstimateFromCensus(true, 20, readable) == 31;
+        DC::State one;
+        Arm(one, 50, false);
+        one.totalSource = &CensusSource;
+        censusUnreadable = 1;
+        Dungeon d1; d1.alive = 20; d1.pending = 11;
+        Poll(one, d1);
+        const int oneLatched = KillAndPoll(one, d1, 31);
+        const std::string oneLine = DC::StatusLine(one, "ok", "ok");
+        DC::State lost;
+        Arm(lost, 50, false);
+        lost.totalSource = &CensusSource;
+        censusFamily = false;
+        Dungeon d2; d2.alive = 20;
+        Poll(lost, d2);
+        const std::string lostLine = DC::StatusLine(lost, "ok", "ok");
+        DC::State ok;
+        Arm(ok, 50, false);
+        ok.totalSource = &CensusSource;
+        Dungeon d3; d3.alive = 20; d3.pending = 11;
+        Poll(ok, d3);
+        const int okEarly = KillAndPoll(ok, d3, 15);
+        const int okLatch = KillAndPoll(ok, d3, 1);
+        check("target/total-census-refused",
+            predicate && oneLatched == 0 && !one.tally.latched && one.tally.total == 0 && DC::HeadText(one).empty()
+                && oneLine.find(" total=unavailable(unreadable=1/4) creators=4 ") != std::string::npos
+                && !lost.tally.latched && lostLine.find(" total=unavailable creators=0 ") != std::string::npos
+                && okEarly == 0 && okLatch == 1 && ok.tally.total == 31 && ok.tally.threshold == 16 && ok.tally.latched,
+            "1/4: " + oneLine + " | family unresolved: " + lostLine + " | readable: " + Tally(ok));
     }
 
     // ---- target: the instance_exists detour's decision ----------------------

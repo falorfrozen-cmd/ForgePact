@@ -24,9 +24,10 @@ count per enemy id, a reset on a room change or when the chest is gone, the
 chat milestones (each once, one line for a kill that passes several), the
 chat forms refused while no chat call is available or after one failed, and a
 latch whose unlock action fails reported as `unlocked=0` with no `ready to
-open` line and the chest's poll left alone.
+open` line and the chest's poll left alone, and the build's estimate refusing
+a census with any creator unreadable (owner, D13).
 
-The header is compiled three times. Once as written, where every scenario must
+The header is compiled four times. Once as written, where every scenario must
 pass; once with the unlock decision replaced by one that never unlocks, where
 the baselines and the form and command scenarios must still pass and every
 target must fail. That second run is the negative control: it shows the
@@ -40,6 +41,10 @@ supplied, must be refused, so `dungeonchest 49` cannot report itself armed,
 and neither can a share that would count no kill, never open the chest or
 have nothing to be a share of. This build replaces the store-or-refuse line
 with one that stores every mode, and the refusal scenario must fail there.
+
+The fourth run puts back the census rule round 3 shipped, which refused only
+when every creator was unreadable: the D13 scenario must fail there (1 of 4
+unreadable then estimates a total), and every other scenario still pass.
 """
 import os
 import shutil
@@ -57,9 +62,13 @@ NEVER_UNLOCKS = "return false;"
 STORE_LINE = 'return pct == 0 || (InRange(pct) && hook == "ok" && unlock == "ok" && totalAvailable);'
 STORES_EVERY_MODE = "return true;"
 REFUSAL = "command/refused"
+# The estimate's census rule (D13); its negative control refuses only when every creator is unreadable.
+CENSUS_LINE = "if (!familyResolved || c.creators <= 0 || c.unreadable > 0) return 0;"
+REFUSES_ONLY_ALL_UNREADABLE = "if (!familyResolved || c.creators <= 0 || c.unreadable >= c.creators) return 0;"
+CENSUS = "target/total-census-refused"
 
 BASELINES = ("baseline/off_never_latches", "baseline/no_chest_no_tally")
-TOTAL = ("target/total-planned", "target/total-unknown")
+TOTAL = ("target/total-planned", "target/total-unknown", CENSUS)
 POLL = ("target/poll-answered-while-latched", "target/poll-untouched-otherwise")
 TARGETS = (
     "target/latch_at_threshold",
@@ -135,6 +144,9 @@ class DungeonChestBehaviorTests(unittest.TestCase):
         assert header.count(STORE_LINE) == 1, "the store decision moved; update STORE_LINE"
         cls.stores_every_mode = _compile_and_run(
             "dungeonchest-stores-every-mode", header.replace(STORE_LINE, STORES_EVERY_MODE))
+        assert header.count(CENSUS_LINE) == 1, "the census rule moved; update CENSUS_LINE"
+        cls.refuses_only_all_unreadable = _compile_and_run(
+            "dungeonchest-refuses-only-all-unreadable", header.replace(CENSUS_LINE, REFUSES_ONLY_ALL_UNREADABLE))
 
     def assertScenario(self, label):
         line = _line(self.output, label)
@@ -158,6 +170,18 @@ class DungeonChestBehaviorTests(unittest.TestCase):
     def test_target_total_unknown_decides_and_shows_nothing(self):
         """No source: refused with total=unavailable; a source answering 0: never latches, asked again each poll."""
         self.assertScenario("target/total-unknown")
+
+    def test_target_total_census_refused_on_any_unreadable_creator(self):
+        """D13: 1 of 4 creators unreadable refuses (total=unavailable(unreadable=1/4)), as do 4 of 4,
+        an unresolved family and no creators; the same census all readable estimates 31 and latches."""
+        self.assertScenario(CENSUS)
+
+    def test_negative_control_census_fails_when_only_all_unreadable_refuses(self):
+        line = _line(self.refuses_only_all_unreadable, CENSUS)
+        self.assertTrue(line.startswith("FAIL "),
+                        f"{CENSUS} passed against round 3's rule (refuse only when all are unreadable): {line}")
+        for label in BASELINES + FORMS + COMMANDS + tuple(x for x in TARGETS if x != CENSUS):
+            self.assertTrue(_line(self.refuses_only_all_unreadable, label).startswith("PASS "), label)
 
     def test_target_unlock_poll_answered_only_for_the_chest_while_latched(self):
         """The instance_exists detour's decision, with its negative control beside it."""

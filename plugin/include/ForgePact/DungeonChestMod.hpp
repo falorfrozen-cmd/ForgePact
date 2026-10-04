@@ -34,7 +34,8 @@ namespace ForgePact::DungeonChest {
 //     kills already counted added to it. Unset: every share is refused. The
 //     player build's source is the estimate below (EstimatedTotal, workorder
 //     token `total-route: estimate`): the creators still to spawn, counted
-//     at first sight, times a mean Live procedure 1b measured.
+//     at first sight, times a mean Live procedure 1b measured, and 0 for a
+//     census with any creator unreadable (EstimateFromCensus).
 //   - `unlock`: called once, when the threshold latches; it answers whether
 //     the game's own chest can now be let open, which for this route (the
 //     `instance_exists` detour, workorder token `unlock-route: builtin`)
@@ -93,12 +94,23 @@ inline long EstimatedTotal(long alive, long pending)
 
 // What the total source saw of the room's creators when it answered, kept for
 // `status`: every creator-family instance, those still to spawn, and those
-// whose state could not be read (counted as spawned).
+// whose state could not be read (any of which refuses the estimate).
 struct Census {
     long creators = 0;
     long pending = 0;
     long unreadable = 0;
 };
+
+// The build's total from one census, or 0 (`total=unavailable`) when the
+// census cannot be trusted: the creator family did not resolve, the room has
+// no creators, or any creator's state could not be read. One unreadable
+// creator would be counted as spawned and shrink T below the share the player
+// picked, so the estimate refuses rather than guess (owner, 2026-10-04, D13).
+inline long EstimateFromCensus(bool familyResolved, long alive, const Census& c)
+{
+    if (!familyResolved || c.creators <= 0 || c.unreadable > 0) return 0;
+    return EstimatedTotal(alive, c.pending);
+}
 
 // ---- the countdown's form ---------------------------------------------------
 

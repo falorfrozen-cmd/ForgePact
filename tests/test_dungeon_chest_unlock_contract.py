@@ -162,11 +162,17 @@ class DungeonChestUnlockContractTests(unittest.TestCase):
         self.assertIn('CallBuiltin("is_array", { packs })', source)
         self.assertIn("++census.pending;", source)
         self.assertIn("++census.unreadable;", source)
-        self.assertIn("return DC::EstimatedTotal(alive, census.pending);", source)
-        # A census that failed as a whole refuses (total=unavailable) rather than
-        # estimating the monsters alive as the dungeon's total.
-        self.assertIn("if (DungeonChestCreatorObjects().empty() || census.creators == 0 "
-                      "|| census.unreadable >= census.creators) return 0;", source)
+        # The census goes through the header's rule (D13): a failed census - the
+        # family unresolved, no creators, or any creator unreadable - refuses
+        # (total=unavailable) rather than estimating. test_dungeon_chest_behavior's
+        # target/total-census-refused runs that rule, 1 of 4 unreadable included.
+        self.assertIn("return DC::EstimateFromCensus(!DungeonChestCreatorObjects().empty(), alive, census);", source)
+        self.assertNotIn("EstimatedTotal(", source)
+        self.assertNotIn("census.unreadable >= census.creators", source)
+        rule = code_statements(definition_body(HEADER.read_text(encoding="utf-8"),
+                                               "inline long EstimateFromCensus(bool familyResolved, long alive, const Census& c)"))
+        self.assertIn("if (!familyResolved || c.creators <= 0 || c.unreadable > 0) return 0;", rule)
+        self.assertIn("return EstimatedTotal(alive, c.pending);", rule)
         self.assertIn("for (int obj : DungeonChestCreatorObjects())", source)
         family = code_statements(function_body(self.player, "static const std::vector<int>& DungeonChestCreatorObjects()"))
         self.assertIn("for (const char* name : kKnownDensityCreatorObjects)", family)
