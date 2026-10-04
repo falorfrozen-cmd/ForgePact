@@ -43,7 +43,7 @@ function decoratePanelIcons(){
       decorateIconLabel(button,name);
     }
   }
-  document.querySelectorAll('.group-title').forEach((label,i)=>decorateIconLabel(label,['experience','damage','defense','critical-chance'][i]));
+  document.querySelectorAll('.group-title').forEach((label,i)=>decorateIconLabel(label,['experience','damage','defense','critical-chance','projectile-amount'][i]));
   decorateIconLabel(document.querySelector('.modifier-card h2'),'damage');
 }
 // The toast rises in and sinks out (app.css), except after a keyboard action:
