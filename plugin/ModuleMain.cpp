@@ -13038,6 +13038,50 @@ static void CiInvokeGlobalMethod(const std::string& globalName, const std::strin
     } catch (...) { Out("citrace invoke global: EXCEPTION"); }
 }
 
+// `citrace invoke obj <ObjectName> <nth> <var> confirm [args...]`: the same
+// call shape as the shipped collector's, against the nth instance of a named
+// object. First caller: the world map's `UI_Map_Zone_Button_obj.m_RefreshNode`
+// (Satanic Zone control research, 2026-10-04) - whether a node repaints its
+// satanic marker from the game's own state when asked, with the value pinned
+// or `satzone everywhere` forcing the answer. The shipped script_execute
+// route only (InvokeMethodValue); no path sweep, no addresses.
+static void CiInvokeObjectMethod(const std::string& objName, const std::string& nthTok, const std::string& varName,
+                                 const std::string& argTokens)
+{
+    try {
+        int nth = 0;
+        try { nth = std::stoi(nthTok); } catch (...) { Out("citrace invoke obj: nth must be a number"); return; }
+        RValue oi = g_Yytk->CallBuiltin("asset_get_index", { RValue(objName) });
+        RValue id = g_Yytk->CallBuiltin("instance_find", { oi, RValue((double)nth) });
+        if (!HhUsableInstance(id)) { Out("citrace invoke obj: no instance " + std::to_string(nth) + " of " + objName); return; }
+        RValue ex = g_Yytk->CallBuiltin("variable_instance_exists", { id, RValue(varName) });
+        if (!ex.ToBoolean()) { Out("citrace invoke obj: " + objName + "[" + std::to_string(nth) + "] has no " + varName); return; }
+        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue(varName) });
+        CInstance* selfInst = HhResolveInstance(id);
+        if (!selfInst) { Out("citrace invoke obj: instance unreadable"); return; }
+        RValue player;
+        CInstance* p = HhResolveLocalPlayer(player) ? HhResolveInstance(player) : nullptr;
+
+        std::vector<RValue> args;
+        std::string remaining = argTokens;
+        for (;;) {
+            std::string next, tok = FirstToken(remaining, next);
+            if (tok.empty()) break;
+            RValue av; std::string lbl;
+            if (!CiParseInvokeArg(tok, selfInst, p, av, lbl)) {
+                Out("citrace invoke obj: bad argument '" + tok + "' - use a number, or player|item|noone|true|false");
+                return;
+            }
+            args.push_back(av);
+            remaining = next;
+        }
+        RValue res;
+        const bool ok = InvokeMethodValue(selfInst, p, v, args, res);
+        Out("citrace invoke obj: " + objName + "[" + std::to_string(nth) + "]." + varName
+            + (ok ? " invoked" : " NOT invoked") + " -> " + Describe(res));
+    } catch (...) { Out("citrace invoke obj: EXCEPTION"); }
+}
+
 // ---- C0.3: event_perform on the item's own events -------------------------
 // Name-free by construction, and it reaches exactly the object-event code
 // session 7 proved unreachable by name (22 raw names, all status 14 at install
@@ -44864,14 +44908,27 @@ static void RunCommand(const std::string& line)
         }
         if (subLc == "invoke") {
             // citrace invoke item|global <name> confirm [path] [args...]
+            // citrace invoke obj <ObjectName> <nth> <var> confirm [args...]
             static const char* const kInvokeUsage =
                 "citrace invoke item|global <name> confirm [scriptref|native|auto|all|with|withex|builtin|builtinex|index|indexex|methodcall|script|scriptex] [args...]"
-                "   (args: numbers, or player|item|noone|true|false)";
+                "   (args: numbers, or player|item|noone|true|false;"
+                "    or: citrace invoke obj <ObjectName> <nth> <var> confirm [args...] - shipped script_execute route only)";
             std::string kind, r1; kind = FirstToken(subRest, r1);
+            std::string kindLc = Lower(kind);
+            if (kindLc == "obj") {
+                std::string objName, r2; objName = FirstToken(r1, r2);
+                std::string nthTok, r3; nthTok = FirstToken(r2, r3);
+                std::string varTok, r4; varTok = FirstToken(r3, r4);
+                std::string confirmTok, r5; confirmTok = FirstToken(r4, r5);
+                std::string argTokens; FirstToken(r5, argTokens);
+                if (objName.empty() || nthTok.empty() || varTok.empty()) { Out(std::string("citrace invoke: usage -> ") + kInvokeUsage); return; }
+                if (!CiConfirmed(confirmTok, kInvokeUsage)) return;
+                CiInvokeObjectMethod(objName, nthTok, varTok, argTokens);
+                return;
+            }
             std::string nameTok, r2; nameTok = FirstToken(r1, r2);
             std::string confirmTok, r3; confirmTok = FirstToken(r2, r3);
             std::string pathTok, argTokens; pathTok = FirstToken(r3, argTokens);
-            std::string kindLc = Lower(kind);
             if ((kindLc != "item" && kindLc != "global") || nameTok.empty()) { Out(std::string("citrace invoke: usage -> ") + kInvokeUsage); return; }
             if (!CiConfirmed(confirmTok, kInvokeUsage)) return;
             if (kindLc == "item") CiInvokeItemMethod(nameTok, pathTok, argTokens);
