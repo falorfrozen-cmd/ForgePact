@@ -23,5 +23,9 @@
       <div class="group-title critical">Critical Strikes</div>
       <div id="criticalstats"></div>
     </div>
+    <div class="modifier-group">
+      <div class="group-title offense">Skills</div>
+      <div id="skillstats"></div>
+    </div>
   </div>
 </div>

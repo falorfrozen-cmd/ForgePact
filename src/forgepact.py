@@ -203,9 +203,16 @@ PERCENT_STATS = [
     ("critchance", "Critical Strike Chance", 500, 5, "multiply"),
     ("spellcritdamage", "Spell Critical Strike Damage", 1000, 5, "multiply"),
     ("spellcritchance", "Spell Critical Strike Chance", 500, 5, "multiply"),
+    # "skill" rows are the skill sliders (#160): `skillslider <key> <value>`
+    # adds to one value the game computes for the player's own casts. The
+    # ceilings are SkillSlidersMod.hpp's clamps.
+    ("projspeed", "Projectile Speed", 100, 5, "skill"),
+    ("projamount", "Projectile Amount", 5, 1, "skill"),
+    ("aoesize", "Area of Effect", 100, 5, "skill"),
 ]
-# A skill level has no fraction, so a typed All Skills value is kept whole.
-WHOLE_PERCENT_STATS = frozenset({"allskills"})
+# A skill level has no fraction, so a typed All Skills value is kept whole;
+# nor does a projectile count.
+WHOLE_PERCENT_STATS = frozenset({"allskills", "projamount"})
 
 # Rare item quality.  These do not add drops - they change how good a drop is
 # allowed to be.  Third field is the slider ceiling.
@@ -992,6 +999,15 @@ def gem_filter_command(cfg: dict) -> str:
     return "gemfilter all" if value == "all" else "gemfilter " + ",".join(str(i) for i in value)
 
 
+def percent_stat_command(key: str, mode: str, bonus: float) -> str:
+    """The plugin line for one PERCENT_STATS row at `bonus` (0 resets it)."""
+    if mode == "add":
+        return f"statadd {key} {bonus:g}"
+    if mode == "skill":
+        return f"skillslider {key} {bonus:g}"
+    return f"stat {key} {1.0 + bonus / 100.0:g}"
+
+
 def build_cmds(cfg: dict) -> list:
     # A slider whose switch is off stands at its default here, so startup,
     # auto-apply and the launch watcher all leave it at vanilla.
@@ -1146,10 +1162,7 @@ def build_cmds(cfg: dict) -> list:
         # slider off, so the already-installed hook is reset in that session.
         if bonus <= 0:
             continue
-        if mode == "add":
-            out.append(f"statadd {key} {bonus:g}")
-        else:
-            out.append(f"stat {key} {1.0 + bonus / 100.0:g}")
+        out.append(percent_stat_command(key, mode, bonus))
     settings = cfg.get("keys", {})
     out.extend(build_key_cmds(settings, include_resets=False))
     for polarity in ("buff", "debuff"):
@@ -2872,8 +2885,7 @@ class H(BaseHTTPRequestHandler):
                     elif sec == "percent_stats":
                         mode = next((md for k, _l, _mx, _st, md in PERCENT_STATS if k == key), "multiply")
                         bonus = float(eff["percent_stats"][key])
-                        command = f"statadd {key} {bonus:g}" if mode == "add" else f"stat {key} {1.0 + bonus / 100.0:g}"
-                        send_cmds([command], cfg)
+                        send_cmds([percent_stat_command(key, mode, bonus)], cfg)
                     elif sec == "spawners":
                         send_cmds([f"specialrate {key} {int(val)}"], cfg)
                     elif sec == "satanic_mods":

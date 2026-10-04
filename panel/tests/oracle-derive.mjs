@@ -52,7 +52,8 @@
 // loop must end on Mods > Quality of Life.
 //
 // NATIVE_SLIDERS are switched table sliders no recorded page ever had (Skill
-// Haste and All Skills, #114; Mining Ore Extra Rolls, issue #36): the same
+// Haste and All Skills, #114; Mining Ore Extra Rolls, issue #36; Projectile
+// Speed, Projectile Amount and Area of Effect, #160): the same
 // eight steps a legacy slider gets (max, min, max, switch off, on, Turn off,
 // on, min), entered on the tab they sit on (one tab step whenever the tab
 // changes), but with nothing recorded to compare the slider's own moves against,
@@ -141,10 +142,12 @@ export const NATIVE_BOOLEANS = [
 export const HIDDEN_LOOT_KEY_PARENT = 'mod_hidden_loot';
 export const HIDDEN_LOOT_KEY_CODES = [17, 0, 164];
 // Switched sliders no recorded page ever had (Skill Haste and All Skills,
-// ForgePact#114; Mining Ore Extra Rolls, #36): the section and key, the tab
-// they sit on (Skill Haste and All Skills: their neighbour Faster Cast Rate's,
-// which the legacy walk reached on the Modifiers tab; Mining Ore Extra Rolls:
-// the Loot tab), their range, and the line src/forgepact.py sends at each end.
+// ForgePact#114; Mining Ore Extra Rolls, #36; the three skill sliders, #160):
+// the section and key, the tab they sit on (Skill Haste and All Skills: their
+// neighbour Faster Cast Rate's, which the legacy walk reached on the Modifiers
+// tab; Mining Ore Extra Rolls: the Loot tab; the skill sliders: Modifiers,
+// entered again after the Loot tab), their range, and the line
+// src/forgepact.py sends at each end.
 // Their contract is written out as literals, as NATIVE_BOOLEANS' is, and they
 // come after everything else (the show key's select included, which needs the
 // tab the native booleans left open), a newer one after an older one, so no
@@ -156,6 +159,12 @@ export const NATIVE_SLIDERS = [
     atMin: 'statadd allskills 0', atMax: 'statadd allskills 100' },
   { section: 'drops', key: 'mining_ore_rolls', tab: 'tab:loot', min: 1, max: 10,
     atMin: 'miningrolls 1', atMax: 'miningrolls 10' },
+  { section: 'percent_stats', key: 'projspeed', tab: 'tab:modifiers', min: 0, max: 100,
+    atMin: 'skillslider projspeed 0', atMax: 'skillslider projspeed 100' },
+  { section: 'percent_stats', key: 'projamount', tab: 'tab:modifiers', min: 0, max: 5,
+    atMin: 'skillslider projamount 0', atMax: 'skillslider projamount 5' },
+  { section: 'percent_stats', key: 'aoesize', tab: 'tab:modifiers', min: 0, max: 100,
+    atMin: 'skillslider aoesize 0', atMax: 'skillslider aoesize 100' },
 ];
 // Panel settings and actions no recorded page ever had, which send the plugin
 // nothing (issue #76's Incident reports card on Setup): a switch's key, tab
