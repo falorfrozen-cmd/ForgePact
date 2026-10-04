@@ -179,9 +179,10 @@ yet" cells.
 
 ### Why no White Mage bar skill reached `LoadProjectileSettings`
 
-Read after Live 1's census, where seven White Mage skills moved
-`ReturnExtraSpellProjectiles`, `StatAOESkillSize` and `LoadAllModifiers` but
-not `LoadProjectileSettings` (measured, `## Live 1`). Static reading unless
+Read after Live 1's census, where casts of seven White Mage skills moved
+`StatAOESkillSize`, `StatExplosionAOE`, `ReturnExtraSpellProjectiles`,
+`TalentUseSetSpeed` and `LoadAllModifiers` and none of the projectile rows; no
+cast was observed calling `LoadProjectileSettings` (`## Live 1`). Static reading unless
 marked; the method was the same Ghidra project plus a scan of the binary for
 direct calls and for the instruction shape that passes an object index.
 
@@ -299,8 +300,10 @@ its size (measured, `## Live 1`). Static reading unless marked.
   may ship is the owner's call in the next workorder. **Measured** (Live 2),
   the stat route on Shadow Bolt: stat 75 acts as a percent of `deltaSpeed`
   and stat 74 as a flat addition, and the object's `speed` built-in followed
-  `deltaSpeed`. The object route was not measured: no White Mage skill calls
-  `LoadProjectileSettings`, and no basic attack was seen.
+  `deltaSpeed`. The object route was not measured: no White Mage skill cast was
+  observed calling `LoadProjectileSettings` (seven skills; the same instrument
+  counted it from the mercenary in the same session), and no basic attack was
+  observed.
 - **Who else the levers reach** (measured): `Mercenary_obj` calls
   `LoadAllModifiers` about every 97 frames while it fights, and
   `LoadProjectileSettings` ran at the same rate with `self=Projectile_Player_obj`
@@ -386,11 +389,12 @@ before each session. No check recorded `fail` or `not-observed`; the
 Capture: `forgepact-issue-160-skill-sliders-live-1.md`. 14 checks: 6 pass,
 8 not-run.
 
-- **Census.** The idle window (1,170 frames) left every row at 0. Casts of
-  Mana Orb, Healing Zone, Soul Spurn, Chain of Holy Light, Shadow Bolt,
-  Restless Spirits and Heavenly Fire moved `StatAOESkillSize` (with
-  `self=Player_obj`, the caster), `StatExplosionAOE`, `ReturnExtraSpellProjectiles`,
-  `TalentUseSetSpeed` and `LoadAllModifiers`. `LoadProjectileSettings`,
+- **Census.** The idle window (1,170 frames) left every row at 0. Across casts
+  of Mana Orb, Healing Zone, Soul Spurn, Chain of Holy Light, Shadow Bolt,
+  Restless Spirits and Heavenly Fire, the rows that moved were
+  `StatAOESkillSize` (with `self=Player_obj`, the caster), `StatExplosionAOE`,
+  `ReturnExtraSpellProjectiles`, `TalentUseSetSpeed` and `LoadAllModifiers`, and
+  none of the projectile rows: `LoadProjectileSettings`,
   `LoadProjectile`, `LoadAOEModifiers`, `CreatePhysicalProjectile`,
   `CA_playerProjectile`, `ReturnExtraProjectilesRanged`, `GetProjectileGravity`,
   `AddAoeIndicatorSize` and `CreateAoeIndicator` stayed at 0: not observed on
@@ -429,11 +433,12 @@ Capture: `forgepact-issue-160-skill-sliders-live-2.md`. Outskirts of Inoya
   (both `self=Mercenary_obj`) each ran 28 times in 2,670 frames: the player's
   mercenary, fighting. Every other row stayed at 0.
 - **`census-lps`: not-run.** No bar skill moved `LoadProjectileSettings` above
-  that idle rate, and no `Player_obj` call line for it appeared. Five basic
-  attack attempts made no `Projectile_Player_obj` instance (nine
-  `tgprobe vars Projectile_Player_obj` reads, all "has no instance"); the
-  mercenary killed the enemies within seconds. A White Mage basic attack was
-  not observed.
+  that idle rate. The basic-attack route is not observed, and this instrument
+  could not have seen it: a basic attack's call would carry
+  `self=Projectile_Player_obj`, like the mercenary's, and the point-in-time
+  `tgprobe vars Projectile_Player_obj` read never found even the mercenary's
+  `Projectile_Player_obj` while `LoadProjectileSettings` ran on it 28 times.
+  The mercenary killed the enemies within seconds.
 - **`amount-count-baseline`: pass.** `skillstate`'s instance count of
   `White_Mage_Shadow_Bolt_obj` read 1 after each of three single Shadow Bolt
   casts, each with `ReturnExtraSpellProjectiles` called with a base of 1 and
@@ -511,7 +516,8 @@ real first (`read-control`), and `projprobe ids on` stayed armed throughout.
   `ReturnExtraProjectilesRanged` is not observed (no White Mage call).
 - **AoE**: stat 554 reaches a White Mage skill object as `projEffect[1086]` at
   0.01 per point, added to its image scales when `maxScale` is 0 (Soul Spurn,
-  Mana Orb). Healing Zone is the outlier and does not grow.
+  measured; a Mana Orb object read the same, a supporting read only, since its
+  check was left not-run). Healing Zone is the outlier and does not grow.
 - **Speed**: stats 74 and 75 are the projectile-speed stats, stat 75 a percent
   of `deltaSpeed` and stat 74 a flat addition, and `deltaSpeed` drives the
   `speed` built-in. Which of them the tooltip's "Projectile Speed" line is,
@@ -544,7 +550,8 @@ real first (`read-control`), and `projprobe ids on` stayed armed throughout.
   (measured).
 - What stats 559 and 560 are, what factor callers pass as `LoadAOEModifiers`'
   sixth argument, and how `LoadAllModifiers` turns stat 554 into element 1086
-  in general (on Soul Spurn and Mana Orb the net is 0.01 per point, measured).
+  in general (on Soul Spurn the net is 0.01 per point, measured; a Mana Orb
+  read agreed, its check not-run).
 - Which skills `LoadAllModifiers` reads stat 554 for, which event types the two
   parent bodies are, and whether every White Mage child inherits them.
 - What element 1086 does to a skill object whose `maxScale` is non-zero (by the
