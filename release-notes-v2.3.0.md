@@ -24,9 +24,10 @@ changes only your own skills, has its own switch and is off by default.
     research session, +50 grew a Soul Spurn from 7.5 to 8.0 in the game's own
     size units. Some skills keep their own size: **Healing Zone** does not grow.
   - Only your own casts are changed, including the repeat a double-cast effect
-    makes of them. Your mercenary and the enemies are not affected. Projectile
-    Amount and Area of Effect leave your basic attack alone; whether Projectile
-    Speed also speeds up a basic attack has not been observed.
+    makes of them. Your mercenary and the enemies are not affected. The
+    sliders are not built to change your basic attack, but that has not been
+    observed for any of the three (no basic attack was seen in the research
+    sessions).
   - With all three off, the default, the game behaves exactly as without
     ForgePact. If the plugin cannot set a slider up on your game, it stays at 0
     and the log says why.
