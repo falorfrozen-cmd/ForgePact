@@ -43,10 +43,17 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 - **Live procedure 1:** ran on 2026-10-04 and came back INSTRUMENT-BLIND: every
   spawned machine was removed in the step after its creation, before its first
   `Step_0`, so no spin was measured (§ Results, `### Live 1 results`).
-- **Live procedure 2:** written (§ Live procedure 2), not yet run. It tries
-  four spawn routes, names who removes a machine, and runs Live 1's spin steps
-  on the first machine that survives. Every § Decision key reads `pending`
-  until a session measures it.
+- **Live procedure 2:** ran on 2026-10-04 (§ Results, `### Live 2 results`).
+  The instrument was proven (every row installed, the builtin rows' self-test
+  moved by one, the caller walk printed), but no spawn route survived: each
+  machine was removed by its own `Alarm_9` in its first step, whatever route
+  created it. No spin was measured, so every spin key in § Decision reads
+  `not-observed`, and `pity-design` reads `blocked` until a machine can be
+  measured.
+- **Next:** phase 1c, a separate workorder on the same branch (owner's
+  decision, 2026-10-04): read locally what `Alarm_9` checks before it removes
+  the machine, build a spawn that meets it, and fall back to a machine the
+  game placed itself.
 - **Owner's decisions (2026-10-04):** the pity counts explosions, with the gold
   equivalent shown; the session character (slot 14 "Sorak") has enough gold
   for the full procedure; measure first, then plan the mod.
@@ -94,8 +101,8 @@ Every claim carries one of four labels, plus a source:
   on 2026-10-04, read that day.
 - **Measured**: observed in a running game.
 - **Our code**: what ForgePact does.
-- **Not established**: not known yet. § Not established lists what Live 2 is
-  meant to settle.
+- **Not established**: not known yet. § Not established lists what is still
+  open after Live 2.
 
 ### The object's events
 
@@ -245,6 +252,13 @@ Read after Live 1 (2026-10-04), to explain its zero counts.
   the script's own function, or whether both names name the script and the
   call reaches its function in a way the detour misses. `gambaprobe hook`'s
   `byname=` column (§ Instrument) answers the first half.
+- **Measured** (Live 2, 2026-10-04): the second. All 24 script rows read
+  `byname=same`: both the short name and the `gml_Script_` name resolve to
+  the script itself, so no separate functions-array routine exists to detour.
+  Yet four `Create_0` runs left `InitPV`, `SPV`, `GPV` and `FPV` at
+  `machine-self=0`. How a by-name call reaches the protected store without
+  passing the inline detour at the script's own entry is **not established**
+  (§ Results, `### Live 2 results`).
 
 ## Instrument
 
@@ -822,26 +836,102 @@ moved. What the session did establish:
   nothing about the machine; Live 2's `selftest-rng` and `rng-rows-live` are
   the controls.
 
-Live procedure 2's results are recorded here, under `### Live 2 results`, once
-it has run.
+Live 2 (below) corrects one reading here: `CleanUp_0` runs nested inside
+`Alarm_9`, so the order above is the order the two event lines printed in, not
+the order the events began in.
+
+### Live 2 results
+
+**Instrument proven; no machine survived** (2026-10-04, the Town of Inoya,
+then the first combat zone outside it; slot 14 "Sorak"; the research DLL built
+from this branch, SHA-256 `eb1fcf09...87f2c0`). The capture is the toolkit's
+`.claude/workorders/forgepact-goburins-head-pity-1b-live-2.md`, a local working
+note not copied here. Each finding names the check it comes from, under the
+name § Live procedure 2 gives it.
+
+- **Measured, the instrument:** `gambaprobe hook` installed 41 rows: 0
+  missing, 0 table-only (32 detoured, 1 detoured-under, 8 shared), and no
+  `WARNING` (`hook-installed`: pass). It took about 9 seconds, and the game was
+  frozen for them. `gambaprobe selftest` moved the `irandom` row from 0 calls
+  to 1 (`selftest-rng`: pass), so the builtin rows see a call. The caller walk
+  named frames by 20,893 compiled-code rows of game code.
+- **Measured, by name:** every script row read `byname=same` (24 of 24, with
+  `InitPV`, `SPV`, `GPV` and `FPV` among them; `byname-resolve`: pass). Both
+  names resolve to the script itself, so there is no separate functions-array
+  routine to detour. Across four `Create_0` runs with a machine as `self`,
+  `InitPV`, `SPV`, `GPV` and `FPV` all stayed at `machine-self=0`, and no
+  `byname-shared` row existed (`byname-visible`: fail). The by-name store calls
+  the static reading puts in `Create_0` are **not observed by the detour**, and
+  this instrument cannot see them: the store route is blind. Phase 2 cannot
+  lean on a store trace.
+- **Measured, the spawn routes:** `depth` (the control), `game`, `layer` and
+  `self` each created a machine (`gambaprobe spawn: route=<name> id=<n>`,
+  object 4644), and every one was gone before its first `Step_0`. After the
+  four spawns, `status` read `create=4 alarm9=4 cleanup=4 step=0` and
+  `machines=0`, and the screenshots show no machine (`spawn-depth`,
+  `spawn-game`, `spawn-layer`, `spawn-self`: fail). The `game` machine's
+  `Create_0` ran under the game's own `instance_create` script (a
+  `gml_Script_instance_create` frame in its caller walk). At `Create_0`, the
+  `depth` and `self` machines read `layer=-1 depth=0`, the `game` machine a game
+  layer (`layer=19940`) and the `layer` machine the layer it was created on
+  with the player's `layer` value (`layer=20351`); by `Alarm_9`
+  the `depth` machine read a layer and a depth of its own (`layer=20359
+  depth=-419`). The route, the layer and the identity of the caller all varied,
+  and the outcome did not.
+- **Measured, who removes it:** the machine's own `Alarm_9`
+  (`cleanup-caller`: pass). On all four spawns, the `CleanUp_0` caller walk
+  shows, below the plugin's detour and eight runner frames, a frame in
+  `gml_Object_Slot_Machine_01_obj_Alarm_9`: `CleanUp_0` runs from inside the
+  machine's `Alarm_9`, through the runner. `Alarm_9`'s own walk shows only
+  runner frames under the plugin (the alarm dispatch), at `alarm9=0
+  alarm11=2`. Both caller lines carry the same plugin frame number as the
+  spawn. Live 1 printed the `CleanUp_0` event line before the `Alarm_9` one
+  because an event line prints after its original returns, and `CleanUp_0`,
+  nested inside `Alarm_9`, returns first.
+- **Measured, no other row saw the machine:** the probe's `machine-self` total
+  (3 after one spawn, 12 after four) is the three event rows that fired,
+  `Create_0`, `Alarm_9` and `CleanUp_0`, once each per spawn. So whichever
+  runner routine `Alarm_9` removes the machine through, no script or builtin
+  row (`instance_destroy`, `instance_change`, `layer_destroy_instances` and
+  `instance_deactivate_object` among them) counted it with the machine as
+  `self`. Which routine it is, is **not established**.
+- **Measured, the RNG rows in combat:** about 15 seconds of combat, no mod on
+  (`rng-rows-live`: pass). `cpr_irandom` went from 0 calls to 1,308 and
+  `cpr_rand32` from 0 to 1,386; `irandom`, `irandom_range`, `random`,
+  `random_range` and `choose` did not move (`irandom` kept the self-test's one
+  call). Combat's rolls pass through the `cpr_*` script rows, which the detour
+  sees; the builtin RNG rows saw none of them. Whether the machine's prize roll
+  passes either is **not established**.
+- **Not observed:** every spin check (`spin-trace`, `gold-debit`,
+  `explosion-trace`, `prize-trace`, `roll-identity`, `forced-head`,
+  `second-machine`), since no machine lived to spin; `fallback-drop` was not
+  run, since the procedure runs it only once a route survives. No gold was
+  spent, and the save was restored from the session's own backup afterwards.
+- **Next:** phase 1c, a separate workorder on this branch (owner's decision,
+  2026-10-04). It reads, locally, what `Alarm_9` checks before it removes the
+  machine, builds a spawn that meets that check, and falls back to a machine the
+  game placed itself.
 
 ## Decision
 
-roll-route: pending
+roll-route: not-observed
 
-explosion-rule: pending
+explosion-rule: not-observed
 
-drop-route: pending
+drop-route: not-observed
 
-counter-route: pending
+counter-route: not-observed
 
-fallback-drop: pending
+fallback-drop: not-run
 
-pity-design: pending
+pity-design: blocked
 
-Live 1 measured no spin, so no key has a label yet. The first session whose
-spin half runs (Live 2, on a machine that survives) gives each key exactly one
-label, backed by the named check.
+Live 2 measured no spin, because no spawned machine lived past its first step
+(§ Results). So the four spin keys read `not-observed`, and `fallback-drop`
+reads `not-run`, since the procedure runs it only on a surviving machine.
+`pity-design` reads `blocked`: with no roll, no script result and no drop
+measured, none of the three designs is available yet. The owner's way on is
+phase 1c (§ Status), which opens each key again on a machine that lives.
 
 - **`roll-route`** (`roll-identity`): which call, with the machine as `self`,
   decides the prize. `builtin`, `script`, `method` or `not-observed`.
@@ -862,7 +952,9 @@ label, backed by the named check.
 ## Not established
 
 Live 1 was meant to settle these and, INSTRUMENT-BLIND, settled none of them.
-Live 2 is meant to; until it has run, none of them is known.
+Live 2 settled who removes a spawned machine (its own `Alarm_9`, on every
+route) and that no spawn route of the four survives; its spin half never ran,
+so the rest stays open for phase 1c.
 
 - **The spin's gold debit path.** `PickUpGoldCheck` is the only balance writer
   per `RUNTIME_DATA_MODELS.md` § 13.10, but no event calls it directly.
@@ -874,13 +966,18 @@ Live 2 is meant to; until it has run, none of them is known.
   ground.
 - **The machine's state keys** in the protected store (spin count, gold spent,
   threshold).
-- **Whether a spawned machine survives, by route.** Every `depth`-route
-  machine of Live 1 was removed before its first `Step_0`; the `game`,
-  `layer` and `self` routes have not run (`spawn-depth`, `spawn-game`,
-  `spawn-layer`, `spawn-self`).
-- **Who removes a depth-route machine.** Not a plain `instance_destroy` from
-  GML, per Live 1; the `CleanUp_0-caller` lines name the frames
-  (`cleanup-caller`).
+- **What `Alarm_9` checks before it removes the machine**, and which runner
+  routine it removes it through. Live 2 measured that it does so on all four
+  spawn routes, in the machine's first step (§ Results, `### Live 2 results`);
+  why is phase 1c's question.
+- **How the by-name store calls reach `InitPV`, `SPV`, `GPV` and `FPV`**
+  without passing the inline detour at the script's own entry, when both
+  names resolve to the script (`byname=same`, `machine-self=0` over four
+  `Create_0` runs).
+- **Whether a machine the game placed itself behaves differently** from a
+  spawned one: none was measured.
+- **Whether the machine's prize roll passes `cpr_irandom` or `cpr_rand32`**,
+  the script rows combat's rolls pass in Live 2, or a builtin RNG row.
 - **The charm's rarity code** (7 Angelic or 10 Unholy, or neither).
 - **Where the price and the odds live.** Neither 10,000 nor 750 appears as a
   literal in the `Create_0`, `Alarm_0` or closure bodies read, so they are in
