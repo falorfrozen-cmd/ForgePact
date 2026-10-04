@@ -217,3 +217,43 @@ One code lesson worth carrying: `instance_find(Player_obj)` hands back a
 `HhResolveInstance` - the same trap the 2026-09-10 note above records. The
 in-zone check (the game's own answer turning true inside a real zone, and a
 relic drop in one) is still the open measurement.
+
+## Live 4 (2026-10-04): what `LoadSatanicZone` really answers, and the map marker
+
+Same ship as Live 3, on the research build with the control feature:
+
+- **`LoadSatanicZone(room)` answers "is the player in that act-zone room?"**
+  Measured standing inside `Act_01_01`: `LoadSatanicZone(1)` true,
+  `LoadSatanicZone(2)` false; earlier in the town, `LoadSatanicZone(235)`
+  false while the player stood in it (towns are not zones). The game calls it
+  every frame with the value from the store, so the game's own "the player is
+  in the satanic zone" state becomes true exactly while the player stands in
+  the room the store names - which is what `satzone pin` writes (and what
+  `follow` keeps in step).
+- **The world map's red marker is a separate layer.** It is a per-node
+  `isSatanic` flag on `UI_Map_Zone_Button_obj` with its own
+  `satanicImg`/`satanicTimer`/`satanicScale`, set when the game itself
+  resolves a zone (the marked node differed across launches and reads zero
+  while inside a zone). Pinning the store did not move it; it did not move on
+  the game's own re-rolls; `satzone everywhere` (with `LoadSatanicZone` forced
+  true for every call, 10k+ calls) did not turn the map red; and invoking the
+  node's own `m_RefreshNode` on all 63 nodes (via the new `citrace invoke obj`
+  probe) changed neither the flags nor the drawing. The map icon is not drawn
+  from the state the control feature owns.
+- **While the map screen is open there is no `Player_obj`** (the game's own
+  menu-room swap): every player-resolving command answers "no player" and the
+  pin tick counts refusals until the map closes. Not a fault; a state to
+  expect.
+- **Travel works with DPI-aware injection.** The waypoint flow is hover a zone
+  node, click it, press F (Choose) - the blocker in Live 3 was that the
+  injecting process was not DPI-aware, so its client-to-screen mapping used a
+  1707x960 virtualized window for a 2560x1440 game and every click landed at
+  two-thirds of the target. With `SetProcessDpiAwareness(2)` before injecting,
+  the flow works end to end (`Town_01_rm` -> `Act_01_01`). Worth carrying into
+  the hs-drive input docs.
+- **The in-zone effect capture is still outstanding.** The test character
+  (`HCSSF`, level 54) died in `Outskirts of Inoya / Nightmare / Zone Level
+  170` while the commands ran - twice (the zone's own mobs; the backup copy
+  was re-injected between runs). The state query above and the map-layer
+  finding are what this session established; a HUD or buff difference with the
+  pin on was not photographed.
