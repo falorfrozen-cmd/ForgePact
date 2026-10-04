@@ -328,8 +328,8 @@ the value for later and changes nothing in the game.
 - **Checked in a live game with this build** (2026-10-04, two Pumpkin Cellar runs at 50 %).
   Kills were counted, the estimated total came out at 642 and 646 monsters,
   and the chest opened with over 100 monsters left in it (in the second run it became
-  openable at exactly half, 323 of 646 kills, with 128 monsters alive; the chest was opened
-  about 15 kills later, with 113 alive). The countdown showed above the character, in chat
+  openable at exactly half, 323 of 646 kills, with 128 monsters alive; the owner opened it
+  a few kills later, between 113 and 103 monsters alive). The countdown showed above the character, in chat
   and both, as picked on the panel. In the first run the label above the character
   changed size on two single frames; after a fix to the label's font, the second run's
   label held steady while standing still. With the switch off the chest stayed shut until
