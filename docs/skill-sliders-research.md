@@ -461,7 +461,8 @@ Capture: `forgepact-issue-160-skill-sliders-live-2.md`. Outskirts of Inoya
   | `speed stat 74 add 50` | 23.750000 | + 20.833333 | 21.375000 |
 
   So stat 75 is a percent of `deltaSpeed` (`1 + value / 100`) and stat 74 a
-  flat addition of 5/12 (0.416667) of `deltaSpeed` per point in this zone.
+  flat addition of 5/12 (0.416667), added to `deltaSpeed`, per point in this
+  zone.
   On all six Shadow Bolt reads (two baselines, four boosted) the `speed`
   built-in equalled `deltaSpeed` times the object's `deltaTimer` at the read,
   so `deltaSpeed` is what sets the bolt's movement. `speed-route: proven`
@@ -526,7 +527,7 @@ real first (`read-control`), and `projprobe ids on` stayed armed throughout.
 - Which of stats 74 and 75 the tooltip's `+1.50 to Projectile Speed` line is.
   Both act on projectile speed (measured); no character with that gear was
   read.
-- How the 5/12 of `deltaSpeed` per point of stat 74 splits between the scale
+- How the 5/12 per point that stat 74 adds to `deltaSpeed` splits between the scale
   `LoadAllModifiers` stores it with and `roomSpd`, and whether it is the same
   in other rooms. Stat 75's 0.01 per point is measured.
 - In which order stats 74 and 75 combine on `deltaSpeed` (they were not raised
