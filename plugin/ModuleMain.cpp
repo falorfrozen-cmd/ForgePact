@@ -23510,6 +23510,16 @@ static const int kSatanicDebuffCount = 26;
 // arrays) so Phase 0 can see call cadence directly in out.txt, not just infer
 // it from g_SatModsHits (which only moves when a disabled id was present).
 static volatile long g_SatLoadTraceLeft = 40;
+// `satforce` (research build only, issue #155): -1 keeps the game's own
+// answer, 0/1 makes every LoadSatanicZone call return false/true to its
+// caller. The forcing happens after the trace line (which keeps logging the
+// game's own result) and before the return, so the game's own consumers see
+// the forced value. Live research 2026-10-03: the game calls
+// LoadSatanicZone(the protected store's value) about twice a frame; see
+// docs/satanic-zone-mods-research.md.
+#ifndef FORGEPACT_RELEASE
+static volatile long g_SatForceReturn = -1;
+#endif
 
 // Resolves the single Controller_obj instance (same pattern as ObjVarJson).
 static bool ResolveControllerObj(RValue& out)
@@ -23591,9 +23601,15 @@ static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int ar
                 debuffsBefore = Describe(dv);
             } catch (...) {}
         }
+        std::string forceNote;
+#ifndef FORGEPACT_RELEASE
+        if (g_SatForceReturn >= 0)
+            forceNote = std::string(" | FORCING -> ") + (g_SatForceReturn ? "true" : "false");
+#endif
         Out("satmods TRACE: LoadSatanicZone call#" + std::to_string(g_SatLoadCalls) + " argc=" + std::to_string(argc)
             + (argc >= 1 && A && A[0] ? " arg0=" + Describe(*A[0]) : "")
             + " -> " + Describe(r)
+            + forceNote
             + " | before filter: buffs=" + buffsBefore + " debuffs=" + debuffsBefore);
     }
     if (!g_SatDisabledBuffs.empty() || !g_SatDisabledDebuffs.empty()) {
@@ -23613,6 +23629,9 @@ static RValue& HookLoadSatanicZone(CInstance* S, CInstance* O, RValue& R, int ar
             }
         } catch (...) {}
     }
+#ifndef FORGEPACT_RELEASE
+    if (g_SatForceReturn >= 0) r = RValue(g_SatForceReturn == 1);
+#endif
     return r;
 }
 
@@ -47410,6 +47429,34 @@ static void RunCommand(const std::string& line)
         }
         return;
     }
+    // Satanic Zone research (issue #155): force LoadSatanicZone's answer so
+    // the game's own consumers see "the player is in the satanic zone" (or
+    // not) wherever the character stands. Installs the satmods diagnostic
+    // hook if the filter never did. A standalone early return for the same
+    // C1061 reason as `restartanytime` above; research build only.
+#ifndef FORGEPACT_RELEASE
+    if (lc == "satforce") {
+        const std::string v = Lower(TrimCopy(rest));
+        if (v.empty() || v == "stat" || v == "status") {
+            Out(std::string("satforce stat: ") + (g_SatForceReturn < 0 ? "off (the game's own answers)"
+                : (g_SatForceReturn ? "every call -> true" : "every call -> false"))
+                + " g_SatLoadCalls=" + std::to_string(g_SatLoadCalls));
+        } else if (v == "off" || v == "no") {
+            g_SatForceReturn = -1;
+            Out("satforce -> off (the game's own answers)");
+        } else if (v == "on" || v == "true" || v == "1" || v == "yes" || v == "0" || v == "false") {
+            // `0`/`false` force false; only `off`/`no` disable the forcing
+            // (review of #156 caught `0` falling into the off branch).
+            g_SatForceReturn = (v == "0" || v == "false") ? 0 : 1;
+            const bool hooked = EnsureSatanicZoneHook();
+            Out(std::string("satforce -> every call returns ") + (g_SatForceReturn ? "true" : "false")
+                + (hooked ? " (LoadSatanicZone hook on)" : " (HOOK COULD NOT INSTALL)"));
+        } else {
+            Out("satforce: usage -> satforce 1|0|off  (no argument = status)");
+        }
+        return;
+    }
+#endif
     // Toggle-skill active indicator (issue #11, Track B). A standalone early
     // return, not one more `else if` below: that chain is already at MSVC's
     // block-nesting limit (C1061) - the same reason the research command
