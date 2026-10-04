@@ -220,21 +220,43 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
   is the call's `self`, read by the instance-handle rule. `hook` refuses while
   `citrace`, `jumpprobe` or `jumpscenery` holds one of them, as `jumpprobe
   hook` does.
-- **Shared rows.** A script or builtin detours once. The rows another install
-  already detours are shared, not hooked again: `GetUniqueRepoStruct` and
-  `CreateDefaultParams` (`InstallSignatureAngelicHooks`, #74), `CreateItemNew`
-  (custom forge, item truth), `LootGroundCreate` (mining ore), `GPV`
-  (`abysstrace`), `instance_create_depth` / `instance_create_layer` (density),
-  and `instance_destroy` while co-op's or `destroywatch`'s hook holds it.
-  - `hook` runs the existing installer when one of them is not yet installed,
-    then splices the probe's detour into that hook's saved original: the
-    holder's body calls the probe, which calls the real trampoline. The probe
-    sees exactly the calls the holder sees, on both routes, and no player
-    hook body changes.
-  - Only a holder whose saved original is a trampoline (a native detour) is
-    spliced. A table-only holder would see too little, and splicing it would
-    make its own route check read it as detoured, so that row stays
-    `missing` and its line names the holder and the reason.
+- **Held rows.** A script or builtin detours once. The rows another ForgePact
+  hook already holds are reached through that hook, never hooked a second
+  time: `GetUniqueRepoStruct` and `CreateDefaultParams`
+  (`InstallSignatureAngelicHooks`, #74), `CreateItemNew` (custom forge, item
+  truth, or the research build's item-inspect hook), `LootGroundCreate`
+  (mining ore), `LootGroundCreateFromItem` (the research build's item-inspect
+  hook), `DropItem` (`DropManager`'s `Hook_DropItem`, installed at startup in
+  the research build), `GPV` (`abysstrace`), `instance_create_depth` /
+  `instance_create_layer` (density), and `instance_destroy` while co-op's or
+  `destroywatch`'s hook holds it.
+  - `hook` runs the existing installer when one of them is not yet installed
+    (never the item-inspect installer: a second run re-swaps a dozen table
+    entries; if that hook is not in, the row is the probe's own), then
+    reaches the row by what the holder's saved original is.
+  - **A trampoline** (the holder detoured natively): the probe's detour is
+    spliced into the saved original, so the holder's body calls the probe,
+    which calls the trampoline. The probe sees exactly the calls the holder
+    sees, on both routes, and no player hook body changes. The row reads
+    `shared`.
+  - **The game's own function** (the holder is table-only; in the research
+    build that is `LootGroundCreateFromItem` always and `CreateItemNew`
+    unless custom forge or item truth installed it first): the probe detours
+    that function itself with `MmCreateHook`, once `AddrIsExecutableInModule`
+    says it is code inside `Hero_Siege.exe`. The holder's body and compiled
+    GML's direct calls both reach the probe; the holder is left as it is.
+    The row reads `detoured-under`. This is `angelicprobe`'s second route,
+    "detoured (under table-only hook)" (`angelic-roll-hook-research.md`),
+    which its own live procedure used on this same
+    `LootGroundCreateFromItem` hook.
+  - **This plugin's own code** (the holder sits behind another table-only
+    hook): nothing the probe can splice or detour sees every call, so the row
+    stays `missing` and its line names the holder and the reason.
+- **Table-only rows.** A script row the probe hooks itself comes up
+  `table-only` when another install already holds its table entry; it is
+  then blind to compiled GML's direct calls. `hook` counts such rows in its
+  summary and names them in a `WARNING` line, so a `not-observed` from one is
+  never read as a measured zero.
   - `DebugLogAddExt` (`debuglog`) is not a probe row: `Alarm_9`'s spawn line
     is read from `bp_ipc\gamelog.txt` through `debuglog`, step 1 of § Live
     procedure 1.
@@ -244,12 +266,29 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
 machine, another `self` inside a machine's own event (counted as `in-event=`
 and logged with `scope=machine-event`, in case the prize is placed from a
 `with` block or a struct method), or anything else. The first two are logged,
-at most 40 lines per row (`kTraceLinesPerRow`); a line that repeats the row's
-last line for the same first argument (one `GPV` key read every step, say) is
-not logged and costs nothing, so idle `Step_0` reads cannot spend the budget
-before the first spin. Once a row's budget is spent its calls are still
-counted, but not described. The `rng` lever still answers machine-self calls
-only.
+within a budget that is per **window**:
+
+- A row writes at most 40 lines a window (`kTraceLinesPerRow`). Once it has,
+  its calls are still counted but not described, and its `status` line ends
+  `BUDGET SPENT`; `status` also prints a `BUDGET SPENT on <n> row(s)` line
+  above the rows.
+- Each line has a key, what it is about: a script's first argument (a `GPV`
+  or `SPV` state key), a builtin's argument text, an event's instance id. One
+  key writes at most 8 lines a window (`kTraceLinesPerKey`); the lines a key
+  was refused are counted as `key-capped=`. So one call shape the machine
+  repeats every frame with a moving result (an idle `irandom`, a timer key)
+  spends 8 lines, not the row.
+- A line identical to its key's last line is not logged and costs nothing.
+  That is all the deduplication guarantees: a key whose value or result
+  changes spends a line each time it changes, until its 8 are gone.
+- `gambaprobe trace`, `gambaprobe hook` again and every `gambaprobe spawn`
+  start a new window, and § Live procedure 1 sends `gambaprobe trace` right
+  before each spin a check reads. A per-frame call with the same arguments
+  as the prize roll can still use up that shape's 8 lines between the
+  `trace` and the spin; the row's `machine-self=` count still moves, and a
+  `key-capped=` above zero at the spin says the shape was cut.
+
+The `rng` lever still answers machine-self calls only.
 
 **The machine-self filter.** A call counts for the machine only when its `self`
 resolves (instance-handle rule, `VALUE_REF` accepted) to an instance whose
@@ -258,12 +297,19 @@ kind check, and a call from any other object passes through untouched.
 
 **Verbs.** Every lever reports what it did or why it refused.
 
-- **`gambaprobe hook`** prints one line per row, ending `detoured`, `shared`,
-  `table-only` or `missing`, then the summary `gambaprobe hook: <n> rows,
-  <m> missing`.
+- **`gambaprobe hook`** prints one line per row, ending `detoured`,
+  `detoured-under`, `shared`, `table-only` or `missing`, then the summary
+  `gambaprobe hook: <n> rows, <m> missing, <t> table-only (<d> detoured, <u>
+  detoured-under, <s> shared)`, and a `WARNING` line naming every
+  `table-only` script row. Sent again, it re-arms and starts a new trace
+  window.
+- **`gambaprobe trace`**: starts a new trace window (every row's and every
+  key's budget), answering `gambaprobe trace: every row's trace budget starts
+  over`. The counts continue.
 - **`gambaprobe spawn`**: one `instance_create_depth` of `Slot_Machine_01_obj`
-  at the local player, depth 0, answering `gambaprobe spawn: id=<n>`. The
-  `Create_0` and `Alarm_9` rows are its positive control.
+  at the local player, depth 0, answering `gambaprobe spawn: id=<n>`. It
+  starts a new trace window first, so the new machine's `Create_0` is
+  described. The `Create_0` and `Alarm_9` rows are its positive control.
 - **`gambaprobe rng <value> [count]`**: answers the next `count` machine-self
   RNG builtin calls with `value` and logs what was replaced, then turns itself
   off (`count` 1 to 50, default 1). For `choose`, `value` is the index of the
@@ -278,8 +324,9 @@ kind check, and a call from any other object passes through untouched.
   exactly as `sigdrop` and `BuildAngelicPool` build a unique, at the player. It
   logs the built item's `itemInfoStruct` field 27 (its rarity code) and
   answers `gambaprobe drop: built rarity=<code> dropped at <x>,<y>`.
-- **`gambaprobe status`**: every row's counter and route, the RNG lever's
-  state, and `gambaprobe: off` while nothing is armed.
+- **`gambaprobe status`**: the probe's line (`gambaprobe: off` while nothing
+  is armed), the RNG lever's state, and, once `hook` has run, every row's
+  counters and route, with `BUDGET SPENT` on any row that only counts.
 - **`gambaprobe off`** (also `gambaprobe 0`): disarms every lever and answers
   `gambaprobe: off`.
 
@@ -288,11 +335,13 @@ probe is on the frame path.
 
 **Tests (our code).** `tests/test_gamba_probe_contract.py` pins the wiring on
 comment-stripped source (research build only, the dispatch, the SDK-derived row
-set, every detour behind `AddrIsExecutableInModule`, this doc's headings and
-decision keys). `tests/test_gamba_probe_behavior.py` with
+set, the held rows spliced or detoured under and never hooked twice, every
+detour behind `AddrIsExecutableInModule`, the trace window, this doc's headings
+and decision keys). `tests/test_gamba_probe_behavior.py` with
 `tests/gamba_probe_harness.cpp` runs the decision core: lever off, every RNG
 answer is the real one; lever on, only a machine-self call is answered, `count`
-calls and then off, and the inert lever is named.
+calls and then off, and the inert lever is named; one key cannot spend a row's
+budget, and a spent row is named.
 
 ## Live procedure 1
 
@@ -311,35 +360,52 @@ repeated here whole.
   off`.
 - **Steps** (each an IPC command unless marked person):
   1. `debuglog` -> `debuglog: ACIK` (game log on). `gambaprobe hook` -> one
-     line per row ending `detoured`, `shared`, `table-only` or `missing`; the
-     five event rows must read `detoured` and the summary line
-     `gambaprobe hook: <n> rows, 0 missing` (check `hook-installed`).
+     line per row ending `detoured`, `detoured-under`, `shared`, `table-only`
+     or `missing`. The five event rows must read `detoured`. No script row
+     may read `table-only` or `missing`: the closure (`anon@1474`), `GPV`,
+     `SPV`, `InitPV`, `FPV`, `GetGoldAmount`, `GoldOperationPending`,
+     `GetGoldCounterHash`, `PickUpGoldCheck`, `LootBlocksUseKey`,
+     `CheckUseKey`, `InputPressed`, `NetworkSendClientEffect`, `PlaySound3D`,
+     `LootGroundCreate`, `LootGroundCreateFromItem`, `CreateLootInFreePos`,
+     `CreateItemNew`, `DropItem`, `DropUniqueItems`, `GetUniqueRepoStruct`,
+     `CreateDefaultParams`, `cpr_irandom` and `cpr_rand32`. The three
+     prize-route rows the research build holds at startup read
+     `detoured-under` (`LootGroundCreateFromItem`, under the item-inspect
+     hook) or `shared` / `detoured-under` (`CreateItemNew`, `DropItem`). The
+     summary line must read `gambaprobe hook: <n> rows, 0 missing, 0
+     table-only`, with no `WARNING` line after it (check `hook-installed`).
   2. `gambaprobe spawn` -> `gambaprobe spawn: id=<n>` and, within a second,
      `gambaprobe status` showing `create=1`, `alarm9=1`, `step>=30`;
      `bp_ipc\gamelog.txt` gains a line containing `Slot Machine Spawned`;
      a screenshot shows a machine beside the player (`spawn-create`,
-     `step-fires`).
-  3. Person: walk to the machine and use it once (one spin; the HUD gold falls
-     by 10,000). Then `gambaprobe status` and the IPC log tail: the
-     machine-self rows that fired, in order, with arguments; record the
-     `GPV`/`SPV` keys and values that changed and any RNG builtin call with
-     its arguments and result (`spin-trace`, `gold-debit`).
+     `step-fires`). Wait about five seconds with nobody at the machine and
+     send `gambaprobe status` again: record any RNG builtin row whose
+     `machine-self=` climbed while idle (a per-frame call: its lines at the
+     spin may come back `key-capped`).
+  3. `gambaprobe trace`, then person: walk to the machine and use it once (one
+     spin; the HUD gold falls by 10,000). Then `gambaprobe status` and the IPC
+     log tail: the machine-self rows that fired, in order, with arguments;
+     record the `GPV`/`SPV` keys and values that changed and any RNG builtin
+     call with its arguments and result (`spin-trace`, `gold-debit`).
   4. Person: keep spinning the same machine until it explodes (expect 10-14
-     spins). After each spin `gambaprobe status`; at the explosion the IPC log
-     tail: which rows fired (`instance_destroy`? `Alarm_0`? the closure?), the
-     `GetUniqueRepoStruct` arguments and `CreateDefaultParams` count, what
-     placed the prize, and a screenshot of what dropped (`explosion-trace`,
-     `prize-trace`, `roll-identity`).
+     spins). After each spin `gambaprobe status`, then `gambaprobe trace`
+     before the next spin; at the explosion the IPC log tail: which rows fired
+     (`instance_destroy`? `Alarm_0`? the closure?), the `GetUniqueRepoStruct`
+     arguments and `CreateDefaultParams` count, what placed the prize, and a
+     screenshot of what dropped (`explosion-trace`, `prize-trace`,
+     `roll-identity`). Record with the checks any row that reads `BUDGET
+     SPENT` or `key-capped=` above 0 in the explosion's `status`.
   5. If step 4 showed one RNG builtin call deciding the prize: `gambaprobe
      spawn`, then `gambaprobe rng <the value that selects base 98> 1`, then
-     person: spin to the explosion. Expected: `gambaprobe: rng answered 1` and
-     Goburin's Head on the ground (screenshot; `GetUniqueRepoStruct` arguments
-     `10, 0, 98`). If step 4 showed no such call, send `gambaprobe rng 0 1`
-     anyway and record `inert` (`forced-head`; a `not-observed` with `inert` is
-     the finding, never a defect).
-  6. `gambaprobe spawn` a second machine; person: one spin on it. Expected: its
-     `gold_spent`-like state key starts from zero, not from the first machine's
-     total (`second-machine`).
+     person: spin to the explosion, with `gambaprobe trace` before each spin
+     as in step 4. Expected: `gambaprobe: rng answered 1` and Goburin's Head
+     on the ground (screenshot; `GetUniqueRepoStruct` arguments `10, 0, 98`).
+     If step 4 showed no such call, send `gambaprobe rng 0 1` anyway and
+     record `inert` (`forced-head`; a `not-observed` with `inert` is the
+     finding, never a defect).
+  6. `gambaprobe spawn` a second machine, then `gambaprobe trace`; person: one
+     spin on it. Expected: its `gold_spent`-like state key starts from zero,
+     not from the first machine's total (`second-machine`).
   7. `gambaprobe drop` -> `gambaprobe drop: built rarity=<code> dropped at
      <x>,<y>` and a Goburin's Head on the ground (screenshot)
      (`fallback-drop`).
