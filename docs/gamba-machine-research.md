@@ -40,8 +40,13 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   and the player build is free of it.
 - **Instrument:** `gambaprobe` (§ Instrument), research build only, on the
   ForgePact branch `134-goburins-head-pity-research`.
-- **Live procedure 1:** written (§ Live procedure 1), not yet run. § Results is
-  empty and every § Decision key reads `pending` until it has run.
+- **Live procedure 1:** ran on 2026-10-04 and came back INSTRUMENT-BLIND: every
+  spawned machine was removed in the step after its creation, before its first
+  `Step_0`, so no spin was measured (§ Results, `### Live 1 results`).
+- **Live procedure 2:** written (§ Live procedure 2), not yet run. It tries
+  four spawn routes, names who removes a machine, and runs Live 1's spin steps
+  on the first machine that survives. Every § Decision key reads `pending`
+  until a session measures it.
 - **Owner's decisions (2026-10-04):** the pity counts explosions, with the gold
   equivalent shown; the session character (slot 14 "Sorak") has enough gold
   for the full procedure; measure first, then plan the mod.
@@ -89,7 +94,7 @@ Every claim carries one of four labels, plus a source:
   on 2026-10-04, read that day.
 - **Measured**: observed in a running game.
 - **Our code**: what ForgePact does.
-- **Not established**: not known yet. § Not established lists what Live 1 is
+- **Not established**: not known yet. § Not established lists what Live 2 is
   meant to settle.
 
 ### The object's events
@@ -177,6 +182,70 @@ Every claim carries one of four labels, plus a source:
   its 20,951 rows are object events (`frame-profiler.md`). § Instrument
   resolves the machine's event rows there, by name.
 
+### What `Create_0` runs, and the parent chain
+
+Read after Live 1 (2026-10-04), to explain its zero counts.
+
+- **Static reading:** `Create_0` (about 67 KB of code) has one exit and no
+  early return. In order, it updates the machine's depth (`UpdateDepth`), arms
+  its alarm 9 for the next step, runs the inherited Create of its parent
+  `Collision_Prop_obj` (which updates the depth again and arms alarm 11 two
+  steps out), and then makes about 80 calls by name to `gml_Script_InitPV`,
+  `gml_Script_SPV` and `gml_Script_GPV`. `CleanUp_0`'s by-name callee is
+  `gml_Script_FPV`.
+- **Static reading:** `Alarm_9` logs "Slot Machine Spawned" through
+  `DebugLogAddExt` first, on every path, and reports to clients; "out of thin
+  air" is on a later branch.
+- **Static reading:** the object's parents are `Collision_Prop_obj` (959) ->
+  `Collision_Parent_obj` (957) -> `Avoidable_Parent_obj` (433)
+  (`hs-game-sdk` `kObjectParents`). `Collision_Prop_obj` owns a `Create_0`
+  and an `Alarm_11`; the two parents above it own a `Create_0` only.
+- **Our code:** the far-sleep mod sleeps `Collision_Prop_obj` leaves outside
+  towns (`far-sleep-research.md` § What sleeps). It is off by default, and
+  § Live procedure 2 keeps it off.
+
+### The game's own creation call
+
+- **Static reading:** the game creates a machine from
+  `gml_Script_ClientCreateEffect`, in the one case of its switch that carries
+  the object index 4644. That case is a single call of the game's own
+  `gml_Script_instance_create` script with three arguments: x, y and the
+  object.
+- **Static reading:** `instance_create` reads a layer from a global array and
+  calls the `instance_create_layer` builtin with that layer. So the game's
+  props live on a named layer of the game's choosing, while Live 1's
+  `gambaprobe spawn` called `instance_create_depth(x, y, 0, object)`, which
+  puts the instance on a depth layer the runner manages.
+- **Static reading, not followed:** `Zone_State_Buffer_obj`'s Create closures
+  also name the object, which is presumably how machines persist between
+  visits to a zone. Those bodies were not read.
+
+### The by-name route
+
+- **Static reading:** compiled GML in this build reaches `InitPV`, `SPV`,
+  `GPV` and `FPV` through a cached lookup by name that ends in a call through
+  the runtime's functions array (24-byte entries: name, routine, argument
+  count, usage; the layout YYToolkit's patch 0004 mirrors), with the builtin
+  calling convention (result, self, other, argument count, arguments).
+- **Static reading:** a direct call to a script's own function (`UpdateDepth`,
+  `GetGoldAmount`, `GetUniqueRepoStruct`) is a different route, and that one
+  the inline detour of `HookOneScript` sees. The script table's `InitPV`
+  (`citrace symdump`'s `symbols.csv`) and the compiled-code table's
+  `gml_Script_InitPV` are the same function. So whatever routine the
+  functions array holds for `gml_Script_InitPV`, the calls `Create_0` made
+  through it did not pass through that function's entry.
+- **Measured** (two sessions): `InitPV`, `SPV` and `FPV` counted 0 calls in
+  Live 1 while `Create_0` and `CleanUp_0` ran to their end, and
+  `dungeon-chest-research.md` (its Live procedure 1) counted `store GPV
+  calls=2 gameCalls=2` for a whole dungeon, where chests read the store every
+  step. Both were first read as the game not calling. Both are the detour not
+  seeing the call: **not observed by the detour**, not "not called".
+- **Not established:** whether `gml_Script_InitPV` (or the short name) names
+  a functions-array entry whose routine is a different executable address from
+  the script's own function, or whether both names name the script and the
+  call reaches its function in a way the detour misses. `gambaprobe hook`'s
+  `byname=` column (§ Instrument) answers the first half.
+
 ## Instrument
 
 `gambaprobe` is research build only (`#ifndef FORGEPACT_RELEASE`). It is never
@@ -216,8 +285,16 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
   `GPV`/`SPV` log key and value, so the machine's state keys surface.
 - **Builtin rows**, machine-self filter (`HookBuiltin`): `irandom`,
   `irandom_range`, `random`, `random_range`, `choose`, `instance_destroy`,
-  `instance_create_depth` and `instance_create_layer`. A builtin row's `self`
-  is the call's `self`, read by the instance-handle rule. `hook` refuses while
+  `instance_create_depth` and `instance_create_layer`, and, since Live 1, the
+  removal candidates `instance_change`, `layer_destroy_instances`,
+  `instance_deactivate_object` and `room_goto`, each through its `HeroSiege`
+  builtin name. A builtin row's `self` is the call's `self`, read by the
+  instance-handle rule. `instance_destroy`, `instance_change` and
+  `instance_deactivate_object` also count and log a call whose first argument
+  names a machine, whoever its `self` is (`machine-arg=`): Live 1's
+  `instance_destroy` row counted no machine-self call while the machine was
+  removed, and a removal from another object's code would carry the machine as
+  its argument, not its `self`. `hook` refuses while
   `citrace`, `jumpprobe` or `jumpscenery` holds one of them, as `jumpprobe
   hook` does.
 - **Held rows.** A script or builtin detours once. The rows another ForgePact
@@ -314,15 +391,39 @@ kind check, and a call from any other object passes through untouched.
   `detoured-under`, `shared`, `table-only` or `missing`, then the summary
   `gambaprobe hook: <n> rows, <m> missing, <t> table-only (<d> detoured, <u>
   detoured-under, <s> shared)`, and a `WARNING` line naming every
-  `table-only` script row. Sent again, it re-arms and starts a new trace
+  `table-only` script row. Every script row's line also ends with its
+  `byname=` resolution (below). Sent again, it re-arms and starts a new trace
   window.
 - **`gambaprobe trace`**: starts a new trace window (every row's and every
   key's budget), answering `gambaprobe trace: every row's trace budget starts
   over`. The counts continue.
-- **`gambaprobe spawn`**: one `instance_create_depth` of `Slot_Machine_01_obj`
-  at the local player, depth 0, answering `gambaprobe spawn: id=<n>`. It
-  starts a new trace window first, so the new machine's `Create_0` is
-  described. The `Create_0` and `Alarm_9` rows are its positive control.
+- **`gambaprobe spawn [depth|game|layer|self]`**: creates one
+  `Slot_Machine_01_obj` at the local player, by one of four routes, each a
+  different code path (§ Static reading, "The game's own creation call"):
+  - `depth` (the default, and the control): `instance_create_depth` at depth
+    0, the call Live 1 used, whose machines all died.
+  - `game`: the game's own `instance_create` script, called by name with the
+    arguments x, y and the machine's object index and with the local player
+    as `self` and `other`, the exact call the game's effect case makes. The
+    name is the short name of the `HeroSiege::Scripts` constant, resolved
+    through `asset_get_index` and called through `script_execute` with
+    `CallBuiltinEx`: the route `DungeonChestChat` proved live on 2026-10-03
+    (`dungeon-chest-research.md` § Chat route).
+  - `layer`: `instance_create_layer` on the local player's own `layer` value,
+    read by the instance-handle rule: the game's builtin, our layer choice.
+  - `self`: `instance_create_depth` through `CallBuiltinEx` with the player as
+    `self` and `other`, which isolates who the caller is.
+
+  Each answers `gambaprobe spawn: route=<name> id=<n> at <x>,<y>`, or a
+  refusal naming the step that failed (no player, name not resolved, dispatch
+  failed, result not an instance). It starts a new trace window first, so the
+  new machine's `Create_0` is described. The `Create_0` and `Alarm_9` rows are
+  its positive control. No route stores an address, a layer name or an effect
+  id.
+- **`gambaprobe selftest`**: calls `irandom(100)` once through `CallBuiltin`,
+  outside the probe's busy guard, and answers `gambaprobe selftest: irandom
+  row calls=<before> -> <after>`. The row must move by one; if it does not,
+  the builtin rows are blind and nothing they count is evidence.
 - **`gambaprobe rng <builtin> <value> [count] [args <text>]`**: answers the
   next `count` machine-self calls of one RNG builtin (`irandom`,
   `irandom_range`, `random`, `random_range` or `choose`) with `value`, logs
@@ -354,9 +455,69 @@ kind check, and a call from any other object passes through untouched.
   answers `gambaprobe drop: built rarity=<code> dropped at <x>,<y>`.
 - **`gambaprobe status`**: the probe's line (`gambaprobe: off` while nothing
   is armed), the RNG lever's state, and, once `hook` has run, every row's
-  counters and route, with `BUDGET SPENT` on any row that only counts.
+  counters and route, with `BUDGET SPENT` on any row that only counts. Every
+  script row also shows its `idx=<short>/<gml_Script_>` and
+  `byname=<same|detoured|shared|missing>`.
 - **`gambaprobe off`** (also `gambaprobe 0`): disarms every lever and answers
   `gambaprobe: off`.
+
+**The caller walk (who removes a machine).** On the `CleanUp_0` and `Alarm_9`
+rows, and on the first `Create_0` of a trace window, the detour prints, before
+the original runs (while the instance is still readable), one line
+`gambaprobe <event>-caller id=<n> object_index=<i> x=<x> y=<y> layer=<l>
+depth=<d> alarm9=<a> alarm11=<b> frame=<f>`, every value read from the
+instance by the instance-handle rule and `?` when a read fails. Up to 24 stack
+frames follow (`RtlCaptureStackBackTrace`), one per line:
+
+- `#<k> gml:<row name>+0x<off>` when the frame lies inside a compiled GML
+  function. The row is the compiled-code-table row with the greatest function
+  address not above the frame, among the rows whose function
+  `AddrIsExecutableInModule` places in `Hero_Siege.exe`. That table, the one
+  `FsFindGmlRow` walks, has one row per compiled function (20,925 rows: 14,694
+  object events, 6,231 scripts); `hook` reads it once into a sorted copy.
+- `#<k> forgepact+0x<off>` inside this plugin; `#<k> exe+0x<rva>` for a runner
+  frame in `Hero_Siege.exe` that no row covers; `#<k> <module>+0x<off>` in
+  another module; `#<k> ?` otherwise.
+
+Only the first 4 walks per row per trace window print; the row's count carries
+the rest. An `object_index` other than the machine's at `CleanUp_0` would mean
+`instance_change`; a `layer` the game never uses points at the depth layer.
+The lines are written to the log and nothing is kept; they are the finding.
+
+**The by-name resolution (`byname=`).** At the first `hook`, before any script
+row is installed, the probe reads `GetNamedRoutineIndex` of both the short name
+and `gml_Script_<short name>` for every script row (§ Static reading, "The
+by-name route"). The index says what the name names:
+
+- an index of 100000 or more names the script. `GetNamedRoutinePointer` then
+  returns its `CScript*`, whose `m_Functions` is the compiled-code table row;
+  the script's function is that row's `m_ScriptFunction`, cross-checked
+  against the row `FsFindGmlRow` finds for `gml_Script_<short name>`;
+- an index below 100000 names an entry of the runtime's functions array.
+  `GetNamedRoutinePointer` then returns that entry's routine.
+
+Every row's `hook` and `status` line prints both indices
+(`idx=<short>/<gml_Script_>`) and one of:
+
+- `byname=same`: both names resolve to the script, so no routine other than
+  the row's own function is reachable by name, and the detour on that
+  function is the only attachment.
+- `byname=detoured`: a name resolves to a functions-array routine at another
+  executable address inside `Hero_Siege.exe`. That routine is detoured too,
+  with the builtin signature `HookBuiltin` uses, as a second attachment feeding
+  the same row's counters.
+- `byname=shared`: several rows resolve to one such routine. It is detoured
+  once, as a `byname-shared` row that logs `argc` and the described arguments
+  under the machine-self filter (`InitPV`, `SPV` and `GPV` differ in argument
+  count).
+- `byname=missing`: the `gml_Script_` name does not resolve.
+
+Its positive control is free: a spawned machine's `Create_0` makes about 28
+`InitPV` calls with the machine as `self`, whether or not the machine then
+survives (`byname-visible`). If both names resolve to the script
+(`byname=same`) and the counts stay at 0, the route is something else again:
+`byname-route: blind` is then the finding, phase 2 must not lean on the store
+trace, and the question goes to a consultant, not to another rebuild.
 
 One per-frame tick returns at once while nothing is armed; nothing else of the
 probe is on the frame path.
@@ -372,7 +533,16 @@ answered, `count` calls and then off, a machine-self call of another builtin or
 with other argument text is left untouched and counted as passed, and the inert
 lever is named; one key cannot spend a row's budget, six keys moving every
 frame of a spin leave a seventh key's line at the spin's end logged, and a
-spent row is named.
+spent row is named. Since Live 1, the harness also covers the caller walk's
+frame text (a pure function of a frame offset and the sorted row list: a GML
+row, the plugin, the exe, another module, unknown), the `machine-arg=` rule
+and the `byname=` status text; the contract test pins the four spawn routes
+(the game script by its `HeroSiege::Scripts` constant, no layer name or effect
+id literal), the caller walk behind the same `AddrIsExecutableInModule` rule,
+the `byname=` resolution printed for every script row, the new rows as
+`HeroSiege`-named builtins, `selftest` outside the busy guard, and this doc's
+nine `##` headings in order, with `pending` refused once `### Live 2 results`
+exists.
 
 ## Live procedure 1
 
@@ -492,10 +662,153 @@ repeated here whole.
   script and builtin rows still count). The research checks (`spin-trace`
   onward) are findings whatever they read.
 
+## Live procedure 2
+
+Written after Live 1 came back INSTRUMENT-BLIND (§ Results). The full
+procedure is in the toolkit workorder `forgepact-goburins-head-pity-1b`,
+context file, § "Live procedure 2". That is a local working note, so it is
+repeated here whole. Steps 1 to 8 spend no gold; the spin half runs only on a
+machine that survives.
+
+- **Build:** research DLL `ForgePact\plugin_build\BloodPactPlugin_rel.dll`
+  from this branch (`build.bat dev`, with the spawn routes, the caller walk and
+  the `byname=` resolution); its SHA-256 is recorded in the session's log. The
+  owner is asked before it is installed. The DLL Live 1 left installed
+  (`aa5f7d03...`) lacks the spawn routes and the walk: `gambaprobe spawn game`
+  answers with the usage line on it, which is how to tell them apart.
+- **Character:** slot 14 "Sorak", loaded in the Town of Inoya (where Live 1's
+  machines died; no travel needed). Steps 1 to 8 spend no gold. The spin half
+  (step 9) needs about 300,000 to 450,000 gold; Sorak had about 299,000 after
+  Live 1's restore, so the owner tops the gold up to 1,000,000 through
+  HSSaveEditor's `shop.ini` gold field, with the game closed, before the
+  session (owner's decision, 2026-10-04).
+- **Preconditions:** every ForgePact mod off in the panel (far-sleep in
+  particular: it sleeps `Collision_Prop_obj` leaves, the machine's parent),
+  `dropmult` at its default x1 for the whole session, and no `citrace`,
+  `jumpprobe`, `jumpscenery` or `dungeonprobe` command sent in this launch.
+  The game's `ClientCreateEffect` is not called (owner's decision,
+  2026-10-04).
+- **Control:** `ping` -> a line starting `pong` (`pong (YYTK 4.0.1)` on
+  2026-10-04). Marker: `gambaprobe status` -> a line starting `gambaprobe:
+  off`.
+- **Steps** (each an IPC command unless marked person):
+  1. `debuglog` -> `debuglog: ACIK`. `gambaprobe hook` -> every row of Live 1
+     step 1 with the same routes, plus builtin rows `instance_change`,
+     `layer_destroy_instances`, `instance_deactivate_object` and `room_goto`
+     reading `detoured`; every script row's line ends with `byname=same`,
+     `byname=detoured`, `byname=shared` or `byname=missing`; the summary
+     `gambaprobe hook: <n> rows, 0 missing, 0 table-only`, no `WARNING`
+     (`hook-installed`). Record the `byname=` of `InitPV`, `SPV`, `GPV`,
+     `FPV` verbatim (`byname-resolve`: pass if all four print one of the
+     four words, whatever the word).
+  2. `gambaprobe selftest` -> `gambaprobe selftest: irandom row calls=<a> ->
+     <b>` with `b = a + 1` (`selftest-rng`). Failing means the builtin rows
+     are blind and nothing from them counts: report INSTRUMENT-BLIND.
+  3. `gambaprobe spawn` (the `depth` route, the control). Expected, as in
+     Live 1: `Create_0`, the spawn line, then within one step `CleanUp_0` and
+     `Alarm_9`, and `status` with `step=0`, `machines=0`. Record whether it
+     survived instead (`spawn-depth`: pass if `step>=30` and the machine is
+     on the screenshot; fail otherwise - a fail is the expected finding).
+     Record every `gambaprobe CleanUp_0-caller ...` line and its `#<k>`
+     frames verbatim, and the `Alarm_9-caller` lines (`cleanup-caller`: pass
+     when at least one `CleanUp_0-caller` line with at least one `gml:` or
+     `exe+` frame printed; fail when CleanUp_0 counted and no caller line
+     printed). From `status`: `InitPV machine-self=` and `SPV machine-self=`
+     (`byname-visible`: pass if `InitPV machine-self>=1`; fail if 0 while
+     `Create_0 calls>=1`).
+  4. `gambaprobe spawn game` -> `gambaprobe spawn: route=game id=<n> at
+     <x>,<y>` (a refusal line names what failed: record it). Within a second
+     `gambaprobe status`: `step>=30`, `machines=1`; screenshot shows the
+     machine beside the player (`spawn-game`). If it died, record its
+     `CleanUp_0-caller` lines too.
+  5. If step 4 did not survive: `gambaprobe spawn layer`, same reading
+     (`spawn-layer`); if it survived, mark `spawn-layer` not-observed.
+  6. If steps 4 and 5 did not survive: `gambaprobe spawn self`, same reading
+     (`spawn-self`); otherwise not-observed.
+  7. If no route survived: person: walk to the Town of Inoya portal, enter
+     the first combat zone, fight for about 15 seconds; `gambaprobe status`
+     before and after: record each RNG row's `calls=` (`rng-rows-live`: pass
+     if any of `irandom`, `irandom_range`, `random`, `random_range`,
+     `choose`, `cpr_irandom`, `cpr_rand32` rose; fail if all stayed at 0
+     through the fight - the finding that the game's rolls do not pass
+     through these rows). If a route survived, run this step after the spin
+     half instead, only if the owner has the time; otherwise not-observed.
+  8. If no route survived: `gambaprobe off` -> `gambaprobe: off`; teardown
+     per the operator's own procedure; every spin check below is
+     not-observed, and that is the session's result, not a defect.
+  9. If a route survived: `gambaprobe trace`, then Live procedure 1's steps
+     3 to 7, word for word, with every `gambaprobe spawn` in them replaced by
+     `gambaprobe spawn <the surviving route>`, and their checks under the
+     same names (`spin-trace`, `gold-debit`, `explosion-trace`,
+     `prize-trace`, `roll-identity`, `forced-head`, `second-machine`,
+     `fallback-drop`). Before the first spin confirm the HUD gold is at least
+     300,000; if not, stop here, mark the spin checks not-observed, and the
+     owner tops up as the Character line says, in a later session of this
+     same procedure (its own capture `-live-3.md`).
+  10. `gambaprobe off` -> `gambaprobe: off`. Teardown per the operator's own
+      procedure (stop, inspect, restore).
+- **Cases:** ordinary = the `depth` control and the `game` route; outliers =
+  `layer` and `self` (only when `game` dies), the combat RNG control.
+- **Checks**, names verbatim: `dll-hash`, `marker`, `control`,
+  `hook-installed`, `selftest-rng`, `byname-resolve`, `spawn-depth`,
+  `cleanup-caller`, `spawn-game`, `spawn-layer`, `spawn-self`,
+  `byname-visible`, `rng-rows-live`, `spin-trace`, `gold-debit`,
+  `explosion-trace`, `prize-trace`, `roll-identity`, `forced-head`,
+  `second-machine`, `fallback-drop`. INSTRUMENT-BLIND is reported only when
+  `hook-installed` or `selftest-rng` fails, or when `cleanup-caller` fails
+  (CleanUp_0 counted, no caller line). A `spawn-*` fail, a `byname-visible`
+  fail and an `rng-rows-live` fail are findings for the Decision, never
+  defects.
+
 ## Results
 
-Live procedure 1 has not run yet. Its results are recorded here, under
-`### Live 1 results`, once it has.
+### Live 1 results
+
+**INSTRUMENT-BLIND** (2026-10-04, Town of Inoya and one Hell zone). The capture
+is the toolkit's `.claude/workorders/forgepact-goburins-head-pity-live-1.md`, a
+local working note not copied here; the full `gambaprobe status` rows are in
+that launch's `bp_ipc\out.txt`. No spin was measured, so no § Decision key
+moved. What the session did establish:
+
+- **Measured:** three `gambaprobe spawn` calls (the `depth` route; two in town,
+  one in a Hell zone) behaved the same. `Create_0` fired inside
+  `instance_create_depth`; after the plugin's command returned, in the next
+  game step, `CleanUp_0` fired and then `Alarm_9`, in that order; `Step_0`
+  never fired; `status` read `machines=0`. The event detours work: those three
+  rows counted.
+- **Measured:** the `instance_destroy` builtin row counted 0 calls in town over
+  the whole window (20 in the zone, none with the machine as `self`). The RNG
+  rows (`irandom`, `irandom_range`, `random`, `random_range`, `choose`,
+  `cpr_irandom`, `cpr_rand32`) counted 0 in both places. `GetGoldAmount`
+  (47 in town, 732 in the zone) and `CreateItemNew` (47) counted calls from
+  other selves, so direct calls reach the script detours and the builtin
+  detour is installed (`HookBuiltin` is `GetNamedRoutinePointer` plus an inline
+  `MmCreateHook`; `dungeon-chest-research.md` counted 3,402 `instance_exists`
+  calls through the same kind of row).
+- **Measured:** the `InitPV`, `SPV` and `FPV` rows counted 0 calls, and `GPV`
+  0 in town and 1 in the zone, while `Create_0` and `CleanUp_0` each ran to
+  their end (the event detour prints after the original returns, so no
+  exception unwound them).
+- **Static reading:** `Create_0` has one exit and makes about 80 calls by
+  name to `InitPV`, `SPV` and `GPV`, and `CleanUp_0` calls `FPV` by name
+  (§ Static reading, "What `Create_0` runs, and the parent chain"). So the
+  zero counts on those rows are the detour missing a call route, not the game
+  skipping the calls (§ Static reading, "The by-name route"): not observed by
+  the detour.
+- **Not established:** who removes the machine. `CleanUp_0` ran with no
+  `instance_destroy` call in the window, and `Alarm_9` still ran after it, so
+  the removal is not a plain `instance_destroy` from GML. The candidates are a
+  runner path (`instance_change`, a layer operation on the runner-managed depth
+  layer the `depth` route lands on, room or zone state code), another object's
+  Begin Step, or inherited parent code. Live 2's `CleanUp_0-caller` lines name
+  the frames.
+- **Not established:** whether the RNG rows can see the game's rolls at all.
+  Their zero counts came with no machine that ever stepped, so they measured
+  nothing about the machine; Live 2's `selftest-rng` and `rng-rows-live` are
+  the controls.
+
+Live procedure 2's results are recorded here, under `### Live 2 results`, once
+it has run.
 
 ## Decision
 
@@ -511,8 +824,9 @@ fallback-drop: pending
 
 pity-design: pending
 
-Live 1 gives each key exactly one label, backed by the named check; until then
-none has one.
+Live 1 measured no spin, so no key has a label yet. The first session whose
+spin half runs (Live 2, on a machine that survives) gives each key exactly one
+label, backed by the named check.
 
 - **`roll-route`** (`roll-identity`): which call, with the machine as `self`,
   decides the prize. `builtin`, `script`, `method` or `not-observed`.
@@ -532,7 +846,8 @@ none has one.
 
 ## Not established
 
-Live 1 is meant to settle these. Until it has run, none of them is known.
+Live 1 was meant to settle these and, INSTRUMENT-BLIND, settled none of them.
+Live 2 is meant to; until it has run, none of them is known.
 
 - **The spin's gold debit path.** `PickUpGoldCheck` is the only balance writer
   per `RUNTIME_DATA_MODELS.md` § 13.10, but no event calls it directly.
@@ -544,7 +859,13 @@ Live 1 is meant to settle these. Until it has run, none of them is known.
   ground.
 - **The machine's state keys** in the protected store (spin count, gold spent,
   threshold).
-- **Whether a spawned machine behaves as a zone-generated one.**
+- **Whether a spawned machine survives, by route.** Every `depth`-route
+  machine of Live 1 was removed before its first `Step_0`; the `game`,
+  `layer` and `self` routes have not run (`spawn-depth`, `spawn-game`,
+  `spawn-layer`, `spawn-self`).
+- **Who removes a depth-route machine.** Not a plain `instance_destroy` from
+  GML, per Live 1; the `CleanUp_0-caller` lines name the frames
+  (`cleanup-caller`).
 - **The charm's rarity code** (7 Angelic or 10 Unholy, or neither).
 - **Where the price and the odds live.** Neither 10,000 nor 750 appears as a
   literal in the `Create_0`, `Alarm_0` or closure bodies read, so they are in
