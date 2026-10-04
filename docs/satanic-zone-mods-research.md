@@ -196,3 +196,24 @@ is kept only as a best-effort diagnostic (harmless if it never fires).
   `g_SatLoadTraceLeftPoll`) is not gated behind `#ifndef FORGEPACT_RELEASE`,
   so a player build would also print it to `out.txt` for a player's first 40
   observed rolls. Low-priority cleanup before treating this as ship-ready.
+
+## The shipped control (issue #157), live-checked 2026-10-04
+
+On the test character in a town, through the plugin's own commands:
+
+- `satzone pin 44` wrote the protected value with the mod's own `SPV` call and
+  it held (`GPV` 85 -> 44 across the check; the 15-frame poll re-asserts it).
+- `satzone pin here` and `satzone pin 235` refused the town as "not an act
+  zone" - the shape gate works.
+- `satzone follow 1` skipped the town as designed (no writes while there).
+- `satzone everywhere 1` installed the `LoadSatanicZone` hook from the frame
+  tick (the char-select deferral: no hook while a menu is up), and the game's
+  ~150 calls a second then saw the forced answer; `everywhere 0` and `off`
+  released with zero refusals.
+
+One code lesson worth carrying: `instance_find(Player_obj)` hands back a
+`VALUE_REF` on this runner, so the mod's first pin attempt resolved no player
+("player instance unreadable") until it went through `HhResolveLocalPlayer` +
+`HhResolveInstance` - the same trap the 2026-09-10 note above records. The
+in-zone check (the game's own answer turning true inside a real zone, and a
+relic drop in one) is still the open measurement.
