@@ -52,7 +52,11 @@ DungeonChestMod.hpp.
   draw state put back. `LabelFixTests`: every draw in __newfont6 (or the
   `hhlabelfont` override) whatever font the frame inherits, the inherited font
   with `labelFont=inherited` when the name does not resolve, and the
-  `fontSwitches=`/`guiResizes=` counters.
+  `fontSwitches=`/`guiResizes=` counters. `fontSwitches=` is only as good as
+  its read of the inherited font, and draw_get_font can answer unset (a real
+  "no font" state and a missing builtin look alike): with the fake answering
+  unset the draws count in `inheritedUnread=` and `inheritedFont=unread`, not
+  as a font that never switched, and an asset-reference answer still reads.
 """
 import hashlib
 import os
@@ -81,6 +85,7 @@ CENSUS_FUNCTIONS = (
     "static long DungeonChestEstimateTotal(",
 )
 DRAW_FUNCTIONS = (
+    "static bool IsNumericInstanceRead(",   # the inherited font's read kind check
     "static void HhDrawOutlinedWorld(",
     "static void DungeonChestDraw(",
 )
@@ -273,6 +278,9 @@ class LabelFixTests(_Scenarios):
 
     def test_label_diagnostics(self):
         self.run_scenario("label-diagnostics")
+
+    def test_label_font_unread(self):
+        self.run_scenario("label-font-unread")
 
 
 del _Scenarios

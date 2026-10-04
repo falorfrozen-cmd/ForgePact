@@ -389,8 +389,10 @@ struct HeadLabel {
     // D14's diagnostics, for the whole session (read as deltas): see NoteLabelDraw.
     long draws = 0;          // label draws noted
     std::string font;        // the font the last label draw used; "" = the inherited one
-    long fontSwitches = 0;   // label draws whose inherited font differed from the previous one's
+    long fontSwitches = 0;   // label draws whose inherited font differed from the previous read one's
     long guiResizes = 0;     // label draws whose GUI size differed from the previous one's
+    long inheritedUnread = 0;   // label draws whose inherited-font read failed (threw, or not a number)
+    bool inheritedKnown = false;   // lastInherited holds a font a draw actually read
     double lastInherited = 0.0;
     double lastGuiW = -1.0, lastGuiH = -1.0;
 };
@@ -408,14 +410,26 @@ inline bool LabelShown(const HeadLabel& l) { return l.count > 0; }
 inline constexpr char kLabelFont[] = "__newfont6";
 
 // One label draw, for `status`: the font it drew in (`used`, "" when it fell
-// back to the inherited one), the inherited font at its entry and the GUI size
-// it placed against (negative when unread, which compares with nothing). A
-// rising `fontSwitches` under a steady label measures the cause above; a
-// rising `guiResizes` says the GUI layer's size moved instead.
-inline void NoteLabelDraw(HeadLabel& l, const std::string& used, double inherited, double gw, double gh)
+// back to the inherited one), the inherited font at its entry (`inherited`,
+// meaningful only when `inheritedRead`) and the GUI size it placed against
+// (negative when unread, which compares with nothing). A rising `fontSwitches`
+// under a steady label measures the cause above; a rising `guiResizes` says
+// the GUI layer's size moved instead. `fontSwitches` compares read fonts only:
+// CallBuiltin("draw_get_font") answers an unset value both for a real "no
+// font" state and for a missing builtin (ModuleMain.cpp's draw_get_font trap),
+// so a draw whose read threw or answered a non-number counts in
+// `inheritedUnread` instead of passing as a font that never switched
+// (`fontSwitches=0` beside a rising `inheritedUnread` means the instrument was
+// blind, not that the font held).
+inline void NoteLabelDraw(HeadLabel& l, const std::string& used, bool inheritedRead, double inherited, double gw, double gh)
 {
-    if (l.draws > 0 && inherited != l.lastInherited) ++l.fontSwitches;
-    l.lastInherited = inherited;
+    if (inheritedRead) {
+        if (l.inheritedKnown && inherited != l.lastInherited) ++l.fontSwitches;
+        l.lastInherited = inherited;
+        l.inheritedKnown = true;
+    } else {
+        ++l.inheritedUnread;
+    }
     if (gw >= 0 && gh >= 0) {
         if (l.lastGuiW >= 0 && (gw != l.lastGuiW || gh != l.lastGuiH)) ++l.guiResizes;
         l.lastGuiW = gw;
@@ -430,6 +444,16 @@ inline std::string LabelFontWord(const HeadLabel& l)
 {
     if (l.draws == 0) return "none";
     return l.font.empty() ? std::string("inherited") : l.font;
+}
+
+// The status word for the inherited font the label draws last read: its
+// index, `unread` when no draw's read has worked yet, `none` before the first
+// draw. `font-cause` is read from `fontSwitches` only beside an index here.
+inline std::string InheritedFontWord(const HeadLabel& l)
+{
+    if (l.draws == 0) return "none";
+    if (!l.inheritedKnown) return "unread";
+    return std::to_string(static_cast<long>(l.lastInherited));
 }
 
 struct State {
@@ -732,8 +756,11 @@ inline LabelSpot PlaceHeadLabel(HeadLabel& l, double x, double y, double top, do
 // unlock action's answer, which opens the detour's view; `answered` is what
 // the detour then did to the chest's polls in this room. After `hook`: the
 // head label's font (`labelFont`, the name it drew in, `inherited` when the
-// name did not resolve, `none` before its first draw) and its two session
-// counters `fontSwitches` and `guiResizes` (NoteLabelDraw, D14), then
+// name did not resolve, `none` before its first draw), its session counter
+// `fontSwitches`, the inherited font's own read (`inheritedFont`, the last
+// index read or `unread`/`none`; `inheritedUnread`, draws whose read failed),
+// so a zero `fontSwitches` can be told from a blind read, and `guiResizes`
+// (NoteLabelDraw, D14), then
 // `latchedAt`, the kills counted at the latch, 0 before (D15).
 inline std::string StatusLine(const State& s, const char* hook, const char* unlock)
 {
@@ -760,6 +787,8 @@ inline std::string StatusLine(const State& s, const char* hook, const char* unlo
         + " hook=" + (hook ? hook : "?")
         + " labelFont=" + LabelFontWord(s.label)
         + " fontSwitches=" + std::to_string(s.label.fontSwitches)
+        + " inheritedFont=" + InheritedFontWord(s.label)
+        + " inheritedUnread=" + std::to_string(s.label.inheritedUnread)
         + " guiResizes=" + std::to_string(s.label.guiResizes)
         + " latchedAt=" + std::to_string(t.latchedAt);
 }

@@ -7689,9 +7689,17 @@ static void DungeonChestDraw()
             if (f.ToDouble() < 0 && !g_HhLabelFont.empty()) f = RValue(std::stod(g_HhLabelFont));
             if (f.ToDouble() >= 0) { g_Yytk->CallBuiltin("draw_set_font", { f }); fontSet = true; }
         } catch (...) {}
+        // The inherited font counts as read only when draw_get_font answered a
+        // number or an asset reference: an unset answer (a real "no font"
+        // state and a missing builtin look the same) or a throw is an unread
+        // draw for `inheritedUnread`, never a font index of -1 that hides
+        // `fontSwitches` (the draw_get_font trap). ToDouble on an unset value
+        // raises the runner's own error rather than throwing, so the kind is
+        // checked first.
+        bool inheritedRead = IsNumericInstanceRead(prevFont);
         double inherited = -1.0;
-        try { inherited = prevFont.ToDouble(); } catch (...) {}
-        ForgePact::DungeonChest::NoteLabelDraw(label, fontSet ? fontName : std::string(), inherited, gw, gh);
+        if (inheritedRead) { try { inherited = prevFont.ToDouble(); } catch (...) { inheritedRead = false; } }
+        ForgePact::DungeonChest::NoteLabelDraw(label, fontSet ? fontName : std::string(), inheritedRead, inherited, gw, gh);
         try {
             g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
             g_Yytk->CallBuiltin("draw_set_valign", { RValue(2.0) });   // bottom-aligned, like the labels
@@ -7702,12 +7710,13 @@ static void DungeonChestDraw()
             RValue pale = g_Yytk->CallBuiltin("make_colour_rgb", { RValue(236.0), RValue(232.0), RValue(220.0) });
             HhDrawOutlinedWorld(spot.x, spot.y + std::floor(lineH + 0.5), label.text, pale);
         } catch (...) {}
-        // Put back what the game had set, the font included, even after a failed draw.
+        // Put back what the game had set, the font included, even after a failed
+        // draw; an unread font has nothing to put back.
         g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha });
         g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
         g_Yytk->CallBuiltin("draw_set_valign", { prevValign });
         g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
-        g_Yytk->CallBuiltin("draw_set_font", { prevFont });
+        if (inheritedRead) g_Yytk->CallBuiltin("draw_set_font", { prevFont });
     } catch (...) {}
 }
 // DrawHudBuffs runs once per frame in the Draw GUI phase (the buff icon row); the labels

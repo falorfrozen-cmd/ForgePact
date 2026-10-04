@@ -92,6 +92,11 @@ static double LineHeight(double font) {
 }
 static bool newFont6Resolves = true;
 static double currentFont = kFontA, currentHalign = 0, currentValign = 0, currentColour = 0xFFFFFF, currentAlpha = 1;
+// The kind draw_get_font answers in: a number, an asset reference (as the
+// pack markers' draw found it can, tests/test_pack_markers_behavior.py), or
+// unset (VALUE_UNDEFINED), which CallBuiltin returns both for a real "no font"
+// state and for a missing builtin (the draw_get_font trap).
+static int fontReadKind = VALUE_REAL;
 static double guiWidth = 1920, guiHeight = 1080;
 struct DrawCall { double x, y; std::string text; double font, colour; };
 static std::vector<DrawCall> draws;
@@ -126,7 +131,12 @@ struct FakeRunner {
             return RValue(-1.0);
         }
         // The head draw's builtins.
-        if (key == "draw_get_font") return RValue(currentFont);
+        if (key == "draw_get_font") {
+            if (fontReadKind == VALUE_UNDEFINED) return RValue();
+            RValue f(currentFont);
+            f.m_Kind = fontReadKind;
+            return f;
+        }
         if (key == "draw_get_halign") return RValue(currentHalign);
         if (key == "draw_get_valign") return RValue(currentValign);
         if (key == "draw_get_colour") return RValue(currentColour);
@@ -566,8 +576,35 @@ static int Run(const std::string& scenario) {
         Frame(kFontA);
         guiWidth = 1920; guiHeight = 1080;
         Frame(kFontA);
-        check(scenario, fontSwitches == "2" && Field("fontSwitches") == "2" && Field("guiResizes") == "2",
+        check(scenario, fontSwitches == "2" && Field("fontSwitches") == "2" && Field("guiResizes") == "2"
+                && Field("inheritedFont") == "1" && Field("inheritedUnread") == "0",
             "fontSwitches(before resizes)=" + fontSwitches + " | " + Status());
+    } else if (scenario == "label-font-unread") {
+        // The instrument's own read (instrument-blindness review, round 2):
+        // draw_get_font answers unset, so the inherited font is unknown. The
+        // label still draws in __newfont6, the unread draws count in
+        // `inheritedUnread`, and `inheritedFont=unread` says `fontSwitches=0`
+        // measured nothing, however the font underneath changed (A, B, A).
+        fontReadKind = VALUE_UNDEFINED;
+        bool ok = true;
+        std::string detail;
+        for (double inherited : { kFontA, kFontB, kFontA }) {
+            const std::vector<DrawCall> calls = Frame(inherited);
+            detail += Calls(calls);
+            ok = ok && DrawnIn(calls, kNewFont6);
+        }
+        const std::string blind = Status();
+        ok = ok && Field("inheritedFont") == "unread" && Field("inheritedUnread") == "3" && Field("fontSwitches") == "0";
+        // Control: an asset reference is a read, and a switch read through it
+        // counts (A then B: one switch); the unread draws stay counted.
+        fontReadKind = VALUE_REF;
+        for (double inherited : { kFontA, kFontB }) {
+            const std::vector<DrawCall> calls = Frame(inherited);
+            detail += Calls(calls);
+            ok = ok && DrawnIn(calls, kNewFont6) && currentFont == inherited;
+        }
+        ok = ok && Field("inheritedFont") == "2" && Field("inheritedUnread") == "3" && Field("fontSwitches") == "1";
+        check(scenario, ok, "blind: " + blind + " | read: " + Status() + detail);
     } else {
         std::cout << "unknown scenario " << scenario << std::endl;
         return 2;

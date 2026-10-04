@@ -126,7 +126,8 @@ creators=<c> pending=<p> unreadable=<u> alive=<a>
 threshold=<t> remaining=<r> latched=<0|1> unlocked=<0|1>
 unlock=<ok|failed|none> answered=<n> countdown=<form> chat=<ok|unavailable>
 chatLines=<n> hook=ok|table-only|failed|none labelFont=<name>|inherited|none
-fontSwitches=<n> guiResizes=<n> latchedAt=<n>`. `total=` is the planned total,
+fontSwitches=<n> inheritedFont=<index>|unread|none inheritedUnread=<n>
+guiResizes=<n> latchedAt=<n>`. `total=` is the planned total,
 `creators=`/`pending=`/`unreadable=` what the total source counted at first
 sight (every spawner, those still to fire, those whose state it could not
 read), `unlock=` the `instance_exists` detour's install state and `answered=` the
@@ -163,6 +164,18 @@ the session and are read as deltas: a rising `fontSwitches=` under a steady
 label measures D14's cause (Live 2 drew the label at about 72 % size on single
 frames, in whatever font was current), and a rising `guiResizes=` would say
 the GUI layer's size moved instead.
+
+`fontSwitches=` is only as good as its read of the inherited font, and
+`draw_get_font` called through `CallBuiltin` answers an unset value both for
+a real "no font" state and for a missing builtin (the trap
+`toggle-skills-research.md` records, which once reported a made-up font
+index). So the read reports on itself: `inheritedFont=` is the index the
+last working read returned (`unread` while no read has worked, `none` before
+the first draw), and `inheritedUnread=` counts label draws whose read threw
+or answered something other than a number or an asset reference. Those draws
+are left out of `fontSwitches=`. A `fontSwitches=` that held still says
+something about the game only beside an `inheritedFont=` index and an
+`inheritedUnread=` that did not rise; otherwise it measured the instrument.
 
 **The total source** (`total-route: estimate`, both builds). At the chest's
 first sight the adapter counts the spawner family
@@ -904,8 +917,8 @@ countdown form `both`.
   2. Person: Cellar Key at the entrance. `dungeonchest status` → `total=T`
      with T > 0 and `threshold=ceil(T/2)`. Both recorded.
   3. First stop, label up:
-     - `dungeonchest status` read, and `labelFont=`, `fontSwitches=` and
-       `guiResizes=` recorded.
+     - `dungeonchest status` read, and `labelFont=`, `fontSwitches=`,
+       `inheritedFont=`, `inheritedUnread=` and `guiResizes=` recorded.
      - Person: stand still for ≥ 10 s.
      - A screenshot to locate the label, then the per-frame capture
        (≥ 1.0 s), then `dungeonchest status` again.
@@ -915,9 +928,13 @@ countdown form `both`.
        - `labelFont=` is not `inherited`;
        - the owner, asked after standing, saw no jitter, flicker, shake or
          size change.
-     - `font-cause` (research): `fontSwitches=` rose during the stand-still
-       (the inherited font switched under the label: cause measured) or did
-       not (not observed). The `guiResizes=` change is recorded beside it.
+     - `font-cause` (research): read only when the second status shows
+       `inheritedFont=` as a non-negative index and `inheritedUnread=` did
+       not rise during the stand-still; otherwise it is recorded as
+       `instrument unread`, with both fields, and says nothing about the
+       game. When readable: `fontSwitches=` rose during the stand-still (the
+       inherited font switched under the label: cause measured) or did not
+       (not observed). The `guiResizes=` change is recorded beside it.
      - `label-look` (research): the owner's words on the label's size and
        readability.
   4. Person: kill on to the second stop; `status` read and `threshold=`
