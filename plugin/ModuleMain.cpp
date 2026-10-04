@@ -19762,6 +19762,10 @@ static void DungeonChestTick()
 // Truth records the outermost call (before the dressing when a forge entry can
 // match, and after it - what the game will show). Its entry is also #74's rewrite point
 // (SignatureBeforeCreate): the record the item is about to be built from.
+// Loot announcements' creation guard notes every CreateItemNew return (inner
+// and outermost alike) while its switch is on: the adapter is defined far
+// below, in the loot announcement adapter.
+static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result);
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -19777,6 +19781,7 @@ static void DungeonChestTick()
             if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
         } \
         RValue& _res = *_resp; \
+        if (_final && g_LootAnnounce.Enabled()) LootAnnounceNoteCreated(argc, A, _res); \
         if (g_GemTableBuilding) return _res;   /* the gem tables' own candidates: nothing else sees them */ \
         const bool _outermost = _final && g_TruthDepth == 0; \
         const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
@@ -20934,8 +20939,11 @@ static void InstallItemInspectHooks()
     HookOneScriptTable("draw_text_outline",   "bp_dto",      (PVOID)Hook_TraceDrawTextOutline, &g_Orig_DrawTextOutline);
     HookOneScriptTable("GetItemTooltipString","bp_gitip",    (PVOID)Hook_GetItemTooltipString,&g_Orig_GetItemTooltipString);
     HookOneScriptTable("GetItemStatString",   "bp_gistat",   (PVOID)Hook_GetItemStatString,   &g_Orig_GetItemStatString);
+    // Both routes, so the research build is never blind to LootGroundCreate's
+    // direct call: installed first here (no Custom Forge entries), a table
+    // swap would be the route every later CreateItemNew installer inherits.
     if (!g_Orig_CreateItemNew)
-        HookOneScriptTable("CreateItemNew",       "bp_citemn",   (PVOID)Hook_CreateItemNew,       &g_Orig_CreateItemNew);
+        HookOneScript("CreateItemNew",            "bp_citemn",   (PVOID)Hook_CreateItemNew,       &g_Orig_CreateItemNew);
     if (!g_Orig_CreateItemInit)
         HookOneScriptTable("CreateItemInit",      "bp_citemi",   (PVOID)Hook_CreateItemInit,      &g_Orig_CreateItemInit);
     if (!g_Orig_GenerateItemRandomStats)
@@ -22654,10 +22662,18 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 // game's own code, since the table-only fallback saves the table entry.
 // The outcome goes into g_SigDetectNative, which the gate reads, and one line per switch-on names
 // it - so a switch never reports these drops on while nothing can see a hit.
+// A hook another installer put on first: its saved original is the game's own
+// code exactly when that install fell back to the table swap (an inline detour
+// saves its trampoline instead). Loot announcements' create-hook= reads it too.
+static bool SavedOriginalIsTableOnly(PFUNC_YYGMLScript orig)
+{
+    return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig);
+}
+
 static void InstallSignatureAngelicHooks()
 {
     auto savedRoute = [](PFUNC_YYGMLScript orig) {
-        return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig) ? "TABLE-ONLY" : "detoured";
+        return SavedOriginalIsTableOnly(orig) ? "TABLE-ONLY" : "detoured";
     };
     const char* cdpRoute = "detoured";
     const char* rollRoute = "detoured";
@@ -47816,31 +47832,39 @@ static void JumpSceneryCommand(const std::string& rest)
 //   - LootGroundInit's one detour, shared with hidden loot sleep
 //     (HookHiddenLootInit, installed by HiddenLootInstall): inside the call
 //     LootAnnounceOnInit only reduces argument 0 and `self` to durable
-//     handles and notes whether the bag-drop window is open. Hidden loot
-//     measured argument 0 as the ground item, a reference, on every one of
-//     1,473 calls.
-//   - LootGroundDrop, count-only: the game's "drop from the bag" path, which
-//     also reaches LootGroundInit. Its detour holds the core's bag-drop window
-//     open for the duration of the original, so an item the player drops is
-//     not announced.
+//     handles. Hidden loot measured argument 0 as the ground item, a
+//     reference, on every one of 1,473 calls; Live procedure 1 measured a bag
+//     drop reaching it too.
+//   - CreateItemNew, the shared Hook_CreateItemNew (installed here as
+//     fp_lootann_new when no other feature holds it): while the switch is on,
+//     LootAnnounceNoteCreated notes the keys of each call's argument 0 and its
+//     return into the core's creation window. This is the creation guard: a
+//     ground item counts only when its item struct was built in that frame or
+//     the one before, so a bag drop or a re-drop after a pickup (an existing
+//     struct put back on the ground) is held. It replaced a count-only
+//     LootGroundDrop window that counted 0 while Live procedure 1's bag drop
+//     was announced. A table-only CreateItemNew hook would never see
+//     LootGroundCreate's direct call, so its route is reported (create-hook=).
 // At the end of the frame (LootAnnounceTick) each noted call is resolved: the
 // first handle that is a live Loot_Ground_obj (by object_index, the object
 // named through the SDK) is the ground item; the item is its
-// kGroundItemInstanceField; the rarity is that item's itemInfoStruct["27"],
-// read by name and kept only as a number; the time stamp its itemTimeStamp.
-// The kind of a value decides how it is read, never whether. No address, no
-// struct layout.
+// kGroundItemInstanceField; its key is derived the same way as at the note
+// (a struct by its object pointer, a reference by the value it holds; a key is
+// compared, never followed); the rarity is that item's itemInfoStruct["27"],
+// read by name and kept only as a number; its itemType and itemTimeStamp make
+// its identity. The creation window then ages once, after the batch. The kind
+// of a value decides how it is read, never whether. No address, no struct
+// layout.
 //
 // The sink: one function, LootAnnounceSink, runs the body
 // ForgePact::LootAnnounceMod::kShippedSink names. All four bodies are here so
 // the research build's `lootannprobe try <n>` runs exactly the code the mod
 // would ship; Live procedure 1 picked `server` (the research doc's "Route").
-static PFUNC_YYGMLScript g_Orig_LootGroundDropLa = nullptr;
 static bool g_LaInstallTried = false;
-static const char* g_LaDropRoute = "not-installed";
-static long long g_LaBagDropCalls = 0;   // LootGroundDrop calls the detour saw
+static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route: both, table-only or none
 static long long g_LaUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
 static long long g_LaNoItem = 0;         // a ground item with no item struct to read
+static long long g_LaNoKey = 0;          // a ground item whose item value gave no key: decided as not recently created
 static long long g_LaPendingDropped = 0; // calls not noted because a frame's queue was full
 static int g_LaLootIndex = -2;           // asset_get_index of Loot_Ground_obj; -2 until resolved
 static long g_LaRefusalLogs = 0;
@@ -47858,18 +47882,16 @@ static constexpr int64_t kLaNetSendKind = 3;   // the item-drop line
 static constexpr size_t kLaPendingCap = 512;   // per frame
 
 #ifndef FORGEPACT_RELEASE
-// lootannprobe's two rows that count through this adapter's hooks rather than
-// a detour of their own (research build only, defined with lootannprobe).
+// lootannprobe's row that counts through the shared LootGroundInit detour
+// rather than a detour of its own (research build only, defined with
+// lootannprobe).
 static void LaProbeNoteInit(CInstance* S, int argc, RValue** A);
-static void LaProbeNoteDrop(CInstance* S, int argc, RValue** A);
 #endif
 
-// One call's handles, reduced inside the call, and whether a bag drop was
-// in progress then.
+// One call's handles, reduced inside the call.
 struct LaPending {
     RValue arg0;
     RValue self;
-    bool bagDrop = false;
 };
 static std::vector<LaPending> g_LaPending;
 
@@ -47898,22 +47920,36 @@ static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A)
     if (!g_LootAnnounce.Enabled()) return;
     if (g_LaPending.size() >= kLaPendingCap) { ++g_LaPendingDropped; return; }
     LaPending p;
-    p.bagDrop = g_LootAnnounce.BagDropActive();
     if (argc > 0 && A && A[0]) p.arg0 = LaDurable(*A[0]);
     if (S) p.self = LaDurable(RValue(S));
     g_LaPending.push_back(std::move(p));
 }
 
-// LootGroundDrop: count, hold the bag-drop window open, run the original.
-static RValue& LaHookLootGroundDrop(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+// An item value's key for the creation window, derived the same way at the
+// CreateItemNew note and at the ground item: a struct by its object pointer,
+// a reference by the value it holds. Any other kind gives no key. The key is
+// compared, never dereferenced or called.
+static bool LaItemKey(const RValue& v, ForgePact::LootAnnounceMod::ItemKey& out)
 {
-    ++g_LaBagDropCalls;
-#ifndef FORGEPACT_RELEASE
-    LaProbeNoteDrop(S, argc, A);
-#endif
-    if (!g_Orig_LootGroundDropLa) return R;
-    ForgePact::LootAnnounceMod::BagDropScope window(g_LootAnnounce);
-    return g_Orig_LootGroundDropLa(S, O, R, argc, A);
+    if (v.m_Kind == VALUE_OBJECT && v.m_Object) {
+        out = { ForgePact::LootAnnounceMod::kKeyStruct, (std::uint64_t)(uintptr_t)v.m_Object };
+        return true;
+    }
+    if (v.m_Kind == VALUE_REF) {
+        out = { ForgePact::LootAnnounceMod::kKeyReference, (std::uint64_t)v.m_i64 };
+        return true;
+    }
+    return false;
+}
+
+// From the shared Hook_CreateItemNew, after the game's original returned,
+// while the switch is on (ITEM_CREATE_HOOK checks Enabled() first): the item
+// instance LootGroundCreate passes in as argument 0, and the returned item.
+static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result)
+{
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    if (argc > 0 && A && A[0] && LaItemKey(*A[0], key)) g_LootAnnounce.NoteCreated(key);
+    if (LaItemKey(result, key)) g_LootAnnounce.NoteCreated(key);
 }
 
 static const char* LaInitRoute()
@@ -47921,31 +47957,39 @@ static const char* LaInitRoute()
     return g_HiddenLootInstallTried ? ForgePact::HiddenLootMod::Instance().RouteName() : "not-installed";
 }
 
-// LootGroundDrop's detour, once.
-static void LaInstallDropHook()
+// CreateItemNew: the shared Hook_CreateItemNew, by its SDK name when nobody
+// holds it yet; otherwise another feature (the Custom Forge, Item Truth,
+// signature drops, the research build's item inspection) installed it first,
+// and its route is read from the saved original the way
+// InstallSignatureAngelicHooks' savedRoute reads it: the table-only fallback
+// saves the table entry, which is the game's own code.
+static void LaInstallCreateHook()
 {
-    if (g_Orig_LootGroundDropLa) return;
+    if (g_Orig_CreateItemNew) {
+        g_LaCreateRoute = SavedOriginalIsTableOnly(g_Orig_CreateItemNew) ? "table-only" : "both";
+        return;
+    }
     bool native = false;
-    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop), "fp_lootann_drop",
-                                  (PVOID)LaHookLootGroundDrop, &g_Orig_LootGroundDropLa, &native);
-    g_LaDropRoute = ok ? (native ? "both" : "table-only") : "none";
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_lootann_new",
+                                  (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew, &native);
+    g_LaCreateRoute = ok ? (native ? "both" : "table-only") : "none";
 }
 
 // The one install path: the shared LootGroundInit detour (through
-// HiddenLootInstall, which does nothing a second time) and LootGroundDrop's.
+// HiddenLootInstall, which does nothing a second time) and CreateItemNew's.
 // A route other than both is said out loud: the game's compiled calls may
 // pass a table-only hook by.
 static void LootAnnounceInstall()
 {
     g_LaInstallTried = true;
     if (!g_HiddenLootInstallTried) HiddenLootInstall();
-    LaInstallDropHook();
+    LaInstallCreateHook();
     if (std::string_view(LaInitRoute()) != "both")
         Out(std::string("lootann: LootGroundInit hook ") + LaInitRoute()
             + " - the game's own drop calls may pass it by, so a drop may go unannounced");
-    if (std::string_view(g_LaDropRoute) != "both")
-        Out(std::string("lootann: LootGroundDrop hook ") + g_LaDropRoute
-            + " - an item dropped from the bag through the game's direct call may be announced");
+    if (std::string_view(g_LaCreateRoute) != "both")
+        Out(std::string("lootann: CreateItemNew hook ") + g_LaCreateRoute
+            + " - the game's own drops may not be seen as new, so nothing would be announced");
 }
 
 // A field of a struct-like value: variable_struct_* for a struct,
@@ -47987,6 +48031,20 @@ static std::string LaItemName(const RValue& item)
     RValue info, name;
     if (!LaField(item, "itemInfoStruct", info) || !LaField(info, "28", name) || name.m_Kind != VALUE_STRING) return "";
     try { return name.ToString(); } catch (...) { return ""; }
+}
+
+// itemType as text, the whole number; "" when it is missing or not a number.
+static std::string LaItemType(const RValue& item)
+{
+    RValue t;
+    if (!LaField(item, "itemType", t)) return "";
+    try {
+        if (t.m_Kind != VALUE_REAL && t.m_Kind != VALUE_INT32 && t.m_Kind != VALUE_INT64) return "";
+        const double v = t.ToDouble();
+        if (!std::isfinite(v)) return "";
+        return std::to_string((long long)v);
+    } catch (...) {}
+    return "";
 }
 
 // itemTimeStamp as text: a string as it is, a number in %.17g, "" otherwise.
@@ -48288,34 +48346,42 @@ static void LaProcess(const LaPending& p)
         id = InstanceIdOf(inst);
     } catch (...) {}
     if (!(item.m_Kind == VALUE_OBJECT && item.m_Object) && item.m_Kind != VALUE_REF) { ++g_LaNoItem; return; }
-    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), p.bagDrop, (int64_t)id, LaTimeStamp(item));
+    // The creation guard: was this item struct built (noted from CreateItemNew)
+    // in this frame or the one before? An item that gives no key is not.
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    const bool hasKey = LaItemKey(item, key);
+    if (!hasKey) ++g_LaNoKey;
+    const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);
+    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, LaItemType(item), LaTimeStamp(item));
     if (verdict == ForgePact::LootAnnounceMod::Verdict::Announce && !LootAnnounceSink(item, loot))
         g_LootAnnounce.NoteSinkRefused();
 }
 
 // The per-frame tick. Returns at once while the switch is off; installs the
 // hooks on the first frame after setup with the switch on; then decides the
-// calls this frame noted.
+// calls this frame noted, and ages the creation window once, after the batch.
 static void LootAnnounceTick()
 {
     if (!g_LootAnnounce.Enabled()) return;
     if (!g_LaInstallTried) LootAnnounceInstall();
-    if (g_LaPending.empty()) return;
-    std::vector<LaPending> batch;
-    batch.swap(g_LaPending);
-    for (const LaPending& p : batch) {
-        try { LaProcess(p); } catch (...) {}
+    if (!g_LaPending.empty()) {
+        std::vector<LaPending> batch;
+        batch.swap(g_LaPending);
+        for (const LaPending& p : batch) {
+            try { LaProcess(p); } catch (...) {}
+        }
     }
+    g_LootAnnounce.AgeCreationWindow();
 }
 
 static std::string LootAnnounceStatLine()
 {
     return g_LootAnnounce.StatLine()
         + " init-hook=" + LaInitRoute()
-        + " drop-hook=" + g_LaDropRoute
-        + " bag-drop-calls=" + std::to_string(g_LaBagDropCalls)
+        + " create-hook=" + g_LaCreateRoute
         + " unidentified=" + std::to_string(g_LaUnidentified)
         + " no-item=" + std::to_string(g_LaNoItem)
+        + " no-key=" + std::to_string(g_LaNoKey)
         + " queue-full=" + std::to_string(g_LaPendingDropped);
 }
 
@@ -48328,7 +48394,7 @@ static void LootAnnounceCommand(const std::string& rest)
         g_LootAnnounce.SetEnabled(true);
         if (g_Setup && !g_LaInstallTried) LootAnnounceInstall();
         Out(g_LootAnnounce.StatusLine() + " route=" + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
-            + " init-hook=" + LaInitRoute() + " drop-hook=" + g_LaDropRoute);
+            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute);
         return;
     }
     if (arg == "0" || arg == "off") {
@@ -50469,10 +50535,11 @@ static void DungeonProbeCommand(const std::string& rest)
 //
 // How a row attaches, first rule that applies (angelicprobe's ApRollAttach
 // order):
-//   1. `via fp_hiddenloot_init` / `via fp_lootann_drop` - LootGroundInit and
-//      LootGroundDrop: the loot announcement adapter's own hooks count the
-//      call (LaProbeNoteInit / LaProbeNoteDrop); LootGroundInit's one detour
-//      is shared and a second one would be refused.
+//   1. `via fp_hiddenloot_init` - LootGroundInit: the shared detour the loot
+//      announcement adapter uses counts the call (LaProbeNoteInit);
+//      LootGroundInit's one detour is shared and a second one would be
+//      refused. (LootGroundDrop is an ordinary row, fp_lap_lgdrop, under rule
+//      3: the mod no longer hooks it.)
 //   2. `via angelicprobe <row>` / `via dungeonprobe chat hook` - another
 //      research hook already holds the script: its own counter is read, no
 //      second hook goes on, and its arguments are not recorded here.
@@ -50495,7 +50562,7 @@ enum LaProbeRoute : long {
     kLaBlocked,
     kLaNotFound,
 };
-enum class LaShared { None, Init, Drop };
+enum class LaShared { None, Init };
 static constexpr long kLaProbeLogCalls = 3;
 
 struct LaProbeRow {
@@ -50533,7 +50600,7 @@ static LaProbeRow g_LaProbeRows[] = {
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatSendServerMessage),         "fp_lap_chatsend",  LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReportClient),                  "fp_lap_report",    LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundInit),                "fp_hiddenloot_init", LaShared::Init, false, false },
-    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),                "fp_lootann_drop",  LaShared::Drop, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),                "fp_lap_lgdrop",    LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem),      "fp_lap_lgcfi",     LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_6032_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_filter", LaShared::None, true, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_11081_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_step", LaShared::None, true, false },
@@ -50541,7 +50608,6 @@ static LaProbeRow g_LaProbeRows[] = {
 static constexpr int kLaProbeRowCount = (int)(sizeof(g_LaProbeRows) / sizeof(g_LaProbeRows[0]));
 static_assert(kLaProbeRowCount == 16, "one row per script in the research doc's Static search table, LaProbeDetour<0..15>");
 static constexpr int kLaRowInit = 11;
-static constexpr int kLaRowDrop = 12;
 static const PVOID kLaProbeDetours[kLaProbeRowCount] = {
     (PVOID)&LaProbeDetour<0>,  (PVOID)&LaProbeDetour<1>,  (PVOID)&LaProbeDetour<2>,  (PVOID)&LaProbeDetour<3>,
     (PVOID)&LaProbeDetour<4>,  (PVOID)&LaProbeDetour<5>,  (PVOID)&LaProbeDetour<6>,  (PVOID)&LaProbeDetour<7>,
@@ -50594,11 +50660,6 @@ static void LaProbeNoteInit(CInstance* S, int argc, RValue** A)
     // Argument 0 is the ground item, a reference (hidden loot, measured).
     if (argc > 0 && A && A[0] && (A[0]->m_Kind == VALUE_REF || A[0]->m_Kind == VALUE_REAL)) g_LaNewest = *A[0];
 }
-static void LaProbeNoteDrop(CInstance* S, int argc, RValue** A)
-{
-    if (!g_LaProbeOn) return;
-    LaProbeRecord(g_LaProbeRows[kLaRowDrop], S, argc, A);
-}
 
 static void LaProbeSetRoute(LaProbeRow& r, long route, const std::string& text)
 {
@@ -50611,19 +50672,12 @@ static void LaProbeAttach(int idx)
     LaProbeRow& r = g_LaProbeRows[idx];
     if (r.route != kLaUnattached) return;
     const std::string_view script(r.script);
-    // Rule 1: the loot announcement adapter's own hooks.
+    // Rule 1: the shared LootGroundInit detour the loot announcement adapter uses.
     if (r.shared == LaShared::Init) {
         if (!g_HiddenLootInstallTried) HiddenLootInstall();
         const std::string route = ForgePact::HiddenLootMod::Instance().RouteName();
         if (route == "none") LaProbeSetRoute(r, kLaBlocked, "blocked: LootGroundInit's shared detour did not install");
         else LaProbeSetRoute(r, kLaVia, "via fp_hiddenloot_init (" + route + ", shared with hiddenloot and lootann)");
-        return;
-    }
-    if (r.shared == LaShared::Drop) {
-        LaInstallDropHook();
-        const std::string route = g_LaDropRoute;
-        if (route == "none") LaProbeSetRoute(r, kLaBlocked, "blocked: lootann's LootGroundDrop detour did not install");
-        else LaProbeSetRoute(r, kLaVia, "via fp_lootann_drop (" + route + ")");
         return;
     }
     // Rule 2: another research hook holds it.

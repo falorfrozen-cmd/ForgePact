@@ -6,9 +6,11 @@ in the header is exactly {9, 7, 10}; the verb is a player command with its own
 early return; LootGroundInit is named in exactly one HookOneScript call in the
 player build, inside HiddenLootInstall, and the announcement installs through
 it and is handed the call by the shared detour after the game's original; the
-LootGroundDrop detour holds the bag-drop window around its original; the
-frame tick costs nothing while off and runs before hidden loot's; the rarity is
-read by name from itemInfoStruct["27"]; the research instrument `lootannprobe`
+creation guard notes every CreateItemNew return through the shared hook, its
+route is reported as create-hook=, and the mod no longer hooks LootGroundDrop;
+the frame tick costs nothing while off, runs before hidden loot's and ages the
+creation window after its batch; the rarity is read by name from
+itemInfoStruct["27"]; the research instrument `lootannprobe`
 and its count-only hook table never reach the player build; the shipped sink
 is the one the research doc's `announce-route:` names (`server`, picked by
 Live procedure 1); and the modstate object and the line formats the live
@@ -33,7 +35,7 @@ EXPECTED_ROUTE = "server"
 
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
-                       "LaProbeNoteDrop", "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay",
+                       "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay",
                        "LaProbeAnonControl", "LaProbeUnresolvedRows")
 
 # The lootannprobe research block's own bounds in ModuleMain.cpp.
@@ -111,8 +113,25 @@ class LootAnnounceHeaderTests(unittest.TestCase):
 
     def test_it_starts_off_and_counts_what_it_holds_back(self):
         self.assertIn("bool m_Enabled = false;", self.code)
-        for counter in ("seen", "announced", "heldRarity", "heldNoRarity", "heldDuplicate", "heldBagDrop", "sinkRefused"):
+        for counter in ("seen", "announced", "heldRarity", "heldNoRarity", "heldDuplicate", "heldBagDrop", "sinkRefused",
+                        "created", "createOverflow"):
             self.assertRegex(self.code, rf"long long {counter} = 0;", counter)
+
+    def test_the_creation_window_replaced_the_bag_drop_window(self):
+        # Live procedure 1's bag drop was announced while the LootGroundDrop
+        # window counted 0; the core now decides on "built this frame or the
+        # last", with a capped window that switching off clears.
+        for gone in ("BagDropScope", "BeginBagDrop", "EndBagDrop", "BagDropActive", "m_BagDropDepth"):
+            self.assertNotIn(gone, self.code, gone)
+        cap = re.search(r"static constexpr std::size_t kCreationCap = (\d+);", self.code)
+        self.assertIsNotNone(cap)
+        self.assertGreaterEqual(int(cap.group(1)), 1024)
+        decide = _body(self.code, "Verdict Decide(")
+        self.assertLess(decide.index("++m_Stats.seen;"), decide.index("if (!recentlyCreated)"))
+        self.assertLess(decide.index("if (!recentlyCreated)"), decide.index("kRarityUnread"))
+        enabled = _body(self.code, "void SetEnabled(bool on)")
+        self.assertIn("m_CreatedNow.clear();", enabled)
+        self.assertIn("m_CreatedBefore.clear();", enabled)
 
     def test_it_is_game_independent(self):
         for forbidden in ("RValue", "CInstance", "g_Yytk", "YYTK", "#include <Windows", "Aurie"):
@@ -138,7 +157,7 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         stat = _body(self.code, "std::string StatLine() const")
         fields = re.findall(r'" ([a-z-]+)="', stat)
         self.assertEqual(fields, ["route", "seen", "announced", "held-rarity", "held-no-rarity", "held-duplicate",
-                                  "held-bag-drop", "sink-refused", "remembered"])
+                                  "held-bag-drop", "sink-refused", "remembered", "created", "create-overflow"])
 
 
 class LootAnnouncePluginWiringTests(unittest.TestCase):
@@ -184,23 +203,73 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         statements = [s.strip() for s in on_init.split("\n") if s.strip() and not s.strip().startswith("#")]
         self.assertEqual(statements[1] if statements[0].startswith("LaProbeNoteInit") else statements[0],
                          "if (!g_LootAnnounce.Enabled()) return;")
-        # Inside the call: the handles are reduced and the bag-drop window
-        # noted; no item is read, nothing is decided or said there.
-        self.assertIn("g_LootAnnounce.BagDropActive()", on_init)
-        for forbidden in ("Decide(", "LootAnnounceSink(", "itemInfoStruct", "ChatAdd"):
+        # Inside the call: the handles are reduced; no item is read, nothing is
+        # decided or said there.
+        for forbidden in ("Decide(", "LootAnnounceSink(", "itemInfoStruct", "ChatAdd", "BagDrop"):
             self.assertNotIn(forbidden, on_init, forbidden)
 
-    def test_the_bag_drop_detour_holds_the_window_around_its_original(self):
-        lai = _code(_body(self.plugin, "static void LaInstallDropHook()"))
-        self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop)", lai)
-        self.assertIn("&g_Orig_LootGroundDropLa, &native)", lai)
-        drop = _code(_body(self.plugin, "static RValue& LaHookLootGroundDrop(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
-        self.assertIn("ForgePact::LootAnnounceMod::BagDropScope window(g_LootAnnounce);", drop)
-        self.assertLess(drop.index("BagDropScope window"), drop.index("g_Orig_LootGroundDropLa(S, O, R, argc, A)"))
+    def test_the_creation_guard_notes_every_create_item_new_return(self):
+        # The note sits in the shared hook body, for CreateItemNew only, after
+        # the original returns and before the gem tables' early return, behind
+        # one enabled check; inner and outermost calls alike.
+        start = self.plugin.index("#define ITEM_CREATE_HOOK(NAME)")
+        macro = self.plugin[start:self.plugin.index("ITEM_CREATE_HOOK(CreateItemNew)", start)]
+        note = "if (_final && g_LootAnnounce.Enabled()) LootAnnounceNoteCreated(argc, A, _res);"
+        self.assertEqual(macro.count(note), 1)
+        self.assertLess(macro.index("_resp = &g_Orig_##NAME(S, O, R, argc, A);"), macro.index(note))
+        self.assertLess(macro.index(note), macro.index("if (g_GemTableBuilding) return _res;"))
+        self.assertNotIn("g_TruthDepth == 0) LootAnnounceNoteCreated", macro)
+        # Declared before the macro, defined in the adapter.
+        self.assertLess(self.plugin.index("static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result);"),
+                        start)
+        noted = _code(_body(self.plugin, "static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result)"))
+        self.assertIn("LaItemKey(*A[0], key)) g_LootAnnounce.NoteCreated(key);", noted)
+        self.assertIn("if (LaItemKey(result, key)) g_LootAnnounce.NoteCreated(key);", noted)
+        # The key: a struct by its object pointer, a reference by the value it
+        # holds, anything else none; compared, never followed.
+        key = _code(_body(self.plugin, "static bool LaItemKey(const RValue& v, ForgePact::LootAnnounceMod::ItemKey& out)"))
+        self.assertIn("v.m_Kind == VALUE_OBJECT && v.m_Object", key)
+        self.assertIn("ForgePact::LootAnnounceMod::kKeyStruct, (std::uint64_t)(uintptr_t)v.m_Object", key)
+        self.assertIn("v.m_Kind == VALUE_REF", key)
+        self.assertIn("ForgePact::LootAnnounceMod::kKeyReference, (std::uint64_t)v.m_i64", key)
+        self.assertIn("return false;", key)
+        for forbidden in ("->", "CallBuiltin", "*v.m_Object"):
+            self.assertNotIn(forbidden, key, forbidden)
+        # The mod no longer hooks LootGroundDrop; its bag-drop window is gone.
+        for gone in ("g_Orig_LootGroundDropLa", "fp_lootann_drop", "LaHookLootGroundDrop", "LaInstallDropHook",
+                     "g_LaDropRoute", "g_LaBagDropCalls", "BagDropScope", "BagDropActive"):
+            self.assertNotIn(gone, self.plugin, gone)
+        self.assertNotIn("gml_Script_LootGroundDrop", self.adapter)
+
+    def test_create_item_new_is_installed_and_its_route_said(self):
+        lai = _code(_body(self.plugin, "static void LootAnnounceInstall()"))
+        self.assertIn("LaInstallCreateHook();", lai)
+        self.assertLess(lai.index("HiddenLootInstall();"), lai.index("LaInstallCreateHook();"))
+        self.assertIn('std::string_view(g_LaCreateRoute) != "both"', lai)
+        self.assertIn('"lootann: CreateItemNew hook "', lai)
+        create = _code(_body(self.plugin, "static void LaInstallCreateHook()"))
+        self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_lootann_new",', create)
+        self.assertIn("(PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew, &native)", create)
+        self.assertIn('g_LaCreateRoute = ok ? (native ? "both" : "table-only") : "none";', create)
+        # Held by another feature first: read from its saved original, the way
+        # InstallSignatureAngelicHooks' savedRoute does.
+        self.assertLess(create.index("if (g_Orig_CreateItemNew)"), create.index("HookOneScript("))
+        self.assertIn('SavedOriginalIsTableOnly(g_Orig_CreateItemNew) ? "table-only" : "both"', create)
+        saved = _code(_body(self.plugin, "static void InstallSignatureAngelicHooks()"))
+        self.assertIn("SavedOriginalIsTableOnly(orig)", saved)
+        # The research build's item inspection installs it with both routes,
+        # so no later installer inherits a table swap.
+        inspect = _code(_body(self.plugin, "static void InstallItemInspectHooks()"))
+        self.assertIn('HookOneScript("CreateItemNew",', inspect)
+        self.assertNotIn('HookOneScriptTable("CreateItemNew"', inspect)
 
     def test_the_tick_costs_nothing_while_off_and_runs_before_hidden_loot(self):
         tick = [l.strip() for l in _code(_body(self.plugin, "static void LootAnnounceTick()")).splitlines() if l.strip()]
         self.assertEqual(tick[0], "if (!g_LootAnnounce.Enabled()) return;")
+        # The creation window ages once per tick, after its batch, whether or
+        # not the frame noted a ground item.
+        self.assertEqual(tick[-1], "g_LootAnnounce.AgeCreationWindow();")
+        self.assertEqual(sum(l.count("AgeCreationWindow") for l in tick), 1)
         frame = _code(_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
         self.assertEqual(frame.count("LootAnnounceTick();"), 1)
         self.assertIn("if (g_Setup) LootAnnounceTick();", frame)
@@ -216,7 +285,12 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         process = _code(_body(self.plugin, "static void LaProcess(const LaPending& p)"))
         self.assertIn("HeroSiege::Player::kGroundItemInstanceField", process)
         self.assertIn("HeroSiege::Objects::GameObject::Loot_Ground_obj", process)
-        self.assertIn("g_LootAnnounce.Decide(LaRarity(item), p.bagDrop, (int64_t)id, LaTimeStamp(item))", process)
+        self.assertIn("const bool hasKey = LaItemKey(item, key);", process)
+        self.assertIn("if (!hasKey) ++g_LaNoKey;", process)
+        self.assertIn("const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);", process)
+        self.assertIn("g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, LaItemType(item), LaTimeStamp(item))", process)
+        item_type = _code(_body(self.plugin, "static std::string LaItemType(const RValue& item)"))
+        self.assertIn('LaField(item, "itemType", t)', item_type)
         # The kind never decides whether the read happens: no instance-kind gate.
         self.assertNotIn("IsInstanceHandle", process)
 
@@ -329,9 +403,15 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
             "gml_Script_anon_6032_gml_Object_Loot_Ground_obj_Create_0",
             "gml_Script_anon_11081_gml_Object_Loot_Ground_obj_Create_0",
         ])
-        # LootGroundInit and LootGroundDrop count through the adapter's hooks.
+        # LootGroundInit counts through the shared detour; LootGroundDrop is an
+        # ordinary count-only row of its own, since the mod no longer hooks it.
         self.assertIn("LaShared::Init", table)
-        self.assertIn("LaShared::Drop", table)
+        self.assertNotIn("LaShared::Drop", code)
+        self.assertNotIn("kLaRowDrop", code)
+        self.assertIn('gml_Script_LootGroundDrop),                "fp_lap_lgdrop",    LaShared::None,', table)
+        rule1 = self.plugin[self.plugin.index("//   1. `via fp_hiddenloot_init`"):self.plugin.index("//   2. `via angelicprobe")]
+        self.assertNotIn("fp_lootann_drop", rule1)
+        self.assertNotIn("LaProbeNoteDrop", rule1)
         # A row held by another research hook is read, never hooked twice.
         attach = _code(_body(self.plugin, "static void LaProbeAttach(int idx)"))
         self.assertIn("g_ApRollRows", attach)
@@ -354,7 +434,9 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('if (arg.empty() || arg == "stat") { Out(LootAnnounceStatLine()); return; }', command)
         stat = _code(_body(self.plugin, "static std::string LootAnnounceStatLine()"))
         fields = re.findall(r'" ([a-z-]+)="', stat)
-        self.assertEqual(fields, ["init-hook", "drop-hook", "bag-drop-calls", "unidentified", "no-item", "queue-full"])
+        self.assertEqual(fields, ["init-hook", "create-hook", "unidentified", "no-item", "no-key", "queue-full"])
+        # `lootann 1` names both hooks' routes.
+        self.assertIn('" init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute', command)
 
 
 if __name__ == "__main__":
