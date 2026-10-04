@@ -116,6 +116,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Satanic Zone control (ForgePact #157): the World tab's two switches
     # and the exact-zone pin (test_satanic_zone_control.py pins it).
     "satzone",
+    # Loot announcements, Mods > Quality of Life (ForgePact #17;
+    # test_loot_announce_contract.py).
+    "lootann",
 }
 
 

@@ -860,6 +860,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "jumpscenery",
             # Satanic Zone control (ForgePact #157; test_satanic_zone_control.py).
             "satzone",
+            # Loot announcements (ForgePact #17;
+            # test_loot_announce_contract.py).
+            "lootann",
         }
         self.assertEqual(entries, expected)
 
@@ -3039,8 +3042,9 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # test_incident_monitor_contract.py), `dungeonchest` is Dungeon
         # chest opens early (ForgePact #31, test_dungeon_chest_behavior.py),
         # `jumpscenery` is Jump through scenery's switch (ForgePact #16,
-        # test_jump_scenery_mod_contract.py), and `satzone` is the Satanic
-        # Zone control (ForgePact #157).
+        # test_jump_scenery_mod_contract.py), `satzone` is the Satanic
+        # Zone control (ForgePact #157), and `lootann` is Loot
+        # announcements (ForgePact #17, test_loot_announce_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3048,7 +3052,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone"})
+                                        "jumpscenery", "satzone", "lootann"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
