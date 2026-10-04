@@ -30503,13 +30503,16 @@ static bool CpIsProfileGetter(const CpTarget& t)
 // Which install holds CreateItemNew, for a message only (toolkit #147):
 // whether it is held is decided by the addresses (CpInstall, CpResolve), never
 // by these flags. Custom Forge and Item Truth install both routes at setup,
-// before the research build's table-only bp_citemn, which installs only if
-// neither did.
+// before the research build's bp_citemn, which installs only if neither did
+// and since ForgePact #17 installs both routes too. So with neither flag set
+// the holder is bp_citemn on either path: inlineDetour no longer changes the
+// name (the inline detour, or the table swap HookOneScript fell back to).
 static const char* CpItemHookName(bool inlineDetour)
 {
+    (void)inlineDetour;
     if (g_CustomForgeHooksActive) return "custom forge";
     if (g_TruthOn) return "item truth";
-    return inlineDetour ? "custom forge / item truth" : "bp_citemn";
+    return "bp_citemn";
 }
 
 // Same resolution as PpResolve: name -> CScript -> the compiled function. The
@@ -30519,10 +30522,10 @@ static const char* CpItemHookName(bool inlineDetour)
 // never after.
 //
 // One exception, toolkit #147 (docs/stash-bag-layout-research.md, Instrument):
-// this build's own item-inspect hook swaps CreateItemNew's table entry at
-// setup, table-only (bp_citemn), and keeps the game's function as its saved
-// original. That original is detoured instead - TgProbeAttach's shape - so the
-// row sees both routes; it still has to pass the same executable-code check.
+// when an install of CreateItemNew (bp_citemn included) had HookOneScript fall
+// back to the table swap, the entry is a plugin detour and the saved original
+// is the game's function. That original is detoured instead - TgProbeAttach's
+// shape - so the row sees both routes; it still has to pass the same executable-code check.
 // On that path `why` names it for the detoured line; the address is never
 // read off anything but the saved original the install resolved by name.
 static PVOID CpResolve(const CpTarget& t, std::string& why)
@@ -30578,8 +30581,9 @@ static void CpInstall(const std::vector<std::string>& filters)
             ++held;
             continue;
         }
-        // Toolkit #147: Custom Forge or Item Truth installs CreateItemNew
-        // through HookOneScript, whose inline detour leaves its saved
+        // Toolkit #147: Custom Forge, Item Truth or (ForgePact #17) this
+        // build's bp_citemn installs CreateItemNew through HookOneScript,
+        // whose inline detour leaves its saved
         // original a trampoline, not the game's code. A second detour would
         // fail, so the row is held. Decided by that address; a HookOneScript
         // that fell back to TABLE-ONLY keeps the game's function there, and
