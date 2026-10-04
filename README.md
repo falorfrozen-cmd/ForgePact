@@ -1434,8 +1434,8 @@ on the ground is announced in the in-game chat.
   drops is made anew on your side, so it can be announced.
 - **How the line is shown.** A red `SERVER: <your character> found <item
   name>` line, for example `SERVER: Sorak found Headhunter`. It is not the
-  game's own online announcement: the game's own announcement could not be
-  made to run offline, so the mod writes this line itself.
+  game's own online announcement: the game's own announcement does not run
+  offline, so the mod writes this line itself.
 - **The game's online behaviour is untouched.** Nothing is sent over the
   network on purpose, and the switch changes nothing while it is off.
 - **Checked in play** (2026-10-04, on the research build): a placed Heroic
