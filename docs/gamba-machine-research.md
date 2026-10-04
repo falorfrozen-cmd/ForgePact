@@ -191,13 +191,13 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
 
 - **Event rows** (compiled-code table walk): `Create_0`, `Alarm_0`, `Alarm_9`,
   `Step_0` and `CleanUp_0` of `Slot_Machine_01_obj`. Each counts its calls and
-  logs the instance id and the frame number of the first N calls.
+  logs the instance id and the frame number (trace budget below).
   - Each `gml_Object_Slot_Machine_01_obj_*` name is resolved in the table by
     name at `hook` time, never by a stored address.
   - A row whose function is not executable inside `Hero_Siege.exe`
-    (`AddrIsExecutableInModule`) is refused. A row the table has swapped (the
-    profiler re-reads such rows from disk) is reported `row=swapped` and
-    skipped. A name the table does not hold is reported `row=missing`.
+    (`AddrIsExecutableInModule`), that is, one a mod has swapped, is reported
+    `row=swapped` and skipped. A name the table does not hold is reported
+    `row=missing`.
   - Otherwise the row is detoured with `MmCreateHook` and a tagged thunk, as
     `HookOneScript`'s native half does, with the `(self, other)` event
     signature.
@@ -212,7 +212,7 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
   `CreateLootInFreePos`, `CreateItemNew`, `DropItem`, `DropUniqueItems`,
   `GetUniqueRepoStruct`, `CreateDefaultParams`, `cpr_irandom` and
   `cpr_rand32`, each through its `HeroSiege::Scripts` constant. Each logs
-  `argc`, up to six described arguments and the result for the first N calls;
+  `argc`, up to six described arguments and the result (trace budget below);
   `GPV`/`SPV` log key and value, so the machine's state keys surface.
 - **Builtin rows**, machine-self filter (`HookBuiltin`): `irandom`,
   `irandom_range`, `random`, `random_range`, `choose`, `instance_destroy`,
@@ -220,15 +220,36 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
   is the call's `self`, read by the instance-handle rule. `hook` refuses while
   `citrace`, `jumpprobe` or `jumpscenery` holds one of them, as `jumpprobe
   hook` does.
-- **Shared rows.** A script or builtin detours once. The rows the player build
-  already detours are shared through their existing bodies (a research-only
-  branch that checks `self` against the machine's object index), not hooked
-  again: `GetUniqueRepoStruct` and `CreateDefaultParams`
-  (`InstallSignatureAngelicHooks`, #74), `CreateItemNew` (custom forge, item
-  truth), `LootGroundCreate` (mining ore), `GPV` (`abysstrace`),
-  `DebugLogAddExt` (`debuglog`), and `instance_create_depth` /
-  `instance_create_layer` (density). `hook` calls the existing installer when
-  one of them is not yet installed, then arms its branch.
+- **Shared rows.** A script or builtin detours once. The rows another install
+  already detours are shared, not hooked again: `GetUniqueRepoStruct` and
+  `CreateDefaultParams` (`InstallSignatureAngelicHooks`, #74), `CreateItemNew`
+  (custom forge, item truth), `LootGroundCreate` (mining ore), `GPV`
+  (`abysstrace`), `instance_create_depth` / `instance_create_layer` (density),
+  and `instance_destroy` while co-op's or `destroywatch`'s hook holds it.
+  - `hook` runs the existing installer when one of them is not yet installed,
+    then splices the probe's detour into that hook's saved original: the
+    holder's body calls the probe, which calls the real trampoline. The probe
+    sees exactly the calls the holder sees, on both routes, and no player
+    hook body changes.
+  - Only a holder whose saved original is a trampoline (a native detour) is
+    spliced. A table-only holder would see too little, and splicing it would
+    make its own route check read it as detoured, so that row stays
+    `missing` and its line names the holder and the reason.
+  - `DebugLogAddExt` (`debuglog`) is not a probe row: `Alarm_9`'s spawn line
+    is read from `bp_ipc\gamelog.txt` through `debuglog`, step 1 of § Live
+    procedure 1.
+
+**Trace budget.** Every row counts every call. While the probe is armed (from
+`hook` until `off`) or its lever is on, a call is classified by its `self`: a
+machine, another `self` inside a machine's own event (counted as `in-event=`
+and logged with `scope=machine-event`, in case the prize is placed from a
+`with` block or a struct method), or anything else. The first two are logged,
+at most 40 lines per row (`kTraceLinesPerRow`); a line that repeats the row's
+last line for the same first argument (one `GPV` key read every step, say) is
+not logged and costs nothing, so idle `Step_0` reads cannot spend the budget
+before the first spin. Once a row's budget is spent its calls are still
+counted, but not described. The `rng` lever still answers machine-self calls
+only.
 
 **The machine-self filter.** A call counts for the machine only when its `self`
 resolves (instance-handle rule, `VALUE_REF` accepted) to an instance whose
@@ -245,7 +266,10 @@ kind check, and a call from any other object passes through untouched.
   `Create_0` and `Alarm_9` rows are its positive control.
 - **`gambaprobe rng <value> [count]`**: answers the next `count` machine-self
   RNG builtin calls with `value` and logs what was replaced, then turns itself
-  off. It writes a result only when it answers, and then runs no original. A
+  off (`count` 1 to 50, default 1). For `choose`, `value` is the index of the
+  argument to answer with; a value that names no argument runs the original
+  and counts as out-of-range. It writes a result only when it answers, and
+  then runs no original. A
   lever that is armed but that no machine call ever reached is reported
   inert in `status`.
 - **`gambaprobe drop`**: builds Goburin's Head through the measured loader
