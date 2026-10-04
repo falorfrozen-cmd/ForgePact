@@ -12,6 +12,21 @@ proven`, `aoe-route: proven`). The sliders themselves (panel rows, `statadd`
 entries, release notes) are the next workorder, and they start from this
 document.
 
+Update (2026-10-04, the implementation workorder): **the sliders are built.**
+The player command `skillslider <projamount|aoesize|projspeed> <value>`
+(`plugin/include/ForgePact/SkillSlidersMod.hpp`, both builds, each off by
+default) adds after the game's own calculation on the three proven routes:
+`ReturnExtraSpellProjectiles` and `ReturnExtraProjectilesRanged` for the
+amount, `StatAOESkillSize` element 0 for the AoE, and stat 75 through
+`ReturnSpecificStat` inside the player's own `LoadAllModifiers` for the speed
+(the stat form; the instance form did not ship). Only `Player_obj` and
+`Universal_Double_Cast_obj` count. The panel draws them as Modifiers → Skills,
+and ForgePact 2.3.0's release notes carry them. Design, scope, the `projprobe`
+exclusion, tests and verification status: the hub guide's section "Skill
+sliders (`skillslider`, issue #160)" (`docs/submodules/ForgePact/instructions.md`).
+Status there: built and unit-tested, live confirmation pending. The sections
+below are the research record and are unchanged.
+
 Every claim carries one of four labels, as in
 [`docs/models/skill-stat-spec.md`](../../docs/models/skill-stat-spec.md):
 
