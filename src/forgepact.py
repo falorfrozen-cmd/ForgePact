@@ -305,6 +305,11 @@ DEFAULTS = {
     # HIDDEN_LOOT_KEYS (0 = none). Left Alt (164) by default, the owner's
     # choice (2026-09-28); only sent while the switch is on.
     "mod_hidden_loot_key": 164,
+    # Jump through scenery (docs/jump-scenery-research.md, #16): the universal
+    # jump passes scenery that would stop it, only when it would land on open
+    # ground inside the room; zone gates and locks still block. Off by
+    # default; offline only, like every mod here.
+    "mod_jump_scenery": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -349,6 +354,14 @@ DEFAULTS = {
         "buff": {str(i): True for i, *_ in SATANIC_BUFF_LIST},
         "debuff": {str(i): True for i, *_ in SATANIC_DEBUFF_LIST},
     },
+    # Satanic Zone control (ForgePact #157, docs/satanic-zone-mods-research.md
+    # "Live 3"): keep the zone the player is in pinned as the resolved zone
+    # (`satzone follow 1`), or make every zone count as satanic by forcing
+    # LoadSatanicZone's answer (`satzone everywhere 1`). Off by default; the
+    # exact-zone pin (`satzone pin <index>`) is a command, not a setting, and
+    # everything off leaves the game's own rolling untouched.
+    "satanic_follow": False,
+    "satanic_everywhere": False,
     # Slider on/off switches, keyed by SLIDER_SWITCH_IDS.  Only switches the
     # player turned off are stored (`False`); a missing id means on, so every
     # older saved file reads as all-on.  An off slider keeps its value; the
@@ -1079,6 +1092,10 @@ def build_cmds(cfg: dict) -> list:
         # goes first, 0 included, so the switch never starts with a stale one.
         out.append(hidden_loot_key_cmd(cfg))
         out.append("hiddenloot 1")
+    if cfg.get("mod_jump_scenery", False):
+        # Safe to send at launch: `jumpscenery 1` only turns the switch on;
+        # the plugin decides nothing until the player's own jump starts.
+        out.append("jumpscenery 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -1140,6 +1157,14 @@ def build_cmds(cfg: dict) -> list:
         disabled = [k for k, v in pool.items() if not v]
         if disabled:
             out.append(f"satmods {polarity} {','.join(disabled)}")
+    if cfg.get("satanic_follow", False):
+        # Safe to send at launch: the pin tick only reads once a controller
+        # exists, and follow skips towns and sub-areas.
+        out.append("satzone follow 1")
+    if cfg.get("satanic_everywhere", False):
+        # Safe to send at launch: only arms the flag; the plugin installs its
+        # LoadSatanicZone hook once a player exists (the restartanytime rule).
+        out.append("satzone everywhere 1")
     return out
 
 
@@ -2789,7 +2814,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_follow", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -2887,6 +2912,10 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"petrelic {1 if cfg['mod_pet_relic_pickup'] else 0}"], cfg)
                     elif key == "mod_pet_loot_unstick":
                         send_cmds([f"petunstick {1 if cfg['mod_pet_loot_unstick'] else 0}"], cfg)
+                    elif key == "satanic_follow":
+                        send_cmds([f"satzone follow {1 if cfg['satanic_follow'] else 0}"], cfg)
+                    elif key == "satanic_everywhere":
+                        send_cmds([f"satzone everywhere {1 if cfg['satanic_everywhere'] else 0}"], cfg)
                     elif key == "mod_auto_prospect":
                         cmds = [f"autoprospect {1 if cfg['mod_auto_prospect'] else 0}"]
                         # Turning the parent on restates the child, as map
@@ -2923,6 +2952,8 @@ class H(BaseHTTPRequestHandler):
                         # Always sent, switch on or off: the plugin stores the
                         # key and reads it only while the switch is on.
                         send_cmds([hidden_loot_key_cmd(cfg)], cfg)
+                    elif key == "mod_jump_scenery":
+                        send_cmds([f"jumpscenery {1 if cfg['mod_jump_scenery'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

@@ -52,6 +52,9 @@
   "#density_rolling",
   "#mod_pet_relic_pickup",
   "#mod_hidden_loot",
+  "#satanic_follow",
+  "#satanic_everywhere",
+  "#mod_jump_scenery",
   "#mod_hidden_loot_key",
   "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
   "#sw_percent_stats_skillhaste",
@@ -5161,6 +5164,237 @@
   },
   {
    "step": 433,
+   "control": "tab:world",
+   "action": "click"
+  },
+  {
+   "step": 434,
+   "control": "#satanic_follow",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "satanic_follow",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "satzone follow 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 435,
+   "control": "#satanic_follow",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "satanic_follow",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "satzone follow 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 436,
+   "control": "#satanic_follow",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 434
+    },
+    "cmds": {
+     "same": 434
+    }
+   }
+  },
+  {
+   "step": 437,
+   "control": "#enabledMods .quick-disable[data-for=\"satanic_follow\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 435
+    },
+    "cmds": {
+     "same": 435
+    }
+   }
+  },
+  {
+   "step": 438,
+   "control": "#satanic_everywhere",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "satanic_everywhere",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "satzone everywhere 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 439,
+   "control": "#satanic_everywhere",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "satanic_everywhere",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "satzone everywhere 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 440,
+   "control": "#satanic_everywhere",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 438
+    },
+    "cmds": {
+     "same": 438
+    }
+   }
+  },
+  {
+   "step": 441,
+   "control": "#enabledMods .quick-disable[data-for=\"satanic_everywhere\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 439
+    },
+    "cmds": {
+     "same": 439
+    }
+   }
+  },
+  {
+   "step": 442,
+   "control": "tab:mods",
+   "action": "click"
+  },
+  {
+   "step": 443,
+   "control": "subtab:qol",
+   "action": "click"
+  },
+  {
+   "step": 444,
+   "control": "#mod_jump_scenery",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_jump_scenery",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "jumpscenery 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 445,
+   "control": "#mod_jump_scenery",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_jump_scenery",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "jumpscenery 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 446,
+   "control": "#mod_jump_scenery",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 444
+    },
+    "cmds": {
+     "same": 444
+    }
+   }
+  },
+  {
+   "step": 447,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_jump_scenery\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 445
+    },
+    "cmds": {
+     "same": 445
+    }
+   }
+  },
+  {
+   "step": 448,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -5173,7 +5407,7 @@
    }
   },
   {
-   "step": 434,
+   "step": 449,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "17",
@@ -5197,7 +5431,7 @@
    }
   },
   {
-   "step": 435,
+   "step": 450,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "0",
@@ -5221,7 +5455,7 @@
    }
   },
   {
-   "step": 436,
+   "step": 451,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "164",
@@ -5245,7 +5479,7 @@
    }
   },
   {
-   "step": 437,
+   "step": 452,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -5258,12 +5492,12 @@
    }
   },
   {
-   "step": 438,
+   "step": 453,
    "control": "tab:modifiers",
    "action": "click"
   },
   {
-   "step": 439,
+   "step": 454,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "max",
    "expect": {
@@ -5287,7 +5521,7 @@
    }
   },
   {
-   "step": 440,
+   "step": 455,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "min",
    "expect": {
@@ -5311,20 +5545,20 @@
    }
   },
   {
-   "step": 441,
+   "step": 456,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 439
+     "same": 454
     },
     "cmds": {
-     "same": 439
+     "same": 454
     }
    }
   },
   {
-   "step": 442,
+   "step": 457,
    "control": "#sw_percent_stats_skillhaste",
    "action": "click",
    "expect": {
@@ -5341,12 +5575,12 @@
      ]
     },
     "cmds": {
-     "same": 440
+     "same": 455
     }
    }
   },
   {
-   "step": 443,
+   "step": 458,
    "control": "#sw_percent_stats_skillhaste",
    "action": "click",
    "expect": {
@@ -5363,25 +5597,25 @@
      ]
     },
     "cmds": {
-     "same": 441
+     "same": 456
     }
    }
   },
   {
-   "step": 444,
+   "step": 459,
    "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_skillhaste\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 442
+     "same": 457
     },
     "cmds": {
-     "same": 442
+     "same": 457
     }
    }
   },
   {
-   "step": 445,
+   "step": 460,
    "control": "#sw_percent_stats_skillhaste",
    "action": "click",
    "expect": {
@@ -5398,25 +5632,25 @@
      ]
     },
     "cmds": {
-     "same": 443
+     "same": 458
     }
    }
   },
   {
-   "step": 446,
+   "step": 461,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "min",
    "expect": {
     "posts": {
-     "same": 440
+     "same": 455
     },
     "cmds": {
-     "same": 440
+     "same": 455
     }
    }
   },
   {
-   "step": 447,
+   "step": 462,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "max",
    "expect": {
@@ -5440,7 +5674,7 @@
    }
   },
   {
-   "step": 448,
+   "step": 463,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "min",
    "expect": {
@@ -5464,20 +5698,20 @@
    }
   },
   {
-   "step": 449,
+   "step": 464,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 447
+     "same": 462
     },
     "cmds": {
-     "same": 447
+     "same": 462
     }
    }
   },
   {
-   "step": 450,
+   "step": 465,
    "control": "#sw_percent_stats_allskills",
    "action": "click",
    "expect": {
@@ -5494,12 +5728,12 @@
      ]
     },
     "cmds": {
-     "same": 448
+     "same": 463
     }
    }
   },
   {
-   "step": 451,
+   "step": 466,
    "control": "#sw_percent_stats_allskills",
    "action": "click",
    "expect": {
@@ -5516,25 +5750,25 @@
      ]
     },
     "cmds": {
-     "same": 449
+     "same": 464
     }
    }
   },
   {
-   "step": 452,
+   "step": 467,
    "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_allskills\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 450
+     "same": 465
     },
     "cmds": {
-     "same": 450
+     "same": 465
     }
    }
   },
   {
-   "step": 453,
+   "step": 468,
    "control": "#sw_percent_stats_allskills",
    "action": "click",
    "expect": {
@@ -5551,30 +5785,30 @@
      ]
     },
     "cmds": {
-     "same": 451
+     "same": 466
     }
    }
   },
   {
-   "step": 454,
+   "step": 469,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "min",
    "expect": {
     "posts": {
-     "same": 448
+     "same": 463
     },
     "cmds": {
-     "same": 448
+     "same": 463
     }
    }
   },
   {
-   "step": 455,
+   "step": 470,
    "control": "tab:loot",
    "action": "click"
   },
   {
-   "step": 456,
+   "step": 471,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "max",
    "expect": {
@@ -5598,7 +5832,7 @@
    }
   },
   {
-   "step": 457,
+   "step": 472,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "min",
    "expect": {
@@ -5622,20 +5856,20 @@
    }
   },
   {
-   "step": 458,
+   "step": 473,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 456
+     "same": 471
     },
     "cmds": {
-     "same": 456
+     "same": 471
     }
    }
   },
   {
-   "step": 459,
+   "step": 474,
    "control": "#sw_drops_mining_ore_rolls",
    "action": "click",
    "expect": {
@@ -5652,12 +5886,12 @@
      ]
     },
     "cmds": {
-     "same": 457
+     "same": 472
     }
    }
   },
   {
-   "step": 460,
+   "step": 475,
    "control": "#sw_drops_mining_ore_rolls",
    "action": "click",
    "expect": {
@@ -5674,25 +5908,25 @@
      ]
     },
     "cmds": {
-     "same": 458
+     "same": 473
     }
    }
   },
   {
-   "step": 461,
+   "step": 476,
    "control": "#enabledMods .quick-disable[data-for=\"sw_drops_mining_ore_rolls\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 459
+     "same": 474
     },
     "cmds": {
-     "same": 459
+     "same": 474
     }
    }
   },
   {
-   "step": 462,
+   "step": 477,
    "control": "#sw_drops_mining_ore_rolls",
    "action": "click",
    "expect": {
@@ -5709,30 +5943,30 @@
      ]
     },
     "cmds": {
-     "same": 460
+     "same": 475
     }
    }
   },
   {
-   "step": 463,
+   "step": 478,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "min",
    "expect": {
     "posts": {
-     "same": 457
+     "same": 472
     },
     "cmds": {
-     "same": 457
+     "same": 472
     }
    }
   },
   {
-   "step": 464,
+   "step": 479,
    "control": "tab:setup",
    "action": "click"
   },
   {
-   "step": 465,
+   "step": 480,
    "control": "#openreports",
    "action": "click",
    "expect": {
@@ -5750,17 +5984,17 @@
    }
   },
   {
-   "step": 466,
+   "step": 481,
    "control": "tab:mods",
    "action": "click"
   },
   {
-   "step": 467,
+   "step": 482,
    "control": "subtab:gameplay",
    "action": "click"
   },
   {
-   "step": 468,
+   "step": 483,
    "control": "#boss_rarity",
    "action": "select",
    "value": "ancient",
@@ -5784,7 +6018,7 @@
    }
   },
   {
-   "step": 469,
+   "step": 484,
    "control": "#boss_rarity",
    "action": "select",
    "value": "off",
@@ -5808,29 +6042,29 @@
    }
   },
   {
-   "step": 470,
+   "step": 485,
    "control": "#boss_rarity",
    "action": "select",
    "value": "ancient",
    "expect": {
     "posts": {
-     "same": 468
+     "same": 483
     },
     "cmds": {
-     "same": 468
+     "same": 483
     }
    }
   },
   {
-   "step": 471,
+   "step": 486,
    "control": "#enabledMods .quick-disable[data-for=\"boss_rarity\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 469
+     "same": 484
     },
     "cmds": {
-     "same": 469
+     "same": 484
     }
    }
   }

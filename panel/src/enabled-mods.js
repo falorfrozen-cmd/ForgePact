@@ -10,14 +10,17 @@
 // option of the Mythic gems entry: it is sent only while that switch is on),
 // game_exe, theme, and the Satanic Zone pools (all on by default, so
 // "enabled" there is the default rather than something the player turned on).
+// The same card's zone-control switches (#157) are ordinary entries: off by
+// default, and each sends its line while on.
 
 // Boolean mods: an entry while true; the control is the checkbox itself.
 export const BOOLEAN_MODS = [
   'map_reveal', 'headhunter', 'tyrant', 'beacon', 'mod_filter_max_relics',
   'mod_orb_pickup_radius', 'mod_pet_quest_pickup', 'mod_pet_relic_pickup', 'mod_pet_loot_unstick', 'mod_auto_prospect',
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
-  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_gem_mythic',
-  'mod_gem_maxroll',
+  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery',
+  'mod_gem_mythic', 'mod_gem_maxroll',
+  'satanic_follow', 'satanic_everywhere',
 ];
 
 // The sliders that carry an on/off switch, in the order src/forgepact.py's

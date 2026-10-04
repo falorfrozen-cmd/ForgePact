@@ -46,9 +46,11 @@ none of these diagnostic hooks or the recorder. See
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
+| **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
+| **Satanic Zone: Choose The Zone** | Off by default. **Keep the zone you are in satanic** makes wherever you go count as the Satanic Zone; **Every zone counts as satanic** makes the game's own "is this a Satanic Zone?" answer yes everywhere. The `satzone` command pins one exact zone (`satzone pin here`, `satzone pin <index>`, `satzone off`). With both off the game rolls its own zone exactly as before. Not yet confirmed in a live game |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
@@ -203,7 +205,7 @@ turned on, with its current value, and says how many are on (**Nothing is on**
 when none are). Each entry has a **Turn off** button that switches that mod
 off exactly as its own control would, and the entry disappears. Settings that
 are only options of another mod (map population, the auto-prospect material
-move, the gem mod filter) and the Satanic Zone modifiers are not listed.
+move, the gem mod filter) and the Satanic Zone modifier pools are not listed.
 
 Every slider now has its own on/off switch, like Monster Density's. Turning a
 slider off keeps the value you set, while the game plays as if the slider were
@@ -536,6 +538,37 @@ of the toolkit through the generated `hs_game_sdk` bindings — see
 [`tools/generate_satanic_zone_sdk.py`](../tools/generate_satanic_zone_sdk.py). Full method
 and live findings are in
 [`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md).
+
+### Satanic Zone: choose the zone
+
+**World → Satanic Zone** (under the mods card) decides which zone the game treats as
+satanic. Both switches are off by default, and with both off nothing changes: the game
+rolls its own zone exactly as before. While on, each switch is an entry in
+**Enabled mods** with a **Turn off** button, like any other mod.
+
+- **Keep the zone you are in satanic** (`satzone follow 1` / `satzone follow 0`):
+  wherever you go, the game treats the zone you are in as the Satanic Zone, so its
+  modifiers and its drops apply there. Towns and sub-areas are left alone. The game
+  re-rolls its own zone during play, so the plugin re-asserts yours about four times a
+  second.
+- **Every zone counts as satanic** (`satzone everywhere 1` / `satzone everywhere 0`):
+  the game's own "is this a Satanic Zone?" answer becomes yes wherever you are, without
+  touching which zone is resolved. Not yet confirmed in a live game: in town it changed
+  nothing visible, and a real zone where a kill can drop a relic has not been tested.
+- **Pin one exact zone** (command only): `satzone pin here` pins the zone you are
+  standing in, `satzone pin <index>` pins a zone by its room index, `satzone off`
+  releases it, and `satzone stat` prints what is pinned and how many writes and refusals
+  there have been. The zone the game keeps is a protected value; the plugin reads it
+  with the game's own `GPV` and writes it with the game's own `SPV`, reading the key
+  from the live game, so nothing is hardcoded.
+
+Measured live 2026-10-04 (research build): the game asks `LoadSatanicZone` about 150
+times a second with the resolved zone's room index, that value can be written and the
+write sticks until the game's next roll, and with the zone pinned, entering it put the
+zone's satanic buffs and debuffs on the character (seen in play). Two things are not
+watched yet: a relic drop in a satanic zone, and the Every zone switch's effect in play.
+The world map's red marker is a separate layer this switch does not drive — see
+[`docs/satanic-zone-mods-research.md`](docs/satanic-zone-mods-research.md) "Live 4".
 
 ## Remove owned relics from drop pool
 
@@ -1296,6 +1329,50 @@ density 5x, in a fight that held the game below 60 fps, it went from 52.5 to
 
 Measurements, the rules and what is not known yet:
 [`docs/far-sleep-research.md`](docs/far-sleep-research.md).
+
+## Jump through scenery (jump over the props that stop it)
+
+Mods → Quality of Life → **Jump through scenery** (plugin command
+`jumpscenery 1|0`, `jumpscenery stat` for its state). Off by default.
+
+A universal jump aimed across a rock, a fence, a cart or another prop does not
+move the player at all: in its take-off frame the game checks a line of points
+along the jump, and one blocked point stops the whole jump. With this on, the
+player's own collision queries during a jump answer "no collision" for the
+game's collision family, so the jump crosses, but only when the jump would land
+on open ground inside the room. Otherwise the game's own answers stand and the
+jump behaves as without the mod.
+
+- **Where it lands.** Each jump is decided once, at its first blocked query:
+  the landing is the take-off point plus the jump's reach in the jump's
+  direction. That point, and the points 16 px before and after it, must be
+  inside the room and free of the collision family; if not, the jump is
+  refused and stays blocked.
+- **The reach is learned, not guessed.** It comes from a recent jump of at
+  least 32 px that crossed nothing. Until the player has made one after
+  loading a character, every jump into scenery stays blocked.
+- **Still blocked.** Locked doors (`Lock_obj`) and zone gates
+  (`Gate_Parent_obj`) keep the game's answer. A jump the game refuses by a
+  route these queries do not cover (one aimed to land inside a carriage, for
+  example) stays refused.
+- **Only the local player's universal jump.** Not walking, not leap, dash or
+  charge skills, and other players in co-op get the game's own answers.
+- **Cost.** Five collision builtins and the jump script are hooked on the first
+  `jumpscenery 1`, by name; while the mod is off each hook returns the game's
+  own answer at once.
+- **Checked in play** on 2026-10-03 (slot 14, Town of Inoya): with the mod
+  off, a jump at a prop did not move the player; with it on, the same jump
+  crossed the prop (125 px) and the player never ended inside scenery. The
+  learned reach (178 px) matched an open-ground jump of about 175 px. A jump
+  aimed to land inside a horse carriage did not move the player even with the
+  mod on, and no room edge could be reached, so neither the landing check nor
+  the room check has been seen working in play; both are tested outside the
+  game only.
+
+`jumpscenery stat` prints the reach and the counters: jumps, `granted=`,
+`answered=`, the refusals by reason, `landed-inside=`, `excluded=` and the room
+size the guard uses. Measurements, the mechanism and what is not known yet:
+[`docs/jump-scenery-research.md`](docs/jump-scenery-research.md) § Phase 2.
 
 ## Extra packs as you approach (lighter frames at high density)
 

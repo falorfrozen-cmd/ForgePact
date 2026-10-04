@@ -24,6 +24,7 @@
  "density_rolling": false,
  "mod_hidden_loot": false,
  "mod_hidden_loot_key": 164,
+ "mod_jump_scenery": false,
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",
@@ -141,6 +142,8 @@
    "26": true
   }
  },
+ "satanic_follow": false,
+ "satanic_everywhere": false,
  "switches": {},
  "theme": "default"
 }

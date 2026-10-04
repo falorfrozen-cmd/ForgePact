@@ -212,7 +212,7 @@ class PanelTests(unittest.TestCase):
         source = (ROOT / 'src/forgepact.py').read_text(encoding='utf-8-sig')
         self.assertIn('''cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]''', source)
         self.assertIn('''send_cmds([f"gemmaxroll {1 if cfg['mod_gem_maxroll'] else 0}"], cfg)''', source)
-        self.assertRegex(source, r'"mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"\):')
+        self.assertRegex(source, r'"mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll"')
 
     def test_switches_on_the_loot_tab(self):
         source = panel_source()
