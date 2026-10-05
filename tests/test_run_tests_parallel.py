@@ -77,7 +77,7 @@ ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 def child_env(force_color=False):
     """The environment every child process of these tests runs in.
 
-    Python 3.13+ colours unittest's status line (and the traceback text it
+    Python 3.14+ colours unittest's status line (and the traceback text it
     keeps) when FORCE_COLOR or PYTHON_COLORS=1 is set, even into a pipe, and
     the comparisons below read that text. So colour is switched off for every
     child, whatever shell runs the suite. Read at call time, not import time.
@@ -404,7 +404,7 @@ class ForceColorTests(unittest.TestCase):
         self.assertEqual(tail(parallel.stderr), tail(serial.stderr), parallel.stderr)
 
 
-@unittest.skipIf(sys.version_info < (3, 13), "the stdlib colours unittest output from 3.13")
+@unittest.skipIf(sys.version_info < (3, 14), "the stdlib colours unittest output from 3.14")
 class ForceColorControlTests(unittest.TestCase):
     """Positive control: FORCE_COLOR does colour a piped child, so the tests
     above guard against something real on this Python."""
