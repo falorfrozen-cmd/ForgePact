@@ -1,8 +1,9 @@
-"""Contract tests for the `gambapity` mod (ForgePact #134, phase 3).
+"""Contract tests for the `gambapity` mod (ForgePact #134, phase 5).
 
 `gambapity` guarantees Goburin's Head (the unique charm at repository type 10 /
-sub 0 / base 98, key `charms_goburins_head`) from the gamba machine after the
-configured number of spins without it dropping. The decision core is
+sub 0 / base 98, key `charms_goburins_head`) from the gamba machine: the first
+machine that explodes after the configured number of spins drops exactly one
+head, and the counter starts over. The decision core is
 plugin/include/ForgePact/GambaPity.hpp (exercised by
 test_gamba_pity_behavior.py); this test pins the adapter in
 plugin/ModuleMain.cpp on comment-stripped source:
@@ -12,18 +13,22 @@ plugin/ModuleMain.cpp on comment-stripped source:
   every `Gp*`/`GambaProbe` symbol vanish from the player build;
 - the three hooks are by SDK constant through `HookOneScript` (`PickUpGoldCheck`
   is gambapity's own) or spliced into the Angelic roll's saved trampolines
-  (`g_Orig_CreateDefaultParams` for the prize build, `g_Orig_CreateItemNew` for
-  the placement's type), and a table-only hook is refused with a message naming
-  the row, never silently armed;
-- the force rewrites `CreateDefaultParams`' returned struct's `j`/`b`/`c` in
-  place to the charm's 0/98/1 on the prize build (third argument truthy), and
-  the item's type (10) - which the struct cannot carry - is rewritten at
-  `CreateItemNew`'s entry on the item's own `itemType` (RUNTIME_DATA_MODELS
-  §13.4), written and read back, carried there by a one-step force-pending
-  flag; the definition record's `a` is the roll seed, left untouched;
-- the natural-drop reset keys on a machine-self `CreateDefaultParams` whose
-  first two arguments are `(0, 98)`, never on a `GetUniqueRepoStruct(10, 0, 98)`
-  call;
+  (`g_Orig_CreateDefaultParams`, `g_Orig_CreateItemNew`), and a table-only
+  hook is refused with a message naming the row, never silently armed;
+- the payout force is retired: neither splice writes a struct, nothing calls
+  `OnPrizeRoll`, and none of the retired symbols or the `gambapity: prize
+  build` line remain. The `CreateDefaultParams` splice keeps only the
+  machine-self `(0, 98)` natural reset, and the `CreateItemNew` splice is a
+  read-after-return head detector;
+- the trigger is an end-of-frame poll from `FrameCallback` that returns at once
+  while the mod is off, reads machines by the instance-handle rule and their
+  sprite by name, and compares it with `Slot_Machine_01_Destroyed_spr`, a key
+  of the Python SDK's `SPRITE_NAME_TO_INDEX`;
+- the ground check reads `itemInstance`'s `itemType` and
+  `itemDefinitionStruct` `j`/`b`; the forced drop goes through `json_parse`,
+  `InitItemFromJson` and `LootGroundCreateFromItem` with the local player as
+  self, a bounded retry and an `instance_exists` read-back, inside the
+  own-drop scope;
 - the machine self is resolved by the instance-handle rule
   (`variable_instance_get` through `N1ObjectIndex`, the masked predicate that
   accepts the flagged object-index kind this runner returns) with no raw kind
@@ -34,14 +39,9 @@ plugin/ModuleMain.cpp on comment-stripped source:
 - the counter persists to `forgepact_gamba_pity.json` beside
   `forgepact_gem_tables.json`, written atomically (temp file then
   `std::filesystem::rename`);
-- `gambapity status` names `count=` and `threshold=` and surfaces
-  `g_GambaPityError` (the last load/save refusal), which is read, not only
-  written;
-- the force and the natural reset each log one action line, and so does every
-  machine-self prize build the detour sees, forced or not (`gambapity: prize
-  build`, with the build's sub/base and the counter): a payout comes on the
-  machine's own cycle, not per spin, and this line is how a session shows one
-  happened and at what count;
+- `gambapity status` carries every counter and surfaces `g_GambaPityError`
+  (the last load/save refusal), and every action line is fixed text from the
+  core;
 - the plugin-side spin-count range equals `src/forgepact.py`'s
   `GAMBA_PITY_RANGE = (10, 1000)` and `Mods.svelte`'s `min`/`max`;
 - `GambaPityFallbackDrop` is gone;
@@ -62,6 +62,8 @@ HEADER = ROOT / "plugin" / "include" / "ForgePact" / "GambaPity.hpp"
 SDK_SCRIPTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
 SDK_OBJECTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "objects.hpp"
 FORGEPACT_PY = ROOT / "src" / "forgepact.py"
+SDK_PYTHON = ROOT.parent / "hs-game-sdk" / "python"
+SDK_PLAYER = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "player.hpp"
 MODS_SVELTE = ROOT / "panel" / "src" / "tabs" / "Mods.svelte"
 
 if str(TESTS_DIR) not in sys.path:
@@ -69,12 +71,16 @@ if str(TESTS_DIR) not in sys.path:
 
 from test_release_hook_contract import function_body, strip_comments, strip_research_blocks  # noqa: E402
 
-BLOCK_START = "// gambapity (ForgePact #134 phase 3, player build): the Goburin's Head pity"
+BLOCK_START = "// gambapity (ForgePact #134 phase 5, player build): the Goburin's Head pity"
 BLOCK_END = "static void RunCommand(const std::string& line)"
 
 # The charm's repository identifier: type, sub, base.
 CHARM = (10, 0, 98)
 MACHINE = "Slot_Machine_01_obj"
+DESTROYED_SPRITE = "Slot_Machine_01_Destroyed_spr"
+# The payout force (phase 3), retired before it shipped.
+RETIRED = ("GambaPityForceParams", "GambaPityForceType", "g_GambaPityForcePending", "GambaPityIsPrizeBuild",
+           "GambaPityLogPrizeBuild", "OnPrizeRoll", "gambapity: prize build")
 
 
 def without_strings(code):
@@ -210,44 +216,35 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("A[1]", spin)
         self.assertIn("a1 == kGambaPitySpinGold", spin)
 
-    # ---- the force -----------------------------------------------------------
+    # ---- the payout force is retired ---------------------------------------
 
-    def test_the_prize_build_is_a_truthy_third_argument(self):
-        build = self.body("static bool GambaPityIsPrizeBuild(")
-        self.assertIn("argc <= 2", build)
-        self.assertIn("A[2]", build)
-        self.assertIn("ToBoolean()", build)
+    def test_the_payout_force_is_gone(self):
+        for word in RETIRED:
+            self.assertNotIn(word, self.plugin, word + " survives in ModuleMain.cpp")
+            self.assertNotIn(word, self.header, word + " survives in GambaPity.hpp")
+        # Neither splice writes a struct: the game's own build runs unchanged.
+        for signature in ("static RValue& GambaPityCdpDetour(", "static RValue& GambaPityItemDetour("):
+            splice = self.body(signature)
+            self.assertNotIn("variable_struct_set", splice, signature)
+            self.assertNotIn("variable_instance_set", splice, signature)
+        self.assertNotIn("variable_struct_set", self.code)
+        # Negative control: the splices are the ones read, not empty slices.
+        self.assertIn("g_GambaPityCdpOrig(S, O, R, argc, A)", self.body("static RValue& GambaPityCdpDetour("))
 
-    def test_the_force_rewrites_the_returned_structs_jbc_in_place(self):
-        force = self.body("static bool GambaPityForceParams(")
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("j"), RValue((double)kGambaPityCharmSub) });', force)
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("b"), RValue((double)kGambaPityCharmBase) });', force)
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("c"), RValue(1.0) });', force)
+    def test_the_create_default_params_splice_keeps_only_the_natural_reset(self):
         cdp = self.body("static RValue& GambaPityCdpDetour(")
-        self.assertIn("const bool prize = GambaPityIsPrizeBuild(argc, A);", cdp)
-        self.assertIn("if (prize && g_GambaPity.OnPrizeRoll(true))", cdp)
-        self.assertIn("GambaPityForceParams(r)", cdp)
-        self.assertIn("g_GambaPityForcePending = true;", cdp)
+        # The original runs first and always.
+        self.assertLess(cdp.index("g_GambaPityCdpOrig(S, O, R, argc, A)"), cdp.index("GambaPityIsCharmBuild(argc, A)"))
+        self.assertIn("g_GambaPity.Enabled() && GambaPityIsCharmBuild(argc, A) && GambaPityIsMachine(S)", cdp)
+        self.assertIn("g_GambaPity.OnMachineCharmBuild(GambaPityFrame());", cdp)
+        self.assertIn("Out(ForgePact::GambaPity::Pity::NaturalBuildLine());", cdp)
+        self.assertNotIn("A[2]", cdp, "the third argument (the payout's) is no input")
 
-    def test_the_type_is_written_at_the_placement_and_reads_back(self):
+    def test_the_create_item_new_splice_is_a_read_after_return_head_detector(self):
         item = self.body("static RValue& GambaPityItemDetour(")
-        self.assertIn("if (g_GambaPityForcePending)", item)
-        self.assertIn("g_GambaPityForcePending = false;", item)
-        self.assertIn("GambaPityForceType(*A[0], why)", item)
-        # The field the game reads for the type is the item's own `itemType`
-        # (RUNTIME_DATA_MODELS §13.4); the definition record's `a` is the roll
-        # seed, left untouched. The itemType write is read back.
-        force = self.body("static bool GambaPityForceType(")
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { item, RValue("itemType"), RValue((double)kGambaPityCharmType) });', force)
-        self.assertIn('SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t)', force)
-        # Negative control: the type force touches nothing else. The definition
-        # record and its `a` were once mistaken for the type's carrier; a write
-        # there would change the roll seed, not the item.
-        self.assertNotIn("itemDefinitionStruct", force)
-        self.assertNotIn('RValue("a")', force)
-        self.assertEqual(force.count('"variable_struct_set"'), 1, "the type force writes one field, itemType")
-        # A field that does not read back is refused, naming it - never silent.
-        self.assertIn('Out("gambapity: the forced item\'s type did not read back ("', item)
+        self.assertLess(item.index("g_GambaPityItemOrig(S, O, R, argc, A)"), item.index("GambaPityIsCharmItem(built)"))
+        self.assertIn("g_GambaPity.OnHeadBuild(GambaPityFrame());", item)
+        self.assertNotIn("A[0]", item, "the detector reads what was built, not the arguments")
 
     def test_the_natural_reset_keys_on_create_default_params_args_0_98(self):
         build = self.body("static bool GambaPityIsCharmBuild(")
@@ -258,34 +255,125 @@ class GambaPityContract(unittest.TestCase):
         # The third argument is not guessed: no A[2] read here.
         self.assertNotIn("A[2]", build)
 
-    def test_the_force_and_the_reset_each_log_an_action_line(self):
-        cdp = self.body("static RValue& GambaPityCdpDetour(")
-        self.assertIn('Out("gambapity: forced Goburin\'s Head (type "', cdp)
-        self.assertIn('Out("gambapity: a natural Goburin\'s Head build reset the counter");', cdp)
+    # ---- the trigger: the end-of-frame sprite poll -------------------------
 
-    def test_a_prize_build_logs_an_action_line_whether_or_not_it_is_forced(self):
-        # The line names what the game asked to build (sub/base) and the
-        # counter, under the prefix a live session greps for.
-        log = self.body("static void GambaPityLogPrizeBuild(")
-        self.assertIn('Out("gambapity: prize build sub="', log)
-        self.assertIn('" base="', log)
-        self.assertIn('" count=" + std::to_string(g_GambaPity.Count())', log)
-        self.assertIn('" threshold=" + std::to_string(g_GambaPity.Threshold())', log)
-        self.assertIn("SigNumber(*A[0], s)", log)
-        self.assertIn("SigNumber(*A[1], b)", log)
-        # It only reports: nothing in it moves the counter or decides the force.
-        for word in ("OnPrizeRoll", "OnNaturalDrop", "OnSpin", "SetCount", "GambaPitySave", "g_GambaPityForcePending"):
-            self.assertNotIn(word, log, word + ": the prize-build log must not change state")
-        # The detour logs every machine-self prize build before it asks whether
-        # to force, so a payout below the threshold is logged too, and with the
-        # count it arrived at rather than the reset one.
-        cdp = self.body("static RValue& GambaPityCdpDetour(")
-        self.assertIn("if (prize) GambaPityLogPrizeBuild(argc, A);", cdp)
-        self.assertEqual(cdp.count("GambaPityLogPrizeBuild("), 1)
-        self.assertLess(cdp.index("GambaPityLogPrizeBuild("), cdp.index("g_GambaPity.OnPrizeRoll(true)"))
-        # Negative control: the coins build (third argument undefined) and a
-        # non-machine self are not prize builds, so the log is gated on both.
-        self.assertLess(cdp.index("g_GambaPity.Enabled() && GambaPityIsMachine(S)"), cdp.index("GambaPityLogPrizeBuild("))
+    def test_the_tick_runs_from_frame_callback_and_returns_at_once_while_off(self):
+        frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
+        self.assertIn("if (g_Setup) GambaPityTick();", frame)
+        shipped = strip_comments(function_body(strip_research_blocks(self.plugin), "void FrameCallback(FWFrame& FrameContext)"))
+        self.assertIn("if (g_Setup) GambaPityTick();", shipped, "the tick is a player-build tick")
+        tick = [line.strip() for line in self.body("static void GambaPityTick()").split("\n") if line.strip()]
+        tick = [line for line in tick if line != "{"]
+        self.assertEqual(tick[0], "if (!g_GambaPity.Enabled() || !g_GambaPityHooked) return;", tick)
+        body = "\n".join(tick)
+        # An unreadable room sees and decides nothing (a sentinel never equals a room).
+        self.assertLess(body.index("if (room == INT64_MIN) return;"), body.index("GambaPityWatchMachines(frame);"))
+        self.assertIn("g_GambaPity.TakeDue(frame)", body)
+
+    def test_the_machines_are_read_by_the_instance_handle_rule_and_their_sprite_by_name(self):
+        watch = self.body("static void GambaPityWatchMachines(")
+        self.assertIn('"instance_number"', watch)
+        self.assertIn('"instance_find"', watch)
+        self.assertIn("HhResolveInstance(handle)", watch)
+        self.assertIn("GambaPityIsMachine(inst)", watch)
+        self.assertIn("sprite == kGambaPityDestroyedSprite", watch)
+        sprite = self.body("static std::string GambaPitySpriteName(")
+        self.assertIn('RValue("sprite_index")', sprite)
+        self.assertIn("IsNumericInstanceRead(spr)", sprite)
+        self.assertIn('"sprite_exists"', sprite)
+        self.assertIn('"sprite_get_name"', sprite)
+        # First sight takes the baseline and prints the poll's positive control.
+        self.assertIn("g_GambaPity.SetBaseline(id, heads);", watch)
+        self.assertIn("GP::Pity::MachineSeenLine(", watch)
+        self.assertIn("g_GambaPity.ExplosionLine(id, frame)", watch)
+
+    def test_the_destroyed_sprite_is_a_python_sdk_sprite_name(self):
+        self.assertIn('static constexpr const char* kGambaPityDestroyedSprite = "' + DESTROYED_SPRITE + '";', self.code)
+        if not SDK_PYTHON.exists():
+            raise unittest.SkipTest(f"hs-game-sdk python binding not found at {SDK_PYTHON}")
+        if str(SDK_PYTHON) not in sys.path:
+            sys.path.insert(0, str(SDK_PYTHON))
+        from hs_game_sdk import SPRITE_NAME_TO_INDEX
+        self.assertGreater(len(SPRITE_NAME_TO_INDEX), 1000, "the sprite table did not load")
+        self.assertIn(DESTROYED_SPRITE, SPRITE_NAME_TO_INDEX)
+        self.assertIn("Slot_Machine_01_spr", SPRITE_NAME_TO_INDEX)   # control: the live sprite is there too
+        # By name, never by a hand-written sprite index.
+        self.assertIsNone(re.search(r"\b" + str(SPRITE_NAME_TO_INDEX[DESTROYED_SPRITE]) + r"\b", self.code))
+
+    def test_no_gp_symbol_in_gambapitys_code(self):
+        self.assertIsNone(re.search(r"\bGp[A-Z0-9_]\w*", strip_research_blocks(self.code)),
+                          "gambapity's player code names a research-only Gp* symbol")
+
+    # ---- the ground check --------------------------------------------------
+
+    def test_the_ground_check_reads_the_ground_items_charm_identity(self):
+        ground = self.body("static std::vector<int64_t> GambaPityGroundHeads(")
+        self.assertIn("HeroSiege::Player::kGroundItemInstanceField", ground)
+        self.assertIn("GambaPityIsCharmItem(item)", ground)
+        self.assertIn("ForgePact::GambaPity::kGroundRadius", ground)
+        self.assertIn("HeroSiege::Objects::GameObject::Loot_Ground_obj", self.body("static int GambaPityLootObject()"))
+        charm = self.body("static bool GambaPityIsCharmItem(")
+        self.assertIn("HeroSiege::Player::kItemInstanceTypeField", charm)
+        self.assertIn("HeroSiege::Player::kItemInstanceDefinitionField", charm)
+        self.assertIn("type == (double)kGambaPityCharmType", charm)
+        self.assertIn('GambaPityNumberField(def, "j", j) && j == (double)kGambaPityCharmSub', charm)
+        self.assertIn('GambaPityNumberField(def, "b", b) && b == (double)kGambaPityCharmBase', charm)
+        # The SDK names are the ones the relic reads measured (section 10.7).
+        if not SDK_PLAYER.exists():
+            raise unittest.SkipTest(f"hs-game-sdk header not found at {SDK_PLAYER}")
+        player = SDK_PLAYER.read_text(encoding="utf-8")
+        self.assertIn('kGroundItemInstanceField = "itemInstance"', player)
+        self.assertIn('kItemInstanceTypeField = "itemType"', player)
+        self.assertIn('kItemInstanceDefinitionField = "itemDefinitionStruct"', player)
+
+    # ---- the decision at the point of use and the forced drop --------------
+
+    def test_the_ground_check_runs_before_the_force_and_again_after_the_drop(self):
+        decide = self.body("static void GambaPityDecide(")
+        self.assertLess(decide.index("GambaPityGroundHeads(e.x, e.y)"), decide.index("g_GambaPity.Decide(e, room, ground)"))
+        self.assertLess(decide.index("g_GambaPity.Decide(e, room, ground)"), decide.index("GambaPityDropHead("))
+        self.assertLess(decide.index("GambaPityDropHead("), decide.index("GP::Pity::GroundAfterDropLine("))
+        self.assertEqual(decide.count("GambaPityGroundHeads("), 2)
+        # The own-drop scope is around the drop.
+        self.assertLess(decide.index("GambaPityOwnDropScope own;"), decide.index("GambaPityDropHead("))
+        self.assertIn("GambaPityOwnDropScope() { g_GambaPity.BeginOwnDrop(); }", self.code)
+        self.assertIn("~GambaPityOwnDropScope() { g_GambaPity.EndOwnDrop(); }", self.code)
+        # A confirmed drop resets, a refused one keeps the counter.
+        self.assertIn("g_GambaPity.ForceRefused();", decide)
+        self.assertIn("g_GambaPity.ForceConfirmed(groundId);", decide)
+
+    def test_the_forced_drop_is_the_loader_route_with_a_bounded_retry_and_a_read_back(self):
+        drop = self.body("static std::string GambaPityDropHead(")
+        self.assertIn("static constexpr int kGambaPityDropAttempts = 3;", self.code)
+        self.assertIn("for (attempt = 1; attempt <= kGambaPityDropAttempts; ++attempt)", drop)
+        order = [drop.index(s) for s in ('"json_parse"', '"gml_Script_InitItemFromJson"',
+                                         '"gml_Script_LootGroundCreateFromItem"', '"instance_exists"')]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("HhResolveLocalPlayer(playerValue)", drop)
+        self.assertIn("player, player,", drop)
+        self.assertIn('return "no local player";', drop)
+        # The charm's numbers come from its kAngelicBases row, not new literals.
+        self.assertIn("GambaPityCharmRow()", drop)
+        self.assertIn("row->sub", drop)
+        self.assertIn("row->b", drop)
+        self.assertNotIn('\\"b\\":98', drop)
+        # A throw never retries (a head may have been placed).
+        self.assertIn('return "the drop threw";', drop)
+
+    def test_the_status_line_and_the_action_lines_are_the_cores_fixed_text(self):
+        for name in ("MachineSeenLine", "ExplosionLine", "ForcedLine", "GroundAfterDropLine", "NaturalSeenLine",
+                     "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine"):
+            self.assertIn(name + "(", self.code, name + " is never printed")
+            self.assertIn(name + "(", self.header)
+        line = self.header[self.header.index("std::string StatusLine() const"):]
+        for field in ("count", "threshold", "gold", "explosions", "forced", "natural", "below", "refused",
+                      "abandoned", "own-head-builds"):
+            self.assertIn('" ' + field + '="', line, field)
+        # Every line the adapter prints itself keeps the gambapity prefix.
+        printed = re.findall(r'Out\("([^"]*)', strip_research_blocks(self.code))
+        self.assertTrue(printed)
+        for text in printed:
+            self.assertTrue(text.startswith("gambapity: "), text)
 
     # ---- the persistent counter ---------------------------------------------
 
@@ -308,6 +396,8 @@ class GambaPityContract(unittest.TestCase):
         line = self.header[self.header.index("std::string StatusLine() const"):]
         self.assertIn('" count="', line)
         self.assertIn('" threshold="', line)
+        self.assertIn('" explosions="', line)
+        self.assertIn('" own-head-builds="', line)
         self.assertIn("GoldEquivalent()", line)
         command = self.body("static void GambaPityCommand(")
         self.assertIn('if (arg.empty() || arg == "status" || arg == "stat") {', command)

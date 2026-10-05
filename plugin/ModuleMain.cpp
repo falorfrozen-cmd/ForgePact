@@ -52186,31 +52186,37 @@ static void DungeonProbeCommand(const std::string& rest)
 #endif // FORGEPACT_RELEASE (dungeonprobe)
 
 // ============================================================================
-// gambapity (ForgePact #134 phase 3, player build): the Goburin's Head pity
+// gambapity (ForgePact #134 phase 5, player build): the Goburin's Head pity
 // ============================================================================
 // The Mods -> Quality of Life switch `gambapity` guarantees Goburin's Head
 // (the unique charm at repository type 10 / sub 0 / base 98, the
 // `charms_goburins_head` row of kAngelicBases) from the gamba machine
-// (Slot_Machine_01_obj) after the configured number of spins without it
-// dropping. The counter/threshold/reset state machine is
+// (Slot_Machine_01_obj): the first machine that explodes after the configured
+// number of spins drops exactly one head, and the counter starts over. The
+// counter, the explosion watch and the deadline's decision are
 // plugin/include/ForgePact/GambaPity.hpp, game-independent by contract; this
-// adapter counts the two measured events and forces the prize build:
+// adapter feeds it the measured events and carries out what it decides:
 //
 //   - a spin: one machine-self PickUpGoldCheck with a1=-10000 (the 10,000-gold
 //     debit, one call per spin);
-//   - the prize build: one machine-self CreateDefaultParams whose third
-//     argument is truthy (c=1, the unique repository), once the counter has
-//     reached the threshold. Its returned struct's j/b/c are rewritten in
-//     place to the charm's 0/98/1, and the item's type (10) - which the
-//     parameter struct cannot carry - is rewritten at CreateItemNew's entry
-//     (the #74 measured rewrite point) on the item's own itemType
-//     (RUNTIME_DATA_MODELS §13.4), written and read back so a write that
-//     failed is refused rather than silent, carried there by a one-step
-//     force-pending flag. The definition record's `a` is the roll seed, left
-//     untouched. The prize build is the machine's payout, which comes on the
-//     machine's own cycle rather than on every spin, so the forced charm is
-//     the next payout after the threshold, not spin N itself; every prize
-//     build the detour sees logs one `gambapity: prize build` line.
+//   - the explosion: Live 4 measured it as the machine's sprite_index changing
+//     from Slot_Machine_01_spr to Slot_Machine_01_Destroyed_spr, with the
+//     instance kept and no item built. Once a frame, from FrameCallback, while
+//     the mod is on, every live machine is read and its sprite compared by
+//     name, so a sprite reference's value kind never matters;
+//   - the natural-head signals: a Goburin's Head lying near the machine that
+//     was not there at its first sight (the ground check), a CreateItemNew
+//     that returned the charm inside the explosion's window (read after the
+//     original returns, any self), and a machine-self CreateDefaultParams
+//     (0, 98), which also resets the counter at once.
+//
+// At the explosion's deadline the room, the mod's state and the ground are
+// read again at the point of use, and a forced head goes through the loader
+// route angelicdrop uses (json_parse, InitItemFromJson, then
+// LootGroundCreateFromItem with the local player as self), read back with
+// instance_exists and tried up to three times, inside an own-drop scope so
+// its own CreateItemNew is counted as own-head-builds, never as a natural
+// head. Payouts are no input: no payout path forces, rewrites or resets.
 //
 // The machine self is read by the instance-handle rule - variable_instance_get
 // through N1ObjectIndex, the masked predicate that accepts the flagged
@@ -52219,8 +52225,7 @@ static void DungeonProbeCommand(const std::string& rest)
 // so gambapity splices its detours into those saved trampolines rather than
 // hooking the scripts a second time; PickUpGoldCheck is gambapity's own
 // HookOneScript. Every hook installs lazily on the first `gambapity <count>`,
-// so an all-off game pays nothing, and each runs the original while the mod is
-// off or a call's self is not a machine.
+// so an all-off game pays nothing, and each runs the original unchanged.
 #include <ForgePact/GambaPity.hpp>
 
 // The charm's repository identifier (type, sub, base): the
@@ -52262,7 +52267,6 @@ static int g_GambaPityMachineObject = -1;      // Slot_Machine_01_obj's index, b
 static PFUNC_YYGMLScript g_GambaPitySpinOrig = nullptr;   // PickUpGoldCheck's original
 static PFUNC_YYGMLScript g_GambaPityCdpOrig = nullptr;    // CreateDefaultParams' trampoline (spliced)
 static PFUNC_YYGMLScript g_GambaPityItemOrig = nullptr;   // CreateItemNew's trampoline (spliced)
-static bool g_GambaPityForcePending = false;    // the forced prize build awaits its type rewrite
 static bool g_GambaPityHooked = false;          // every hook is in
 static bool g_GambaPitySpinNative = false;      // PickUpGoldCheck is an inline detour
 static bool g_GambaPityLoaded = false;          // the counter file was read
@@ -52330,14 +52334,6 @@ static bool GambaPityIsSpin(int argc, RValue** A)
     return argc > 1 && A && A[1] && SigNumber(*A[1], a1) && a1 == kGambaPitySpinGold;
 }
 
-// The prize build: CreateDefaultParams' third argument is truthy (c=1, the
-// unique repository) - never the coins build, whose third argument is
-// undefined (c=0).
-static bool GambaPityIsPrizeBuild(int argc, RValue** A)
-{
-    if (argc <= 2 || !A || !A[2]) return false;
-    try { return A[2]->ToBoolean(); } catch (...) { return false; }
-}
 // A natural charm build: CreateDefaultParams' first two arguments are the
 // charm's sub/base (0, 98). The third is not checked - it is true (unique) or
 // undefined (normal) by tier, so it is no signal.
@@ -52406,114 +52402,316 @@ static RValue& GambaPitySpinDetour(CInstance* S, CInstance* O, RValue& R, int ar
     return g_GambaPitySpinOrig ? g_GambaPitySpinOrig(S, O, R, argc, A) : R;
 }
 
-// Rewrite CreateDefaultParams' returned struct in place to the charm's
-// j/b/c (0/98/1) - the SignatureRewriteParams shape: mutate through
-// variable_struct_set, never hand the game a fresh struct it would treat as a
-// copy. Returns whether the rewrite read back, so the force is never reported
-// while it did nothing.
-static bool GambaPityForceParams(RValue& params)
+// The frame the decision core counts in: FrameCallback's presented frames.
+static int64_t GambaPityFrame() { return (int64_t)g_RuntimeFrame; }
+
+// CreateDefaultParams: the game's own build, always, unchanged. Afterwards a
+// machine-self build of the charm's sub/base (0, 98) is a natural head: it
+// resets the counter at once and is a signal for any explosion whose window
+// holds it. Nothing here rewrites, forces or logs a payout.
+static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+    if (g_GambaPity.Enabled() && GambaPityIsCharmBuild(argc, A) && GambaPityIsMachine(S)) {
+        g_GambaPity.OnMachineCharmBuild(GambaPityFrame());
+        GambaPitySave();
+        Out(ForgePact::GambaPity::Pity::NaturalBuildLine());
+    }
+    return r;
+}
+
+// ---- reading an item and the ground ----------------------------------------
+// A field of a struct-like value - a struct through variable_struct_*, an
+// instance handle (either kind, IsInstanceHandle) through variable_instance_*.
+// False when the owner holds no such field or is neither.
+static bool GambaPityField(const RValue& owner, const std::string& name, RValue& value)
 {
     try {
-        if (!g_Yytk->CallBuiltin("is_struct", { params }).ToBoolean()) return false;
-        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("j"), RValue((double)kGambaPityCharmSub) });
-        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("b"), RValue((double)kGambaPityCharmBase) });
-        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("c"), RValue(1.0) });
-        double j = 0.0, b = 0.0, c = 0.0;
-        return SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("j") }), j) && j == (double)kGambaPityCharmSub
-            && SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("b") }), b) && b == (double)kGambaPityCharmBase
-            && SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("c") }), c) && c == 1.0;
+        if (g_Yytk->CallBuiltin("is_struct", { owner }).ToBoolean()) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            value = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
+            return true;
+        }
+        if (HeroSiege::Player::IsInstanceHandle(owner)) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            value = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static bool GambaPityNumberField(const RValue& owner, const std::string& name, double& value)
+{
+    RValue v;
+    return GambaPityField(owner, name, v) && SigNumber(v, value);
+}
+
+// Is this item instance Goburin's Head? Its own itemType (10) and its
+// definition's j/b (0/98) - the charm's repository identifier, read from the
+// fields the SDK documents (RUNTIME_DATA_MODELS §10.7, §20.1). A level- or
+// name-shaped field is never evidence.
+static bool GambaPityIsCharmItem(const RValue& item)
+{
+    double type = -1.0, j = -1.0, b = -1.0;
+    RValue def;
+    return GambaPityNumberField(item, std::string(HeroSiege::Player::kItemInstanceTypeField), type)
+        && type == (double)kGambaPityCharmType
+        && GambaPityField(item, std::string(HeroSiege::Player::kItemInstanceDefinitionField), def)
+        && GambaPityNumberField(def, "j", j) && j == (double)kGambaPityCharmSub
+        && GambaPityNumberField(def, "b", b) && b == (double)kGambaPityCharmBase;
+}
+
+// CreateItemNew: the game's own build, always, unchanged. Read after the
+// original returns: a returned charm, any self, is a head build - our own
+// inside the forced drop's own-drop scope (own-head-builds, the detector's
+// control), else a natural-head signal for an explosion whose window holds it.
+static RValue& GambaPityItemDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& built = g_GambaPityItemOrig ? g_GambaPityItemOrig(S, O, R, argc, A) : R;
+    if (g_GambaPity.Enabled() && GambaPityIsCharmItem(built)) g_GambaPity.OnHeadBuild(GambaPityFrame());
+    return built;
+}
+
+// The instance id behind a handle or a bare id, or -1.
+static int64_t GambaPityIdOf(const RValue& value)
+{
+    try {
+        if (HeroSiege::Player::IsInstanceHandle(value)) {
+            const RValue id = g_Yytk->CallBuiltin("variable_instance_get", { value, RValue("id") });
+            return IsNumericInstanceRead(id) ? (int64_t)id.ToDouble() : -1;
+        }
+        double number = -1.0;
+        return SigNumber(value, number) && number >= 0.0 ? (int64_t)number : -1;
+    } catch (...) { return -1; }
+}
+
+static bool GambaPityXY(const RValue& inst, double& x, double& y)
+{
+    try {
+        const RValue rx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") });
+        const RValue ry = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") });
+        return SigNumber(rx, x) && SigNumber(ry, y);
     } catch (...) { return false; }
 }
 
-// One line per machine-self prize build the detour sees, forced or not: the
-// sub/base the game asked to build and the count the build arrived at. The
-// machine pays out on its own cycle, not on every spin, so the force can only
-// act on the next payout after the threshold; this line is how a session's
-// out.txt shows that a payout happened and at what count. It only reports.
-static void GambaPityLogPrizeBuild(int argc, RValue** A)
+// Loot_Ground_obj's object index, by its SDK name; -1 unresolved.
+static int g_GambaPityLootObject = -1;
+static int GambaPityLootObject()
 {
-    double s = 0.0, b = 0.0;
-    const bool read = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], s) && SigNumber(*A[1], b);
-    Out("gambapity: prize build sub=" + (read ? std::to_string((long long)s) : std::string("?"))
-        + " base=" + (read ? std::to_string((long long)b) : std::string("?"))
-        + " count=" + std::to_string(g_GambaPity.Count())
-        + " threshold=" + std::to_string(g_GambaPity.Threshold()));
-}
-
-// CreateDefaultParams: the prize build. Force the charm once the counter has
-// reached the threshold; else run the game's own build, and a natural charm
-// build (args 0, 98) starts the guarantee over. Every prize build is logged
-// before the force is decided, so a payout below the threshold shows too.
-static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
-{
-    if (g_GambaPity.Enabled() && GambaPityIsMachine(S)) {
-        const bool prize = GambaPityIsPrizeBuild(argc, A);
-        if (prize) GambaPityLogPrizeBuild(argc, A);
-        if (prize && g_GambaPity.OnPrizeRoll(true)) {
-            GambaPitySave();   // the counter reset to zero
-            RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
-            if (GambaPityForceParams(r)) {
-                g_GambaPityForcePending = true;   // the type is rewritten at the placement
-                Out("gambapity: forced Goburin's Head (type " + std::to_string(kGambaPityCharmType)
-                    + " / sub " + std::to_string(kGambaPityCharmSub)
-                    + " / base " + std::to_string(kGambaPityCharmBase) + ") and reset the counter");
-            } else {
-                Out("gambapity: the forced prize build's struct did not read back; the charm was not forced");
-            }
-            return r;
-        }
-        // The game's own build; a natural charm build resets the counter.
-        RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
-        if (GambaPityIsCharmBuild(argc, A)) {
-            g_GambaPity.OnNaturalDrop();
-            GambaPitySave();
-            Out("gambapity: a natural Goburin's Head build reset the counter");
-        }
-        return r;
+    if (g_GambaPityLootObject < 0) {
+        try {
+            g_GambaPityLootObject = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        } catch (...) { g_GambaPityLootObject = -1; }
+        if (g_GambaPityLootObject < 0) g_GambaPityLootObject = -1;
     }
-    return g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+    return g_GambaPityLootObject;
 }
 
-// Rewrite the placement's type in place to the charm's type (10) and read it
-// back, mirroring GambaPityForceParams: the type is never reported forced while
-// it did nothing. The game builds the item from the item's own `itemType`
-// (RUNTIME_DATA_MODELS §13.4), which is rewritten and read back; the definition
-// record's `a` is the roll seed LootGroundCreate already set, left untouched.
-// Returns whether the write read back, naming the field that did not in `why`.
-static bool GambaPityForceType(RValue& item, std::string& why)
+// The ground check: the instance ids of every Loot_Ground_obj within
+// kGroundRadius of (x, y) whose itemInstance is Goburin's Head. It does not
+// depend on how the head was built (measured on 42 ground relics, §10.7).
+static std::vector<int64_t> GambaPityGroundHeads(double x, double y)
+{
+    std::vector<int64_t> heads;
+    const int loot = GambaPityLootObject();
+    if (loot < 0) return heads;
+    const double radius = ForgePact::GambaPity::kGroundRadius;
+    try {
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)loot) }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)loot), RValue((double)i) });
+            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
+            double gx = 0.0, gy = 0.0;
+            if (!GambaPityXY(inst, gx, gy) || (gx - x) * (gx - x) + (gy - y) * (gy - y) > radius * radius) continue;
+            RValue item;
+            if (!GambaPityField(inst, std::string(HeroSiege::Player::kGroundItemInstanceField), item)
+                || !GambaPityIsCharmItem(item)) continue;
+            const int64_t id = GambaPityIdOf(inst);
+            if (id >= 0) heads.push_back(id);
+        }
+    } catch (...) {}
+    return heads;
+}
+
+// ---- the forced drop -------------------------------------------------------
+// Our own forced drop, for its whole length: a head build inside it is ours
+// (own-head-builds), never a natural-head signal.
+struct GambaPityOwnDropScope {
+    GambaPityOwnDropScope() { g_GambaPity.BeginOwnDrop(); }
+    ~GambaPityOwnDropScope() { g_GambaPity.EndOwnDrop(); }
+};
+
+// LootGroundCreateFromItem returned no live instance for 86-191 of 1,000 calls
+// in another feature, and nothing was placed for those (§18.5), so a drop is
+// confirmed by its own return and built and placed again while it is not.
+static constexpr int kGambaPityDropAttempts = 3;
+
+// Drop one Goburin's Head at (x, y) through the loader route angelicdrop uses
+// (SpawnAngelicItem): json_parse of the charm's definition, InitItemFromJson
+// with the global instance as self, then LootGroundCreateFromItem with the
+// local player as self (#124 Live 1: 49 of 49 placements). Returns "" with the
+// built item's rarity, the attempt and the placed instance's id, or the stage
+// that refused. A call that returned no live instance placed nothing, so the
+// retry cannot make two heads.
+static std::string GambaPityDropHead(double x, double y, int& rarity, int& attempt, int64_t& groundId)
+{
+    const AngelicBase* row = GambaPityCharmRow();
+    if (!row) return "no charm row";
+    RValue playerValue;
+    if (!HhResolveLocalPlayer(playerValue)) return "no local player";
+    CInstance* player = HhResolveInstance(playerValue);
+    if (!player) return "no local player";
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) return "no global instance";
+    for (attempt = 1; attempt <= kGambaPityDropAttempts; ++attempt) {
+        try {
+            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
+            const std::string key = "0-0-" + std::to_string(ms) + "-" + std::to_string(row->type);
+            const std::string json = "{\"w\":1,\"a\":" + std::to_string(seed) + ",\"j\":" + std::to_string(row->sub)
+                + ",\"b\":" + std::to_string(row->b) + ",\"c\":1}";
+            RValue parsed;
+            g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+            if (!g_Yytk->CallBuiltin("is_struct", { parsed }).ToBoolean()) return "json_parse failed";
+            RValue item;
+            const AurieStatus built = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) });
+            if (!AurieSuccess(built) || !g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) return "InitItemFromJson failed";
+            double rar = -1.0;
+            RValue info;
+            if (GambaPityField(item, "itemInfoStruct", info) && GambaPityNumberField(info, "27", rar)) rarity = (int)rar;
+            RValue placed;
+            const AurieStatus st = g_Yytk->CallGameScriptEx(placed, "gml_Script_LootGroundCreateFromItem", player, player,
+                                                            { RValue(x), RValue(y), item });
+            if (!AurieSuccess(st)) return "LootGroundCreateFromItem failed";
+            // The read-back: the returned instance (a handle or a bare id)
+            // exists. Anything else is never handed to instance_exists.
+            double number = -1.0;
+            const bool handle = HeroSiege::Player::IsInstanceHandle(placed);
+            if ((handle || (SigNumber(placed, number) && number >= 0.0))
+                && g_Yytk->CallBuiltin("instance_exists", { placed }).ToBoolean()) {
+                groundId = GambaPityIdOf(placed);
+                return "";
+            }
+        } catch (...) {
+            // Whether a head was placed is unknown, so never try again.
+            return "the drop threw";
+        }
+    }
+    attempt = kGambaPityDropAttempts;
+    return "LootGroundCreateFromItem returned no live instance";
+}
+
+// ---- the machine watch and the deadline ------------------------------------
+// The machine's destroyed sprite, by name (Live 4, G18; the Python SDK's
+// sprite table lists it). Sprites are compared by name, never by value kind.
+static constexpr const char* kGambaPityDestroyedSprite = "Slot_Machine_01_Destroyed_spr";
+// More machines than a room holds; a cap, not a measurement.
+static constexpr int kGambaPityMaxMachines = 16;
+
+// The machine's sprite_index, named by sprite_get_name behind
+// IsNumericInstanceRead and sprite_exists; "?" when it is not a sprite.
+static std::string GambaPitySpriteName(const RValue& handle)
 {
     try {
-        if (!g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) { why = "the item is not a struct"; return false; }
-        g_Yytk->CallBuiltin("variable_struct_set", { item, RValue("itemType"), RValue((double)kGambaPityCharmType) });
-        double t = 0.0;
-        if (!SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t) || t != (double)kGambaPityCharmType) {
-            why = "the item's itemType did not read back"; return false;
-        }
-        return true;
-    } catch (...) { why = "the type rewrite threw"; return false; }
+        const RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("sprite_index") });
+        if (!IsNumericInstanceRead(spr) || !g_Yytk->CallBuiltin("sprite_exists", { spr }).ToBoolean()) return "?";
+        const std::string name = g_Yytk->CallBuiltin("sprite_get_name", { spr }).ToString();
+        return name.empty() ? std::string("?") : name;
+    } catch (...) { return "?"; }
 }
 
-// CreateItemNew's entry: the placement's type. The forced prize build's
-// returned struct carries no type, so when the force is pending the type is
-// rewritten here - the #74 measured rewrite point - and the flag cleared. The
-// game builds the item from the item's own `itemType` (RUNTIME_DATA_MODELS
-// §13.4), which is rewritten and read back; the definition record's `a` is the
-// roll seed LootGroundCreate already set, left untouched. A field that does not
-// read back is refused, never silent. The definition's j/b/c were already
-// forced at CreateDefaultParams.
-static RValue& GambaPityItemDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+// Every live Slot_Machine_01_obj, once: first sight takes the ground baseline
+// and prints the machine line (the poll's positive control); a live-to-
+// destroyed change prints the explosion line.
+static void GambaPityWatchMachines(int64_t frame)
 {
-    if (g_GambaPityForcePending) {
-        g_GambaPityForcePending = false;
-        std::string why;
-        if (!(argc > 0 && A && A[0])) why = "CreateItemNew had no item argument";
-        else GambaPityForceType(*A[0], why);
-        if (why.empty())
-            Out("gambapity: forced the prize item's type to " + std::to_string(kGambaPityCharmType));
-        else
-            Out("gambapity: the forced item's type did not read back (" + why + "); the charm's type was not forced");
+    namespace GP = ForgePact::GambaPity;
+    int n = 0;
+    try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_GambaPityMachineObject) }).ToDouble(); }
+    catch (...) { return; }
+    for (int i = 0; i < n && i < kGambaPityMaxMachines; ++i) {
+        RValue handle;
+        try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_GambaPityMachineObject), RValue((double)i) }); }
+        catch (...) { continue; }
+        CInstance* inst = HhResolveInstance(handle);
+        if (!inst || !GambaPityIsMachine(inst)) continue;
+        const int64_t id = GambaPityIdOf(handle);
+        const std::string sprite = GambaPitySpriteName(handle);
+        double x = 0.0, y = 0.0;
+        if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) continue;   // an unread machine decides nothing
+        switch (g_GambaPity.ObserveMachine(id, sprite == kGambaPityDestroyedSprite, frame, x, y)) {
+        case GP::Sighting::FirstSeen: {
+            const std::vector<int64_t> heads = GambaPityGroundHeads(x, y);
+            g_GambaPity.SetBaseline(id, heads);
+            Out(GP::Pity::MachineSeenLine(id, sprite, (int)heads.size()));
+            break;
+        }
+        case GP::Sighting::Exploded:
+            Out(g_GambaPity.ExplosionLine(id, frame));
+            break;
+        case GP::Sighting::None:
+            break;
+        }
     }
-    return g_GambaPityItemOrig ? g_GambaPityItemOrig(S, O, R, argc, A) : R;
+}
+
+// One explosion at its deadline, decided at the point of use: the mod's state
+// and the room are read again, and the ground near the machine is checked
+// before anything is dropped. After a drop, the ground is checked again.
+static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t room)
+{
+    namespace GP = ForgePact::GambaPity;
+    const std::vector<int64_t> ground = room == e.room ? GambaPityGroundHeads(e.x, e.y) : std::vector<int64_t>();
+    const GP::Decision d = g_GambaPity.Decide(e, room, ground);
+    switch (d.outcome) {
+    case GP::Outcome::Abandoned:
+        Out(GP::Pity::AbandonedLine(e.id));
+        return;
+    case GP::Outcome::Natural:
+        GambaPitySave();   // the counter reset
+        Out(GP::Pity::NaturalSeenLine(d.signal));
+        return;
+    case GP::Outcome::Below:
+        Out(g_GambaPity.BelowLine());
+        return;
+    case GP::Outcome::Force:
+        break;
+    }
+    int rarity = -1, attempt = 0;
+    int64_t groundId = -1;
+    std::string refused;
+    {
+        GambaPityOwnDropScope own;
+        refused = GambaPityDropHead(e.x, e.y, rarity, attempt, groundId);
+    }
+    if (!refused.empty()) {
+        g_GambaPity.ForceRefused();
+        Out(GP::Pity::RefusedLine(refused));
+        return;
+    }
+    g_GambaPity.ForceConfirmed(groundId);
+    GambaPitySave();   // the counter reset
+    Out(GP::Pity::ForcedLine(e.x, e.y, rarity, attempt));
+    Out(GP::Pity::GroundAfterDropLine(g_GambaPity.NewHeads(e.id, GambaPityGroundHeads(e.x, e.y))));
+}
+
+// FrameCallback's per-frame tick (player build). Returns at once while the
+// mod is off, so an all-off game pays one branch; with no machine in the room
+// it costs one instance_number. A frame whose room cannot be read sees and
+// decides nothing, so "unreadable" never compares equal to a room.
+static void GambaPityTick()
+{
+    if (!g_GambaPity.Enabled() || !g_GambaPityHooked) return;
+    const int64_t room = CurrentRoomKey();
+    if (room == INT64_MIN) return;
+    const int64_t frame = GambaPityFrame();
+    g_GambaPity.OnRoom(room);
+    GambaPityWatchMachines(frame);
+    for (const ForgePact::GambaPity::Explosion& e : g_GambaPity.TakeDue(frame)) GambaPityDecide(e, room);
 }
 
 // ---- install ---------------------------------------------------------------
@@ -52583,7 +52781,7 @@ static std::string GambaPityInstallHooks()
 }
 
 // `gambapity <count>|off|status` (the panel's switch and range). `off` keeps
-// the counter; only a payout resets it.
+// the counter; a forced head or a natural one resets it, a payout never does.
 static void GambaPityCommand(const std::string& rest)
 {
     const std::string arg = Lower(TrimCopy(rest));
@@ -54282,6 +54480,11 @@ void FrameCallback(FWFrame& FrameContext)
     // (JumpScenery.hpp). The decisions happen inside the hooked calls, at the
     // point of use. Returns at once while it is off.
     if (g_Setup) JumpSceneryTick();
+
+    // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
+    // sprites, once a frame, and each explosion's decision at its deadline
+    // (GambaPityTick). Returns at once while it is off.
+    if (g_Setup) GambaPityTick();
 
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll

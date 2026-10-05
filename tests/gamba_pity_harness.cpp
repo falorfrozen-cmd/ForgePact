@@ -331,8 +331,8 @@ int main()
         const Explosion e = due.size() == 1 ? due[0] : Explosion();
         check("lines/machine_seen", Pity::MachineSeenLine(100, "Slot_Machine_01_spr", 0)
               == "gambapity: machine id=100 seen sprite=Slot_Machine_01_spr heads-nearby=0");
-        check("lines/explosion", p.ExplosionLine(e) == "gambapity: explosion id=100 count=12 threshold=10 frame=4321",
-              p.ExplosionLine(e));
+        check("lines/explosion", p.ExplosionLine(e.id, e.frame) == "gambapity: explosion id=100 count=12 threshold=10 frame=4321",
+              p.ExplosionLine(e.id, e.frame));
         check("lines/forced", Pity::ForcedLine(320.4, 479.6, 6, 1)
               == "gambapity: forced Goburin's Head at 320,480 (rarity 6, attempt 1) and reset the counter",
               Pity::ForcedLine(320.4, 479.6, 6, 1));
@@ -343,7 +343,7 @@ int main()
         check("lines/below", p.BelowLine() == "gambapity: explosion below the threshold (count=3 threshold=10); counter kept");
         check("lines/refused", Pity::RefusedLine("no local player")
               == "gambapity: forced drop refused - no local player; counter kept");
-        check("lines/abandoned", Pity::AbandonedLine(e) == "gambapity: explosion id=100 abandoned (room changed); counter kept");
+        check("lines/abandoned", Pity::AbandonedLine(e.id) == "gambapity: explosion id=100 abandoned (room changed); counter kept");
         check("lines/natural_build", Pity::NaturalBuildLine() == "gambapity: a natural Goburin's Head build reset the counter");
     }
 

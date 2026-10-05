@@ -302,10 +302,10 @@ public:
             + " heads-nearby=" + std::to_string(headsNearby);
     }
 
-    std::string ExplosionLine(const Explosion& e) const
+    std::string ExplosionLine(int64_t id, int64_t frame) const
     {
-        return "gambapity: explosion id=" + std::to_string(e.id) + " count=" + std::to_string(count_)
-            + " threshold=" + std::to_string(threshold_) + " frame=" + std::to_string(e.frame);
+        return "gambapity: explosion id=" + std::to_string(id) + " count=" + std::to_string(count_)
+            + " threshold=" + std::to_string(threshold_) + " frame=" + std::to_string(frame);
     }
 
     static std::string ForcedLine(double x, double y, int rarity, int attempt)
@@ -336,9 +336,9 @@ public:
         return "gambapity: forced drop refused - " + stage + "; counter kept";
     }
 
-    static std::string AbandonedLine(const Explosion& e)
+    static std::string AbandonedLine(int64_t id)
     {
-        return "gambapity: explosion id=" + std::to_string(e.id) + " abandoned (room changed); counter kept";
+        return "gambapity: explosion id=" + std::to_string(id) + " abandoned (room changed); counter kept";
     }
 
     static std::string NaturalBuildLine()
