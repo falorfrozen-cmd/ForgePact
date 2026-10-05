@@ -47308,8 +47308,9 @@ static void GpLogCall(int row, const std::string& label, const std::string& self
 //   gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
 //   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
 //   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
-//   gambaprobe window closed lines=<n> dropped=<n> frame=<f>
-//   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n>   (status)
+//   gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> frame=<f>
+//   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n> instance-ring=<n>
+//       build-dropped=<n> instance-dropped=<n>   (status)
 
 // The rows whose calls build or place an item: the ring holds their calls for
 // any self, and a window prints them.
@@ -47332,26 +47333,36 @@ static bool GpIsBuildRow(int script)
 
 static int64_t GpFrame() { return (int64_t)g_RuntimeFrame; }
 
-// A build-row call of an active probe, any self: described, pushed into the
-// ring and, inside a window, printed as a window line (before the original,
-// so the calls it makes print after it). True when it fell inside a window;
-// `selfText` is then the self as the line named it.
-static bool GpWatchScript(const char* label, GpNs::Seen seen, CInstance* S, int argc, RValue** A, std::string& selfText)
+// A build-row call of an active probe, any self, its arguments already
+// described: pushed into the build ring and, inside a window, printed as a
+// window line under the build cap (before the original, so the calls it
+// makes print after it). True when it fell inside a window; `selfText` is
+// then the self as the line named it.
+static bool GpWatchCall(const std::string& label, GpNs::Seen seen, CInstance* S, int argc, const std::string& args,
+                        std::string& selfText)
 {
     const int64_t frame = GpFrame();
-    std::string key, args;
     g_GpBusy = true;
     try {
-        args = GpScriptArgs(argc, A, key);
         selfText = GpSelfText(seen, S);
         const bool window = g_GpWatch.InWindow(frame);
         g_GpWatch.Push({ label, selfText, argc, args, frame });
-        if (window && g_GpWatch.TakeWindowLine(frame)) Out(GpNs::WindowCallLine(label, selfText, argc, args, frame));
+        if (window && g_GpWatch.TakeBuildLine(frame)) Out(GpNs::WindowCallLine(label, selfText, argc, args, frame));
         g_GpBusy = false;
         return window;
     } catch (...) {}
     g_GpBusy = false;
     return false;
+}
+
+// A build row reached through its script's own function (GpOnScript).
+static bool GpWatchScript(const char* label, GpNs::Seen seen, CInstance* S, int argc, RValue** A, std::string& selfText)
+{
+    std::string key, args;
+    g_GpBusy = true;
+    try { args = GpScriptArgs(argc, A, key); } catch (...) {}
+    g_GpBusy = false;
+    return GpWatchCall(label, seen, S, argc, args, selfText);
 }
 
 // What a CreateItemNew inside a window built, read after the original
@@ -47362,7 +47373,7 @@ static bool GpWatchScript(const char* label, GpNs::Seen seen, CInstance* S, int 
 static void GpWatchBuilt(const RValue& item, const std::string& selfText)
 {
     const int64_t frame = GpFrame();
-    if (!g_GpWatch.TakeWindowLine(frame)) return;
+    if (!g_GpWatch.TakeBuildLine(frame)) return;
     double type = 0, j = 0, b = 0, c = 0, rarity = 0;
     bool hasType = false, hasJ = false, hasB = false, hasC = false, hasRarity = false;
     std::string name = "?";
@@ -47392,15 +47403,41 @@ static void GpWatchBuilt(const RValue& item, const std::string& selfText)
     g_GpBusy = false;
 }
 
-// An instance create/destroy call of an active probe inside a window, any
-// self: one window line, described before the original (instance_destroy
-// may take its self with it).
-static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, int argc, RValue* Args)
+static GpNs::ArgTarget GpArgTarget(const RValue& arg, CInstance* S, CInstance* O);   // with the builtin detour, below
+
+// The object an instance call is about, the key of its per-object window
+// cap: a create's object argument (the fourth, for instance_create_layer and
+// instance_create_depth alike), or the object of what instance_destroy ends
+// (its argument's, read by name through GpArgTarget, or its self's).
+static std::string GpInstanceKey(int builtin, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    const std::string row = GpBuiltinName(builtin);
+    if (static_cast<GpNs::Builtin>(builtin) != GpNs::Builtin::InstanceDestroy)
+        return row + " " + (Args && argc > 3 ? GpValueText(Args[3]) : std::string("?"));
+    if (!Args || argc < 1) return row + " object=" + std::to_string(S ? GpObjectIndexOf(S->ToRValue()) : -1);
+    const GpNs::ArgTarget target = GpArgTarget(Args[0], S, O);
+    if (target.kind == GpNs::ArgKind::All) return row + " all";
+    return row + " object=" + std::to_string(target.object);
+}
+
+// An instance create/destroy call of an active probe, any self: described
+// before the original (instance_destroy may take its self with it), pushed
+// into the instance ring - apart from the build ring, so a burst of effects
+// cannot evict a build - and, inside a window, printed as a window line under
+// the instance cap and its object's share of it, never the build cap.
+static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     const int64_t frame = GpFrame();
-    if (!g_GpWatch.InWindow(frame) || !g_GpWatch.TakeWindowLine(frame)) return;
+    const std::string label = GpBuiltinName(builtin);
     g_GpBusy = true;
-    try { Out(GpNs::WindowCallLine(GpBuiltinName(builtin), GpSelfText(seen, S), argc, GpBuiltinArgs(argc, Args), frame)); } catch (...) {}
+    try {
+        const std::string self = GpSelfText(seen, S);
+        const std::string args = GpBuiltinArgs(argc, Args);
+        const std::string key = GpInstanceKey(builtin, S, O, argc, Args);
+        const bool window = g_GpWatch.InWindow(frame);
+        g_GpWatch.Push({ label, self, argc, args, frame, GpNs::CallKind::Instance, key });
+        if (window && g_GpWatch.TakeInstanceLine(frame, key)) Out(GpNs::WindowCallLine(label, self, argc, args, frame));
+    } catch (...) {}
     g_GpBusy = false;
 }
 
@@ -47566,9 +47603,10 @@ static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O,
         if (t.orig) t.orig(Result, S, O, argc, Args);
         return;
     }
-    // The explosion watch: inside a window, an instance create/destroy call
-    // is a window line whatever its self, apart from the trace budget below.
-    if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin))) GpWatchBuiltin(builtin, d.seen, S, argc, Args);
+    // The explosion watch: an instance create/destroy call, whatever its
+    // self, goes into the instance ring and, inside a window, is a window
+    // line, apart from the trace budget below.
+    if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin))) GpWatchBuiltin(builtin, d.seen, S, O, argc, Args);
     // Another self's instance_destroy / instance_change /
     // instance_deactivate_object whose first argument names a machine is
     // counted and logged too (machine-arg=).
@@ -47609,6 +47647,21 @@ static std::string GpByNameLabel(int slot)
 // and described like a script row's call - `argc`, up to six arguments keyed
 // by the first, the result - under the same machine-self filter. Never
 // answered.
+// The explosion watch on a by-name routine: a slot any build row reaches is
+// a build-row call (ring, window line), and one CreateItemNew reaches has
+// its built item read after the original. True when the built line is due.
+static bool GpWatchByName(int slot, GpNs::Seen seen, CInstance* S, int argc, RValue* Args, std::string& selfText)
+{
+    const GpByNameSlot& b = g_GpByNameSlots[slot];
+    if (seen == GpNs::Seen::Idle || std::none_of(b.scripts.begin(), b.scripts.end(), GpIsBuildRow)) return false;
+    std::string args;
+    g_GpBusy = true;
+    try { args = GpBuiltinArgs(argc, Args); } catch (...) {}
+    g_GpBusy = false;
+    const bool window = GpWatchCall(GpByNameLabel(slot), seen, S, argc, args, selfText);
+    return window && std::find(b.scripts.begin(), b.scripts.end(), (int)kGpScript_CreateItemNew) != b.scripts.end();
+}
+
 static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     GpByNameSlot& b = g_GpByNameSlots[slot];
@@ -47616,8 +47669,12 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
     ++b.calls;
     const int row = b.scripts.size() == 1 ? GpNs::ScriptRowOf(b.scripts[0]) : GpByNameRow(slot);
     const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
+    // The explosion watch, before the self filter (build rows only).
+    std::string watchSelf;
+    const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf);
     if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {
         if (b.orig) b.orig(Result, S, O, argc, Args);
+        if (readBuilt) GpWatchBuilt(Result, watchSelf);
         return;
     }
     std::string key, args, selfText;
@@ -47629,6 +47686,7 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
     } catch (...) {}
     g_GpBusy = false;
     if (b.orig) b.orig(Result, S, O, argc, Args);
+    if (readBuilt) GpWatchBuilt(Result, watchSelf);
     g_GpBusy = true;
     try { GpLogCall(row, GpByNameLabel(slot), selfText, argc, args, key, GpValueText(Result)); } catch (...) {}
     g_GpBusy = false;
@@ -48934,9 +48992,12 @@ static void GpUsage()
     Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
     Out("  window [frames]            open the explosion watch's window by hand (default " + std::to_string(GpNs::kWindowSpanDefault)
         + " frames, at most " + std::to_string(GpNs::kWindowSpanMax) + "): it replays the last "
-        + std::to_string(GpNs::kWindowLookBackFrames) + " frames of build-row calls, then logs every build row and"
-        " instance_create_layer/_depth/instance_destroy call for any self, and what each CreateItemNew built, up to "
-        + std::to_string(GpNs::kWindowLineCap) + " lines; a machine's sprite change or disappearance opens one by itself");
+        + std::to_string(GpNs::kWindowLookBackFrames) + " frames of build-row and instance calls, then logs every build row and"
+        " instance_create_layer/_depth/instance_destroy call for any self, and what each CreateItemNew built (build lines up to "
+        + std::to_string(GpNs::kWindowBuildLineCap) + ", instance lines up to " + std::to_string(GpNs::kWindowInstanceLineCap) + ", "
+        + std::to_string(GpNs::kWindowInstanceLinesPerObject) + " per object, each counted when dropped; spans are presented"
+        " frames); window again while one is open extends it and tops both caps up; a machine's sprite change or"
+        " disappearance opens one by itself");
     Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)
         + " new lines per row, " + std::to_string(GpNs::kTraceLinesPerKey) + " per key, are logged each window; BUDGET SPENT"
         " marks a row that only counts; repeats= counts lines identical to their key's last, unlogged-repeats names"

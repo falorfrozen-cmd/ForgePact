@@ -31,10 +31,13 @@ Phase 4 (the explosion watch): without a sprite change, a vanished machine or
 a `window` command, no window line is produced and the trace budgets count as
 before, and a machine seen again with the same sprite prints nothing more.
 A sprite change or a vanished machine prints one line and opens a window that
-replays the ring's last two frames of build-row calls, logs forward calls for
-its span, stops at its own line cap (counting what it dropped) and is extended,
-never doubled, by a second transition; every line is the fixed text the
-contract test and the live procedure read.
+replays both rings' last two frames (build-row calls, and instance
+create/destroy calls in a ring of their own that a burst cannot use to evict a
+build) in call order, logs forward calls for its span, keeps two caps of its
+own - build lines that instance lines can never spend, and instance lines per
+object - counting what each dropped, tops both up when extended, and is
+extended, never doubled, by a second transition; every line is the fixed text
+the contract test and the live procedure read.
 """
 import os
 import shutil
@@ -240,7 +243,9 @@ class GambaProbeBehaviorTests(unittest.TestCase):
         """Target: change and gone lines open a window, which replays its look-back and stops at its own cap."""
         for label in ("watch/sprite_change_opens_a_window_and_replays_the_ring", "watch/forward_lines_until_the_span_ends",
                       "watch/a_machine_that_disappears_is_one_gone_line_and_a_window",
-                      "watch/window_stops_at_its_cap_and_counts_what_it_dropped", "watch/command_opens_the_same_window",
+                      "watch/instance_lines_stop_per_object_and_at_their_cap",
+                      "watch/build_lines_keep_their_own_cap_and_count_what_they_dropped", "watch/command_opens_the_same_window",
+                      "watch/a_command_on_an_open_window_tops_up_both_caps", "watch/an_instance_burst_cannot_evict_a_build",
                       "watch/a_transition_while_open_extends_the_window", "watch/a_call_a_window_counted_is_not_replayed",
                       "watch/off_closes_and_forgets_the_machines"):
             self.assertScenario(label)

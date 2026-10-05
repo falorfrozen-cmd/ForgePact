@@ -877,20 +877,34 @@ private:
 // sprite name, and a machine whose sprite changes or that the refresh no
 // longer finds opens a window. While the window is open, every build-row
 // call and every instance create/destroy call is a window line whatever its
-// self, and each CreateItemNew is followed by what it built. The adapter
-// also keeps the last kWatchRingSize build-row calls, for any self, because
-// a build in the transition's own step runs before the end-of-frame poll
-// that notices the transition (EVENT_FRAME is the end of the frame): a new
-// window first replays the ring's last kWindowLookBackFrames frames.
+// self, and each CreateItemNew is followed by what it built. A window opened
+// by hand (`gambaprobe window`) does the same whatever the sprite does, so
+// the live procedure holds one open across the spins instead of trusting the
+// sprite trigger alone.
 //
-// A window has its own line cap, kWindowLineCap, apart from the trace
-// budget (kTraceLinesPerRow / kTraceLinesPerKey), and counts what it
-// dropped. Outside a window the trace behaves exactly as it did before.
+// The adapter keeps two rings, for any self: the last kWatchRingSize
+// build-row calls and the last kWatchInstanceRingSize instance create/destroy
+// calls (apart, so a burst of effects cannot evict a build), because a call
+// in the transition's own step runs before the end-of-frame poll that
+// notices the transition (EVENT_FRAME is the end of the frame): a new window
+// first replays both rings' last kWindowLookBackFrames frames, in call order.
+//
+// A window has two line caps of its own, apart from the trace budget
+// (kTraceLinesPerRow / kTraceLinesPerKey): build lines (calls, replays and
+// `built` lines) spend kWindowBuildLineCap, which instance lines can never
+// touch; instance lines spend kWindowInstanceLineCap and at most
+// kWindowInstanceLinesPerObject per created object. Each counts what it
+// dropped, and the closed line reports both. An extension (a transition or
+// `window` while one is open) tops both caps up. Spans are counted in
+// presented frames. Outside a window the trace behaves exactly as before.
 inline constexpr int kWatchRingSize = 64;
+inline constexpr int kWatchInstanceRingSize = 256;
 inline constexpr int kWindowLookBackFrames = 2;
-inline constexpr int kWindowSpanDefault = 300;
+inline constexpr int kWindowSpanDefault = 600;
 inline constexpr int kWindowSpanMax = 3600;
-inline constexpr int kWindowLineCap = 400;
+inline constexpr int kWindowBuildLineCap = 400;
+inline constexpr int kWindowInstanceLineCap = 800;
+inline constexpr int kWindowInstanceLinesPerObject = 32;
 
 // The builtin rows a window logs for any self, besides the build rows.
 inline constexpr bool BuiltinInWindow(Builtin b)
@@ -925,15 +939,23 @@ struct MachineSight {
     std::string sprite;
 };
 
-// One build-row call as the adapter formatted it: the row's label, the
-// self's text, argc and the arguments as GpScriptArgs prints them (each with
-// its leading space). `inWindow` is set by Push.
+// Which ring and which cap a call belongs to.
+enum class CallKind : int { Build, Instance };
+
+// One call as the adapter formatted it: the row's label, the self's text,
+// argc and the arguments as a trace line prints them (each with its leading
+// space), its frame, its kind and, for an instance call, the created (or
+// destroyed) object's key for the per-object cap. `seq` and `inWindow` are
+// set by Push.
 struct RingCall {
     std::string row;
     std::string self;
     int         argc = 0;
     std::string args;
     int64_t     frame = 0;
+    CallKind    kind = CallKind::Build;
+    std::string key;
+    uint64_t    seq = 0;
     bool        inWindow = false;
 };
 
@@ -958,7 +980,8 @@ inline std::string WindowOpenLine(WindowReason r, long long id, int64_t frame, i
     return "gambaprobe window open reason=" + std::string(WindowReasonWord(r)) + " id=" + IdText(id) + FrameTail(frame)
         + " replayed=" + std::to_string(replayed) + " span=" + std::to_string(span);
 }
-// A transition or a command while a window is open moves its end out.
+// A transition or a command while a window is open moves its end out and
+// tops its caps up.
 inline std::string WindowExtendedLine(WindowReason r, long long id, int64_t end, int64_t frame)
 {
     return "gambaprobe window extended reason=" + std::string(WindowReasonWord(r)) + " id=" + IdText(id) + " end="
@@ -983,9 +1006,11 @@ inline std::string WindowBuiltLine(std::string_view itemType, std::string_view j
         + " c=" + std::string(c) + " rarity=" + std::string(rarity) + " name=" + std::string(name) + " self=" + std::string(self)
         + FrameTail(frame);
 }
-inline std::string WindowClosedLine(uint64_t lines, uint64_t dropped, int64_t frame)
+inline std::string WindowClosedLine(uint64_t buildLines, uint64_t buildDropped, uint64_t instanceLines, uint64_t instanceDropped,
+                                    int64_t frame)
 {
-    return "gambaprobe window closed lines=" + std::to_string(lines) + " dropped=" + std::to_string(dropped) + FrameTail(frame);
+    return "gambaprobe window closed build-lines=" + std::to_string(buildLines) + " build-dropped=" + std::to_string(buildDropped)
+        + " instance-lines=" + std::to_string(instanceLines) + " instance-dropped=" + std::to_string(instanceDropped) + FrameTail(frame);
 }
 inline std::string OptionalNumberText(bool read, double v) { return read ? NumberText(v) : std::string("?"); }
 
@@ -1027,10 +1052,11 @@ public:
         return out;
     }
 
-    // Opens a window of `span` frames at `frame`: its open line, then the
-    // ring's calls from the last kWindowLookBackFrames frames that no window
-    // counted yet, oldest first, within the cap. While one is open, its end
-    // moves out to frame + span instead and only the extended line prints.
+    // Opens a window of `span` frames at `frame`: its open line, then both
+    // rings' calls from the last kWindowLookBackFrames frames that no window
+    // counted yet, in call order, each within its own cap. While one is open,
+    // its end moves out to frame + span instead, both caps are topped up and
+    // only the extended line prints.
     std::vector<std::string> Open(WindowReason reason, long long id, int64_t frame, int span)
     {
         std::vector<std::string> out;
@@ -1038,45 +1064,65 @@ public:
         if (span > kWindowSpanMax) span = kWindowSpanMax;
         if (open_) {
             if (frame + span > end_) end_ = frame + span;   // never std::max: windows.h's macro breaks it in the plugin
+            TopUp();
             out.push_back(WindowExtendedLine(reason, id, end_, frame));
             return out;
         }
         open_ = true;
         end_ = frame + span;
-        lines_ = 0;
-        dropped_ = 0;
+        buildLines_ = buildDropped_ = instanceLines_ = instanceDropped_ = 0;
+        TopUp();
         ++windows_;
+        std::vector<RingCall*> due;
+        for (std::vector<RingCall>* ring : { &ring_, &instanceRing_ })
+            for (RingCall& c : *ring)
+                if (!c.inWindow && c.frame >= frame - kWindowLookBackFrames && c.frame <= frame) due.push_back(&c);
+        std::sort(due.begin(), due.end(), [](const RingCall* a, const RingCall* b) { return a->seq < b->seq; });
         std::vector<std::string> replay;
-        for (RingCall& c : ring_) {
-            if (c.inWindow || c.frame < frame - kWindowLookBackFrames || c.frame > frame) continue;
-            c.inWindow = true;
-            if (!TakeLine()) continue;
-            replay.push_back(WindowReplayLine(c.row, c.self, c.argc, c.args, c.frame));
+        for (RingCall* c : due) {
+            c->inWindow = true;
+            if (!TakeLine(c->kind, c->key)) continue;
+            replay.push_back(WindowReplayLine(c->row, c->self, c->argc, c->args, c->frame));
         }
         out.push_back(WindowOpenLine(reason, id, frame, static_cast<int>(replay.size()), span));
         for (std::string& line : replay) out.push_back(std::move(line));
         return out;
     }
 
-    // One build-row call, any self: kept in the ring (the oldest goes past
-    // kWatchRingSize), marked when an open window already covers it.
+    // One call, any self: kept in its kind's ring (the oldest goes past the
+    // ring's size), marked when an open window already covers it.
     void Push(RingCall call)
     {
         call.inWindow = InWindow(call.frame);
-        ring_.push_back(std::move(call));
-        if (ring_.size() > static_cast<size_t>(kWatchRingSize)) ring_.erase(ring_.begin());
+        call.seq = ++seq_;
+        const bool instance = call.kind == CallKind::Instance;
+        std::vector<RingCall>& ring = instance ? instanceRing_ : ring_;
+        const size_t size = static_cast<size_t>(instance ? kWatchInstanceRingSize : kWatchRingSize);
+        ring.push_back(std::move(call));
+        if (ring.size() > size) ring.erase(ring.begin());
     }
 
     // Is a call at `frame` inside the open window? Its frames are
     // [open, open + span).
     bool InWindow(int64_t frame) const { return open_ && frame < end_; }
 
-    // May a window line for a call at `frame` print? Only inside the window
-    // and within its cap; past the cap it is counted as dropped.
-    bool TakeWindowLine(int64_t frame)
+    // May a build line (a build-row call or a `built` line) for a call at
+    // `frame` print? Only inside the window and within kWindowBuildLineCap;
+    // past it the line is counted as build-dropped. Instance lines never
+    // spend this cap.
+    bool TakeBuildLine(int64_t frame)
     {
         if (!InWindow(frame)) return false;
-        return TakeLine();
+        return TakeLine(CallKind::Build, {});
+    }
+
+    // May an instance create/destroy line for the object `key` print? Only
+    // inside the window, within kWindowInstanceLineCap and
+    // kWindowInstanceLinesPerObject for that object; else instance-dropped.
+    bool TakeInstanceLine(int64_t frame, std::string_view key)
+    {
+        if (!InWindow(frame)) return false;
+        return TakeLine(CallKind::Instance, key);
     }
 
     // The end-of-frame tick: a window whose span has run closes, once, with
@@ -1097,43 +1143,77 @@ public:
 
     bool WindowOpen() const { return open_; }
     int64_t WindowEnd() const { return end_; }
-    uint64_t WindowLines() const { return lines_; }
-    uint64_t WindowDropped() const { return dropped_; }
+    uint64_t BuildLines() const { return buildLines_; }
+    uint64_t BuildDropped() const { return buildDropped_; }
+    uint64_t InstanceLines() const { return instanceLines_; }
+    uint64_t InstanceDropped() const { return instanceDropped_; }
     uint64_t MachinesSeen() const { return machinesSeen_; }
     uint64_t Transitions() const { return transitions_; }
     uint64_t Windows() const { return windows_; }
     int RingSize() const { return static_cast<int>(ring_.size()); }
+    int InstanceRingSize() const { return static_cast<int>(instanceRing_.size()); }
 
-    // `gambaprobe status`'s watch line.
+    // `gambaprobe status`'s watch line; the dropped counts are the current
+    // (or last) window's, so a held window's losses show before it closes.
     std::string StatusLine() const
     {
         return "gambaprobe watch: machines-seen=" + std::to_string(machinesSeen_) + " transitions=" + std::to_string(transitions_)
-            + " windows=" + std::to_string(windows_) + " window=" + (open_ ? "open" : "closed") + " ring=" + std::to_string(ring_.size());
+            + " windows=" + std::to_string(windows_) + " window=" + (open_ ? "open" : "closed") + " ring=" + std::to_string(ring_.size())
+            + " instance-ring=" + std::to_string(instanceRing_.size()) + " build-dropped=" + std::to_string(buildDropped_)
+            + " instance-dropped=" + std::to_string(instanceDropped_);
     }
 
 private:
-    bool TakeLine()
+    bool TakeLine(CallKind kind, std::string_view key)
     {
-        if (lines_ >= static_cast<uint64_t>(kWindowLineCap)) {
-            ++dropped_;
+        if (kind == CallKind::Build) {
+            if (buildUsed_ >= kWindowBuildLineCap) {
+                ++buildDropped_;
+                return false;
+            }
+            ++buildUsed_;
+            ++buildLines_;
+            return true;
+        }
+        int& perObject = instancePerObject_[std::string(key)];
+        if (instanceUsed_ >= kWindowInstanceLineCap || perObject >= kWindowInstanceLinesPerObject) {
+            ++instanceDropped_;
             return false;
         }
-        ++lines_;
+        ++perObject;
+        ++instanceUsed_;
+        ++instanceLines_;
         return true;
+    }
+
+    // A new window, or an extension: both caps are whole again; the lines
+    // and dropped counts the closed line reports carry on.
+    void TopUp()
+    {
+        buildUsed_ = 0;
+        instanceUsed_ = 0;
+        instancePerObject_.clear();
     }
 
     std::string Close(int64_t frame)
     {
         open_ = false;
-        return WindowClosedLine(lines_, dropped_, frame);
+        return WindowClosedLine(buildLines_, buildDropped_, instanceLines_, instanceDropped_, frame);
     }
 
     std::vector<MachineSight> machines_;
     std::vector<RingCall> ring_;
+    std::vector<RingCall> instanceRing_;
+    std::unordered_map<std::string, int> instancePerObject_;
+    uint64_t seq_ = 0;
     bool open_ = false;
     int64_t end_ = 0;
-    uint64_t lines_ = 0;
-    uint64_t dropped_ = 0;
+    int buildUsed_ = 0;
+    int instanceUsed_ = 0;
+    uint64_t buildLines_ = 0;
+    uint64_t buildDropped_ = 0;
+    uint64_t instanceLines_ = 0;
+    uint64_t instanceDropped_ = 0;
     uint64_t machinesSeen_ = 0;
     uint64_t transitions_ = 0;
     uint64_t windows_ = 0;
