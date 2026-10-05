@@ -860,6 +860,72 @@ int main()
             && w.Off(9).empty() && w.Windows() == 1, closed);
     }
 
+    // ---- phase 5: N2, the `full` line, and N1, the by-name mark -------------------------
+    {
+        // Baseline: a window that never reaches a cap prints exactly what it
+        // printed before - no `full` line, no `capped` line.
+        Watch w;
+        w.Open(WindowReason::Command, -1, 0, 100);
+        for (int i = 0; i < 10; ++i) w.TakeBuildLine(1);
+        for (int i = 0; i < 10; ++i) w.TakeInstanceLine(1, "obj " + std::to_string(i));
+        const std::vector<std::string> pending = w.TakeCappedLines(2);
+        const std::string closed = w.Tick(100);
+        check("watch/baseline_a_window_below_its_caps_prints_no_full_line", pending.empty()
+            && closed == "gambaprobe window closed build-lines=10 build-dropped=0 instance-lines=10 instance-dropped=0 capped=0 frame=100",
+              closed);
+    }
+    {
+        // The first refusal of each overall cap prints one `full` line per
+        // window, at the refused call's frame; a top-up does not print it
+        // again; a new window does.
+        Watch w;
+        w.Open(WindowReason::Command, -1, 0, 1000);
+        for (int i = 0; i < kWindowBuildLineCap; ++i) w.TakeBuildLine(1);
+        const bool noneYet = w.TakeCappedLines(1).empty();
+        const bool refused = !w.TakeBuildLine(7);
+        const std::vector<std::string> build = w.TakeCappedLines(8);
+        const bool buildOnce = !w.TakeBuildLine(9) && w.TakeCappedLines(9).empty();
+        for (int i = 0; i < kWindowInstanceLineCap; ++i) w.TakeInstanceLine(10, "obj " + std::to_string(i));
+        w.TakeInstanceLine(11, "one more");
+        w.TakeInstanceLine(12, "and another");
+        const std::vector<std::string> instance = w.TakeCappedLines(12);
+        w.Open(WindowReason::Command, -1, 20, 1000);   // a top-up
+        for (int i = 0; i < kWindowBuildLineCap + 1; ++i) w.TakeBuildLine(21);
+        const bool notAgain = w.TakeCappedLines(21).empty();
+        w.Tick(1020);
+        w.Open(WindowReason::Command, -1, 1021, 100);
+        for (int i = 0; i < kWindowBuildLineCap + 1; ++i) w.TakeBuildLine(1022);
+        const std::vector<std::string> next = w.TakeCappedLines(1022);
+        check("watch/the_first_refusal_of_each_cap_prints_one_full_line_per_window", noneYet && refused && buildOnce
+            && build.size() == 1 && build[0] == "gambaprobe window full build frame=7"
+            && instance.size() == 1 && instance[0] == "gambaprobe window full instance frame=11"
+            && notAgain && next.size() == 1 && next[0] == "gambaprobe window full build frame=1022",
+              build.empty() ? "" : build[0]);
+        // A per-object refusal is a `capped` line, never a `full` one.
+        Watch o;
+        o.Open(WindowReason::Command, -1, 0, 100);
+        for (int i = 0; i < kWindowInstanceLinesPerObject + 1; ++i) o.TakeInstanceLine(1, "Coin_obj");
+        const std::vector<std::string> capped = o.TakeCappedLines(1);
+        check("watch/a_per_object_refusal_is_not_a_full_line", capped.size() == 1
+            && capped[0] == "gambaprobe window capped Coin_obj frame=1", capped.empty() ? "" : capped[0]);
+        check("watch/full_line_text", WindowFullLine(CallKind::Build, 5) == "gambaprobe window full build frame=5"
+            && WindowFullLine(CallKind::Instance, 6) == "gambaprobe window full instance frame=6");
+    }
+    {
+        // N1: the by-name mark is consumed by the first call the slot routes;
+        // a later matching call inside the same original is its own, and a
+        // call the slot does not route leaves the mark.
+        int mark = 3;
+        const bool other = ConsumeFedMark(mark, false);
+        const bool kept = mark == 3;
+        const bool first = ConsumeFedMark(mark, true);
+        const bool second = ConsumeFedMark(mark, true);
+        int none = -1;
+        const bool unmarked = ConsumeFedMark(none, true);
+        check("watch/the_by_name_mark_feeds_only_the_first_matching_call",
+              !other && kept && first && mark == -1 && !second && !unmarked && none == -1);
+    }
+
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
     return failures ? 1 : 0;
 }

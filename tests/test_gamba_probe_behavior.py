@@ -251,6 +251,22 @@ class GambaProbeBehaviorTests(unittest.TestCase):
                       "watch/off_closes_and_forgets_the_machines"):
             self.assertScenario(label)
 
+    # ---- phase 5: the carried N1 and N2 fixes ----------------------------
+
+    def test_a_window_below_its_caps_prints_what_it_printed_before(self):
+        """Baseline for N2: no cap reached, no `full` line."""
+        self.assertScenario("watch/baseline_a_window_below_its_caps_prints_no_full_line")
+
+    def test_the_first_refusal_of_each_cap_prints_one_full_line_per_window(self):
+        """N2: `gambaprobe window full <build|instance> frame=<f>`, once per window and cap kind."""
+        for label in ("watch/the_first_refusal_of_each_cap_prints_one_full_line_per_window",
+                      "watch/a_per_object_refusal_is_not_a_full_line", "watch/full_line_text"):
+            self.assertScenario(label)
+
+    def test_the_by_name_feed_marks_only_the_first_matching_call(self):
+        """N1: the by-name mark is consumed by the first call its slot routes."""
+        self.assertScenario("watch/the_by_name_mark_feeds_only_the_first_matching_call")
+
     def test_the_decision_keys(self):
         for label in ("decision/six_keys_in_order", "decision/listed_labels_valid", "decision/pending_only_before_live_1",
                       "decision/drop_route_takes_a_name", "decision/unlisted_label_or_key_refused"):

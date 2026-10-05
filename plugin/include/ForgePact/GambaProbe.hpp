@@ -1025,6 +1025,24 @@ inline std::string WindowCappedLine(std::string_view key, int64_t frame)
 {
     return "gambaprobe window capped " + std::string(key) + FrameTail(frame);
 }
+// N2: the window's overall build cap or instance cap refused its first line.
+// Printed once per window and cap kind, at the refused call's frame, so a
+// negative read from a window that filled up is visibly not a clean one.
+inline std::string WindowFullLine(CallKind kind, int64_t frame)
+{
+    return std::string("gambaprobe window full ") + (kind == CallKind::Build ? "build" : "instance") + FrameTail(frame);
+}
+
+// N1: the by-name slot whose call the watch already fed marks only the first
+// script call it reaches that the slot routes: that call is consumed (true,
+// the mark is cleared), and every later call inside the same original is a
+// call of its own. `mark` is -1 when no by-name call is running.
+inline bool ConsumeFedMark(int& mark, bool slotRoutesThisScript)
+{
+    if (mark < 0 || !slotRoutesThisScript) return false;
+    mark = -1;
+    return true;
+}
 inline std::string OptionalNumberText(bool read, double v) { return read ? NumberText(v) : std::string("?"); }
 
 class Watch {
@@ -1086,6 +1104,8 @@ public:
         buildLines_ = buildDropped_ = instanceLines_ = instanceDropped_ = 0;
         cappedKeys_.clear();
         pendingCapped_.clear();
+        pendingFull_.clear();
+        fullBuild_ = fullInstance_ = false;
         TopUp();
         ++windows_;
         std::vector<RingCall*> due;
@@ -1096,7 +1116,7 @@ public:
         std::vector<std::string> replay;
         for (RingCall* c : due) {
             c->inWindow = true;
-            if (!TakeLine(c->kind, c->key)) continue;
+            if (!TakeLine(c->kind, c->key, c->frame)) continue;
             replay.push_back(WindowReplayLine(c->row, c->self, c->argc, c->args, c->frame));
         }
         out.push_back(WindowOpenLine(reason, id, frame, static_cast<int>(replay.size()), span));
@@ -1129,7 +1149,7 @@ public:
     bool TakeBuildLine(int64_t frame)
     {
         if (!InWindow(frame)) return false;
-        return TakeLine(CallKind::Build, {});
+        return TakeLine(CallKind::Build, {}, frame);
     }
 
     // May an instance create/destroy line for the object `key` print? Only
@@ -1138,17 +1158,20 @@ public:
     bool TakeInstanceLine(int64_t frame, std::string_view key)
     {
         if (!InWindow(frame)) return false;
-        return TakeLine(CallKind::Instance, key);
+        return TakeLine(CallKind::Instance, key, frame);
     }
 
     // The `capped` lines of objects that reached their share since the last
-    // call, once each per window: the adapter prints them after the line
-    // that was refused.
+    // call, once each per window, then the `full` lines of a cap kind that
+    // refused its first line (N2), once each per window: the adapter prints
+    // them after the line that was refused.
     std::vector<std::string> TakeCappedLines(int64_t frame)
     {
         std::vector<std::string> out;
         for (const std::string& key : pendingCapped_) out.push_back(WindowCappedLine(key, frame));
         pendingCapped_.clear();
+        for (std::string& line : pendingFull_) out.push_back(std::move(line));
+        pendingFull_.clear();
         return out;
     }
 
@@ -1198,11 +1221,12 @@ public:
     }
 
 private:
-    bool TakeLine(CallKind kind, std::string_view key)
+    bool TakeLine(CallKind kind, std::string_view key, int64_t frame)
     {
         if (kind == CallKind::Build) {
             if (buildUsed_ >= kWindowBuildLineCap) {
                 ++buildDropped_;
+                NoteFull(kind, frame);
                 return false;
             }
             ++buildUsed_;
@@ -1217,12 +1241,23 @@ private:
         }
         if (instanceUsed_ >= kWindowInstanceLineCap) {
             ++instanceDropped_;
+            NoteFull(kind, frame);
             return false;
         }
         ++perObject;
         ++instanceUsed_;
         ++instanceLines_;
         return true;
+    }
+
+    // The first refusal by a kind's overall cap in this window queues its
+    // `full` line; later ones (a top-up included) queue nothing.
+    void NoteFull(CallKind kind, int64_t frame)
+    {
+        bool& said = kind == CallKind::Build ? fullBuild_ : fullInstance_;
+        if (said) return;
+        said = true;
+        pendingFull_.push_back(WindowFullLine(kind, frame));
     }
 
     // A new window, or an extension: both caps are whole again; the lines
@@ -1246,6 +1281,9 @@ private:
     std::unordered_map<std::string, int> instancePerObject_;
     std::unordered_map<std::string, bool> cappedKeys_;   // this window's objects that reached their share (kept across a top-up)
     std::vector<std::string> pendingCapped_;             // ... not yet printed
+    std::vector<std::string> pendingFull_;               // N2's `full` lines not yet printed
+    bool fullBuild_ = false;                             // this window's build cap has refused a line
+    bool fullInstance_ = false;                          // ... and its instance cap
     uint64_t seq_ = 0;
     bool open_ = false;
     int64_t end_ = 0;

@@ -302,7 +302,7 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other) return t.orig ? t.orig(S, O, R, argc, A) : R;",
                       script)
         # Phase 4: the explosion watch reads nothing for an idle call either.
-        self.assertIn("if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !GpFedByName(script) && GpWatchScript(",
+        self.assertIn("if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !fedByName && GpWatchScript(",
                       self.body("static RValue& GpOnScript("))
         builtin = self.body("static void GpOnBuiltin(")
         idle = braced_block(builtin, "if (d.seen == GpNs::Seen::Idle) {")
@@ -906,7 +906,18 @@ class GambaProbeContract(unittest.TestCase):
         fed_by_name = self.body("static bool GpFedByName(int script)")
         self.assertIn("g_GpByNameSlots[g_GpByNameFed].scripts", fed_by_name)
         script = self.body("static RValue& GpOnScript(")
-        self.assertLess(script.index("!GpFedByName(script)"), script.index("GpWatchScript("))
+        self.assertLess(script.index("!fedByName"), script.index("GpWatchScript("))
+        # Phase 5 (N1): the mark is consumed by the first call the slot
+        # routes, read before anything else, and this call's original runs
+        # with no mark, so a later call inside the same by-name original is
+        # fed as its own.
+        self.assertIn("return GpNs::ConsumeFedMark(g_GpByNameFed, ", fed_by_name)
+        consume = braced_block(self.header, "inline bool ConsumeFedMark(int& mark, bool slotRoutesThisScript)\n{")
+        self.assertIn("mark = -1;", consume)
+        order = [script.index(s) for s in ("const bool fedByName = GpFedByName(script);", "GpByNameFedScope unmarked(-1);",
+                                           "g_GpCore.Observe(")]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(script.count("GpFedByName("), 1)
 
     def test_a_window_prints_its_lines_for_any_self_apart_from_the_trace_budget(self):
         watch = self.body("static bool GpWatchCall(")
@@ -937,10 +948,20 @@ class GambaProbeContract(unittest.TestCase):
         take_capped = braced_block(self.header, "if (perObject >= kWindowInstanceLinesPerObject) {")
         self.assertIn("pendingCapped_.emplace_back(key);", take_capped)
         self.assertIn('"gambaprobe window capped "', self.header)
-        take = braced_block(self.header, "bool TakeLine(CallKind kind, std::string_view key)\n    {")
+        take = braced_block(self.header, "bool TakeLine(CallKind kind, std::string_view key, int64_t frame)\n    {")
         self.assertIn("kWindowBuildLineCap", take)
         self.assertIn("kWindowInstanceLineCap", take)
         self.assertIn("kWindowInstanceLinesPerObject", take)
+        # Phase 5 (N2): each overall cap's first refusal in a window queues one
+        # `full` line, which the adapter prints after a refused build line as
+        # it does after a refused instance line.
+        self.assertEqual(take.count("NoteFull(kind, frame);"), 2)
+        self.assertIn('"gambaprobe window full "', self.header)
+        self.assertIn("if (window) for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);",
+                      self.body("static bool GpWatchCall("))
+        built = self.body("static void GpWatchBuilt(")
+        refused = braced_block(built, "if (!g_GpWatch.TakeBuildLine(frame)) {")
+        self.assertIn("for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);", refused)
         # `window` (or a transition) on an open window tops both caps up.
         self.assertIn("TopUp();", braced_block(self.header, "if (open_) {"))
         closed = braced_block(self.header, "inline std::string WindowClosedLine(uint64_t buildLines, uint64_t buildDropped, "
@@ -975,7 +996,9 @@ class GambaProbeContract(unittest.TestCase):
         self.assertLess(script.index("RValue& built = GpTraceScript(t, row, seen, S, O, R, argc, A);"),
                         script.index("GpWatchBuilt(built, watchSelf);"))
         built = self.body("static void GpWatchBuilt(")
-        self.assertLess(built.index("if (!g_GpWatch.TakeBuildLine(frame)) return;"), built.index("g_GpBusy = true;"))
+        self.assertLess(built.index("if (!g_GpWatch.TakeBuildLine(frame)) {"), built.index("g_GpBusy = true;"))
+        refused = braced_block(built, "if (!g_GpWatch.TakeBuildLine(frame)) {")
+        self.assertEqual([line.strip() for line in refused.split("\n") if line.strip()][-1], "return;")
         for read in ('TryStructNumber(item, "itemType", type)', 'RValue("itemDefinitionStruct")',
                      'TryStructNumber(def, "j", j)', 'TryStructNumber(def, "b", b)', 'TryStructNumber(def, "c", c)',
                      'RValue("itemInfoStruct")', 'TryStructNumber(info, "27", rarity)', 'StructKey(info, "28")',

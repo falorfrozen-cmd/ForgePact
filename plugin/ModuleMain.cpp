@@ -47343,11 +47343,14 @@ struct GpByNameFedScope {
     explicit GpByNameFedScope(int slot) : prev(g_GpByNameFed) { g_GpByNameFed = slot; }
     ~GpByNameFedScope() { g_GpByNameFed = prev; }
 };
+// N1: only the first call the running slot routes is the one it fed; that
+// call consumes the mark (GpNs::ConsumeFedMark), so a later call inside the
+// same original is fed as a call of its own.
 static bool GpFedByName(int script)
 {
     if (g_GpByNameFed < 0) return false;
     const std::vector<int>& rows = g_GpByNameSlots[g_GpByNameFed].scripts;
-    return std::find(rows.begin(), rows.end(), script) != rows.end();
+    return GpNs::ConsumeFedMark(g_GpByNameFed, std::find(rows.begin(), rows.end(), script) != rows.end());
 }
 
 // A build-row call of an active probe, any self, its arguments already
@@ -47365,6 +47368,8 @@ static bool GpWatchCall(const std::string& label, GpNs::Seen seen, CInstance* S,
         const bool window = g_GpWatch.InWindow(frame);
         g_GpWatch.Push({ label, selfText, argc, args, frame });
         if (window && g_GpWatch.TakeBuildLine(frame)) Out(GpNs::WindowCallLine(label, selfText, argc, args, frame));
+        // N2: a refusal by the window's build cap says so, once per window.
+        if (window) for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
         g_GpBusy = false;
         return window;
     } catch (...) {}
@@ -47390,7 +47395,11 @@ static bool GpWatchScript(const char* label, GpNs::Seen seen, CInstance* S, int 
 static void GpWatchBuilt(const RValue& item, const std::string& selfText)
 {
     const int64_t frame = GpFrame();
-    if (!g_GpWatch.TakeBuildLine(frame)) return;
+    if (!g_GpWatch.TakeBuildLine(frame)) {
+        // N2: a refusal by the window's build cap says so, once per window.
+        for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
+        return;
+    }
     double type = 0, j = 0, b = 0, c = 0, rarity = 0;
     bool hasType = false, hasJ = false, hasB = false, hasC = false, hasRarity = false;
     std::string name = "?";
@@ -47488,13 +47497,18 @@ static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int
 {
     GpScriptRow& t = g_GpScriptRows[script];
     if (g_GpBusy) return t.orig ? t.orig(S, O, R, argc, A) : R;   // the probe's own call
+    // N1: whether a running by-name call already fed this one (consuming its
+    // mark), read first; this call's original then runs with no mark, so the
+    // calls it makes are their own.
+    const bool fedByName = GpFedByName(script);
+    GpByNameFedScope unmarked(-1);
     const int row = GpNs::ScriptRowOf(script);
     const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
     // The explosion watch, before the self filter: a build row's call, any
     // self, into the ring and, inside a window, a window line; a
     // CreateItemNew inside a window is followed by what it built.
     std::string watchSelf;
-    if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !GpFedByName(script) && GpWatchScript(t.label, seen, S, argc, A, watchSelf)
+    if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !fedByName && GpWatchScript(t.label, seen, S, argc, A, watchSelf)
         && script == kGpScript_CreateItemNew) {
         RValue& built = GpTraceScript(t, row, seen, S, O, R, argc, A);
         GpWatchBuilt(built, watchSelf);
