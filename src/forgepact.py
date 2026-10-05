@@ -356,11 +356,11 @@ DEFAULTS = {
     # style"): one of DUNGEON_CHEST_COUNTDOWN_FORMS, above the head by
     # default, the plugin's own default; only sent while the switch is on.
     "dungeon_chest_countdown": "head",
-    # Goburin's Head pity (issue #134): while the switch is on, the gamba
-    # machine's prize roll is forced to the charm after this many spins
-    # without it dropping. Off by default; the count (an integer in
-    # GAMBA_PITY_RANGE, one spin = 10,000 gold) is kept while off and sends
-    # nothing.
+    # Goburin's Head pity (issue #134): while the switch is on, the first gamba
+    # machine that explodes after this many spins drops Goburin's Head (the
+    # plugin drops it and starts the count over; a payout never uses it up).
+    # Off by default; the count (an integer in GAMBA_PITY_RANGE, one spin =
+    # 10,000 gold) is kept while off and sends nothing.
     "mod_gambapity": False,
     "gambapity": 100,
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
