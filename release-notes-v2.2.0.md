@@ -10,8 +10,9 @@ shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
-switch, also off by default, makes a slot machine drop the charm at
-the next explosion after the number of spins you set.
+switch, also off by default, is meant to make a slot machine drop the charm
+at the next explosion after the number of spins you set (not yet watched in
+a live game).
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -230,18 +231,18 @@ experience.
   of the walkable map has not been observed.
 - **Goburin's Head pity (#134).** A new switch in Mods → Quality of Life, off
   by default, with a slider from 10 to 1000 spins. Until now, the one-of-a-kind
-  charm the slot machine can give, Goburin's Head, was pure luck. A machine
-  explodes after a run of spins and can't be used again. With the switch on,
-  the machine drops Goburin's Head when it explodes, at
-  the next explosion after the number of spins you set, and the count starts
-  over. If the game
-  drops the charm at that explosion itself, ForgePact adds none. Each spin costs 10,000 gold, so the count is the least gold it
-  takes, and the count carries over between sessions and between machines.
-  The machine's payouts between explosions don't use the count up. If the
-  charm drops on its own at any count, the count starts over. The spin that
-  makes a machine explode may not be counted, so the count can read one fewer
-  than you counted. The forced drop and this reset have not been watched in a
-  live game yet.
+  charm the slot machine can give, Goburin's Head, was pure luck. With the
+  switch on, a machine drops Goburin's Head when it explodes, at the first
+  explosion after the number of spins you set, and the count starts over. If
+  ForgePact sees a charm the game dropped at that explosion, it adds none; a
+  charm the game drops later or farther from the machine would not be seen
+  (no such drop has been observed). Each spin costs 10,000 gold, so the count
+  is the least gold it takes. The count carries over between sessions and
+  between machines, and the machine's payouts between explosions don't use it
+  up. If the charm drops on its own at any count, the count starts over. The
+  spin that makes a machine explode may not be counted, so the count can read
+  one fewer than you counted. The forced drop and this reset have not been
+  watched in a live game yet.
 
 ## Changed
 

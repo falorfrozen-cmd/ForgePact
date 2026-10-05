@@ -38,8 +38,8 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 
 - **Phase:** research for Goburin's Head pity (ForgePact #134). Phases 1 and
   1c measured the machine, phase 3 wrote the pity mod (`gambapity`, on this
-  branch and unreleased), and phase 4 measures the explosion it must fire on.
-  Nothing of the research instrument is player-visible, and the player build
+  branch and unreleased), phase 4 measures the explosion it must fire on, and
+  phase 5 fires it on the explosion. Nothing of the research instrument is player-visible, and the player build
   is free of it.
 - **Instrument:** `gambaprobe` (§ Instrument), research build only, on the
   ForgePact branch `134-goburins-head-pity-research`.
@@ -80,7 +80,7 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   for the full procedure; measure first, then plan the mod. Phase 3 counted
   spins instead (the explosion was never observed). The 2026-10-05 ruling
   names the explosion as the firing event; whether the count unit stays spins
-  is the successor's decision.
+  is the successor's decision. Phase 5 kept spins.
 - **Phase 4 (2026-10-05):** the owner ruled that the pity fires on the first
   **explosion** after the count is reached, never on a payout, and that an
   explosion is the machine's last act after roughly 10-14 spins and the only
@@ -89,7 +89,7 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   stays unreleased. Nothing has observed the explosion, so `gambaprobe` gains
   the explosion watch (§ Instrument, `gambaprobe window`) and § Live procedure
   4 runs one natural machine to its explosion. The mod itself is the next
-  phase, planned from that session.
+  phase, planned from that session (phase 5, above).
 
 ## Static search
 
@@ -1330,7 +1330,9 @@ may not exist on another machine; the outline is repeated here.
   prints.
 - **steps**: `gambapity 10` (`armed`: with the count already at 12, the first
   explosion must force); `reveal` noted, and turned on only if it was off;
-  zones until the game places a machine (`machine-seen`: `gambapity: machine
+  `hiddenloot stat` noted, and `hiddenloot 0` for the session if it was on
+  (a hidden ground item is put to sleep, and a sleeping head could be
+  invisible to the ground check); zones until the game places a machine (`machine-seen`: `gambapity: machine
   id=<id> seen sprite=Slot_Machine_01_spr heads-nearby=0`); the person spins
   that machine until it can no longer be used, without fighting or opening
   chests near it, while the operator sends `gambapity status` every few spins
@@ -1339,8 +1341,8 @@ may not exist on another machine; the outline is repeated here.
   explosion line); the person stays beside it 5 seconds, then `gambapity
   status` and a screenshot of the machine and the ground. A second machine,
   if one appears, runs the same way after `gambapity 1000` (`below-control`).
-  Teardown: `gambapity off`, `reveal` restored, the saves and the counter
-  file restored.
+  Teardown: `gambapity off`, `reveal` and `hiddenloot` restored, the saves
+  and the counter file restored.
 - **checks**: `dll-hash`, `marker` and `control` for the session;
   `explosion-trigger` (`gambapity: explosion id=<the machine> ...` and
   `explosions=1`), `forced-head` (the `forced Goburin's Head at <x>,<y>`
