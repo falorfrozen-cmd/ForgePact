@@ -776,9 +776,22 @@ armed:
   cap of 800, at most 32 per created object (a create's object argument, or
   the object `instance_destroy` ends), so one effect repeated every frame
   cannot crowd out the rest. Both count what they dropped, the closed line
-  reports both, and `status` shows the open window's dropped counts. A second
-  transition, or `window`, while one is open extends it rather than opening
-  another, and tops both caps up.
+  reports both, and `status` shows the open window's dropped counts. The first
+  time an object reaches its 32 in a window, one `gambaprobe window capped
+  <object key>` line names it (and the closed and status lines count the
+  capped objects), so a cap that hid, say, the explosion's coins is visible.
+  A second transition, or `window`, while one is open extends it rather than
+  opening another, and tops both caps up.
+- **What a window cannot show.** A `CreateItemNew` that a window replays from
+  the ring has no `built` line, because the item was read only for calls
+  inside a window; `head-route`'s `GetUniqueRepoStruct` with `10, 0, 98`
+  alternative covers that case. The rings count no evictions, so
+  `replayed=<n>` cannot tell "nothing happened in the look-back" from "it
+  happened and was pushed out of the ring".
+- **Holding a window.** While a window is open, `gambaprobe status` prints
+  its end, the current frame and the frames that remain (`window=open
+  end=<f> frame=<now> remaining=<n>`), so an operator holding one knows when
+  to send `window` again.
 - **Frames.** Spans are counted in presented frames (the frame callback), so
   above 60 fps a window is shorter in seconds: 3600 frames is a minute at 60
   fps and 30 seconds at 120.
@@ -794,8 +807,9 @@ armed:
   gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
-  gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> frame=<f>
-  gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n>
+  gambaprobe window capped <object key> frame=<f>
+  gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> capped=<n> frame=<f>
+  gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open end=<f> frame=<now> remaining=<n>|closed> ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n> capped=<n>
   ```
 
   The last is `gambaprobe status`'s new line. `<args>` is printed the way a
@@ -1219,10 +1233,12 @@ here.
   game places a machine (`sprite-control`: `machines=` at least 1 and a real
   sprite name on each first-sight line); from the first spin, the operator
   holds a commanded window: `gambaprobe window 3600` before the first spin,
-  re-sent before it ends (`gambaprobe status` shows `window=open`; at most
-  3600 presented frames, which is shorter than a minute above 60 fps), until
-  the person reports the explosion, so the forward any-self lines cover it
-  whatever the sprite trigger does; the person spins one machine until it can
+  then again on a fixed cadence, about every 15 seconds, until the person
+  reports the explosion (each re-send prints `gambaprobe window extended ...
+  end=<f> frame=<f>`, and `gambaprobe status` shows `window=open end=<f>
+  frame=<now> remaining=<n>`; 3600 presented frames is shorter than a minute
+  above 60 fps, so the cadence keeps well inside it), so the forward any-self
+  lines cover the explosion whatever the sprite trigger does; the person spins one machine until it can
   no longer be used, at most 25 spins or until the HUD gold is under 50,000,
   waits beside it 10 seconds and says how many spins and what they saw;
   `gambaprobe status` and the spun machine's id from its `PickUpGoldCheck`
@@ -1235,16 +1251,25 @@ here.
   `PickUpGoldCheck` calls before the transition, and the person's count),
   `explosion-builds` (every window line around the explosion, from the held
   window and from any transition's window, replayed and forward, whether a
-  `Coin_obj` appeared, and each closed line's dropped counts), `explosion-self` (the `self`
+  `Coin_obj` appeared, each closed line's dropped counts and any `capped`
+  line), `explosion-self` (the `self`
   of each build in that window) and `head-route` (a `built` line with
   `itemType=10 j=0 b=98`, or `GetUniqueRepoStruct` with `10, 0, 98`;
   `not-observed` unless the game drops the head). Their `fail` or
-  `not-observed` is the finding.
-- **what it decides**: the next phase's design. A build in the transition's
-  window means the force rewrites the explosion's own build; a transition
-  with no build but `Coin_obj` means the mod drops the head itself at the
-  transition; no machine reaching its explosion leaves the route
+  `not-observed` is the finding. A negative `explosion-builds` (no build at
+  the explosion) counts only when the explosion's frame, from its transition
+  line or else from the spun machine's last machine-self `PickUpGoldCheck`
+  line, falls inside an open window's frames (between an `open` or
+  `extended` line and its end, before its `closed` line); otherwise it is
   `not-observed`.
+- **what it decides**: the next phase's design. A build in the window
+  around the explosion means the force rewrites the explosion's own build; an
+  explosion inside an open window with no build line, no `instance_create_layer`
+  of `Loot_Ground_obj` and only `Coin_obj` means the mod drops the head itself
+  at the transition. A `Loot_Ground_obj` create with no build line reads as
+  "build route not observed", not as "no build" (the item was built by a
+  route the window did not log). No machine reaching its explosion, or an
+  explosion outside every open window, leaves the route `not-observed`.
 
 ## Results
 
