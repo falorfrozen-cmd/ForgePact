@@ -61,6 +61,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 - **Owner's decisions (2026-10-04):** the pity counts explosions, with the gold
   equivalent shown; the session character (slot 14 "Sorak") has enough gold
   for the full procedure; measure first, then plan the mod.
+- **Phase 4 (2026-10-05):** the owner ruled that the pity fires on the first
+  **explosion** after the count is reached, never on a payout, and that an
+  explosion is the machine's last act after roughly 10-14 spins and the only
+  time Goburin's Head drops (the owner's report, not measured). Phase 3's
+  force acts on a payout build, the wrong event, so it is superseded and
+  stays unreleased. Nothing has observed the explosion, so `gambaprobe` gains
+  the explosion watch (§ Instrument, `gambaprobe window`) and § Live procedure
+  4 runs one natural machine to its explosion. The mod itself is the next
+  phase, planned from that session.
 
 ## Static search
 
@@ -70,6 +79,11 @@ Every line is labelled. **Static search** means the name or index is in
 - **Static search:** object `Slot_Machine_01_obj` (`HeroSiege::Objects`, index
   4644). Sprites `Slot_Machine_01_spr`, `Slot_Machine_01_Destroyed_spr` and
   `Slot_Machine_Icons_spr`; sound `Las_Gambas_snd`.
+- **Static search (phase 4):** `Slot_Machine_01_Destroyed_spr` (Python SDK
+  sprite 26574) is the likely look of a machine the owner reports as used up
+  after its explosion. **Not established** that the explosion sets it, which
+  is why the explosion watch prints any sprite change, and a machine that is
+  gone, rather than waiting for this one name.
 - **Static search:** sprites `Glyph_of_Gamba_spr` and
   `Pickup_Glyph_of_Gamba_spr` belong to a glyph item, and object
   `Relic_Casino_Dice_obj` to a relic. Neither is the machine, and neither is
@@ -135,6 +149,25 @@ Every claim carries one of four labels, plus a source:
   far too large to read whole.
 - **Not established:** what the three unique picks and seven parameter builds
   in `Step_0` correspond to (prize tiers?).
+
+### What `Step_0`'s call layout shows, and what it does not (phase 4)
+
+- **Static reading (2026-10-05, the build current that day):** `Step_0` does
+  not decompile: the decompiler process died on it, so it is deliberately not
+  in the decompile index, where a failure stub could be mistaken for a body.
+- **Static reading:** a call-by-call listing of `Step_0`, callees named from
+  the symbol dump, shows only the named script calls listed above: 7
+  `CreateDefaultParams`, 3 `GetUniqueRepoStruct`, 2 `LootBlocksUseKey`, 2
+  `GetGoldAmount`, 2 `GoldOperationPending`, 2 `NetworkSendClientEffect` and 1
+  `GetGoldCounterHash`. The builds sit in one stretch: three builds with no
+  pick before them, three pick-then-build pairs, and one trailing build.
+- **Static reading, not verified:** each of the three pick sites loads the
+  same small constants at the same distances before the call, consistent with
+  all three picking the measured `(1, 0, 72)`; no site was seen loading 10 or
+  98. A small operand can be a stack offset, so this is not proof.
+- **Not established:** which of those builds, if any, is the explosion's, its
+  `self`, and whether the explosion builds an item at all. The layout cannot
+  say; the explosion watch (§ Instrument) measures it.
 
 ### The die and the ground placement are reached another way
 
@@ -701,6 +734,63 @@ to another rebuild.
 One per-frame tick returns at once while nothing is armed; nothing else of the
 probe is on the frame path.
 
+**The explosion watch (phase 4, our code).** The owner reports that the
+machine explodes after roughly 10-14 spins and that the explosion is the only
+time Goburin's Head drops, but nothing has observed it, and § Static reading
+cannot place it. The watch looks for it from both sides, while the probe is
+armed:
+
+- **Machine sprites.** Each tick reads every live machine's `sprite_index`
+  through `variable_instance_get` and names it with `sprite_get_name` (a
+  value that is not a sprite reads `?`). No sprite is spelled or numbered, so
+  it does not matter which sprite the explosion shows. A refresh that threw
+  is not polled, so it cannot report every machine gone.
+- **The ring.** Every call of the eight build rows (`CreateDefaultParams`,
+  `GetUniqueRepoStruct`, `LootGroundCreate`, `LootGroundCreateFromItem`,
+  `CreateLootInFreePos`, `CreateItemNew`, `DropItem`, `DropUniqueItems`),
+  whatever its `self`, goes into a ring of the last 64 before the machine-self
+  filter. A build in the transition's own step runs before the end-of-frame
+  tick that notices the transition, so without the ring it would be lost.
+  Every build row reads `byname=same` (Live 3), so no by-name slot feeds it.
+- **The window.** A sprite change or a machine that is gone opens a window,
+  as does `gambaprobe window [frames]` by hand (300 frames by default, at most
+  3600). It first replays the ring's calls from the last 2 frames, then for
+  its span prints a line for every build-row call and every
+  `instance_create_layer`, `instance_create_depth` and `instance_destroy`
+  call, for any `self` (named by the probe's own self text, so an object
+  other than the machine is named), and after each `CreateItemNew` returns,
+  what it built (its `itemType`, its `itemDefinitionStruct`'s `j`/`b`/`c`, and
+  its `itemInfoStruct`'s rarity `"27"` and name `"28"`, `?` for a value that
+  does not read; Goburin's Head is `itemType 10 j=0 b=98 c=1`). A window has
+  its own cap of 400 lines, apart from the trace budget, and counts what it
+  dropped. A second transition, or `window`, while one is open extends it
+  rather than opening another. Outside a window the trace behaves exactly as
+  before. `gambaprobe off` closes an open window.
+- **The lines**, fixed text that the behavior test pins byte for byte and
+  Live procedure 4 reads:
+
+  ```
+  gambaprobe machine id=<id> sprite=<name> frame=<f>
+  gambaprobe machine id=<id> sprite <old> -> <new> frame=<f>
+  gambaprobe machine id=<id> gone frame=<f>
+  gambaprobe window open reason=<sprite|gone|command> id=<id or -> frame=<f> replayed=<n> span=<frames>
+  gambaprobe window extended reason=<sprite|gone|command> id=<id or -> end=<f> frame=<f>
+  gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
+  gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
+  gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
+  gambaprobe window closed lines=<n> dropped=<n> frame=<f>
+  gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n>
+  ```
+
+  The last is `gambaprobe status`'s new line. `<args>` is printed the way a
+  trace line prints a script's arguments. A `gone` line can also mean the
+  machine was deactivated or the room changed, so the operator judges it.
+- **Positive controls.** `gambaprobe window 1800` near monsters must print
+  window lines for `CreateDefaultParams` and `CreateItemNew` with a `self`
+  that is not a machine, and at least one `built` line (`window-control`).
+  Each machine's first-sight line must name a real sprite, not `?`
+  (`sprite-control`).
+
 **Tests (our code).** `tests/test_gamba_probe_contract.py` pins the wiring on
 comment-stripped source (research build only, the dispatch, the SDK-derived row
 set, the held rows spliced or detoured under and never hooked twice, every
@@ -722,7 +812,15 @@ same `AddrIsExecutableInModule` rule, the `byname=` resolution printed for
 every script row, `fnwalk`'s array walk by validation (no stored address),
 the extension-function rows by name, `selftest` outside the busy guard, and
 this doc's ten `##` headings in order, with `pending` refused once
-`### Live 2 results` exists.
+`### Live 2 results` exists. Phase 4 adds the explosion watch: the harness
+pins the baseline (no window line without a transition or a `window`
+command, the trace budgets unchanged, one first-sight line per machine) and
+the target (a change or gone line opens one window, which replays its
+look-back, logs forward for its span, stops at its cap and is extended, not
+doubled), every line byte for byte; the contract test pins the sprite read by
+name with no kind check, every build row's ring push before the self filter,
+window lines for any `self` apart from the trace budget, the built-item read
+after `CreateItemNew` returns, the `window` verb and the `status` line.
 
 ## Live procedure 1
 
@@ -1068,6 +1166,53 @@ workorder `forgepact-goburins-head-pity-1c`, context file, § "Live procedure
   validation rule; `citrace dispatchdump`'s notes in `ModuleMain.cpp`,
   measured 2026-09-11, first entry `camera_create`), walked by `fnwalk`.
 
+## Live procedure 4 (explosion watch, research build)
+
+Written after the owner ruled (2026-10-05) that the pity fires on the
+machine's explosion, which no session had observed. The full procedure is in
+the toolkit workorder `forgepact-goburins-head-pity-4-payout-force`, context
+file, § "Live procedure 1 (explosion watch, research build)"; its capture,
+written by the live operator, is that workorder's `-live-1.md`. Both are
+local working notes, so the outline is repeated here.
+
+- **build**: the research DLL from `plugin_build\build.bat dev`
+  (`BloodPactPlugin_rel.dll`), installed only after the owner says so.
+  `gambapity` stays off all session.
+- **character**: slot 14 "Sorak". `shop.ini`'s gold is read, not changed
+  (about 25 spins of 10,000 per machine), and
+  `forgepact_gamba_pity.json` is recorded before and after (it is the
+  successor's starting count; nothing here changes it).
+- **control**: `ping` -> `pong (YYTK 4.0.1)`. **marker**: `gambaprobe status`
+  -> a line starting `gambaprobe: off`, and a `gambaprobe watch:` line.
+- **steps**: `gambaprobe hook` (`hook-rows`: the eight build rows and the
+  three instance builtins read `detoured`, `detoured-under` or `shared`);
+  `gambaprobe trace`; near monsters, `gambaprobe window 1800` until an item
+  drops (`window-control`); `reveal` noted, and turned on only if it was off;
+  zones from the Town of Inoya portal until the game places a machine
+  (`sprite-control`: `machines=` at least 1 and a real sprite name on each
+  first-sight line); the person spins one machine until it can no longer be
+  used, at most 25 spins or until the HUD gold is under 50,000, waits beside
+  it 10 seconds and says how many spins and what they saw; `gambaprobe
+  status` and the spun machine's id from its `PickUpGoldCheck` lines; a
+  second natural machine, if one appears, the same way; `gambaprobe off`,
+  then the saves and `reveal` restored.
+- **checks**: `dll-hash`, `marker`, `control`, `hook-rows`, `window-control`
+  and `sprite-control` must pass for the session to count. The research
+  checks are `explosion-seen` (a change or gone line for the spun machine,
+  with its old and new sprite), `spins-to-explode` (machine-self
+  `PickUpGoldCheck` calls before the transition, and the person's count),
+  `explosion-builds` (every window line of that transition, replayed and
+  forward, and whether a `Coin_obj` appeared), `explosion-self` (the `self`
+  of each build in that window) and `head-route` (a `built` line with
+  `itemType=10 j=0 b=98`, or `GetUniqueRepoStruct` with `10, 0, 98`;
+  `not-observed` unless the game drops the head). Their `fail` or
+  `not-observed` is the finding.
+- **what it decides**: the next phase's design. A build in the transition's
+  window means the force rewrites the explosion's own build; a transition
+  with no build but `Coin_obj` means the mod drops the head itself at the
+  transition; no machine reaching its explosion leaves the route
+  `not-observed`.
+
 ## Results
 
 ### Live 1 results
@@ -1348,3 +1493,13 @@ machine's spin and payout and answered several of the rest; what stays open:
 - **Where the odds live.** The price is measured at 10,000 gold a spin (the
   gold debit through `PickUpGoldCheck`); the 750 (or whichever odds constant)
   was not seen, and neither appears as a literal in the bodies read.
+- **The explosion's route and `self` (phase 4).** By the owner's report the
+  machine explodes after roughly 10-14 spins, cannot be used afterwards, and
+  the explosion is the only time Goburin's Head drops; none of that is
+  measured. Which call the explosion makes, with which `self` (the machine,
+  one of its events, or another object), whether it builds an item at all,
+  how it changes the machine (sprite, `Slot_Machine_01_Destroyed_spr` or
+  another, or removal) and how many spins it takes are open, and so is the
+  route the head takes when the game drops it. Live 3 cannot answer it: after
+  its last spin the machine still existed, and its probe logged only calls
+  whose `self` was the machine. § Live procedure 4 measures it.
