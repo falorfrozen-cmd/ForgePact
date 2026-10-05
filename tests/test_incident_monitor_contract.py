@@ -292,7 +292,10 @@ class IncidentMonitorContractTests(unittest.TestCase):
         shipped = seam_view(self.header, defined=False)
         qpc = code_lines(function_body(shipped, "inline int64_t Qpc() noexcept"))
         self.assertEqual(qpc, ["LARGE_INTEGER v;", "QueryPerformanceCounter(&v);", "return v.QuadPart;"])
+        frequency = code_lines(function_body(shipped, "inline int64_t QpcFrequency() noexcept"))
+        self.assertIn("QueryPerformanceFrequency(&v);", frequency)
         self.assertNotIn("HarnessClockQpc", strip_comments(shipped))
+        self.assertNotIn("HarnessClockFrequency", strip_comments(shipped))
         # Nothing the player build compiles, and no script that builds it, turns
         # the seam on. The behaviour test's compile line is where it is set.
         inputs = player_build_inputs()
@@ -307,6 +310,12 @@ class IncidentMonitorContractTests(unittest.TestCase):
         harness = code_lines(function_body(seam_view(self.header, defined=True), "inline int64_t Qpc() noexcept"))
         self.assertNotIn("QueryPerformanceCounter(&v);", harness)
         self.assertIn("return HarnessClockQpc();", harness)
+        # The harness also counts at its own frequency, so a host counter that
+        # does not divide into milliseconds cannot round its controlled charges.
+        harness_frequency = code_lines(function_body(seam_view(self.header, defined=True),
+                                                     "inline int64_t QpcFrequency() noexcept"))
+        self.assertNotIn("QueryPerformanceFrequency(&v);", harness_frequency)
+        self.assertIn("return HarnessClockFrequency();", harness_frequency)
         bat = inputs["plugin_build/build.bat"]
         enabled = bat.replace("/DNDEBUG", "/DNDEBUG /D" + CLOCK_SEAM)
         self.assertNotEqual(enabled, bat)

@@ -16,13 +16,15 @@ crash check are pure functions over text.
 The per-mod accounting runs on a clock the harness controls (ForgePact #165):
 compiled with /DFORGEPACT_INCIDENT_HARNESS_CLOCK, the header's Qpc() reads the
 harness's clock, which moves only when a scenario's Spin(ms) moves it by
-exactly that much. So each accounting scenario's charge is exact, and a busy
-machine, which used to charge a preempted scope the time it was descheduled,
-cannot move it: descheduled-not-charged sleeps for real inside a scope and is
-charged only the controlled work beside it. One scenario reads the real
-counter through the same seam, real-clock-control, the positive control that
-the accounting reads the clock at all; its bounds are lower bounds only,
-since preemption only ever adds time. Nothing here needs the machine to
+exactly that much, at a fixed 10 MHz of its own rather than the host's
+counter frequency. So each accounting scenario's charge is exact, and a busy
+machine cannot move it: descheduled-not-charged sleeps for real inside a
+scope and is charged only the controlled work beside it. That pins the
+harness's clock, not the shipped accounting: on the real counter a scope is
+still charged the time its thread was descheduled, and one scenario,
+real-clock-control, shows it by reading the real counter through the same
+seam. It is the positive control that the accounting reads the clock at all;
+its bounds are lower bounds only, since preemption only ever adds time. Nothing here needs the machine to
 itself, so the module runs beside the rest of the parallel suite.
 The accounting charges a mod only for ForgePact's own code (the owner,
 2026-10-02): the game original a hook wraps runs inside the guard and is
@@ -216,10 +218,12 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
                          "frame 6.0 ms: frame 2.0 density 4.0 | sampled frame 10.0 ms: frame 2.0 density 8.0"
                          " | top frame 2.0 ms/frame")
 
-    # ForgePact #165. Target: a thread descheduled inside a timed scope (a
-    # real Sleep, beside 5 ms of controlled work) is charged only the
-    # controlled work, so a busy machine cannot move these scenarios.
-    def test_target_time_descheduled_inside_a_scope_is_not_charged(self):
+    # ForgePact #165. Target: the harness's controlled clock is immune to a
+    # deschedule. A real Sleep inside a timed scope, beside 5 ms of controlled
+    # work, does not reach it, so a busy machine cannot move the accounting
+    # scenarios. The shipped accounting reads the real counter and still
+    # charges that time (the real-clock control below).
+    def test_target_the_controlled_clock_ignores_a_real_sleep_in_a_scope(self):
         detail = self.scenario("descheduled-not-charged")
         self.assertTrue(detail.startswith("frame 5.0 ms: gems 5.0 | slept "), detail)
 

@@ -156,13 +156,16 @@ inline std::string InModText(Mod m, bool gameOriginal)
 
 // The player build reads QueryPerformanceCounter here, as a plain call. A test
 // harness that puts /DFORGEPACT_INCIDENT_HARNESS_CLOCK on its compile line
-// defines HarnessClockQpc() itself (tests/incident_monitor_harness.cpp), so
-// its accounting scenarios run on a clock that moves only when it says so.
-// The seam is the compiler's, not a pointer: the scopes below run on every
-// hooked call, and the shipped read pays nothing for a test's clock.
+// defines HarnessClockQpc() and HarnessClockFrequency() itself
+// (tests/incident_monitor_harness.cpp), so its accounting scenarios run on a
+// clock that moves only when it says so, at a frequency of its own rather than
+// the host's. The seam is the compiler's, not a pointer: the scopes below run
+// on every hooked call, and the shipped read pays nothing for a test's clock.
 #ifdef FORGEPACT_INCIDENT_HARNESS_CLOCK
 int64_t HarnessClockQpc() noexcept;
+int64_t HarnessClockFrequency() noexcept;
 inline int64_t Qpc() noexcept { return HarnessClockQpc(); }
+inline int64_t QpcFrequency() noexcept { return HarnessClockFrequency(); }
 #else
 inline int64_t Qpc() noexcept
 {
@@ -170,7 +173,6 @@ inline int64_t Qpc() noexcept
     QueryPerformanceCounter(&v);
     return v.QuadPart;
 }
-#endif
 
 inline int64_t QpcFrequency() noexcept
 {
@@ -181,6 +183,7 @@ inline int64_t QpcFrequency() noexcept
     }();
     return frequency;
 }
+#endif
 
 inline double QpcToMs(int64_t ticks) noexcept
 {

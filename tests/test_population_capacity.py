@@ -10,8 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # a fixed 90 s over compile and run together failed for reasons that had
 # nothing to do with the code (ForgePact #165). The compile gets a wide bound.
 COMPILE_TIMEOUT_SECONDS = 600
-# The compiled harnesses read no clock and finish in about a second; this
-# bound only catches a hang, so it stays tight and separate from the compile.
+# The compiled harnesses assert nothing about elapsed time
+# (population_native_library prints its read timings but does not check them)
+# and finish in about a second; this bound only catches a hang, so it stays
+# tight and separate from the compile.
 RUN_TIMEOUT_SECONDS = 90
 
 class PopulationCapacityTests(unittest.TestCase):
