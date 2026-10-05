@@ -168,7 +168,11 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   and is decided as not recently created); the rarity is the item's
   `itemInfoStruct["27"]`, kept only as a number; its identity is its
   `itemType` and `itemTimeStamp` when the stamp is real (not empty, `0` or
-  `undefined`), otherwise the ground id with the stamp. The core then
+  `undefined`), otherwise the ground id with the stamp. An item whose
+  identity could not be read (a real stamp with no numeric `itemType`, or no
+  real stamp and no readable ground `id`) counts `no-identity` and is not
+  decided, so two unread items never share one identity; that case was not
+  observed live. The core then
   decides, in this order: off, not recently created (`held-bag-drop`),
   unread rarity, a rarity not in {9, 7, 10}, an identity already announced
   (`held-duplicate`), or announce. After the batch the creation window ages
@@ -199,7 +203,7 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   `lootann: on|off route= seen= announced= held-rarity= held-no-rarity=
   held-duplicate= held-bag-drop= sink-refused= remembered= created=
   create-overflow= init-hook= create-hook= unidentified= no-item= no-key=
-  queue-full=`. The
+  no-identity= queue-full=`. The
   modstate JSON carries `lootAnnounce` with `on`, `route`, `seen`,
   `announced`, `heldRarity`, `heldNoRarity`, `heldDuplicate`, `heldBagDrop`
   and `sinkRefused`.
@@ -413,8 +417,12 @@ build of the same belt between the placements: same definition and
 read 9, so it was not that rebuild (a temporary copy made at the pickup or
 the drop; the log has no time to say which). Inference: the struct that went
 pickup → bag → ground was the placed one, or a copy `CreateItemNew` did not
-make. The same log shows the game's own drops built this session with a
-fresh numeric `itemTimeStamp` through the detoured `CreateItemNew`.
+make. The same log shows the game's own drops built with a fresh numeric
+`itemTimeStamp` through the detoured `CreateItemNew`. This session stayed in
+town and read no natural drop, so those records are an earlier launch's: the
+values read decode to the end of Live procedure 1's kills
+(`docs/RUNTIME_DATA_MODELS.md` § 16.11), and that the log is appended to
+across launches is inference from that.
 
 **Why the guard changed.** A window opened by a hook that never sees the bag
 drop cannot hold it. "Built by `CreateItemNew` this frame or the last" was

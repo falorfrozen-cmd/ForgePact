@@ -15,8 +15,9 @@ with it on, a just-built Heroic, Angelic or Unholy item announces once;
 Satanic, Mythic, Common and every other code, and an unreadable rarity, do
 not; an item not built in this frame or the last does not; an identity
 already announced does not; off clears the creation window; the window and
-the memory are capped; the stat line counts what happened; and Live procedure
-1's steps replay with the bag drop held.
+the memory are capped; the stat line counts what happened; an identity the
+adapter could not read is not identifiable; and Live procedure 2's steps
+replay with the bag drop held.
 """
 import os
 import shutil
@@ -115,7 +116,10 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
         self.assertScenarios("target/second_sight_not_announced", "target/identity_is_item_type_and_time_stamp",
                              "target/identity_without_a_stamp_is_the_ground_id", "target/memory_kept_across_off_on")
 
-    # The creation guard (Replan 1, after Live procedure 1's bag drop was
+    def test_an_unread_identity_is_not_one(self):
+        self.assertScenarios("target/unread_identity_is_not_identifiable")
+
+    # The creation guard (Replan 1, after Live procedure 2's bag drop was
     # announced through the old LootGroundDrop window). Every label the plan's
     # criterion lists must print PASS.
     CREATION_GUARD_SCENARIOS = (
@@ -127,7 +131,7 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
         "target/same_stamp_new_ground_id_held",
         "target/off_clears_creation_window",
         "target/creation_window_cap",
-        "target/live1_replay",
+        "target/live2_replay",
     )
 
     def test_an_item_not_built_this_frame_or_the_last_does_not(self):

@@ -38,7 +38,10 @@ namespace ForgePact {
 //   - each item announces once: the memory is the item's itemType and its
 //     itemTimeStamp when the stamp is real (not empty, "0" or "undefined"),
 //     otherwise the ground instance id with the stamp (itemDataHash is not an
-//     identity, section 16.5).
+//     identity, section 16.5). An item whose identity could not be read (a
+//     real stamp with no itemType, or no real stamp and no ground id) is not
+//     Identifiable: the adapter counts it (no-identity) and does not decide
+//     it, so one unread item never stands for another.
 //
 // It is game-independent by contract - rarity codes, instance ids, item keys
 // as integers, types and time stamps as text, never an instance or an RValue
@@ -186,10 +189,18 @@ public:
         if (IsRealStamp(timeStamp)) return "item:" + itemType + ":" + timeStamp;
         return "ground:" + std::to_string(instanceId) + ":" + timeStamp;
     }
+    // Whether the adapter read the parts Identity() would use: the itemType
+    // ("" when it could not be read) beside a real stamp, else the ground
+    // instance id. Asked before Decide, so an unread part never reaches the
+    // memory, where two unread items would compare equal.
+    static bool Identifiable(bool groundIdRead, const std::string& itemType, const std::string& timeStamp)
+    {
+        return IsRealStamp(timeStamp) ? !itemType.empty() : groundIdRead;
+    }
 
     // One ground item. `recentlyCreated` is RecentlyCreated() for the key of
     // the item struct it holds (false when it gave no key); the rest is read
-    // off the ground instance.
+    // off the ground instance, and is Identifiable (the adapter asks first).
     Verdict Decide(int rarityCode, bool recentlyCreated, int64_t instanceId, const std::string& itemType,
                    const std::string& timeStamp)
     {

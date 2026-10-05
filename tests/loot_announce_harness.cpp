@@ -18,8 +18,8 @@
 // identity (itemType and a real itemTimeStamp, else the ground id) was
 // already announced does not; switching off clears the creation window; the
 // window and the memory are capped; the counters and the stat line say what
-// happened. live1_replay replays Live procedure 2's steps 2-6 (the
-// workorder's Live 1, aborted), the session
+// happened. An identity the adapter could not read is not Identifiable.
+// live2_replay replays Live procedure 2's steps 2-6 (aborted), the session
 // whose bag drop the old LootGroundDrop window announced.
 #include <cstdint>
 #include <iostream>
@@ -220,6 +220,20 @@ int main()
             if (fresh(m, { Angelic, 3101, s, "4", 3101 }) != Verdict::Announce) fallback = false;
         }
         check("target/identity_without_a_stamp_is_the_ground_id", fallback && m.Stats().announced == 9, counts(m));
+        // What the adapter asks before Decide. A real stamp needs a read
+        // itemType; without one the ground id must have been read. Two items
+        // read as nothing would otherwise share one identity, which the last
+        // line shows the memory cannot tell apart.
+        bool identifiable = LootAnnounceMod::Identifiable(true, "4", "1759600000123")
+            && LootAnnounceMod::Identifiable(false, "4", "1759600000123")
+            && !LootAnnounceMod::Identifiable(true, "", "1759600000123")
+            && !LootAnnounceMod::Identifiable(false, "", "1759600000123");
+        for (const std::string& s : { std::string(""), std::string("0"), std::string("undefined") })
+            identifiable = identifiable && LootAnnounceMod::Identifiable(true, "4", s) && LootAnnounceMod::Identifiable(true, "", s)
+                && !LootAnnounceMod::Identifiable(false, "4", s) && !LootAnnounceMod::Identifiable(false, "", s);
+        check("target/unread_identity_is_not_identifiable",
+              identifiable
+                  && LootAnnounceMod::Identity(3200, "", "1759600000123") == LootAnnounceMod::Identity(3201, "", "1759600000123"));
         // Off, then on again: the memory is kept, so a still-lying item is not
         // announced a second time.
         m.SetEnabled(false);
@@ -352,7 +366,7 @@ int main()
         const auto& z = m.Stats();
         const bool unchanged = z.seen == before.seen && z.announced == before.announced && z.heldRarity == before.heldRarity
             && z.heldBagDrop == before.heldBagDrop && z.created == before.created;
-        check("target/live1_replay",
+        check("target/live2_replay",
               h == Verdict::Announce && a == Verdict::Announce && s == Verdict::HeldRarity && b == Verdict::HeldBagDrop
                   && counted && o == Verdict::Off && unchanged,
               counts(m));

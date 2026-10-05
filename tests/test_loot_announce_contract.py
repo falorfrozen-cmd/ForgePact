@@ -291,7 +291,14 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn("const bool hasKey = LaItemKey(item, key);", process)
         self.assertIn("if (!hasKey) ++g_LaNoKey;", process)
         self.assertIn("const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);", process)
-        self.assertIn("g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, LaItemType(item), LaTimeStamp(item))", process)
+        self.assertIn("g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, type, stamp)", process)
+        # An identity that could not be read is counted and left before the
+        # core's memory sees it: "unread" must never compare equal to "unread".
+        self.assertNotIn("double id = -1.0;", process)
+        self.assertIn("idRead = id >= 0.0;", process)
+        refuse = "if (!ForgePact::LootAnnounceMod::Identifiable(idRead, type, stamp)) { ++g_LaNoIdentity; return; }"
+        self.assertIn(refuse, process)
+        self.assertLess(process.index(refuse), process.index("g_LootAnnounce.Decide("))
         item_type = _code(_body(self.plugin, "static std::string LaItemType(const RValue& item)"))
         self.assertIn('LaField(item, "itemType", t)', item_type)
         # The kind never decides whether the read happens: no instance-kind gate.
@@ -437,7 +444,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('if (arg.empty() || arg == "stat") { Out(LootAnnounceStatLine()); return; }', command)
         stat = _code(_body(self.plugin, "static std::string LootAnnounceStatLine()"))
         fields = re.findall(r'" ([a-z-]+)="', stat)
-        self.assertEqual(fields, ["init-hook", "create-hook", "unidentified", "no-item", "no-key", "queue-full"])
+        self.assertEqual(fields, ["init-hook", "create-hook", "unidentified", "no-item", "no-key", "no-identity", "queue-full"])
         # `lootann 1` names both hooks' routes.
         self.assertIn('" init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute', command)
 

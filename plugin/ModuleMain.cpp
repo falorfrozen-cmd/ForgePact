@@ -47838,7 +47838,7 @@ static void JumpSceneryCommand(const std::string& rest)
 //     (HookHiddenLootInit, installed by HiddenLootInstall): inside the call
 //     LootAnnounceOnInit only reduces argument 0 and `self` to durable
 //     handles. Hidden loot measured argument 0 as the ground item, a
-//     reference, on every one of 1,473 calls; Live procedure 1 measured a bag
+//     reference, on every one of 1,473 calls; Live procedure 2 measured a bag
 //     drop reaching it too.
 //   - CreateItemNew, the shared Hook_CreateItemNew (installed here as
 //     fp_lootann_new when no other feature holds it): while the switch is on,
@@ -47870,6 +47870,7 @@ static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route
 static long long g_LaUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
 static long long g_LaNoItem = 0;         // a ground item with no item struct to read
 static long long g_LaNoKey = 0;          // a ground item whose item value gave no key: decided as not recently created
+static long long g_LaNoIdentity = 0;     // a ground item whose identity could not be read: counted, not decided
 static long long g_LaPendingDropped = 0; // calls not noted because a frame's queue was full
 static int g_LaLootIndex = -2;           // asset_get_index of Loot_Ground_obj; -2 until resolved
 static long g_LaRefusalLogs = 0;
@@ -48121,9 +48122,10 @@ static CInstance* LaPlayer(RValue* idOut, std::string& failed)
     return nullptr;
 }
 
-// The character's name: the player instance's `name`, when it is text. Not
-// established on this build (a co-op read uses it), so the sink falls back to
-// "You" and its supplied line says which it used.
+// The character's name: the player instance's `name`, when it is text. Live
+// procedure 1 measured it holding the character's name (`Sorak`); a read that
+// is not text falls back to "You", and the sink's supplied line says which it
+// used.
 static std::string LaCharacterName(CInstance* player)
 {
     if (!player) return "You";
@@ -48342,22 +48344,30 @@ static void LaProcess(const LaPending& p)
     }
     if (!loot) { ++g_LaUnidentified; return; }
     RValue item;
-    double id = -1.0;
+    double id = 0.0;
+    bool idRead = false;
     try {
         const RValue inst = loot->ToRValue();
         const std::string field(HeroSiege::Player::kGroundItemInstanceField);
         if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(field) }).ToBoolean())
             item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+        // InstanceIdOf answers below 0 for an `id` it could not read.
         id = InstanceIdOf(inst);
+        idRead = id >= 0.0;
     } catch (...) {}
     if (!(item.m_Kind == VALUE_OBJECT && item.m_Object) && item.m_Kind != VALUE_REF) { ++g_LaNoItem; return; }
+    // An unread itemType ("") or ground id is not an identity: two such items
+    // would share one in the core's memory, so this one is counted and left.
+    const std::string type = LaItemType(item);
+    const std::string stamp = LaTimeStamp(item);
+    if (!ForgePact::LootAnnounceMod::Identifiable(idRead, type, stamp)) { ++g_LaNoIdentity; return; }
     // The creation guard: was this item struct built (noted from CreateItemNew)
     // in this frame or the one before? An item that gives no key is not.
     ForgePact::LootAnnounceMod::ItemKey key{};
     const bool hasKey = LaItemKey(item, key);
     if (!hasKey) ++g_LaNoKey;
     const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);
-    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, LaItemType(item), LaTimeStamp(item));
+    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, type, stamp);
     if (verdict == ForgePact::LootAnnounceMod::Verdict::Announce && !LootAnnounceSink(item, loot))
         g_LootAnnounce.NoteSinkRefused();
 }
@@ -48387,6 +48397,7 @@ static std::string LootAnnounceStatLine()
         + " unidentified=" + std::to_string(g_LaUnidentified)
         + " no-item=" + std::to_string(g_LaNoItem)
         + " no-key=" + std::to_string(g_LaNoKey)
+        + " no-identity=" + std::to_string(g_LaNoIdentity)
         + " queue-full=" + std::to_string(g_LaPendingDropped);
 }
 
