@@ -47308,9 +47308,10 @@ static void GpLogCall(int row, const std::string& label, const std::string& self
 //   gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
 //   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
 //   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
-//   gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> frame=<f>
-//   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n> instance-ring=<n>
-//       build-dropped=<n> instance-dropped=<n>   (status)
+//   gambaprobe window capped <object key> frame=<f>
+//   gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> capped=<n> frame=<f>
+//   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open end=<f> frame=<now> remaining=<n>|closed>
+//       ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n> capped=<n>   (status)
 
 // The rows whose calls build or place an item: the ring holds their calls for
 // any self, and a window prints them.
@@ -47332,6 +47333,22 @@ static bool GpIsBuildRow(int script)
 }
 
 static int64_t GpFrame() { return (int64_t)g_RuntimeFrame; }
+
+// The by-name slot whose call the watch already fed, while that call's
+// original runs: a script row it reaches through the script's own function
+// is not fed again, so one call is not logged under two labels.
+static thread_local int g_GpByNameFed = -1;
+struct GpByNameFedScope {
+    int prev;
+    explicit GpByNameFedScope(int slot) : prev(g_GpByNameFed) { g_GpByNameFed = slot; }
+    ~GpByNameFedScope() { g_GpByNameFed = prev; }
+};
+static bool GpFedByName(int script)
+{
+    if (g_GpByNameFed < 0) return false;
+    const std::vector<int>& rows = g_GpByNameSlots[g_GpByNameFed].scripts;
+    return std::find(rows.begin(), rows.end(), script) != rows.end();
+}
 
 // A build-row call of an active probe, any self, its arguments already
 // described: pushed into the build ring and, inside a window, printed as a
@@ -47408,14 +47425,18 @@ static GpNs::ArgTarget GpArgTarget(const RValue& arg, CInstance* S, CInstance* O
 // The object an instance call is about, the key of its per-object window
 // cap: a create's object argument (the fourth, for instance_create_layer and
 // instance_create_depth alike), or the object of what instance_destroy ends
-// (its argument's, read by name through GpArgTarget, or its self's).
-static std::string GpInstanceKey(int builtin, CInstance* S, CInstance* O, int argc, RValue* Args)
+// (its argument's, read by name through GpArgTarget, or its self's). The
+// argument's read is handed back in `target` (`targetRead` true), so the
+// by-argument rule (GpMachineArg) does not read it a second time.
+static std::string GpInstanceKey(int builtin, CInstance* S, CInstance* O, int argc, RValue* Args, GpNs::ArgTarget& target,
+                                 bool& targetRead)
 {
     const std::string row = GpBuiltinName(builtin);
     if (static_cast<GpNs::Builtin>(builtin) != GpNs::Builtin::InstanceDestroy)
         return row + " " + (Args && argc > 3 ? GpValueText(Args[3]) : std::string("?"));
     if (!Args || argc < 1) return row + " object=" + std::to_string(S ? GpObjectIndexOf(S->ToRValue()) : -1);
-    const GpNs::ArgTarget target = GpArgTarget(Args[0], S, O);
+    target = GpArgTarget(Args[0], S, O);
+    targetRead = true;
     if (target.kind == GpNs::ArgKind::All) return row + " all";
     return row + " object=" + std::to_string(target.object);
 }
@@ -47425,7 +47446,10 @@ static std::string GpInstanceKey(int builtin, CInstance* S, CInstance* O, int ar
 // into the instance ring - apart from the build ring, so a burst of effects
 // cannot evict a build - and, inside a window, printed as a window line under
 // the instance cap and its object's share of it, never the build cap.
-static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args)
+// The first refusal of an object's share in a window prints its `capped`
+// line, so a cap that hid (say) the explosion's coins is named.
+static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args, GpNs::ArgTarget& target,
+                           bool& targetRead)
 {
     const int64_t frame = GpFrame();
     const std::string label = GpBuiltinName(builtin);
@@ -47433,10 +47457,11 @@ static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, CInstance
     try {
         const std::string self = GpSelfText(seen, S);
         const std::string args = GpBuiltinArgs(argc, Args);
-        const std::string key = GpInstanceKey(builtin, S, O, argc, Args);
+        const std::string key = GpInstanceKey(builtin, S, O, argc, Args, target, targetRead);
         const bool window = g_GpWatch.InWindow(frame);
         g_GpWatch.Push({ label, self, argc, args, frame, GpNs::CallKind::Instance, key });
         if (window && g_GpWatch.TakeInstanceLine(frame, key)) Out(GpNs::WindowCallLine(label, self, argc, args, frame));
+        for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
     } catch (...) {}
     g_GpBusy = false;
 }
@@ -47469,7 +47494,7 @@ static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int
     // self, into the ring and, inside a window, a window line; a
     // CreateItemNew inside a window is followed by what it built.
     std::string watchSelf;
-    if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && GpWatchScript(t.label, seen, S, argc, A, watchSelf)
+    if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !GpFedByName(script) && GpWatchScript(t.label, seen, S, argc, A, watchSelf)
         && script == kGpScript_CreateItemNew) {
         RValue& built = GpTraceScript(t, row, seen, S, O, R, argc, A);
         GpWatchBuilt(built, watchSelf);
@@ -47558,14 +47583,20 @@ static GpNs::ArgTarget GpArgTarget(const RValue& arg, CInstance* S, CInstance* O
 }
 
 // The by-argument rule for a call whose self is not a machine: does its first
-// argument name one? Read before the original, which may end that instance.
-static bool GpMachineArg(int builtin, int row, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args)
+// argument name one? Read before the original, which may end that instance;
+// `known` is the explosion watch's read of the same argument, when it made
+// one (instance_destroy), so it is not read twice.
+static bool GpMachineArg(int builtin, int row, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args,
+                         const GpNs::ArgTarget* known)
 {
     if (!Args || argc < 1 || !GpNs::BuiltinChecksArgument(static_cast<GpNs::Builtin>(builtin))) return false;
     GpNs::ArgTarget target;
-    g_GpBusy = true;
-    try { target = GpArgTarget(Args[0], S, O); } catch (...) {}
-    g_GpBusy = false;
+    if (known) target = *known;
+    else {
+        g_GpBusy = true;
+        try { target = GpArgTarget(Args[0], S, O); } catch (...) {}
+        g_GpBusy = false;
+    }
     return g_GpCore.NoteMachineArg(row, seen, g_GpCore.ArgNamesMachine(target));
 }
 
@@ -47606,11 +47637,14 @@ static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O,
     // The explosion watch: an instance create/destroy call, whatever its
     // self, goes into the instance ring and, inside a window, is a window
     // line, apart from the trace budget below.
-    if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin))) GpWatchBuiltin(builtin, d.seen, S, O, argc, Args);
+    GpNs::ArgTarget target;
+    bool targetRead = false;
+    if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin)))
+        GpWatchBuiltin(builtin, d.seen, S, O, argc, Args, target, targetRead);
     // Another self's instance_destroy / instance_change /
     // instance_deactivate_object whose first argument names a machine is
     // counted and logged too (machine-arg=).
-    const bool byArg = d.seen != GpNs::Seen::Machine && GpMachineArg(builtin, row, d.seen, S, O, argc, Args);
+    const bool byArg = d.seen != GpNs::Seen::Machine && GpMachineArg(builtin, row, d.seen, S, O, argc, Args, targetRead ? &target : nullptr);
     if ((d.seen == GpNs::Seen::Other && !byArg) || !GpCanLog(row)) {
         if (t.orig) t.orig(Result, S, O, argc, Args);
         return;
@@ -47649,11 +47683,15 @@ static std::string GpByNameLabel(int slot)
 // answered.
 // The explosion watch on a by-name routine: a slot any build row reaches is
 // a build-row call (ring, window line), and one CreateItemNew reaches has
-// its built item read after the original. True when the built line is due.
-static bool GpWatchByName(int slot, GpNs::Seen seen, CInstance* S, int argc, RValue* Args, std::string& selfText)
+// its built item read after the original. True when the built line is due;
+// `fed` says whether the call went to the watch at all (the original then
+// runs under GpByNameFedScope).
+static bool GpWatchByName(int slot, GpNs::Seen seen, CInstance* S, int argc, RValue* Args, std::string& selfText, bool& fed)
 {
     const GpByNameSlot& b = g_GpByNameSlots[slot];
+    fed = false;
     if (seen == GpNs::Seen::Idle || std::none_of(b.scripts.begin(), b.scripts.end(), GpIsBuildRow)) return false;
+    fed = true;
     std::string args;
     g_GpBusy = true;
     try { args = GpBuiltinArgs(argc, Args); } catch (...) {}
@@ -47671,9 +47709,14 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
     const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
     // The explosion watch, before the self filter (build rows only).
     std::string watchSelf;
-    const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf);
+    bool fed = false;
+    const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf, fed);
+    const int mark = fed ? slot : g_GpByNameFed;
     if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {
-        if (b.orig) b.orig(Result, S, O, argc, Args);
+        {
+            GpByNameFedScope scope(mark);
+            if (b.orig) b.orig(Result, S, O, argc, Args);
+        }
         if (readBuilt) GpWatchBuilt(Result, watchSelf);
         return;
     }
@@ -47685,7 +47728,10 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
         selfText = GpSelfText(seen, S);
     } catch (...) {}
     g_GpBusy = false;
-    if (b.orig) b.orig(Result, S, O, argc, Args);
+    {
+        GpByNameFedScope scope(mark);
+        if (b.orig) b.orig(Result, S, O, argc, Args);
+    }
     if (readBuilt) GpWatchBuilt(Result, watchSelf);
     g_GpBusy = true;
     try { GpLogCall(row, GpByNameLabel(slot), selfText, argc, args, key, GpValueText(Result)); } catch (...) {}
@@ -48896,7 +48942,7 @@ static void GpStatus()
 {
     Out(g_GpCore.StatusLine());
     Out("gambaprobe: machines=" + GpMachinesText() + " hooked=" + (g_GpHooked ? "yes" : "no"));
-    Out(g_GpWatch.StatusLine());
+    Out(g_GpWatch.StatusLine(GpFrame()));
     Out(g_GpCore.RngLine());
     if (!g_GpHooked) return;
     if (g_GpCore.SpentRows() > 0)

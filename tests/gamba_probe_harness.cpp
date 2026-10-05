@@ -637,14 +637,25 @@ int main()
             == "gambaprobe window built itemType=10 j=0 b=98 c=1 rarity=4 name=Goburin's Head self=machine id=494624 frame=11";
         lines = lines && WindowExtendedLine(WindowReason::Gone, 42, 611, 311)
             == "gambaprobe window extended reason=gone id=42 end=611 frame=311";
-        lines = lines && WindowClosedLine(12, 2, 30, 4, 311)
-            == "gambaprobe window closed build-lines=12 build-dropped=2 instance-lines=30 instance-dropped=4 frame=311";
+        lines = lines && WindowClosedLine(12, 2, 30, 4, 1, 311)
+            == "gambaprobe window closed build-lines=12 build-dropped=2 instance-lines=30 instance-dropped=4 capped=1 frame=311";
+        lines = lines && WindowCappedLine("instance_create_layer real:777", 40)
+            == "gambaprobe window capped instance_create_layer real:777 frame=40";
         lines = lines && OptionalNumberText(true, 98.0) == "98" && OptionalNumberText(false, 98.0) == "?"
             && OptionalNumberText(true, 0.5) == "0.5";
         check("watch/fixed_lines", lines);
         Watch w;
-        check("watch/status_line", w.StatusLine() == "gambaprobe watch: machines-seen=0 transitions=0 windows=0 window=closed ring=0"
-              " instance-ring=0 build-dropped=0 instance-dropped=0", w.StatusLine());
+        const std::string closedStatus = w.StatusLine(5);
+        // While a window is open, status names its end, the current frame and
+        // what remains, so an operator can re-send `window` before it ends.
+        w.Open(WindowReason::Command, -1, 100, 3600);
+        const std::string openStatus = w.StatusLine(1000);
+        const std::string lateStatus = w.StatusLine(3800);
+        check("watch/status_line", closedStatus == "gambaprobe watch: machines-seen=0 transitions=0 windows=0 window=closed ring=0"
+              " instance-ring=0 build-dropped=0 instance-dropped=0 capped=0"
+            && openStatus == "gambaprobe watch: machines-seen=0 transitions=0 windows=1 window=open end=3700 frame=1000 remaining=2700"
+              " ring=0 instance-ring=0 build-dropped=0 instance-dropped=0 capped=0"
+            && contains(lateStatus, " window=open end=3700 frame=3800 remaining=0 "), openStatus + " | " + lateStatus);
     }
     {
         // Baseline: no transition and no `window` command - no window line,
@@ -712,10 +723,10 @@ int main()
         const std::string closed = w.Tick(700);
         const std::string again = w.Tick(701);
         check("watch/forward_lines_until_the_span_ends", in && f1 && !late && open.empty()
-            && closed == "gambaprobe window closed build-lines=4 build-dropped=0 instance-lines=1 instance-dropped=0 frame=700"
+            && closed == "gambaprobe window closed build-lines=4 build-dropped=0 instance-lines=1 instance-dropped=0 capped=0 frame=700"
             && again.empty() && !w.WindowOpen()
-            && w.StatusLine() == "gambaprobe watch: machines-seen=1 transitions=1 windows=1 window=closed ring=4 instance-ring=1"
-                                 " build-dropped=0 instance-dropped=0", closed + " / " + w.StatusLine());
+            && w.StatusLine(701) == "gambaprobe watch: machines-seen=1 transitions=1 windows=1 window=closed ring=4 instance-ring=1"
+                                    " build-dropped=0 instance-dropped=0 capped=0", closed + " / " + w.StatusLine(701));
     }
     {
         // A machine the refresh no longer finds: one gone line and a window;
@@ -747,7 +758,7 @@ int main()
               std::to_string(oneObject) + " " + std::to_string(manyObjects));
         const std::string closed = w.Tick(3600);
         check("watch/build_lines_keep_their_own_cap_and_count_what_they_dropped", built == kWindowBuildLineCap && w.Windows() == 1
-            && closed == "gambaprobe window closed build-lines=400 build-dropped=50 instance-lines=800 instance-dropped=40 frame=3600"
+            && closed == "gambaprobe window closed build-lines=400 build-dropped=50 instance-lines=800 instance-dropped=40 capped=1 frame=3600"
             && p.RowCounters(ScriptRowOf(21)).logged == 0 && p.SpentRows() == 0, closed);
         check("watch/command_opens_the_same_window", open.size() == 1
             && open[0] == "gambaprobe window open reason=command id=- frame=0 replayed=0 span=3600", open.empty() ? "" : open[0]);
@@ -764,7 +775,8 @@ int main()
         const bool again = w.TakeBuildLine(11) && w.TakeInstanceLine(11, "k");
         const std::string closed = w.Tick(1010);
         check("watch/a_command_on_an_open_window_tops_up_both_caps", spent && again && w.Windows() == 1
-            && closed == "gambaprobe window closed build-lines=401 build-dropped=2 instance-lines=33 instance-dropped=2 frame=1010", closed);
+            && closed == "gambaprobe window closed build-lines=401 build-dropped=2 instance-lines=33 instance-dropped=2 capped=1 frame=1010",
+              closed);
     }
     {
         // A burst of instance calls cannot evict a build from its ring: the
@@ -776,12 +788,37 @@ int main()
             w.Push({ "instance_create_layer", "machine id=42", 4, " a3=real:12", 99 + i % 2, CallKind::Instance, "instance_create_layer real:12" });
         const std::vector<std::string> out = w.Open(WindowReason::Command, -1, 100, 600);
         check("watch/an_instance_burst_cannot_evict_a_build", w.RingSize() == 1 && w.InstanceRingSize() == kWatchInstanceRingSize
-            && out.size() == static_cast<size_t>(2 + kWindowInstanceLinesPerObject)
+            && out.size() == static_cast<size_t>(3 + kWindowInstanceLinesPerObject)
+            && out.back() == "gambaprobe window capped instance_create_layer real:12 frame=100"
             && out[0] == "gambaprobe window open reason=command id=- frame=100 replayed=33 span=600"
             && out[1] == "gambaprobe window replay CreateDefaultParams self=machine id=42 argc=3 a0=real:0 frame=99"
             && w.BuildLines() == 1 && w.InstanceLines() == static_cast<uint64_t>(kWindowInstanceLinesPerObject)
             && w.InstanceDropped() == static_cast<uint64_t>(kWatchInstanceRingSize - kWindowInstanceLinesPerObject),
               out.empty() ? "" : out[0]);
+    }
+    {
+        // The first refusal of an object's share names it, once per window
+        // (a top-up does not name it again); a refusal by the overall cap
+        // names nothing; a new window names it again.
+        Watch w;
+        w.Open(WindowReason::Command, -1, 0, 1000);
+        for (int i = 0; i < kWindowInstanceLinesPerObject; ++i) w.TakeInstanceLine(1, "instance_create_layer Coin_obj");
+        const bool none = w.TakeCappedLines(1).empty();
+        const bool refused = !w.TakeInstanceLine(1, "instance_create_layer Coin_obj");
+        const std::vector<std::string> first = w.TakeCappedLines(1);
+        w.TakeInstanceLine(2, "instance_create_layer Coin_obj");
+        const bool once = w.TakeCappedLines(2).empty();
+        w.Open(WindowReason::Command, -1, 3, 1000);   // a top-up
+        for (int i = 0; i < kWindowInstanceLinesPerObject + 1; ++i) w.TakeInstanceLine(4, "instance_create_layer Coin_obj");
+        const bool notAgain = w.TakeCappedLines(4).empty() && w.Capped() == 1;
+        const std::string status = w.StatusLine(5);
+        w.Tick(1003);
+        w.Open(WindowReason::Command, -1, 1004, 100);
+        for (int i = 0; i < kWindowInstanceLinesPerObject + 1; ++i) w.TakeInstanceLine(1005, "instance_create_layer Coin_obj");
+        const std::vector<std::string> next = w.TakeCappedLines(1005);
+        check("watch/a_capped_object_is_named_once_per_window", none && refused && first.size() == 1
+            && first[0] == "gambaprobe window capped instance_create_layer Coin_obj frame=1" && once && notAgain
+            && contains(status, " capped=1") && next.size() == 1, first.empty() ? status : first[0]);
     }
     {
         // A second transition while a window is open extends it: no second
@@ -818,7 +855,7 @@ int main()
         const std::string closed = w.Off(7);
         const std::vector<std::string> after = w.Poll(8, { { 42, "a" } });
         check("watch/off_closes_and_forgets_the_machines",
-              closed == "gambaprobe window closed build-lines=1 build-dropped=0 instance-lines=0 instance-dropped=0 frame=7"
+              closed == "gambaprobe window closed build-lines=1 build-dropped=0 instance-lines=0 instance-dropped=0 capped=0 frame=7"
             && !w.WindowOpen() && after.size() == 1 && after[0] == "gambaprobe machine id=42 sprite=a frame=8"
             && w.Off(9).empty() && w.Windows() == 1, closed);
     }

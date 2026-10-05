@@ -69,6 +69,12 @@ fires on the machine's explosion, which nothing had observed):
   object, never the build cap), both reported when dropped and topped up by
   an extension; the automatic span is at least 600 frames; and the by-name
   route feeds the watch for the build rows too;
+- round 2: `status` names an open window's end, the current frame and what
+  remains; the first refusal of an object's share prints a `capped` line;
+  the rings drop their oldest with `pop_front`; the by-argument rule reuses
+  the watch's read of instance_destroy's argument; and a call fed through a
+  by-name slot runs its original under a marker that keeps the script row
+  from feeding it again;
 - the built-item line is read after CreateItemNew returns;
 - `window [frames]` opens a window by hand, `status` prints the watch's
   counters, `off` closes an open window, and every new symbol stays inside
@@ -150,7 +156,7 @@ SHARED_SCRIPTS = {
 
 # The standard headers the decision core may include, and nothing else.
 STD_HEADERS = {"cmath", "cstdint", "cstdio", "functional", "string_view", "unordered_map", "algorithm", "array",
-               "string", "vector", "optional", "limits", "utility"}
+               "string", "vector", "optional", "limits", "utility", "deque"}
 
 
 def sdk_scripts():
@@ -296,7 +302,7 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other) return t.orig ? t.orig(S, O, R, argc, A) : R;",
                       script)
         # Phase 4: the explosion watch reads nothing for an idle call either.
-        self.assertIn("if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && GpWatchScript(",
+        self.assertIn("if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !GpFedByName(script) && GpWatchScript(",
                       self.body("static RValue& GpOnScript("))
         builtin = self.body("static void GpOnBuiltin(")
         idle = braced_block(builtin, "if (d.seen == GpNs::Seen::Idle) {")
@@ -870,7 +876,10 @@ class GambaProbeContract(unittest.TestCase):
         # Header: the build ring and the instance ring are apart, so a burst
         # of instance calls cannot evict a build.
         push = braced_block(self.header, "void Push(RingCall call)\n    {")
-        self.assertIn("std::vector<RingCall>& ring = instance ? instanceRing_ : ring_;", push)
+        self.assertIn("std::deque<RingCall>& ring = instance ? instanceRing_ : ring_;", push)
+        # Round 2: a full ring drops its oldest in constant time.
+        self.assertIn("if (ring.size() > size) ring.pop_front();", push)
+        self.assertNotIn("erase(", push)
         self.assertRegex(self.header, r"inline constexpr int kWatchInstanceRingSize = (2[5-9]\d|[3-9]\d\d);")
 
     def test_the_byname_route_feeds_the_watch_for_build_rows(self):
@@ -880,7 +889,7 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("GpWatchCall(GpByNameLabel(slot), seen, S, argc, args, selfText)", by_name)
         self.assertIn("kGpScript_CreateItemNew", by_name)
         on_by_name = self.body("static void GpOnByName(")
-        feed = "const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf);"
+        feed = "const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf, fed);"
         self.assertIn(feed, on_by_name)
         self.assertLess(on_by_name.index(feed),
                         on_by_name.index("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {"),
@@ -889,6 +898,15 @@ class GambaProbeContract(unittest.TestCase):
                          "the built item is read after the original on both return paths")
         for path in on_by_name.split("if (readBuilt) GpWatchBuilt(Result, watchSelf);")[:2]:
             self.assertIn("if (b.orig) b.orig(Result, S, O, argc, Args);", path[-200:])
+            # Round 2: the original runs under the by-name marker, so the
+            # script row it reaches is not fed a second time.
+            self.assertIn("GpByNameFedScope scope(mark);", path[-200:])
+        self.assertIn("const int mark = fed ? slot : g_GpByNameFed;", on_by_name)
+        self.assertIn("static thread_local int g_GpByNameFed = -1;", self.code)
+        fed_by_name = self.body("static bool GpFedByName(int script)")
+        self.assertIn("g_GpByNameSlots[g_GpByNameFed].scripts", fed_by_name)
+        script = self.body("static RValue& GpOnScript(")
+        self.assertLess(script.index("!GpFedByName(script)"), script.index("GpWatchScript("))
 
     def test_a_window_prints_its_lines_for_any_self_apart_from_the_trace_budget(self):
         watch = self.body("static bool GpWatchCall(")
@@ -904,10 +922,21 @@ class GambaProbeContract(unittest.TestCase):
                       builtin)
         self.assertLess(builtin.index("g_GpWatch.Push("), builtin.index("TakeInstanceLine("))
         self.assertNotIn("TakeBuildLine", builtin)
-        self.assertIn("const std::string key = GpInstanceKey(builtin, S, O, argc, Args);", builtin)
+        self.assertIn("const std::string key = GpInstanceKey(builtin, S, O, argc, Args, target, targetRead);", builtin)
         key = self.body("static std::string GpInstanceKey(")
         self.assertIn("GpValueText(Args[3])", key)
-        self.assertIn("GpArgTarget(Args[0], S, O)", key)
+        self.assertIn("target = GpArgTarget(Args[0], S, O);", key)
+        self.assertIn("targetRead = true;", key)
+        # Round 2: the first refusal of an object's share is named, and the
+        # by-argument rule reuses the watch's read of instance_destroy's
+        # argument instead of reading it again.
+        self.assertLess(builtin.index("TakeInstanceLine("), builtin.index("g_GpWatch.TakeCappedLines(frame)"))
+        machine_arg = self.body("static bool GpMachineArg(")
+        self.assertIn("if (known) target = *known;", machine_arg)
+        self.assertLess(machine_arg.index("if (known) target = *known;"), machine_arg.index("GpArgTarget(Args[0], S, O)"))
+        take_capped = braced_block(self.header, "if (perObject >= kWindowInstanceLinesPerObject) {")
+        self.assertIn("pendingCapped_.emplace_back(key);", take_capped)
+        self.assertIn('"gambaprobe window capped "', self.header)
         take = braced_block(self.header, "bool TakeLine(CallKind kind, std::string_view key)\n    {")
         self.assertIn("kWindowBuildLineCap", take)
         self.assertIn("kWindowInstanceLineCap", take)
@@ -915,11 +944,12 @@ class GambaProbeContract(unittest.TestCase):
         # `window` (or a transition) on an open window tops both caps up.
         self.assertIn("TopUp();", braced_block(self.header, "if (open_) {"))
         closed = braced_block(self.header, "inline std::string WindowClosedLine(uint64_t buildLines, uint64_t buildDropped, "
-                                           "uint64_t instanceLines, uint64_t instanceDropped,\n                                    int64_t frame)\n{")
-        for field in ('" build-dropped="', '" instance-dropped="'):
+                                           "uint64_t instanceLines, uint64_t instanceDropped,\n"
+                                           "                                    uint64_t capped, int64_t frame)\n{")
+        for field in ('" build-dropped="', '" instance-dropped="', '" capped="'):
             self.assertIn(field, closed)
         on_builtin = self.body("static void GpOnBuiltin(")
-        call = "if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin))) GpWatchBuiltin(builtin, d.seen, S, O, argc, Args);"
+        call = "GpWatchBuiltin(builtin, d.seen, S, O, argc, Args, target, targetRead);"
         self.assertIn(call, on_builtin)
         # After the idle return, before the self filter and the original.
         self.assertLess(on_builtin.index("if (d.seen == GpNs::Seen::Idle) {"), on_builtin.index(call))
@@ -961,12 +991,17 @@ class GambaProbeContract(unittest.TestCase):
         self.assertLess(window.index("if (!g_GpHooked || !g_GpCore.Active()) {"), window.index("g_GpWatch.Open("))
         self.assertIn('"  window [frames]', self.body("static void GpUsage()"))
         status = self.body("static void GpStatus()")
-        self.assertIn("Out(g_GpWatch.StatusLine());", status)
+        self.assertIn("Out(g_GpWatch.StatusLine(GpFrame()));", status)
         # Printed before the `hooked` early return, so `status` always shows it.
-        self.assertLess(status.index("Out(g_GpWatch.StatusLine());"), status.index("if (!g_GpHooked) return;"))
+        self.assertLess(status.index("Out(g_GpWatch.StatusLine(GpFrame()));"), status.index("if (!g_GpHooked) return;"))
+        # Round 2: an open window's end, the current frame and what remains,
+        # so the operator can hold it.
+        status_line = braced_block(self.header, "std::string StatusLine(int64_t now) const\n    {")
+        for field in ('"open end="', '" frame="', '" remaining="', '" capped="'):
+            self.assertIn(field, status_line)
         watch_status = braced_block(self.header, "class Watch {")
         for field in ('"gambaprobe watch: machines-seen="', '" transitions="', '" windows="', '" window="', '" ring="',
-                      '" instance-ring="', '" build-dropped="', '" instance-dropped="'):
+                      '" instance-ring="', '" build-dropped="', '" instance-dropped="', '" capped="'):
             self.assertIn(field, watch_status)
         off = self.body("static void GpOff()")
         self.assertIn("const std::string closed = g_GpWatch.Off(GpFrame());", off)

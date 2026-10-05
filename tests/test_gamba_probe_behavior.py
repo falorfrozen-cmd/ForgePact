@@ -246,6 +246,7 @@ class GambaProbeBehaviorTests(unittest.TestCase):
                       "watch/instance_lines_stop_per_object_and_at_their_cap",
                       "watch/build_lines_keep_their_own_cap_and_count_what_they_dropped", "watch/command_opens_the_same_window",
                       "watch/a_command_on_an_open_window_tops_up_both_caps", "watch/an_instance_burst_cannot_evict_a_build",
+                      "watch/a_capped_object_is_named_once_per_window",
                       "watch/a_transition_while_open_extends_the_window", "watch/a_call_a_window_counted_is_not_replayed",
                       "watch/off_closes_and_forgets_the_machines"):
             self.assertScenario(label)

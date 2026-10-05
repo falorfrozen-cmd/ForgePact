@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -894,9 +895,14 @@ private:
 // `built` lines) spend kWindowBuildLineCap, which instance lines can never
 // touch; instance lines spend kWindowInstanceLineCap and at most
 // kWindowInstanceLinesPerObject per created object. Each counts what it
-// dropped, and the closed line reports both. An extension (a transition or
-// `window` while one is open) tops both caps up. Spans are counted in
-// presented frames. Outside a window the trace behaves exactly as before.
+// dropped, and the closed line reports both; the first time an object hits
+// its share in a window, one `capped` line names it, so a cap that hid (say)
+// the explosion's coins is visible. An extension (a transition or `window`
+// while one is open) tops both caps up. Spans are counted in presented
+// frames, and `status` prints an open window's end, the current frame and
+// what remains, so an operator can hold it open. The rings count no
+// evictions: a replay of nothing cannot be told from a replay of evicted
+// calls. Outside a window the trace behaves exactly as before.
 inline constexpr int kWatchRingSize = 64;
 inline constexpr int kWatchInstanceRingSize = 256;
 inline constexpr int kWindowLookBackFrames = 2;
@@ -1007,10 +1013,17 @@ inline std::string WindowBuiltLine(std::string_view itemType, std::string_view j
         + FrameTail(frame);
 }
 inline std::string WindowClosedLine(uint64_t buildLines, uint64_t buildDropped, uint64_t instanceLines, uint64_t instanceDropped,
-                                    int64_t frame)
+                                    uint64_t capped, int64_t frame)
 {
     return "gambaprobe window closed build-lines=" + std::to_string(buildLines) + " build-dropped=" + std::to_string(buildDropped)
-        + " instance-lines=" + std::to_string(instanceLines) + " instance-dropped=" + std::to_string(instanceDropped) + FrameTail(frame);
+        + " instance-lines=" + std::to_string(instanceLines) + " instance-dropped=" + std::to_string(instanceDropped)
+        + " capped=" + std::to_string(capped) + FrameTail(frame);
+}
+// An object whose instance lines reached kWindowInstanceLinesPerObject in
+// this window: printed once per object per window.
+inline std::string WindowCappedLine(std::string_view key, int64_t frame)
+{
+    return "gambaprobe window capped " + std::string(key) + FrameTail(frame);
 }
 inline std::string OptionalNumberText(bool read, double v) { return read ? NumberText(v) : std::string("?"); }
 
@@ -1071,10 +1084,12 @@ public:
         open_ = true;
         end_ = frame + span;
         buildLines_ = buildDropped_ = instanceLines_ = instanceDropped_ = 0;
+        cappedKeys_.clear();
+        pendingCapped_.clear();
         TopUp();
         ++windows_;
         std::vector<RingCall*> due;
-        for (std::vector<RingCall>* ring : { &ring_, &instanceRing_ })
+        for (std::deque<RingCall>* ring : { &ring_, &instanceRing_ })
             for (RingCall& c : *ring)
                 if (!c.inWindow && c.frame >= frame - kWindowLookBackFrames && c.frame <= frame) due.push_back(&c);
         std::sort(due.begin(), due.end(), [](const RingCall* a, const RingCall* b) { return a->seq < b->seq; });
@@ -1086,6 +1101,7 @@ public:
         }
         out.push_back(WindowOpenLine(reason, id, frame, static_cast<int>(replay.size()), span));
         for (std::string& line : replay) out.push_back(std::move(line));
+        for (std::string& line : TakeCappedLines(frame)) out.push_back(std::move(line));
         return out;
     }
 
@@ -1096,10 +1112,10 @@ public:
         call.inWindow = InWindow(call.frame);
         call.seq = ++seq_;
         const bool instance = call.kind == CallKind::Instance;
-        std::vector<RingCall>& ring = instance ? instanceRing_ : ring_;
+        std::deque<RingCall>& ring = instance ? instanceRing_ : ring_;
         const size_t size = static_cast<size_t>(instance ? kWatchInstanceRingSize : kWatchRingSize);
         ring.push_back(std::move(call));
-        if (ring.size() > size) ring.erase(ring.begin());
+        if (ring.size() > size) ring.pop_front();
     }
 
     // Is a call at `frame` inside the open window? Its frames are
@@ -1123,6 +1139,17 @@ public:
     {
         if (!InWindow(frame)) return false;
         return TakeLine(CallKind::Instance, key);
+    }
+
+    // The `capped` lines of objects that reached their share since the last
+    // call, once each per window: the adapter prints them after the line
+    // that was refused.
+    std::vector<std::string> TakeCappedLines(int64_t frame)
+    {
+        std::vector<std::string> out;
+        for (const std::string& key : pendingCapped_) out.push_back(WindowCappedLine(key, frame));
+        pendingCapped_.clear();
+        return out;
     }
 
     // The end-of-frame tick: a window whose span has run closes, once, with
@@ -1152,15 +1179,22 @@ public:
     uint64_t Windows() const { return windows_; }
     int RingSize() const { return static_cast<int>(ring_.size()); }
     int InstanceRingSize() const { return static_cast<int>(instanceRing_.size()); }
+    uint64_t Capped() const { return static_cast<uint64_t>(cappedKeys_.size()); }
 
-    // `gambaprobe status`'s watch line; the dropped counts are the current
-    // (or last) window's, so a held window's losses show before it closes.
-    std::string StatusLine() const
+    // `gambaprobe status`'s watch line at frame `now`. While a window is open
+    // it names the window's end, the current frame and the frames that remain,
+    // so an operator holding a window knows when to send `window` again; the
+    // dropped and capped counts are the current (or last) window's, so a held
+    // window's losses show before it closes.
+    std::string StatusLine(int64_t now) const
     {
+        std::string window = open_ ? "open end=" + std::to_string(end_) + " frame=" + std::to_string(now) + " remaining="
+                                         + std::to_string(end_ > now ? end_ - now : 0)
+                                   : std::string("closed");
         return "gambaprobe watch: machines-seen=" + std::to_string(machinesSeen_) + " transitions=" + std::to_string(transitions_)
-            + " windows=" + std::to_string(windows_) + " window=" + (open_ ? "open" : "closed") + " ring=" + std::to_string(ring_.size())
+            + " windows=" + std::to_string(windows_) + " window=" + window + " ring=" + std::to_string(ring_.size())
             + " instance-ring=" + std::to_string(instanceRing_.size()) + " build-dropped=" + std::to_string(buildDropped_)
-            + " instance-dropped=" + std::to_string(instanceDropped_);
+            + " instance-dropped=" + std::to_string(instanceDropped_) + " capped=" + std::to_string(cappedKeys_.size());
     }
 
 private:
@@ -1176,7 +1210,12 @@ private:
             return true;
         }
         int& perObject = instancePerObject_[std::string(key)];
-        if (instanceUsed_ >= kWindowInstanceLineCap || perObject >= kWindowInstanceLinesPerObject) {
+        if (perObject >= kWindowInstanceLinesPerObject) {
+            ++instanceDropped_;
+            if (cappedKeys_.emplace(std::string(key), true).second) pendingCapped_.emplace_back(key);
+            return false;
+        }
+        if (instanceUsed_ >= kWindowInstanceLineCap) {
             ++instanceDropped_;
             return false;
         }
@@ -1198,13 +1237,15 @@ private:
     std::string Close(int64_t frame)
     {
         open_ = false;
-        return WindowClosedLine(buildLines_, buildDropped_, instanceLines_, instanceDropped_, frame);
+        return WindowClosedLine(buildLines_, buildDropped_, instanceLines_, instanceDropped_, Capped(), frame);
     }
 
     std::vector<MachineSight> machines_;
-    std::vector<RingCall> ring_;
-    std::vector<RingCall> instanceRing_;
+    std::deque<RingCall> ring_;
+    std::deque<RingCall> instanceRing_;
     std::unordered_map<std::string, int> instancePerObject_;
+    std::unordered_map<std::string, bool> cappedKeys_;   // this window's objects that reached their share (kept across a top-up)
+    std::vector<std::string> pendingCapped_;             // ... not yet printed
     uint64_t seq_ = 0;
     bool open_ = false;
     int64_t end_ = 0;
