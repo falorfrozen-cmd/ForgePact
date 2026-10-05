@@ -7,6 +7,7 @@ id-set equality, and small fixture suites are run both ways, serially with
 compared line for line (minus the timing).
 """
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -22,6 +23,16 @@ SCRIPT = ROOT / "tools" / "run_tests_parallel.py"
 _spec = importlib.util.spec_from_file_location("forgepact_run_tests_parallel", SCRIPT)
 runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(runner)
+
+# Python 3.14 colours unittest's summary when the calling shell sets
+# FORCE_COLOR (agent shells do), and an escape-prefixed "FAILED" no longer
+# starts with "FAILED". PYTHON_COLORS=0 outranks FORCE_COLOR, so every
+# subprocess here, and the runner's workers it inherits to, prints plain text.
+PLAIN_ENV = {key: value for key, value in os.environ.items()
+             if key not in ("FORCE_COLOR", "PYTHON_COLORS", "NO_COLOR")}
+PLAIN_ENV.update({"PYTHON_COLORS": "0", "NO_COLOR": "1"})
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 MIXED = {
@@ -70,8 +81,11 @@ def write_suite(root, files):
 
 
 def tail(stderr):
-    """unittest's closing 'Ran N tests' and status lines, timing dropped."""
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    """unittest's closing 'Ran N tests' and status lines, timing dropped.
+
+    Escape sequences are stripped first, as a second guard behind PLAIN_ENV.
+    """
+    lines = [ANSI_ESCAPE.sub("", line) for line in stderr.splitlines() if line.strip()]
     ran = next(line for line in reversed(lines) if line.startswith("Ran "))
     status = next(line for line in reversed(lines) if line.startswith(("OK", "FAILED")))
     return ran.split(" in ")[0], status
@@ -85,10 +99,10 @@ class FixtureSuiteTests(unittest.TestCase):
             suite.mkdir()
             write_suite(suite, files)
             serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "suite"],
-                                    cwd=tmp, capture_output=True, text=True)
+                                    cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
             parallel = subprocess.run([sys.executable, str(SCRIPT), "-j", jobs,
                                        "--start-dir", "suite", "--state-dir", str(tmp / "state")],
-                                      cwd=tmp, capture_output=True, text=True)
+                                      cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
             return serial, parallel
 
     def test_failures_errors_and_skips_are_reported_as_serial_reports_them(self):
@@ -121,7 +135,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "2", "--start-dir", str(tmp),
                                   "--state-dir", str(tmp / "state")],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, env=PLAIN_ENV)
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertIn("test_e_crash (worker exit 3)", run.stderr)
         self.assertNotIn("never loaded", run.stderr)
@@ -148,7 +162,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, {f"test_solo_{i}.py": self.SOLO for i in range(3)})
             return subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", str(tmp),
                                    "--state-dir", str(tmp / "state"), *extra],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, env=PLAIN_ENV)
 
     def test_a_group_never_runs_more_copies_than_its_limit(self):
         run = self.run_solo()
@@ -212,7 +226,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, files)
             return subprocess.run([sys.executable, str(SCRIPT), "-j", jobs, "--start-dir", str(tmp),
                                    "--state-dir", str(tmp / "state")],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, env=PLAIN_ENV)
 
     def test_an_exclusive_module_runs_last_and_alone(self):
         run = self.run_exclusive()
@@ -254,13 +268,13 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(suite, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
                                   "--state-dir", str(tmp / "state"), *extra],
-                                 cwd=tmp, capture_output=True, text=True)
+                                 cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
             ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
             reference = tmp / "reference"
             reference.mkdir()
             write_suite(reference, PASSING)
             serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "reference"],
-                                    cwd=tmp, capture_output=True, text=True)
+                                    cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
         return run, ran, serial
 
     def test_an_excluded_module_does_not_run_and_is_named(self):
@@ -313,7 +327,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(suite, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
                                   "--state-dir", str(tmp / "state"), *extra],
-                                 cwd=tmp, capture_output=True, text=True)
+                                 cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
             ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
         return run, ran
 
@@ -378,7 +392,7 @@ class CoverageTests(unittest.TestCase):
         # From the hub root, a bare `tests` would be the hub's suite.
         with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
             listed = subprocess.run([sys.executable, str(SCRIPT), "--list"], cwd=tmp,
-                                    capture_output=True, text=True, check=True).stdout.split()
+                                    capture_output=True, text=True, env=PLAIN_ENV, check=True).stdout.split()
         self.assertEqual(Counter(listed), Counter(runner.discover(ROOT / "tests")))
 
     def test_a_missing_extra_or_doubled_id_is_a_problem(self):
@@ -405,7 +419,7 @@ class CoverageTests(unittest.TestCase):
         full = runner.discover(ROOT / "tests")
         run = subprocess.run([sys.executable, str(SCRIPT), "--list", "--exclude-module", "test_panel_e2e*",
                               "--exclude-module", "test_panel_perf"],
-                             capture_output=True, text=True, check=True)
+                             capture_output=True, text=True, env=PLAIN_ENV, check=True)
         listed = run.stdout.split()
         gone = [i for i in full if runner.module_of(i) == "test_panel_perf"
                 or runner.module_of(i).startswith("test_panel_e2e")]
