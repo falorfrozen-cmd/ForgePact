@@ -51876,10 +51876,11 @@ static void DungeonProbeCommand(const std::string& rest)
 //     reached the threshold. Its returned struct's j/b/c are rewritten in
 //     place to the charm's 0/98/1, and the item's type (10) - which the
 //     parameter struct cannot carry - is rewritten at CreateItemNew's entry
-//     (the #74 measured rewrite point) as the definition record's `a` (with
-//     the item's own itemType as belt-and-braces), each written and read back
-//     so a write that failed is refused rather than silent, carried there by a
-//     one-step force-pending flag.
+//     (the #74 measured rewrite point) on the item's own itemType
+//     (RUNTIME_DATA_MODELS §13.4), written and read back so a write that
+//     failed is refused rather than silent, carried there by a one-step
+//     force-pending flag. The definition record's `a` is the roll seed, left
+//     untouched.
 //
 // The machine self is read by the instance-handle rule - variable_instance_get
 // through N1ObjectIndex, the masked predicate that accepts the flagged
@@ -52127,21 +52128,14 @@ static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int arg
 
 // Rewrite the placement's type in place to the charm's type (10) and read it
 // back, mirroring GambaPityForceParams: the type is never reported forced while
-// it did nothing. The game builds the item from the definition record's `a`
-// (SignatureRewriteParams, the #74 measured rewrite), so `a` is rewritten and
-// read back, and the item's own itemType as belt-and-braces. Returns whether
-// both read back, naming the field that did not in `why`.
+// it did nothing. The game builds the item from the item's own `itemType`
+// (RUNTIME_DATA_MODELS §13.4), which is rewritten and read back; the definition
+// record's `a` is the roll seed LootGroundCreate already set, left untouched.
+// Returns whether the write read back, naming the field that did not in `why`.
 static bool GambaPityForceType(RValue& item, std::string& why)
 {
     try {
         if (!g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) { why = "the item is not a struct"; return false; }
-        RValue record = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
-        if (!g_Yytk->CallBuiltin("is_struct", { record }).ToBoolean()) { why = "the item's itemDefinitionStruct is not a struct"; return false; }
-        g_Yytk->CallBuiltin("variable_struct_set", { record, RValue("a"), RValue((double)kGambaPityCharmType) });
-        double a = 0.0;
-        if (!SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { record, RValue("a") }), a) || a != (double)kGambaPityCharmType) {
-            why = "the record's a did not read back"; return false;
-        }
         g_Yytk->CallBuiltin("variable_struct_set", { item, RValue("itemType"), RValue((double)kGambaPityCharmType) });
         double t = 0.0;
         if (!SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t) || t != (double)kGambaPityCharmType) {
@@ -52154,11 +52148,11 @@ static bool GambaPityForceType(RValue& item, std::string& why)
 // CreateItemNew's entry: the placement's type. The forced prize build's
 // returned struct carries no type, so when the force is pending the type is
 // rewritten here - the #74 measured rewrite point - and the flag cleared. The
-// game builds the item from the definition record's `a` (LootGroundCreate
-// stored its own `a` into it and CreateItemNew reads a, b, c, j), so `a` is
-// rewritten and read back, and the item's own itemType as belt-and-braces; a
-// field that does not read back is refused, never silent. The definition's
-// j/b/c were already forced at CreateDefaultParams.
+// game builds the item from the item's own `itemType` (RUNTIME_DATA_MODELS
+// §13.4), which is rewritten and read back; the definition record's `a` is the
+// roll seed LootGroundCreate already set, left untouched. A field that does not
+// read back is refused, never silent. The definition's j/b/c were already
+// forced at CreateDefaultParams.
 static RValue& GambaPityItemDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (g_GambaPityForcePending) {

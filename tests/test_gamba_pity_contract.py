@@ -18,9 +18,9 @@ plugin/ModuleMain.cpp on comment-stripped source:
 - the force rewrites `CreateDefaultParams`' returned struct's `j`/`b`/`c` in
   place to the charm's 0/98/1 on the prize build (third argument truthy), and
   the item's type (10) - which the struct cannot carry - is rewritten at
-  `CreateItemNew`'s entry as the definition record's `a` (with the item's own
-  `itemType` as belt-and-braces), each written and read back, carried there by
-  a one-step force-pending flag;
+  `CreateItemNew`'s entry on the item's own `itemType` (RUNTIME_DATA_MODELS
+  §13.4), written and read back, carried there by a one-step force-pending
+  flag; the definition record's `a` is the roll seed, left untouched;
 - the natural-drop reset keys on a machine-self `CreateDefaultParams` whose
   first two arguments are `(0, 98)`, never on a `GetUniqueRepoStruct(10, 0, 98)`
   call;
@@ -229,14 +229,11 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("if (g_GambaPityForcePending)", item)
         self.assertIn("g_GambaPityForcePending = false;", item)
         self.assertIn("GambaPityForceType(*A[0], why)", item)
-        # The field the game reads for the type is the definition record's `a`,
-        # reached through itemDefinitionStruct; the item's own itemType is
-        # belt-and-braces. Both are written and read back.
+        # The field the game reads for the type is the item's own `itemType`
+        # (RUNTIME_DATA_MODELS §13.4); the definition record's `a` is the roll
+        # seed, left untouched. The itemType write is read back.
         force = self.body("static bool GambaPityForceType(")
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") })', force)
-        self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { record, RValue("a"), RValue((double)kGambaPityCharmType) });', force)
         self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { item, RValue("itemType"), RValue((double)kGambaPityCharmType) });', force)
-        self.assertIn('SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { record, RValue("a") }), a)', force)
         self.assertIn('SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t)', force)
         # A field that does not read back is refused, naming it - never silent.
         self.assertIn('Out("gambapity: the forced item\'s type did not read back ("', item)
