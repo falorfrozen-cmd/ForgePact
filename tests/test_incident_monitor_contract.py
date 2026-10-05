@@ -5,7 +5,9 @@ harness cannot see. The header stays game-independent. FrameCallback takes the
 incident frame boundary right after the frame profiler's. The `incident` verb
 is a player command and a standalone early return. The monitor thread's code
 never reaches into the game's runtime or YYToolkit. The player build reads the
-high-resolution clock only in the incident monitor. The clean-shutdown
+high-resolution clock only in the incident monitor, as a plain
+QueryPerformanceCounter call: the harness's controlled clock is a compile-time
+seam nothing the player build compiles turns on (#165). The clean-shutdown
 marker is written by a by-name ExitProcess hook first and the static
 destructor second, with Win32 file calls only. Nothing is left for the C
 runtime to destroy at ExitProcess. The thresholds are the plan's (D5). Every
@@ -136,6 +138,68 @@ def unguarded_original_calls(body):
             if not any(a < m.start() < b for a, b in guarded)]
 
 
+# ForgePact #165: the harness's controlled clock, which only a test's compile
+# line may turn on.
+CLOCK_SEAM = "FORGEPACT_INCIDENT_HARNESS_CLOCK"
+CONDITIONAL = re.compile(r"#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)")
+BUILD_SCRIPT_SUFFIXES = {".bat", ".cmd", ".ps1", ".py", ".rsp", ".txt", ".yml", ".yaml"}
+BUILD_SOURCE_SUFFIXES = {".cpp", ".hpp", ".h", ".inl"}
+SEAM_DEFINE = re.compile(r"#\s*define\s+" + CLOCK_SEAM + r"\b")
+
+
+def seam_view(source, defined):
+    """`source` as the compiler sees it with CLOCK_SEAM defined or not: each
+    `#ifdef`/`#ifndef CLOCK_SEAM` keeps the branch that setting takes. Any
+    other conditional on the seam is refused rather than guessed at."""
+    out, stack = [], []   # one (on the seam, keep) per open conditional
+    for line in source.splitlines():
+        directive = CONDITIONAL.match(line.strip())
+        if not directive:
+            if all(keep for _, keep in stack):
+                out.append(line)
+            continue
+        kind, rest = directive.groups()
+        if kind in ("ifdef", "ifndef") and rest.strip() == CLOCK_SEAM:
+            stack.append((True, defined == (kind == "ifdef")))
+            continue
+        if kind in ("if", "elif") and CLOCK_SEAM in rest:
+            raise AssertionError("a conditional on the clock seam this check cannot read: " + line)
+        if kind == "else" and stack and stack[-1][0]:
+            stack[-1] = (True, not stack[-1][1])
+            continue
+        if kind == "endif":
+            if stack.pop()[0]:
+                continue
+        elif kind in ("if", "ifdef", "ifndef"):
+            stack.append((False, True))
+        if all(keep for _, keep in stack):
+            out.append(line)
+    return "\n".join(out)
+
+
+def seam_enablers(files):
+    """Each of `files` (name to text) that would turn the controlled clock on: a
+    build script that names the seam at all, or a source that defines it."""
+    found = []
+    for name, text in files.items():
+        script = Path(name).suffix.lower() in BUILD_SCRIPT_SUFFIXES
+        if (CLOCK_SEAM in text) if script else SEAM_DEFINE.search(text):
+            found.append(name)
+    return found
+
+
+def player_build_inputs():
+    """What the player build compiles and the scripts that compile it."""
+    files = {}
+    for base, pattern in ((ROOT / "plugin", "**/*"), (ROOT / "plugin_build", "**/*"),
+                          (ROOT / ".github" / "workflows", "*")):
+        for path in base.glob(pattern):
+            suffix = path.suffix.lower()
+            if path.is_file() and (suffix in BUILD_SCRIPT_SUFFIXES or suffix in BUILD_SOURCE_SUFFIXES):
+                files[path.relative_to(ROOT).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
+    return files
+
+
 class IncidentMonitorContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -219,6 +283,45 @@ class IncidentMonitorContractTests(unittest.TestCase):
             self.assertTrue(first <= match.start() < last, player[match.start() - 200:match.start() + 50])
         # Positive control: the header is where the clock is read.
         self.assertIn("QueryPerformanceCounter(&v);", self.header)
+
+    def test_the_shipped_build_reads_the_real_clock(self):
+        # ForgePact #165: the harness's accounting runs on a clock it controls,
+        # through a compile-time seam. The header with the seam unset, which is
+        # what the player build compiles, reads QueryPerformanceCounter as a
+        # plain call and never names the harness's clock.
+        shipped = seam_view(self.header, defined=False)
+        qpc = code_lines(function_body(shipped, "inline int64_t Qpc() noexcept"))
+        self.assertEqual(qpc, ["LARGE_INTEGER v;", "QueryPerformanceCounter(&v);", "return v.QuadPart;"])
+        frequency = code_lines(function_body(shipped, "inline int64_t QpcFrequency() noexcept"))
+        self.assertIn("QueryPerformanceFrequency(&v);", frequency)
+        self.assertNotIn("HarnessClockQpc", strip_comments(shipped))
+        self.assertNotIn("HarnessClockFrequency", strip_comments(shipped))
+        # Nothing the player build compiles, and no script that builds it, turns
+        # the seam on. The behaviour test's compile line is where it is set.
+        inputs = player_build_inputs()
+        self.assertIn("plugin/ModuleMain.cpp", inputs)
+        self.assertIn("plugin_build/build.bat", inputs)
+        self.assertIn("plugin/include/ForgePact/IncidentMonitor.hpp", inputs)
+        self.assertEqual(seam_enablers(inputs), [])
+        behavior = (ROOT / "tests" / "test_incident_monitor_behavior.py").read_text(encoding="utf-8")
+        self.assertIn("/D" + CLOCK_SEAM + " ", behavior)
+        # Negative controls: the same checks catch a header read with the seam
+        # on, a build script that sets it, and a source that defines it.
+        harness = code_lines(function_body(seam_view(self.header, defined=True), "inline int64_t Qpc() noexcept"))
+        self.assertNotIn("QueryPerformanceCounter(&v);", harness)
+        self.assertIn("return HarnessClockQpc();", harness)
+        # The harness also counts at its own frequency, so a host counter that
+        # does not divide into milliseconds cannot round its controlled charges.
+        harness_frequency = code_lines(function_body(seam_view(self.header, defined=True),
+                                                     "inline int64_t QpcFrequency() noexcept"))
+        self.assertNotIn("QueryPerformanceFrequency(&v);", harness_frequency)
+        self.assertIn("return HarnessClockFrequency();", harness_frequency)
+        bat = inputs["plugin_build/build.bat"]
+        enabled = bat.replace("/DNDEBUG", "/DNDEBUG /D" + CLOCK_SEAM)
+        self.assertNotEqual(enabled, bat)
+        defined = "#define " + CLOCK_SEAM + " 1\n" + inputs["plugin/ModuleMain.cpp"]
+        self.assertEqual(seam_enablers({"plugin_build/build.bat": enabled, "plugin/ModuleMain.cpp": defined}),
+                         ["plugin_build/build.bat", "plugin/ModuleMain.cpp"])
 
     def test_the_shutdown_destructor_uses_win32_only(self):
         # D14: one Write, called by the ExitProcess hook and by the destructor;

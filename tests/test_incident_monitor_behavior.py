@@ -9,12 +9,23 @@ the usual frame time and 4 s without a frame must each produce exactly one
 episode of the right kind (the targets). A freeze is judged once frames come
 back: a gap the first frames after it explain with a room change is a load and
 produces nothing, a gap that begins in a menu room is a load however long it
-lasts (D17), and any other gap that never ends is reported at 15 s. The per-mod
-accounting and the installer's tag thunks run for real against the clock (the
-accounting scenarios run at raised priority and are retried up to ten times,
-since a preempted thread is
-charged its descheduled time and preemption only ever adds), and the username
-scrub and the next-load crash check are pure functions over text.
+lasts (D17), and any other gap that never ends is reported at 15 s. The
+installer's tag thunks run for real, and the username scrub and the next-load
+crash check are pure functions over text.
+
+The per-mod accounting runs on a clock the harness controls (ForgePact #165):
+compiled with /DFORGEPACT_INCIDENT_HARNESS_CLOCK, the header's Qpc() reads the
+harness's clock, which moves only when a scenario's Spin(ms) moves it by
+exactly that much, at a fixed 10 MHz of its own rather than the host's
+counter frequency. So each accounting scenario's charge is exact, and a busy
+machine cannot move it: descheduled-not-charged sleeps for real inside a
+scope and is charged only the controlled work beside it. That pins the
+harness's clock, not the shipped accounting: on the real counter a scope is
+still charged the time its thread was descheduled, and one scenario,
+real-clock-control, shows it by reading the real counter through the same
+seam. It is the positive control that the accounting reads the clock at all;
+its bounds are lower bounds only, since preemption only ever adds time. Nothing here needs the machine to
+itself, so the module runs beside the rest of the parallel suite.
 The accounting charges a mod only for ForgePact's own code (the owner,
 2026-10-02): the game original a hook wraps runs inside the guard and is
 charged to nobody, and every row, `frame` included, is self time.
@@ -36,9 +47,6 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
-
-# per-mod-accounting times wall-clock spins, which a full parallel run preempts (2 of 6 failed on 87d890e under 24 busy loops; final gate 2026-10-03).
-PARALLEL_EXCLUSIVE = True
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "build" / "incident-monitor-behavior"
@@ -62,6 +70,8 @@ EXPECTED = (
     "game-original-outer-clock",
     "own-work-inside-game-original",
     "frame-self-time",
+    "descheduled-not-charged",
+    "real-clock-control",
     "game-original-in-mod",
     "worst-judged-vs-overall",
     "hook-tag-thunk",
@@ -104,7 +114,7 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         script = OUTPUT / "compile.cmd"
         script.write_text(
             f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-            f'cl /nologo /std:c++20 /EHsc /O2 /W4 /I "{include}" '
+            f'cl /nologo /std:c++20 /EHsc /O2 /W4 /DFORGEPACT_INCIDENT_HARNESS_CLOCK /I "{include}" '
             f'"{ROOT / "tests/incident_monitor_harness.cpp"}" /Fe:"{cls.harness}" '
             f'/Fo:"{OUTPUT / "incident_monitor_harness.obj"}" /link /INCREMENTAL:NO\n'
             'if errorlevel 1 exit /b 1\n'
@@ -181,24 +191,48 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         self.scenario("unfocused-suppressed")
         self.scenario("rate-limit-30s")
 
+    # On the controlled clock the charges are exact: density's sixteen 1 ms
+    # calls, one timed and counted sixteen times, are 16.0 and not 1.0, and the
+    # nested drops scope is counted once.
     def test_the_per_mod_table_orders_by_cost_and_scales_the_sampled_scope(self):
-        self.assertIn("top density", self.scenario("per-mod-accounting"))
+        detail = self.scenario("per-mod-accounting")
+        self.assertTrue(detail.startswith(
+            "3 frames: density 16.0/16.0 gems 8.0/8.0 miner 2.0/2.0 drops 1.0/1.0 | "), detail)
+        self.assertIn("| top density 16.0 ms/frame", detail)
 
     # The owner, 2026-10-02: a mod is charged only for ForgePact's own code.
     # Baseline: own work around the game's original is charged. Targets: the
     # original is not, whichever clock it would have run on; a hook the game
     # calls from inside it times its own code; every row is self time.
     def test_baseline_a_hooks_own_work_is_charged(self):
-        self.scenario("own-work-charged")
+        self.assertEqual(self.scenario("own-work-charged"), "frame 15.0 ms: hudlabels 5.0")
         self.scenario("per-mod-accounting")
 
     def test_target_the_game_original_a_hook_wraps_is_not_charged(self):
-        self.scenario("game-original-excluded")
-        self.scenario("game-original-outer-clock")
-        self.scenario("own-work-inside-game-original")
+        self.assertEqual(self.scenario("game-original-excluded"), "frame 10.0 ms: hudlabels 0.0")
+        self.assertEqual(self.scenario("game-original-outer-clock"), "frame 10.0 ms: density 0.0")
+        self.assertEqual(self.scenario("own-work-inside-game-original"), "frame 10.0 ms: drops 2.0")
 
     def test_target_every_row_is_self_time_frame_included(self):
-        self.assertIn("| top frame 2.0", self.scenario("frame-self-time"))
+        self.assertEqual(self.scenario("frame-self-time"),
+                         "frame 6.0 ms: frame 2.0 density 4.0 | sampled frame 10.0 ms: frame 2.0 density 8.0"
+                         " | top frame 2.0 ms/frame")
+
+    # ForgePact #165. Target: the harness's controlled clock is immune to a
+    # deschedule. A real Sleep inside a timed scope, beside 5 ms of controlled
+    # work, does not reach it, so a busy machine cannot move the accounting
+    # scenarios. The shipped accounting reads the real counter and still
+    # charges that time (the real-clock control below).
+    def test_target_the_controlled_clock_ignores_a_real_sleep_in_a_scope(self):
+        detail = self.scenario("descheduled-not-charged")
+        self.assertTrue(detail.startswith("frame 5.0 ms: gems 5.0 | slept "), detail)
+
+    # Baseline and positive control: on the real clock the accounting charges
+    # the scope at least the time it slept, so it reads the real counter.
+    def test_baseline_the_real_clock_charges_at_least_the_time_away(self):
+        detail = self.scenario("real-clock-control")
+        self.assertIn(" ms on the real clock", detail)
+        self.assertNotIn("gems 0.0 |", detail)
 
     def test_target_a_freeze_inside_a_game_original_says_so(self):
         detail = self.scenario("game-original-in-mod")
