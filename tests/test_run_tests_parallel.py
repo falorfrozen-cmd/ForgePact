@@ -69,9 +69,16 @@ def write_suite(root, files):
         (root / name).write_text(textwrap.dedent(body), encoding="utf-8")
 
 
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def tail(stderr):
-    """unittest's closing 'Ran N tests' and status lines, timing dropped."""
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    """unittest's closing 'Ran N tests' and status lines, timing dropped.
+
+    Colour escapes are stripped first: Python 3.14's unittest colours 'OK' and
+    'FAILED' when FORCE_COLOR is set, even into a pipe.
+    """
+    lines = [ANSI_ESCAPE.sub("", line) for line in stderr.splitlines() if line.strip()]
     ran = next(line for line in reversed(lines) if line.startswith("Ran "))
     status = next(line for line in reversed(lines) if line.startswith(("OK", "FAILED")))
     return ran.split(" in ")[0], status
