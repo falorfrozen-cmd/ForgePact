@@ -36,8 +36,11 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 
 ## Status
 
-- **Phase:** research (phase 1 of 2). Nothing in this phase is player-visible,
-  and the player build is free of it.
+- **Phase:** research for Goburin's Head pity (ForgePact #134). Phases 1 and
+  1c measured the machine, phase 3 wrote the pity mod (`gambapity`, on this
+  branch and unreleased), and phase 4 measures the explosion it must fire on.
+  Nothing of the research instrument is player-visible, and the player build
+  is free of it.
 - **Instrument:** `gambaprobe` (§ Instrument), research build only, on the
   ForgePact branch `134-goburins-head-pity-research`.
 - **Live procedure 1:** ran on 2026-10-04 and came back INSTRUMENT-BLIND: every
@@ -50,9 +53,8 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   created it. No spin was measured, so every spin key in § Decision reads
   `not-observed`, and `pity-design` reads `blocked` until a machine can be
   measured.
-- **Next:** phase 2, the pity mod, is now planned (a spin was measured in
-  Live 3; the roll is a script, so the design is `force-script` per §
-  Decision).
+- **Next:** the successor workorder moves the force to the explosion after
+  Live procedure 4.
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -60,7 +62,10 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   route and the by-name route are both blind.
 - **Owner's decisions (2026-10-04):** the pity counts explosions, with the gold
   equivalent shown; the session character (slot 14 "Sorak") has enough gold
-  for the full procedure; measure first, then plan the mod.
+  for the full procedure; measure first, then plan the mod. Phase 3 counted
+  spins instead (the explosion was never observed). The 2026-10-05 ruling
+  names the explosion as the firing event; whether the count unit stays spins
+  is the successor's decision.
 - **Phase 4 (2026-10-05):** the owner ruled that the pity fires on the first
   **explosion** after the count is reached, never on a payout, and that an
   explosion is the machine's last act after roughly 10-14 spins and the only
@@ -745,27 +750,38 @@ armed:
   value that is not a sprite reads `?`). No sprite is spelled or numbered, so
   it does not matter which sprite the explosion shows. A refresh that threw
   is not polled, so it cannot report every machine gone.
-- **The ring.** Every call of the eight build rows (`CreateDefaultParams`,
+- **Two rings.** Every call of the eight build rows (`CreateDefaultParams`,
   `GetUniqueRepoStruct`, `LootGroundCreate`, `LootGroundCreateFromItem`,
   `CreateLootInFreePos`, `CreateItemNew`, `DropItem`, `DropUniqueItems`),
   whatever its `self`, goes into a ring of the last 64 before the machine-self
-  filter. A build in the transition's own step runs before the end-of-frame
-  tick that notices the transition, so without the ring it would be lost.
-  Every build row reads `byname=same` (Live 3), so no by-name slot feeds it.
-- **The window.** A sprite change or a machine that is gone opens a window,
-  as does `gambaprobe window [frames]` by hand (300 frames by default, at most
-  3600). It first replays the ring's calls from the last 2 frames, then for
-  its span prints a line for every build-row call and every
-  `instance_create_layer`, `instance_create_depth` and `instance_destroy`
-  call, for any `self` (named by the probe's own self text, so an object
-  other than the machine is named), and after each `CreateItemNew` returns,
-  what it built (its `itemType`, its `itemDefinitionStruct`'s `j`/`b`/`c`, and
-  its `itemInfoStruct`'s rarity `"27"` and name `"28"`, `?` for a value that
-  does not read; Goburin's Head is `itemType 10 j=0 b=98 c=1`). A window has
-  its own cap of 400 lines, apart from the trace budget, and counts what it
-  dropped. A second transition, or `window`, while one is open extends it
-  rather than opening another. Outside a window the trace behaves exactly as
-  before. `gambaprobe off` closes an open window.
+  filter, through the script's own function or a by-name slot alike. Every
+  `instance_create_layer`, `instance_create_depth` and `instance_destroy` call
+  goes into a ring of its own, the last 256, so a burst of effects cannot
+  evict a build. A call in the transition's own step runs before the
+  end-of-frame tick that notices the transition, so without the rings it
+  would be lost.
+- **The window.** A sprite change or a machine that is gone opens a window of
+  600 frames, as does `gambaprobe window [frames]` by hand (600 by default, at
+  most 3600). It first replays both rings' calls from the last 2 frames, in
+  call order, then for its span prints a line for every build-row call and
+  every instance create/destroy call, for any `self` (named by the probe's own
+  self text, so an object other than the machine is named), and after each
+  `CreateItemNew` returns, what it built (its `itemType`, its
+  `itemDefinitionStruct`'s `j`/`b`/`c`, and its `itemInfoStruct`'s rarity
+  `"27"` and name `"28"`, `?` for a value that does not read; Goburin's Head
+  is `itemType 10 j=0 b=98 c=1`). Outside a window the trace behaves exactly
+  as before. `gambaprobe off` closes an open window.
+- **Two caps.** Build lines (calls, replays and `built` lines) spend a cap of
+  400 per window that instance lines can never touch. Instance lines spend a
+  cap of 800, at most 32 per created object (a create's object argument, or
+  the object `instance_destroy` ends), so one effect repeated every frame
+  cannot crowd out the rest. Both count what they dropped, the closed line
+  reports both, and `status` shows the open window's dropped counts. A second
+  transition, or `window`, while one is open extends it rather than opening
+  another, and tops both caps up.
+- **Frames.** Spans are counted in presented frames (the frame callback), so
+  above 60 fps a window is shorter in seconds: 3600 frames is a minute at 60
+  fps and 30 seconds at 120.
 - **The lines**, fixed text that the behavior test pins byte for byte and
   Live procedure 4 reads:
 
@@ -778,8 +794,8 @@ armed:
   gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
-  gambaprobe window closed lines=<n> dropped=<n> frame=<f>
-  gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n>
+  gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> frame=<f>
+  gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open|closed> ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n>
   ```
 
   The last is `gambaprobe status`'s new line. `<args>` is printed the way a
@@ -787,9 +803,13 @@ armed:
   machine was deactivated or the room changed, so the operator judges it.
 - **Positive controls.** `gambaprobe window 1800` near monsters must print
   window lines for `CreateDefaultParams` and `CreateItemNew` with a `self`
-  that is not a machine, and at least one `built` line (`window-control`).
-  Each machine's first-sight line must name a real sprite, not `?`
-  (`sprite-control`).
+  that is not a machine, and at least one `built` line whose `itemType`, `j`,
+  `b` and `c` are numbers and whose `rarity` is not `?`; its closed line must
+  read `build-dropped=0` (`window-control`). Each machine's first-sight line
+  must name a real sprite, not `?` (`sprite-control`). The sprite trigger
+  itself has no positive control (Live 3's machine instance outlived its
+  last spin), so Live procedure 4 holds a commanded window across the spins
+  and does not depend on it.
 
 **Tests (our code).** `tests/test_gamba_probe_contract.py` pins the wiring on
 comment-stripped source (research build only, the dispatch, the SDK-derived row
@@ -816,11 +836,14 @@ this doc's ten `##` headings in order, with `pending` refused once
 pins the baseline (no window line without a transition or a `window`
 command, the trace budgets unchanged, one first-sight line per machine) and
 the target (a change or gone line opens one window, which replays its
-look-back, logs forward for its span, stops at its cap and is extended, not
-doubled), every line byte for byte; the contract test pins the sprite read by
+look-back from both rings in call order, logs forward for its span, keeps
+its build and instance caps apart, per object for instance lines, tops both
+up when extended and is extended, not doubled), every line byte for byte; the contract test pins the sprite read by
 name with no kind check, every build row's ring push before the self filter,
-window lines for any `self` apart from the trace budget, the built-item read
-after `CreateItemNew` returns, the `window` verb and the `status` line.
+window lines for any `self` apart from the trace budget, the instance ring
+and its cap apart from the build cap, the by-name feed for build rows, the
+built-item read after `CreateItemNew` returns, the `window` verb and the
+`status` line.
 
 ## Live procedure 1
 
@@ -1173,7 +1196,9 @@ machine's explosion, which no session had observed. The full procedure is in
 the toolkit workorder `forgepact-goburins-head-pity-4-payout-force`, context
 file, § "Live procedure 1 (explosion watch, research build)"; its capture,
 written by the live operator, is that workorder's `-live-1.md`. Both are
-local working notes, so the outline is repeated here.
+local working notes under the toolkit's `.claude/workorders/`, which is not
+committed, so they may not exist on another machine; the outline is repeated
+here.
 
 - **build**: the research DLL from `plugin_build\build.bat dev`
   (`BloodPactPlugin_rel.dll`), installed only after the owner says so.
@@ -1187,22 +1212,30 @@ local working notes, so the outline is repeated here.
 - **steps**: `gambaprobe hook` (`hook-rows`: the eight build rows and the
   three instance builtins read `detoured`, `detoured-under` or `shared`);
   `gambaprobe trace`; near monsters, `gambaprobe window 1800` until an item
-  drops (`window-control`); `reveal` noted, and turned on only if it was off;
-  zones from the Town of Inoya portal until the game places a machine
-  (`sprite-control`: `machines=` at least 1 and a real sprite name on each
-  first-sight line); the person spins one machine until it can no longer be
-  used, at most 25 spins or until the HUD gold is under 50,000, waits beside
-  it 10 seconds and says how many spins and what they saw; `gambaprobe
-  status` and the spun machine's id from its `PickUpGoldCheck` lines; a
-  second natural machine, if one appears, the same way; `gambaprobe off`,
-  then the saves and `reveal` restored.
+  drops and the window closes (`window-control`: pass only with a `built`
+  line whose `itemType`, `j`, `b` and `c` are numbers and whose `rarity` is
+  not `?`, and a closed line reading `build-dropped=0`); `reveal` noted, and
+  turned on only if it was off; zones from the Town of Inoya portal until the
+  game places a machine (`sprite-control`: `machines=` at least 1 and a real
+  sprite name on each first-sight line); from the first spin, the operator
+  holds a commanded window: `gambaprobe window 3600` before the first spin,
+  re-sent before it ends (`gambaprobe status` shows `window=open`; at most
+  3600 presented frames, which is shorter than a minute above 60 fps), until
+  the person reports the explosion, so the forward any-self lines cover it
+  whatever the sprite trigger does; the person spins one machine until it can
+  no longer be used, at most 25 spins or until the HUD gold is under 50,000,
+  waits beside it 10 seconds and says how many spins and what they saw;
+  `gambaprobe status` and the spun machine's id from its `PickUpGoldCheck`
+  lines; a second natural machine, if one appears, the same way;
+  `gambaprobe off`, then the saves and `reveal` restored.
 - **checks**: `dll-hash`, `marker`, `control`, `hook-rows`, `window-control`
   and `sprite-control` must pass for the session to count. The research
   checks are `explosion-seen` (a change or gone line for the spun machine,
   with its old and new sprite), `spins-to-explode` (machine-self
   `PickUpGoldCheck` calls before the transition, and the person's count),
-  `explosion-builds` (every window line of that transition, replayed and
-  forward, and whether a `Coin_obj` appeared), `explosion-self` (the `self`
+  `explosion-builds` (every window line around the explosion, from the held
+  window and from any transition's window, replayed and forward, whether a
+  `Coin_obj` appeared, and each closed line's dropped counts), `explosion-self` (the `self`
   of each build in that window) and `head-route` (a `built` line with
   `itemType=10 j=0 b=98`, or `GetUniqueRepoStruct` with `10, 0, 98`;
   `not-observed` unless the game drops the head). Their `fail` or
