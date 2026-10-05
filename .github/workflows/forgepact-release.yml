@@ -69,6 +69,9 @@ jobs:
       # see none and refuse every run. This job writes nothing; `upload`
       # does.
       contents: write
+      # OIDC: lets azure/login mint a short-lived token for Azure Artifact
+      # Signing instead of a long-lived client secret.
+      id-token: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
@@ -296,6 +299,50 @@ jobs:
         shell: bash
         working-directory: ForgePact
         run: python build_release.py
+
+      # Authenticode-sign the panel exe and every DLL in the package before it
+      # is zipped, so the SHA256SUMS.txt and BUILD-INFO.json that
+      # release_ci.py writes next record the hashes of the signed bytes a
+      # player receives -- the flag that keeps the injection DLL and its
+      # siblings from tripping antivirus heuristics. Gated on the repo
+      # variable AZURE_SIGNING_ACCOUNT: a fork that has not set up a Trusted
+      # Signing account ships unsigned, exactly as before.
+      - name: Install the Azure Artifact Signing CLI
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        shell: pwsh
+        run: |
+          dotnet tool install --global --prerelease sign
+          Add-Content $env:GITHUB_PATH (Join-Path $env:USERPROFILE '.dotnet\tools')
+
+      - name: Log in for code signing (OIDC)
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign the package binaries
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        shell: pwsh
+        env:
+          ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        working-directory: ForgePact
+        run: |
+          $files = Get-ChildItem -Recurse -File dist/ForgePact | Where-Object { $_.Extension -in '.exe', '.dll' }
+          if (-not $files) { Write-Error "no binaries found under dist/ForgePact"; exit 1 }
+          foreach ($f in $files) {
+            sign code artifact-signing `
+              --timestamp-url http://timestamp.acs.microsoft.com `
+              --artifact-signing-endpoint $env:ENDPOINT `
+              --artifact-signing-account $env:ACCOUNT `
+              --artifact-signing-certificate-profile $env:PROFILE `
+              $f.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Error "sign failed for $($f.FullName)"; exit $LASTEXITCODE }
+            Write-Output "signed $($f.FullName)"
+          }
 
       - name: Zip the release (release_ci.py package)
         id: package
