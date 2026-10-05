@@ -46776,6 +46776,13 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 }
 
 #ifndef FORGEPACT_RELEASE
+// The scripts the `gambapity` mod holds, as "A, B"; gambaprobe's `hook`
+// refuses while it is non-empty. Research build only: nothing in the player
+// build asks. Defined with the gambapity adapter, below.
+static std::string GambaPityHeldScripts();
+#endif
+
+#ifndef FORGEPACT_RELEASE
 // ---- gambaprobe: the gamba machine phase 1 instrument (ForgePact #134) ----
 // docs/gamba-machine-research.md holds the static search, the readings, the
 // live procedure and the decision this instrument serves. Research build
@@ -48053,6 +48060,11 @@ static void GpInstall()
     if (!jumpscenery.empty()) {
         Out("gambaprobe hook: refused - jumpscenery holds " + jumpscenery + "; nothing hooked. Relaunch without turning"
             " `jumpscenery` on.");
+        return;
+    }
+    const std::string gambapity = GambaPityHeldScripts();
+    if (!gambapity.empty()) {
+        Out("gambaprobe hook: refused - gambapity holds " + gambapity + "; nothing hooked. Relaunch without `gambapity`.");
         return;
     }
     if (GpResolveMachineObject() < 0) {
@@ -51846,6 +51858,393 @@ static void DungeonProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (dungeonprobe)
 
+// ============================================================================
+// gambapity (ForgePact #134 phase 3, player build): the Goburin's Head pity
+// ============================================================================
+// The Mods -> Quality of Life switch `gambapity` guarantees Goburin's Head
+// (the unique charm at repository type 10 / sub 0 / base 98, the
+// `charms_goburins_head` row of kAngelicBases) from the gamba machine
+// (Slot_Machine_01_obj) after the configured number of spins without it
+// dropping. The counter/threshold/reset state machine is
+// plugin/include/ForgePact/GambaPity.hpp, game-independent by contract; this
+// adapter counts the two measured events and forces the prize build:
+//
+//   - a spin: one machine-self PickUpGoldCheck with a1=-10000 (the 10,000-gold
+//     debit, one call per spin);
+//   - the prize build: one machine-self CreateDefaultParams whose third
+//     argument is truthy (c=1, the unique repository), once the counter has
+//     reached the threshold. Its returned struct's j/b/c are rewritten in
+//     place to the charm's 0/98/1, and the item's type (10) - which the
+//     parameter struct cannot carry - is rewritten at CreateItemNew's entry
+//     (the #74 measured rewrite point), carried there by a one-step
+//     force-pending flag.
+//
+// The machine self is read by the instance-handle rule - variable_instance_get
+// through N1ObjectIndex, the masked predicate that accepts the flagged
+// object-index kind this runner returns - never a kind check. CreateDefaultParams and CreateItemNew are already held by
+// the Angelic roll's hooks (g_Orig_CreateDefaultParams, g_Orig_CreateItemNew),
+// so gambapity splices its detours into those saved trampolines rather than
+// hooking the scripts a second time; PickUpGoldCheck is gambapity's own
+// HookOneScript. Every hook installs lazily on the first `gambapity <count>`,
+// so an all-off game pays nothing, and each runs the original while the mod is
+// off or a call's self is not a machine.
+#include <ForgePact/GambaPity.hpp>
+
+// The charm's repository identifier (type, sub, base): the
+// `charms_goburins_head` row of kAngelicBases, named by its keys, not a game
+// index. The row is the single source of truth: GambaPityCharmRow() resolves
+// it by key and GambaPityInstallHooks refuses the mod if these copies do not
+// match, so re-validating the row re-validates the mod.
+static constexpr int kGambaPityCharmType = 10;
+static constexpr int kGambaPityCharmSub = 0;
+static constexpr int kGambaPityCharmBase = 98;
+// A spin debits exactly 10,000 gold: PickUpGoldCheck's second argument carries
+// -10000 on a machine's spin.
+static constexpr double kGambaPitySpinGold = -10000.0;
+// The spin count the panel's switch accepts: the same range as
+// src/forgepact.py's GAMBA_PITY_RANGE and Mods.svelte's min/max, pinned
+// against each other in tests/test_gamba_pity_contract.py.
+static constexpr int kGambaPityMin = 10;
+static constexpr int kGambaPityMax = 1000;
+
+// The kAngelicBases row the charm is (by key, not index) - the same lookup
+// gambaprobe's `drop` uses.
+static const AngelicBase* GambaPityCharmRow()
+{
+    for (const AngelicBase& a : kAngelicBases)
+        if (std::string_view(a.key) == "charms_goburins_head") return &a;
+    return nullptr;
+}
+// The constants above match the row they name: the row is the single source of
+// truth, so this is checked once when the mod arms rather than trusting the
+// copies.
+static bool GambaPityCharmConstantsMatch()
+{
+    const AngelicBase* head = GambaPityCharmRow();
+    return head && head->type == kGambaPityCharmType && head->sub == kGambaPityCharmSub && head->b == kGambaPityCharmBase;
+}
+
+static ForgePact::GambaPity::Pity g_GambaPity;
+static int g_GambaPityMachineObject = -1;      // Slot_Machine_01_obj's index, by name; -1 unresolved
+static PFUNC_YYGMLScript g_GambaPitySpinOrig = nullptr;   // PickUpGoldCheck's original
+static PFUNC_YYGMLScript g_GambaPityCdpOrig = nullptr;    // CreateDefaultParams' trampoline (spliced)
+static PFUNC_YYGMLScript g_GambaPityItemOrig = nullptr;   // CreateItemNew's trampoline (spliced)
+static bool g_GambaPityForcePending = false;    // the forced prize build awaits its type rewrite
+static bool g_GambaPityHooked = false;          // every hook is in
+static bool g_GambaPitySpinNative = false;      // PickUpGoldCheck is an inline detour
+static bool g_GambaPityLoaded = false;          // the counter file was read
+static std::string g_GambaPityError;            // the last load/save refusal, empty when none
+
+// The scripts gambapity holds, as "A, B" - empty when it holds none. The
+// research build's gambaprobe refuses while this is non-empty.
+#ifndef FORGEPACT_RELEASE
+static std::string GambaPityHeldScripts()
+{
+    std::string held;
+    if (g_GambaPityCdpOrig) held += "CreateDefaultParams";
+    if (g_GambaPityItemOrig) held += (held.empty() ? "" : ", ") + std::string("CreateItemNew");
+    if (g_GambaPitySpinOrig) held += (held.empty() ? "" : ", ") + std::string("PickUpGoldCheck");
+    return held;
+}
+#endif
+
+// The plugin's own module handle, for "is this our own code?" checks (the
+// `AurieModule*` g_ArSelfModule is opaque, so the handle is read by address).
+static HMODULE GambaPitySelfModule()
+{
+    HMODULE self = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&GambaPitySelfModule), &self);
+    return self;
+}
+
+// ---- the machine self, by the instance-handle rule -------------------------
+static int GambaPityResolveMachineObject()
+{
+    int obj = -1;
+    try {
+        obj = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Slot_Machine_01_obj))) }).ToDouble();
+    } catch (...) { obj = -1; }
+    return obj >= 0 ? obj : -1;
+}
+
+// The machine's object_index, read through variable_instance_get and
+// N1ObjectIndex - the masked predicate that accepts the flagged object-index
+// kind this runner returns - never a kind check. (CallerObjectIndex's
+// unmasked comparison rejects that kind, so it would answer -1 for every
+// machine and the mod would silently count no spins and force no roll.)
+static int GambaPityObjectIndex(CInstance* S)
+{
+    if (!S) return -1;
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") });
+        int idx = -1;
+        return N1ObjectIndex(oi, idx) ? idx : -1;
+    } catch (...) { return -1; }
+}
+
+// Whether S is a gamba machine, by its object_index - never a kind check.
+static bool GambaPityIsMachine(CInstance* S)
+{
+    return g_GambaPityMachineObject >= 0 && GambaPityObjectIndex(S) == g_GambaPityMachineObject;
+}
+
+// A spin: the second argument is the -10000 gold debit.
+static bool GambaPityIsSpin(int argc, RValue** A)
+{
+    double a1 = 0.0;
+    return argc > 1 && A && A[1] && SigNumber(*A[1], a1) && a1 == kGambaPitySpinGold;
+}
+
+// The prize build: CreateDefaultParams' third argument is truthy (c=1, the
+// unique repository) - never the coins build, whose third argument is
+// undefined (c=0).
+static bool GambaPityIsPrizeBuild(int argc, RValue** A)
+{
+    if (argc <= 2 || !A || !A[2]) return false;
+    try { return A[2]->ToBoolean(); } catch (...) { return false; }
+}
+// A natural charm build: CreateDefaultParams' first two arguments are the
+// charm's sub/base (0, 98). The third is not checked - it is true (unique) or
+// undefined (normal) by tier, so it is no signal.
+static bool GambaPityIsCharmBuild(int argc, RValue** A)
+{
+    double s = 0.0, b = 0.0;
+    return argc > 1 && A && A[0] && A[1]
+        && SigNumber(*A[0], s) && SigNumber(*A[1], b)
+        && s == (double)kGambaPityCharmSub && b == (double)kGambaPityCharmBase;
+}
+
+// ---- the persistent counter ------------------------------------------------
+// %LOCALAPPDATA%\Hero_Siege\forgepact_gamba_pity.json, the
+// forgepact_gem_tables.json pattern: next to it, written atomically, game
+// thread only.
+static std::filesystem::path GambaPityPath()
+{
+    const std::filesystem::path truth = ForgePact::ItemTruth::Root();   // ...\Hero_Siege\itemtruth
+    return truth.empty() ? std::filesystem::path() : truth.parent_path() / L"forgepact_gamba_pity.json";
+}
+
+static void GambaPityLoad()
+{
+    if (g_GambaPityLoaded) return;
+    g_GambaPityLoaded = true;
+    try {
+        const std::filesystem::path path = GambaPityPath();
+        std::error_code ec;
+        if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 4096) {
+            std::ifstream in(path, std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const std::string key = "\"count\"";
+            const size_t at = text.find(key);
+            if (at != std::string::npos) {
+                size_t i = at + key.size();
+                while (i < text.size() && (text[i] == ' ' || text[i] == ':')) ++i;
+                const size_t start = i;
+                while (i < text.size() && (std::isdigit((unsigned char)text[i]) || text[i] == '-')) ++i;
+                if (i > start) g_GambaPity.SetCount(std::stoi(text.substr(start, i - start)));
+            }
+        }
+    } catch (...) { g_GambaPityError = "could not read the gambapity counter"; }
+}
+
+static void GambaPitySave()
+{
+    try {
+        const std::filesystem::path path = GambaPityPath();
+        if (path.empty()) return;
+        std::filesystem::path tmp = path;
+        tmp += L".tmp";
+        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << "{\"count\":" << g_GambaPity.Count() << "}"; }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) { g_GambaPityError = "could not save " + path.string(); return; }
+    } catch (...) { g_GambaPityError = "could not save the gambapity counter"; }
+}
+
+// ---- the detours -----------------------------------------------------------
+// PickUpGoldCheck: count one spin, then run the game's own call.
+static RValue& GambaPitySpinDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_GambaPity.Enabled() && GambaPityIsMachine(S) && GambaPityIsSpin(argc, A)) {
+        if (g_GambaPity.OnSpin(true)) GambaPitySave();
+    }
+    return g_GambaPitySpinOrig ? g_GambaPitySpinOrig(S, O, R, argc, A) : R;
+}
+
+// Rewrite CreateDefaultParams' returned struct in place to the charm's
+// j/b/c (0/98/1) - the SignatureRewriteParams shape: mutate through
+// variable_struct_set, never hand the game a fresh struct it would treat as a
+// copy. Returns whether the rewrite read back, so the force is never reported
+// while it did nothing.
+static bool GambaPityForceParams(RValue& params)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("is_struct", { params }).ToBoolean()) return false;
+        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("j"), RValue((double)kGambaPityCharmSub) });
+        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("b"), RValue((double)kGambaPityCharmBase) });
+        g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("c"), RValue(1.0) });
+        double j = 0.0, b = 0.0, c = 0.0;
+        return SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("j") }), j) && j == (double)kGambaPityCharmSub
+            && SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("b") }), b) && b == (double)kGambaPityCharmBase
+            && SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { params, RValue("c") }), c) && c == 1.0;
+    } catch (...) { return false; }
+}
+
+// CreateDefaultParams: the prize build. Force the charm once the counter has
+// reached the threshold; else run the game's own build, and a natural charm
+// build (args 0, 98) starts the guarantee over.
+static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_GambaPity.Enabled() && GambaPityIsMachine(S)) {
+        if (GambaPityIsPrizeBuild(argc, A) && g_GambaPity.OnPrizeRoll(true)) {
+            GambaPitySave();   // the counter reset to zero
+            RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+            if (GambaPityForceParams(r)) {
+                g_GambaPityForcePending = true;   // the type is rewritten at the placement
+                Out("gambapity: forced Goburin's Head (type " + std::to_string(kGambaPityCharmType)
+                    + " / sub " + std::to_string(kGambaPityCharmSub)
+                    + " / base " + std::to_string(kGambaPityCharmBase) + ") and reset the counter");
+            } else {
+                Out("gambapity: the forced prize build's struct did not read back; the charm was not forced");
+            }
+            return r;
+        }
+        // The game's own build; a natural charm build resets the counter.
+        RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+        if (GambaPityIsCharmBuild(argc, A)) {
+            g_GambaPity.OnNaturalDrop();
+            GambaPitySave();
+            Out("gambapity: a natural Goburin's Head build reset the counter");
+        }
+        return r;
+    }
+    return g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+}
+
+// CreateItemNew's entry: the placement's type. The forced prize build's
+// returned struct carries no type, so when the force is pending the item's
+// itemType is rewritten to the charm's type (10) here - the #74 measured
+// rewrite point - and the flag cleared. The definition's j/b/c were already
+// forced at CreateDefaultParams.
+static RValue& GambaPityItemDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_GambaPityForcePending) {
+        g_GambaPityForcePending = false;
+        if (argc > 0 && A && A[0]) {
+            try { g_Yytk->CallBuiltin("variable_struct_set", { *A[0], RValue("itemType"), RValue((double)kGambaPityCharmType) }); } catch (...) {}
+        }
+    }
+    return g_GambaPityItemOrig ? g_GambaPityItemOrig(S, O, R, argc, A) : R;
+}
+
+// ---- install ---------------------------------------------------------------
+// The three hooks, lazily on the first `gambapity <count>`. Returns "" when
+// every hook is in, else why the mod stays off.
+static std::string GambaPityInstallHooks()
+{
+#ifndef FORGEPACT_RELEASE
+    // Coexistence with gambaprobe: one holder per script, each naming the other.
+    std::string probeHeld;
+    if (g_GpScriptRows[kGpScript_CreateDefaultParams].orig) probeHeld += "CreateDefaultParams";
+    if (g_GpScriptRows[kGpScript_CreateItemNew].orig)
+        probeHeld += (probeHeld.empty() ? "" : ", ") + std::string("CreateItemNew");
+    if (g_GpScriptRows[kGpScript_PickUpGoldCheck].orig)
+        probeHeld += (probeHeld.empty() ? "" : ", ") + std::string("PickUpGoldCheck");
+    if (!probeHeld.empty())
+        return "gambaprobe holds " + probeHeld + "; the mod stays off. Relaunch without `gambaprobe hook`.";
+#endif
+    if (!GambaPityCharmConstantsMatch())
+        return "the charm constants do not match the kAngelicBases charms_goburins_head row; the mod stays off";
+    if (g_GambaPityMachineObject < 0) {
+        g_GambaPityMachineObject = GambaPityResolveMachineObject();
+        if (g_GambaPityMachineObject < 0)
+            return std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Slot_Machine_01_obj))
+                + " did not resolve by name; the mod stays off";
+    }
+    if (!g_GambaPitySpinOrig) {
+        bool native = false;
+        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_PickUpGoldCheck), "fp_gambapity_spin",
+                           (PVOID)GambaPitySpinDetour, &g_GambaPitySpinOrig, &native) || !g_GambaPitySpinOrig)
+            return "PickUpGoldCheck was not found by name; the mod stays off";
+        g_GambaPitySpinNative = native;
+    }
+    if (!g_GambaPitySpinNative)
+        return "PickUpGoldCheck is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+    if (!g_GambaPityCdpOrig) {
+        // The prize build's script is already held by the Angelic roll's hook
+        // (g_Orig_CreateDefaultParams); splice our detour into its saved
+        // trampoline rather than hooking the script a second time.
+        if (!g_Orig_CreateDefaultParams) InstallSignatureAngelicHooks();
+        if (!g_Orig_CreateDefaultParams)
+            return "CreateDefaultParams is not hooked (the Angelic roll's hook did not install); the mod stays off";
+        const void* saved = (const void*)g_Orig_CreateDefaultParams;
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved))
+            return "CreateDefaultParams is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+        if (AddrIsExecutableInModule(GambaPitySelfModule(), saved))
+            return "CreateDefaultParams sits behind another ForgePact hook (table-only); the mod stays off";
+        g_GambaPityCdpOrig = g_Orig_CreateDefaultParams;
+        g_Orig_CreateDefaultParams = reinterpret_cast<PFUNC_YYGMLScript>(GambaPityCdpDetour);
+    }
+    if (!g_GambaPityItemOrig) {
+        // The placement's script is already held by the Angelic roll's hook
+        // (g_Orig_CreateItemNew, the #74 rewrite point); splice our detour into
+        // its saved trampoline the same way.
+        if (!g_Orig_CreateItemNew) InstallSignatureAngelicHooks();
+        if (!g_Orig_CreateItemNew)
+            return "CreateItemNew is not hooked (the Angelic roll's hook did not install); the mod stays off";
+        const void* saved = (const void*)g_Orig_CreateItemNew;
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved))
+            return "CreateItemNew is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+        if (AddrIsExecutableInModule(GambaPitySelfModule(), saved))
+            return "CreateItemNew sits behind another ForgePact hook (table-only); the mod stays off";
+        g_GambaPityItemOrig = g_Orig_CreateItemNew;
+        g_Orig_CreateItemNew = reinterpret_cast<PFUNC_YYGMLScript>(GambaPityItemDetour);
+    }
+    return "";
+}
+
+// `gambapity <count>|off|status` (the panel's switch and range). `off` keeps
+// the counter; only a payout resets it.
+static void GambaPityCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg.empty() || arg == "status" || arg == "stat") {
+        GambaPityLoad();
+        // The last load/save refusal, beside the status line (the gems: saved
+        // pattern): a refusal must be readable, never only written.
+        Out(g_GambaPity.StatusLine() + (g_GambaPityError.empty() ? std::string() : " - " + g_GambaPityError));
+        return;
+    }
+    if (arg == "off" || arg == "0") {
+        GambaPityLoad();
+        g_GambaPity.Off();
+        Out(g_GambaPity.StatusLine());
+        return;
+    }
+    int count = 0;
+    try {
+        size_t k = 0;
+        count = std::stoi(arg, &k);
+        if (k != arg.size()) count = 0;
+    } catch (...) { count = 0; }
+    if (count < kGambaPityMin || count > kGambaPityMax) {
+        Out("gambapity: usage gambapity <count>|off|status, count " + std::to_string(kGambaPityMin)
+            + ".." + std::to_string(kGambaPityMax) + " (unchanged: " + std::to_string(g_GambaPity.Threshold()) + ")");
+        return;
+    }
+    GambaPityLoad();
+    if (!g_GambaPityHooked) {
+        const std::string why = GambaPityInstallHooks();
+        if (!why.empty()) { Out("gambapity: refused - " + why); return; }
+        g_GambaPityHooked = true;
+    }
+    g_GambaPity.SetThreshold(count);
+    g_GambaPity.SetEnabled(true);
+    Out(g_GambaPity.StatusLine());
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -51866,7 +52265,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider"
+        "jumpscenery", "skillslider", "gambapity"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -52033,6 +52432,9 @@ static void RunCommand(const std::string& line)
     // Skill sliders (Modifiers > Skills, #160): `skillslider <lever> <value>`
     // and `skillslider list`; the same standalone early return.
     if (lc == "skillslider") { ForgePact::SkillSlidersMod::Instance().HandleCommand(rest); return; }
+    // Goburin's Head pity (Mods > Quality of Life, #134): the switch-and-range's
+    // command, the same standalone early return.
+    if (lc == "gambapity") { GambaPityCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }

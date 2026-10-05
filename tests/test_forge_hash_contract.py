@@ -119,6 +119,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Skill sliders (ForgePact #160): the Modifiers tab's Skills group
     # (test_skill_sliders_contract.py pins it).
     "skillslider",
+    # Goburin's Head pity (ForgePact #134): the Mods tab's switch and range
+    # (test_gamba_pity_contract.py pins it).
+    "gambapity",
 }
 
 

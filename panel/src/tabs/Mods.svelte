@@ -118,6 +118,15 @@
             <option value="fade">Fade</option>
         </select>
     </div>
+    <!-- Goburin's Head pity (issue #134): a switch and a slider, the dungeon chest's shape (the owner's pity count
+         after the research could not keep "counts explosions" literally). The value beside the slider is typable and
+         reads "off" while the switch is off. -->
+    <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Goburin's Head pity<br><span class="feature-description">After this many slot-machine spins without Goburin's Head dropping, the machine's next prize is the charm. Each spin costs 10,000 gold, so the count is also the gold it takes. The count carries over between sessions. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_gambapity" aria-label="Goburin's Head pity"><span class="sl"></span></label>
+        <input type="range" id="gambapity" min="10" max="1000" step="10" value="100" aria-label="Spins before the guaranteed charm">
+        <span class="val off" id="gppval" style="width:64px">off</span>
+    </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard" role="tabpanel" aria-labelledby="subtab-items">

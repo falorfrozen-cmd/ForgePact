@@ -4,6 +4,7 @@
 // the config - so tests/enabled-mods.test.js runs it under plain node.
 //
 // Never entries: dungeon_chest_pct (it rides on mod_dungeon_chest's entry),
+// gambapity (it rides on mod_gambapity's entry),
 // auto_apply (a panel setting), enemy_speed_ct (a scope, not a
 // value), the child options map_reveal_packs / map_reveal_spawn /
 // mod_auto_prospect_bag / mod_hidden_loot_key / dungeon_chest_countdown (they
@@ -70,6 +71,9 @@ export function enabledControls(cfg) {
   // Not in BOOLEAN_MODS, whose entries the oracle derives as `verb 1` /
   // `verb 0`: off sends `dungeonchest off`, on the saved percentage.
   if (cfg.mod_dungeon_chest) out.push('mod_dungeon_chest');
+  // Goburin's Head pity: its switch decides, as dungeon chest's does. Not in
+  // BOOLEAN_MODS either: off sends `gambapity off`, on the saved count.
+  if (cfg.mod_gambapity) out.push('mod_gambapity');
   if (cfg.density_on && Number(cfg.density) > 1) out.push('den_on');
   for (const id of sliderSwitchIds(cfg)) {
     if (switchOn(cfg, id) && sliderValue(cfg, id) > sliderDefault(id)) out.push(switchControlId(id));

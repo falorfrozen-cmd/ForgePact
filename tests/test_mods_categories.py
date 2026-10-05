@@ -89,6 +89,10 @@ QOL_CONTROL_IDS = [
     # Jump through scenery (forgepact-16-jump-scenery-mod).
     "mod_jump_scenery",
     "mod_skill_timer_style",
+    # Goburin's Head pity (forgepact-134-goburins-head-pity-mod): the switch and
+    # its range.
+    "mod_gambapity",
+    "gambapity",
 ]
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
 # The Gameplay sub-tab holds the Bosses select (issue #44), then Dungeon chest

@@ -9,7 +9,9 @@ loot your filter hides to sleep so the game stops updating it every frame, and
 shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
-the rocks, fences and carts that stop it.
+the rocks, fences and carts that stop it. A new **Goburin's Head pity**
+switch, also off by default, guarantees the slot machine's charm after the
+number of spins you set.
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -226,6 +228,15 @@ experience.
   check has been seen holding a jump back in play, the check on locked
   doors and zone gates was not reached, and what the game does at the edge
   of the walkable map has not been observed.
+- **Goburin's Head pity (#134).** A new switch in Mods → Quality of Life, off
+  by default, with a slider from 10 to 1000 spins. Until now, the one-of-a-kind
+  charm the slot machine can give, Goburin's Head, was pure luck. With the
+  switch on, after the number of spins you set without the charm dropping, the
+  machine's next prize is the charm. Each spin costs 10,000 gold, so the count
+  is also the gold it takes, and the count carries over between sessions and
+  between machines. If the charm drops on its own before then, the count starts
+  over — this reset has not been watched in a live game yet. The forced drop
+  itself has not been watched in a live game yet.
 
 ## Changed
 

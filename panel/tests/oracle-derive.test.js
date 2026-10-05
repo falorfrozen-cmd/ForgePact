@@ -70,9 +70,21 @@ const PANEL_STEPS = PANEL_TABS + 2 * PANEL_BOOLEANS.length + PANEL_BUTTONS.lengt
 // (the panel's own controls left Setup open), then raised, off, raised and
 // Turn off for each.
 const NATIVE_SELECT_STEPS = 2 + 4 * NATIVE_SELECTS.length;
-// Then the switch-plus-range pairs': no navigation (the native selects left
-// Mods › Gameplay open), then eight steps each, and two controls each.
-const PAIR_STEPS = 8 * NATIVE_SWITCHED_RANGES.length;
+// Then the switch-plus-range pairs': one tab/sub-tab step each time it
+// changes between pairs (the first pair continues the native selects' Mods >
+// Gameplay; a later pair on another sub-tab re-enters it), then eight steps
+// each, and two controls each.
+const PAIR_NAV = (() => {
+  let count = 0;
+  let tab = NATIVE_SELECTS.at(-1).tab;
+  let sub = NATIVE_SELECTS.at(-1).sub;
+  for (const n of NATIVE_SWITCHED_RANGES) {
+    if (n.tab !== tab) { count += 1; tab = n.tab; sub = null; }
+    if (n.sub && n.sub !== sub) { count += 1; sub = n.sub; }
+  }
+  return count;
+})();
+const PAIR_STEPS = PAIR_NAV + 8 * NATIVE_SWITCHED_RANGES.length;
 const PAIR_CONTROLS = 2 * NATIVE_SWITCHED_RANGES.length;
 // Then, last, their child selects': the switch on, one select per value, the
 // switch off, and one control each.
@@ -146,7 +158,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 141 switch clicks, 74 Turn off buttons, one theme step per theme', () => {
+test('the counts: 141 switch clicks, 75 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -154,13 +166,13 @@ test('the counts: 141 switch clicks, 74 Turn off buttons, one theme step per the
   assert.equal(switches.length, 3 * (SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length));
   assert.equal(quick.length, SLIDERS.length + KEY_SLIDERS.length + NATIVE_SLIDERS.length + BOOLEAN_MODS.length + 2 + NATIVE_SELECTS.length
     + NATIVE_SWITCHED_RANGES.length);
-  // The dungeon chest switch's id has no `sw_` prefix: it adds a Turn off
-  // button and no `#sw_` click. Jump through scenery's native boolean adds
-  // one more Turn off button, and the two Satanic Zone control switches two
-  // more. The three skill sliders (#160) add three switch clicks and one
-  // Turn off button each.
+  // The dungeon chest and Goburin's Head pity switches' ids have no `sw_`
+  // prefix: each adds a Turn off button and no `#sw_` click. Jump through
+  // scenery's native boolean adds one more Turn off button, and the two
+  // Satanic Zone control switches two more. The three skill sliders (#160)
+  // add three switch clicks and one Turn off button each.
   assert.equal(switches.length, 141);
-  assert.equal(quick.length, 74);
+  assert.equal(quick.length, 75);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -478,7 +490,9 @@ test('a native select\'s contract is literal: raised and off post the value and 
 
 test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb> off`, a range moved while off sends nothing', () => {
   assert.deepEqual(NATIVE_SWITCHED_RANGES, [{ key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay',
-    verb: 'dungeonchest', rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' }]);
+    verb: 'dungeonchest', rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' },
+  { key: 'mod_gambapity', range: 'gambapity', tab: 'tab:mods', sub: 'subtab:qol', verb: 'gambapity',
+    rest: 100, min: 10, max: 1000, typed: 250 }]);
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_RANGE_STEPS;
   for (const n of NATIVE_SWITCHED_RANGES) {
@@ -492,13 +506,23 @@ test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb
     assert.ok(!n.key.startsWith('sw_'));
   }
   // The native selects' last step (the Bosses Turn off, on Mods › Gameplay)
-  // comes first, so none of their indexes moved, and no navigation step
-  // follows it: the pair sits on the sub-tab already open.
+  // comes first, so none of their indexes moved, and a later pair on another
+  // sub-tab re-enters it.
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_SELECTS.at(-1).key));
   assert.equal(NATIVE_SWITCHED_RANGES[0].tab, NATIVE_SELECTS.at(-1).tab);
   assert.equal(NATIVE_SWITCHED_RANGES[0].sub, NATIVE_SELECTS.at(-1).sub);
-  NATIVE_SWITCHED_RANGES.forEach(({ key, range, verb, rest, min, max, typed, restate }, i) => {
-    const first = at + 8 * i;
+  let first = at;
+  let tab = NATIVE_SELECTS.at(-1).tab;
+  let sub = NATIVE_SELECTS.at(-1).sub;
+  NATIVE_SWITCHED_RANGES.forEach(({ key, range, verb, rest, min, max, typed, restate, tab: entryTab, sub: entrySub }) => {
+    if (entryTab !== tab) {
+      assert.deepEqual(steps[first], { step: first, control: entryTab, action: 'click' });
+      first += 1; tab = entryTab; sub = null;
+    }
+    if (entrySub && entrySub !== sub) {
+      assert.deepEqual(steps[first], { step: first, control: entrySub, action: 'click' });
+      first += 1; sub = entrySub;
+    }
     const sw = '#' + key;
     const rg = '#' + range;
     assert.deepEqual(steps.slice(first, first + 8).map((s) => [s.control, s.action, s.value]), [
@@ -507,16 +531,20 @@ test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb
     ]);
     const toggled = (value) => [{ url: '/api/set', body: { key, value } }];
     const moved = (value) => [{ url: '/api/set', body: { key: range, value } }];
-    // The switch's on restates its child select's form after the percentage.
-    assert.deepEqual(steps[first].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${rest}`, restate] } });
+    const onCmds = (value) => [`${verb} ${value}`, ...(restate ? [restate] : [])];
+    // The switch's on restates its child select's form after the percentage;
+    // a pair with no child select sends the count alone.
+    assert.deepEqual(steps[first].expect, { posts: { is: toggled(true) }, cmds: { is: onCmds(rest) } });
     assert.deepEqual(steps[first + 1].expect, { posts: { is: moved(max) }, cmds: { is: [`${verb} ${max}`] } });
     assert.deepEqual(steps[first + 2].expect, { posts: { is: moved(min) }, cmds: { is: [`${verb} ${min}`] } });
     assert.deepEqual(steps[first + 3].expect, { posts: { is: moved(typed) }, cmds: { is: [`${verb} ${typed}`] } });
     assert.deepEqual(steps[first + 4].expect, { posts: { is: toggled(false) }, cmds: { is: [`${verb} off`] } });
     assert.deepEqual(steps[first + 5].expect, { posts: { is: moved(max) }, cmds: { is: [] } }, 'moved while off: saved, nothing sent');
-    assert.deepEqual(steps[first + 6].expect, { posts: { is: toggled(true) }, cmds: { is: [`${verb} ${max}`, restate] } });
+    assert.deepEqual(steps[first + 6].expect, { posts: { is: toggled(true) }, cmds: { is: onCmds(max) } });
     assert.deepEqual(steps[first + 7].expect, { posts: { same: first + 4 }, cmds: { same: first + 4 } });
+    first += 8;
   });
+  assert.equal(first, at + PAIR_STEPS);
   assert.deepEqual(DERIVED.controls.slice(-NATIVE_RANGE_CONTROLS, -CHILD_SELECT_CONTROLS),
     NATIVE_SWITCHED_RANGES.flatMap((n) => ['#' + n.key, '#' + n.range]));
   assert.equal(steps[at + PAIR_STEPS - 1].control, quickDisable(NATIVE_SWITCHED_RANGES.at(-1).key));

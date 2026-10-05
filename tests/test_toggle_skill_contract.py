@@ -862,6 +862,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "satzone",
             # Skill sliders (ForgePact #160; test_skill_sliders_contract.py).
             "skillslider",
+            # Goburin's Head pity (ForgePact #134; test_gamba_pity_contract.py).
+            "gambapity",
         }
         self.assertEqual(entries, expected)
 
@@ -3052,7 +3054,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone", "skillslider"})
+                                        "jumpscenery", "satzone", "skillslider", "gambapity"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

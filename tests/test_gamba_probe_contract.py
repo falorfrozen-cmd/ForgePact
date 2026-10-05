@@ -216,7 +216,9 @@ class GambaProbeContract(unittest.TestCase):
         for symbol in sorted(symbols):
             self.assertIsNone(re.search(r"\b" + re.escape(symbol) + r"\b", self.shipped), symbol + " reaches the player build")
         self.assertIsNone(re.search(GP_SYMBOL, self.shipped), "a Gp* symbol reaches the player build")
-        for word in ("gambaprobe", "GambaProbe", "GpNs", MACHINE):
+        # Phase 2's gambapity (a player feature) names the machine by its SDK
+        # object, so `Slot_Machine_01_obj` is no longer a research-only name.
+        for word in ("gambaprobe", "GambaProbe", "GpNs"):
             self.assertNotIn(word, self.shipped, word + " reaches the player build")
         self.assertNotIn("GambaProbe.hpp", strip_research_blocks(self.plugin))
 
