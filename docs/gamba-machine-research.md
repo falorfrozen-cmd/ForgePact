@@ -61,9 +61,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   explosion (no head dropped in either) built an item inside its open window
   (`explosion-route: none`); no vanilla head dropped (`head-route`:
   not-observed).
-- **Next:** the successor workorder moves the force to the explosion: it
-  drops the head itself at the sprite change (`pity-design:
-  drop-ourselves`).
+- **Phase 5 (2026-10-06):** `gambapity` now fires on the explosion. The
+  phase-3 payout force is deleted; once a frame while on, the player build
+  reads each machine's sprite by name, and the first live-to-destroyed change
+  after the count is reached drops one Goburin's Head itself through the
+  loader route, unless a natural head was seen at that explosion (the ground
+  check, a head build in the window, or a machine-self `(0, 98)` build).
+  `gambaprobe` gains the `window full` line (N2) and the by-name fix (N1)
+  (§ Instrument). § Live procedure 5 checks the force in play; until its
+  results are recorded, the forced drop is not confirmed.
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -793,6 +799,22 @@ armed:
   named again at the explosion.
   A second transition, or `window`, while one is open extends it rather than
   opening another, and tops both caps up.
+- **A full window says so (phase 5, N2).** Until phase 5, a line refused by
+  a window's overall build cap or instance cap left no line behind, only the
+  closed line's dropped count. Now the first refusal by each of the two caps
+  in a window prints one `gambaprobe window full <build|instance> frame=<f>`
+  line, at the refused call's frame; a top-up does not print it again, and a
+  new window does. Reading rule: a `full` line at or after an explosion's
+  frame, inside the window that holds it, makes a negative read from that
+  window (no build, no ground item) `not-observed`, never a pass. A window
+  that never reaches a cap prints exactly what it printed before.
+- **The by-name feed (phase 5, N1).** A build row reached by name is fed to
+  the watch once, by its by-name slot, and the script row its original
+  reaches is not fed again. Until phase 5 the mark covered the whole original,
+  so every other call inside it was skipped as already fed. Now only the
+  first call the slot routes consumes the mark, and that call's own original
+  runs with no mark, so any later call is fed as its own. It is dormant on
+  this build: the by-name route is blind (§ Live 3 results).
 - **What a window cannot show.** A `CreateItemNew` that a window replays from
   the ring has no `built` line, because the item was read only for calls
   inside a window; `head-route`'s `GetUniqueRepoStruct` with `10, 0, 98`
@@ -819,6 +841,7 @@ armed:
   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
   gambaprobe window capped <object key> frame=<f>
+  gambaprobe window full <build|instance> frame=<f>
   gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> capped=<n> frame=<f>
   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open end=<f> frame=<now> remaining=<n>|closed> ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n> capped=<n>
   ```
@@ -1284,6 +1307,53 @@ here.
   "build route not observed", not as "no build" (the item was built by a
   route the window did not log). No machine reaching its explosion, or an
   explosion outside every open window, leaves the route `not-observed`.
+
+## Live procedure 5 (explosion force, player build)
+
+Written for phase 5, which drops the head at the explosion. The full
+procedure is in the toolkit workorder
+`forgepact-goburins-head-pity-5-explosion-force`, context file, § "Live
+procedure 1 (final gate, player build)"; its capture, written by the live
+operator, is that workorder's `-live-1.md`. Both are local working notes
+under the toolkit's `.claude/workorders/`, which is not committed, so they
+may not exist on another machine; the outline is repeated here.
+
+- **build**: the player DLL from `plugin_build\build.bat`
+  (`BloodPactPlugin_ship.dll`), installed only after the owner says so.
+  `gambaprobe` does not exist in it.
+- **character**: slot 14 "Sorak". `shop.ini`'s gold is read, not changed
+  (about 25 spins of 10,000 per machine; stop below 50,000), and
+  `forgepact_gamba_pity.json` is recorded before (expected `{"count":12}`)
+  and written back to its starting content at teardown.
+- **control**: `ping` -> `pong (YYTK 4.0.1)`. **marker**: `gambapity status`
+  answers a line carrying `explosions=0 forced=0`, which only this build
+  prints.
+- **steps**: `gambapity 10` (`armed`: with the count already at 12, the first
+  explosion must force); `reveal` noted, and turned on only if it was off;
+  zones until the game places a machine (`machine-seen`: `gambapity: machine
+  id=<id> seen sprite=Slot_Machine_01_spr heads-nearby=0`); the person spins
+  that machine until it can no longer be used, without fighting or opening
+  chests near it, while the operator sends `gambapity status` every few spins
+  (`spin-count`: `count=` rises by one per debit; `payout-no-force`: whenever
+  gold came back, `forced=0` held and no `forced` line came before the
+  explosion line); the person stays beside it 5 seconds, then `gambapity
+  status` and a screenshot of the machine and the ground. A second machine,
+  if one appears, runs the same way after `gambapity 1000` (`below-control`).
+  Teardown: `gambapity off`, `reveal` restored, the saves and the counter
+  file restored.
+- **checks**: `dll-hash`, `marker` and `control` for the session;
+  `explosion-trigger` (`gambapity: explosion id=<the machine> ...` and
+  `explosions=1`), `forced-head` (the `forced Goburin's Head at <x>,<y>`
+  line after it, then `forced=1 count=0` and the counter file at
+  `{"count":0}`), `drop-detected` (`own-head-builds=1`, the head-build
+  detector's control, and `ground check after the drop: heads=1`, the
+  ground check's control) and `one-head` (exactly one head near the machine,
+  picked up and confirmed, `natural=0`) must pass. `below-control` needs a
+  second machine and is `not-observed` without one; `natural-head` (a
+  natural head's line) cannot be arranged, and its `not-observed` is the
+  expected finding.
+- **what it decides**: § Decision's `fallback-drop`, `proven` when the
+  forced head was placed, read back and seen once, `failed` otherwise.
 
 ## Results
 
