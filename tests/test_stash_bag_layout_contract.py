@@ -463,11 +463,12 @@ class CraftprobePhase0Additions(unittest.TestCase):
             self.assertNotIn(symbol, shipped, symbol)
 
     # --- the CreateItemNew row under this build's own item hooks -------------
-    # The research build's item-inspect hook swaps CreateItemNew's table entry
-    # at setup, table-only. The row detours the saved original instead (the
-    # shape TgProbeAttach ships), and reports the function held when another
-    # install already detoured it inline - decided by the address, never by a
-    # flag - so P0-1's check is `not-run (instrument: held ...)`, not failed.
+    # The research build's item-inspect hook installs CreateItemNew with both
+    # routes (ForgePact #17). Only if HookOneScript fell back to the table swap
+    # does the row detour the saved original instead (the shape TgProbeAttach
+    # ships); otherwise it reports the function held by the install that
+    # detoured it inline - decided by the address, never by a flag - so P0-1's
+    # check is `not-run (instrument: held ...)`, not failed.
 
     def test_resolver_falls_back_to_the_saved_original_only_for_create_item_new(self):
         resolver = self.body("static PVOID CpResolve(")
@@ -511,12 +512,19 @@ class CraftprobePhase0Additions(unittest.TestCase):
         detoured = install[install.index('"craftprobe hook: detoured %s at exe+0x%llX"'):]
         detoured = detoured[:detoured.index("++ok;")]
         self.assertIn('why.empty() ? std::string() : " (" + why + ")"', detoured)
-        self.assertEqual(self.body("static const char* CpItemHookName(").count('"bp_citemn"'), 1)
+        # bp_citemn installs both routes now (ForgePact #17), so with neither
+        # flag set it is the holder on either path: one return names it, and
+        # the old "custom forge / item truth" guess for an unflagged inline
+        # detour is gone.
+        name = self.body("static const char* CpItemHookName(")
+        self.assertEqual(name.count('"bp_citemn"'), 1)
+        self.assertNotIn("custom forge / item truth", name)
+        self.assertNotIn("inlineDetour ?", name)
 
-    def test_the_item_inspect_hook_still_swaps_create_item_new_table_only(self):
+    def test_the_item_inspect_hook_installs_create_item_new_with_both_routes(self):
         inspect = self.body("static void InstallItemInspectHooks(")
-        self.assertIn('HookOneScriptTable("CreateItemNew",', inspect)
-        self.assertNotIn('HookOneScript("CreateItemNew",', inspect)
+        self.assertIn('HookOneScript("CreateItemNew",', inspect)
+        self.assertNotIn('HookOneScriptTable("CreateItemNew",', inspect)
 
 
 class CraftprobeLive2Additions(unittest.TestCase):

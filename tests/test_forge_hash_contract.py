@@ -119,6 +119,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Skill sliders (ForgePact #160): the Modifiers tab's Skills group
     # (test_skill_sliders_contract.py pins it).
     "skillslider",
+    # Loot announcements, Mods > Quality of Life (ForgePact #17;
+    # test_loot_announce_contract.py).
+    "lootann",
 }
 
 

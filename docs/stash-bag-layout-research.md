@@ -417,24 +417,27 @@ button as self and the stash window as other.
   reads `rows=285` (#14's 282 plus these three). A row whose function
   another install in this plugin already holds is reported `held by
   <install>`, neither detoured nor failed.
-- **`CreateItemNew` under this build's own item hook.** The research build
-  swaps `CreateItemNew`'s script-table entry at setup for its item-inspect
-  hook (`bp_citemn`, table-only), so the entry the row resolves is not the
-  game's code. The row then detours the game's function that hook saved as
-  its original, after the same executable-code check - the shape the
-  toggle-skill probe already uses - and the detoured line says so:
-  `craftprobe hook: detoured CreateItemNew at exe+0x… (under table-only
-  bp_citemn)`. When Custom Forge entries are loaded or the Item Editor has
-  asked for Item Truth, that install has already detoured `CreateItemNew`
-  inline, its saved original is a trampoline rather than the game's code,
-  and the row is reported `held by custom forge` or `held by item truth`
-  (inline detour). Which of the two applies is decided by that address; the
-  install's name in the message is the only thing its flags decide. Live 1
-  found that Custom Forge detours `CreateItemNew` at plugin start on every
-  launch of this build (the launch banner prints `HOOK INSTALLED on
-  CreateItemNew` before any command), with no forged-item entries and no
-  Item Truth request, so the row is `held by custom forge` in every session
-  and the `under table-only` path does not occur on this build.
+- **`CreateItemNew` under this build's own item hook.** The research build's
+  item-inspect hook (`bp_citemn`) installs `CreateItemNew` with both routes
+  since ForgePact #17 (it was a table swap before, which left the research
+  build blind to the game's direct calls). Whichever install holds
+  `CreateItemNew` - `bp_citemn`, Custom Forge, or Item Truth when the Item
+  Editor has asked for it - has detoured it inline, so its saved original is
+  a trampoline rather than the game's code, and the row is reported `held by
+  bp_citemn`, `held by custom forge` or `held by item truth` (inline
+  detour). Only if that install's `HookOneScript` fell back to the table
+  swap is the entry the row resolves not the game's code while the saved
+  original is: the row then detours the game's function that install saved,
+  after the same executable-code check - the shape the toggle-skill probe
+  already uses - and the detoured line says so: `craftprobe hook: detoured
+  CreateItemNew at exe+0x… (under table-only bp_citemn)` (or the install's
+  name). Which of the two applies is decided by that address; the install's
+  name in the message is the only thing its flags decide. Live 1, on the
+  build before #17, found that Custom Forge detours `CreateItemNew` at plugin
+  start on every launch of this build (the launch banner prints `HOOK
+  INSTALLED on CreateItemNew` before any command), with no forged-item
+  entries and no Item Truth request, so the row was `held by custom forge`
+  in every session and the `under table-only` path did not occur.
 
 Two more additions for Live procedure 2 (research build only, pinned by the
 same test). Every by-name route live 1 could not reach failed on the
@@ -611,12 +614,15 @@ stash to bag to stash (the outlier: a stack, the split). No others.
   them, and fails this check.
 - **control.** The positive control of § Instrument. With `mapkeep on`
   (it holds two rows) and neither Custom Forge entries nor an Item Truth
-  request, `craftprobe hook` answers `283 detoured, 0 failed, 2 held by
-  mapkeep, craftmats or an item hook` and prints `craftprobe hook: detoured
-  CreateItemNew at exe+0x… (under table-only bp_citemn)`. With Custom Forge
-  entries loaded or Item Truth requested it answers `282 detoured, 0 failed,
-  3 held …`, and P0-1's `CreateItemNew` check is `not-run (instrument: held
-  by <install>)`.
+  request, `craftprobe hook` answers `282 detoured, 0 failed, 3 held by
+  mapkeep, craftmats or an item hook` and prints `craftprobe hook:
+  CreateItemNew held by bp_citemn`, since `bp_citemn` installs both routes
+  (ForgePact #17); with Custom Forge entries loaded or Item Truth requested
+  the row reads `held by custom forge` or `held by item truth` instead. In
+  each case P0-1's `CreateItemNew` check is `not-run (instrument: held by
+  <install>)`. The `283 detoured, 0 failed, 2 held` answer with `detoured
+  CreateItemNew at exe+0x… (under table-only bp_citemn)` occurs only if
+  that install's `HookOneScript` fell back to the table swap.
 - **Before launch.** No forged-item sidecar entries and no Item Truth
   request for this launch; the capture records which state the session was
   in. A manual copy of the saves plus `hs_saves_backup`;

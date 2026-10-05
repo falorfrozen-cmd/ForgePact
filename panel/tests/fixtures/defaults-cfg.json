@@ -25,6 +25,7 @@
  "mod_hidden_loot": false,
  "mod_hidden_loot_key": 164,
  "mod_jump_scenery": false,
+ "mod_loot_announce": false,
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",

@@ -541,6 +541,10 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 // adapter sits after hidden loot sleep's; the mod state reads the switch.
 #include <ForgePact/JumpScenery.hpp>
 static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
+// Loot announcements (`lootann`, ForgePact #17): the decision core. Its
+// adapter sits after jump through scenery's; the mod state reads the switch.
+#include <ForgePact/LootAnnounceMod.hpp>
+static ForgePact::LootAnnounceMod g_LootAnnounce;
 #include <ForgePact/StatsManager.hpp>
 // Skill sliders (`skillslider`, #160): projectile amount, AoE size and
 // projectile speed for the player's own casts. Nothing is hooked until a
@@ -19758,6 +19762,10 @@ static void DungeonChestTick()
 // Truth records the outermost call (before the dressing when a forge entry can
 // match, and after it - what the game will show). Its entry is also #74's rewrite point
 // (SignatureBeforeCreate): the record the item is about to be built from.
+// Loot announcements' creation guard notes every CreateItemNew return (inner
+// and outermost alike) while its switch is on: the adapter is defined far
+// below, in the loot announcement adapter.
+static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result);
 #define ITEM_CREATE_HOOK(NAME) \
     static PFUNC_YYGMLScript g_Orig_##NAME = nullptr; \
     static volatile long g_cnt_##NAME = 0; \
@@ -19773,6 +19781,7 @@ static void DungeonChestTick()
             if (g_Orig_##NAME) _resp = &g_Orig_##NAME(S, O, R, argc, A); \
         } \
         RValue& _res = *_resp; \
+        if (_final && g_LootAnnounce.Enabled()) LootAnnounceNoteCreated(argc, A, _res); \
         if (g_GemTableBuilding) return _res;   /* the gem tables' own candidates: nothing else sees them */ \
         const bool _outermost = _final && g_TruthDepth == 0; \
         const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
@@ -20930,8 +20939,11 @@ static void InstallItemInspectHooks()
     HookOneScriptTable("draw_text_outline",   "bp_dto",      (PVOID)Hook_TraceDrawTextOutline, &g_Orig_DrawTextOutline);
     HookOneScriptTable("GetItemTooltipString","bp_gitip",    (PVOID)Hook_GetItemTooltipString,&g_Orig_GetItemTooltipString);
     HookOneScriptTable("GetItemStatString",   "bp_gistat",   (PVOID)Hook_GetItemStatString,   &g_Orig_GetItemStatString);
+    // Both routes, so the research build is never blind to LootGroundCreate's
+    // direct call: installed first here (no Custom Forge entries), a table
+    // swap would be the route every later CreateItemNew installer inherits.
     if (!g_Orig_CreateItemNew)
-        HookOneScriptTable("CreateItemNew",       "bp_citemn",   (PVOID)Hook_CreateItemNew,       &g_Orig_CreateItemNew);
+        HookOneScript("CreateItemNew",            "bp_citemn",   (PVOID)Hook_CreateItemNew,       &g_Orig_CreateItemNew);
     if (!g_Orig_CreateItemInit)
         HookOneScriptTable("CreateItemInit",      "bp_citemi",   (PVOID)Hook_CreateItemInit,      &g_Orig_CreateItemInit);
     if (!g_Orig_GenerateItemRandomStats)
@@ -22650,6 +22662,15 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
 // game's own code, since the table-only fallback saves the table entry.
 // The outcome goes into g_SigDetectNative, which the gate reads, and one line per switch-on names
 // it - so a switch never reports these drops on while nothing can see a hit.
+// A hook another installer put on first: its saved original is the game's own
+// code exactly when that install fell back to the table swap (an inline detour
+// saves its trampoline instead) - savedRoute's test below. Loot announcements'
+// create-hook= reads CreateItemNew's route with it.
+static bool SavedOriginalIsTableOnly(PFUNC_YYGMLScript orig)
+{
+    return AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)orig);
+}
+
 static void InstallSignatureAngelicHooks()
 {
     auto savedRoute = [](PFUNC_YYGMLScript orig) {
@@ -26935,6 +26956,18 @@ static void FlushModState(uint32_t frame)
             body += ",\"errors\":" + std::to_string(hl.StatsRef().errors) + "}";
         }
         body += ",\"jumpScenery\":{\"enabled\":"; body += g_JumpScenery.Enabled() ? "true" : "false"; body += "}";
+        {
+            const auto& la = g_LootAnnounce.Stats();
+            body += ",\"lootAnnounce\":{\"on\":"; body += g_LootAnnounce.Enabled() ? "true" : "false";
+            body += ",\"route\":\""; body += ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink); body += "\"";
+            body += ",\"seen\":" + std::to_string(la.seen);
+            body += ",\"announced\":" + std::to_string(la.announced);
+            body += ",\"heldRarity\":" + std::to_string(la.heldRarity);
+            body += ",\"heldNoRarity\":" + std::to_string(la.heldNoRarity);
+            body += ",\"heldDuplicate\":" + std::to_string(la.heldDuplicate);
+            body += ",\"heldBagDrop\":" + std::to_string(la.heldBagDrop);
+            body += ",\"sinkRefused\":" + std::to_string(la.sinkRefused) + "}";
+        }
         namespace pool = ForgePact::ProtectedPool::Runtime;
         auto& reveal = ForgePact::MapRevealManager::Instance();
         body += ",\"population\":{\"capacityReady\":"; body += pool::active.load() ? "true" : "false";
@@ -30470,13 +30503,16 @@ static bool CpIsProfileGetter(const CpTarget& t)
 // Which install holds CreateItemNew, for a message only (toolkit #147):
 // whether it is held is decided by the addresses (CpInstall, CpResolve), never
 // by these flags. Custom Forge and Item Truth install both routes at setup,
-// before the research build's table-only bp_citemn, which installs only if
-// neither did.
+// before the research build's bp_citemn, which installs only if neither did
+// and since ForgePact #17 installs both routes too. So with neither flag set
+// the holder is bp_citemn on either path: inlineDetour no longer changes the
+// name (the inline detour, or the table swap HookOneScript fell back to).
 static const char* CpItemHookName(bool inlineDetour)
 {
+    (void)inlineDetour;
     if (g_CustomForgeHooksActive) return "custom forge";
     if (g_TruthOn) return "item truth";
-    return inlineDetour ? "custom forge / item truth" : "bp_citemn";
+    return "bp_citemn";
 }
 
 // Same resolution as PpResolve: name -> CScript -> the compiled function. The
@@ -30486,10 +30522,10 @@ static const char* CpItemHookName(bool inlineDetour)
 // never after.
 //
 // One exception, toolkit #147 (docs/stash-bag-layout-research.md, Instrument):
-// this build's own item-inspect hook swaps CreateItemNew's table entry at
-// setup, table-only (bp_citemn), and keeps the game's function as its saved
-// original. That original is detoured instead - TgProbeAttach's shape - so the
-// row sees both routes; it still has to pass the same executable-code check.
+// when an install of CreateItemNew (bp_citemn included) had HookOneScript fall
+// back to the table swap, the entry is a plugin detour and the saved original
+// is the game's function. That original is detoured instead - TgProbeAttach's
+// shape - so the row sees both routes; it still has to pass the same executable-code check.
 // On that path `why` names it for the detoured line; the address is never
 // read off anything but the saved original the install resolved by name.
 static PVOID CpResolve(const CpTarget& t, std::string& why)
@@ -30545,8 +30581,9 @@ static void CpInstall(const std::vector<std::string>& filters)
             ++held;
             continue;
         }
-        // Toolkit #147: Custom Forge or Item Truth installs CreateItemNew
-        // through HookOneScript, whose inline detour leaves its saved
+        // Toolkit #147: Custom Forge, Item Truth or (ForgePact #17) this
+        // build's bp_citemn installs CreateItemNew through HookOneScript,
+        // whose inline detour leaves its saved
         // original a trampoline, not the game's code. A second detour would
         // fail, so the row is held. Decided by that address; a HookOneScript
         // that fell back to TABLE-ONLY keeps the game's function there, and
@@ -47259,9 +47296,16 @@ static void FarSleepCommand(const std::string& rest)
 // inside the call to durable handles (instance_exists and the `id` read, so
 // no raw pointer outlives the call); the class acts at the end of the frame,
 // in HiddenLootTick.
+//
+// The detour is shared (ForgePact #17): a second inline detour on the same
+// script would be refused ("table entry is not code inside Hero_Siege.exe"),
+// so loot announcements install through HiddenLootInstall too, and this one
+// detour hands the call to each consumer in turn - hidden loot, then
+// LootAnnounceOnInit, which returns at once while `lootann` is off.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
+static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A);   // the loot announcement adapter, below
 static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& result = g_Orig_LootGroundInit(S, O, R, argc, A);
@@ -47270,6 +47314,7 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
         const RValue none;
         hl.OnInit(argc > 0 && A && A[0] ? *A[0] : none, argc > 1 && A && A[1] ? *A[1] : none, S ? RValue(S) : none);
     }
+    LootAnnounceOnInit(S, argc, A);
     return result;
 }
 // The one install attempt, on the first switch-on after setup. Both routes
@@ -47778,6 +47823,606 @@ static void JumpSceneryCommand(const std::string& rest)
     Out("jumpscenery: usage jumpscenery 1 | 0 | stat");
 }
 // ---- end of the jump through scenery adapter
+
+// ---- Loot announcements (LootAnnounceMod.hpp): the adapter -----------------
+// `lootann 1|0|stat` (ForgePact #17, the Mods tab's switch). Offline, the game
+// shows no chat line when a Heroic, Angelic or Unholy item drops; online it
+// does (docs/loot-announcement-research.md). While the switch is on, each
+// ground item the game initialises is decided once by the core in
+// LootAnnounceMod.hpp, and an item it announces gets one chat line from the
+// shipped sink.
+//
+// Two hooks, both by SDK name through HookOneScript, installed on the first
+// switch-on after setup:
+//   - LootGroundInit's one detour, shared with hidden loot sleep
+//     (HookHiddenLootInit, installed by HiddenLootInstall): inside the call
+//     LootAnnounceOnInit only reduces argument 0 and `self` to durable
+//     handles. Hidden loot measured argument 0 as the ground item, a
+//     reference, on every one of 1,473 calls; Live procedure 2 measured a bag
+//     drop reaching it too.
+//   - CreateItemNew, the shared Hook_CreateItemNew (installed here as
+//     fp_lootann_new when no other feature holds it): while the switch is on,
+//     LootAnnounceNoteCreated notes the keys of each call's argument 0 and its
+//     return into the core's creation window. This is the creation guard: a
+//     ground item counts only when its item struct was built in that frame or
+//     the one before, so a bag drop or a re-drop after a pickup (an existing
+//     struct put back on the ground) is held. It replaced a count-only
+//     LootGroundDrop window that counted 0 while Live procedure 2's bag drop
+//     was announced; Live procedure 3 measured the guard holding a bag drop. A table-only CreateItemNew hook would never see
+//     LootGroundCreate's direct call, so its route is reported (create-hook=).
+// At the end of the frame (LootAnnounceTick) each noted call is resolved: the
+// first handle that is a live Loot_Ground_obj (by object_index, the object
+// named through the SDK) is the ground item; the item is its
+// kGroundItemInstanceField; its key is derived the same way as at the note
+// (a struct by its object pointer, a reference by the value it holds; a key is
+// compared, never followed); the rarity is that item's itemInfoStruct["27"],
+// read by name and kept only as a number; its itemType and itemTimeStamp make
+// its identity. The creation window then ages once, after the batch. The kind
+// of a value decides how it is read, never whether. No address, no struct
+// layout.
+//
+// The sink: one function, LootAnnounceSink, runs the body
+// ForgePact::LootAnnounceMod::kShippedSink names. All four bodies are here so
+// the research build's `lootannprobe try <n>` runs exactly the code the mod
+// would ship; Live procedure 1 picked `server` (the research doc's "Route").
+static bool g_LaInstallTried = false;
+static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route: both, table-only or none
+static long long g_LaUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
+static long long g_LaNoItem = 0;         // a ground item with no item struct to read
+static long long g_LaNoKey = 0;          // a ground item whose item value gave no key: decided as not recently created
+static long long g_LaNoIdentity = 0;     // a ground item whose identity could not be read: counted, not decided
+static long long g_LaPendingDropped = 0; // calls not noted because a frame's queue was full
+static int g_LaLootIndex = -2;           // asset_get_index of Loot_Ground_obj; -2 until resolved
+static long g_LaRefusalLogs = 0;
+
+// netsend's first argument (the closure passes a runtime-filled value whose
+// meaning is not established): undefined, or the local player's id. Only
+// `lootannprobe try 2|3` and a shipped `netsend` use it; with `server`
+// shipped, the player build passes it along unused.
+static constexpr bool kLaNetSendA0IsPlayer = false;
+// netsend's second and fourth arguments, as the closure's call sites supply
+// them (static reading): the real 18687, and a colour literal one branch uses.
+static constexpr double kLaNetSendA1 = 18687.0;
+static constexpr double kLaNetSendColour = (double)0xA2FCFF;
+static constexpr int64_t kLaNetSendKind = 3;   // the item-drop line
+static constexpr size_t kLaPendingCap = 512;   // per frame
+
+#ifndef FORGEPACT_RELEASE
+// lootannprobe's row that counts through the shared LootGroundInit detour
+// rather than a detour of its own (research build only, defined with
+// lootannprobe).
+static void LaProbeNoteInit(CInstance* S, int argc, RValue** A);
+#endif
+
+// One call's handles, reduced inside the call.
+struct LaPending {
+    RValue arg0;
+    RValue self;
+};
+static std::vector<LaPending> g_LaPending;
+
+// A value kept past the call: a number or a reference as it is, with no read;
+// an instance pointer as its own `id` (so no raw pointer outlives the call);
+// anything else as undefined.
+static RValue LaDurable(const RValue& v)
+{
+    try {
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF) return v;
+        if (v.m_Kind == VALUE_OBJECT && v.m_Object) {
+            if (!g_Yytk->CallBuiltin("instance_exists", { v }).ToBoolean()) return RValue();
+            const RValue id = g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("id") });
+            if (id.m_Kind == VALUE_REAL || id.m_Kind == VALUE_INT32 || id.m_Kind == VALUE_INT64 || id.m_Kind == VALUE_REF) return id;
+        }
+    } catch (...) {}
+    return RValue();
+}
+
+// From the shared LootGroundInit detour, after the game's own call returned.
+static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A)
+{
+#ifndef FORGEPACT_RELEASE
+    LaProbeNoteInit(S, argc, A);
+#endif
+    if (!g_LootAnnounce.Enabled()) return;
+    if (g_LaPending.size() >= kLaPendingCap) { ++g_LaPendingDropped; return; }
+    LaPending p;
+    if (argc > 0 && A && A[0]) p.arg0 = LaDurable(*A[0]);
+    if (S) p.self = LaDurable(RValue(S));
+    g_LaPending.push_back(std::move(p));
+}
+
+// An item value's key for the creation window, derived the same way at the
+// CreateItemNew note and at the ground item: a struct by its object pointer,
+// a reference by the value it holds. Any other kind gives no key. The key is
+// compared, never dereferenced or called.
+static bool LaItemKey(const RValue& v, ForgePact::LootAnnounceMod::ItemKey& out)
+{
+    if (v.m_Kind == VALUE_OBJECT && v.m_Object) {
+        out = { ForgePact::LootAnnounceMod::kKeyStruct, (std::uint64_t)(uintptr_t)v.m_Object };
+        return true;
+    }
+    if (v.m_Kind == VALUE_REF) {
+        out = { ForgePact::LootAnnounceMod::kKeyReference, (std::uint64_t)v.m_i64 };
+        return true;
+    }
+    return false;
+}
+
+// From the shared Hook_CreateItemNew, after the game's original returned,
+// while the switch is on (ITEM_CREATE_HOOK checks Enabled() first): the item
+// instance LootGroundCreate passes in as argument 0, and the returned item.
+static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result)
+{
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    if (argc > 0 && A && A[0] && LaItemKey(*A[0], key)) g_LootAnnounce.NoteCreated(key);
+    if (LaItemKey(result, key)) g_LootAnnounce.NoteCreated(key);
+}
+
+static const char* LaInitRoute()
+{
+    return g_HiddenLootInstallTried ? ForgePact::HiddenLootMod::Instance().RouteName() : "not-installed";
+}
+
+// CreateItemNew: the shared Hook_CreateItemNew, by its SDK name when nobody
+// holds it yet; otherwise another feature (the Custom Forge, Item Truth,
+// signature drops, the research build's item inspection) installed it first,
+// and its route is read from the saved original the way
+// InstallSignatureAngelicHooks' savedRoute reads it: the table-only fallback
+// saves the table entry, which is the game's own code.
+static void LaInstallCreateHook()
+{
+    if (g_Orig_CreateItemNew) {
+        g_LaCreateRoute = SavedOriginalIsTableOnly(g_Orig_CreateItemNew) ? "table-only" : "both";
+        return;
+    }
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_lootann_new",
+                                  (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew, &native);
+    g_LaCreateRoute = ok ? (native ? "both" : "table-only") : "none";
+}
+
+// The one install path: the shared LootGroundInit detour (through
+// HiddenLootInstall, which does nothing a second time) and CreateItemNew's.
+// A route other than both is said out loud: the game's compiled calls may
+// pass a table-only hook by.
+static void LootAnnounceInstall()
+{
+    g_LaInstallTried = true;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    LaInstallCreateHook();
+    if (std::string_view(LaInitRoute()) != "both")
+        Out(std::string("lootann: LootGroundInit hook ") + LaInitRoute()
+            + " - the game's own drop calls may pass it by, so a drop may go unannounced");
+    if (std::string_view(g_LaCreateRoute) != "both")
+        Out(std::string("lootann: CreateItemNew hook ") + g_LaCreateRoute
+            + " - the game's own drops may not be seen as new, so nothing would be announced");
+}
+
+// A field of a struct-like value: variable_struct_* for a struct,
+// variable_instance_* for the reference this runner can hand back instead
+// (ReadGroundRelic's split). Anything else holds nothing.
+static bool LaField(const RValue& owner, const char* name, RValue& out)
+{
+    try {
+        if (owner.m_Kind == VALUE_OBJECT && owner.m_Object) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
+            return true;
+        }
+        if (owner.m_Kind == VALUE_REF) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+// itemInfoStruct["27"], by name (RUNTIME_DATA_MODELS.md section 16.4); a
+// missing or non-numeric value is kRarityUnread.
+static int LaRarity(const RValue& item)
+{
+    RValue info, code;
+    if (!LaField(item, "itemInfoStruct", info) || !LaField(info, "27", code)) return ForgePact::LootAnnounceMod::kRarityUnread;
+    if (code.m_Kind != VALUE_REAL && code.m_Kind != VALUE_INT32 && code.m_Kind != VALUE_INT64)
+        return ForgePact::LootAnnounceMod::kRarityUnread;
+    const double v = code.ToDouble();
+    if (!std::isfinite(v) || v < 0.0 || v > 1000.0) return ForgePact::LootAnnounceMod::kRarityUnread;
+    return (int)v;
+}
+
+// itemInfoStruct["28"], the display name; "" when it is not text.
+static std::string LaItemName(const RValue& item)
+{
+    RValue info, name;
+    if (!LaField(item, "itemInfoStruct", info) || !LaField(info, "28", name) || name.m_Kind != VALUE_STRING) return "";
+    try { return name.ToString(); } catch (...) { return ""; }
+}
+
+// itemType as text, the whole number; "" when it is missing or not a number.
+static std::string LaItemType(const RValue& item)
+{
+    RValue t;
+    if (!LaField(item, "itemType", t)) return "";
+    try {
+        if (t.m_Kind != VALUE_REAL && t.m_Kind != VALUE_INT32 && t.m_Kind != VALUE_INT64) return "";
+        const double v = t.ToDouble();
+        if (!std::isfinite(v)) return "";
+        return std::to_string((long long)v);
+    } catch (...) {}
+    return "";
+}
+
+// itemTimeStamp as text: a string as it is, a number in %.17g, "" otherwise.
+static std::string LaTimeStamp(const RValue& item)
+{
+    RValue ts;
+    if (!LaField(item, "itemTimeStamp", ts)) return "";
+    try {
+        if (ts.m_Kind == VALUE_STRING) return ts.ToString();
+        if (ts.m_Kind == VALUE_REAL || ts.m_Kind == VALUE_INT32 || ts.m_Kind == VALUE_INT64) {
+            const double v = ts.ToDouble();
+            if (!std::isfinite(v)) return "";
+            char b[40];
+            sprintf_s(b, "%.17g", v);
+            return b;
+        }
+    } catch (...) {}
+    return "";
+}
+
+// One argument as a supplied-line records it: its kind, and a string's first
+// 40 characters.
+static std::string LaArgText(const RValue& v)
+{
+    std::string s;
+    switch (v.m_Kind) {
+    case VALUE_REAL: s = "real"; break;
+    case VALUE_INT32: s = "int32"; break;
+    case VALUE_INT64: s = "int64"; break;
+    case VALUE_BOOL: s = "bool"; break;
+    case VALUE_STRING: s = "string"; break;
+    case VALUE_OBJECT: s = "struct"; break;
+    case VALUE_ARRAY: s = "array"; break;
+    case VALUE_UNDEFINED: s = "undefined"; break;
+    case VALUE_REF: s = "ref"; break;
+    default: s = "kind" + std::to_string((int)v.m_Kind); break;
+    }
+    if (v.m_Kind == VALUE_STRING) {
+        std::string t;
+        try { t = v.ToString(); } catch (...) {}
+        if (t.size() > 40) t = t.substr(0, 40);
+        s += ":\"" + t + "\"";
+    } else if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+        try {
+            const double d = v.ToDouble();
+            if (std::isfinite(d)) { char b[32]; sprintf_s(b, ":%g", d); s += b; }
+        } catch (...) {}
+    }
+    return s;
+}
+static std::string LaArgList(const std::vector<RValue>& args)
+{
+    std::string s;
+    for (size_t i = 0; i < args.size(); ++i) s += (i ? "," : "") + LaArgText(args[i]);
+    return s.empty() ? std::string("none") : s;
+}
+
+// The local player, by the VALUE_REF-safe resolver every player feature uses.
+static CInstance* LaPlayer(RValue* idOut, std::string& failed)
+{
+    try {
+        RValue id;
+        if (!HhResolveLocalPlayer(id)) { failed = "self (no local player)"; return nullptr; }
+        CInstance* inst = HhResolveInstance(id);
+        if (!inst) { failed = "self (the local player is not resolvable to an instance)"; return nullptr; }
+        if (idOut) *idOut = id;
+        return inst;
+    } catch (...) { failed = "self (exception while resolving the local player)"; }
+    return nullptr;
+}
+
+// The character's name: the player instance's `name`, when it is text. Live
+// procedure 1 measured it holding the character's name (`Sorak`); a read that
+// is not text falls back to "You", and the sink's supplied line says which it
+// used.
+static std::string LaCharacterName(CInstance* player)
+{
+    if (!player) return "You";
+    try {
+        const RValue n = g_Yytk->CallBuiltin("variable_instance_get", { player->ToRValue(), RValue("name") });
+        if (n.m_Kind == VALUE_STRING) {
+            const std::string s = n.ToString();
+            if (!s.empty()) return s;
+        }
+    } catch (...) {}
+    return "You";
+}
+
+// "[hh:mm]", local time: the form ChatAddServerMessage's own call to
+// ChatAddMessage carried (measured, dungeon-chest research).
+static std::string LaClockStamp()
+{
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[16];
+    sprintf_s(stamp, "[%02u:%02u]", (unsigned)t.wHour, (unsigned)t.wMinute);
+    return stamp;
+}
+
+// The method variable of a ground item whose function's name is the SDK's
+// announcement closure: variable_instance_get_names, is_method,
+// method_get_index and script_get_name, all by name. `listing` receives
+// every method variable seen, `name -> script#index`.
+//
+// method_get_index is taken as a number before script_get_name sees it, the
+// way CiTryResolveMethod does (it can come back a REAL or a VALUE_REF).
+// Live procedure 1's build handed script_get_name the raw value and got
+// "<undefined>" for every anon@ method while the named s_lootDrawData
+// resolved; the index printed beside each name keeps an unresolved row
+// readable instead of looking like an unbound variable.
+static constexpr const char* kLaClosureShort = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0);
+static bool LaFindClosure(CInstance* lootInst, RValue& method, std::string& variable, std::string& listing)
+{
+    if (!lootInst) return false;
+    const std::string shortName = kLaClosureShort;
+    const std::string fullName = std::string(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0);
+    bool found = false;
+    try {
+        const RValue inst = lootInst->ToRValue();
+        const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+        if (names.m_Kind != VALUE_ARRAY) return false;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        for (int i = 0; i < n && i < 1024; ++i) {
+            const RValue nm = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            if (nm.m_Kind != VALUE_STRING) continue;
+            const std::string var = nm.ToString();
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(var) });
+            if (!g_Yytk->CallBuiltin("is_method", { v }).ToBoolean()) continue;
+            std::string script = "?";
+            std::string index = "#?";
+            try {
+                const RValue idx = g_Yytk->CallBuiltin("method_get_index", { v });
+                if (!IsNumericInstanceRead(idx)) {
+                    index = "#(" + Describe(idx) + ")";
+                } else {
+                    const int scriptIdx = (int)idx.ToDouble();
+                    index = "#" + std::to_string(scriptIdx);
+                    if (scriptIdx >= 0) {
+                        const RValue sn = g_Yytk->CallBuiltin("script_get_name", { RValue((double)scriptIdx) });
+                        if (sn.m_Kind == VALUE_STRING) script = sn.ToString();
+                    }
+                }
+            } catch (...) { script = "(unreadable)"; }
+            const bool match = script == shortName || script == fullName;
+            listing += (listing.empty() ? "" : ", ") + var + " -> " + script + index + (match ? " [SDK closure]" : "");
+            if (match && !found) { method = v; variable = var; found = true; }
+        }
+    } catch (...) { listing += (listing.empty() ? "" : ", ") + std::string("(read threw)"); }
+    return found;
+}
+
+// What one sink run supplied and got back. `failed` names the field that
+// refused, and is empty when the call dispatched.
+struct LaSinkRun {
+    bool dispatched = false;
+    std::string script = "none";
+    std::string self = "none";
+    std::string args = "none";
+    std::string failed;
+    RValue ret;
+};
+using LaBeforeCall = void (*)(const LaSinkRun&);
+
+// One by-name call through ApCallScript's route (asset_get_index, then
+// script_execute with `self` as self and other). `before` sees the supplied
+// shape just before the call, so a crash still leaves its line.
+static void LaCall(LaSinkRun& run, const char* script, CInstance* self, const std::string& selfName,
+                   const std::vector<RValue>& args, LaBeforeCall before)
+{
+    run.script = script;
+    run.self = selfName;
+    run.args = LaArgList(args);
+    try {
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+        if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+            run.failed = std::string("script (asset_get_index refused ") + script + ")";
+            return;
+        }
+    } catch (...) { run.failed = "script (asset_get_index threw)"; return; }
+    if (before) before(run);
+    if (!ApCallScript(script, self, args, run.ret)) {
+        run.failed = std::string("call (script_execute of ") + script + " threw or returned a failure status)";
+        return;
+    }
+    run.dispatched = true;
+}
+
+// The four sink bodies, in fidelity order (docs/loot-announcement-research.md,
+// "Route").
+//   method  - the ground item's own announcement method, zero arguments,
+//             through InvokeMethodValue with the ground item as self and other.
+//   netsend - NetworkSendChatMessageIngame by name, the five arguments the
+//             closure passes (a0 undefined, or the player's id).
+//   chatadd - ChatAddMessage, the measured fifteen-argument shape, the
+//             character as sender, GetItemDropMessage(item)'s text.
+//   server  - ChatAddServerMessage, `<character> found <item name>`: the
+//             proven red `SERVER:` line.
+static LaSinkRun LaRunSink(ForgePact::LootAnnounceMod::Sink sink, bool netSendA0IsPlayer, const RValue& item,
+                           CInstance* lootInst, LaBeforeCall before)
+{
+    using Sink = ForgePact::LootAnnounceMod::Sink;
+    LaSinkRun run;
+    if (sink == Sink::Method) {
+        run.script = kLaClosureShort;
+        run.self = "Loot_Ground_obj";
+        run.args = "none";
+        if (!lootInst) { run.failed = "self (no ground item)"; return run; }
+        RValue method;
+        std::string variable, listing;
+        if (!LaFindClosure(lootInst, method, variable, listing)) {
+            run.failed = std::string("method (no method variable names ") + kLaClosureShort + "; seen: "
+                + (listing.empty() ? std::string("none") : listing) + ")";
+            return run;
+        }
+        run.script = std::string(kLaClosureShort) + " via " + variable;
+        if (before) before(run);
+        if (!InvokeMethodValue(lootInst, lootInst, method, {}, run.ret)) {
+            run.failed = "call (InvokeMethodValue did not dispatch the method)";
+            return run;
+        }
+        run.dispatched = true;
+        return run;
+    }
+    RValue playerId;
+    std::string failed;
+    CInstance* player = LaPlayer(&playerId, failed);
+    if (sink == Sink::NetSend) {
+        if (!lootInst) { run.failed = "self (no ground item)"; return run; }
+        if (netSendA0IsPlayer && !player) { run.failed = failed; return run; }
+        const std::vector<RValue> args = { netSendA0IsPlayer ? playerId : RValue(), RValue(kLaNetSendA1), item,
+                                           RValue(kLaNetSendColour), RValue(kLaNetSendKind) };
+        LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_NetworkSendChatMessageIngame), lootInst,
+               "Loot_Ground_obj", args, before);
+        return run;
+    }
+    if (!player) { run.failed = failed; return run; }
+    const std::string character = LaCharacterName(player);
+    if (sink == Sink::ChatAdd) {
+        LaSinkRun text;
+        LaCall(text, SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemDropMessage), player, "Player_obj", { item }, nullptr);
+        if (!text.dispatched) { run = text; return run; }
+        if (text.ret.m_Kind != VALUE_STRING) {
+            run.script = text.script;
+            run.failed = "text (GetItemDropMessage returned " + LaArgText(text.ret) + ")";
+            return run;
+        }
+        std::vector<RValue> args = { RValue(character), text.ret, RValue(0.0), RValue(0.0), RValue((int64_t)0), RValue((int64_t)0),
+                                     RValue(0.0), RValue(0.0), RValue(LaClockStamp()) };
+        for (int i = 0; i < 6; ++i) args.push_back(RValue());
+        LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage), player, "Player_obj", args, before);
+        return run;
+    }
+    const std::string name = LaItemName(item);
+    if (name.empty()) {
+        run.script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage);
+        run.failed = "text (itemInfoStruct[\"28\"] is not text)";
+        return run;
+    }
+    LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), player, "Player_obj",
+           { RValue(character + " found " + name) }, before);
+    return run;
+}
+
+// The mod's one sink: the body kShippedSink names. A refusal is counted by
+// the caller and logged here, one line naming the field that failed (the
+// first 20; the count keeps going).
+static bool LootAnnounceSink(const RValue& item, CInstance* lootInst)
+{
+    const LaSinkRun run = LaRunSink(ForgePact::LootAnnounceMod::kShippedSink, kLaNetSendA0IsPlayer, item, lootInst, nullptr);
+    if (run.dispatched) return true;
+    if (++g_LaRefusalLogs <= 20)
+        Out(std::string("lootann: no line (sink ") + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
+            + ") - " + run.failed + (g_LaRefusalLogs == 20 ? "; further refusals are counted in sink-refused= only" : ""));
+    return false;
+}
+
+// One noted call, at the end of its frame.
+static void LaProcess(const LaPending& p)
+{
+    if (g_LaLootIndex == -2) {
+        try {
+            g_LaLootIndex = (int)g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        } catch (...) { g_LaLootIndex = -1; }
+    }
+    CInstance* loot = nullptr;
+    for (const RValue* h : { &p.arg0, &p.self }) {
+        if (h->m_Kind == VALUE_UNDEFINED || g_LaLootIndex < 0) continue;
+        CInstance* inst = HhResolveInstance(*h);
+        if (inst && CallerObjectIndex(inst) == g_LaLootIndex) { loot = inst; break; }
+    }
+    if (!loot) { ++g_LaUnidentified; return; }
+    RValue item;
+    double id = 0.0;
+    bool idRead = false;
+    try {
+        const RValue inst = loot->ToRValue();
+        const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+        if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(field) }).ToBoolean())
+            item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+        // InstanceIdOf answers below 0 for an `id` it could not read.
+        id = InstanceIdOf(inst);
+        idRead = id >= 0.0;
+    } catch (...) {}
+    if (!(item.m_Kind == VALUE_OBJECT && item.m_Object) && item.m_Kind != VALUE_REF) { ++g_LaNoItem; return; }
+    // An unread itemType ("") or ground id is not an identity: two such items
+    // would share one in the core's memory, so this one is counted and left.
+    const std::string type = LaItemType(item);
+    const std::string stamp = LaTimeStamp(item);
+    if (!ForgePact::LootAnnounceMod::Identifiable(idRead, type, stamp)) { ++g_LaNoIdentity; return; }
+    // The creation guard: was this item struct built (noted from CreateItemNew)
+    // in this frame or the one before? An item that gives no key is not.
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    const bool hasKey = LaItemKey(item, key);
+    if (!hasKey) ++g_LaNoKey;
+    const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);
+    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, type, stamp);
+    if (verdict == ForgePact::LootAnnounceMod::Verdict::Announce && !LootAnnounceSink(item, loot))
+        g_LootAnnounce.NoteSinkRefused();
+}
+
+// The per-frame tick. Returns at once while the switch is off; installs the
+// hooks on the first frame after setup with the switch on; then decides the
+// calls this frame noted, and ages the creation window once, after the batch.
+static void LootAnnounceTick()
+{
+    if (!g_LootAnnounce.Enabled()) return;
+    if (!g_LaInstallTried) LootAnnounceInstall();
+    if (!g_LaPending.empty()) {
+        std::vector<LaPending> batch;
+        batch.swap(g_LaPending);
+        for (const LaPending& p : batch) {
+            try { LaProcess(p); } catch (...) {}
+        }
+    }
+    g_LootAnnounce.AgeCreationWindow();
+}
+
+static std::string LootAnnounceStatLine()
+{
+    return g_LootAnnounce.StatLine()
+        + " init-hook=" + LaInitRoute()
+        + " create-hook=" + g_LaCreateRoute
+        + " unidentified=" + std::to_string(g_LaUnidentified)
+        + " no-item=" + std::to_string(g_LaNoItem)
+        + " no-key=" + std::to_string(g_LaNoKey)
+        + " no-identity=" + std::to_string(g_LaNoIdentity)
+        + " queue-full=" + std::to_string(g_LaPendingDropped);
+}
+
+// `lootann 1|0` (the panel's switch); bare `lootann` or `stat` prints the
+// counters the live procedure reads.
+static void LootAnnounceCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg == "1" || arg == "on") {
+        g_LootAnnounce.SetEnabled(true);
+        if (g_Setup && !g_LaInstallTried) LootAnnounceInstall();
+        Out(g_LootAnnounce.StatusLine() + " route=" + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
+            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute);
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        g_LootAnnounce.SetEnabled(false);
+        g_LaPending.clear();
+        Out(g_LootAnnounce.StatusLine());
+        return;
+    }
+    if (arg.empty() || arg == "stat") { Out(LootAnnounceStatLine()); return; }
+    Out("lootann: usage lootann 1 | 0 | stat");
+}
+// ---- end of the loot announcement adapter
 
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
@@ -49879,6 +50524,526 @@ static void DungeonProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (dungeonprobe)
 
+#ifndef FORGEPACT_RELEASE
+// ===== lootannprobe: the loot announcement research instrument (ForgePact #17) =====
+// Research build only. Which call, if any, shows the game's own drop line
+// offline: docs/loot-announcement-research.md ("Instrument", "Live procedure
+// 1"). The forms:
+//   on            - attaches every row below, once; the hooks stay in.
+//   status        - `lootannprobe: on|off`, then every row (zero counts
+//                   too) with its install route, then the live counts of
+//                   Loot_Ground_obj, Ingame_Chat_obj, Chat_obj and
+//                   Menu_Controller_obj.
+//   place <r>     - heroic|angelic|unholy|satanic|common: one ground item
+//                   beside the player through the game's own
+//                   LootGroundCreateFromItem, built the way `sigdrop` builds
+//                   one (InitItemFromJson, then itemInfoStruct["27"] written).
+//   methods       - the newest ground item's method variables, by name,
+//                   then `anon rows resolved: <k> of <n>`, the anon control
+//                   (LaProbeAnonControl): k = 0 means the listing is blind;
+//                   then `unresolved rows: <u> of <total>` (LaProbeUnresolvedRows):
+//                   u > 0 means a missing SDK closure is not a fail.
+//   try <n>       - the loot announcement adapter's sink n (1 method, 2
+//                   netsend with a0 undefined, 3 netsend with the player's
+//                   id, 4 chatadd, 5 server) against the newest ground item.
+//   say <text>    - ChatAddServerMessage, the proven route, with this text.
+// The positive control for the call route is `dungeonprobe chat control`.
+//
+// How a row attaches, first rule that applies (angelicprobe's ApRollAttach
+// order):
+//   1. `via fp_hiddenloot_init` - LootGroundInit: the shared detour the loot
+//      announcement adapter uses counts the call (LaProbeNoteInit);
+//      LootGroundInit's one detour is shared and a second one would be
+//      refused. (LootGroundDrop is an ordinary row, fp_lap_lgdrop, under rule
+//      3: the mod no longer hooks it.)
+//   2. `via angelicprobe <row>` / `via dungeonprobe chat hook` - another
+//      research hook already holds the script: its own counter is read, no
+//      second hook goes on, and its arguments are not recorded here.
+//   3. `both` - the table entry is the game's own code: HookOneScript, both
+//      routes, a count-only detour that records the call and runs the
+//      original. `TABLE-ONLY (...)` when its inline detour failed.
+//   4. `detoured (under table-only Hook_LootGroundCreateFromItem)` - the
+//      research build's item inspection table-swapped the entry at startup;
+//      its saved original is the game's function, detoured there.
+// Anything else is `blocked: ...` or `not found (...)`, and `status` prints
+// calls=n/a for it - a row that cannot see its script never reports 0.
+// Never run `dungeonprobe on` or an `angelicprobe` form after `lootannprobe
+// on` in one session: their installers do not know these rows.
+enum LaProbeRoute : long {
+    kLaUnattached = 0,
+    kLaBoth,
+    kLaTableOnly,
+    kLaDetouredUnder,
+    kLaVia,
+    kLaBlocked,
+    kLaNotFound,
+};
+enum class LaShared { None, Init };
+static constexpr long kLaProbeLogCalls = 3;
+
+struct LaProbeRow {
+    const char*        script;      // short name, from the SDK constant
+    const char*        hookId;
+    LaShared           shared;
+    bool               hot;         // runs per ground item per step: recorded on its first calls only
+    bool               rareArgs;    // record the three arguments' values and the return
+    PFUNC_YYGMLScript  orig = nullptr;
+    long               route = kLaUnattached;
+    std::string        routeText = "not attached (send `lootannprobe on`)";
+    const volatile long* viaCalls = nullptr;   // another research hook's own counter
+    long               calls = 0;
+    std::string        last = "none";
+    std::string        rare = "none";
+};
+
+static RValue& LaProbeBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+template <int N>
+static RValue& LaProbeDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    return LaProbeBody(N, S, O, R, argc, A);
+}
+
+static LaProbeRow g_LaProbeRows[] = {
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_closure", LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetRareDropAnnouncement),       "fp_lap_rareann",   LaShared::None, false, true },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_NetworkSendChatMessageIngame),  "fp_lap_netsend",   LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemDropMessage),            "fp_lap_dropmsg",   LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage),                "fp_lap_chatadd",   LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage),          "fp_lap_chatsrv",   LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddIngameMessageFiltered),  "fp_lap_chatfilt",  LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_CA_chatIngame),                 "fp_lap_cachat",    LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_PacketSend),                    "fp_lap_packet",    LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatSendServerMessage),         "fp_lap_chatsend",  LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReportClient),                  "fp_lap_report",    LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundInit),                "fp_hiddenloot_init", LaShared::Init, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),                "fp_lap_lgdrop",    LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem),      "fp_lap_lgcfi",     LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_6032_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_filter", LaShared::None, true, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_11081_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_step", LaShared::None, true, false },
+};
+static constexpr int kLaProbeRowCount = (int)(sizeof(g_LaProbeRows) / sizeof(g_LaProbeRows[0]));
+static_assert(kLaProbeRowCount == 16, "one row per script in the research doc's Static search table, LaProbeDetour<0..15>");
+static constexpr int kLaRowInit = 11;
+static const PVOID kLaProbeDetours[kLaProbeRowCount] = {
+    (PVOID)&LaProbeDetour<0>,  (PVOID)&LaProbeDetour<1>,  (PVOID)&LaProbeDetour<2>,  (PVOID)&LaProbeDetour<3>,
+    (PVOID)&LaProbeDetour<4>,  (PVOID)&LaProbeDetour<5>,  (PVOID)&LaProbeDetour<6>,  (PVOID)&LaProbeDetour<7>,
+    (PVOID)&LaProbeDetour<8>,  (PVOID)&LaProbeDetour<9>,  (PVOID)&LaProbeDetour<10>, (PVOID)&LaProbeDetour<11>,
+    (PVOID)&LaProbeDetour<12>, (PVOID)&LaProbeDetour<13>, (PVOID)&LaProbeDetour<14>, (PVOID)&LaProbeDetour<15>,
+};
+static bool g_LaProbeOn = false;
+static RValue g_LaNewest;   // the newest ground item seen: `place`'s return, or LootGroundInit's argument 0
+
+// What one call carried: the self's object, argc, each argument's kind (a
+// string's first 40 characters). The first three calls of a row are logged.
+static void LaProbeRecord(LaProbeRow& r, CInstance* S, int argc, RValue** A)
+{
+    const long n = ++r.calls;
+    if (r.hot && n > kLaProbeLogCalls) return;
+    try {
+        r.last = "self=" + DpObjectName(CallerObjectIndex(S)) + " argc=" + std::to_string(argc) + " args=" + DpArgList(argc, A);
+        if (n <= kLaProbeLogCalls) Out(std::string("lootannprobe ") + r.script + " #" + std::to_string(n) + " " + r.last);
+    } catch (...) {}
+}
+
+static std::string LaProbeValue(const RValue& v)
+{
+    std::string s = LaArgText(v);
+    if (v.m_Kind == VALUE_BOOL) { try { s += v.ToBoolean() ? ":true" : ":false"; } catch (...) {} }
+    return s;
+}
+
+static RValue& LaProbeBody(int idx, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    LaProbeRow& r = g_LaProbeRows[idx];
+    LaProbeRecord(r, S, argc, A);
+    if (!r.orig) return R;
+    RValue& res = r.orig(S, O, R, argc, A);
+    if (r.rareArgs) {
+        try {
+            std::string a;
+            for (int i = 0; i < 3; ++i) a += (i ? "," : "") + (i < argc && A && A[i] ? LaProbeValue(*A[i]) : std::string("none"));
+            r.rare = a + " -> " + LaProbeValue(res);
+            if (r.calls <= kLaProbeLogCalls) Out(std::string("lootannprobe ") + r.script + " #" + std::to_string(r.calls) + " " + r.rare);
+        } catch (...) {}
+    }
+    return res;
+}
+
+static void LaProbeNoteInit(CInstance* S, int argc, RValue** A)
+{
+    if (!g_LaProbeOn) return;
+    LaProbeRecord(g_LaProbeRows[kLaRowInit], S, argc, A);
+    // Argument 0 is the ground item, a reference (hidden loot, measured).
+    if (argc > 0 && A && A[0] && (A[0]->m_Kind == VALUE_REF || A[0]->m_Kind == VALUE_REAL)) g_LaNewest = *A[0];
+}
+
+static void LaProbeSetRoute(LaProbeRow& r, long route, const std::string& text)
+{
+    r.route = route;
+    r.routeText = text;
+}
+
+static void LaProbeAttach(int idx)
+{
+    LaProbeRow& r = g_LaProbeRows[idx];
+    if (r.route != kLaUnattached) return;
+    const std::string_view script(r.script);
+    // Rule 1: the shared LootGroundInit detour the loot announcement adapter uses.
+    if (r.shared == LaShared::Init) {
+        if (!g_HiddenLootInstallTried) HiddenLootInstall();
+        const std::string route = ForgePact::HiddenLootMod::Instance().RouteName();
+        if (route == "none") LaProbeSetRoute(r, kLaBlocked, "blocked: LootGroundInit's shared detour did not install");
+        else LaProbeSetRoute(r, kLaVia, "via fp_hiddenloot_init (" + route + ", shared with hiddenloot and lootann)");
+        return;
+    }
+    // Rule 2: another research hook holds it.
+    for (const ApRollRow& ap : g_ApRollRows) {
+        if (script != ap.script || !ap.tramp) continue;
+        r.viaCalls = &ap.calls;
+        LaProbeSetRoute(r, kLaVia, std::string("via angelicprobe ") + ap.id + " (its count; arguments not recorded here)");
+        return;
+    }
+    for (const DpChatHook& h : g_DpChat) {
+        if (script != h.script || !h.hooked) continue;
+        r.viaCalls = &h.calls;
+        LaProbeSetRoute(r, kLaVia, std::string("via dungeonprobe chat hook ") + h.id + " (" + (h.native ? "both" : "table-only")
+            + "; its count; arguments not recorded here)");
+        return;
+    }
+    const std::string full = "gml_Script_" + std::string(r.script);
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
+    CScript* sc = (AurieSuccess(st) && p) ? reinterpret_cast<CScript*>(p) : nullptr;
+    if (!sc || !sc->m_Functions || !sc->m_Functions->m_ScriptFunction) {
+        LaProbeSetRoute(r, kLaNotFound, "not found (" + full + " st=" + std::to_string((int)st) + ")");
+        return;
+    }
+    const PVOID tableEntry = (PVOID)sc->m_Functions->m_ScriptFunction;
+    // Rule 3: nothing holds it - both routes.
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)tableEntry)) {
+        bool native = false;
+        if (!HookOneScript(r.script, r.hookId, kLaProbeDetours[idx], &r.orig, &native)) {
+            LaProbeSetRoute(r, kLaBlocked, "blocked: HookOneScript refused (see its line above)");
+            return;
+        }
+        if (native) LaProbeSetRoute(r, kLaBoth, "both");
+        else LaProbeSetRoute(r, kLaTableOnly, "TABLE-ONLY (HookOneScript's inline detour failed; see its line above)");
+        return;
+    }
+    // Rule 4: a table-only ForgePact hook holds it and its saved original is
+    // the game's function: detour there.
+    PFUNC_YYGMLScript held = nullptr;
+    const char* holder = nullptr;
+    if (script == SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem)) {
+        held = g_Orig_LootGroundCreateFromItem;
+        holder = "Hook_LootGroundCreateFromItem";
+    }
+    if (held && AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)held)) {
+        PVOID tramp = nullptr;
+        const AurieStatus hs = MmCreateHook(g_ArSelfModule, r.hookId, (PVOID)held, kLaProbeDetours[idx], &tramp);
+        if (AurieSuccess(hs) && tramp) {
+            r.orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+            LaProbeSetRoute(r, kLaDetouredUnder, std::string("detoured (under table-only ") + holder + ")");
+        } else {
+            LaProbeSetRoute(r, kLaTableOnly, std::string("TABLE-ONLY (") + holder + " holds it and the detour under it failed: MmCreateHook st="
+                + std::to_string((int)hs) + ")");
+        }
+        return;
+    }
+    LaProbeSetRoute(r, kLaBlocked, "blocked: table entry is not code inside Hero_Siege.exe and no known holder's saved original is the game's");
+}
+
+static bool LaProbeCounted(const LaProbeRow& r)
+{
+    return r.route == kLaBoth || r.route == kLaTableOnly || r.route == kLaDetouredUnder || r.route == kLaVia;
+}
+static long LaProbeCalls(const LaProbeRow& r)
+{
+    return r.viaCalls ? (long)*r.viaCalls : r.calls;
+}
+
+// The newest ground item: `place`'s return or LootGroundInit's argument 0
+// while it is still a live Loot_Ground_obj, else the room's last one.
+static CInstance* LaProbeNewest(std::string& how)
+{
+    const int lootIdx = (int)(int32_t)HeroSiege::Objects::GameObject::Loot_Ground_obj;
+    try {
+        if (g_LaNewest.m_Kind != VALUE_UNDEFINED) {
+            CInstance* inst = HhResolveInstance(g_LaNewest);
+            if (inst && CallerObjectIndex(inst) == lootIdx) { how = "newest seen (" + DpArgText(g_LaNewest) + ")"; return inst; }
+        }
+        const RValue obj((double)lootIdx);
+        const double n = g_Yytk->CallBuiltin("instance_number", { obj }).ToDouble();
+        if (n < 1) { how = "none (no Loot_Ground_obj in the room)"; return nullptr; }
+        CInstance* inst = HhResolveInstance(g_Yytk->CallBuiltin("instance_find", { obj, RValue(n - 1) }));
+        how = inst ? "the room's last Loot_Ground_obj" : "none (instance_find did not resolve)";
+        return inst;
+    } catch (...) { how = "none (exception while resolving)"; }
+    return nullptr;
+}
+
+static void LaProbeStatus()
+{
+    int attached = 0;
+    for (const LaProbeRow& r : g_LaProbeRows) if (r.route != kLaUnattached) ++attached;
+    Out(std::string("lootannprobe: ") + (g_LaProbeOn ? "on" : "off") + " rows=" + std::to_string(kLaProbeRowCount)
+        + " attached=" + std::to_string(attached));
+    for (const LaProbeRow& r : g_LaProbeRows) {
+        const bool counted = r.route == kLaUnattached || LaProbeCounted(r);
+        std::string line = std::string("lootannprobe row ") + r.script + " route=" + r.routeText
+            + " calls=" + (counted ? std::to_string(LaProbeCalls(r)) : std::string("n/a")) + " last=" + r.last;
+        if (r.rareArgs) line += " args->ret=" + r.rare;
+        Out(line);
+    }
+    using GO = HeroSiege::Objects::GameObject;
+    Out("lootannprobe census Loot_Ground_obj=" + std::to_string(DpCount(GO::Loot_Ground_obj))
+        + " Ingame_Chat_obj=" + std::to_string(DpCount(GO::Ingame_Chat_obj))
+        + " Chat_obj=" + std::to_string(DpCount(GO::Chat_obj))
+        + " Menu_Controller_obj=" + std::to_string(DpCount(GO::Menu_Controller_obj)));
+}
+
+// `place <rarity>`: sigdrop's construction (InitItemFromJson with the global
+// instance as self, a Heavy Belt base; `angelic` uses sigdrop's Headhunter
+// seed), then itemInfoStruct["27"] written as Custom Forge writes it, then the
+// game's own LootGroundCreateFromItem(x, y, item) beside the player.
+static void LaProbePlace(const std::string& which)
+{
+    static const struct { const char* name; int code; } kRarities[] = {
+        { "heroic", 9 }, { "angelic", 7 }, { "unholy", 10 }, { "satanic", 6 }, { "common", 1 },
+    };
+    int code = -1;
+    for (const auto& k : kRarities) if (which == k.name) code = k.code;
+    if (code < 0) { Out("lootannprobe place: rarity must be heroic|angelic|unholy|satanic|common; nothing placed"); return; }
+    std::string failed;
+    CInstance* player = LaPlayer(nullptr, failed);
+    if (!player) { Out("lootannprobe place " + which + ": refused - " + failed); return; }
+    const char* stage = "position";
+    try {
+        const RValue pr = player->ToRValue();
+        const RValue px = g_Yytk->CallBuiltin("variable_instance_get", { pr, RValue("x") });
+        const RValue py = g_Yytk->CallBuiltin("variable_instance_get", { pr, RValue("y") });
+        double x = 0, y = 0;
+        if (!ApNumber(px, x) || !ApNumber(py, y)) { Out("lootannprobe place " + which + ": refused - the player's x/y are not numbers"); return; }
+        x += 48.0;
+        stage = "global";
+        CInstance* g = nullptr;
+        g_Yytk->GetGlobalInstance(&g);
+        if (!g) { Out("lootannprobe place " + which + ": refused - no global instance"); return; }
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const long long seed = which == "angelic" ? (long long)kSigBeltSeed : 100000000LL + (ms % 800000000LL);
+        const std::string key = "0-0-" + std::to_string(ms) + "-8";
+        const std::string json = "{\"w\":1,\"a\":" + std::to_string(seed) + ",\"j\":0,\"b\":2,\"c\":0,\"o\":1}";
+        stage = "json_parse";
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (parsed.m_Kind != VALUE_OBJECT) { Out("lootannprobe place " + which + ": json_parse gave " + Describe(parsed)); return; }
+        stage = "InitItemFromJson";
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson.data(), g, g, { parsed, RValue(key) });
+        if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) {
+            Out("lootannprobe place " + which + ": InitItemFromJson gave " + Describe(item) + " st=" + std::to_string((int)st));
+            return;
+        }
+        stage = "rarity";
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemInfoStruct") });
+        if (info.m_Kind != VALUE_OBJECT) { Out("lootannprobe place " + which + ": the item has no itemInfoStruct"); return; }
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("27"), RValue((double)code) });
+        stage = "LootGroundCreateFromItem";
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem.data(), g, g,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out("lootannprobe place " + which + ": LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        if (res.m_Kind == VALUE_REF || res.m_Kind == VALUE_REAL || res.m_Kind == VALUE_INT32 || res.m_Kind == VALUE_INT64) g_LaNewest = res;
+        stage = "read back";
+        double rarity = -1, type = -1;
+        TryStructNumber(info, "27", rarity);
+        TryStructNumber(item, "itemType", type);
+        Out("lootannprobe place " + which + ": \"27\"=" + std::to_string((int)rarity) + " \"28\"=" + LaItemName(item)
+            + " itemType=" + std::to_string((int)type) + " instance=" + DpArgText(res) + " id=" + std::to_string((long long)InstanceIdOf(res))
+            + " at " + std::to_string((int)x) + "," + std::to_string((int)y));
+    } catch (...) { Out(std::string("lootannprobe place ") + which + ": EXCEPTION at " + stage); }
+}
+
+// The anon control for `lootannprobe methods`. s_lootDrawData is a named
+// method and resolved under the broken probe too, so it cannot tell a
+// working listing from a blind one; only an anon@ row can. Loot_Ground_obj's
+// Create event binds m_LootFilter and m_LootGroundDeActiveStep to anon@
+// closures (dev2-bug-batch-research.md "#95 part 1", static reading;
+// CiTryResolveMethod resolved m_LootGroundDeActiveStep to one, 2026-09-11).
+// `listed` counts those two variables in LaFindClosure's listing, `resolved`
+// the ones whose name came back as an anon@ closure of that Create event.
+// resolved = 0 means the listing is INSTRUMENT-BLIND: a missing SDK closure
+// row then says nothing about the game.
+static void LaProbeAnonControl(const std::string& listing, int& resolved, int& listed)
+{
+    resolved = 0;
+    listed = 0;
+    // "@gml_Object_Loot_Ground_obj_Create_0", spelled by the SDK closure's own name.
+    const std::string closure = kLaClosureShort;
+    const size_t second = closure.find('@', closure.find('@') + 1);
+    const std::string createEvent = second == std::string::npos ? closure : closure.substr(second);
+    size_t pos = 0;
+    while (pos < listing.size()) {
+        size_t end = listing.find(", ", pos);
+        if (end == std::string::npos) end = listing.size();
+        const std::string row = listing.substr(pos, end - pos);
+        pos = end + 2;
+        const size_t arrow = row.find(" -> ");
+        if (arrow == std::string::npos) continue;
+        const std::string var = row.substr(0, arrow);
+        if (var != "m_LootFilter" && var != "m_LootGroundDeActiveStep") continue;
+        ++listed;
+        const std::string script = row.substr(arrow + 4);
+        if (script.find("anon@") != std::string::npos && script.find(createEvent) != std::string::npos) ++resolved;
+    }
+}
+
+// The second half of the rule for a missing SDK closure. A passing anon
+// control proves the resolver can name the control rows, not that every row
+// was read: the closure can sit on a row that still came back unnamed
+// (m_AngelicMessage, say). `total` counts every row of LaFindClosure's
+// listing, `unresolved` the rows with no name - `<undefined>#<n>`, `?#?`,
+// `?#(<kind>)`, `(unreadable)#...`, an empty name, or a `(read threw)` entry
+// that is no row at all - and `text` lists those rows as printed, index
+// included. unresolved > 0 means no row naming anon@1138 is `not-observed`,
+// never `fail`.
+static void LaProbeUnresolvedRows(const std::string& listing, int& unresolved, int& total, std::string& text)
+{
+    unresolved = 0;
+    total = 0;
+    text.clear();
+    size_t pos = 0;
+    while (pos < listing.size()) {
+        size_t end = listing.find(", ", pos);
+        if (end == std::string::npos) end = listing.size();
+        const std::string row = listing.substr(pos, end - pos);
+        pos = end + 2;
+        ++total;
+        const size_t arrow = row.find(" -> ");
+        const std::string script = arrow == std::string::npos ? std::string() : row.substr(arrow + 4);
+        const bool unnamed = arrow == std::string::npos
+            || script.rfind("<undefined>", 0) == 0
+            || script.rfind("?#", 0) == 0
+            || script.rfind("(unreadable)", 0) == 0
+            || script.rfind("#", 0) == 0
+            || script.find("#(") != std::string::npos;
+        if (!unnamed) continue;
+        ++unresolved;
+        text += (text.empty() ? "" : "; ") + row;
+    }
+}
+
+static void LaProbeMethods()
+{
+    std::string how;
+    CInstance* loot = LaProbeNewest(how);
+    if (!loot) { Out("lootannprobe methods: no ground item - " + how); return; }
+    RValue method;
+    std::string variable, listing;
+    const bool found = LaFindClosure(loot, method, variable, listing);
+    Out("lootannprobe methods on " + how + ": " + (listing.empty() ? std::string("no method variables") : listing));
+    int anonResolved = 0, anonListed = 0;
+    LaProbeAnonControl(listing, anonResolved, anonListed);
+    Out("lootannprobe methods: anon rows resolved: " + std::to_string(anonResolved) + " of " + std::to_string(anonListed));
+    int unresolvedRows = 0, methodRows = 0;
+    std::string unresolvedText;
+    LaProbeUnresolvedRows(listing, unresolvedRows, methodRows, unresolvedText);
+    Out("lootannprobe methods: unresolved rows: " + std::to_string(unresolvedRows) + " of " + std::to_string(methodRows)
+        + (unresolvedText.empty() ? std::string() : " (" + unresolvedText + ")"));
+    Out(std::string("lootannprobe methods: SDK closure ") + kLaClosureShort + " "
+        + (found ? "found as variable " + variable : std::string("not found")));
+}
+
+static std::string g_LaTryLabel;
+static void LaProbeBefore(const LaSinkRun& run)
+{
+    Out(g_LaTryLabel + " supplied script=" + run.script + " self=" + run.self + " args=" + run.args + " -> calling");
+}
+
+static void LaProbeTry(int n)
+{
+    using Sink = ForgePact::LootAnnounceMod::Sink;
+    static const struct { Sink sink; bool a0Player; } kTries[] = {
+        { Sink::Method, false }, { Sink::NetSend, false }, { Sink::NetSend, true }, { Sink::ChatAdd, false }, { Sink::Server, false },
+    };
+    if (n < 1 || n > 5) { Out("lootannprobe try: n must be 1..5 (1 method, 2 netsend/undefined, 3 netsend/player id, 4 chatadd, 5 server); nothing called"); return; }
+    std::string how;
+    CInstance* loot = LaProbeNewest(how);
+    RValue item;
+    if (loot) {
+        try {
+            const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+            const RValue inst = loot->ToRValue();
+            if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(field) }).ToBoolean())
+                item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+        } catch (...) {}
+    }
+    long before[kLaProbeRowCount];
+    for (int i = 0; i < kLaProbeRowCount; ++i) before[i] = LaProbeCalls(g_LaProbeRows[i]);
+    g_LaTryLabel = "lootannprobe try " + std::to_string(n);
+    Out(g_LaTryLabel + " sink=" + ForgePact::LootAnnounceMod::SinkName(kTries[n - 1].sink) + " ground item: " + how
+        + " item=" + LaArgText(item) + " \"27\"=" + std::to_string(LaRarity(item)) + " \"28\"=" + LaItemName(item));
+    const LaSinkRun run = LaRunSink(kTries[n - 1].sink, kTries[n - 1].a0Player, item, loot, &LaProbeBefore);
+    Out(g_LaTryLabel + " supplied script=" + run.script + " self=" + run.self + " args=" + run.args + " -> dispatched="
+        + (run.dispatched ? "1" : "0") + " ret=" + (run.dispatched ? LaArgText(run.ret) : std::string("none"))
+        + (run.failed.empty() ? std::string() : " refused: " + run.failed));
+    std::string deltas;
+    for (int i = 0; i < kLaProbeRowCount; ++i) {
+        const long d = LaProbeCalls(g_LaProbeRows[i]) - before[i];
+        if (d) deltas += (deltas.empty() ? "" : ", ") + std::string(g_LaProbeRows[i].script) + "+" + std::to_string(d);
+    }
+    Out(g_LaTryLabel + " deltas: " + (deltas.empty() ? std::string("none") : deltas)
+        + (g_LaProbeOn ? std::string() : std::string(" (rows not attached: send `lootannprobe on` first)")));
+}
+
+static void LaProbeSay(const std::string& text)
+{
+    std::string failed;
+    CInstance* player = LaPlayer(nullptr, failed);
+    const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage);
+    if (!player) { Out(std::string("lootannprobe say supplied script=") + script + " -> dispatched=0 refused: " + failed); return; }
+    LaSinkRun run;
+    g_LaTryLabel = "lootannprobe say";
+    LaCall(run, script, player, "Player_obj", { RValue(text) }, &LaProbeBefore);
+    Out("lootannprobe say supplied script=" + run.script + " self=" + run.self + " args=" + run.args + " -> dispatched="
+        + (run.dispatched ? "1" : "0") + " ret=" + (run.dispatched ? LaArgText(run.ret) : std::string("none"))
+        + (run.failed.empty() ? std::string() : " refused: " + run.failed));
+}
+
+static void LootAnnProbeCommand(const std::string& rest)
+{
+    std::string tail;
+    const std::string sub = Lower(FirstToken(TrimCopy(rest), tail));
+    if (sub == "on") {
+        if (!g_Setup) { Out("lootannprobe on: refused - the game is not set up yet; load a character first"); return; }
+        g_LaProbeOn = true;
+        for (int i = 0; i < kLaProbeRowCount; ++i) {
+            LaProbeAttach(i);
+            const LaProbeRow& r = g_LaProbeRows[i];
+            if (r.route != kLaBoth) Out(std::string("lootannprobe: ") + r.script + " " + r.routeText);
+        }
+        LaProbeStatus();
+        return;
+    }
+    if (sub.empty() || sub == "status") { LaProbeStatus(); return; }
+    if (sub == "place") { LaProbePlace(Lower(TrimCopy(tail))); return; }
+    if (sub == "methods") { LaProbeMethods(); return; }
+    if (sub == "try") {
+        int n = 0;
+        try { size_t k = 0; const std::string a = TrimCopy(tail); n = std::stoi(a, &k); if (k != a.size()) n = 0; } catch (...) { n = 0; }
+        LaProbeTry(n);
+        return;
+    }
+    if (sub == "say") {
+        const std::string text = TrimCopy(tail);
+        if (text.empty()) { Out("lootannprobe say: no text given; nothing called"); return; }
+        LaProbeSay(text);
+        return;
+    }
+    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|common | methods | try <1-5> | say <text>");
+}
+#endif // FORGEPACT_RELEASE (lootannprobe)
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -49899,7 +51064,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider"
+        "jumpscenery", "skillslider", "lootann"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -50011,6 +51176,8 @@ static void RunCommand(const std::string& line)
     if (lc == "droptrace") { DropTraceCommand(rest); return; }
     // Dungeon chest research (issue #31): the same standalone early return.
     if (lc == "dungeonprobe") { DungeonProbeCommand(rest); return; }
+    // Loot announcement research (issue #17): the same standalone early return.
+    if (lc == "lootannprobe") { LootAnnProbeCommand(rest); return; }
 #endif
     // Timed-skill countdown (issue #55). A standalone early return, same
     // MSVC C1061 reason as `toggleborder`/`toggleguard` below.
@@ -50050,6 +51217,8 @@ static void RunCommand(const std::string& line)
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Jump through scenery: the Mods tab's switch, the same early return.
     if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
+    // Loot announcements: the Mods tab's switch, the same early return.
+    if (lc == "lootann") { LootAnnounceCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
     if (lc == "densityroll") { DensityRollCommand(rest); return; }
     // Hidden loot sleep: the Mods tab's switch and its show key, the same
@@ -51511,6 +52680,13 @@ void FrameCallback(FWFrame& FrameContext)
     // while the switch is on (StashMoveAllTick). The move itself runs only on
     // a press with the game in front and the stash open.
     if (g_Setup) StashMoveAllTick();
+
+    // Loot announcements, toggled by `lootann 1`: the ground items the shared
+    // LootGroundInit detour noted this frame are decided and announced
+    // (LootAnnounceMod.hpp). Before hidden loot's tick, which may put a
+    // filter-hidden drop to sleep, where it can no longer be read. Returns at
+    // once while it is off.
+    if (g_Setup) LootAnnounceTick();
 
     // Hidden loot sleep, toggled by `hiddenloot 1`: a drop the player's loot
     // filter hides sleeps at the end of the frame it dropped in, and wakes
