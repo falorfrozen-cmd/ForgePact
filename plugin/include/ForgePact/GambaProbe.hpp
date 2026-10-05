@@ -868,4 +868,275 @@ private:
     uint64_t rngPassedArgs_ = 0;
 };
 
+// ---- the explosion watch (phase 4) ------------------------------------------------
+// The owner reports that a machine explodes after roughly 10-14 spins, can
+// no longer be used afterwards, and that the explosion is the only time
+// Goburin's Head drops. Nothing has observed the explosion yet, and the
+// local reading could not place it, so the watch looks for it from two
+// sides: each frame the adapter hands over every live machine's id and
+// sprite name, and a machine whose sprite changes or that the refresh no
+// longer finds opens a window. While the window is open, every build-row
+// call and every instance create/destroy call is a window line whatever its
+// self, and each CreateItemNew is followed by what it built. The adapter
+// also keeps the last kWatchRingSize build-row calls, for any self, because
+// a build in the transition's own step runs before the end-of-frame poll
+// that notices the transition (EVENT_FRAME is the end of the frame): a new
+// window first replays the ring's last kWindowLookBackFrames frames.
+//
+// A window has its own line cap, kWindowLineCap, apart from the trace
+// budget (kTraceLinesPerRow / kTraceLinesPerKey), and counts what it
+// dropped. Outside a window the trace behaves exactly as it did before.
+inline constexpr int kWatchRingSize = 64;
+inline constexpr int kWindowLookBackFrames = 2;
+inline constexpr int kWindowSpanDefault = 300;
+inline constexpr int kWindowSpanMax = 3600;
+inline constexpr int kWindowLineCap = 400;
+
+// The builtin rows a window logs for any self, besides the build rows.
+inline constexpr bool BuiltinInWindow(Builtin b)
+{
+    return b == Builtin::InstanceCreateLayer || b == Builtin::InstanceCreateDepth || b == Builtin::InstanceDestroy;
+}
+
+// `gambaprobe window [frames]`: nothing or a non-positive count is the
+// default span, more than kWindowSpanMax is capped there.
+inline int WindowSpan(long long requested)
+{
+    if (requested <= 0) return kWindowSpanDefault;
+    return requested > kWindowSpanMax ? kWindowSpanMax : static_cast<int>(requested);
+}
+
+enum class WindowReason : int { Sprite, Gone, Command };
+
+inline constexpr std::string_view WindowReasonWord(WindowReason r)
+{
+    switch (r) {
+    case WindowReason::Sprite:  return "sprite";
+    case WindowReason::Gone:    return "gone";
+    case WindowReason::Command: return "command";
+    }
+    return "?";
+}
+
+// One machine as the refresh found it: its id and its sprite's name (`?`
+// when the value was not a sprite).
+struct MachineSight {
+    long long   id = -1;
+    std::string sprite;
+};
+
+// One build-row call as the adapter formatted it: the row's label, the
+// self's text, argc and the arguments as GpScriptArgs prints them (each with
+// its leading space). `inWindow` is set by Push.
+struct RingCall {
+    std::string row;
+    std::string self;
+    int         argc = 0;
+    std::string args;
+    int64_t     frame = 0;
+    bool        inWindow = false;
+};
+
+// ---- the fixed lines ----------------------------------------------------------------
+inline std::string FrameTail(int64_t frame) { return " frame=" + std::to_string(frame); }
+inline std::string IdText(long long id) { return id < 0 ? std::string("-") : std::to_string(id); }
+
+inline std::string MachineFirstLine(long long id, std::string_view sprite, int64_t frame)
+{
+    return "gambaprobe machine id=" + std::to_string(id) + " sprite=" + std::string(sprite) + FrameTail(frame);
+}
+inline std::string MachineChangeLine(long long id, std::string_view from, std::string_view to, int64_t frame)
+{
+    return "gambaprobe machine id=" + std::to_string(id) + " sprite " + std::string(from) + " -> " + std::string(to) + FrameTail(frame);
+}
+inline std::string MachineGoneLine(long long id, int64_t frame)
+{
+    return "gambaprobe machine id=" + std::to_string(id) + " gone" + FrameTail(frame);
+}
+inline std::string WindowOpenLine(WindowReason r, long long id, int64_t frame, int replayed, int span)
+{
+    return "gambaprobe window open reason=" + std::string(WindowReasonWord(r)) + " id=" + IdText(id) + FrameTail(frame)
+        + " replayed=" + std::to_string(replayed) + " span=" + std::to_string(span);
+}
+// A transition or a command while a window is open moves its end out.
+inline std::string WindowExtendedLine(WindowReason r, long long id, int64_t end, int64_t frame)
+{
+    return "gambaprobe window extended reason=" + std::string(WindowReasonWord(r)) + " id=" + IdText(id) + " end="
+        + std::to_string(end) + FrameTail(frame);
+}
+inline std::string WindowCallLine(std::string_view row, std::string_view self, int argc, std::string_view args, int64_t frame)
+{
+    return "gambaprobe window " + std::string(row) + " self=" + std::string(self) + " argc=" + std::to_string(argc)
+        + std::string(args) + FrameTail(frame);
+}
+inline std::string WindowReplayLine(std::string_view row, std::string_view self, int argc, std::string_view args, int64_t frame)
+{
+    return "gambaprobe window replay " + std::string(row) + " self=" + std::string(self) + " argc=" + std::to_string(argc)
+        + std::string(args) + FrameTail(frame);
+}
+// What a CreateItemNew built; each value as the adapter read it, `?` when
+// it could not (OptionalNumberText).
+inline std::string WindowBuiltLine(std::string_view itemType, std::string_view j, std::string_view b, std::string_view c,
+                                   std::string_view rarity, std::string_view name, std::string_view self, int64_t frame)
+{
+    return "gambaprobe window built itemType=" + std::string(itemType) + " j=" + std::string(j) + " b=" + std::string(b)
+        + " c=" + std::string(c) + " rarity=" + std::string(rarity) + " name=" + std::string(name) + " self=" + std::string(self)
+        + FrameTail(frame);
+}
+inline std::string WindowClosedLine(uint64_t lines, uint64_t dropped, int64_t frame)
+{
+    return "gambaprobe window closed lines=" + std::to_string(lines) + " dropped=" + std::to_string(dropped) + FrameTail(frame);
+}
+inline std::string OptionalNumberText(bool read, double v) { return read ? NumberText(v) : std::string("?"); }
+
+class Watch {
+public:
+    // The per-frame refresh's machines. A machine seen for the first time
+    // prints its first-sight line; one whose sprite differs from the last
+    // name it showed prints a change line and opens (or extends) a window;
+    // one the record holds that `seen` lacks prints a gone line, opens a
+    // window and is forgotten. A gone line can also mean the instance was
+    // deactivated or left the room: the operator judges.
+    std::vector<std::string> Poll(int64_t frame, const std::vector<MachineSight>& seen)
+    {
+        std::vector<std::string> out;
+        for (const MachineSight& m : seen) {
+            auto it = std::find_if(machines_.begin(), machines_.end(), [&m](const MachineSight& k) { return k.id == m.id; });
+            if (it == machines_.end()) {
+                machines_.push_back(m);
+                ++machinesSeen_;
+                out.push_back(MachineFirstLine(m.id, m.sprite, frame));
+                continue;
+            }
+            if (it->sprite == m.sprite) continue;
+            const std::string from = it->sprite;
+            it->sprite = m.sprite;
+            ++transitions_;
+            out.push_back(MachineChangeLine(m.id, from, m.sprite, frame));
+            for (std::string& line : Open(WindowReason::Sprite, m.id, frame, kWindowSpanDefault)) out.push_back(std::move(line));
+        }
+        for (size_t i = 0; i < machines_.size();) {
+            const long long id = machines_[i].id;
+            const bool found = std::any_of(seen.begin(), seen.end(), [id](const MachineSight& m) { return m.id == id; });
+            if (found) { ++i; continue; }
+            machines_.erase(machines_.begin() + static_cast<std::ptrdiff_t>(i));
+            ++transitions_;
+            out.push_back(MachineGoneLine(id, frame));
+            for (std::string& line : Open(WindowReason::Gone, id, frame, kWindowSpanDefault)) out.push_back(std::move(line));
+        }
+        return out;
+    }
+
+    // Opens a window of `span` frames at `frame`: its open line, then the
+    // ring's calls from the last kWindowLookBackFrames frames that no window
+    // counted yet, oldest first, within the cap. While one is open, its end
+    // moves out to frame + span instead and only the extended line prints.
+    std::vector<std::string> Open(WindowReason reason, long long id, int64_t frame, int span)
+    {
+        std::vector<std::string> out;
+        if (span <= 0) span = kWindowSpanDefault;
+        if (span > kWindowSpanMax) span = kWindowSpanMax;
+        if (open_) {
+            end_ = std::max(end_, frame + span);
+            out.push_back(WindowExtendedLine(reason, id, end_, frame));
+            return out;
+        }
+        open_ = true;
+        end_ = frame + span;
+        lines_ = 0;
+        dropped_ = 0;
+        ++windows_;
+        std::vector<std::string> replay;
+        for (RingCall& c : ring_) {
+            if (c.inWindow || c.frame < frame - kWindowLookBackFrames || c.frame > frame) continue;
+            c.inWindow = true;
+            if (!TakeLine()) continue;
+            replay.push_back(WindowReplayLine(c.row, c.self, c.argc, c.args, c.frame));
+        }
+        out.push_back(WindowOpenLine(reason, id, frame, static_cast<int>(replay.size()), span));
+        for (std::string& line : replay) out.push_back(std::move(line));
+        return out;
+    }
+
+    // One build-row call, any self: kept in the ring (the oldest goes past
+    // kWatchRingSize), marked when an open window already covers it.
+    void Push(RingCall call)
+    {
+        call.inWindow = InWindow(call.frame);
+        ring_.push_back(std::move(call));
+        if (ring_.size() > static_cast<size_t>(kWatchRingSize)) ring_.erase(ring_.begin());
+    }
+
+    // Is a call at `frame` inside the open window? Its frames are
+    // [open, open + span).
+    bool InWindow(int64_t frame) const { return open_ && frame < end_; }
+
+    // May a window line for a call at `frame` print? Only inside the window
+    // and within its cap; past the cap it is counted as dropped.
+    bool TakeWindowLine(int64_t frame)
+    {
+        if (!InWindow(frame)) return false;
+        return TakeLine();
+    }
+
+    // The end-of-frame tick: a window whose span has run closes, once, with
+    // its line; otherwise nothing.
+    std::string Tick(int64_t frame)
+    {
+        if (!open_ || frame < end_) return {};
+        return Close(frame);
+    }
+
+    // `gambaprobe off`: an open window closes with its line and the machine
+    // record is forgotten; the counts stay.
+    std::string Off(int64_t frame)
+    {
+        machines_.clear();
+        return open_ ? Close(frame) : std::string();
+    }
+
+    bool WindowOpen() const { return open_; }
+    int64_t WindowEnd() const { return end_; }
+    uint64_t WindowLines() const { return lines_; }
+    uint64_t WindowDropped() const { return dropped_; }
+    uint64_t MachinesSeen() const { return machinesSeen_; }
+    uint64_t Transitions() const { return transitions_; }
+    uint64_t Windows() const { return windows_; }
+    int RingSize() const { return static_cast<int>(ring_.size()); }
+
+    // `gambaprobe status`'s watch line.
+    std::string StatusLine() const
+    {
+        return "gambaprobe watch: machines-seen=" + std::to_string(machinesSeen_) + " transitions=" + std::to_string(transitions_)
+            + " windows=" + std::to_string(windows_) + " window=" + (open_ ? "open" : "closed") + " ring=" + std::to_string(ring_.size());
+    }
+
+private:
+    bool TakeLine()
+    {
+        if (lines_ >= static_cast<uint64_t>(kWindowLineCap)) {
+            ++dropped_;
+            return false;
+        }
+        ++lines_;
+        return true;
+    }
+
+    std::string Close(int64_t frame)
+    {
+        open_ = false;
+        return WindowClosedLine(lines_, dropped_, frame);
+    }
+
+    std::vector<MachineSight> machines_;
+    std::vector<RingCall> ring_;
+    bool open_ = false;
+    int64_t end_ = 0;
+    uint64_t lines_ = 0;
+    uint64_t dropped_ = 0;
+    uint64_t machinesSeen_ = 0;
+    uint64_t transitions_ = 0;
+    uint64_t windows_ = 0;
+};
+
 } // namespace ForgePact::GambaProbe

@@ -26,6 +26,15 @@ caller walk prints at most its budget per window and counts the rest; a
 frame's text names the gml row, the runner, this plugin, another module or
 nothing; and a script row's by-name route reads same, detoured, shared or
 missing from its two name lookups.
+
+Phase 4 (the explosion watch): without a sprite change, a vanished machine or
+a `window` command, no window line is produced and the trace budgets count as
+before, and a machine seen again with the same sprite prints nothing more.
+A sprite change or a vanished machine prints one line and opens a window that
+replays the ring's last two frames of build-row calls, logs forward calls for
+its span, stops at its own line cap (counting what it dropped) and is extended,
+never doubled, by a second transition; every line is the fixed text the
+contract test and the live procedure read.
 """
 import os
 import shutil
@@ -212,6 +221,28 @@ class GambaProbeBehaviorTests(unittest.TestCase):
                       "byname/a_routine_that_is_the_rows_own_function_is_same", "byname/another_game_routine_is_detoured",
                       "byname/full_name_unresolved_is_missing", "byname/an_undetourable_routine_is_missing",
                       "byname/several_rows_on_one_routine_share_it", "byname/status_text_ends_with_the_word"):
+            self.assertScenario(label)
+
+    # ---- phase 4: the explosion watch -------------------------------------
+
+    def test_the_watch_limits_and_fixed_lines(self):
+        for label in ("watch/limits", "watch/window_builtin_rows", "watch/span_default_and_cap", "watch/fixed_lines",
+                      "watch/status_line"):
+            self.assertScenario(label)
+
+    def test_without_a_transition_or_a_window_command_nothing_changes(self):
+        """Baseline: no window line, the trace budgets count as before, one first-sight line per machine."""
+        for label in ("watch/baseline_no_window_without_a_transition", "watch/baseline_trace_budgets_unchanged",
+                      "watch/ring_is_bounded", "watch/baseline_same_sprite_one_first_sight_line"):
+            self.assertScenario(label)
+
+    def test_a_transition_opens_one_window_that_replays_and_logs_forward(self):
+        """Target: change and gone lines open a window, which replays its look-back and stops at its own cap."""
+        for label in ("watch/sprite_change_opens_a_window_and_replays_the_ring", "watch/forward_lines_until_the_span_ends",
+                      "watch/a_machine_that_disappears_is_one_gone_line_and_a_window",
+                      "watch/window_stops_at_its_cap_and_counts_what_it_dropped", "watch/command_opens_the_same_window",
+                      "watch/a_transition_while_open_extends_the_window", "watch/a_call_a_window_counted_is_not_replayed",
+                      "watch/off_closes_and_forgets_the_machines"):
             self.assertScenario(label)
 
     def test_the_decision_keys(self):

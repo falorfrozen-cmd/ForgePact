@@ -17,6 +17,12 @@
 // the last two counted as passed; a lever its target never reached is named
 // INERT; moving keys cannot spend a row's trace budget within a spin; the
 // status text reads back every counter.
+//
+// Phase 4, the explosion watch (Watch): baseline, no window line without a
+// transition or a `window` command, and one first-sight line per machine;
+// target, a sprite change or a vanished machine opens one window that replays
+// the ring's look-back, logs forward until its span ends, stops at its own cap
+// and is extended by a second transition.
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -591,6 +597,180 @@ int main()
         check("decision/unlisted_label_or_key_refused", !DecisionLabelValid("roll-route", "maybe", false)
             && !DecisionLabelValid("pity-design", "LootGroundCreateFromItem", true) && !DecisionLabelValid("no-such-key", "builtin", false)
             && !DecisionLabelValid("fallback-drop", "", false));
+    }
+
+    // ---- phase 4: the explosion watch -------------------------------------------------
+    // A machine is a number id and the sprite name the adapter read; a call
+    // is the text the adapter formatted. Frames are the end-of-frame poll's:
+    // a step's calls carry the previous poll's frame, so a build in the
+    // transition's own step is one frame behind the poll that notices it.
+    {
+        check("watch/limits", kWatchRingSize == 64 && kWindowLookBackFrames == 2 && kWindowSpanDefault == 300
+            && kWindowSpanMax == 3600 && kWindowLineCap == 400 && kWindowLineCap != kTraceLinesPerRow
+            && kWindowLineCap != kTraceLinesPerKey);
+        check("watch/window_builtin_rows", BuiltinInWindow(Builtin::InstanceCreateLayer) && BuiltinInWindow(Builtin::InstanceCreateDepth)
+            && BuiltinInWindow(Builtin::InstanceDestroy) && !BuiltinInWindow(Builtin::Irandom) && !BuiltinInWindow(Builtin::Choose)
+            && !BuiltinInWindow(Builtin::InstanceChange) && !BuiltinInWindow(Builtin::GetVariable));
+        check("watch/span_default_and_cap", WindowSpan(0) == kWindowSpanDefault && WindowSpan(-5) == kWindowSpanDefault
+            && WindowSpan(1) == 1 && WindowSpan(1800) == 1800 && WindowSpan(3600) == 3600 && WindowSpan(100000) == kWindowSpanMax);
+    }
+    {
+        // The fixed lines, byte for byte (the contract test and the live
+        // procedure read them).
+        const std::string args = " a0=real:0 a1=real:72 a2=bool:true";
+        bool lines = MachineFirstLine(494624, "Slot_Machine_01_spr", 10) == "gambaprobe machine id=494624 sprite=Slot_Machine_01_spr frame=10";
+        lines = lines && MachineChangeLine(494624, "Slot_Machine_01_spr", "Slot_Machine_01_Destroyed_spr", 11)
+            == "gambaprobe machine id=494624 sprite Slot_Machine_01_spr -> Slot_Machine_01_Destroyed_spr frame=11";
+        lines = lines && MachineGoneLine(494624, 12) == "gambaprobe machine id=494624 gone frame=12";
+        lines = lines && WindowOpenLine(WindowReason::Sprite, 494624, 11, 3, 300)
+            == "gambaprobe window open reason=sprite id=494624 frame=11 replayed=3 span=300";
+        lines = lines && WindowOpenLine(WindowReason::Gone, 7, 11, 0, 300) == "gambaprobe window open reason=gone id=7 frame=11 replayed=0 span=300";
+        lines = lines && WindowOpenLine(WindowReason::Command, -1, 11, 0, 1800)
+            == "gambaprobe window open reason=command id=- frame=11 replayed=0 span=1800";
+        lines = lines && WindowCallLine("CreateDefaultParams", "machine id=494624", 3, args, 11)
+            == "gambaprobe window CreateDefaultParams self=machine id=494624 argc=3 a0=real:0 a1=real:72 a2=bool:true frame=11";
+        lines = lines && WindowCallLine("instance_destroy", "Coin_obj id=9", 0, "", 4) == "gambaprobe window instance_destroy self=Coin_obj id=9 argc=0 frame=4";
+        lines = lines && WindowReplayLine("CreateDefaultParams", "machine id=494624", 3, args, 10)
+            == "gambaprobe window replay CreateDefaultParams self=machine id=494624 argc=3 a0=real:0 a1=real:72 a2=bool:true frame=10";
+        lines = lines && WindowBuiltLine("10", "0", "98", "1", "4", "Goburin's Head", "machine id=494624", 11)
+            == "gambaprobe window built itemType=10 j=0 b=98 c=1 rarity=4 name=Goburin's Head self=machine id=494624 frame=11";
+        lines = lines && WindowExtendedLine(WindowReason::Gone, 42, 611, 311)
+            == "gambaprobe window extended reason=gone id=42 end=611 frame=311";
+        lines = lines && WindowClosedLine(12, 2, 311) == "gambaprobe window closed lines=12 dropped=2 frame=311";
+        lines = lines && OptionalNumberText(true, 98.0) == "98" && OptionalNumberText(false, 98.0) == "?"
+            && OptionalNumberText(true, 0.5) == "0.5";
+        check("watch/fixed_lines", lines);
+        Watch w;
+        check("watch/status_line", w.StatusLine() == "gambaprobe watch: machines-seen=0 transitions=0 windows=0 window=closed ring=0",
+              w.StatusLine());
+    }
+    {
+        // Baseline: no transition and no `window` command - no window line,
+        // and the trace budgets count exactly as they did without the watch.
+        Probe p = make();
+        Probe q = make();
+        Watch w;
+        const int cdp = ScriptRowOf(21);
+        int windowLines = 0;
+        for (int64_t frame = 0; frame < 900; ++frame) {
+            for (const std::string& line : w.Poll(frame, { { 1, "Slot_Machine_01_spr" } }))
+                if (contains(line, "gambaprobe window")) ++windowLines;
+            if (!w.Tick(frame).empty()) ++windowLines;
+            observe(p, cdp, kEnemy);
+            observe(q, cdp, kEnemy);
+            w.Push({ "CreateDefaultParams", "Enemy id=1", 3, " a0=real:0", frame });
+            if (w.TakeWindowLine(frame)) ++windowLines;
+            p.TakeTraceLine(cdp, static_cast<uint64_t>(frame % 3), static_cast<uint64_t>(frame));
+            q.TakeTraceLine(cdp, static_cast<uint64_t>(frame % 3), static_cast<uint64_t>(frame));
+        }
+        check("watch/baseline_no_window_without_a_transition", windowLines == 0 && !w.WindowOpen() && w.Windows() == 0
+            && w.WindowLines() == 0 && w.WindowDropped() == 0 && !w.InWindow(899));
+        check("watch/baseline_trace_budgets_unchanged", p.RowText(cdp) == q.RowText(cdp) && p.StatusLine() == q.StatusLine()
+            && p.RowCounters(cdp).logged == static_cast<uint64_t>(3 * kTraceLinesPerKey), p.RowText(cdp));
+        check("watch/ring_is_bounded", w.RingSize() == kWatchRingSize);
+        Watch s;
+        const std::vector<std::string> a = s.Poll(5, { { 42, "Slot_Machine_01_spr" } });
+        const std::vector<std::string> b = s.Poll(6, { { 42, "Slot_Machine_01_spr" } });
+        const std::vector<std::string> c = s.Poll(7, { { 42, "Slot_Machine_01_spr" } });
+        check("watch/baseline_same_sprite_one_first_sight_line", a.size() == 1
+            && a[0] == "gambaprobe machine id=42 sprite=Slot_Machine_01_spr frame=5" && b.empty() && c.empty()
+            && s.MachinesSeen() == 1 && s.Transitions() == 0 && s.Windows() == 0 && !s.WindowOpen());
+    }
+    {
+        // Target: a sprite change is one change line and opens a window that
+        // replays the ring's last kWindowLookBackFrames frames, in order.
+        Watch w;
+        w.Poll(100, { { 42, "Slot_Machine_01_spr" } });
+        w.Push({ "CreateDefaultParams", "Enemy id=1", 3, " a0=real:0", 96 });   // older than the look-back
+        w.Push({ "CreateDefaultParams", "machine id=42", 3, " a0=real:0 a1=real:72", 98 });
+        w.Push({ "CreateItemNew", "machine id=42", 1, " a0=real:15", 99 });
+        w.Push({ "LootGroundCreate", "Player_obj id=3", 4, " a0=real:1", 100 });
+        const std::vector<std::string> out = w.Poll(100, { { 42, "Slot_Machine_01_Destroyed_spr" } });
+        const bool shape = out.size() == 5
+            && out[0] == "gambaprobe machine id=42 sprite Slot_Machine_01_spr -> Slot_Machine_01_Destroyed_spr frame=100"
+            && out[1] == "gambaprobe window open reason=sprite id=42 frame=100 replayed=3 span=300"
+            && out[2] == "gambaprobe window replay CreateDefaultParams self=machine id=42 argc=3 a0=real:0 a1=real:72 frame=98"
+            && out[3] == "gambaprobe window replay CreateItemNew self=machine id=42 argc=1 a0=real:15 frame=99"
+            && out[4] == "gambaprobe window replay LootGroundCreate self=Player_obj id=3 argc=4 a0=real:1 frame=100";
+        std::string all;
+        for (const std::string& line : out) all += line + " | ";
+        check("watch/sprite_change_opens_a_window_and_replays_the_ring", shape && w.WindowOpen() && w.Windows() == 1
+            && w.Transitions() == 1 && w.WindowLines() == 3, all);
+        // Forward calls are window lines until the span ends; then the
+        // window closes once and counts its lines.
+        const bool in = w.InWindow(100) && w.InWindow(399) && !w.InWindow(400);
+        const bool f1 = w.TakeWindowLine(150);
+        const bool late = w.TakeWindowLine(400);
+        const std::string open = w.Tick(399);
+        const std::string closed = w.Tick(400);
+        const std::string again = w.Tick(401);
+        check("watch/forward_lines_until_the_span_ends", in && f1 && !late && open.empty()
+            && closed == "gambaprobe window closed lines=4 dropped=0 frame=400" && again.empty() && !w.WindowOpen()
+            && w.StatusLine() == "gambaprobe watch: machines-seen=1 transitions=1 windows=1 window=closed ring=4", closed + " / " + w.StatusLine());
+    }
+    {
+        // A machine the refresh no longer finds: one gone line and a window;
+        // it is forgotten, so it is not gone twice.
+        Watch w;
+        w.Poll(10, { { 42, "Slot_Machine_01_spr" }, { 43, "Slot_Machine_01_spr" } });
+        const std::vector<std::string> out = w.Poll(11, { { 43, "Slot_Machine_01_spr" } });
+        const std::vector<std::string> next = w.Poll(12, { { 43, "Slot_Machine_01_spr" } });
+        check("watch/a_machine_that_disappears_is_one_gone_line_and_a_window", out.size() == 2
+            && out[0] == "gambaprobe machine id=42 gone frame=11"
+            && out[1] == "gambaprobe window open reason=gone id=42 frame=11 replayed=0 span=300" && next.empty()
+            && w.Transitions() == 1 && w.Windows() == 1 && w.MachinesSeen() == 2, out.empty() ? "" : out[0]);
+    }
+    {
+        // The window's line cap is its own: it stops at kWindowLineCap and
+        // counts what it dropped, and the per-row trace budget never moves.
+        Probe p = make();
+        Watch w;
+        const std::vector<std::string> open = w.Open(WindowReason::Command, -1, 0, 3600);
+        int taken = 0;
+        for (int i = 0; i < kWindowLineCap + 50; ++i) if (w.TakeWindowLine(1 + i % 100)) ++taken;
+        const std::string closed = w.Tick(3600);
+        check("watch/window_stops_at_its_cap_and_counts_what_it_dropped", taken == kWindowLineCap && w.Windows() == 1
+            && closed == "gambaprobe window closed lines=400 dropped=50 frame=3600"
+            && p.RowCounters(ScriptRowOf(21)).logged == 0 && p.SpentRows() == 0, closed);
+        check("watch/command_opens_the_same_window", open.size() == 1
+            && open[0] == "gambaprobe window open reason=command id=- frame=0 replayed=0 span=3600", open.empty() ? "" : open[0]);
+    }
+    {
+        // A second transition while a window is open extends it: no second
+        // open line, no second window, and the old end moves out.
+        Watch w;
+        w.Poll(0, { { 42, "a" }, { 43, "b" } });
+        w.Poll(10, { { 42, "a2" }, { 43, "b" } });
+        const std::vector<std::string> second = w.Poll(200, { { 42, "a2" }, { 43, "b2" } });
+        const bool extended = w.InWindow(450) && !w.InWindow(500) && w.WindowEnd() == 500;
+        const std::vector<std::string> cmd = w.Open(WindowReason::Command, -1, 300, 1000);
+        check("watch/a_transition_while_open_extends_the_window", second.size() == 2
+            && second[0] == "gambaprobe machine id=43 sprite b -> b2 frame=200"
+            && second[1] == "gambaprobe window extended reason=sprite id=43 end=500 frame=200" && extended && w.Windows() == 1
+            && w.Transitions() == 2 && cmd.size() == 1
+            && cmd[0] == "gambaprobe window extended reason=command id=- end=1300 frame=300" && w.WindowEnd() == 1300
+            && w.Windows() == 1, second.empty() ? "" : second[0]);
+        // A call the open window already counted is not replayed by the next
+        // window's look-back.
+        w.Push({ "CreateItemNew", "Enemy id=1", 1, "", 1299 });
+        w.Tick(1300);
+        const std::vector<std::string> reopen = w.Open(WindowReason::Command, -1, 1300, 10);
+        check("watch/a_call_a_window_counted_is_not_replayed", reopen.size() == 1
+            && reopen[0] == "gambaprobe window open reason=command id=- frame=1300 replayed=0 span=10" && w.Windows() == 2,
+              reopen.empty() ? "" : reopen[0]);
+    }
+    {
+        // `off`: the record is forgotten and an open window closes with its
+        // line; the counts stay.
+        Watch w;
+        w.Poll(0, { { 42, "a" } });
+        w.Open(WindowReason::Command, -1, 5, 100);
+        w.TakeWindowLine(6);
+        const std::string closed = w.Off(7);
+        const std::vector<std::string> after = w.Poll(8, { { 42, "a" } });
+        check("watch/off_closes_and_forgets_the_machines", closed == "gambaprobe window closed lines=1 dropped=0 frame=7"
+            && !w.WindowOpen() && after.size() == 1 && after[0] == "gambaprobe machine id=42 sprite=a frame=8"
+            && w.Off(9).empty() && w.Windows() == 1, closed);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
