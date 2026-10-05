@@ -53,8 +53,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   created it. No spin was measured, so every spin key in § Decision reads
   `not-observed`, and `pity-design` reads `blocked` until a machine can be
   measured.
-- **Next:** the successor workorder moves the force to the explosion after
-  Live procedure 4.
+- **Live procedure 4:** ran on 2026-10-05/06 (§ Results, `### Live 4
+  results`): two natural machines exploded inside open windows. The
+  explosion changes the machine's sprite to `Slot_Machine_01_Destroyed_spr`
+  and leaves the instance, after 12-13 and 8-9 spins, and builds no item
+  (`explosion-route: none`); no vanilla head dropped (`head-route`:
+  not-observed).
+- **Next:** the successor workorder moves the force to the explosion: it
+  drops the head itself at the sprite change (`pity-design:
+  drop-ourselves`).
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -1472,6 +1479,100 @@ note not copied here. Each finding names the check it comes from, under the name
 
 Live 3 labels the six § Decision keys for the first time (below).
 
+### Live 4 results
+
+**Two natural machines exploded inside open windows, and neither explosion
+built an item** (2026-10-05/06, zones played from the Town of Inoya, among
+them The Depths of Hell; slot 14 "Sorak"; the research DLL built from this
+branch, SHA-256
+`cfaeadc4e7799199a7cab31278f766269cc222971ee13a42349ba9a0eccaaa50`; map reveal
+on to find machines). The capture is the toolkit's
+`.claude/workorders/forgepact-goburins-head-pity-4-payout-force-live-1.md`, a
+local working note not copied here. Each finding names the check § Live
+procedure 4 gives it. Two machines are two samples, one explosion each.
+
+- **Measured, the instrument:** `gambaprobe hook` installed 44 rows, 3
+  missing (the three extension-function rows, as in Live 3), 0 table-only
+  (32 detoured, 1 detoured-under, 8 shared) (`hook-rows`: pass), in `8145
+  ms`; `gambaprobe status` printed the `gambaprobe watch:` line (`marker`:
+  pass); `ping` answered `pong (YYTK 4.0.1)` (`control`: pass). Each machine
+  was first seen as `gambaprobe machine id=<id> sprite=Slot_Machine_01_spr`,
+  a real sprite name, with `machines=1` in `status` for the first
+  (`sprite-control`: pass, both machines).
+- **Measured, `window-control` (failed as written, control observed):** a
+  commanded window in combat logged build rows with other selves
+  (`CreateDefaultParams self=Spider_Passive_obj`, `CreateItemNew
+  self=Loot_Ground_obj`, also `Chest_Drop_obj`, `Legion_Skeleton_Passive_obj`,
+  `Zombie_Passive_obj`, `Fall_Hay_01_obj`) and numeric `built` lines (for
+  example `built itemType=0 j=0 b=14 c=0 rarity=5`), so the window sees a
+  build whatever its `self` and reads the item it made. But both combat
+  windows closed with `build-dropped` above 0 (110 and 159): a chest dropping
+  about 20 items in one frame filled the 400-line build cap. The check's
+  literal rule (`build-dropped=0`) failed. The workorder's driver ruled on
+  2026-10-06, with the owner away, that the control counts as observed
+  (`FAIL-literal / control-observed`) on two conditions: each explosion's own
+  window must close with `build-dropped=0`, and the person does not fight or
+  open chests near the machine while spinning; an explosion window that
+  drops build lines leaves `explosion-builds` `not-observed`. Both explosion
+  windows met them. The ruling can be undone by rerunning step 3 in a quiet
+  zone.
+- **Measured, the explosion is a sprite change, and the instance stays
+  (`explosion-seen`):** machine 1 (id 1041955) printed `gambaprobe machine
+  id=1041955 sprite Slot_Machine_01_spr -> Slot_Machine_01_Destroyed_spr` at
+  frame 142300, and machine 2 (id 1762987) the same change at frame 279205.
+  Neither machine printed a `gone` line, so the instance was not removed: the
+  explosion swaps the machine's sprite for `Slot_Machine_01_Destroyed_spr`.
+  A screenshot after machine 1's explosion shows the wrecked machine and no
+  item on the ground. Whether a destroyed machine can be spun again was not
+  tried (the owner's report says it cannot).
+- **Measured, what comes just before the change:** with the machine as
+  `self`, an `instance_create_layer` of `Visual_Effect_Simple_obj` 2 frames
+  before the sprite change on both machines (frames 142298 and 279203). Each
+  change came about 190-200 presented
+  frames after the machine's last `PickUpGoldCheck` debit (frames 142111 and
+  279007), consistent with the explosion ending a spin.
+- **Measured, spins to the explosion (`spins-to-explode`):** machine 1: 12
+  machine-self `PickUpGoldCheck` debits (`a1=-10000`) before the change,
+  while `GoldOperationPending`, `GetGoldAmount` and `NetworkSendClientEffect`
+  each counted 13 machine-self calls; the person counted 13 spins. Machine 2:
+  9 debits before the change (the first four before the window opened); the
+  person counted "8/9". So a machine explodes after 12 or 13 spins in one
+  sample and 8 or 9 in the other: the two machines did not share one spin
+  count. Machine 1's HUD gold read 301,053 before its first spin and 321,053
+  after the explosion.
+- **Measured, no item build at either explosion (`explosion-builds`,
+  `explosion-self`):** machine 1's explosion (frame 142300) fell inside a
+  window held without a gap from frame 138540 to 147750, which closed
+  `build-lines=0 build-dropped=0 instance-lines=135 instance-dropped=120
+  capped=1`; machine 2's (frame 279205) inside the window 277920..281520,
+  which closed `build-lines=0 build-dropped=0 instance-lines=66
+  instance-dropped=36 capped=1`. Neither window logged any build row
+  (`CreateDefaultParams`, `CreateItemNew`, `GetUniqueRepoStruct`,
+  `LootGroundCreate`, `CreateLootInFreePos`, `DropItem`, `DropUniqueItems`)
+  for any `self`, any `built` line, or an `instance_create_layer` of
+  `Loot_Ground_obj` (2513). The only creates around the change had the
+  machine as `self`: `Visual_Effect_Simple_obj` on both, and on machine 1 a
+  `Coin_obj` 7 frames before. Each window's `instance-dropped` comes with
+  `capped=1`: one created object reached its 32 lines per window (in the
+  same zones the capped object was the mercenary's `Aura_Mask_obj`, two
+  lines every ~73 frames), and the 800-line instance cap was not reached, so
+  a `Loot_Ground_obj` create would have had its own 32 lines.
+- **Measured, the instance channel's positive control:** `Coin_obj` (954)
+  creates with the machine as `self` inside both explosion windows (machine
+  1: four, frames 140663 to 142293; machine 2: one, frame 278530). Gold
+  payouts are `Coin_obj` instances the machine creates, as Live 3 measured,
+  and the window saw them, so the empty build and `Loot_Ground_obj` lines
+  are a measured negative: **`explosion-route: none`**.
+- **Not observed, the head (`head-route`):** neither explosion dropped
+  Goburin's Head, and no `built` line with `itemType=10 j=0 b=98` and no
+  `GetUniqueRepoStruct` with `10, 0, 98` appeared in any window (the only
+  `itemType=10` line was a chest's `Sneaking Grand Charm`, `b=58`). So the
+  route a natural head takes, and whether an explosion that drops one builds
+  it through the build rows, are not observed in 2 samples.
+
+Live 4 relabels `pity-design` and keeps `explosion-rule` at `not-observed`
+(below).
+
 ## Decision
 
 roll-route: script
@@ -1484,7 +1585,23 @@ counter-route: both
 
 fallback-drop: not-run
 
-pity-design: force-script
+pity-design: drop-ourselves
+
+Live 4 (§ Results, `### Live 4 results`) observed two explosions: each is
+the machine's sprite changing to `Slot_Machine_01_Destroyed_spr` at the end
+of a spin, the instance staying, with no item build of any `self` inside an
+open window whose `Coin_obj` lines prove it saw the machine's creates. So
+the explosion route is `explosion-route: none`: there is no build of the
+explosion's own to rewrite, and the next phase drops the head itself at the
+transition through the loader route (`json_parse` -> `InitItemFromJson` ->
+`LootGroundCreateFromItem`, which `sigdrop` and `angelicdrop` proved live),
+so `pity-design` is `drop-ourselves`. Phase 3's `force-script` acted on a
+payout build, which the owner ruled is the wrong event. `explosion-rule`
+stays `not-observed`: the two machines exploded after 12-13 and 8-9 spins,
+so they did not share one spin count or one gold total, but two samples
+cannot tell a random roll per spin from a threshold drawn per machine or
+read from the machine's state. `counter-route` stays `both`: spins through
+`PickUpGoldCheck`, and explosions through the watch's sprite change.
 
 Live 3 measured a natural machine's spin and payout (the `scp` and `stamp`
 spawn routes both failed, so no spawned machine could be spun). The prize roll
@@ -1556,13 +1673,16 @@ machine's spin and payout and answered several of the rest; what stays open:
 - **Where the odds live.** The price is measured at 10,000 gold a spin (the
   gold debit through `PickUpGoldCheck`); the 750 (or whichever odds constant)
   was not seen, and neither appears as a literal in the bodies read.
-- **The explosion's route and `self` (phase 4).** By the owner's report the
-  machine explodes after roughly 10-14 spins, cannot be used afterwards, and
-  the explosion is the only time Goburin's Head drops; none of that is
-  measured. Which call the explosion makes, with which `self` (the machine,
-  one of its events, or another object), whether it builds an item at all,
-  how it changes the machine (sprite, `Slot_Machine_01_Destroyed_spr` or
-  another, or removal) and how many spins it takes are open, and so is the
-  route the head takes when the game drops it. Live 3 cannot answer it: after
-  its last spin the machine still existed, and its probe logged only calls
-  whose `self` was the machine. § Live procedure 4 measures it.
+- **What decides the explosion, and the head's own route (phase 4).** Live
+  4 measured the explosion itself (§ Results, `### Live 4 results`): the
+  machine's sprite changes to `Slot_Machine_01_Destroyed_spr`, the instance
+  stays, a machine-self `Visual_Effect_Simple_obj` comes 2 frames before,
+  and no item is built, after 12-13 and 8-9 spins on two machines. Still
+  open: what decides when a machine explodes (`explosion-rule`; two samples
+  at different counts cannot tell a random roll per spin from a per-machine
+  threshold), whether a destroyed machine can still be spun (the owner's
+  report says it cannot; not tried), and the route Goburin's Head takes when
+  the game drops it. By the owner's report the explosion is the only time
+  the head drops in the unmodded game; neither sample dropped one, so
+  whether an explosion that drops the head builds it through the build rows
+  is not observed.
