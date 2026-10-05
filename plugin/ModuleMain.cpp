@@ -52232,6 +52232,14 @@ static void DungeonProbeCommand(const std::string& rest)
 // its own CreateItemNew is counted as own-head-builds, never as a natural
 // head. Payouts are no input: no payout path forces, rewrites or resets.
 //
+// Every line it prints is the core's fixed text (GambaPity.hpp's *Line
+// functions, pinned byte for byte by the behaviour test), read by the live
+// procedure: `gambapity: machine id=<id> seen sprite=<name> heads-nearby=<n>`
+// once per machine (the poll's positive control),
+// `gambapity: explosion id=<id> count=<n> threshold=<t> frame=<f>` at the
+// sprite change, and at the deadline one of the forced (then `ground check
+// after the drop: heads=<n>`), natural, below, refused or abandoned lines.
+//
 // The machine self is read by the instance-handle rule - variable_instance_get
 // through N1ObjectIndex, the masked predicate that accepts the flagged
 // object-index kind this runner returns - never a kind check. CreateDefaultParams and CreateItemNew are already held by
