@@ -1026,7 +1026,8 @@ inline std::string WindowCappedLine(std::string_view key, int64_t frame)
     return "gambaprobe window capped " + std::string(key) + FrameTail(frame);
 }
 // N2: the window's overall build cap or instance cap refused its first line.
-// Printed once per window and cap kind, at the refused call's frame, so a
+// Printed once per window and cap kind, at the refused call's frame (a
+// replayed call's at the window's open frame), so a
 // negative read from a window that filled up is visibly not a clean one.
 inline std::string WindowFullLine(CallKind kind, int64_t frame)
 {
@@ -1116,7 +1117,9 @@ public:
         std::vector<std::string> replay;
         for (RingCall* c : due) {
             c->inWindow = true;
-            if (!TakeLine(c->kind, c->key, c->frame)) continue;
+            // A replay refused by a cap is stamped with the window's open
+            // frame, so its `full` line is inside the window it refers to.
+            if (!TakeLine(c->kind, c->key, frame)) continue;
             replay.push_back(WindowReplayLine(c->row, c->self, c->argc, c->args, c->frame));
         }
         out.push_back(WindowOpenLine(reason, id, frame, static_cast<int>(replay.size()), span));

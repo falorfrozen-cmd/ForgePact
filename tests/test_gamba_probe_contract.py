@@ -914,7 +914,7 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn("return GpNs::ConsumeFedMark(g_GpByNameFed, ", fed_by_name)
         consume = braced_block(self.header, "inline bool ConsumeFedMark(int& mark, bool slotRoutesThisScript)\n{")
         self.assertIn("mark = -1;", consume)
-        order = [script.index(s) for s in ("const bool fedByName = GpFedByName(script);", "GpByNameFedScope unmarked(-1);",
+        order = [script.index(s) for s in ("const bool fedByName = GpFedByName(script);", "GpByNameFedScope unmarked(fedByName ? -1 : g_GpByNameFed);",
                                            "g_GpCore.Observe(")]
         self.assertEqual(order, sorted(order))
         self.assertEqual(script.count("GpFedByName("), 1)
@@ -956,6 +956,10 @@ class GambaProbeContract(unittest.TestCase):
         # `full` line, which the adapter prints after a refused build line as
         # it does after a refused instance line.
         self.assertEqual(take.count("NoteFull(kind, frame);"), 2)
+        # A replay refused by a cap is stamped with the window's open frame, so
+        # its `full` line falls inside the window it refers to.
+        self.assertIn("if (!TakeLine(c->kind, c->key, frame)) continue;", self.header)
+        self.assertNotIn("TakeLine(c->kind, c->key, c->frame)", self.header)
         self.assertIn('"gambaprobe window full "', self.header)
         self.assertIn("if (window) for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);",
                       self.body("static bool GpWatchCall("))
