@@ -35,7 +35,10 @@ namespace ForgePact::GambaPity {
 // the room changed -> abandoned (counter kept); a natural-head signal in the
 // window -> natural (no force, counter reset, at any count); on and the count
 // at the threshold -> force (a confirmed drop resets, a refused one keeps the
-// counter so the next explosion forces); otherwise below (counter kept).
+// counter so the next explosion forces), unless the ground near the machine
+// did not read, now or at its first sight -> ground-unread (refused, counter
+// kept: a second head is worse than a late one); otherwise below (counter
+// kept).
 //
 // It is game-independent by contract - numbers, strings, frame numbers and
 // machine/instance ids, never an instance, an RValue or a game constant - so
@@ -58,7 +61,11 @@ inline constexpr double kGroundRadius = 256.0;
 enum class Sighting { None, FirstSeen, Exploded };
 
 // What an explosion's deadline decided.
-enum class Outcome { Abandoned, Natural, Force, Below };
+// GroundUnread: the count is at the threshold, but the ground near the machine
+// (now, or at its first sight) could not be read, so a head the game placed
+// could not be ruled out: the force is refused and the counter kept, since a
+// second head is worse than a late one.
+enum class Outcome { Abandoned, Natural, Force, Below, GroundUnread };
 
 // One explosion awaiting its deadline.
 struct Explosion {
@@ -147,7 +154,8 @@ public:
     {
         auto it = machines_.find(id);
         if (it == machines_.end()) {
-            machines_[id] = Machine{ destroyed, {} };
+            machines_[id] = Machine{ destroyed, false, {} };
+            ++machinesSeen_;
             return Sighting::FirstSeen;
         }
         if (it->second.destroyed || !destroyed) return Sighting::None;
@@ -169,11 +177,19 @@ public:
 
     // The ground heads (Loot_Ground_obj instance ids holding the charm) near a
     // machine at its first sight: the baseline a later head is compared with.
-    void SetBaseline(int64_t id, const std::vector<int64_t>& heads)
+    // `read` false: the scan did not read, so the baseline is unknown and the
+    // machine's explosion can never be forced (Decide answers GroundUnread).
+    void SetBaseline(int64_t id, const std::vector<int64_t>& heads, bool read = true)
     {
         auto it = machines_.find(id);
-        if (it != machines_.end()) it->second.baseline = std::set<int64_t>(heads.begin(), heads.end());
+        if (it == machines_.end()) return;
+        it->second.baseline = std::set<int64_t>(heads.begin(), heads.end());
+        it->second.baselineRead = read;
     }
+
+    // A machine instance the watch found but could not read (its id, sprite or
+    // position): skipped this frame, and counted so the skip is never silent.
+    void NoteMachineUnread() { ++machinesUnread_; }
 
     // The heads in `heads` that were not in the machine's baseline.
     int NewHeads(int64_t id, const std::vector<int64_t>& heads) const
@@ -225,10 +241,12 @@ public:
     }
 
     // Decide one due explosion, at the point of use: `room` is the room now,
-    // `ground` the charm heads lying near the machine now. Abandoned and
-    // natural and below are final here; a force waits for ForceConfirmed or
-    // ForceRefused.
-    Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground)
+    // `ground` the charm heads lying near the machine now, and `groundRead`
+    // whether that scan read to the end. Abandoned, natural, below and
+    // ground-unread are final here; a force waits for ForceConfirmed or
+    // ForceRefused. A force needs both ground reads - the machine's baseline
+    // and this one - since only they can rule out a head the game placed.
+    Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)
     {
         Decision d;
         if (room != e.room) {
@@ -236,10 +254,12 @@ public:
             d.outcome = Outcome::Abandoned;
             return d;
         }
-        int fresh = 0;
         auto it = machines_.find(e.id);
-        for (int64_t h : ground)
-            if (!ownHeads_.count(h) && (it == machines_.end() || !it->second.baseline.count(h))) ++fresh;
+        const bool baselineRead = it != machines_.end() && it->second.baselineRead;
+        int fresh = 0;
+        if (groundRead && baselineRead)
+            for (int64_t h : ground)
+                if (!ownHeads_.count(h) && !it->second.baseline.count(h)) ++fresh;
         if (fresh > 0 || !e.signal.empty()) {
             d.signal = fresh > 0 ? std::string("ground") : e.signal;
             d.outcome = Outcome::Natural;
@@ -248,6 +268,12 @@ public:
             return d;
         }
         if (enabled_ && threshold_ > 0 && count_ >= threshold_) {
+            if (!groundRead || !baselineRead) {
+                ++refused_;
+                ++groundUnread_;
+                d.outcome = Outcome::GroundUnread;
+                return d;
+            }
             d.outcome = Outcome::Force;
             return d;
         }
@@ -278,6 +304,9 @@ public:
     int Refused() const { return refused_; }
     int Abandoned() const { return abandoned_; }
     int OwnHeadBuilds() const { return ownHeadBuilds_; }
+    int MachinesSeen() const { return machinesSeen_; }
+    int MachinesUnread() const { return machinesUnread_; }
+    int GroundUnread() const { return groundUnread_; }
 
     // ---- the lines gambapity prints (fixed text; the contract test and the
     // live procedure read them) ------------------------------------------------
@@ -293,13 +322,18 @@ public:
             + " below=" + std::to_string(below_)
             + " refused=" + std::to_string(refused_)
             + " abandoned=" + std::to_string(abandoned_)
-            + " own-head-builds=" + std::to_string(ownHeadBuilds_);
+            + " own-head-builds=" + std::to_string(ownHeadBuilds_)
+            + " machines=" + std::to_string(machinesSeen_)
+            + " unread=" + std::to_string(machinesUnread_)
+            + " ground-unread=" + std::to_string(groundUnread_);
     }
 
-    static std::string MachineSeenLine(int64_t id, const std::string& sprite, int headsNearby)
+    // `headsNearby` is the baseline's count, or "unread (<stage>)" when the
+    // first-sight scan did not read.
+    static std::string MachineSeenLine(int64_t id, const std::string& sprite, const std::string& headsNearby)
     {
         return "gambapity: machine id=" + std::to_string(id) + " seen sprite=" + sprite
-            + " heads-nearby=" + std::to_string(headsNearby);
+            + " heads-nearby=" + headsNearby;
     }
 
     std::string ExplosionLine(int64_t id, int64_t frame) const
@@ -318,6 +352,12 @@ public:
     static std::string GroundAfterDropLine(int heads)
     {
         return "gambapity: ground check after the drop: heads=" + std::to_string(heads);
+    }
+
+    // The after-drop scan did not read: its stage, never a count.
+    static std::string GroundAfterDropUnreadLine(const std::string& stage)
+    {
+        return "gambapity: ground check after the drop: unread (" + stage + ")";
     }
 
     static std::string NaturalSeenLine(const std::string& signal)
@@ -349,6 +389,7 @@ public:
 private:
     struct Machine {
         bool destroyed = false;
+        bool baselineRead = false;    // the first-sight scan read to the end
         std::set<int64_t> baseline;   // charm heads near it at first sight
     };
 
@@ -383,6 +424,9 @@ private:
     int refused_ = 0;
     int abandoned_ = 0;
     int ownHeadBuilds_ = 0;
+    int machinesSeen_ = 0;     // machines seen for the first time (cumulative)
+    int machinesUnread_ = 0;   // machine reads skipped (an id, sprite or position that did not read)
+    int groundUnread_ = 0;     // forces refused because a ground scan did not read
 };
 
 } // namespace ForgePact::GambaPity

@@ -21,7 +21,8 @@ plugin/ModuleMain.cpp on comment-stripped source:
   machine-self `(0, 98)` natural reset, and the `CreateItemNew` splice is a
   read-after-return head detector;
 - the trigger is an end-of-frame poll from `FrameCallback` that returns at once
-  while the mod is off, reads machines by the instance-handle rule and their
+  while the mod is off, reads machines through `instance_find` (counting each
+  unread one) and their
   sprite by name, and compares it with `Slot_Machine_01_Destroyed_spr`, a key
   of the Python SDK's `SPRITE_NAME_TO_INDEX`;
 - the ground check reads `itemInstance`'s `itemType` and
@@ -187,8 +188,15 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("variable_instance_get", index)
         self.assertIn("N1ObjectIndex", index)
         self.assertNotIn("IsNumericInstanceRead", index)
+        # gambapity's own code spells out no kind check. It does go through one
+        # unmasked comparison, IsNumericInstanceRead, for a machine's
+        # sprite_index and an instance's id; a flagged kind there reads as
+        # unread, which is counted (`unread=`) or refuses the force (`ground
+        # unread`), never a silent "nothing here".
         for word in ("m_Kind", "VALUE_OBJECT", "VALUE_REF", "VALUE_REAL"):
-            self.assertNotIn(word, self.code, word + ": a raw kind check in gambapity would silently disable it")
+            self.assertNotIn(word, self.code, word + ": a raw kind check spelled out in gambapity's own code")
+        self.assertIn("IsNumericInstanceRead(spr)", self.body("static std::string GambaPitySpriteName("))
+        self.assertIn("IsNumericInstanceRead(id)", self.body("static int64_t GambaPityIdOf("))
         # The machine's object is resolved by name, never a hand-written index.
         self.assertIn("HeroSiege::Objects::GetObjectName(", self.code)
         self.assertIn("HeroSiege::Objects::GameObject::Slot_Machine_01_obj", self.code)
@@ -274,16 +282,23 @@ class GambaPityContract(unittest.TestCase):
         watch = self.body("static void GambaPityWatchMachines(")
         self.assertIn('"instance_number"', watch)
         self.assertIn('"instance_find"', watch)
-        self.assertIn("HhResolveInstance(handle)", watch)
-        self.assertIn("GambaPityIsMachine(inst)", watch)
         self.assertIn("sprite == kGambaPityDestroyedSprite", watch)
+        # instance_find on the machine's own object already names the machine:
+        # no second identification that could drop a machine silently.
+        self.assertNotIn("HhResolveInstance", watch)
+        # Every skipped machine is counted (`unread=`): the instance_number
+        # throw, the instances past the cap, the instance_find throw and an id,
+        # sprite or position that does not read.
+        self.assertEqual(watch.count("g_GambaPity.NoteMachineUnread();"), 4)
+        self.assertIn('if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) {', watch)
+        self.assertIn("g_GambaPity.SetBaseline(id, scan.heads, scan.read);", watch)
+        self.assertIn('"unread (" + scan.stage + ")"', watch)
         sprite = self.body("static std::string GambaPitySpriteName(")
         self.assertIn('RValue("sprite_index")', sprite)
         self.assertIn("IsNumericInstanceRead(spr)", sprite)
         self.assertIn('"sprite_exists"', sprite)
         self.assertIn('"sprite_get_name"', sprite)
         # First sight takes the baseline and prints the poll's positive control.
-        self.assertIn("g_GambaPity.SetBaseline(id, heads);", watch)
         self.assertIn("GP::Pity::MachineSeenLine(", watch)
         self.assertIn("g_GambaPity.ExplosionLine(id, frame)", watch)
 
@@ -307,17 +322,28 @@ class GambaPityContract(unittest.TestCase):
     # ---- the ground check --------------------------------------------------
 
     def test_the_ground_check_reads_the_ground_items_charm_identity(self):
-        ground = self.body("static std::vector<int64_t> GambaPityGroundHeads(")
+        ground = self.body("static GambaPityGroundScan GambaPityGroundHeads(")
         self.assertIn("HeroSiege::Player::kGroundItemInstanceField", ground)
-        self.assertIn("GambaPityIsCharmItem(item)", ground)
+        self.assertIn("GambaPityReadCharm(item)", ground)
         self.assertIn("ForgePact::GambaPity::kGroundRadius", ground)
+        # "Scanned, none" and "could not look" are told apart: `read` is set
+        # only at the end, and every way the scan can fail names its stage.
+        self.assertEqual(ground.count("scan.read = true;"), 1)
+        self.assertLess(ground.index("scan.stage = \"the scan threw\";"), ground.index("scan.read = true;"))
+        for stage in ("Loot_Ground_obj did not resolve", "a ground item did not read",
+                      "a ground item near the machine did not read", "the scan threw"):
+            self.assertIn('"' + stage + '"', ground)
+        # Only an item read as not the charm is passed over; an unread one stops the scan.
+        self.assertIn("if (charm == GambaPityCharmRead::NotCharm) continue;", ground)
         self.assertIn("HeroSiege::Objects::GameObject::Loot_Ground_obj", self.body("static int GambaPityLootObject()"))
-        charm = self.body("static bool GambaPityIsCharmItem(")
+        charm = self.body("static GambaPityCharmRead GambaPityReadCharm(")
         self.assertIn("HeroSiege::Player::kItemInstanceTypeField", charm)
         self.assertIn("HeroSiege::Player::kItemInstanceDefinitionField", charm)
-        self.assertIn("type == (double)kGambaPityCharmType", charm)
-        self.assertIn('GambaPityNumberField(def, "j", j) && j == (double)kGambaPityCharmSub', charm)
-        self.assertIn('GambaPityNumberField(def, "b", b) && b == (double)kGambaPityCharmBase', charm)
+        self.assertIn("if (type != (double)kGambaPityCharmType) return GambaPityCharmRead::NotCharm;", charm)
+        self.assertIn('!GambaPityNumberField(def, "j", j) || !GambaPityNumberField(def, "b", b)) return GambaPityCharmRead::Unread;',
+                      charm)
+        self.assertIn("j == (double)kGambaPityCharmSub && b == (double)kGambaPityCharmBase", charm)
+        self.assertIn("return GambaPityReadCharm(item) == GambaPityCharmRead::Charm;", self.body("static bool GambaPityIsCharmItem("))
         # The SDK names are the ones the relic reads measured (section 10.7).
         if not SDK_PLAYER.exists():
             raise unittest.SkipTest(f"hs-game-sdk header not found at {SDK_PLAYER}")
@@ -330,8 +356,14 @@ class GambaPityContract(unittest.TestCase):
 
     def test_the_ground_check_runs_before_the_force_and_again_after_the_drop(self):
         decide = self.body("static void GambaPityDecide(")
-        self.assertLess(decide.index("GambaPityGroundHeads(e.x, e.y)"), decide.index("g_GambaPity.Decide(e, room, ground)"))
-        self.assertLess(decide.index("g_GambaPity.Decide(e, room, ground)"), decide.index("GambaPityDropHead("))
+        decision = "g_GambaPity.Decide(e, room, ground.heads, ground.read)"
+        self.assertLess(decide.index("GambaPityGroundHeads(e.x, e.y)"), decide.index(decision))
+        self.assertLess(decide.index(decision), decide.index("GambaPityDropHead("))
+        # An unread scan refuses the force by name, before any drop.
+        self.assertIn('GP::Pity::RefusedLine("ground unread ("', decide)
+        self.assertLess(decide.index("case GP::Outcome::GroundUnread:"), decide.index("GambaPityDropHead("))
+        # The after-drop check names its stage when it does not read.
+        self.assertIn("GP::Pity::GroundAfterDropUnreadLine(after.stage)", decide)
         self.assertLess(decide.index("GambaPityDropHead("), decide.index("GP::Pity::GroundAfterDropLine("))
         self.assertEqual(decide.count("GambaPityGroundHeads("), 2)
         # The own-drop scope is around the drop.
@@ -359,15 +391,22 @@ class GambaPityContract(unittest.TestCase):
         self.assertNotIn('\\"b\\":98', drop)
         # A throw never retries (a head may have been placed).
         self.assertIn('return "the drop threw";', drop)
+        # Each attempt's key moves on by one millisecond, so keys never collide.
+        self.assertIn('"0-0-" + std::to_string(ms + attempt - 1) + "-"', drop)
+        self.assertLess(drop.index("const long long ms ="), drop.index("for (attempt = 1;"))
+        # The refusal after the last attempt names what the call returned.
+        self.assertIn('"LootGroundCreateFromItem returned no live instance (returned " + returned + ")"', drop)
+        self.assertIn("returned = Describe(placed);", drop)
 
     def test_the_status_line_and_the_action_lines_are_the_cores_fixed_text(self):
-        for name in ("MachineSeenLine", "ExplosionLine", "ForcedLine", "GroundAfterDropLine", "NaturalSeenLine",
+        for name in ("MachineSeenLine", "ExplosionLine", "ForcedLine", "GroundAfterDropLine", "GroundAfterDropUnreadLine",
+                     "NaturalSeenLine",
                      "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine"):
             self.assertIn(name + "(", self.code, name + " is never printed")
             self.assertIn(name + "(", self.header)
         line = self.header[self.header.index("std::string StatusLine() const"):]
         for field in ("count", "threshold", "gold", "explosions", "forced", "natural", "below", "refused",
-                      "abandoned", "own-head-builds"):
+                      "abandoned", "own-head-builds", "machines", "unread", "ground-unread"):
             self.assertIn('" ' + field + '="', line, field)
         # Every line the adapter prints itself keeps the gambapity prefix.
         printed = re.findall(r'Out\("([^"]*)', strip_research_blocks(self.code))

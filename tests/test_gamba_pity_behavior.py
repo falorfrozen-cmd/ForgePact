@@ -163,6 +163,23 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_an_own_drop_build_counts_as_own_head_builds_not_a_signal(self):
         self.assertScenario("target/an_own_drop_build_counts_as_own_head_builds_not_a_signal")
 
+    def test_our_earlier_forced_head_near_a_second_machine_is_not_natural(self):
+        self.assertScenario("target/our_earlier_forced_head_near_a_second_machine_is_not_natural")
+
+    # ---- target: an unread ground never forces -------------------------
+
+    def test_an_unread_ground_scan_refuses_the_force_and_keeps_the_counter(self):
+        self.assertScenario("target/an_unread_ground_scan_refuses_the_force_and_keeps_the_counter")
+
+    def test_an_unread_baseline_refuses_the_force(self):
+        self.assertScenario("target/an_unread_baseline_refuses_the_force")
+
+    def test_an_unread_ground_below_the_threshold_is_below_and_a_build_is_still_natural(self):
+        self.assertScenario("target/an_unread_ground_below_the_threshold_is_below_and_a_build_is_still_natural")
+
+    def test_machines_seen_and_unread_reads_are_counted(self):
+        self.assertScenario("counter/machines_seen_and_unread_reads_are_counted")
+
     # ---- target: the room, two machines, payouts -----------------------
 
     def test_a_room_change_abandons_a_pending_explosion_and_keeps_the_counter(self):
@@ -186,6 +203,7 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_every_action_line_is_fixed_text(self):
         for label in ("lines/machine_seen", "lines/explosion", "lines/forced", "lines/ground_after_drop",
                       "lines/natural_seen", "lines/below", "lines/refused", "lines/abandoned",
+                      "lines/ground_after_drop_unread", "lines/machine_seen_unread",
                       "lines/natural_build"):
             self.assertScenario(label)
 

@@ -47498,10 +47498,11 @@ static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int
     GpScriptRow& t = g_GpScriptRows[script];
     if (g_GpBusy) return t.orig ? t.orig(S, O, R, argc, A) : R;   // the probe's own call
     // N1: whether a running by-name call already fed this one (consuming its
-    // mark), read first; this call's original then runs with no mark, so the
-    // calls it makes are their own.
+    // mark), read first. Only then does this call's original run with no mark,
+    // so the calls it makes are their own; a call that did not consume the
+    // mark leaves it in place for the first matching call further in.
     const bool fedByName = GpFedByName(script);
-    GpByNameFedScope unmarked(-1);
+    GpByNameFedScope unmarked(fedByName ? -1 : g_GpByNameFed);
     const int row = GpNs::ScriptRowOf(script);
     const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
     // The explosion watch, before the self filter: a build row's call, any
@@ -52225,7 +52226,9 @@ static void DungeonProbeCommand(const std::string& rest)
 //     (0, 98), which also resets the counter at once.
 //
 // At the explosion's deadline the room, the mod's state and the ground are
-// read again at the point of use, and a forced head goes through the loader
+// read again at the point of use (a ground scan that does not read refuses
+// the force with `ground unread` and keeps the counter, since a second head is
+// worse than a late one), and a forced head goes through the loader
 // route angelicdrop uses (json_parse, InitItemFromJson, then
 // LootGroundCreateFromItem with the local player as self), read back with
 // instance_exists and tried up to three times, inside an own-drop scope so
@@ -52333,6 +52336,11 @@ static int GambaPityResolveMachineObject()
 // kind this runner returns - never a kind check. (CallerObjectIndex's
 // unmasked comparison rejects that kind, so it would answer -1 for every
 // machine and the mod would silently count no spins and force no roll.)
+// Elsewhere gambapity does go through one unmasked comparison:
+// IsNumericInstanceRead, for the machine's sprite_index and an instance's id.
+// A flagged kind there reads as unread - the machine is skipped and counted
+// in `unread=`, a ground item makes the scan unread and refuses the force -
+// so it fails visibly, never as a silent "nothing here".
 static int GambaPityObjectIndex(CInstance* S)
 {
     if (!S) return -1;
@@ -52472,16 +52480,24 @@ static bool GambaPityNumberField(const RValue& owner, const std::string& name, d
 // Is this item instance Goburin's Head? Its own itemType (10) and its
 // definition's j/b (0/98) - the charm's repository identifier, read from the
 // fields the SDK documents (RUNTIME_DATA_MODELS §10.7, §20.1). A level- or
-// name-shaped field is never evidence.
-static bool GambaPityIsCharmItem(const RValue& item)
+// name-shaped field is never evidence. Three answers, because the ground
+// check must not take "could not read it" for "not the charm": a field that
+// does not read is Unread, and only a read that differs is NotCharm.
+enum class GambaPityCharmRead { Charm, NotCharm, Unread };
+static GambaPityCharmRead GambaPityReadCharm(const RValue& item)
 {
     double type = -1.0, j = -1.0, b = -1.0;
     RValue def;
-    return GambaPityNumberField(item, std::string(HeroSiege::Player::kItemInstanceTypeField), type)
-        && type == (double)kGambaPityCharmType
-        && GambaPityField(item, std::string(HeroSiege::Player::kItemInstanceDefinitionField), def)
-        && GambaPityNumberField(def, "j", j) && j == (double)kGambaPityCharmSub
-        && GambaPityNumberField(def, "b", b) && b == (double)kGambaPityCharmBase;
+    if (!GambaPityNumberField(item, std::string(HeroSiege::Player::kItemInstanceTypeField), type)) return GambaPityCharmRead::Unread;
+    if (type != (double)kGambaPityCharmType) return GambaPityCharmRead::NotCharm;
+    if (!GambaPityField(item, std::string(HeroSiege::Player::kItemInstanceDefinitionField), def)
+        || !GambaPityNumberField(def, "j", j) || !GambaPityNumberField(def, "b", b)) return GambaPityCharmRead::Unread;
+    return j == (double)kGambaPityCharmSub && b == (double)kGambaPityCharmBase ? GambaPityCharmRead::Charm
+                                                                               : GambaPityCharmRead::NotCharm;
+}
+static bool GambaPityIsCharmItem(const RValue& item)
+{
+    return GambaPityReadCharm(item) == GambaPityCharmRead::Charm;
 }
 
 // CreateItemNew: the game's own build, always, unchanged. Read after the
@@ -52534,27 +52550,49 @@ static int GambaPityLootObject()
 // The ground check: the instance ids of every Loot_Ground_obj within
 // kGroundRadius of (x, y) whose itemInstance is Goburin's Head. It does not
 // depend on how the head was built (measured on 42 ground relics, §10.7).
-static std::vector<int64_t> GambaPityGroundHeads(double x, double y)
-{
+// `read` is true only when the scan read to the end: an empty list then means
+// "scanned, none", never "could not look". Anything the scan cannot read - the
+// object unresolved, the scan throwing, an instance that is not a handle or
+// whose position does not read, or an item near the machine whose identity or
+// id does not read - makes it unread, with `stage` saying which.
+struct GambaPityGroundScan {
+    bool read = false;
+    std::string stage;
     std::vector<int64_t> heads;
+};
+static GambaPityGroundScan GambaPityGroundHeads(double x, double y)
+{
+    GambaPityGroundScan scan;
     const int loot = GambaPityLootObject();
-    if (loot < 0) return heads;
+    if (loot < 0) { scan.stage = "Loot_Ground_obj did not resolve"; return scan; }
     const double radius = ForgePact::GambaPity::kGroundRadius;
     try {
         const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)loot) }).ToDouble();
         for (int i = 0; i < n; ++i) {
             const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)loot), RValue((double)i) });
-            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
             double gx = 0.0, gy = 0.0;
-            if (!GambaPityXY(inst, gx, gy) || (gx - x) * (gx - x) + (gy - y) * (gy - y) > radius * radius) continue;
+            if (!HeroSiege::Player::IsInstanceHandle(inst) || !GambaPityXY(inst, gx, gy)) {
+                scan.stage = "a ground item did not read";
+                return scan;
+            }
+            if ((gx - x) * (gx - x) + (gy - y) * (gy - y) > radius * radius) continue;
             RValue item;
-            if (!GambaPityField(inst, std::string(HeroSiege::Player::kGroundItemInstanceField), item)
-                || !GambaPityIsCharmItem(item)) continue;
-            const int64_t id = GambaPityIdOf(inst);
-            if (id >= 0) heads.push_back(id);
+            const GambaPityCharmRead charm = GambaPityField(inst, std::string(HeroSiege::Player::kGroundItemInstanceField), item)
+                ? GambaPityReadCharm(item) : GambaPityCharmRead::Unread;
+            if (charm == GambaPityCharmRead::NotCharm) continue;
+            const int64_t id = charm == GambaPityCharmRead::Charm ? GambaPityIdOf(inst) : -1;
+            if (id < 0) {
+                scan.stage = "a ground item near the machine did not read";
+                return scan;
+            }
+            scan.heads.push_back(id);
         }
-    } catch (...) {}
-    return heads;
+    } catch (...) {
+        scan.stage = "the scan threw";
+        return scan;
+    }
+    scan.read = true;
+    return scan;
 }
 
 // ---- the forced drop -------------------------------------------------------
@@ -52588,12 +52626,16 @@ static std::string GambaPityDropHead(double x, double y, int& rarity, int& attem
     CInstance* g = nullptr;
     g_Yytk->GetGlobalInstance(&g);
     if (!g) return "no global instance";
+    // Each attempt's item key is "0-0-<ms>-<type>", <ms> taken once and moved
+    // on by one per attempt, so three attempts in one millisecond never share
+    // a key.
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    RValue placed;   // the last attempt's return, named in the refusal
     for (attempt = 1; attempt <= kGambaPityDropAttempts; ++attempt) {
         try {
-            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
             const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
-            const std::string key = "0-0-" + std::to_string(ms) + "-" + std::to_string(row->type);
+            const std::string key = "0-0-" + std::to_string(ms + attempt - 1) + "-" + std::to_string(row->type);
             const std::string json = "{\"w\":1,\"a\":" + std::to_string(seed) + ",\"j\":" + std::to_string(row->sub)
                 + ",\"b\":" + std::to_string(row->b) + ",\"c\":1}";
             RValue parsed;
@@ -52605,7 +52647,7 @@ static std::string GambaPityDropHead(double x, double y, int& rarity, int& attem
             double rar = -1.0;
             RValue info;
             if (GambaPityField(item, "itemInfoStruct", info) && GambaPityNumberField(info, "27", rar)) rarity = (int)rar;
-            RValue placed;
+            placed = RValue();
             const AurieStatus st = g_Yytk->CallGameScriptEx(placed, "gml_Script_LootGroundCreateFromItem", player, player,
                                                             { RValue(x), RValue(y), item });
             if (!AurieSuccess(st)) return "LootGroundCreateFromItem failed";
@@ -52624,7 +52666,9 @@ static std::string GambaPityDropHead(double x, double y, int& rarity, int& attem
         }
     }
     attempt = kGambaPityDropAttempts;
-    return "LootGroundCreateFromItem returned no live instance";
+    std::string returned = "?";
+    try { returned = Describe(placed); } catch (...) {}
+    return "LootGroundCreateFromItem returned no live instance (returned " + returned + ")";
 }
 
 // ---- the machine watch and the deadline ------------------------------------
@@ -52648,28 +52692,34 @@ static std::string GambaPitySpriteName(const RValue& handle)
 
 // Every live Slot_Machine_01_obj, once: first sight takes the ground baseline
 // and prints the machine line (the poll's positive control); a live-to-
-// destroyed change prints the explosion line.
+// destroyed change prints the explosion line. instance_find on the machine's
+// own object already names the machine, so nothing re-identifies it; a machine
+// whose id, sprite or position does not read (or past the cap) is skipped for
+// the frame and counted as `unread=`, never dropped silently.
 static void GambaPityWatchMachines(int64_t frame)
 {
     namespace GP = ForgePact::GambaPity;
     int n = 0;
     try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_GambaPityMachineObject) }).ToDouble(); }
-    catch (...) { return; }
+    catch (...) { g_GambaPity.NoteMachineUnread(); return; }
+    for (int i = kGambaPityMaxMachines; i < n; ++i) g_GambaPity.NoteMachineUnread();
     for (int i = 0; i < n && i < kGambaPityMaxMachines; ++i) {
         RValue handle;
         try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_GambaPityMachineObject), RValue((double)i) }); }
-        catch (...) { continue; }
-        CInstance* inst = HhResolveInstance(handle);
-        if (!inst || !GambaPityIsMachine(inst)) continue;
+        catch (...) { g_GambaPity.NoteMachineUnread(); continue; }
         const int64_t id = GambaPityIdOf(handle);
-        const std::string sprite = GambaPitySpriteName(handle);
+        const std::string sprite = id < 0 ? std::string("?") : GambaPitySpriteName(handle);
         double x = 0.0, y = 0.0;
-        if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) continue;   // an unread machine decides nothing
+        if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) {   // an unread machine decides nothing
+            g_GambaPity.NoteMachineUnread();
+            continue;
+        }
         switch (g_GambaPity.ObserveMachine(id, sprite == kGambaPityDestroyedSprite, frame, x, y)) {
         case GP::Sighting::FirstSeen: {
-            const std::vector<int64_t> heads = GambaPityGroundHeads(x, y);
-            g_GambaPity.SetBaseline(id, heads);
-            Out(GP::Pity::MachineSeenLine(id, sprite, (int)heads.size()));
+            const GambaPityGroundScan scan = GambaPityGroundHeads(x, y);
+            g_GambaPity.SetBaseline(id, scan.heads, scan.read);
+            Out(GP::Pity::MachineSeenLine(id, sprite, scan.read ? std::to_string(scan.heads.size())
+                                                                : "unread (" + scan.stage + ")"));
             break;
         }
         case GP::Sighting::Exploded:
@@ -52683,13 +52733,18 @@ static void GambaPityWatchMachines(int64_t frame)
 
 // One explosion at its deadline, decided at the point of use: the mod's state
 // and the room are read again, and the ground near the machine is checked
-// before anything is dropped. After a drop, the ground is checked again.
+// before anything is dropped; a scan that did not read refuses the force
+// (`ground unread`), counter kept. After a drop, the ground is checked again.
 static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t room)
 {
     namespace GP = ForgePact::GambaPity;
-    const std::vector<int64_t> ground = room == e.room ? GambaPityGroundHeads(e.x, e.y) : std::vector<int64_t>();
-    const GP::Decision d = g_GambaPity.Decide(e, room, ground);
+    GambaPityGroundScan ground;
+    if (room == e.room) ground = GambaPityGroundHeads(e.x, e.y);
+    const GP::Decision d = g_GambaPity.Decide(e, room, ground.heads, ground.read);
     switch (d.outcome) {
+    case GP::Outcome::GroundUnread:
+        Out(GP::Pity::RefusedLine("ground unread (" + (ground.read ? std::string("the machine's first-sight scan") : ground.stage) + ")"));
+        return;
     case GP::Outcome::Abandoned:
         Out(GP::Pity::AbandonedLine(e.id));
         return;
@@ -52718,7 +52773,9 @@ static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t ro
     g_GambaPity.ForceConfirmed(groundId);
     GambaPitySave();   // the counter reset
     Out(GP::Pity::ForcedLine(e.x, e.y, rarity, attempt));
-    Out(GP::Pity::GroundAfterDropLine(g_GambaPity.NewHeads(e.id, GambaPityGroundHeads(e.x, e.y))));
+    const GambaPityGroundScan after = GambaPityGroundHeads(e.x, e.y);
+    Out(after.read ? GP::Pity::GroundAfterDropLine(g_GambaPity.NewHeads(e.id, after.heads))
+                   : GP::Pity::GroundAfterDropUnreadLine(after.stage));
 }
 
 // FrameCallback's per-frame tick (player build). Returns at once while the
@@ -52770,9 +52827,10 @@ static std::string GambaPityInstallHooks()
     if (!g_GambaPitySpinNative)
         return "PickUpGoldCheck is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
     if (!g_GambaPityCdpOrig) {
-        // The prize build's script is already held by the Angelic roll's hook
-        // (g_Orig_CreateDefaultParams); splice our detour into its saved
-        // trampoline rather than hooking the script a second time.
+        // CreateDefaultParams (read for the machine-self (0, 98) natural reset)
+        // is already held by the Angelic roll's hook (g_Orig_CreateDefaultParams);
+        // splice our detour into its saved trampoline rather than hooking the
+        // script a second time.
         if (!g_Orig_CreateDefaultParams) InstallSignatureAngelicHooks();
         if (!g_Orig_CreateDefaultParams)
             return "CreateDefaultParams is not hooked (the Angelic roll's hook did not install); the mod stays off";

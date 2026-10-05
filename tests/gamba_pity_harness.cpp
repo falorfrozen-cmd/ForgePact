@@ -82,7 +82,8 @@ int main()
         p.OnNaturalDrop();
         check("baseline/off_a_natural_drop_leaves_the_count", p.Count() == 0);
         check("baseline/off_status", p.StatusLine() == "gambapity: off count=0 threshold=100 gold=0 explosions=0 forced=0"
-            " natural=0 below=0 refused=0 abandoned=0 own-head-builds=0", p.StatusLine());
+            " natural=0 below=0 refused=0 abandoned=0 own-head-builds=0"
+              " machines=0 unread=0 ground-unread=0", p.StatusLine());
     }
     {
         // Off at the deadline: the explosion is never forced, even past the threshold.
@@ -164,6 +165,7 @@ int main()
         bool kept = d.outcome == Outcome::Force && p.Count() == 12 && p.Refused() == 1 && p.Forced() == 0;
         // The next explosion, on another machine, forces again.
         p.ObserveMachine(101, false, 200, 0.0, 0.0);
+        p.SetBaseline(101, kNoHeads);
         const Explosion next = ExplodeAndWait(p, 101, 300);
         const Decision d2 = p.Decide(next, 7, kNoHeads);
         check("target/a_refused_force_keeps_the_counter_and_the_next_explosion_forces",
@@ -264,6 +266,79 @@ int main()
               counted && d2.outcome == Outcome::Force && p.Natural() == 0, p.StatusLine());
     }
 
+    {
+        // Our own earlier forced head, lying near a second machine that was
+        // seen before it landed, is not that machine's natural head; a head
+        // that is not ours there still is (the negative control).
+        Pity p = Armed(10, 12);
+        p.ObserveMachine(101, false, 50, 400.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.Decide(ExplodeAndWait(p, 100, 100), 7, kNoHeads);
+        p.ForceConfirmed(9001);
+        p.SetCount(12);
+        const Decision ours = p.Decide(ExplodeAndWait(p, 101, 300), 7, { 9001 });
+        Pity q = Armed(10, 12);
+        q.ObserveMachine(101, false, 50, 400.0, 480.0);
+        q.SetBaseline(101, kNoHeads);
+        q.Decide(ExplodeAndWait(q, 100, 100), 7, kNoHeads);
+        q.ForceConfirmed(9001);
+        const Decision theirs = q.Decide(ExplodeAndWait(q, 101, 300), 7, { 9001, 9002 });
+        check("target/our_earlier_forced_head_near_a_second_machine_is_not_natural",
+              ours.outcome == Outcome::Force && p.Natural() == 0
+              && theirs.outcome == Outcome::Natural && theirs.signal == "ground" && q.Natural() == 1, p.StatusLine());
+    }
+
+    // ---- an unread ground never forces --------------------------------------
+    {
+        // The scan at the deadline did not read: refused, counter kept, counted;
+        // the next explosion, read, forces.
+        Pity p = Armed(10, 12);
+        const Decision d = p.Decide(ExplodeAndWait(p, 100, 100), 7, kNoHeads, false);
+        const bool refused = d.outcome == Outcome::GroundUnread && p.Count() == 12 && p.Refused() == 1
+            && p.GroundUnread() == 1 && p.Forced() == 0;
+        p.ObserveMachine(101, false, 150, 0.0, 0.0);
+        p.SetBaseline(101, kNoHeads);
+        const Decision next = p.Decide(ExplodeAndWait(p, 101, 300), 7, kNoHeads, true);
+        check("target/an_unread_ground_scan_refuses_the_force_and_keeps_the_counter",
+              refused && next.outcome == Outcome::Force, p.StatusLine());
+    }
+    {
+        // The machine's first-sight scan did not read: its baseline is unknown,
+        // so its explosion is never forced, even with the deadline's scan read.
+        Pity p;
+        p.SetThreshold(10);
+        p.SetEnabled(true);
+        p.SetCount(12);
+        p.OnRoom(7);
+        p.ObserveMachine(100, false, 0, 320.0, 480.0);
+        p.SetBaseline(100, kNoHeads, false);
+        const Decision d = p.Decide(ExplodeAndWait(p, 100, 100), 7, { 555 }, true);
+        check("target/an_unread_baseline_refuses_the_force", d.outcome == Outcome::GroundUnread && p.Count() == 12
+              && p.Natural() == 0 && p.GroundUnread() == 1, p.StatusLine());
+    }
+    {
+        // Below the threshold an unread ground changes nothing; a head build in
+        // the window is still natural with the ground unread.
+        Pity below = Armed(10, 3);
+        const Decision b = below.Decide(ExplodeAndWait(below, 100, 100), 7, kNoHeads, false);
+        Pity built = Armed(10, 12);
+        built.OnHeadBuild(95);
+        const Decision n = built.Decide(ExplodeAndWait(built, 100, 100), 7, kNoHeads, false);
+        check("target/an_unread_ground_below_the_threshold_is_below_and_a_build_is_still_natural",
+              b.outcome == Outcome::Below && below.GroundUnread() == 0
+              && n.outcome == Outcome::Natural && n.signal == "build" && built.Count() == 0);
+    }
+    {
+        // Machines seen and machine reads skipped are counted in status.
+        Pity p = Armed(10, 0);
+        p.ObserveMachine(101, false, 1, 0.0, 0.0);
+        p.ObserveMachine(101, false, 2, 0.0, 0.0);
+        p.NoteMachineUnread();
+        p.NoteMachineUnread();
+        check("counter/machines_seen_and_unread_reads_are_counted", p.MachinesSeen() == 2 && p.MachinesUnread() == 2
+              && p.StatusLine().find(" machines=2 unread=2 ground-unread=0") != std::string::npos, p.StatusLine());
+    }
+
     // ---- the room -----------------------------------------------------------
     {
         Pity p = Armed(10, 12);
@@ -318,18 +393,20 @@ int main()
         p.OnSpin(true);
         check("status/line_names_every_counter",
               p.StatusLine() == "gambapity: on count=1 threshold=100 gold=10000 explosions=0 forced=0 natural=0"
-              " below=0 refused=0 abandoned=0 own-head-builds=0", p.StatusLine());
+              " below=0 refused=0 abandoned=0 own-head-builds=0"
+              " machines=0 unread=0 ground-unread=0", p.StatusLine());
         p.Off();
         check("status/off_keeps_the_count_in_the_line",
               p.StatusLine() == "gambapity: off count=1 threshold=100 gold=10000 explosions=0 forced=0 natural=0"
-              " below=0 refused=0 abandoned=0 own-head-builds=0", p.StatusLine());
+              " below=0 refused=0 abandoned=0 own-head-builds=0"
+              " machines=0 unread=0 ground-unread=0", p.StatusLine());
     }
     {
         Pity p = Armed(10, 12);
         p.ObserveMachine(100, true, 4321, 320.0, 480.0);
         std::vector<Explosion> due = p.TakeDue(4321 + kSettleFrames);
         const Explosion e = due.size() == 1 ? due[0] : Explosion();
-        check("lines/machine_seen", Pity::MachineSeenLine(100, "Slot_Machine_01_spr", 0)
+        check("lines/machine_seen", Pity::MachineSeenLine(100, "Slot_Machine_01_spr", "0")
               == "gambapity: machine id=100 seen sprite=Slot_Machine_01_spr heads-nearby=0");
         check("lines/explosion", p.ExplosionLine(e.id, e.frame) == "gambapity: explosion id=100 count=12 threshold=10 frame=4321",
               p.ExplosionLine(e.id, e.frame));
@@ -337,6 +414,10 @@ int main()
               == "gambapity: forced Goburin's Head at 320,480 (rarity 6, attempt 1) and reset the counter",
               Pity::ForcedLine(320.4, 479.6, 6, 1));
         check("lines/ground_after_drop", Pity::GroundAfterDropLine(1) == "gambapity: ground check after the drop: heads=1");
+        check("lines/ground_after_drop_unread", Pity::GroundAfterDropUnreadLine("the scan threw")
+              == "gambapity: ground check after the drop: unread (the scan threw)");
+        check("lines/machine_seen_unread", Pity::MachineSeenLine(7, "Slot_Machine_01_spr", "unread (the scan threw)")
+              == "gambapity: machine id=7 seen sprite=Slot_Machine_01_spr heads-nearby=unread (the scan threw)");
         check("lines/natural_seen", Pity::NaturalSeenLine("ground")
               == "gambapity: the explosion's own Goburin's Head was seen (ground); no force, counter reset");
         p.SetCount(3);
