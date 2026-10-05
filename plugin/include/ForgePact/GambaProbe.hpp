@@ -1037,7 +1037,7 @@ public:
         if (span <= 0) span = kWindowSpanDefault;
         if (span > kWindowSpanMax) span = kWindowSpanMax;
         if (open_) {
-            end_ = std::max(end_, frame + span);
+            if (frame + span > end_) end_ = frame + span;   // never std::max: windows.h's macro breaks it in the plugin
             out.push_back(WindowExtendedLine(reason, id, end_, frame));
             return out;
         }

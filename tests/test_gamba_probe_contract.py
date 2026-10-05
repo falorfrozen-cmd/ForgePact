@@ -54,6 +54,21 @@ its Create_0:
   machine counts as `machine-arg=`, and `selftest` calls irandom outside the
   busy guard.
 
+Phase 4, the explosion watch (the owner ruled on 2026-10-05 that the pity
+fires on the machine's explosion, which nothing had observed):
+
+- the tick reads each live machine's sprite by name (variable_instance_get,
+  sprite_get_name) with no kind check and no sprite spelled or numbered, and
+  feeds the core only after a refresh that ran to its end;
+- every build row's call goes into the ring before the machine-self filter,
+  whatever its self, and inside a window the build rows and the instance
+  create/destroy builtins print a window line for any self, apart from the
+  trace budget;
+- the built-item line is read after CreateItemNew returns;
+- `window [frames]` opens a window by hand, `status` prints the watch's
+  counters, `off` closes an open window, and every new symbol stays inside
+  the research-build guard.
+
 GambaProbe.hpp's decision itself is exercised by test_gamba_probe_behavior.py.
 """
 import re
@@ -207,7 +222,10 @@ class GambaProbeContract(unittest.TestCase):
         symbols = set(re.findall(GP_SYMBOL, self.code)) | set(re.findall(r"\bGAMBAPROBE_\w+|\bGP_[A-Z_]+\b", self.code))
         # A scan that finds nothing would pass vacuously.
         for expected in ("GpCommand", "GpInstall", "GpOnScript", "GpOnBuiltin", "GpOnEvent", "GpFrameTick", "g_GpCore",
-                         "g_GpScriptRows", "kGpScriptCount", "GpRefreshMachines", "GAMBAPROBE_SCRIPTS", "GP_SCRIPT_ENTRY"):
+                         "g_GpScriptRows", "kGpScriptCount", "GpRefreshMachines", "GAMBAPROBE_SCRIPTS", "GP_SCRIPT_ENTRY",
+                         # phase 4: the explosion watch
+                         "g_GpWatch", "GpWatchScript", "GpWatchBuilt", "GpWatchBuiltin", "GpWatchTick", "GpWindow",
+                         "GpSpriteName", "GpIsBuildRow", "GpTraceScript", "g_GpMachinesRead"):
             self.assertIn(expected, symbols)
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
@@ -269,9 +287,12 @@ class GambaProbeContract(unittest.TestCase):
         observe = braced_block(self.header, "Seen Observe(int row, SelfFn&& selfObject, bool inMachineEvent)\n    {")
         order = [observe.index(s) for s in ("++c.calls;", "if (!Active()) return Seen::Idle;", "selfObject()")]
         self.assertEqual(order, sorted(order))
-        script = self.body("static RValue& GpOnScript(")
+        script = self.body("static RValue& GpTraceScript(GpScriptRow& t, int row, GpNs::Seen seen,")
         self.assertIn("if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other) return t.orig ? t.orig(S, O, R, argc, A) : R;",
                       script)
+        # Phase 4: the explosion watch reads nothing for an idle call either.
+        self.assertIn("if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && GpWatchScript(",
+                      self.body("static RValue& GpOnScript("))
         builtin = self.body("static void GpOnBuiltin(")
         idle = braced_block(builtin, "if (d.seen == GpNs::Seen::Idle) {")
         self.assertEqual([line.strip() for line in idle.split("\n") if line.strip()],
@@ -792,6 +813,112 @@ class GambaProbeContract(unittest.TestCase):
         self.assertIn('"gambaprobe selftest: irandom row calls=" + std::to_string(before) + " -> " + std::to_string(after)', test)
         self.assertLess(test.index("const uint64_t before"), test.index('CallBuiltin("irandom"'))
         self.assertLess(test.index('CallBuiltin("irandom"'), test.index("const uint64_t after"))
+
+    # ---- phase 4: the explosion watch -------------------------------------------
+
+    def test_the_machine_sprite_is_read_by_name_with_no_kind_check(self):
+        """`sprite-control`: the tick names each machine's sprite through sprite_get_name, never a sprite index."""
+        sprite = self.body("static std::string GpSpriteName(const RValue& handle)")
+        self.assertIn('g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("sprite_index") })', sprite)
+        self.assertIn('g_Yytk->CallBuiltin("sprite_get_name", { spr })', sprite)
+        self.assertIn('return "?";', sprite)
+        self.assertLess(sprite.index('"sprite_exists"'), sprite.index('"sprite_get_name"'))
+        for word in ("m_Kind", "VALUE_"):
+            self.assertNotIn(word, sprite)
+        # No sprite is spelled or numbered: the watch prints whatever name the
+        # machine shows, so the explosion's sprite need not be known.
+        self.assertNotIn("_spr", without_strings(self.code))
+        self.assertNotIn('_spr"', self.code)
+        machines = self.body("static void GpRefreshMachines()")
+        self.assertIn("found.push_back({ inst, GpIdOf(handle), GpSpriteName(handle) });", machines)
+        self.assertIn("g_GpMachinesRead = read;", machines)
+        # The tick feeds the watch only after a refresh that ran to its end,
+        # so a refresh that threw cannot report every machine gone.
+        tick = [line.strip() for line in self.body("static void GpFrameTick()").split("\n") if line.strip()]
+        self.assertEqual(tick, ["if (!g_GpCore.Active()) return;", "GpRefreshMachines();", "GpWatchTick();"])
+        watch_tick = self.body("static void GpWatchTick()")
+        order = [watch_tick.index(s) for s in ("g_GpWatch.Tick(frame)", "if (!g_GpMachinesRead) return;",
+                                               "g_GpWatch.Poll(frame, seen)")]
+        self.assertEqual(order, sorted(order))
+
+    def test_every_build_row_goes_into_the_ring_before_the_self_filter(self):
+        """A build in the transition's own step runs before the end-of-frame poll: the ring keeps it, any self."""
+        build = self.body("static bool GpIsBuildRow(int script)")
+        cases = set(re.findall(r"case kGpScript_(\w+):", build))
+        self.assertEqual(cases, {"CreateDefaultParams", "GetUniqueRepoStruct", "LootGroundCreate", "LootGroundCreateFromItem",
+                                 "CreateLootInFreePos", "CreateItemNew", "DropItem", "DropUniqueItems"})
+        for row in cases:
+            self.assertIn(row, [safe for safe, _, _ in self.rows], row + " is not a script row")
+        script = self.body("static RValue& GpOnScript(")
+        self.assertLess(script.index("GpWatchScript("), script.index("GpTraceScript("),
+                        "the ring push must come before the machine-self filter")
+        self.assertNotIn("Seen::Other", script[:script.index("GpWatchScript(")])
+        watch = self.body("static bool GpWatchScript(")
+        self.assertIn("g_GpWatch.Push({ label, selfText, argc, args, frame });", watch)
+        self.assertIn("args = GpScriptArgs(argc, A, key);", watch)
+        self.assertIn("selfText = GpSelfText(seen, S);", watch)
+        self.assertNotIn("Seen::Machine", watch)
+        self.assertNotIn("Seen::Other", watch)
+
+    def test_a_window_prints_its_lines_for_any_self_apart_from_the_trace_budget(self):
+        watch = self.body("static bool GpWatchScript(")
+        self.assertIn("if (window && g_GpWatch.TakeWindowLine(frame)) Out(GpNs::WindowCallLine(label, selfText, argc, args, frame));",
+                      watch)
+        self.assertLess(watch.index("const bool window = g_GpWatch.InWindow(frame);"), watch.index("g_GpWatch.Push("))
+        builtin = self.body("static void GpWatchBuiltin(")
+        self.assertIn("if (!g_GpWatch.InWindow(frame) || !g_GpWatch.TakeWindowLine(frame)) return;", builtin)
+        self.assertIn("GpNs::WindowCallLine(GpBuiltinName(builtin), GpSelfText(seen, S), argc, GpBuiltinArgs(argc, Args), frame)",
+                      builtin)
+        on_builtin = self.body("static void GpOnBuiltin(")
+        call = "if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin))) GpWatchBuiltin(builtin, d.seen, S, argc, Args);"
+        self.assertIn(call, on_builtin)
+        # After the idle return, before the self filter and the original.
+        self.assertLess(on_builtin.index("if (d.seen == GpNs::Seen::Idle) {"), on_builtin.index(call))
+        self.assertLess(on_builtin.index(call), on_builtin.index("if ((d.seen == GpNs::Seen::Other && !byArg) || !GpCanLog(row)) {"))
+        in_window = braced_block(self.header, "inline constexpr bool BuiltinInWindow(Builtin b)\n{")
+        for name in ("InstanceCreateLayer", "InstanceCreateDepth", "InstanceDestroy"):
+            self.assertIn("Builtin::" + name, in_window)
+        # Window lines spend the window's own cap, never a row's or a key's.
+        for signature in ("static bool GpWatchScript(", "static void GpWatchBuiltin(", "static void GpWatchBuilt("):
+            body = self.body(signature)
+            for word in ("GpCanLog", "TakeTraceLine", "GpLogCall"):
+                self.assertNotIn(word, body, signature + " spends the trace budget")
+        self.assertRegex(self.header, r"inline constexpr int kWindowLineCap = \d+;")
+        self.assertIsNone(re.search(r"\bkWindowLineCap\s*=\s*\d+;", self.code), "the window cap is the header's")
+
+    def test_the_built_item_line_is_read_after_create_item_new_returns(self):
+        script = self.body("static RValue& GpOnScript(")
+        self.assertIn("&& script == kGpScript_CreateItemNew) {", script)
+        self.assertLess(script.index("RValue& built = GpTraceScript(t, row, seen, S, O, R, argc, A);"),
+                        script.index("GpWatchBuilt(built, watchSelf);"))
+        built = self.body("static void GpWatchBuilt(")
+        self.assertLess(built.index("if (!g_GpWatch.TakeWindowLine(frame)) return;"), built.index("g_GpBusy = true;"))
+        for read in ('TryStructNumber(item, "itemType", type)', 'RValue("itemDefinitionStruct")',
+                     'TryStructNumber(def, "j", j)', 'TryStructNumber(def, "b", b)', 'TryStructNumber(def, "c", c)',
+                     'RValue("itemInfoStruct")', 'TryStructNumber(info, "27", rarity)', 'StructKey(info, "28")',
+                     "GpNs::WindowBuiltLine("):
+            self.assertIn(read, built)
+        self.assertIn('Out(GpNs::WindowBuiltLine(', built)
+
+    def test_the_window_verb_and_the_status_counters(self):
+        command = self.body("static void GpCommand(")
+        self.assertIn('if (sub == "window") { GpWindow(tail); return; }', command)
+        window = self.body("static void GpWindow(const std::vector<std::string>& tail)")
+        self.assertIn("g_GpWatch.Open(GpNs::WindowReason::Command, -1, GpFrame(), GpNs::WindowSpan(frames))", window)
+        self.assertLess(window.index("if (!g_GpHooked || !g_GpCore.Active()) {"), window.index("g_GpWatch.Open("))
+        self.assertIn('"  window [frames]', self.body("static void GpUsage()"))
+        status = self.body("static void GpStatus()")
+        self.assertIn("Out(g_GpWatch.StatusLine());", status)
+        # Printed before the `hooked` early return, so `status` always shows it.
+        self.assertLess(status.index("Out(g_GpWatch.StatusLine());"), status.index("if (!g_GpHooked) return;"))
+        watch_status = braced_block(self.header, "class Watch {")
+        for field in ('"gambaprobe watch: machines-seen="', '" transitions="', '" windows="', '" window="', '" ring="'):
+            self.assertIn(field, watch_status)
+        off = self.body("static void GpOff()")
+        self.assertIn("const std::string closed = g_GpWatch.Off(GpFrame());", off)
+        # The gambapity coexistence refusals are untouched (criterion 6 pins
+        # the text; this pins that `hook` still refuses).
+        self.assertIn("Relaunch without", self.plugin)
 
     # ---- the research document --------------------------------------------------
 
