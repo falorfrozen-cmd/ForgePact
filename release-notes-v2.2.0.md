@@ -10,8 +10,8 @@ shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
-switch, also off by default, guarantees the slot machine's charm after the
-number of spins you set.
+switch, also off by default, makes the slot machine's next prize the charm
+once you have spun the number of times you set.
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -232,11 +232,14 @@ experience.
   by default, with a slider from 10 to 1000 spins. Until now, the one-of-a-kind
   charm the slot machine can give, Goburin's Head, was pure luck. With the
   switch on, after the number of spins you set without the charm dropping, the
-  machine's next prize is the charm. Each spin costs 10,000 gold, so the count
-  is also the gold it takes, and the count carries over between sessions and
-  between machines. If the charm drops on its own before then, the count starts
-  over — this reset has not been watched in a live game yet. The forced drop
-  itself has not been watched in a live game yet.
+  machine's next prize is the charm. The machine does not hand out a prize on
+  every spin, so the charm does not arrive on that exact spin: it is the next
+  prize the machine pays out, which can take several more spins. Each spin
+  costs 10,000 gold, so the count is the least gold it takes, and the count
+  carries over between sessions and between machines. If the charm drops on
+  its own before then, the count starts over — this reset has not been watched
+  in a live game yet. The forced drop itself has not been watched in a live
+  game yet.
 
 ## Changed
 

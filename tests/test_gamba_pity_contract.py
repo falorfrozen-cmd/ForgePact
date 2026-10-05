@@ -37,7 +37,11 @@ plugin/ModuleMain.cpp on comment-stripped source:
 - `gambapity status` names `count=` and `threshold=` and surfaces
   `g_GambaPityError` (the last load/save refusal), which is read, not only
   written;
-- the force and the natural reset each log one action line;
+- the force and the natural reset each log one action line, and so does every
+  machine-self prize build the detour sees, forced or not (`gambapity: prize
+  build`, with the build's sub/base and the counter): a payout comes on the
+  machine's own cycle, not per spin, and this line is how a session shows one
+  happened and at what count;
 - the plugin-side spin-count range equals `src/forgepact.py`'s
   `GAMBA_PITY_RANGE = (10, 1000)` and `Mods.svelte`'s `min`/`max`;
 - `GambaPityFallbackDrop` is gone;
@@ -220,7 +224,8 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("b"), RValue((double)kGambaPityCharmBase) });', force)
         self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { params, RValue("c"), RValue(1.0) });', force)
         cdp = self.body("static RValue& GambaPityCdpDetour(")
-        self.assertIn("GambaPityIsPrizeBuild(argc, A) && g_GambaPity.OnPrizeRoll(true)", cdp)
+        self.assertIn("const bool prize = GambaPityIsPrizeBuild(argc, A);", cdp)
+        self.assertIn("if (prize && g_GambaPity.OnPrizeRoll(true))", cdp)
         self.assertIn("GambaPityForceParams(r)", cdp)
         self.assertIn("g_GambaPityForcePending = true;", cdp)
 
@@ -235,6 +240,12 @@ class GambaPityContract(unittest.TestCase):
         force = self.body("static bool GambaPityForceType(")
         self.assertIn('g_Yytk->CallBuiltin("variable_struct_set", { item, RValue("itemType"), RValue((double)kGambaPityCharmType) });', force)
         self.assertIn('SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemType") }), t)', force)
+        # Negative control: the type force touches nothing else. The definition
+        # record and its `a` were once mistaken for the type's carrier; a write
+        # there would change the roll seed, not the item.
+        self.assertNotIn("itemDefinitionStruct", force)
+        self.assertNotIn('RValue("a")', force)
+        self.assertEqual(force.count('"variable_struct_set"'), 1, "the type force writes one field, itemType")
         # A field that does not read back is refused, naming it - never silent.
         self.assertIn('Out("gambapity: the forced item\'s type did not read back ("', item)
 
@@ -251,6 +262,30 @@ class GambaPityContract(unittest.TestCase):
         cdp = self.body("static RValue& GambaPityCdpDetour(")
         self.assertIn('Out("gambapity: forced Goburin\'s Head (type "', cdp)
         self.assertIn('Out("gambapity: a natural Goburin\'s Head build reset the counter");', cdp)
+
+    def test_a_prize_build_logs_an_action_line_whether_or_not_it_is_forced(self):
+        # The line names what the game asked to build (sub/base) and the
+        # counter, under the prefix a live session greps for.
+        log = self.body("static void GambaPityLogPrizeBuild(")
+        self.assertIn('Out("gambapity: prize build sub="', log)
+        self.assertIn('" base="', log)
+        self.assertIn('" count=" + std::to_string(g_GambaPity.Count())', log)
+        self.assertIn('" threshold=" + std::to_string(g_GambaPity.Threshold())', log)
+        self.assertIn("SigNumber(*A[0], s)", log)
+        self.assertIn("SigNumber(*A[1], b)", log)
+        # It only reports: nothing in it moves the counter or decides the force.
+        for word in ("OnPrizeRoll", "OnNaturalDrop", "OnSpin", "SetCount", "GambaPitySave", "g_GambaPityForcePending"):
+            self.assertNotIn(word, log, word + ": the prize-build log must not change state")
+        # The detour logs every machine-self prize build before it asks whether
+        # to force, so a payout below the threshold is logged too, and with the
+        # count it arrived at rather than the reset one.
+        cdp = self.body("static RValue& GambaPityCdpDetour(")
+        self.assertIn("if (prize) GambaPityLogPrizeBuild(argc, A);", cdp)
+        self.assertEqual(cdp.count("GambaPityLogPrizeBuild("), 1)
+        self.assertLess(cdp.index("GambaPityLogPrizeBuild("), cdp.index("g_GambaPity.OnPrizeRoll(true)"))
+        # Negative control: the coins build (third argument undefined) and a
+        # non-machine self are not prize builds, so the log is gated on both.
+        self.assertLess(cdp.index("g_GambaPity.Enabled() && GambaPityIsMachine(S)"), cdp.index("GambaPityLogPrizeBuild("))
 
     # ---- the persistent counter ---------------------------------------------
 

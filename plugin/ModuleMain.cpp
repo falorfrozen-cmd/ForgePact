@@ -51880,7 +51880,10 @@ static void DungeonProbeCommand(const std::string& rest)
 //     (RUNTIME_DATA_MODELS §13.4), written and read back so a write that
 //     failed is refused rather than silent, carried there by a one-step
 //     force-pending flag. The definition record's `a` is the roll seed, left
-//     untouched.
+//     untouched. The prize build is the machine's payout, which comes on the
+//     machine's own cycle rather than on every spin, so the forced charm is
+//     the next payout after the threshold, not spin N itself; every prize
+//     build the detour sees logs one `gambapity: prize build` line.
 //
 // The machine self is read by the instance-handle rule - variable_instance_get
 // through N1ObjectIndex, the masked predicate that accepts the flagged
@@ -52095,13 +52098,31 @@ static bool GambaPityForceParams(RValue& params)
     } catch (...) { return false; }
 }
 
+// One line per machine-self prize build the detour sees, forced or not: the
+// sub/base the game asked to build and the count the build arrived at. The
+// machine pays out on its own cycle, not on every spin, so the force can only
+// act on the next payout after the threshold; this line is how a session's
+// out.txt shows that a payout happened and at what count. It only reports.
+static void GambaPityLogPrizeBuild(int argc, RValue** A)
+{
+    double s = 0.0, b = 0.0;
+    const bool read = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], s) && SigNumber(*A[1], b);
+    Out("gambapity: prize build sub=" + (read ? std::to_string((long long)s) : std::string("?"))
+        + " base=" + (read ? std::to_string((long long)b) : std::string("?"))
+        + " count=" + std::to_string(g_GambaPity.Count())
+        + " threshold=" + std::to_string(g_GambaPity.Threshold()));
+}
+
 // CreateDefaultParams: the prize build. Force the charm once the counter has
 // reached the threshold; else run the game's own build, and a natural charm
-// build (args 0, 98) starts the guarantee over.
+// build (args 0, 98) starts the guarantee over. Every prize build is logged
+// before the force is decided, so a payout below the threshold shows too.
 static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (g_GambaPity.Enabled() && GambaPityIsMachine(S)) {
-        if (GambaPityIsPrizeBuild(argc, A) && g_GambaPity.OnPrizeRoll(true)) {
+        const bool prize = GambaPityIsPrizeBuild(argc, A);
+        if (prize) GambaPityLogPrizeBuild(argc, A);
+        if (prize && g_GambaPity.OnPrizeRoll(true)) {
             GambaPitySave();   // the counter reset to zero
             RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
             if (GambaPityForceParams(r)) {
