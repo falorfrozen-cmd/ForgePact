@@ -105,7 +105,10 @@
 // 2026-10-04), the shape of the show key's select above: the switch turned on
 // around them (on repeats the pair's last on, off its off), each value posted
 // and its line sent, ending on the default. Last of all, after the pairs, so
-// no earlier step's index moves.
+// no earlier step's index moves. A later pair can leave another Mods sub-tab
+// open (Goburin's Head pity sits on Quality of Life, Dungeon chest opens
+// early on Gameplay), so each child re-enters its own pair's tab and sub-tab
+// before its switch is turned on around it.
 //
 // Deterministic: the same legacy file and the same THEMES give the same bytes,
 // and tests/oracle-derive.test.js holds the committed file to that. A theme
@@ -438,12 +441,17 @@ export function derive(legacy, derivedFrom, supplement = null, supplementFrom = 
     pairAt[key] = { on, off };
   }
   // The child selects no recording has, last of all: their switch turned on
-  // around them (it is off after the pair's Turn off), each value in turn.
+  // around them (it is off after the pair's Turn off), each value in turn. A
+  // later pair can leave another Mods sub-tab open, so each child re-enters
+  // its own pair's tab and sub-tab first.
   for (const { key, parent, values, verb } of NATIVE_CHILD_SELECTS) {
     const selector = '#' + key;
     const sw = '#' + parent;
     const { on: parentOn, off: parentOff } = pairAt[parent];
+    const parentPair = NATIVE_SWITCHED_RANGES.find((n) => n.key === parent);
     controls.push(selector);
+    if (parentPair.tab !== open.tab) { push(parentPair.tab, 'click'); open = { tab: parentPair.tab, sub: null }; }
+    if (parentPair.sub && parentPair.sub !== open.sub) { push(parentPair.sub, 'click'); open.sub = parentPair.sub; }
     push(sw, 'click', { expect: { posts: { same: parentOn }, cmds: { same: parentOn } } });
     for (const value of values) {
       push(selector, 'select', { value, expect: { posts: { is: setPost({ key, value }) }, cmds: { is: [`${verb} ${value}`] } } });

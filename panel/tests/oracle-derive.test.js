@@ -86,9 +86,21 @@ const PAIR_NAV = (() => {
 })();
 const PAIR_STEPS = PAIR_NAV + 8 * NATIVE_SWITCHED_RANGES.length;
 const PAIR_CONTROLS = 2 * NATIVE_SWITCHED_RANGES.length;
-// Then, last, their child selects': the switch on, one select per value, the
-// switch off, and one control each.
-const CHILD_SELECT_STEPS = NATIVE_CHILD_SELECTS.reduce((n, c) => n + 2 + c.values.length, 0);
+// Then, last, their child selects': each re-enters its own pair's tab and
+// sub-tab first (a later pair can leave another sub-tab open), then the switch
+// on, one select per value, the switch off, and one control each.
+const CHILD_SELECT_NAV = (() => {
+  let count = 0;
+  let tab = NATIVE_SWITCHED_RANGES.at(-1).tab;
+  let sub = NATIVE_SWITCHED_RANGES.at(-1).sub;
+  for (const c of NATIVE_CHILD_SELECTS) {
+    const parentPair = NATIVE_SWITCHED_RANGES.find((n) => n.key === c.parent);
+    if (parentPair.tab !== tab) { count += 1; tab = parentPair.tab; sub = null; }
+    if (parentPair.sub && parentPair.sub !== sub) { count += 1; sub = parentPair.sub; }
+  }
+  return count;
+})();
+const CHILD_SELECT_STEPS = CHILD_SELECT_NAV + NATIVE_CHILD_SELECTS.reduce((n, c) => n + 2 + c.values.length, 0);
 const CHILD_SELECT_CONTROLS = NATIVE_CHILD_SELECTS.length;
 // Everything after the native selects.
 const NATIVE_RANGE_STEPS = PAIR_STEPS + CHILD_SELECT_STEPS;
@@ -558,6 +570,8 @@ test('a child select of a pair is literal and last: its switch on around it, eac
   let at = steps.length - CHILD_SELECT_STEPS;
   // The pairs' last step (the Turn off) comes first, so none of their indexes moved.
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_SWITCHED_RANGES.at(-1).key));
+  let tab = NATIVE_SWITCHED_RANGES.at(-1).tab;
+  let sub = NATIVE_SWITCHED_RANGES.at(-1).sub;
   for (const { key, parent, values, verb } of NATIVE_CHILD_SELECTS) {
     const p = NATIVE_SWITCHED_RANGES.findIndex((n) => n.key === parent);
     assert.ok(p >= 0, `${key}: its parent is a switch-plus-range pair`);
@@ -567,6 +581,17 @@ test('a child select of a pair is literal and last: its switch on around it, eac
     assert.ok(!steps.slice(0, at).some((s) => s.control === select), `${select} appears before its own steps`);
     // The default the switch's on restates is the last value, so the walk ends on it.
     assert.equal(NATIVE_SWITCHED_RANGES[p].restate, `${verb} ${values.at(-1)}`);
+    // A later pair may have left another sub-tab open: the child re-enters its
+    // own pair's tab and sub-tab before its switch is turned on around it.
+    const { tab: entryTab, sub: entrySub } = NATIVE_SWITCHED_RANGES[p];
+    if (entryTab !== tab) {
+      assert.deepEqual(steps[at], { step: at, control: entryTab, action: 'click' });
+      at += 1; tab = entryTab; sub = null;
+    }
+    if (entrySub && entrySub !== sub) {
+      assert.deepEqual(steps[at], { step: at, control: entrySub, action: 'click' });
+      at += 1; sub = entrySub;
+    }
     assert.deepEqual(steps[at], { step: at, control: '#' + parent, action: 'click', expect: { posts: { same: on }, cmds: { same: on } } });
     values.forEach((value, i) => {
       assert.deepEqual(steps[at + 1 + i], {

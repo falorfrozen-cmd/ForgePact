@@ -6898,6 +6898,11 @@
   },
   {
    "step": 529,
+   "control": "subtab:gameplay",
+   "action": "click"
+  },
+  {
+   "step": 530,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
@@ -6910,7 +6915,7 @@
    }
   },
   {
-   "step": 530,
+   "step": 531,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "chat",
@@ -6934,7 +6939,7 @@
    }
   },
   {
-   "step": 531,
+   "step": 532,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "both",
@@ -6958,7 +6963,7 @@
    }
   },
   {
-   "step": 532,
+   "step": 533,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "head",
@@ -6982,7 +6987,7 @@
    }
   },
   {
-   "step": 533,
+   "step": 534,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
