@@ -1,18 +1,22 @@
 """Run gambapity's real decision core against controlled calls.
 
-`gambapity` (ForgePact #134 phase 2, player build) guarantees Goburin's Head
-from the gamba machine after the configured number of spins without it
-dropping. The counter/threshold/reset state machine lives in
+`gambapity` (ForgePact #134 phase 5, player build) guarantees Goburin's Head
+from the gamba machine: the first machine that explodes after the configured
+number of spins drops exactly one head, and the counter starts over. The
+counter, the explosion watch and the deadline's decision live in
 plugin/include/ForgePact/GambaPity.hpp, game-independent by contract, and
-these scenarios pin the decision ModuleMain.cpp's adapter takes from it,
+these scenarios pin the decisions ModuleMain.cpp's adapter takes from it,
 compiled whole.
 
-Baseline: off, or on with a count not yet reached, every prize roll runs the
-game's own roll, nothing but a spin moves the counter, and nothing is ever
-forced. Target: with the threshold reached, the next prize roll forces the
-charm and resets; a spin before the threshold never forces; a natural charm
-drop resets; a spin on another object's call never counts; the gold equivalent
-is count * 10000.
+Baseline: off, nothing counts and nothing forces; only a machine-self spin
+counts; the gold equivalent is count * 10000; `off` keeps the count; a natural
+head resets it. Target: a live-to-destroyed sprite change is one explosion,
+decided once its settle span has passed; at the threshold with no head signal
+it forces, a confirmed force resets and a refused one keeps the count; below
+the threshold the count is kept; a new ground head, a head build in the
+look-back or settle span, or a machine-self (0, 98) build makes it natural at
+any count; a room change abandons it; two machines in one span force at most
+once; spins without an explosion never force; every line is fixed text.
 """
 import os
 import shutil
@@ -93,50 +97,97 @@ class GambaPityBehaviorTests(unittest.TestCase):
     # ---- baseline: off, nothing happens --------------------------------
 
     def test_off_never_counts_or_forces(self):
-        for label in ("baseline/off_a_spin_never_counts", "baseline/off_a_prize_roll_never_forces",
-                      "baseline/off_a_natural_drop_leaves_the_count", "baseline/off_status"):
+        for label in ("baseline/off_a_spin_never_counts", "baseline/off_a_natural_drop_leaves_the_count",
+                      "baseline/off_status", "baseline/off_an_explosion_never_forces",
+                      "baseline/off_clears_pending_explosions"):
             self.assertScenario(label)
 
-    def test_on_below_the_threshold_runs_the_games_own_roll(self):
-        for label in ("baseline/on_below_the_threshold_runs_the_games_own_roll",
-                      "baseline/on_below_the_threshold_status"):
-            self.assertScenario(label)
-
-    # ---- the counter: nothing but a spin moves it ----------------------
+    # ---- the counter: nothing but a spin raises it ---------------------
 
     def test_only_a_machine_self_spin_counts(self):
         for label in ("counter/another_objects_spin_never_counts", "counter/only_a_machine_self_spin_counts",
                       "counter/a_natural_drop_resets", "counter/off_keeps_the_counter"):
             self.assertScenario(label)
 
-    # ---- target: the threshold reached forces and resets ---------------
+    # ---- target: the machine watch -------------------------------------
 
-    def test_a_spin_before_the_threshold_never_forces(self):
-        for label in ("target/a_spin_before_the_threshold_never_forces",
-                      "target/the_next_prize_roll_forces_the_charm",
-                      "target/after_the_reset_the_roll_is_the_games_own_again"):
-            self.assertScenario(label)
+    def test_first_sight_of_a_destroyed_machine_is_not_an_explosion(self):
+        self.assertScenario("target/first_sight_destroyed_is_not_an_explosion")
 
-    def test_another_selfs_roll_never_forces(self):
-        for label in ("target/another_selfs_roll_never_forces",
-                      "target/the_machines_own_roll_forces_at_the_threshold"):
-            self.assertScenario(label)
+    def test_a_live_to_destroyed_change_is_one_explosion_decided_after_the_settle_span(self):
+        self.assertScenario("target/live_to_destroyed_is_one_explosion_decided_after_the_settle_span")
 
-    def test_the_count_past_the_threshold_forces_once(self):
-        self.assertScenario("target/count_past_the_threshold_still_forces")
+    def test_a_vanished_machine_is_not_an_explosion(self):
+        self.assertScenario("target/a_vanished_machine_is_not_an_explosion")
+
+    def test_the_settle_span_look_back_and_radius(self):
+        self.assertScenario("table/settle_lookback_radius")
+
+    # ---- target: the decision ------------------------------------------
+
+    def test_at_the_threshold_with_no_signal_the_decision_is_force(self):
+        self.assertScenario("target/at_the_threshold_with_no_signal_the_decision_is_force")
+
+    def test_a_confirmed_force_resets_the_counter(self):
+        self.assertScenario("target/a_confirmed_force_resets_the_counter")
+
+    def test_a_refused_force_keeps_the_counter_and_the_next_explosion_forces(self):
+        self.assertScenario("target/a_refused_force_keeps_the_counter_and_the_next_explosion_forces")
+
+    def test_below_the_threshold_the_counter_is_kept(self):
+        self.assertScenario("target/below_the_threshold_the_counter_is_kept")
 
     def test_a_zero_threshold_never_forces(self):
         self.assertScenario("target/a_zero_threshold_never_forces")
 
-    def test_a_natural_drop_resets_the_threshold_reached(self):
-        self.assertScenario("target/a_natural_drop_resets_the_threshold_reached")
+    # ---- target: the natural-head signals ------------------------------
 
-    # ---- the status line ------------------------------------------------
+    def test_a_new_ground_head_is_natural_at_any_count(self):
+        self.assertScenario("target/a_new_ground_head_is_natural_at_any_count")
 
-    def test_the_status_line_reads_back_the_state(self):
-        for label in ("status/line_names_count_threshold_and_gold", "status/off_keeps_the_count_in_the_line"):
+    def test_a_head_in_the_machines_baseline_is_not_natural(self):
+        self.assertScenario("target/a_baseline_head_is_not_natural")
+
+    def test_a_head_build_in_the_look_back_is_natural(self):
+        self.assertScenario("target/a_head_build_in_the_look_back_is_natural")
+
+    def test_a_head_build_in_the_settle_span_is_natural(self):
+        self.assertScenario("target/a_head_build_in_the_settle_span_is_natural")
+
+    def test_a_head_build_outside_every_span_does_not_reset(self):
+        self.assertScenario("target/a_head_build_outside_every_span_does_not_reset")
+
+    def test_a_machine_build_resets_at_once_and_makes_the_explosion_natural(self):
+        self.assertScenario("target/a_machine_build_resets_at_once_and_makes_the_explosion_natural")
+
+    def test_an_own_drop_build_counts_as_own_head_builds_not_a_signal(self):
+        self.assertScenario("target/an_own_drop_build_counts_as_own_head_builds_not_a_signal")
+
+    # ---- target: the room, two machines, payouts -----------------------
+
+    def test_a_room_change_abandons_a_pending_explosion_and_keeps_the_counter(self):
+        self.assertScenario("target/a_room_change_abandons_a_pending_explosion_and_keeps_the_counter")
+
+    def test_a_room_change_clears_the_machine_records(self):
+        self.assertScenario("target/a_room_change_clears_the_machine_records")
+
+    def test_two_machines_in_one_settle_span_force_at_most_once(self):
+        self.assertScenario("target/two_machines_in_one_settle_span_force_at_most_once")
+
+    def test_spins_without_an_explosion_never_force(self):
+        self.assertScenario("target/spins_without_an_explosion_never_force")
+
+    # ---- the lines, byte for byte --------------------------------------
+
+    def test_the_status_line_carries_every_counter(self):
+        for label in ("status/line_names_every_counter", "status/off_keeps_the_count_in_the_line"):
             self.assertScenario(label)
 
+    def test_every_action_line_is_fixed_text(self):
+        for label in ("lines/machine_seen", "lines/explosion", "lines/forced", "lines/ground_after_drop",
+                      "lines/natural_seen", "lines/below", "lines/refused", "lines/abandoned",
+                      "lines/natural_build"):
+            self.assertScenario(label)
 
 if __name__ == "__main__":
     unittest.main()
