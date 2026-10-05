@@ -1136,8 +1136,10 @@ name § Live procedure 2 gives it.
   named frames by 20,893 compiled-code rows of game code.
 - **Measured, by name:** every script row read `byname=same` (24 of 24, with
   `InitPV`, `SPV`, `GPV` and `FPV` among them; `byname-resolve`: pass). Both
-  names resolve to the script itself, so there is no separate functions-array
-  routine to detour. Across four `Create_0` runs with a machine as `self`,
+  names resolve to the script itself (`byname=same` shows only which entry
+  `GetNamedRoutineIndex` — one index per name — prefers; it does not rule out a
+  same-named functions-array entry, because the array was never walked here —
+  `gambaprobe fnwalk` walks it). Across four `Create_0` runs with a machine as `self`,
   `InitPV`, `SPV`, `GPV` and `FPV` all stayed at `machine-self=0`, and no
   `byname-shared` row existed (`byname-visible`: fail). The by-name store calls
   the static reading puts in `Create_0` are **not observed by the detour**, and
@@ -1242,14 +1244,16 @@ note not copied here. Each finding names the check it comes from, under the name
   the prize roll is the script `GetUniqueRepoStruct` with the machine as `self`
   (`argc=3 a0=real:1.000000 a1=int64:0 a2=real:72.000000`, not `10, 0, 98`),
   whose randomness goes through the `cpr_irandom` and `cpr_rand32` script rows
-  (`scope=machine-event`), not a builtin. The prize is built by
+  (`scope=machine-event`); a builtin RNG row did not move, which is not-observed. The prize is built by
   `CreateDefaultParams` (`(0,72,true)` then `(0,11,undefined)`) and placed by
   `LootGroundCreate` -> `CreateLootInFreePos` -> `instance_create_layer`
   (`Loot_Ground_obj`, plus `Coin_obj`, `Loot_Pillar_obj`, `Impact_Sound_obj`,
   `Visual_Effect_Simple_obj`). The machine object is not destroyed by a payout:
   `machines=2` (the same two ids) before and after.
-- **Measured, the roll is a script, not a builtin:** the `irandom` lever armed
-  for the prize roll never saw a machine-self builtin RNG call
+- **Measured, the roll is a script:** the `irandom` lever armed
+  for the prize roll stayed `INERT` — no machine-self builtin RNG call reached
+  it, which is not-observed on that row (the builtin rows are unproven against
+  a compiled call), not proof the roll passes no builtin
   (`gambaprobe rng: ... lever=on INERT - armed, but no machine-self irandom call
   has reached it`; `forced-head`: not-observed). `state-trace` is not-observed
   (the `SetVariable` row reads `missing`).
@@ -1264,7 +1268,7 @@ Live 3 labels the six § Decision keys for the first time (below).
 
 roll-route: script
 
-explosion-rule: random
+explosion-rule: not-observed
 
 drop-route: LootGroundCreate
 
@@ -1277,11 +1281,13 @@ pity-design: force-script
 Live 3 measured a natural machine's spin and payout (the `scp` and `stamp`
 spawn routes both failed, so no spawned machine could be spun). The prize roll
 is the script `GetUniqueRepoStruct` with the machine as `self` (arguments `1, 0,
-72`), whose randomness goes through the `cpr_irandom`/`cpr_rand32` script rows —
-no builtin RNG fires with the machine as `self` (the `irandom` lever stayed
-`INERT`), so `roll-route` is `script`. The payout comes on that random roll and
-the machine is not destroyed by it (`machines=2` before and after), so
-`explosion-rule` is `random`; the prize is placed by `LootGroundCreate` ->
+72`), whose randomness goes through the `cpr_irandom`/`cpr_rand32` script rows
+(`scope=machine-event`), so `roll-route` is `script`; the `irandom` lever stayed
+`INERT` with the machine as `self`, which is not-observed on that row (the
+builtin rows are unproven against a compiled call), not proof the roll passes no
+builtin. The payout comes on that random roll, and
+the machine is not destroyed by it (`machines=2` before and after) — what ends a machine was not observed — so
+`explosion-rule` is `not-observed`; the prize is placed by `LootGroundCreate` ->
 `CreateLootInFreePos` -> `instance_create_layer`, so `drop-route` is
 `LootGroundCreate`. A pity counter can count both events from the machine-self
 hooks that fired — spins through `PickUpGoldCheck` (`a1=-10000`, one per spin)
