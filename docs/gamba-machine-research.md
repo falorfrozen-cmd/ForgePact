@@ -779,7 +779,9 @@ armed:
   reports both, and `status` shows the open window's dropped counts. The first
   time an object reaches its 32 in a window, one `gambaprobe window capped
   <object key>` line names it (and the closed and status lines count the
-  capped objects), so a cap that hid, say, the explosion's coins is visible.
+  capped objects). It names an object only the first time in the window, so in
+  a window held across many top-ups a cap reached in the early spins is not
+  named again at the explosion.
   A second transition, or `window`, while one is open extends it rather than
   opening another, and tops both caps up.
 - **What a window cannot show.** A `CreateItemNew` that a window replays from
@@ -1233,7 +1235,8 @@ here.
   game places a machine (`sprite-control`: `machines=` at least 1 and a real
   sprite name on each first-sight line); from the first spin, the operator
   holds a commanded window: `gambaprobe window 3600` before the first spin,
-  then again on a fixed cadence, about every 15 seconds, until the person
+  then again on a fixed cadence, about every 15 seconds (and at once whenever
+  `status` shows `remaining` below 1800), until the person
   reports the explosion (each re-send prints `gambaprobe window extended ...
   end=<f> frame=<f>`, and `gambaprobe status` shows `window=open end=<f>
   frame=<now> remaining=<n>`; 3600 presented frames is shorter than a minute
@@ -1265,7 +1268,9 @@ here.
 - **what it decides**: the next phase's design. A build in the window
   around the explosion means the force rewrites the explosion's own build; an
   explosion inside an open window with no build line, no `instance_create_layer`
-  of `Loot_Ground_obj` and only `Coin_obj` means the mod drops the head itself
+  of `Loot_Ground_obj` (2513) and at least one `Coin_obj` (954) create line (the
+  in-window positive control for the instance channel; without one the route
+  is `not-observed`) means the mod drops the head itself
   at the transition. A `Loot_Ground_obj` create with no build line reads as
   "build route not observed", not as "no build" (the item was built by a
   route the window did not log). No machine reaching its explosion, or an
