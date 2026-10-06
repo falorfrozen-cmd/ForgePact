@@ -337,6 +337,43 @@ class RunnerAndCheckouts(unittest.TestCase):
             self.assertLess(placed, text.find("run_tests_parallel.py"), f"{job} places the SDK after its tests")
 
 
+TAGGED_CHECKOUT = "Check out the tagged ForgePact tree"
+
+
+def tagged_checkout_step(job: str = "build") -> str:
+    """The text of `job`'s tagged-tree checkout step, and nothing past it."""
+    text = jobs()[job]
+    at = text.find(f"- name: {TAGGED_CHECKOUT}")
+    if at == -1:
+        raise AssertionError(f"{TAGGED_CHECKOUT!r} is missing from {job}")
+    return step_text(text, at + 2)
+
+
+def checkout_fetch_depth(step: str):
+    """The `fetch-depth:` value under the step's `with:`, or None when it sets none."""
+    m = re.search(r"(?m)^\s{10}fetch-depth:\s*['\"]?(\w+)['\"]?\s*$", step)
+    return m.group(1) if m else None
+
+
+class TheBuildJobFetchesFullHistory(unittest.TestCase):
+    """tests/test_toggle_skill_contract.py's history pins run in `build` only,
+    and under CI=true fail when the checkout cannot read the commits they
+    compare against. So that checkout must fetch everything (ForgePact#176)."""
+
+    def test_the_tagged_checkout_sets_fetch_depth_0(self):
+        step = tagged_checkout_step()
+        self.assertIn("path: ForgePact", step)
+        self.assertEqual(checkout_fetch_depth(step), "0", step)
+
+    def test_the_reader_rejects_the_step_without_it(self):
+        # Negative control: the same step with the line removed reads as unset,
+        # so the check above is about this step's text, not the file's.
+        step = tagged_checkout_step()
+        stripped = "\n".join(l for l in step.splitlines() if "fetch-depth:" not in l)
+        self.assertIn("path: ForgePact", stripped)
+        self.assertIsNone(checkout_fetch_depth(stripped))
+
+
 class Dependencies(unittest.TestCase):
     def test_requirements_build_txt_is_installed(self):
         lines = code_lines(workflow_text())
