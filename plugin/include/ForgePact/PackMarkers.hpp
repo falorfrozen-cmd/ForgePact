@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -40,6 +41,27 @@ namespace ForgePact {
 // one icon with a count badge, and opaque outlined dots remain the fallback
 // when no icon could be loaded.
 //
+// Retirement (issue #181): a marker goes when its pack is born or its spawner
+// is gone, under one of two policies, chosen at runtime (`packmarks retire`
+// in the research build):
+// - `timer` (the default): a create the hooks attribute to the spawner
+//   retires it at once; the rotating check retires it when the spawner is
+//   gone, when its `enemyCreatorTimer` was seen as a number and no longer is,
+//   or when the timer was never seen as a number for kUnarmedGiveUpFrames
+//   after listing ("spent before we looked").
+// - `state`: the rotating check retires it when the spawner is gone, or when
+//   the spawner's own `enemyArray`, read by name, is an array - undefined
+//   before and while armed, an array once the pack is born
+//   (docs/RUNTIME_DATA_MODELS.md 11.2). Nothing else does: not a timer, and
+//   not an attributed create, which runs inside the birth before the
+//   spawner's state says born. The question is asked of the spawner itself,
+//   where the marker is used, not of anything cached.
+// Issue #181: the special packs' icons gave way to generic ones a few seconds
+// after arrival. A special-kind spawner without `enemyCreatorTimer` would be
+// given up by the `timer` policy's third rule although unborn; that is the
+// suspected cause, not yet measured, and the per-kind retirement accounting
+// and the census below are what the research build measures it with.
+//
 // Everything below is header-only and reaches the game only through
 // g_Yytk->CallBuiltin, so tests/pack_markers_harness.cpp can compile the real
 // class against a controlled runner.
@@ -53,8 +75,38 @@ public:
         "Enemy_Creator_Champion_obj", "Enemy_Creator_Colossal_Chest_obj",
         "Enemy_Creator_Legion_obj", "Enemy_Creator_Miniboss_obj",
     };
+    // Index order == Kind; the same names as PackMarkerIcons::kIcons, used in
+    // the `packmarks` diagnostic lines.
+    static constexpr const char* kKindNames[KindCount] = {
+        "normal", "ambush", "ancient", "champion", "colossal_chest", "legion", "miniboss",
+    };
     // Which kind a mixed cluster shows: the rarest pack wins.
     static constexpr int kKindPriority[KindCount] = { 0, 1, 5, 4, 3, 2, 6 };
+    // The retirement policy (see the class comment).
+    enum class Retire : uint8_t { Timer = 0, State };
+    static constexpr const char* kRetireNames[2] = { "timer", "state" };
+    // Why a marker was retired, one counter each per kind and zone.
+    enum Reason : uint8_t { ReasonSpawned = 0, ReasonDestroyed, ReasonTimerGone, ReasonGivenUp, ReasonStateBorn, ReasonCount };
+    static constexpr const char* kReasonNames[ReasonCount] = { "spawned", "destroyed", "timergone", "givenup", "stateborn" };
+    // Per kind, since the zone generation last changed.
+    struct KindStats {
+        uint64_t listed = 0;                    // distinct spawners that got a marker
+        uint64_t retired[ReasonCount] = {};     // retirements by rule
+        uint64_t attributed = 0;                // creates the hooks attributed to a spawner of this kind, retiring or not
+        int64_t ageMin = -1, ageMax = -1;       // frames between listing and retirement (-1 = none retired)
+        std::unordered_map<int, uint64_t> creates;   // created object index -> attributed creates
+    };
+    // How a census found one variable on a creator: a number (the timer) or an
+    // array (enemyArray), undefined, absent (variable_instance_exists false),
+    // or anything else, a read that threw included.
+    enum Tally : uint8_t { TallyValue = 0, TallyUndefined, TallyAbsent, TallyOther, TallyCount };
+    struct CensusRow {
+        unsigned creators = 0, marked = 0;
+        unsigned timer[TallyCount] = {};        // enemyCreatorTimer
+        unsigned enemyArray[TallyCount] = {};
+        unsigned lost = 0;    // not marked, and enemyArray not an array: a marker the state policy would hold
+        unsigned stale = 0;   // marked, and enemyArray an array: a marker the state policy would retire
+    };
     struct Marker {
         int64_t id;
         double x, y;
@@ -88,9 +140,11 @@ public:
         bool ring = true;
         double ringRadius = 3.0;
     };
-    // A marker is dropped when a creator has shown no timer for this long
-    // after being enumerated: spawners initialise within a second or two, so
-    // one that never reports a timer was already spent when we first saw it.
+    // Under the `timer` policy a marker is dropped when a creator has shown no
+    // timer for this long after being enumerated: spawners initialise within a
+    // second or two, so one that never reports a timer was taken to be spent
+    // already when we first saw it (issue #181 questions this for the kinds
+    // that may carry no timer at all).
     static constexpr uint64_t kUnarmedGiveUpFrames = 600;
     static constexpr uint64_t kCountPollFrames = 30;
     static constexpr uint64_t kEnumerateMinGapFrames = 60;
@@ -131,7 +185,8 @@ public:
     template <class Probe>
     void OnFrame(uint64_t frame, uint64_t zoneGeneration, Probe mapReadable) {
         if (!Enabled()) return;
-        if (zoneGeneration != m_Zone) { m_Zone = zoneGeneration; Clear(); m_Spent.clear(); m_Dirty = true; }
+        m_Frame = frame;
+        if (zoneGeneration != m_Zone) { m_Zone = zoneGeneration; Clear(); m_Spent.clear(); ResetStats(); m_Dirty = true; }
         const bool mayEnumerate = frame >= m_LastEnumerate + kEnumerateMinGapFrames;
         if (m_Dirty && mayEnumerate) { if (mapReadable()) Enumerate(frame); return; }
         if ((frame % kCountPollFrames) == 0 && mayEnumerate && !m_Dirty) {
@@ -147,17 +202,64 @@ public:
     }
 
     // From the create hook: `creatorId` (a numeric instance id) just created
-    // a monster, so its pack exists and the marker must go now rather than
-    // when the rotating check reaches it.
-    void MarkSpawned(int64_t creatorId) {
+    // a monster of object `createdObject`; `creatorObject` is the creator's
+    // own object index, which names its kind when it has no marker (-1 when
+    // not known). Every such create is counted against the creator's kind.
+    // Under `timer` the pack is taken to exist, so the marker goes now rather
+    // than when the rotating check reaches it; under `state` the create
+    // retires nothing (the spawner's own enemyArray decides).
+    void MarkSpawned(int64_t creatorId, int createdObject = -1, int creatorObject = -1) {
         if (!Enabled()) return;
+        const int kind = KindOfCreator(creatorId, creatorObject);
+        if (kind >= 0) {
+            ++m_Stats[kind].attributed;
+            if (createdObject >= 0) ++m_Stats[kind].creates[createdObject];
+        } else ++m_UnattributedCreates;
+        if (GetRetire() != Retire::Timer) return;
         // Remembered even when no marker exists yet: a pack born during the
         // zone's first frames must not get a marker from a later enumeration.
         m_Spent.insert({ creatorId, true });
         auto it = m_Index.find(creatorId);
         if (it == m_Index.end()) return;
+        const Marker m = m_Markers[it->second];
         Remove(it->second);
+        NoteRetired(m, ReasonSpawned, m_Frame);
         ++m_Spawned;
+    }
+
+    // The retirement policy, switchable at any time; a switch keeps every
+    // marker and what was learned about it.
+    Retire GetRetire() const { return m_Retire.load(std::memory_order_relaxed); }
+    void SetRetire(Retire policy) { m_Retire.store(policy, std::memory_order_relaxed); }
+    static const char* RetireName(Retire policy) { return kRetireNames[policy == Retire::State ? 1 : 0]; }
+
+    // One-shot census for `packmarks census`, never run per frame: walks
+    // every creator of each kind now and tallies how it carries its timer and
+    // its enemyArray, and how that agrees with the markers held.
+    std::array<CensusRow, KindCount> Census() {
+        std::array<CensusRow, KindCount> rows{};
+        for (int k = 0; k < KindCount; ++k) {
+            const int obj = ObjectIndex(k);
+            if (obj < 0) continue;
+            int n = 0;
+            try { n = static_cast<int>(g_Yytk->CallBuiltin("instance_number", { RValue((double)obj) }).ToDouble()); } catch (...) { continue; }
+            CensusRow& row = rows[k];
+            for (int i = 0; i < n; ++i) {
+                RValue inst;
+                try { inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)obj), RValue((double)i) }); } catch (...) { continue; }
+                ++row.creators;
+                int64_t id = -1;
+                const bool isMarked = Identity(inst, id) && m_Index.count(id) != 0;
+                if (isMarked) ++row.marked;
+                ++row.timer[TallyVariable(inst, "enemyCreatorTimer", false)];
+                const Tally packs = TallyVariable(inst, "enemyArray", true);
+                ++row.enemyArray[packs];
+                const bool born = packs == TallyValue;
+                if (!isMarked && !born) ++row.lost;
+                if (isMarked && born) ++row.stale;
+            }
+        }
+        return rows;
     }
 
     // A density copy made on its own, as the player walks (rolling density
@@ -299,6 +401,26 @@ public:
     void StyleChanged() { m_ClustersDirty = true; }
     const std::vector<Marker>& Markers() const { return m_Markers; }
     const std::vector<Cluster>& ClusterList() const { return m_Clusters; }
+    // Markers held now, per kind (`packmarks stat`'s kinds= field).
+    std::array<size_t, KindCount> KindCounts() const {
+        std::array<size_t, KindCount> counts{};
+        for (const Marker& m : m_Markers) ++counts[m.kind < KindCount ? m.kind : Normal];
+        return counts;
+    }
+    // Retirement accounting (`packmarks why`), per kind since the zone
+    // generation last changed.
+    const KindStats& Stats(int kind) const { return m_Stats[kind >= 0 && kind < KindCount ? kind : Normal]; }
+    // The `n` objects created most often by spawners of `kind`, most first
+    // (ties by lower object index): (object index, creates).
+    std::vector<std::pair<int, uint64_t>> TopCreates(int kind, size_t n = 4) const {
+        const KindStats& s = Stats(kind);
+        std::vector<std::pair<int, uint64_t>> top(s.creates.begin(), s.creates.end());
+        std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : a.first < b.first; });
+        if (top.size() > n) top.resize(n);
+        return top;
+    }
+    uint64_t UnattributedCreates() const { return m_UnattributedCreates; }   // creates whose creator's kind was unknown
+    uint64_t Frame() const { return m_Frame; }                               // the last frame OnFrame ran
 
     void Clear() {
         m_Markers.clear(); m_Index.clear(); m_Clusters.clear(); m_ClustersDirty = false; m_Cursor = 0;
@@ -322,6 +444,50 @@ private:
             out = static_cast<int64_t>(v);
             return true;
         } catch (...) { return false; }
+    }
+    // The census's reading of one variable on a creator. Absent is asked
+    // first, so an undefined value means the variable exists and is unset.
+    static Tally TallyVariable(const RValue& inst, const char* name, bool wantArray) {
+        try {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(name) }).ToBoolean()) return TallyAbsent;
+            const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) });
+            if (IsUndefined(v)) return TallyUndefined;
+            if (wantArray ? IsArray(v) : IsNumber(v)) return TallyValue;
+            return TallyOther;
+        } catch (...) { return TallyOther; }
+    }
+    static bool IsUndefined(const RValue& v) {
+        return (static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu) == static_cast<uint32_t>(VALUE_UNDEFINED);
+    }
+    // By the runtime's own is_array, as DungeonChestEstimateTotal reads the
+    // same variable.
+    static bool IsArray(const RValue& v) {
+        if (IsUndefined(v)) return false;
+        return g_Yytk->CallBuiltin("is_array", { v }).ToBoolean();
+    }
+    // The kind of the creator a create was attributed to: its marker's, the
+    // kind it was listed under this zone, or its object index's.
+    int KindOfCreator(int64_t creatorId, int creatorObject) const {
+        auto it = m_Index.find(creatorId);
+        if (it != m_Index.end()) return m_Markers[it->second].kind;
+        auto listed = m_KindOf.find(creatorId);
+        if (listed != m_KindOf.end()) return listed->second;
+        if (creatorObject >= 0)
+            for (int k = 0; k < KindCount; ++k)
+                if (m_ObjResolved[k] && m_ObjIdx[k] == creatorObject) return k;
+        return -1;
+    }
+    void NoteRetired(const Marker& m, Reason reason, uint64_t frame) {
+        KindStats& s = m_Stats[m.kind < KindCount ? m.kind : Normal];
+        ++s.retired[reason];
+        const int64_t age = frame >= m.firstSeen ? static_cast<int64_t>(frame - m.firstSeen) : 0;
+        if (s.ageMin < 0 || age < s.ageMin) s.ageMin = age;
+        if (age > s.ageMax) s.ageMax = age;
+    }
+    void ResetStats() {
+        for (KindStats& s : m_Stats) s = KindStats{};
+        m_KindOf.clear();
+        m_UnattributedCreates = 0;
     }
     int ObjectIndex(int kind) {
         if (m_ObjResolved[kind]) return m_ObjIdx[kind];
@@ -434,6 +600,7 @@ private:
                     Marker m{ id, x, y, static_cast<uint8_t>(k), false, frame };
                     if (old != m_Index.end()) { m.armed = m_Markers[old->second].armed; m.firstSeen = m_Markers[old->second].firstSeen; }
                     else if (m_Spent.count(id)) continue;
+                    else if (m_KindOf.emplace(id, static_cast<uint8_t>(k)).second) ++m_Stats[k].listed;
                     index.emplace(id, fresh.size());
                     fresh.push_back(m);
                 } catch (...) {}
@@ -450,18 +617,29 @@ private:
         while (budget-- > 0 && !m_Markers.empty()) {
             if (m_Cursor >= m_Markers.size()) m_Cursor = 0;
             Marker& m = m_Markers[m_Cursor];
-            bool remove = false;
+            Reason reason = ReasonCount;   // ReasonCount = keep
             try {
                 RValue idv((double)m.id);
-                if (!g_Yytk->CallBuiltin("instance_exists", { idv }).ToBoolean()) remove = true;
-                else {
+                if (!g_Yytk->CallBuiltin("instance_exists", { idv }).ToBoolean()) reason = ReasonDestroyed;
+                else if (GetRetire() == Retire::State) {
+                    // The spawner's own state, read by name where the marker
+                    // is used: enemyArray turns into an array at the birth.
+                    // Absent or any other value keeps the marker.
+                    if (IsArray(g_Yytk->CallBuiltin("variable_instance_get", { idv, RValue("enemyArray") }))) reason = ReasonStateBorn;
+                } else {
                     RValue t = g_Yytk->CallBuiltin("variable_instance_get", { idv, RValue("enemyCreatorTimer") });
                     if (IsNumber(t)) m.armed = true;
-                    else if (m.armed) remove = true;                                   // timer destroyed: the pack was born
-                    else if (frame >= m.firstSeen + kUnarmedGiveUpFrames) remove = true; // never armed: spent before we looked
+                    else if (m.armed) reason = ReasonTimerGone;                                   // timer destroyed: the pack was born
+                    else if (frame >= m.firstSeen + kUnarmedGiveUpFrames) reason = ReasonGivenUp;   // never armed: spent before we looked
                 }
             } catch (...) {}
-            if (remove) { m_Spent.insert({ m.id, true }); Remove(m_Cursor); ++m_Removed; }
+            if (reason != ReasonCount) {
+                const Marker gone = m;
+                m_Spent.insert({ gone.id, true });
+                Remove(m_Cursor);
+                NoteRetired(gone, reason, frame);
+                ++m_Removed;
+            }
             else ++m_Cursor;
         }
     }
@@ -496,6 +674,11 @@ private:
     std::vector<Marker> m_Markers;
     std::unordered_map<int64_t, size_t> m_Index;
     std::unordered_map<int64_t, bool> m_Spent;   // ids whose pack was born or which were spent; never re-marked this zone
+    std::atomic<Retire> m_Retire{ Retire::Timer };
+    uint64_t m_Frame{ 0 };
+    KindStats m_Stats[KindCount];
+    std::unordered_map<int64_t, uint8_t> m_KindOf;   // every id listed this zone -> its kind
+    uint64_t m_UnattributedCreates{ 0 };
     std::vector<Cluster> m_Clusters;
     bool m_ClustersDirty{ false };
     Style m_Style;

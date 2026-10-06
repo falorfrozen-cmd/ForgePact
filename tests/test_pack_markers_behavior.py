@@ -8,6 +8,7 @@ how births and destroyed spawners retire a marker, and that a marker is drawn
 with the same placement formula the game uses for its own dots.
 """
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -126,6 +127,98 @@ class PackMarkersBehaviorTests(unittest.TestCase):
         self.assertScenario("draw/state_restored_on_primitive_path")
         # Second review: draw_get_font can answer with an asset reference.
         self.assertScenario("draw/font_restored_when_the_runner_answers_a_reference")
+
+    # Issue #181 baseline: today's rules, pinned as they are.
+    def test_baseline_a_timerless_special_spawner_is_given_up(self):
+        # A spawner kind with no enemyCreatorTimer never arms, so the timer
+        # policy drops its marker after kUnarmedGiveUpFrames, unborn.
+        self.assertScenario("timerless/listed")
+        self.assertScenario("timerless/kept_while_young")
+        self.assertScenario("timerless/dropped_after_give_up")
+
+    def test_baseline_an_attributed_create_retires_the_marker_at_once(self):
+        self.assertScenario("attributed/retires_at_once")
+
+    # Issue #181: the retirement policy, `timer` (today's rules) or `state`.
+    def test_the_retirement_policy_defaults_to_timer_and_switches_at_runtime(self):
+        self.assertScenario("retire/default_is_timer")
+        self.assertScenario("retire/selectable_at_runtime")
+
+    # Issue #181 target: under `state`, only a gone spawner or its own
+    # enemyArray turning into an array retires a marker.
+    def test_state_a_timerless_special_spawner_keeps_its_marker(self):
+        self.assertScenario("state/timerless_kept_past_give_up")
+
+    def test_state_a_born_pack_loses_its_marker_within_one_rotation(self):
+        self.assertScenario("state/born_retired_within_one_rotation")
+
+    def test_state_a_destroyed_spawner_loses_its_marker(self):
+        self.assertScenario("state/destroyed_retired")
+
+    def test_state_an_attributed_create_does_not_retire_an_unborn_marker(self):
+        self.assertScenario("state/attributed_create_keeps_marker")
+        self.assertScenario("state/attributed_then_born_retired")
+
+    def test_state_an_absent_enemy_array_keeps_the_marker(self):
+        self.assertScenario("state/absent_array_keeps_marker")
+
+    def test_state_a_revisited_zones_born_spawners_get_no_marker(self):
+        self.assertScenario("state/revisit_born_spawners_unmarked")
+
+    def test_state_a_normal_spawner_behaves_the_same_way(self):
+        # Control: the rule is not special-kind specific.
+        self.assertScenario("state/normal_control")
+
+    # Issue #181: the one-shot census over every creator of each kind.
+    def test_census_tallies_the_timer_on_all_seven_kinds(self):
+        self.assertScenario("census/creators_and_marked")
+        self.assertScenario("census/timer_number")
+        self.assertScenario("census/timer_undefined")
+        self.assertScenario("census/timer_absent")
+        self.assertScenario("census/timer_other")
+
+    def test_census_tallies_the_enemy_array_on_all_seven_kinds(self):
+        self.assertScenario("census/array_array")
+        self.assertScenario("census/array_undefined")
+        self.assertScenario("census/array_absent")
+        self.assertScenario("census/array_other")
+
+    def test_census_counts_lost_and_stale_markers_both_ways(self):
+        self.assertScenario("census/lost_both_ways")
+        self.assertScenario("census/stale_both_ways")
+
+    def test_census_runs_only_when_asked(self):
+        self.assertScenario("census/never_per_frame")
+
+    # Issue #181: per-kind, per-zone retirement accounting.
+    def test_accounting_each_rule_counts_under_its_own_reason_and_kind(self):
+        self.assertScenario("accounting/listed")
+        self.assertScenario("accounting/spawned")
+        self.assertScenario("accounting/destroyed")
+        self.assertScenario("accounting/timergone")
+        self.assertScenario("accounting/givenup")
+        self.assertScenario("accounting/stateborn")
+
+    def test_accounting_records_ages_and_every_attributed_create(self):
+        self.assertScenario("accounting/age_range")
+        self.assertScenario("accounting/attributed_creates")
+        self.assertScenario("accounting/top_creates")
+
+    def test_accounting_resets_on_a_zone_change(self):
+        self.assertScenario("accounting/reset_on_zone_change")
+
+    def test_markers_held_now_are_counted_per_kind(self):
+        self.assertScenario("stat/kinds_held_now")
+
+    def test_kind_names_match_the_icon_names(self):
+        # `packmarks` lines name a kind by its icon; the two tables must agree.
+        root = ROOT / "plugin/include/ForgePact"
+        markers = (root / "PackMarkers.hpp").read_text(encoding="utf-8")
+        icons = (root / "PackMarkerIcons.hpp").read_text(encoding="utf-8")
+        start = markers.index("kKindNames[KindCount] = {")
+        names = re.findall(r'"([a-z_]+)"', markers[start:markers.index("};", start)])
+        self.assertEqual(names, re.findall(r'^\s*\{ "([a-z_]+)", k_', icons, re.M))
+        self.assertEqual(len(names), 7)
 
 
 if __name__ == "__main__":

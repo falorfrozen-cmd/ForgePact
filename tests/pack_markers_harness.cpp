@@ -6,6 +6,13 @@
 // holds spawners with an `enemyCreatorTimer` that is undefined until the
 // spawner initialises and undefined again once it has given birth, which is
 // exactly what the live creator does (docs/population-performance-analysis.md).
+//
+// It can also hold what the runtime may answer for the other six creator kinds
+// (issue #181): a spawner with no `enemyCreatorTimer` variable at all, and an
+// `enemyArray` per spawner that is undefined before the birth and an array
+// after it (RUNTIME_DATA_MODELS 11.2), absent, or some other value.
+// `variable_instance_exists` tells absent from undefined, as the runner does;
+// `variable_instance_get` of an absent variable answers undefined.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -16,7 +23,7 @@
 #include <string>
 #include <vector>
 
-enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_BOOL };
+enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_BOOL, VALUE_ARRAY };
 struct RValue {
     int m_Kind = VALUE_UNDEFINED;
     double number = 0;
@@ -29,12 +36,21 @@ struct RValue {
 };
 
 // ---- the controlled world -------------------------------------------------
-struct Spawner { int64_t id; int kind; double x, y; bool exists; bool initialised; bool spawned; };
+// How a spawner carries a variable: as the live Enemy_Creator_obj does
+// (Usual: the timer a number while armed, enemyArray an array once born), not
+// at all (Absent), or as a value of another kind (Odd: a string timer, a
+// numeric enemyArray).
+enum VarMode { Usual = 0, Absent, Odd };
+struct Spawner {
+    int64_t id; int kind; double x, y; bool exists; bool initialised; bool spawned;
+    int timerMode = Usual; int arrayMode = Usual;
+};
 struct World {
     std::vector<Spawner> spawners;
     std::map<std::string, int> objects;   // creator family name -> object index
     double hudRes = 2.0;
     long finds = 0, reads = 0, numbers = 0, exists = 0, draws = 0, rings = 0, texts = 0, spriteAdds = 0, spriteDeletes = 0;
+    long timerReads = 0, arrayReads = 0, existsChecks = 0;
     long spriteAddResult = 500;           // sprite_add answers 500+n, or -1 when negative
     bool refuseRelative = false;          // the sandbox refuses the relative path: only the absolute one works
     std::vector<std::string> addedPaths;
@@ -71,9 +87,32 @@ struct Runner {
             if (field == "x") return RValue(s->x);
             if (field == "y") return RValue(s->y);
             if (field == "id") return RValue((double)s->id);
-            if (field == "enemyCreatorTimer") { if (s->initialised && !s->spawned) return RValue(116.0); return RValue(); }
+            if (field == "enemyCreatorTimer") {
+                ++world.timerReads;
+                if (s->timerMode == Absent) return RValue();
+                if (s->timerMode == Odd) return RValue("soon");
+                if (s->initialised && !s->spawned) return RValue(116.0);
+                return RValue();
+            }
+            if (field == "enemyArray") {
+                ++world.arrayReads;
+                if (s->arrayMode == Absent) return RValue();
+                if (s->arrayMode == Odd) return RValue(-1.0);
+                if (s->spawned) { RValue a; a.m_Kind = VALUE_ARRAY; return a; }
+                return RValue();
+            }
             throw std::runtime_error("unexpected field " + field);
         }
+        if (name == "variable_instance_exists") {
+            ++world.existsChecks;
+            Spawner* s = byId((int64_t)args[0].number);
+            if (!s) return RValue(0.0);
+            const std::string& field = args[1].text;
+            if (field == "enemyCreatorTimer") return RValue(s->timerMode == Absent ? 0.0 : 1.0);
+            if (field == "enemyArray") return RValue(s->arrayMode == Absent ? 0.0 : 1.0);
+            return RValue(field == "x" || field == "y" || field == "id" ? 1.0 : 0.0);
+        }
+        if (name == "is_array") return RValue(args[0].m_Kind == VALUE_ARRAY ? 1.0 : 0.0);
         if (name == "variable_global_get") { if (args[0].text == "hud_res") return RValue(world.hudRes); if (args[0].text == "font_smallest") return RValue(3.0); return RValue(); }
         if (name == "draw_sprite_ext") {
             ++world.draws;
@@ -128,6 +167,20 @@ static void resetWorld() {
                       {"Enemy_Creator_Champion_obj", 13}, {"Enemy_Creator_Colossal_Chest_obj", 14}, {"Enemy_Creator_Legion_obj", 15},
                       {"Enemy_Creator_Miniboss_obj", 16} };
 }
+// The scenarios after the first two zones each start a zone of their own: a
+// fresh world, a new zone generation, and frames run until it is listed.
+static uint64_t clockFrame = 0;
+static uint64_t zoneNow = 2;
+static bool marked(int64_t id) { for (const auto& m : pm().Markers()) if (m.id == id) return true; return false; }
+static void runFrames(uint64_t n) { for (uint64_t i = 0; i < n; ++i) pm().OnFrame(clockFrame++, zoneNow, readable); }
+static void enterZone(const std::vector<Spawner>& spawners) {
+    resetWorld();
+    world.spawners = spawners;
+    ++zoneNow;
+    const uint64_t before = pm().Enumerations();
+    for (int i = 0; i < 1000 && pm().Enumerations() == before; ++i) runFrames(1);
+}
+static Spawner spawnerOf(int64_t id, int obj, double x, double y) { return Spawner{ id, obj, x, y, true, true, false }; }
 
 int main() {
     resetWorld();
@@ -331,6 +384,300 @@ int main() {
         pm().OnFrame(g++, 2, readable);
     check("copy/real_growth_still_lists", pm().Enumerations() == enumsBeforeCopy + 1 && pm().Count() == 7,
         "enumerations=" + std::to_string(pm().Enumerations() - enumsBeforeCopy) + " count=" + std::to_string(pm().Count()));
+    clockFrame = g;
+
+    // ---- issue #181 baseline: how markers retire under today's rules -------
+    // A special-kind spawner that carries no enemyCreatorTimer at all (as the
+    // six other creator kinds may not) is listed and kept while young, then
+    // given up as "spent before we looked" once kUnarmedGiveUpFrames pass,
+    // although its pack was never born. Pinned as it is: the suspected cause
+    // of the icons giving way a few seconds after arrival.
+    {
+        Spawner champion = spawnerOf(7000, 13, 100, 100); champion.timerMode = Absent;
+        Spawner plain = spawnerOf(7001, 10, 900, 900);
+        enterZone({ champion, plain });
+        const uint64_t listedAt = clockFrame;
+        check("timerless/listed", marked(7000) && marked(7001), "count=" + std::to_string(pm().Count()));
+        runFrames(PackMarkers::kUnarmedGiveUpFrames / 2);
+        check("timerless/kept_while_young", marked(7000));
+        while (clockFrame < listedAt + PackMarkers::kUnarmedGiveUpFrames + 10) runFrames(1);
+        check("timerless/dropped_after_give_up", !marked(7000) && marked(7001) && !world.spawners[0].spawned,
+            "count=" + std::to_string(pm().Count()));
+    }
+    // A create the hooks attribute to a spawner retires its marker at once,
+    // whatever the spawner's own state says.
+    {
+        enterZone({ spawnerOf(7100, 13, 100, 100), spawnerOf(7101, 13, 900, 900) });
+        pm().MarkSpawned(7100);
+        check("attributed/retires_at_once", !marked(7100) && marked(7101) && !world.spawners[0].spawned,
+            "count=" + std::to_string(pm().Count()));
+    }
+
+    // ---- issue #181: the retirement policy -------------------------------
+    using Retire = PackMarkers::Retire;
+    auto st = [](int kind) -> const PackMarkers::KindStats& { return pm().Stats(kind); };
+    // Rotations: the rotating check visits every marker within ceil(n/32) frames.
+    auto rotation = []() { return (pm().Count() + PackMarkers::kValidatePerFrame - 1) / PackMarkers::kValidatePerFrame; };
+    check("retire/default_is_timer", pm().GetRetire() == Retire::Timer
+        && std::string(PackMarkers::RetireName(Retire::Timer)) == "timer" && std::string(PackMarkers::RetireName(Retire::State)) == "state");
+    // Switching policy at runtime keeps every marker held.
+    {
+        enterZone({ spawnerOf(7200, 13, 100, 100), spawnerOf(7201, 10, 900, 900) });
+        pm().SetRetire(Retire::State);
+        runFrames(rotation());
+        const bool keptUnderState = pm().Count() == 2;
+        pm().SetRetire(Retire::Timer);
+        runFrames(rotation());
+        check("retire/selectable_at_runtime", keptUnderState && pm().Count() == 2 && pm().GetRetire() == Retire::Timer,
+            "count=" + std::to_string(pm().Count()));
+    }
+
+    // ---- issue #181 target: the state policy ------------------------------
+    pm().SetRetire(Retire::State);
+    // A special spawner without a timer keeps its marker past the give-up
+    // window: an unborn pack is not "spent" for lacking a timer.
+    {
+        Spawner champion = spawnerOf(7300, 13, 100, 100); champion.timerMode = Absent;
+        enterZone({ champion });
+        const uint64_t listedAt = clockFrame;
+        while (clockFrame < listedAt + 2 * PackMarkers::kUnarmedGiveUpFrames) runFrames(1);
+        check("state/timerless_kept_past_give_up", marked(7300) && st(PackMarkers::Champion).retired[PackMarkers::ReasonGivenUp] == 0,
+            "count=" + std::to_string(pm().Count()));
+    }
+    // A spawner whose enemyArray becomes an array (its pack is born) loses its
+    // marker within one rotation; the 69 others keep theirs.
+    {
+        std::vector<Spawner> zone;
+        for (int i = 0; i < 69; ++i) zone.push_back(spawnerOf(7400 + i, 13, 300.0 * i, 0));
+        zone.push_back(spawnerOf(7499, 13, 0, 5000));
+        enterZone(zone);
+        runFrames(rotation());
+        const bool keptUnborn = marked(7499);
+        const size_t frames = rotation();
+        world.spawners.back().spawned = true;
+        runFrames(frames);
+        check("state/born_retired_within_one_rotation", keptUnborn && !marked(7499) && pm().Count() == 69
+            && st(PackMarkers::Champion).retired[PackMarkers::ReasonStateBorn] == 1,
+            "frames=" + std::to_string(frames) + " count=" + std::to_string(pm().Count()));
+    }
+    // A destroyed spawner loses it.
+    {
+        enterZone({ spawnerOf(7500, 16, 100, 100), spawnerOf(7501, 16, 900, 900) });
+        world.spawners[0].exists = false;
+        runFrames(rotation());
+        check("state/destroyed_retired", !marked(7500) && marked(7501) && st(PackMarkers::Miniboss).retired[PackMarkers::ReasonDestroyed] == 1,
+            "count=" + std::to_string(pm().Count()));
+    }
+    // A create attributed to the spawner retires nothing while its enemyArray
+    // is not an array (the create runs inside the birth, before the state
+    // says born); the create is still counted.
+    {
+        enterZone({ spawnerOf(7600, 15, 100, 100) });
+        const uint64_t spawnedBefore = pm().Spawned();
+        pm().MarkSpawned(7600, 42, 15);
+        runFrames(rotation());
+        check("state/attributed_create_keeps_marker", marked(7600) && pm().Spawned() == spawnedBefore && st(PackMarkers::Legion).attributed == 1
+            && st(PackMarkers::Legion).retired[PackMarkers::ReasonSpawned] == 0,
+            "count=" + std::to_string(pm().Count()) + " spawned=" + std::to_string(pm().Spawned()));
+        // ...and once the state does say born, the same spawner goes.
+        world.spawners[0].spawned = true;
+        runFrames(rotation());
+        check("state/attributed_then_born_retired", !marked(7600));
+    }
+    // An absent enemyArray keeps the marker, born or not: only an array retires.
+    {
+        Spawner noArray = spawnerOf(7700, 11, 100, 100); noArray.arrayMode = Absent; noArray.spawned = true;
+        Spawner odd = spawnerOf(7701, 11, 900, 900); odd.arrayMode = Odd; odd.spawned = true;
+        enterZone({ noArray, odd });
+        runFrames(rotation() + 2);
+        check("state/absent_array_keeps_marker", marked(7700) && marked(7701), "count=" + std::to_string(pm().Count()));
+    }
+    // A revisited zone: its born spawners still exist with an array, and are
+    // listed again by a fresh enumeration; one rotation retires them, the
+    // unborn one stays, and nothing brings them back.
+    {
+        std::vector<Spawner> zone;
+        for (int i = 0; i < 6; ++i) { Spawner s = spawnerOf(7800 + i, 12 + (i % 2), 200.0 * i, 0); s.spawned = true; zone.push_back(s); }
+        zone.push_back(spawnerOf(7899, 12, 0, 4000));
+        enterZone(zone);
+        const size_t listed = pm().Count();
+        runFrames(rotation());
+        const bool retired = pm().Count() == 1 && marked(7899);
+        const uint64_t enumerations = pm().Enumerations();
+        runFrames(PackMarkers::kReenumerateFrames + PackMarkers::kCountPollFrames);   // past the periodic re-listing
+        check("state/revisit_born_spawners_unmarked", listed == 7 && retired && pm().Enumerations() > enumerations
+            && pm().Count() == 1 && marked(7899),
+            "listed=" + std::to_string(listed) + " count=" + std::to_string(pm().Count()));
+    }
+    // Control: a normal spawner behaves the same way - an unborn one without a
+    // usable timer is kept past the give-up window, a born one goes in one rotation.
+    {
+        Spawner unarmed = spawnerOf(7900, 10, 100, 100); unarmed.initialised = false;
+        Spawner born = spawnerOf(7901, 10, 900, 900);
+        enterZone({ unarmed, born });
+        const uint64_t listedAt = clockFrame;
+        world.spawners[1].spawned = true;
+        runFrames(rotation());
+        const bool bornGone = !marked(7901);
+        while (clockFrame < listedAt + 2 * PackMarkers::kUnarmedGiveUpFrames) runFrames(1);
+        check("state/normal_control", bornGone && marked(7900) && st(PackMarkers::Normal).retired[PackMarkers::ReasonStateBorn] == 1
+            && st(PackMarkers::Normal).retired[PackMarkers::ReasonGivenUp] == 0, "count=" + std::to_string(pm().Count()));
+    }
+    pm().SetRetire(Retire::Timer);
+
+    // ---- issue #181: the census --------------------------------------------
+    // All seven kinds, every way a creator can carry its timer and its
+    // enemyArray: number/array, undefined, absent, other.
+    {
+        std::vector<Spawner> zone;
+        zone.push_back(spawnerOf(8000, 10, 0, 0));                                                    // normal: timer number, array undefined
+        { Spawner s = spawnerOf(8001, 10, 100, 0); s.initialised = false; zone.push_back(s); }        // normal: timer undefined, array undefined
+        { Spawner s = spawnerOf(8100, 11, 200, 0); s.timerMode = Absent; s.arrayMode = Absent; zone.push_back(s); }   // ambush: absent, absent
+        { Spawner s = spawnerOf(8200, 12, 300, 0); s.timerMode = Odd; s.arrayMode = Odd; zone.push_back(s); }         // ancient: other, other
+        { Spawner s = spawnerOf(8300, 13, 400, 0); s.spawned = true; zone.push_back(s); }             // champion: born - timer undefined, array an array
+        { Spawner s = spawnerOf(8400, 14, 500, 0); s.initialised = false; zone.push_back(s); }        // colossal chest: undefined, undefined
+        { Spawner s = spawnerOf(8500, 15, 600, 0); s.timerMode = Absent; zone.push_back(s); }         // legion: absent, undefined
+        { Spawner s = spawnerOf(8501, 15, 700, 0); s.spawned = true; zone.push_back(s); }             // legion: born
+        { Spawner s = spawnerOf(8600, 16, 800, 0); s.timerMode = Absent; zone.push_back(s); }         // miniboss: absent, undefined
+        enterZone(zone);
+        // Retire two markers by an attributed create (timer policy): 8001's
+        // pack is not born (lost), 8501's is (neither lost nor stale).
+        pm().MarkSpawned(8001, 42, 10);
+        pm().MarkSpawned(8501, 42, 15);
+        const long existsBefore = world.existsChecks;
+        const auto rows = pm().Census();
+        using T = PackMarkers::Tally;
+        auto tallies = [](const unsigned* t) { return std::to_string(t[0]) + "/" + std::to_string(t[1]) + "/" + std::to_string(t[2]) + "/" + std::to_string(t[3]); };
+        auto row = [&](int kind) {
+            const auto& r = rows[kind];
+            return std::string(PackMarkers::kKindNames[kind]) + ": creators=" + std::to_string(r.creators) + " marked=" + std::to_string(r.marked)
+                + " timer=" + tallies(r.timer) + " enemyArray=" + tallies(r.enemyArray) + " lost=" + std::to_string(r.lost) + " stale=" + std::to_string(r.stale);
+        };
+        std::string all; for (int k = 0; k < PackMarkers::KindCount; ++k) all += " [" + row(k) + "]";
+        check("census/creators_and_marked", rows[PackMarkers::Normal].creators == 2 && rows[PackMarkers::Normal].marked == 1
+            && rows[PackMarkers::Legion].creators == 2 && rows[PackMarkers::Legion].marked == 1
+            && rows[PackMarkers::Ambush].creators == 1 && rows[PackMarkers::Ambush].marked == 1 && rows[PackMarkers::Miniboss].creators == 1, all);
+        check("census/timer_number", rows[PackMarkers::Normal].timer[T::TallyValue] == 1, all);
+        check("census/timer_undefined", rows[PackMarkers::Normal].timer[T::TallyUndefined] == 1 && rows[PackMarkers::Champion].timer[T::TallyUndefined] == 1
+            && rows[PackMarkers::ColossalChest].timer[T::TallyUndefined] == 1, all);
+        check("census/timer_absent", rows[PackMarkers::Ambush].timer[T::TallyAbsent] == 1 && rows[PackMarkers::Legion].timer[T::TallyAbsent] == 1
+            && rows[PackMarkers::Miniboss].timer[T::TallyAbsent] == 1 && rows[PackMarkers::Normal].timer[T::TallyAbsent] == 0, all);
+        check("census/timer_other", rows[PackMarkers::Ancient].timer[T::TallyOther] == 1 && rows[PackMarkers::Ancient].timer[T::TallyValue] == 0, all);
+        check("census/array_array", rows[PackMarkers::Champion].enemyArray[T::TallyValue] == 1 && rows[PackMarkers::Legion].enemyArray[T::TallyValue] == 1
+            && rows[PackMarkers::Normal].enemyArray[T::TallyValue] == 0, all);
+        check("census/array_undefined", rows[PackMarkers::Normal].enemyArray[T::TallyUndefined] == 2 && rows[PackMarkers::ColossalChest].enemyArray[T::TallyUndefined] == 1
+            && rows[PackMarkers::Legion].enemyArray[T::TallyUndefined] == 1 && rows[PackMarkers::Miniboss].enemyArray[T::TallyUndefined] == 1, all);
+        check("census/array_absent", rows[PackMarkers::Ambush].enemyArray[T::TallyAbsent] == 1 && rows[PackMarkers::Ambush].enemyArray[T::TallyUndefined] == 0, all);
+        check("census/array_other", rows[PackMarkers::Ancient].enemyArray[T::TallyOther] == 1 && rows[PackMarkers::Ancient].enemyArray[T::TallyValue] == 0, all);
+        // lost: not marked and no array (8001); a retired marker whose pack IS
+        // born (8501) is not lost, and a marked unborn one (8000) is neither.
+        check("census/lost_both_ways", rows[PackMarkers::Normal].lost == 1 && rows[PackMarkers::Legion].lost == 0
+            && rows[PackMarkers::ColossalChest].lost == 0 && rows[PackMarkers::Ambush].lost == 0, all);
+        // stale: marked and an array (8300, listed already born); the retired
+        // born one (8501) and the marked unborn ones are not stale.
+        check("census/stale_both_ways", rows[PackMarkers::Champion].stale == 1 && rows[PackMarkers::Legion].stale == 0
+            && rows[PackMarkers::Normal].stale == 0 && rows[PackMarkers::Miniboss].stale == 0, all);
+        // One-shot: the census asked variable_instance_exists twice per
+        // creator; frames never ask it at all.
+        const long censusAsks = world.existsChecks - existsBefore;
+        runFrames(3 * PackMarkers::kCountPollFrames);
+        check("census/never_per_frame", censusAsks == 2 * 9 && world.existsChecks - existsBefore == censusAsks,
+            "asks=" + std::to_string(censusAsks) + " after=" + std::to_string(world.existsChecks - existsBefore));
+    }
+
+    // ---- issue #181: retirement accounting ----------------------------------
+    // Each rule counts against its own reason and its own kind only.
+    {
+        Spawner timerless = spawnerOf(9200, 12, 300, 0); timerless.timerMode = Absent;
+        enterZone({ spawnerOf(9000, 10, 0, 0), spawnerOf(9100, 11, 100, 0), timerless,
+                    spawnerOf(9300, 13, 600, 0), spawnerOf(9500, 15, 900, 0), spawnerOf(9600, 16, 1200, 0) });
+        const uint64_t listedAt = clockFrame;
+        check("accounting/listed", st(PackMarkers::Normal).listed == 1 && st(PackMarkers::Legion).listed == 1
+            && st(PackMarkers::ColossalChest).listed == 0, "normal=" + std::to_string(st(PackMarkers::Normal).listed));
+        runFrames(rotation());   // arms every spawner that has a timer
+        // Each step must add exactly one retirement, under its own kind and reason.
+        using Counters = std::vector<uint64_t>;
+        auto snapshot = [&]() {
+            Counters c;
+            for (int k = 0; k < PackMarkers::KindCount; ++k)
+                for (int r = 0; r < PackMarkers::ReasonCount; ++r) c.push_back(st(k).retired[r]);
+            return c;
+        };
+        auto onlyAdded = [&](const Counters& before, int kind, int reason) {
+            const Counters after = snapshot();
+            for (size_t i = 0; i < after.size(); ++i) {
+                const uint64_t want = before[i] + ((int)i == kind * PackMarkers::ReasonCount + reason ? 1 : 0);
+                if (after[i] != want) return false;
+            }
+            return true;
+        };
+        auto counts = [&]() {
+            std::string s;
+            for (int k = 0; k < PackMarkers::KindCount; ++k) {
+                s += std::string(" ") + PackMarkers::kKindNames[k] + ":";
+                for (int r = 0; r < PackMarkers::ReasonCount; ++r) s += std::to_string(st(k).retired[r]);
+            }
+            return s;
+        };
+        Counters before = snapshot();
+        pm().MarkSpawned(9500, 42, 15);
+        check("accounting/spawned", onlyAdded(before, PackMarkers::Legion, PackMarkers::ReasonSpawned), counts());
+        before = snapshot();
+        world.spawners[3].exists = false;
+        runFrames(rotation());
+        check("accounting/destroyed", onlyAdded(before, PackMarkers::Champion, PackMarkers::ReasonDestroyed), counts());
+        before = snapshot();
+        world.spawners[0].spawned = true;
+        runFrames(rotation());
+        check("accounting/timergone", onlyAdded(before, PackMarkers::Normal, PackMarkers::ReasonTimerGone), counts());
+        before = snapshot();
+        while (clockFrame < listedAt + PackMarkers::kUnarmedGiveUpFrames + 10) runFrames(1);
+        check("accounting/givenup", onlyAdded(before, PackMarkers::Ancient, PackMarkers::ReasonGivenUp), counts());
+        before = snapshot();
+        pm().SetRetire(Retire::State);
+        world.spawners[1].spawned = true;
+        runFrames(rotation());
+        pm().SetRetire(Retire::Timer);
+        check("accounting/stateborn", onlyAdded(before, PackMarkers::Ambush, PackMarkers::ReasonStateBorn)
+            && pm().Count() == 1 && marked(9600), counts());
+        // Ages: the create came before any rotation, the give-up after the window.
+        check("accounting/age_range", st(PackMarkers::Legion).ageMin >= 0 && st(PackMarkers::Legion).ageMax < (int64_t)PackMarkers::kUnarmedGiveUpFrames
+            && st(PackMarkers::Ancient).ageMin >= (int64_t)PackMarkers::kUnarmedGiveUpFrames && st(PackMarkers::Ancient).ageMin == st(PackMarkers::Ancient).ageMax
+            && st(PackMarkers::Miniboss).ageMin == -1 && st(PackMarkers::Miniboss).ageMax == -1,
+            "legion=" + std::to_string(st(PackMarkers::Legion).ageMin) + ".." + std::to_string(st(PackMarkers::Legion).ageMax)
+            + " ancient=" + std::to_string(st(PackMarkers::Ancient).ageMin) + ".." + std::to_string(st(PackMarkers::Ancient).ageMax));
+        // Every create is counted against its creator's kind with the created
+        // object, retiring or not: a spent creator's by the kind it was listed
+        // under, an unlisted one's by its object index, else unattributed.
+        pm().MarkSpawned(9500, 42, -1);
+        pm().MarkSpawned(9500, 43, -1);
+        pm().MarkSpawned(9500, 43, -1);
+        pm().MarkSpawned(9500, 44, -1);
+        pm().MarkSpawned(9500, 45, -1);
+        pm().MarkSpawned(9500, 46, -1);
+        pm().MarkSpawned(424242, 50, 16);
+        pm().MarkSpawned(434343, 50, -1);
+        const auto top = pm().TopCreates(PackMarkers::Legion);
+        check("accounting/attributed_creates", st(PackMarkers::Legion).attributed == 7 && st(PackMarkers::Legion).creates.at(42) == 2
+            && st(PackMarkers::Legion).creates.at(43) == 2 && st(PackMarkers::Miniboss).attributed == 1 && st(PackMarkers::Miniboss).creates.at(50) == 1
+            && pm().UnattributedCreates() == 1 && st(PackMarkers::Legion).retired[PackMarkers::ReasonSpawned] == 1,
+            "legion=" + std::to_string(st(PackMarkers::Legion).attributed) + " unattributed=" + std::to_string(pm().UnattributedCreates()));
+        check("accounting/top_creates", top.size() == 4 && top[0].first == 42 && top[0].second == 2 && top[1].first == 43
+            && top[2].first == 44 && top[3].first == 45, "top=" + std::to_string(top.size()));
+        // markers held now, per kind
+        const auto held = pm().KindCounts();
+        check("stat/kinds_held_now", held[PackMarkers::Miniboss] == 1 && held[PackMarkers::Normal] == 0 && held[PackMarkers::Legion] == 0
+            && std::string(PackMarkers::kKindNames[PackMarkers::ColossalChest]) == "colossal_chest", "miniboss=" + std::to_string(held[PackMarkers::Miniboss]));
+        // A zone generation change starts every count again.
+        enterZone({ spawnerOf(9700, 10, 0, 0) });
+        bool zero = pm().UnattributedCreates() == 0;
+        for (int k = 0; k < PackMarkers::KindCount; ++k) {
+            const auto& s = st(k);
+            for (int r = 0; r < PackMarkers::ReasonCount; ++r) zero = zero && s.retired[r] == 0;
+            zero = zero && s.attributed == 0 && s.creates.empty() && s.ageMin == -1 && s.ageMax == -1 && s.listed == (k == PackMarkers::Normal ? 1u : 0u);
+        }
+        check("accounting/reset_on_zone_change", zero);
+    }
 
     // Off again: the list is gone and nothing is drawn.
     pm().SetEnabled(false);
