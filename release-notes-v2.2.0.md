@@ -320,15 +320,35 @@ experience.
   mods list use the same names. What the rows do is unchanged, and the shares
   you set carry over: a share you had on Rare now shows on Ancient, and one you
   had on Ancient shows on Legion.
+- **Shorter freezes when ForgePact hooks into the game (#151).** Every time
+  ForgePact attaches one of its mods to the game, the mod loader
+  (`AurieCore.dll`) briefly pauses the game, and finding what to pause meant
+  looking through every program running on your computer, twice. That cost
+  about 69 ms per attachment: in our testing the main menu held for about 1.3
+  seconds at start-up with Item truth on, and turning on a relic drop
+  multiplier in town froze the game for about 1.5 seconds. This release ships
+  a modified `AurieCore.dll` that looks only at the game itself. On the same
+  computer it now costs under 2 ms per attachment: the start-up hold went
+  from about 1.3 seconds to about 0.05 seconds, and turning on the relic drop
+  multiplier in town held the game for about 0.1 seconds instead of 1.5.
+  Mods attach exactly as before and do the same things; only the pause gets
+  shorter.
+  `AurieCore-NOTICE.md` in the `modfiles` folder says what was changed and
+  where its source is.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact: the panel
 gained a slider, four switches, an Incident reports card and a Gameplay page,
 so updating only the plugin leaves them out. Your existing settings are
 retained. Source users can run `Prepare-Plugin.bat` if plugin files are missing
-before using **Install Mod Plugin**. The plugin changed too, so **Launch Modded
-Game** brings it up to date for you. If you start the game from Steam instead,
-or ForgePact's warning asks for it, press **Install Mod Plugin** once after
-updating.
+before using **Install Mod Plugin**.
+
+**Press Install Mod Plugin once after updating, this time even if you use
+Launch Modded Game.** This release replaces `AurieCore.dll` in the game's
+folder as well as the plugin. **Launch Modded Game** only brings the plugin up
+to date, and while the game still has the old `AurieCore.dll` it refuses to
+update even that and asks you to press **Install Mod Plugin**. One press
+installs the new `AurieCore.dll` and the new plugin together; after that,
+Launch Modded Game and starting from Steam both work as before.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.

@@ -19,6 +19,8 @@ the exe - see MODFILE_SOURCES in src/forgepact.py):
         modfiles/HSOfflineTrackerProducer.dll   (optional: HS Offline Tracker live sensor)
         modfiles/NOTICE.md                      (YYToolkit corresponding-source pointer)
         modfiles/YYToolkit-BUILD-INFO.json      (YYToolkit build record)
+        modfiles/AurieCore-NOTICE.md            (modified AurieCore notice)
+        modfiles/AurieCore-BUILD-INFO.json      (AurieCore build record)
         README.md
         CREDITS.md
         LICENSE
@@ -59,6 +61,18 @@ OPTIONAL = ["HSOfflineTrackerProducer.dll"]  # HS Offline Tracker live sensor
 # AGPL notice and the provenance record travel with the binary they describe.
 YYTOOLKIT_NOTICE_DIR = ROOT / "yytoolkit-modified"
 YYTOOLKIT_NOTICE_FILES = ["NOTICE.md", "YYToolkit-BUILD-INFO.json"]
+# The same pair for modfiles/AurieCore.dll, the hub's third_party/aurie/ patch
+# series (issue #151). Prefixed because modfiles/NOTICE.md is YYToolkit's.
+AURIE_NOTICE_DIR = ROOT / "aurie-modified"
+AURIE_NOTICE_FILES = ["AurieCore-NOTICE.md", "AurieCore-BUILD-INFO.json"]
+
+
+def ship_notices(out_mod: Path) -> None:
+    """Copy both modified binaries' notice and build record into modfiles/."""
+    for n in YYTOOLKIT_NOTICE_FILES:
+        shutil.copy2(YYTOOLKIT_NOTICE_DIR / n, out_mod / n)
+    for n in AURIE_NOTICE_FILES:
+        shutil.copy2(AURIE_NOTICE_DIR / n, out_mod / n)
 
 
 def panel_version() -> str:
@@ -155,6 +169,10 @@ def main() -> int:
     if missing_notice:
         print("ERROR: yytoolkit-modified is incomplete ->", ", ".join(missing_notice))
         return 1
+    missing_notice = [n for n in AURIE_NOTICE_FILES if not (AURIE_NOTICE_DIR / n).is_file()]
+    if missing_notice:
+        print("ERROR: aurie-modified is incomplete ->", ", ".join(missing_notice))
+        return 1
 
     # Is the plugin in the package the same as the last release build from source?
     # If not, anyone pressing Install gets the OLD plugin, today's commands are not
@@ -238,8 +256,7 @@ def main() -> int:
     for n in OPTIONAL:
         if (MODFILES / n).is_file():
             shutil.copy2(MODFILES / n, out_mod / n)
-    for n in YYTOOLKIT_NOTICE_FILES:
-        shutil.copy2(YYTOOLKIT_NOTICE_DIR / n, out_mod / n)
+    ship_notices(out_mod)
 
     for n in ("README.md", "CREDITS.md", "LICENSE"):
         p = ROOT / n

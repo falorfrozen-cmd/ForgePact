@@ -41,6 +41,7 @@
 // ModuleMain.cpp includes <windows.h> without NOMINMAX.
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <array>
@@ -1569,6 +1570,214 @@ inline std::vector<std::string> StatLines(const StatFacts& s)
         lines.push_back(row);
     }
     return lines;
+}
+
+// ---- what a hook install costs (ForgePact #151) --------------------------------
+//
+// The one-time setup holds the main menu's frame for about 2.5 s, nearly all
+// of it in the hook installers (docs/setup-stall-research.md). ModuleMain.cpp's
+// HookOneScript and HookBuiltin each open an InstallTimer for the whole call
+// and read Qpc() around three of its parts: resolve (the name lookup), detour
+// (the one inline-hook call, counted whether or not it succeeds) and log (the
+// log writes). Rest is the remainder of the call. Every install goes into the
+// session's totals and, while the setup window is open (from SetupLapStart
+// until SetupSlowest ends the laps), into the setup's. The setup line adds
+// what the existing line's `hooks` value spent outside the two installers.
+// Frame thread only, like the laps: plain fields, no atomics. It changes no
+// install; it only reads the clock around them.
+
+// One install's parts, in Qpc() ticks.
+struct InstallParts {
+    int64_t resolve = 0;
+    int64_t detour = 0;
+    int64_t log = 0;
+    bool detoured = false;   // the installer reached its detour call
+};
+
+class InstallCost {
+public:
+    // The setup's parts in ms. `outsideMs` is the `hooks` value the setup
+    // line was given minus the installs' own time, never negative, so the
+    // five add up to that value.
+    struct Parts {
+        double resolveMs = 0.0;
+        double detourMs = 0.0;
+        double logMs = 0.0;
+        double restMs = 0.0;
+        double outsideMs = 0.0;
+    };
+
+    void OpenSetup() noexcept
+    {
+        m_Setup = Totals{};
+        m_SetupOpen = true;
+        m_SetupMeasured = false;
+    }
+
+    void CloseSetup() noexcept { m_SetupOpen = false; }
+
+    void Record(const char* id, const InstallParts& parts, int64_t totalTicks) noexcept
+    {
+        Add(m_Session, id, parts, totalTicks);
+        if (m_SetupOpen) Add(m_Setup, id, parts, totalTicks);
+    }
+
+    // The setup line, given the existing `incident: setup` line's `hooks`
+    // value; kept for `incident setup`.
+    std::string SetupMeasured(double hooksMs)
+    {
+        m_HooksMs = hooksMs;
+        m_SetupMeasured = true;
+        return SetupLine();
+    }
+
+    Parts SetupParts() const noexcept
+    {
+        Parts p;
+        p.resolveMs = QpcToMs(m_Setup.resolve);
+        p.detourMs = QpcToMs(m_Setup.detour);
+        p.logMs = QpcToMs(m_Setup.log);
+        p.restMs = QpcToMs(m_Setup.rest);
+        const double installsMs = QpcToMs(m_Setup.total);
+        p.outsideMs = m_HooksMs > installsMs ? m_HooksMs - installsMs : 0.0;
+        return p;
+    }
+
+    std::string SetupLine() const
+    {
+        if (!m_SetupMeasured) return "incident: setup installs not measured yet";
+        const Parts p = SetupParts();
+        return "incident: setup installs " + std::to_string(m_Setup.installs) + ", detours " + std::to_string(m_Setup.detours)
+               + ": resolve " + Fixed(p.resolveMs, 1) + " ms, detour " + Fixed(p.detourMs, 1) + " ms (worst "
+               + Worst(m_Setup) + "), log " + Fixed(p.logMs, 1) + " ms, rest " + Fixed(p.restMs, 1)
+               + " ms, outside installers " + Fixed(p.outsideMs, 1) + " ms";
+    }
+
+    std::string SessionLine() const
+    {
+        return "incident: installs since load " + std::to_string(m_Session.installs) + ", detours "
+               + std::to_string(m_Session.detours) + ", detour " + Fixed(QpcToMs(m_Session.detour), 1) + " ms total, worst "
+               + Worst(m_Session);
+    }
+
+private:
+    struct Totals {
+        unsigned installs = 0;
+        unsigned detours = 0;
+        int64_t resolve = 0;
+        int64_t detour = 0;
+        int64_t log = 0;
+        int64_t rest = 0;
+        int64_t total = 0;          // the four above, added
+        int64_t worstDetour = 0;
+        char worstId[kHookIdChars] = {};
+    };
+
+    static void Add(Totals& t, const char* id, const InstallParts& parts, int64_t totalTicks) noexcept
+    {
+        const int64_t rest = totalTicks - parts.resolve - parts.detour - parts.log;
+        ++t.installs;
+        t.resolve += parts.resolve;
+        t.detour += parts.detour;
+        t.log += parts.log;
+        t.rest += rest > 0 ? rest : 0;
+        t.total += parts.resolve + parts.detour + parts.log + (rest > 0 ? rest : 0);
+        if (!parts.detoured) return;
+        ++t.detours;
+        if (t.detours > 1 && parts.detour <= t.worstDetour) return;
+        t.worstDetour = parts.detour;
+        const char* name = id && *id ? id : "unnamed";
+        size_t i = 0;
+        for (; i + 1 < kHookIdChars && name[i]; ++i) t.worstId[i] = name[i];
+        t.worstId[i] = '\0';
+    }
+
+    static std::string Worst(const Totals& t)
+    {
+        if (!t.detours) return "0.0 ms none";
+        return Fixed(QpcToMs(t.worstDetour), 1) + " ms " + t.worstId;
+    }
+
+    Totals m_Session;
+    Totals m_Setup;
+    double m_HooksMs = 0.0;
+    bool m_SetupOpen = false;
+    bool m_SetupMeasured = false;
+};
+
+// Constant-initialised and trivially destructible, as g_Accounting is: an
+// install made at any time finds it whole.
+inline constinit InstallCost g_InstallCost;
+static_assert(std::is_trivially_destructible_v<InstallCost>, "the install cost must have nothing to run at exit");
+
+// One installer call. Its total is the whole call; `parts` holds what the
+// installer read around its work. It records on destruction, so every return
+// path, a failed lookup included, is counted.
+class InstallTimer {
+public:
+    explicit InstallTimer(const char* id, InstallCost& cost = g_InstallCost) noexcept
+        : m_Id(id), m_Cost(cost), m_Start(Qpc())
+    {
+    }
+    ~InstallTimer() { m_Cost.Record(m_Id, parts, Qpc() - m_Start); }
+    InstallTimer(const InstallTimer&) = delete;
+    InstallTimer& operator=(const InstallTimer&) = delete;
+
+    InstallParts parts;
+
+private:
+    const char* m_Id;
+    InstallCost& m_Cost;
+    int64_t m_Start;
+};
+
+// ---- the thread snapshot probe (`incident setup`) ------------------------------
+
+struct ThreadSnapshotResult {
+    bool ok = false;
+    unsigned long error = 0;     // GetLastError() when the snapshot failed
+    double ms = 0.0;
+    unsigned systemThreads = 0;
+    unsigned processThreads = 0;
+};
+
+// The positive control for the setup line's `detour` part: one walk of the
+// kind each detour's freeze and resume take (docs/setup-stall-research.md,
+// static reading). A thread snapshot of the whole system, every entry in it,
+// and a count of the entries this process owns. It only reads the list: no
+// thread is opened, stopped or started. `incident setup` runs it on the frame
+// thread; nothing else does.
+inline ThreadSnapshotResult ThreadSnapshot() noexcept
+{
+    ThreadSnapshotResult r;
+    const DWORD self = GetCurrentProcessId();
+    const int64_t start = Qpc();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) {
+        r.error = GetLastError();
+        r.ms = QpcToMs(Qpc() - start);
+        return r;
+    }
+    THREADENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+    if (Thread32First(snap, &entry)) {
+        do {
+            ++r.systemThreads;
+            if (entry.th32OwnerProcessID == self) ++r.processThreads;
+            entry.dwSize = sizeof(entry);
+        } while (Thread32Next(snap, &entry));
+    }
+    CloseHandle(snap);
+    r.ms = QpcToMs(Qpc() - start);
+    r.ok = r.systemThreads > 0;
+    return r;
+}
+
+inline std::string ThreadSnapshotLine(const ThreadSnapshotResult& r)
+{
+    if (!r.ok) return "incident: thread snapshot failed, error " + std::to_string(r.error);
+    return "incident: thread snapshot " + Fixed(r.ms, 1) + " ms, " + std::to_string(r.systemThreads) + " threads system-wide, "
+           + std::to_string(r.processThreads) + " in this process";
 }
 
 // ---- the monitor's shared state ------------------------------------------------

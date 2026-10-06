@@ -15,9 +15,15 @@ controls over a small file-based IPC channel that the ForgePact panel writes to.
   `HSOfflineTrackerProducer.dll`). Run `py tools/fetch_toolchain.py` to place all of
   them — it downloads each from a pinned commit or release and verifies its SHA-256
   before writing anything (all-or-nothing; see `tools/toolchain-pins.json` for exactly
-  where each one comes from). These come from YYToolkit and Aurie upstream —
+  where each one comes from). The headers and `AuriePatcher.exe` come from YYToolkit
+  and Aurie upstream unmodified —
   https://github.com/AurieFramework/YYToolkit and https://github.com/AurieFramework/Aurie
-  (both AGPL-3.0) — and are never committed to this repository (`.gitignore`).
+  (both AGPL-3.0). `YYToolkit.dll` and `AurieCore.dll` are **modified** builds of those
+  projects, published as release assets of the toolkit hub from its `third_party/yytoolkit/`
+  and `third_party/aurie/` patch series; their notices are `yytoolkit-modified/NOTICE.md`
+  and `aurie-modified/AurieCore-NOTICE.md`. The plugin still compiles against upstream's
+  Aurie v2.0.2 `shared.hpp`: the AurieCore patches change no exported function or
+  header. None of these are ever committed to this repository (`.gitignore`).
 - **hs-game-sdk** headers — `ModuleMain.cpp` includes `<hs_game_sdk/hs_game_sdk.hpp>` for
   the typed object/script/player wrappers, and `build.bat` adds
   `..\..\hs-game-sdk\cpp\include` to the include path. In a full toolkit checkout that

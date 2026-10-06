@@ -97,6 +97,13 @@ narrow statement, not an exoneration.
   frames of 250 ms or more, `window yes|no` and `menu yes|no` (whether the
   room the frame thread last sampled is a menu room); a third line carries
   the tagged and untagged hook counts and the report write errors.
+- **The `incident setup` command** (ForgePact#151) prints the setup's
+  install-cost line (or `incident: setup installs not measured yet`), the
+  session's install totals since load (`installs since load <n>, detours
+  <d>, detour <ms> ms total, worst <ms> ms <hook id>`, which also count
+  on-demand installs) and one thread snapshot timed on the spot, the
+  positive control for the detour's cost. Its reasoning and measurements are
+  in [setup-stall-research.md](setup-stall-research.md).
 
 ## The report
 
@@ -287,7 +294,16 @@ that fails to write is counted, and the `incident: report written` line says
   continues through every research installer). The clock readings go
   through `ForgePact::Incident::Qpc()`. Bounding or moving the setup is not
   decided here; Live 3 measured which installer costs what (see "Live
-  results"); bounding it is ForgePact#151.
+  results"); bounding it is ForgePact#151. Since #151 the block prints a
+  second line right after it, `incident: setup installs <n>, detours <d>:
+  resolve ... ms, detour ... ms (worst ... ms <hook id>), log ... ms, rest
+  ... ms, outside installers ... ms`, which splits the hook installs by
+  part. #151's Live 1 measured the detour (Aurie's `MmCreateHook`) at 97.5%
+  of the `hooks` value. With the patched `AurieCore.dll` that ships from
+  2.2.0 (the hub's `third_party/aurie/`, series `hs.1`), #151's Live 2
+  (2026-10-06, capture `.claude/workorders/forgepact-151-aurie-freeze-live-1.md`
+  in the hub) measured the setup at 47.8 ms, `hooks` 47.4 ms, of which the
+  18 detours were 28.1 ms; see [setup-stall-research.md](setup-stall-research.md).
 - **The panel's route leaves a trace.** `/api/state`'s `incidents` carries
   `reports`, `lastExit` and `exitWatch` (`pidHeld`, `exitsSeen`,
   `lastCode`), so "the game exited cleanly" is told apart from "no exit was
@@ -392,18 +408,25 @@ that fails to write is counted, and the `incident: report written` line says
   `in a menu room: a load, not reported` when it ends; a crash there is
   still found at the next load. The menu rooms are a list of names, so a
   menu room the list lacks is judged like any other room.
-- **The start-up setup frame is slow, and shows as `setup`.** The one-time
+- **The start-up setup frame shows as `setup`; it was slow with upstream's
+  Aurie.** With the patched `AurieCore.dll` 2.2.0 ships, #151's Live 2
+  (2026-10-06) measured the setup at 47.8 ms (`hooks` 47.4 ms) on the test
+  machine, so its frame is no longer a stall; the rest of this item records
+  what it cost with upstream's DLL, which a game that has not received the
+  new `AurieCore.dll` still pays. The one-time
   setup (`LoadConfig` and `InstallHook`, at frame 300 in the main menu)
-  takes one frame of about 2.5-2.7 s on the test machine: Live 3 measured
+  took one frame of about 2.5-2.7 s on the test machine: Live 3 measured
   `incident: setup 2491.1 ms at frame 301` (config 0.3 ms, hooks 2490.8
-  ms) and 2701.2 ms at the relaunch, and nearly all of it is one
+  ms) and 2701.2 ms at the relaunch, and nearly all of it was one
   installer pair, `InstallCustomForgeItemHooks+InstallItemTruth` at 2486.2
-  ms. It falls in the room-change grace, so it is never judged or
-  reported, but for a minute after it the `setup` row's worst in
-  `incident stat` and in any report written in that minute is that frame;
-  the `incident: setup` line in the log says what it cost and names the
-  three slowest installers. Making it faster or spreading it over frames
-  is not part of 2.2.0; it is left for a follow-up with these numbers.
+  ms. The setup frame falls in the room-change grace, so it is never judged
+  or reported, but for a minute after it the `setup` row's worst in
+  `incident stat` and in any report written in that minute is that frame
+  (48.22 ms in Live 2); the `incident: setup` line in the log says what it
+  cost and names the three slowest installers. The fix 2.2.0 carries is
+  the patched Aurie freeze (ForgePact#151, the hub's `third_party/aurie/`);
+  spreading the installs over frames was rejected (see
+  [setup-stall-research.md](setup-stall-research.md) § "Fix routes").
 - **No function names without the PDB, and the PDB needs renaming first.** A
   report records the faulting module and offset only. Mapping an offset
   inside `BloodPactPlugin.dll` to one of our functions is a maintainer step

@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "tool": "tools/build_aurie.py",
+  "upstream": {
+    "repo": "https://github.com/AurieFramework/Aurie",
+    "tag": "v2.0.2",
+    "commit": "5c4839ea19d47c6afb7d459358f53643b2774e3a",
+    "tree": "294c7a2ce9b52a2adcaa87c7aac2859cfe6a2a39"
+  },
+  "hub": {
+    "commit": "b650302ceb0e13af2a40f40aed03e0d5a6de136f",
+    "patch_directory_dirty": false
+  },
+  "patches": [
+    {
+      "name": "0001-series-identity.patch",
+      "sha256": "2203897b4aa2ae0c6bd8147e654b91742bb541b97a828193ffa94700b9932633",
+      "log_markers": [
+        "Hero Siege patch series",
+        "(hero-siege-offline-toolkit, third_party/aurie)"
+      ]
+    },
+    {
+      "name": "0002-per-process-hook-freeze.patch",
+      "sha256": "69c39805f6e78a68bbec1bacff620a70e2bc72d2c0f7d0efffea77ace7fbf644",
+      "log_markers": [
+        "MmCreateHook freeze: per-process thread walk",
+        "FELL BACK to the system-wide thread snapshot"
+      ]
+    }
+  ],
+  "toolchain": {
+    "visual_studio": "17.14.37710.0",
+    "vs_version_range": "[17.0,18.0)",
+    "msbuild": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\MSBuild\\Current\\Bin\\amd64\\MSBuild.exe",
+    "msbuild_version": "17.14.60.43110",
+    "build_state": "PlatformToolSet=v143:VCToolArchitecture=Native64Bit:VCToolsVersion=14.44.35207:TargetPlatformVersion=10.0.26100.0:",
+    "cl": "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35229 for x64"
+  },
+  "configuration": "Release|x64 + repro.props (/Brepro, /PDBALTPATH:%_PDB%, /d1trimfile)",
+  "warnings": 0,
+  "dll": {
+    "name": "AurieCore.dll",
+    "size": 968704,
+    "sha256": "3cf98af99a0ef38dea1a2d4627e6466631f6e7dd2b254b1a80e5438ac06800cb"
+  },
+  "markers_verified": [
+    {
+      "patch": "0001-series-identity.patch",
+      "marker": "Hero Siege patch series"
+    },
+    {
+      "patch": "0001-series-identity.patch",
+      "marker": "(hero-siege-offline-toolkit, third_party/aurie)"
+    },
+    {
+      "patch": "0002-per-process-hook-freeze.patch",
+      "marker": "MmCreateHook freeze: per-process thread walk"
+    },
+    {
+      "patch": "0002-per-process-hook-freeze.patch",
+      "marker": "FELL BACK to the system-wide thread snapshot"
+    }
+  ],
+  "host_tests": {
+    "ran": 1,
+    "passed": 1,
+    "files": [
+      "thread_freeze_test.cpp"
+    ]
+  },
+  "source": {
+    "name": "aurie-source-daa28744eef0.zip",
+    "id": "daa28744eef05be8443b1c431ad33783fafcae889d85f70b0307f9dce228bec4",
+    "sha256": "cf271b2921b05c7b1f9052e629dd8f38960c4ab275fc4225b3fe7fa5648784e4"
+  },
+  "live_gameplay_verified": false
+}
