@@ -963,3 +963,103 @@ ancient birth forced by a warp, a normal birth as the positive control, a
 colossal chest opened, a revisit, and champion and legion only if a zone
 of the session has them.
 Its record round writes the results under `### Live 4 results`.
+
+### Live 4 results
+
+Run 2026-10-06 on the second research build (ForgePact `7685404`, installed
+DLL SHA-256 `1b7ab053…a991`, matched by the lease), character slot 14, saves
+backed up and restored clean afterwards, `forgepact.json` left as it was. One
+zone, Steam Train (zone level 293), under `retire kind` throughout: 62
+normal, 9 ambush, 10 ancient, 6 colossal chest and 4 miniboss spawners, no
+champion and no legion. The player was warped beside a miniboss spawner
+(and the character's own damage killed the pack about 16 s later), then an
+ancient spawner, then a normal spawner as the control, then a colossal chest
+group, which the owner opened; then the owner left by waypoint and came
+back. 24 checks: 21 passed, 1 failed (`miniboss-held`), 2 were not observed
+(champion, legion). The capture is the hub's
+`.claude/workorders/forgepact-181-map-reveal-icons-live-4.md`.
+
+- **The build and the instruments answered (pass, measured).** The DLL hash
+  matched, `ping` answered, `packmarks stat` read `hook=native`, ` unread=0`
+  and `retire=kind`, and the getter control read the boss probe's slot as
+  the same non-zero value through both named getters (`-> proven`) at every
+  census. ` unread=` stayed 0 for the whole session.
+- **The protected pack state at arrival (measured).** Before any warp the
+  census tallied `spawnPack` as: normal 1 on 50 spawners and 3 on the 12
+  already born (the same 12 whose `enemyArray` was an array), ambush 0 on all
+  9, ancient 1 on all 10, colossal chest 0 on all 6, miniboss 2 on all 4.
+  So the four miniboss spawners already read born at arrival, as the static
+  reading predicted, and here, unlike Live 3, their creates were attributed
+  at arrival too (`Hellspawn_Guardsman_obj`, one per spawner, each recorded
+  as a member).
+- **A normal birth moves the state 1 → 3 (control, pass, measured).** At the
+  control spawner the state went 1 → 3 as its `enemyArray` became an array
+  and its `enemyCreatorTimer` went away; normal `kindborn` rose 25 → 30 and
+  the census's array count with it; the owner saw monsters there. Across the
+  session every born normal spawner read 3 and every unborn one 1.
+- **An ancient birth moves the state 1 → 3 and retires its marker (pass,
+  measured).** At the ancient warp the chosen spawner went 1 → 3 and five
+  ancient spawners near the warp read born; ancient `kindborn` rose 1 → 6
+  and the ancient markers fell 9 → 4; the owner saw the pack and the icons
+  go ("worked as intended"). The intermediate state 2 was never read (the
+  static reading has it last one frame). One more ancient spawner had
+  already read born, with no ancient warp, during the miniboss fight; where
+  the character stood at its birth was not read. The chosen spawner's
+  attributed creates went 0 → 1, and no ancient spawner read unborn with a
+  create attributed to it (`attributedUnborn=0`), so the attributed create
+  agreed with the state at every ancient birth seen.
+- **A colossal chest wave moves the state 0 → 2 and retires its markers
+  (pass, measured).** All six colossal chest spawners read 0 before the
+  chest was opened and 2 afterwards, with one `Abomination_obj` attributed
+  to each; colossal `kindborn` rose 0 → 6, the colossal markers fell 6 → 0,
+  and the owner saw the monsters spawn and the icons clear. The
+  intermediate state 1 was not read.
+- **The miniboss marker held per the owner's observation; the plugin's read
+  disagreed at 5 s (`miniboss-held` failed; route `packgone-signal:
+  measured` on the owner's observation, by the owner's decision).** The
+  owner saw the miniboss icons stay until the minibosses were killed, and
+  the other spawners' icons go as soon as their packs appeared. But 5 s
+  after the warp the member read of spawner 262691 (and of 262694) already
+  said `alive=0/1`, `packgone` was 2 and two miniboss markers had been
+  retired, while a screenshot showed two Hellspawn Guardsmen alive and the
+  nearest `Hellspawn_Guardsman_obj` was 158 px (172 px) from the spawner.
+  After the kill all four read `alive=0/1`, `packgone=4`, no miniboss
+  marker left. The control spawner gave no positive control either: its
+  member read said `alive=0/8` 5 s after its birth, while monsters were on
+  screen and the nearest `Skeletal_Trooper_obj` was 1089 px away. So the
+  "alive" half of the member read has no positive control in
+  this session: it may have retired miniboss markers early, and the owner's
+  view did not settle it. **Open caveat**, not a finding about the game:
+  Live procedure 2 (the player build) settles it with a slow, deliberate
+  miniboss fight. Measured beside it: the miniboss spawners still exist
+  after the kill, and every protected value and instance variable they
+  carry reads the same before the warp, after it and after the kill
+  (`spawnPack` 2, its zone state 1, its self-destroy value 0), apart from
+  the image index, so nothing on the spawner marks the pack's death.
+- **A revisit holds (route `revisit: holds`, measured).** After leaving by
+  waypoint and coming back, no marker returned for any spawner retired
+  before leaving: `remembered=` covered at least as many as had been born
+  per kind (normal 74 for 37, ancient 14 for 7, colossal chest 12 for 6,
+  miniboss 8 for 4), and the 37 markers drawn were exactly the unborn
+  normal (25), ambush (9) and ancient (3) ones; none at the miniboss,
+  ancient, control or colossal spots. The owner saw no cleared icon come
+  back. The owner first saw no icons at all and then the uncleared ones
+  appear, while the first poll after arrival already listed the 37; the
+  delay the owner saw was not read.
+- **A revisit does not keep spawner ids (route `revisit-ids: changed`,
+  measured).** Every spawner came back as a new instance (ids 262xxx →
+  321xxx) and `sameid=0` for every kind, so only the position key of the
+  birth memory matched. The protected state survived the revisit for every
+  kind (normal 1:25 and 3:37, ancient 1:3 and 3:7, colossal chest 2 on all
+  6, miniboss 2 on all 4), and the plain creators kept their timer split,
+  but no plain creator's `enemyArray` was an array after the revisit.
+- **Champion and legion: not observed.** Steam Train had no champion and no
+  legion creator at arrival, at any census or on the revisit, and the
+  session visited no other zone. Their rule stays the static reading.
+
+**Route: `kinds-signal: measured`, `revisit: holds`, `revisit-ids: changed`,
+`packgone-signal: measured` per the owner's observation.** The operator
+recorded `packgone-signal: wrong` from the `miniboss-held` fail; the owner,
+having watched the session, accepted the miniboss behaviour as intended, and
+the 5 s member read stays the open caveat above until Live procedure 2's
+miniboss fight settles it.
