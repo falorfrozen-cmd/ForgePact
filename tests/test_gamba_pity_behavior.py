@@ -16,9 +16,10 @@ span has passed; the explosion whose own addition reached the threshold, with
 no head signal, forces, a confirmed force resets and a refused one keeps the
 count; below the threshold, or abandoned by a room change, the count is kept;
 a new ground head, a head build in the look-back or settle span, or a
-machine-self (0, 98) build makes it natural at any count; two machines in one
-span force at most once; the counter file is version 2 and an older spin file
-reads as 0; every line is fixed text.
+machine-self (0, 98) build makes it natural at any count; each explosion is
+decided on its own standing in the count, one head per explosion, and a reset
+keeps a later pending explosion's addition; the counter file is version 2 and
+an older spin file reads as 0; every line is fixed text.
 """
 import os
 import shutil
@@ -209,18 +210,32 @@ class GambaPityBehaviorTests(unittest.TestCase):
                       "target/an_abandoned_explosion_below_the_threshold_still_counts"):
             self.assertScenario(label)
 
-    def test_two_machines_in_one_settle_span_force_at_most_once(self):
-        self.assertScenario("target/two_machines_in_one_settle_span_force_at_most_once")
+    def test_two_machines_in_one_span_at_threshold_2_only_the_one_standing_at_2_forces(self):
+        self.assertScenario("target/two_machines_in_one_span_at_threshold_2_only_the_one_standing_at_2_forces")
 
     def test_the_explosion_that_reached_the_threshold_forces_and_the_other_is_below(self):
         self.assertScenario("target/the_explosion_that_reached_the_threshold_forces_and_the_other_is_below")
 
     # ---- target: a reset keeps a later pending explosion's addition ----
 
-    def test_explosions_pending_together_force_at_most_once(self):
-        for label in ("target/three_explosions_in_one_span_at_threshold_1_make_one_head_and_leave_2",
-                      "target/explosions_pending_together_force_at_most_once_and_a_later_one_forces"):
-            self.assertScenario(label)
+    def test_three_explosions_in_one_span_at_threshold_1_make_three_heads(self):
+        self.assertScenario("target/three_explosions_in_one_span_at_threshold_1_make_three_heads_and_leave_0")
+
+    def test_a_natural_head_at_e1_then_e2_pending_at_threshold_1_forces(self):
+        self.assertScenario("target/a_natural_head_at_e1_then_e2_pending_at_threshold_1_forces")
+
+    def test_a_refused_or_ground_unread_force_on_e1_then_e2_pending_forces(self):
+        self.assertScenario(
+            "target/a_refused_or_ground_unread_force_on_e1_then_e2_pending_forces_and_resets_through_itself")
+
+    def test_two_natural_heads_in_one_pending_set(self):
+        self.assertScenario("target/two_natural_heads_in_one_pending_set_each_reset_through_their_own_explosion")
+
+    def test_an_abandoned_explosion_in_the_middle_of_a_pending_set(self):
+        self.assertScenario("target/an_abandoned_explosion_in_the_middle_of_a_pending_set_keeps_its_addition")
+
+    def test_the_below_line_shows_the_explosions_own_standing(self):
+        self.assertScenario("lines/below_shows_the_explosions_own_standing")
 
     def test_a_natural_head_keeps_a_later_pending_explosions_addition(self):
         self.assertScenario("target/a_natural_head_keeps_a_later_pending_explosions_addition")

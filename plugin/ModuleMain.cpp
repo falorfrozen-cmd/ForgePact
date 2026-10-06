@@ -52769,7 +52769,7 @@ static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t ro
     case GP::Outcome::Below:
         // An unread ground below the threshold skipped the natural ground
         // signal: the line says so (and below-ground-unread= counts it).
-        Out(g_GambaPity.BelowLine(d.groundUnread ? unreadStage : std::string()));
+        Out(g_GambaPity.BelowLine(e, d.groundUnread ? unreadStage : std::string()));
         return;
     case GP::Outcome::Force:
         break;

@@ -14,7 +14,9 @@
 // and a refused one keeps the count; below the threshold, or abandoned by a
 // room change, it keeps the count; a new ground head, a head build in the
 // look-back or settle span, or a machine-self (0, 98) build makes it natural
-// at any count; two machines in one span force at most once; the counter file
+// at any count; each explosion is decided on its own standing in the count,
+// one head per explosion, and a reset keeps a later pending one's addition;
+// the counter file
 // is version 2 and an older spin file reads as 0; every line is fixed text.
 #include <cstdint>
 #include <iostream>
@@ -138,7 +140,7 @@ int main()
         const std::string firstLine = p.ExplosionLine(100, 100);
         std::vector<Explosion> due = p.TakeDue(100 + kSettleFrames);
         const Decision first = due.size() == 1 ? p.Decide(due[0], 7, kNoHeads) : Decision{ Outcome::Force, "" };
-        const std::string belowLine = p.BelowLine();
+        const std::string belowLine = due.size() == 1 ? p.BelowLine(due[0]) : std::string();
         const bool below = first.outcome == Outcome::Below && p.Count() == 1
             && firstLine == "gambapity: explosion id=100 count=1 threshold=2 frame=100"
             && belowLine == "gambapity: explosion below the threshold (count=1 threshold=2); counter kept";
@@ -486,7 +488,7 @@ int main()
                 p.ForceConfirmed(e, -1);
             }
         }
-        check("target/two_machines_in_one_settle_span_force_at_most_once",
+        check("target/two_machines_in_one_span_at_threshold_2_only_the_one_standing_at_2_forces",
               due.size() == 2 && forces == 1 && forcedId == 101 && p.Forced() == 1 && p.Below() == 1 && p.Count() == 0,
               p.StatusLine());
         // From 1: the first brings the count to 2 and forces; its reset takes
@@ -514,10 +516,9 @@ int main()
     }
 
     {
-        // Threshold 1, three explosions in one span: one head, and the two
-        // later additions stay, so the count is 2. Explosions pending when a
-        // force was confirmed never force; the next explosion, added after
-        // it, does, and its reset takes every addition before it.
+        // Threshold 1, three explosions in one span: each stands at 1 on its
+        // own count, so each forces - three heads, one per explosion - and
+        // each head resets through its own explosion, leaving 0.
         Pity p = Armed(1, 0);
         p.ObserveMachine(101, false, 0, 600.0, 480.0);
         p.SetBaseline(101, kNoHeads);
@@ -528,24 +529,127 @@ int main()
         p.ObserveMachine(102, true, 110, 900.0, 480.0);
         std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
         int forces = 0;
-        int64_t forcedId = -1;
+        std::string counts;
         for (const Explosion& e : due) {
             if (p.Decide(e, 7, kNoHeads).outcome == Outcome::Force) {
                 ++forces;
-                forcedId = e.id;
                 p.ForceConfirmed(e, -1);
+                counts += std::to_string(p.Count());
             }
         }
-        check("target/three_explosions_in_one_span_at_threshold_1_make_one_head_and_leave_2",
-              due.size() == 3 && forces == 1 && forcedId == 100 && p.Forced() == 1 && p.Below() == 2 && p.Count() == 2,
-              p.StatusLine());
-        p.ObserveMachine(103, false, 300, 0.0, 0.0);
-        p.SetBaseline(103, kNoHeads);
-        const Explosion next = ExplodeAndWait(p, 103, 400);
-        const Decision d = p.Decide(next, 7, kNoHeads);
-        p.ForceConfirmed(next, -1);
-        check("target/explosions_pending_together_force_at_most_once_and_a_later_one_forces",
-              d.outcome == Outcome::Force && p.Forced() == 2 && p.Count() == 0, p.StatusLine());
+        check("target/three_explosions_in_one_span_at_threshold_1_make_three_heads_and_leave_0",
+              due.size() == 3 && forces == 3 && counts == "210" && p.Forced() == 3 && p.Below() == 0 && p.Count() == 0,
+              counts + " | " + p.StatusLine());
+    }
+    {
+        // Threshold 1: a natural head at e1 takes e1's addition; e2, pending,
+        // still stands at 1 on its own count and forces.
+        Pity p = Armed(1, 0);
+        p.ObserveMachine(101, false, 0, 2000.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);
+        p.ObserveMachine(101, true, 110, 2000.0, 480.0);
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        const Decision n = due.size() == 2 ? p.Decide(due[0], 7, { 555 }) : Decision();
+        const bool kept = p.Count() == 1;
+        const Decision f = due.size() == 2 ? p.Decide(due[1], 7, kNoHeads) : Decision();
+        if (f.outcome == Outcome::Force) p.ForceConfirmed(due[1], -1);
+        check("target/a_natural_head_at_e1_then_e2_pending_at_threshold_1_forces",
+              n.outcome == Outcome::Natural && kept && f.outcome == Outcome::Force && p.Natural() == 1 && p.Forced() == 1
+              && p.Count() == 0, p.StatusLine());
+    }
+    {
+        // A refused force on e1, and a ground-unread refusal on e1, with e2
+        // pending: e2 stands past the threshold, forces, and resets through
+        // itself - e1's kept addition goes with it.
+        bool ok = true;
+        std::string detail;
+        for (int mode = 0; mode < 2; ++mode) {
+            Pity p = Armed(1, 0);
+            p.ObserveMachine(101, false, 0, 2000.0, 480.0);
+            p.SetBaseline(101, kNoHeads);
+            p.ObserveMachine(100, true, 100, 320.0, 480.0);
+            p.ObserveMachine(101, true, 110, 2000.0, 480.0);
+            std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+            if (due.size() != 2) {
+                ok = false;
+                continue;
+            }
+            const Decision d1 = p.Decide(due[0], 7, kNoHeads, mode == 0);
+            if (mode == 0) {
+                ok = ok && d1.outcome == Outcome::Force;
+                p.ForceRefused();
+            } else {
+                ok = ok && d1.outcome == Outcome::GroundUnread && p.GroundUnread() == 1;
+            }
+            ok = ok && p.Count() == 2 && p.Refused() == 1;
+            const Decision d2 = p.Decide(due[1], 7, kNoHeads);
+            ok = ok && d2.outcome == Outcome::Force && p.Position(due[1]) == 2;
+            p.ForceConfirmed(due[1], -1);
+            ok = ok && p.Count() == 0 && p.Forced() == 1;
+            detail += p.StatusLine() + " | ";
+        }
+        check("target/a_refused_or_ground_unread_force_on_e1_then_e2_pending_forces_and_resets_through_itself", ok, detail);
+    }
+    {
+        // Two natural heads in one pending set: each takes its own addition
+        // and every one before it, so the count goes 5 -> 1 -> 0.
+        Pity p = Armed(10, 3);
+        p.ObserveMachine(101, false, 0, 2000.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);
+        p.ObserveMachine(101, true, 110, 2000.0, 480.0);
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        const bool counted = p.Count() == 5;
+        const Decision a = due.size() == 2 ? p.Decide(due[0], 7, { 555 }) : Decision();
+        const bool first = p.Count() == 1;
+        const Decision b = due.size() == 2 ? p.Decide(due[1], 7, { 556 }) : Decision();
+        check("target/two_natural_heads_in_one_pending_set_each_reset_through_their_own_explosion",
+              counted && a.outcome == Outcome::Natural && first && b.outcome == Outcome::Natural && p.Count() == 0
+              && p.Natural() == 2 && p.Forced() == 0, p.StatusLine());
+    }
+    {
+        // An abandoned explosion in the middle of a pending set: e1 (room 7)
+        // is below on its own count, e2 (room 8) is abandoned and keeps its
+        // addition, and e3 (room 7) stands at 3, forces and resets through
+        // itself, taking e1's and e2's additions too.
+        Pity p = Armed(2, 0);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);   // e1, room 7
+        p.OnRoom(8);
+        p.ObserveMachine(200, false, 101, 0.0, 0.0);
+        p.SetBaseline(200, kNoHeads);
+        p.ObserveMachine(200, true, 105, 0.0, 0.0);       // e2, room 8
+        p.OnRoom(7);
+        p.ObserveMachine(300, false, 106, 900.0, 480.0);
+        p.SetBaseline(300, kNoHeads);
+        p.ObserveMachine(300, true, 110, 900.0, 480.0);   // e3, room 7
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        const bool three = due.size() == 3;
+        if (!three) due.resize(3);
+        const Decision d1 = p.Decide(due[0], 7, kNoHeads);
+        const std::string below = p.BelowLine(due[0]);
+        const Decision d2 = p.Decide(due[1], 7, kNoHeads);
+        const bool kept = p.Count() == 3;
+        const Decision d3 = p.Decide(due[2], 7, kNoHeads);
+        if (d3.outcome == Outcome::Force) p.ForceConfirmed(due[2], -1);
+        check("target/an_abandoned_explosion_in_the_middle_of_a_pending_set_keeps_its_addition",
+              three && d1.outcome == Outcome::Below && below.find("(count=1 threshold=2)") != std::string::npos
+              && d2.outcome == Outcome::Abandoned && kept && d3.outcome == Outcome::Force && p.Count() == 0
+              && p.Forced() == 1 && p.Abandoned() == 1, below + " | " + p.StatusLine());
+    }
+    {
+        // The below line shows the explosion's own standing, not the counter:
+        // threshold 3 from 0, e1 and e2 pending (count 2), e1 is below at 1.
+        Pity p = Armed(3, 0);
+        p.ObserveMachine(101, false, 0, 2000.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);
+        p.ObserveMachine(101, true, 110, 2000.0, 480.0);
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        const Decision d = due.size() == 2 ? p.Decide(due[0], 7, kNoHeads) : Decision();
+        const std::string line = due.size() == 2 ? p.BelowLine(due[0]) : std::string();
+        check("lines/below_shows_the_explosions_own_standing", d.outcome == Outcome::Below && p.Count() == 2
+              && line == "gambapity: explosion below the threshold (count=1 threshold=3); counter kept", line);
     }
     {
         // A natural head at an earlier explosion takes its addition and every
@@ -626,9 +730,9 @@ int main()
               == "gambapity: forced Goburin's Head at 320,480 (rarity 6, attempt 1) and reset the counter",
               Pity::ForcedLine(320.4, 479.6, 6, 1));
         check("lines/ground_after_drop", Pity::GroundAfterDropLine(1) == "gambapity: ground check after the drop: heads=1");
-        check("lines/below_ground_unread", p.BelowLine("the scan threw")
+        check("lines/below_ground_unread", p.BelowLine(e, "the scan threw")
               == "gambapity: explosion below the threshold (count=12 threshold=10); counter kept; ground unread (the scan threw)",
-              p.BelowLine("the scan threw"));
+              p.BelowLine(e, "the scan threw"));
         check("lines/baseline_read", Pity::BaselineReadLine(7, 1) == "gambapity: machine id=7 baseline read heads-nearby=1");
         check("lines/ground_after_drop_unread", Pity::GroundAfterDropUnreadLine("the scan threw")
               == "gambapity: ground check after the drop: unread (the scan threw)");
@@ -637,7 +741,7 @@ int main()
         check("lines/natural_seen", Pity::NaturalSeenLine("ground")
               == "gambapity: the explosion's own Goburin's Head was seen (ground); no force, counter reset");
         p.SetCount(3);
-        check("lines/below", p.BelowLine() == "gambapity: explosion below the threshold (count=3 threshold=10); counter kept");
+        check("lines/below", p.BelowLine(e) == "gambapity: explosion below the threshold (count=3 threshold=10); counter kept");
         check("lines/refused", Pity::RefusedLine("no local player")
               == "gambapity: forced drop refused - no local player; counter kept");
         check("lines/abandoned", Pity::AbandonedLine(e.id) == "gambapity: explosion id=100 abandoned (room changed); counter kept");

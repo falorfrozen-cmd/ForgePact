@@ -404,7 +404,7 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("const std::string unreadStage = ground.read ? std::string(\"the machine's baseline scan\") : ground.stage;",
                       decide)
         self.assertIn('GP::Pity::RefusedLine("ground unread (" + unreadStage + ")")', decide)
-        self.assertIn("Out(g_GambaPity.BelowLine(d.groundUnread ? unreadStage : std::string()));", decide)
+        self.assertIn("Out(g_GambaPity.BelowLine(e, d.groundUnread ? unreadStage : std::string()));", decide)
         below = self.header[self.header.index("++below_;"):]
         below = below[:below.index("return d;")]
         self.assertIn("if (!groundRead || !baselineRead) {", below)
@@ -420,20 +420,27 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("g_GambaPity.ForceRefused();", decide)
         self.assertIn("g_GambaPity.ForceConfirmed(e, groundId);", decide)
 
-    def test_a_reset_takes_only_its_explosions_standing_and_one_force_per_pending_set(self):
+    def test_a_reset_takes_only_its_explosions_standing_and_each_explosion_forces_on_its_own(self):
         # A confirmed force and a natural head take this explosion's addition
         # and every one before it; a later pending explosion's addition stays.
         confirmed = function_body(self.header, "void ForceConfirmed(const Explosion& e, int64_t groundId)")
         self.assertIn("ResetThrough(e);", confirmed)
-        self.assertIn("forcedThrough_ = added_;", confirmed)
         self.assertNotIn("count_ = 0;", confirmed)
         decide = function_body(self.header, "Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)")
         natural = decide[decide.index("d.outcome = Outcome::Natural;"):]
         natural = natural[:natural.index("return d;")]
         self.assertIn("ResetThrough(e);", natural)
         self.assertNotIn("OnNaturalDrop();", natural)
-        # Explosions pending when a force was confirmed never force.
-        self.assertIn("Position(e) >= threshold_ && e.addSeq > forcedThrough_", decide)
+        # One head per explosion: each explosion forces on its own standing in
+        # the count, with no gate over a pending set (the owner's rule is per
+        # explosion), so at threshold 1 explosions pending together each force.
+        self.assertIn("if (enabled_ && threshold_ > 0 && Position(e) >= threshold_) {", decide)
+        self.assertNotIn("forcedThrough_", self.header)
+        # The below line shows the explosion's own standing, the number it was
+        # decided on, not the counter.
+        below = function_body(self.header, "std::string BelowLine(const Explosion& e, const std::string& unreadStage = std::string()) const")
+        self.assertIn("Position(e)", below)
+        self.assertNotIn("count_", below)
         reset = function_body(self.header, "void ResetThrough(const Explosion& e)")
         self.assertIn("const int64_t after = added_ - e.addSeq;", reset)
         self.assertIn("clearedThrough_ = e.addSeq;", reset)

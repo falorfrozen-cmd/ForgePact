@@ -36,12 +36,13 @@ namespace ForgePact::GambaPity {
 // The decision is made kSettleFrames presented frames after the sprite
 // change, in this order: the room changed -> abandoned (count kept); a
 // natural-head signal in the window -> natural (no force, at any count: this
-// explosion's addition and every one before it leave the count); on, the
-// count at the threshold, this explosion's own addition the one that reached
-// it and no force confirmed since it was added -> force (a confirmed drop
-// takes this explosion's addition and every one before it out of the count,
-// keeping a later pending explosion's; a refused one keeps the count so the
-// next explosion forces), unless the ground near the machine did not read, now or
+// explosion's addition and every one before it leave the count); on and this
+// explosion standing at the threshold in the count (its own count: the
+// additions up to and including its own) -> force (a confirmed drop takes
+// this explosion's addition and every one before it out of the count,
+// keeping a later pending explosion's, which then forces on its own count if
+// that is still at the threshold - exactly one head per explosion; a refused
+// one keeps the count so the next explosion forces), unless the ground near the machine did not read, now or
 // at its first sight -> ground-unread (refused, count kept: a second head is
 // worse than a late one); otherwise below (count kept).
 //
@@ -288,12 +289,13 @@ public:
     // ground-unread are final here; a force waits for ForceConfirmed or
     // ForceRefused. A force needs this explosion to stand at the threshold
     // in the count (Position: an explosion still pending never forces on a
-    // later one's addition), to have been added after the last confirmed
-    // force (so explosions pending at the same time make at most one head),
-    // and both ground reads - the machine's baseline and this one - since
-    // only they can rule out a head the game placed. A natural outcome
-    // takes this explosion's addition and every one before it out of the
-    // count; a later pending explosion's addition stays.
+    // later one's addition) and both ground reads - the machine's baseline
+    // and this one - since only they can rule out a head the game placed.
+    // Each explosion is decided on its own count: explosions pending
+    // together can each force (at threshold 1, three give three heads), one
+    // head per explosion. A natural outcome takes this explosion's addition
+    // and every one before it out of the count; a later pending explosion's
+    // addition stays.
     Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)
     {
         Decision d;
@@ -315,7 +317,7 @@ public:
             ++natural_;
             return d;
         }
-        if (enabled_ && threshold_ > 0 && count_ >= threshold_ && Position(e) >= threshold_ && e.addSeq > forcedThrough_) {
+        if (enabled_ && threshold_ > 0 && Position(e) >= threshold_) {
             if (!groundRead || !baselineRead) {
                 ++refused_;
                 ++groundUnread_;
@@ -339,12 +341,10 @@ public:
     // The forced head was placed and read back (its ground instance id, kept
     // so a later explosion's ground check does not take it for natural): the
     // count drops by this explosion's standing - its addition and every one
-    // before it - so a later pending explosion's addition is kept, and no
-    // explosion added before now can force.
+    // before it - so a later pending explosion's addition is kept.
     void ForceConfirmed(const Explosion& e, int64_t groundId)
     {
         ResetThrough(e);
-        forcedThrough_ = added_;
         ++forced_;
         if (groundId >= 0) ownHeads_.insert(groundId);
     }
@@ -423,11 +423,14 @@ public:
         return "gambapity: the explosion's own Goburin's Head was seen (" + signal + "); no force, counter reset";
     }
 
-    // `unreadStage` non-empty: the ground (or the baseline) did not read, so the
-    // natural ground signal was not checked, and the line says why.
-    std::string BelowLine(const std::string& unreadStage = std::string()) const
+    // The `count=` is the explosion's own standing (Position), the number it
+    // was decided on, not the counter: a later pending explosion's addition
+    // is not its own. `unreadStage` non-empty: the ground (or the baseline)
+    // did not read, so the natural ground signal was not checked, and the
+    // line says why.
+    std::string BelowLine(const Explosion& e, const std::string& unreadStage = std::string()) const
     {
-        return "gambapity: explosion below the threshold (count=" + std::to_string(count_)
+        return "gambapity: explosion below the threshold (count=" + std::to_string(std::max<int64_t>(0, Position(e)))
             + " threshold=" + std::to_string(threshold_) + "); counter kept"
             + (unreadStage.empty() ? std::string() : "; ground unread (" + unreadStage + ")");
     }
@@ -510,7 +513,6 @@ private:
     int count_ = 0;
     int64_t added_ = 0;           // additions this session (each counted explosion's addSeq)
     int64_t clearedThrough_ = 0;  // the last addSeq a reset took out of the count
-    int64_t forcedThrough_ = 0;   // added_ at the last confirmed force: nothing added by then forces
     int64_t room_ = -1;
     bool ownDrop_ = false;
     std::map<int64_t, Machine> machines_;
