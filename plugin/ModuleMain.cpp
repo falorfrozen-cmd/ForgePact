@@ -1915,20 +1915,22 @@ struct CreationCallerInfo {
         return object;
     }
 };
-// Pack markers: a spawner that creates a monster has given birth, so its map
-// marker goes now instead of when the rotating check reaches it. One
-// object_index read of the caller (shared through CreationCallerInfo) and,
-// only for a known spawner creating a monster, one id read. Nothing runs
-// while the markers are off.
+// Pack markers: a spawner that creates a monster is reported with the object
+// it created and its own object, which `packmarks why` counts per kind; under
+// the `timer` retirement policy its map marker goes now instead of when the
+// rotating check reaches it. One object_index read of the caller (shared
+// through CreationCallerInfo) and, only for a known spawner creating a
+// monster, one id read. Nothing runs while the markers are off.
 static void PackMarkerBirth(CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller)
 {
     if (!S || argc < 4 || !Args || !ForgePact::PackMarkers::Instance().Enabled()) return;
     try {
-        if (!IsEnemyObject((int)Args[3].ToDouble())) return;
+        const int created = (int)Args[3].ToDouble();
+        if (!IsEnemyObject(created)) return;
         if (!IsCachedCreatorObject(caller.ObjectIndex())) return;
         const double id = InstanceIdOf(S->ToRValue());
         if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0)
-            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id));
+            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id), created, caller.ObjectIndex());
     } catch (...) {}
 }
 // Observe native success through the already-installed creation hooks. Store
@@ -40063,10 +40065,71 @@ static void PackMarksCommand(const std::string& rest)
         //   packmarks icons 0|1 | iconscale <mult> | reload           (the PNG icons; reload after replacing a file)
         //   packmarks cluster <world px|0> | badge 0|1                (nearby spawners drawn as one marker, with a count)
         //   packmarks list [n]   - the first n markers (id, kind, x, y, armed)
+        // Research build only (issue #181: which rule retires the special
+        // packs' markers; the live procedures match these lines exactly):
+        //   packmarks why            - per kind, retirements by rule this zone, attributed creates, age at retirement, the four objects created most
+        //   packmarks census         - one-shot walk of every creator of each kind: how it carries enemyCreatorTimer and enemyArray
+        //   packmarks retire timer|state   - the marker retirement policy (default timer)
         auto& pm = ForgePact::PackMarkers::Instance();
         auto& st = pm.StyleRef();
         std::string a2; const std::string a1 = Lower(FirstToken(rest, a2));
         auto number = [](const std::string& s, double fallback) { try { return std::stod(s); } catch (...) { return fallback; } };
+#ifndef FORGEPACT_RELEASE
+        using PM = ForgePact::PackMarkers;
+        if (a1 == "why") {
+            // The runtime's own name for an object index, never a hand-typed table.
+            auto objectName = [](int obj) -> std::string {
+                try { return g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) }).ToString(); }
+                catch (...) { return "#" + std::to_string(obj); }
+            };
+            const auto held = pm.KindCounts();
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                const PM::KindStats& s = pm.Stats(k);
+                Out(std::string("packmarks why ") + PM::kKindNames[k] + ": listed=" + std::to_string(s.listed)
+                    + " marked=" + std::to_string(held[k])
+                    + " spawned=" + std::to_string(s.retired[PM::ReasonSpawned])
+                    + " destroyed=" + std::to_string(s.retired[PM::ReasonDestroyed])
+                    + " timergone=" + std::to_string(s.retired[PM::ReasonTimerGone])
+                    + " givenup=" + std::to_string(s.retired[PM::ReasonGivenUp])
+                    + " stateborn=" + std::to_string(s.retired[PM::ReasonStateBorn])
+                    + " attributed=" + std::to_string(s.attributed)
+                    + " age=" + std::to_string(s.ageMin) + ".." + std::to_string(s.ageMax)
+                    + " frame=" + std::to_string(pm.Frame()));
+            }
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                std::string list;
+                for (const auto& [obj, n] : pm.TopCreates(k, 4))
+                    list += (list.empty() ? "" : " ") + objectName(obj) + "=" + std::to_string(n);
+                Out(std::string("packmarks why ") + PM::kKindNames[k] + " creates: " + (list.empty() ? std::string("none") : list));
+            }
+            return;
+        }
+        if (a1 == "census") {
+            auto tally = [](const unsigned (&t)[PM::TallyCount]) {
+                return std::to_string(t[PM::TallyValue]) + "/" + std::to_string(t[PM::TallyUndefined]) + "/"
+                    + std::to_string(t[PM::TallyAbsent]) + "/" + std::to_string(t[PM::TallyOther]);
+            };
+            const auto rows = pm.Census();
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                const PM::CensusRow& row = rows[k];
+                Out(std::string("packmarks census ") + PM::kKindNames[k] + ": creators=" + std::to_string(row.creators)
+                    + " marked=" + std::to_string(row.marked)
+                    + " timer=" + tally(row.timer)
+                    + " enemyArray=" + tally(row.enemyArray)
+                    + " lost=" + std::to_string(row.lost)
+                    + " stale=" + std::to_string(row.stale));
+            }
+            return;
+        }
+        if (a1 == "retire") {
+            const std::string v = Lower(TrimCopy(a2));
+            if (v == "timer") pm.SetRetire(PM::Retire::Timer);
+            else if (v == "state") pm.SetRetire(PM::Retire::State);
+            else if (!v.empty()) { Out("packmarks: usage -> packmarks retire timer|state"); return; }
+            Out(std::string("packmarks retire -> ") + PM::RetireName(pm.GetRetire()));
+            return;
+        }
+#endif
         if (a1 == "style") {
             std::string k, r; k = Lower(FirstToken(a2, r));
             std::string sub, r2; sub = FirstToken(r, r2);
@@ -40113,7 +40176,12 @@ static void PackMarksCommand(const std::string& rest)
             }
             Out("packmarks list: " + std::to_string(shown) + " of " + std::to_string(pm.Count()));
         } else {
-            Out(std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
+            // Markers held now, per kind, in Kind order.
+            std::string kinds;
+            const auto counts = pm.KindCounts();
+            for (int k = 0; k < (int)ForgePact::PackMarkers::KindCount; ++k)
+                kinds += std::string(k ? "," : "") + ForgePact::PackMarkers::kKindNames[k] + ":" + std::to_string(counts[k]);
+            std::string line = std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
                 + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
                 + " marked=" + std::to_string(pm.Count()) + " spawned=" + std::to_string(pm.Spawned()) + " removed=" + std::to_string(pm.Removed())
                 + " enumerations=" + std::to_string(pm.Enumerations()) + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
@@ -40123,7 +40191,12 @@ static void PackMarksCommand(const std::string& rest)
                 + (pm.IconsTried() ? "" : " (not loaded yet)") + " viaAbsolute=" + std::to_string(pm.IconsViaAbsolute())
                 + " lastAddKind=" + std::to_string(pm.IconLastKind()) + " lastAddValue=" + std::to_string(pm.IconLastValue()) + " addThrows=" + std::to_string(pm.IconLoadThrows())
                 + " iconWrites=" + std::to_string(g_PackMarkerIconWrites) + " iconWriteErrors=" + std::to_string(g_PackMarkerIconWriteErrors)
-                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off"));
+                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off")
+                + " kinds=" + kinds;
+#ifndef FORGEPACT_RELEASE
+            line += std::string(" retire=") + ForgePact::PackMarkers::RetireName(pm.GetRetire());
+#endif
+            Out(line);
         }
 }
 
