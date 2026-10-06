@@ -669,4 +669,72 @@ workorder `forgepact-181-map-reveal-icons` (capture
 `forgepact-181-map-reveal-icons-live-1.md`): two fresh zones, one under each
 rule, a forced birth by warping next to a special marker, and a revisit. Its
 results are recorded here, under `### Live 1 results`, by that workorder's
-record round. Nothing above is a result yet.
+record round. The sections above are the design; the results follow.
+
+### Live 1 results
+
+Run 2026-10-06 on the research build (installed DLL SHA-256 `d2bb1c72…`),
+character slot 14, saves backed up and restored clean afterwards. Zone A was
+The Depths of Hell (zone level 294) under `retire timer`, zone B Steam Train
+(zone level 293) under `retire state`, then a forced birth in B by warping
+beside an ambush marker, and a revisit of A. All 19 checks of the procedure
+passed. The capture is the hub's
+`.claude/workorders/forgepact-181-map-reveal-icons-live-1.md`; the numbers
+below are read from it.
+
+What each check showed:
+
+- **The icons are ours, and the game draws none of its own (H5 ruled out,
+  measured).** At arrival in A, `enumerations=18` and `iconDraws=781`; the
+  owner saw white skulls, devil icons and coloured dots. With `reveal packs 0`
+  only the coloured dots remained, which the owner called vanilla.
+- **The sprites are not lost (H4 ruled out, measured).** `loaded=7/7` at
+  arrival and 30 s later, with `iconDraws` growing from 781 to 4471.
+- **Unarmed give-up is the mechanism (H1, measured).** In A, 15 ancient and 3
+  miniboss spawners were listed and marked about a second before the first
+  full read; by then all were gone, `givenup=15` at `age=600..602` and
+  `givenup=3` at `age=600..603`, with no other retirement. The census found
+  `enemyCreatorTimer` and `enemyArray` both absent (`variable_instance_exists`
+  false) on all 18, so neither variable was ever going to arm them. The owner
+  saw the devil icons go within 30 s, leaving the skulls and the dots.
+  The census counted all 18 as `lost`, a pack still to come that the map no
+  longer showed.
+- **No false birth retired a special marker (H2 not observed under `timer`,
+  measured).** Ancient and miniboss had `attributed=0` and no attributed
+  creates in A. Normal spawners did have creates attributed to them (58:
+  `Skeleton_Mage_Fire_obj`, `Imp_Passive_obj`, `Hell_Beast_Passive_obj`).
+  Later in the session, under `state`, miniboss spawners had creates
+  attributed too (`Hellspawn_Guardsman_obj` 4 in B, `Servant_of_Devil_obj` 3
+  on the revisit) and none of them retired a marker, which is what `state`
+  is meant to do.
+- **No early birth (H3 not observed, measured).** At 30 s in A no special
+  spawner had an `enemyArray` at all, so nothing showed a born pack.
+- **`state` keeps every kind (measured).** In B, 80 markers (normal 51, ambush
+  9, ancient 10, colossal chest 6, miniboss 4) all held from arrival to 30 s
+  later, every kind `lost=0 stale=0 givenup=0`, and the owner confirmed the
+  icons stayed.
+- **`state` still retires born packs, for the kinds it can read (measured).**
+  Warping beside an ambush marker turned 6 of the 9 ambush spawners'
+  `enemyArray` from undefined to an array: `marked` 9 → 3, `stateborn=6`,
+  `stale=0`, with 42 creates attributed. One more normal pack was born at the
+  same time (`enemyArray` 11 → 12 arrays, `stateborn` 11 → 12). The owner saw
+  packs appear, a mix of both.
+- **The revisit stayed clean (measured).** Back in A under `state`, 10 s
+  after arrival every kind read `stale=0`, with normal 92, ancient 15 and
+  miniboss 3 marked. Not explained by this session: on the revisit all 92
+  normal spawners read `enemyArray` undefined, including the 10 that read as
+  an array before the player left.
+- **Champion and legion were not observed.** Neither zone had a spawner of
+  either kind (`inames` found no ambush or legion instance in A; B had none
+  of champion or legion), so nothing here is measured for them.
+
+**Route.** The mechanism behind #181 is unarmed give-up: the ancient and
+miniboss spawners carry no `enemyCreatorTimer`, so the 600-frame rule dropped
+their markers with no create attributed to them. The `state` candidate kept
+every kind in B and retired the forced ambush birth and the normal births.
+**Not established:** whether a born ancient or miniboss marker retires under
+`state`. Those spawners carry no `enemyArray` (nor does the colossal chest),
+so under `state` their marker goes only when the spawner itself no longer
+exists, and no birth of either kind was forced in this session. A follow-up
+session on the same build, Live procedure 3 of the same workorder, is planned
+to settle it.
