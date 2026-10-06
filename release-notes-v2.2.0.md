@@ -239,11 +239,11 @@ experience.
   loot your filter hides on, a charm your filter hides would not be seen
   either. The count carries over between sessions and between machines, and
   the machine's payouts don't change it. If the charm drops on its own at any
-  count, the count starts over. In a test game, a machine that exploded once
-  the count was reached dropped exactly one Goburin's Head, and the count
-  started over; the count of explosions itself has not been confirmed in play
-  yet. A charm the game drops on its own, and the reset that follows, have
-  not been watched in a live game yet.
+  count, the count starts over. In a test game with the number set to 2, the
+  first machine to explode was counted and dropped nothing, the second
+  dropped exactly one Goburin's Head, and the count started over. A charm the
+  game drops on its own, and the reset that follows, have not been watched in
+  a live game yet.
 
 ## Changed
 

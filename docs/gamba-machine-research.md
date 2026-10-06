@@ -87,6 +87,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   5's unversioned spin count loads as 0, said once). The trigger, the settle
   span, the natural-head signals, the unread refusals and the drop route are
   phase 5's, unchanged. § Live procedure 6 checks the count in play.
+- **Live procedure 6:** ran on 2026-10-06 with the player build, in two
+  parts (§ Results, `### Live 6 results`). With the threshold at 2, the
+  first natural machine's explosion counted one without a head and dropped
+  nothing, and the second's brought the count to 2 and dropped exactly one
+  Goburin's Head, which both head detectors saw, and the count reset to 0;
+  spins moved nothing. The older spin file's migration failed on the first
+  build (the load held the file open during the rename), was fixed, and
+  passed on the fixed build in a second session. Not observed: a natural
+  head.
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -1805,6 +1814,112 @@ a local working note not copied here. Each finding names the check
 
 Live 5 sets `fallback-drop` to `proven` (below).
 
+### Live 6 results
+
+**Two natural machines exploded with the threshold at 2: the first counted
+one explosion without a head and dropped nothing, and the second brought
+the count to 2, and the mod dropped exactly one Goburin's Head at it**
+(2026-10-06; slot 14 "Sorak"; map reveal already on, `hiddenloot` already
+off). The session ran in two parts. Live 1 ran phase 6's player build
+(`BloodPactPlugin_ship.dll`, SHA-256
+`85fda2eed6a100b8ccb876dcb4ad1618c79c018eee8710b84406d22eb9a56e99`) through
+the whole procedure, and every check passed but `migrate-once` (below).
+After the fix, Live 2 ran the fixed player build (SHA-256
+`0a493c3f6ca8dd8bb7bd0aa26751035a738eee2d1dfc9bdc8248bc8703acb101`) through
+the migration steps alone, from the backend with no person at the keyboard.
+In both, the lease's hash of the installed DLL was the one installed. The
+captures are the toolkit's
+`.claude/workorders/forgepact-goburins-head-pity-6-explosion-count-live-1.md`
+and `-live-2.md`, local working notes not copied here. Each finding names
+the check § Live procedure 6 gives it. Two machines are two samples.
+
+- **Measured, the session (`dll-hash`, `control`, `marker`):** in both
+  parts `ping` answered `pong (YYTK 4.0.1)`, and the first `gambapity
+  status` answered a status line with `explosions=` and no `gold=` field,
+  which only a phase-6 build prints.
+- **Measured, the migration line (`migrate`):** with the counter file at
+  phase 5's `{"count":12}`, and no gambapity line in `out.txt` from the
+  launch banner on, the first `status` printed `gambapity: the counter file
+  held a spin count from an older version; the explosion count starts at
+  0`, then `gambapity: off count=0 threshold=0 explosions=0 ...`. On Live
+  1's build that status line ended ` - could not save <path>`; on Live 2's
+  it did not.
+- **Failed on Live 1, measured on Live 2 (`migrate-once`,
+  `next-launch-silent`):** on Live 1's build the file still read
+  `{"count":12}` after the first `status`, with a 23-byte
+  `forgepact_gamba_pity.json.tmp` holding `{"version":2,"count":0}` beside
+  it, on two launches. The first launch's failure was put down to the
+  operator's own read of the file at the same moment; the second launch,
+  with no other reader, failed the same way. The cause, read from the
+  source rather than measured (the rename's own error was not recorded):
+  the load still held the file open when the migration renamed the temp
+  file over it, which Windows refuses. Round 3 closes the file first. On
+  Live 2's build the file read `{"version":2,"count":0}` (23 bytes, no
+  `.tmp`) right after the first `status`, a second `status` in the same
+  process printed no migration line, and after a stop and relaunch the
+  next `status` printed none either, with no `migrat`, `spin count` or
+  `could not save` anywhere in that launch's `out.txt`.
+- **Measured, armed (`armed`):** `gambapity 2` answered `gambapity: on
+  count=0 threshold=2 explosions=0 ...`.
+- **Measured, the poll (`machine-seen`):** in one zone (Deep Space,
+  Pyramid Level 1) two machines were seen before the first spin, `machine
+  id=420878` and `machine id=622504`, each `seen
+  sprite=Slot_Machine_01_spr heads-nearby=0`. Machine A is 622504, the one
+  that exploded.
+- **Measured, spins are no input (`spin-no-count`):** after three spins on
+  A, `status` read `count=0 ... explosions=0 ... machines=2` while the HUD
+  gold had fallen from 299,873 to 269,873 (the owner's reading).
+- **Measured, below the threshold (`first-below`):** the person spun A 13
+  times, the last of which exploded it, with no head. `gambapity: explosion
+  id=622504 count=1 threshold=2 frame=73867`, then `gambapity: explosion
+  below the threshold (count=1 threshold=2); counter kept`, and no natural
+  or forced line; `status` read `count=1 threshold=2 explosions=1 forced=0
+  natural=0 below=1`, and a screenshot after it showed the wreck and no
+  head.
+- **Measured, the second machine (`second-machine-seen`):** after A,
+  machines 684782 and 795130 were seen; B is 795130 by its explosion line,
+  a different machine from A.
+- **Measured, the force (`second-forces`, `drop-detected`, `one-head`):**
+  the person spun B 9 times, the last of which exploded it. `gambapity:
+  explosion id=795130 count=2 threshold=2 frame=120104`, then `gambapity:
+  forced Goburin's Head at 7584,4552 (rarity 10, attempt 1) and reset the
+  counter` and `gambapity: ground check after the drop: heads=1`; `status`
+  read `count=0 threshold=2 explosions=2 forced=1 natural=0 below=1 ...
+  own-head-builds=1 machines=4`. A screenshot after it showed one
+  `Goburin's Head | SS` label by the wreck and no second, and the person
+  reported "head dropped" (they were not asked outright about a second).
+  The head was not picked up.
+- **Measured, the counter file (`counter-file`):** `{"version":2,"count":1}`
+  after A, with the `.tmp` the failed migration had left gone, so that
+  save's rename landed; `{"version":2,"count":0}` after B. Both 23 bytes.
+- **Seen on Live 1's build, fixed since:** after those saves had landed,
+  `status` still ended ` - could not save <path>`, the migration's refusal.
+  Round 3 clears that error when a save lands; Live 2's lines carried no
+  error, but it ran no explosion, so the cleared error after an explosion's
+  save is pinned by the tests, not watched in play.
+- **Not established, the HUD gold:** after A's 13 spins the screenshot's
+  HUD read 229,873, 70,000 below the start rather than 130,000, and after
+  B's 9 spins 200,219, 30,000 below 230,219 rather than 90,000. Payouts and
+  loot between spins may account for it (Live 5 saw about 50,380 come back
+  over 12 spins), but the payouts were not itemised and `shop.ini` is
+  written only at a save, so the gap is not reconciled. The count reads no
+  gold.
+- **Not observed, a natural head (`natural-head`):** no `the explosion's
+  own Goburin's Head was seen` or `natural Goburin's Head build` line,
+  `natural=0`. The game dropped no head of its own at either explosion (A
+  dropped none; B's was the mod's), so the natural-head reset stays
+  unconfirmed in play.
+- **Teardown:** `gambapity off`; the saves restored from each part's
+  backup (`changed [], added [], missing []` after); the counter file
+  written back to `{"count":12}`, its starting hash; `forgepact.json`
+  never edited.
+
+Live 6 confirms phase 6's count in play: an explosion without a head counts
+one and keeps the counter below the threshold, and the explosion that
+reaches the threshold drops the head and resets it. It adds two natural
+explosions, at the person's counts of 13 and 9 spins (phase 6 hooks no
+spin, so no debit was read), to Live 4's 13 and 8/9 and Live 5's 12.
+
 ## Decision
 
 roll-route: script
@@ -1818,6 +1933,18 @@ counter-route: both
 fallback-drop: proven
 
 pity-design: drop-ourselves
+
+Live 6 (§ Results, `### Live 6 results`) ran phase 6's explosion count on
+two natural machines with the threshold at 2: the first explosion counted
+one below the threshold and dropped nothing, and the second forced exactly
+one head through the same loader route (read back on the first attempt,
+rarity 10, both detectors seeing it) and reset the count, so the shipped
+unit, the explosion without a head, holds in play and the force has a
+second sample. No key changes. The person's spin counts at the two
+explosions, 13 and 9, join Live 4's and Live 5's and still cannot tell a
+roll per spin from a threshold per machine, so `explosion-rule` stays
+`not-observed`; `counter-route` still records which events a counter could
+read. The natural-head reset was not exercised.
 
 Live 5 (§ Results, `### Live 5 results`) ran the player build's force on one
 natural machine: at its explosion, with the count over the threshold, the
@@ -1933,21 +2060,23 @@ machine's spin and payout and answered several of the rest; what stays open:
   count 9-10; Live 5's machine read 12 debits for the person's 12 spins,
   the exploding one included, so the samples disagree), what decides when a machine explodes (`explosion-rule`; two samples
   at different counts cannot tell a random roll per spin from a per-machine
-  threshold), whether a destroyed machine can still be spun (the owner's
+  threshold, and Live 5's 12 and Live 6's 13 and 9, the person's counts,
+  do not either), whether a destroyed machine can still be spun (the owner's
   report says it cannot; not tried), and the route Goburin's Head takes when
   the game drops it. By the owner's report the explosion is the only time
   the head drops in the unmodded game; neither sample dropped one, so
   whether an explosion that drops the head builds it through the build rows
   is not observed.
-- **The pity's paths Live 5 did not reach.** A below-threshold explosion
-  keeping the counter (`below-control`, no second machine appeared), a
-  natural head seen at an explosion and the reset it makes (`natural-head`,
-  the game did not drop one), a refused or abandoned force, and whether
-  the natural-head signals would see a head the game drops are all not
-  observed in play; the explosion decision is pinned by the pity's
-  behaviour test.
-- **The phase-6 explosion count.** Counting explosions without a head (each
-  added when seen, the one that reaches the threshold forced), the counter
-  file's version 2 and its migration from phase 5's spin count are not
-  observed in play until Live procedure 6 runs; until then only the
-  behaviour and contract tests pin them.
+- **The pity's paths Live 5 and Live 6 did not reach.** A natural head
+  seen at an explosion and the reset it makes (`natural-head`, the game
+  dropped none at the pity's three explosions in Live 5 and Live 6), a refused or abandoned force, several
+  explosions pending together, and whether the natural-head signals would
+  see a head the game drops are all not observed in play; the explosion
+  decision is pinned by the pity's behaviour test. (Live 6 measured a
+  below-threshold explosion keeping the counter.)
+- **What Live 6 measured on which build.** The explosion count, the force
+  and the counter file's saves were measured on Live 1's build; the fixed
+  build, whose change is the load's closed file and the save error's
+  clearing, re-ran only the migration (Live 2). On the fixed build the count and
+  the force are pinned by the behaviour and contract tests, not watched in
+  play.
