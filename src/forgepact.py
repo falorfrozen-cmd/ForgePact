@@ -3161,8 +3161,10 @@ class H(BaseHTTPRequestHandler):
                         # kept). Turning it on restates the count.
                         send_cmds([gambapity_cmd(cfg)], cfg)
                     elif key == "gambapity":
-                        # Stored either way; sent only while the switch is on
-                        # (the range is disabled while it is off).
+                        # Stored either way; sent only while the switch is on.
+                        # The panel never disables the slider: moved while the
+                        # switch is off, the count is saved here, sent when the
+                        # switch is turned on, and the toast says "(while on)".
                         if cfg.get("mod_gambapity", False):
                             send_cmds([gambapity_cmd(cfg)], cfg)
                     elif key == "angelic_items":

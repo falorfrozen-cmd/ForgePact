@@ -616,12 +616,56 @@ class GambaPityContract(unittest.TestCase):
         from test_release_hook_contract import function_body as body
         from test_panel_performance import run_node
         panel = (ROOT / "panel" / "src" / "panel.js").read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.assertIn("toast('Goburin\\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head - '", panel)
+        self.assertIn("toast('Goburin\\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head'"
+                      "+(on?'':' (while on)')+' - '", panel)
         ordinal = "function gambapityOrdinal(n){" + body(panel, "function gambapityOrdinal(n)") + "}"
         values = [1, 2, 3, 4, 10, 11, 12, 13, 20, 21, 22, 23, 111]
         got = run_node(ordinal, f"console.log(JSON.stringify({values}.map(gambapityOrdinal)));")
         self.assertEqual(got, ["1st", "2nd", "3rd", "4th", "10th", "11th", "12th", "13th", "20th", "21st", "22nd",
                                "23rd", "111th"])
+
+    def test_the_slider_posts_and_toasts_a_whole_count_and_says_while_on_when_off(self):
+        # PR #180 review: a typed 3.4 was posted and toasted as "3.4th" while the
+        # server keeps round(3.4) = 3, and the toast promised a drop with the
+        # switch off. Runs the real handler line, sliderVal and the ordinal in
+        # node, typed values, switch off then on (the on run is the control).
+        from test_panel_performance import run_node
+        panel = (ROOT / "panel" / "src" / "panel.js").read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("gpp.oninput=()=>gambapityPaint(Math.round(sliderVal(gpp)));", panel)
+        handler = next((line.strip() for line in panel.splitlines() if line.strip().startswith("gpp.onchange=")), None)
+        self.assertIsNotNone(handler, "panel.js has no gpp.onchange handler")
+        helpers = ("function sliderVal(r){" + function_body(panel, "function sliderVal(r)") + "}\n"
+                   "function gambapityOrdinal(n){" + function_body(panel, "function gambapityOrdinal(n)") + "}\n")
+        stubs = ("let on=false;const posted=[],toasts=[];\n"
+                 "const document={getElementById:(id)=>id==='mod_gambapity'?{checked:on}:null};\n"
+                 "const j=async(url,o)=>{posted.push(JSON.parse(o.body));return {ok:'saved'}};\n"
+                 "const toast=(t)=>toasts.push(t);\n"
+                 "const gpp={value:'3.4',step:'any',dataset:{typed:'1',step0:'1'}};\n")
+        driver = ("(async()=>{await gpp.onchange();on=true;gpp.value='12.6';await gpp.onchange();"
+                  "console.log(JSON.stringify({posted,toasts}));})();")
+        got = run_node(helpers + stubs + handler, driver)
+        self.assertEqual(got["posted"], [{"key": "gambapity", "value": 3}, {"key": "gambapity", "value": 13}])
+        self.assertEqual(got["toasts"], [
+            "Goburin's Head pity: drops at the 3rd explosion without a head (while on) - saved",
+            "Goburin's Head pity: drops at the 13th explosion without a head - saved",
+        ])
+
+    def test_the_readme_has_the_row_the_card_list_entry_and_the_section(self):
+        # PR #180 review: README had nothing on gambapity; its Quality of Life
+        # siblings each have a features-table row, a card-list mention and a section.
+        readme = (ROOT / "README.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+        row = next((line for line in readme.splitlines() if line.startswith("| **Goburin's Head pity** |")), None)
+        self.assertIsNotNone(row, "the features table has no Goburin's Head pity row")
+        self.assertIn("Mods → Quality of Life, off by default", row)
+        self.assertIn("(#goburins-head-pity)", row)
+        self.assertIn("the timed skill countdown and Goburin's Head pity)", readme)
+        self.assertRegex(readme, r"(?m)^## Goburin's Head pity$")
+        section = readme.split("\n## Goburin's Head pity\n", 1)[1].split("\n## ", 1)[0]
+        low = " ".join(section.split()).lower()
+        for phrase in ("off by default", "from 1 to 20", "one head per explosion", "the count starts over",
+                       "forgepact_gamba_pity.json", "`gambapity status`", "`gambapity off`",
+                       "have not been observed"):
+            self.assertIn(phrase, low)
 
     def _load_cfg_from(self, saved):
         if str(SDK_PYTHON) not in sys.path:

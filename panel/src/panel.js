@@ -697,9 +697,12 @@ function bind(){
   // Goburin's Head pity: the dungeon chest's switch-plus-slider shape. The
   // value follows the drag (input) and is posted on release (change); the
   // switch repaints before its POST, so a lost server still leaves the box right.
+  // A typed count is rounded to the whole number the server keeps, so the box,
+  // the POST and the toast agree; with the switch off the slider still moves
+  // and is saved, but nothing counts, so the toast says "(while on)".
   const gpp=document.getElementById('gambapity');
-  gpp.oninput=()=>gambapityPaint(sliderVal(gpp));
-  gpp.onchange=async()=>{const v=sliderVal(gpp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head - '+(res.ok||res.err))};
+  gpp.oninput=()=>gambapityPaint(Math.round(sliderVal(gpp)));
+  gpp.onchange=async()=>{const v=Math.round(sliderVal(gpp)),on=document.getElementById('mod_gambapity').checked;const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head'+(on?'':' (while on)')+' - '+(res.ok||res.err))};
   typable(gpp,document.getElementById('gppval'));
   document.getElementById('mod_gambapity').onchange=async(e)=>{
     gambapityPaint(+gpp.value);
