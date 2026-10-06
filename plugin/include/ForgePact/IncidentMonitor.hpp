@@ -35,7 +35,8 @@
 //
 // Game-independent: Win32 and the standard library only, no runtime
 // interface. tests/incident_monitor_harness.cpp drives the same classes on a
-// simulated clock, and tests/incident_shutdown_probe.cpp loads the marker in
+// simulated clock, and the accounting on a clock it controls (the seam at
+// Qpc() below), and tests/incident_shutdown_probe.cpp loads the marker in
 // a DLL of its own. Avoids the two-argument min/max of the standard library:
 // ModuleMain.cpp includes <windows.h> without NOMINMAX.
 
@@ -153,6 +154,19 @@ inline std::string InModText(Mod m, bool gameOriginal)
 
 // ---- clock ---------------------------------------------------------------------
 
+// The player build reads QueryPerformanceCounter here, as a plain call. A test
+// harness that puts /DFORGEPACT_INCIDENT_HARNESS_CLOCK on its compile line
+// defines HarnessClockQpc() and HarnessClockFrequency() itself
+// (tests/incident_monitor_harness.cpp), so its accounting scenarios run on a
+// clock that moves only when it says so, at a frequency of its own rather than
+// the host's. The seam is the compiler's, not a pointer: the scopes below run
+// on every hooked call, and the shipped read pays nothing for a test's clock.
+#ifdef FORGEPACT_INCIDENT_HARNESS_CLOCK
+int64_t HarnessClockQpc() noexcept;
+int64_t HarnessClockFrequency() noexcept;
+inline int64_t Qpc() noexcept { return HarnessClockQpc(); }
+inline int64_t QpcFrequency() noexcept { return HarnessClockFrequency(); }
+#else
 inline int64_t Qpc() noexcept
 {
     LARGE_INTEGER v;
@@ -169,6 +183,7 @@ inline int64_t QpcFrequency() noexcept
     }();
     return frequency;
 }
+#endif
 
 inline double QpcToMs(int64_t ticks) noexcept
 {

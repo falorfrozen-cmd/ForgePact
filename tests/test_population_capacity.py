@@ -5,6 +5,16 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# vcvars64 plus one cl /O2 takes a few seconds on an idle machine, but beside
+# other load a comparable harness compile was measured at about 2 minutes, so
+# a fixed 90 s over compile and run together failed for reasons that had
+# nothing to do with the code (ForgePact #165). The compile gets a wide bound.
+COMPILE_TIMEOUT_SECONDS = 600
+# The compiled harnesses assert nothing about elapsed time
+# (population_native_library prints its read timings but does not check them)
+# and finish in about a second; this bound only catches a hang, so it stays
+# tight and separate from the compile.
+RUN_TIMEOUT_SECONDS = 90
 
 class PopulationCapacityTests(unittest.TestCase):
     def test_real_detours_and_existing_drop_getter_when_explicitly_supplied(self):
@@ -26,11 +36,11 @@ class PopulationCapacityTests(unittest.TestCase):
         script.write_text(f'@echo off\ncall "{vs}\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul\n'
             f'cl /nologo /std:c++20 /EHsc /O2 /DFORGEPACT_NATIVE_DETOURS /I "{ROOT / "plugin/include"}" /I "{mh / "include"}" /I "{out}" '
             f'"{ROOT / "tests/population_native_library.cpp"}" {sources} /Fe:"{out / "detours.exe"}" /Fo:"{out}/"\n',encoding='utf-8')
-        build = subprocess.run(['cmd','/d','/c',str(script)],capture_output=True,text=True,timeout=90)
+        build = subprocess.run(['cmd','/d','/c',str(script)],capture_output=True,text=True,timeout=COMPILE_TIMEOUT_SECONDS)
         self.assertEqual(build.returncode,0,build.stdout+build.stderr)
         for mode in (0,-1,10):
             with self.subTest(preexisting_getter=mode==-1,failed_hook=mode if mode>0 else None):
-                run=subprocess.run([str(out/'detours.exe'),library,str(out/'local-native-cache'),str(mode)],capture_output=True,text=True,timeout=90)
+                run=subprocess.run([str(out/'detours.exe'),library,str(out/'local-native-cache'),str(mode)],capture_output=True,text=True,timeout=RUN_TIMEOUT_SECONDS)
                 self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                 print(run.stdout.strip())
 
@@ -45,11 +55,11 @@ class PopulationCapacityTests(unittest.TestCase):
         script = out / 'native.cmd'
         script.write_text(f'@echo off\ncall "{vs}\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul\n'
             f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{ROOT / "tests/population_native_library.cpp"}" /Fe:"{out / "native.exe"}" /Fo:"{out / "native.obj"}"\n', encoding='utf-8')
-        build = subprocess.run(['cmd','/d','/c',str(script)], capture_output=True,text=True,timeout=90)
+        build = subprocess.run(['cmd','/d','/c',str(script)], capture_output=True,text=True,timeout=COMPILE_TIMEOUT_SECONDS)
         self.assertEqual(build.returncode,0,build.stdout+build.stderr)
         for fail in range(11):
             with self.subTest(failed_hook=fail):
-                run = subprocess.run([str(out/'native.exe'), library,str(out/'local-native-cache'),str(fail)],capture_output=True,text=True,timeout=90)
+                run = subprocess.run([str(out/'native.exe'), library,str(out/'local-native-cache'),str(fail)],capture_output=True,text=True,timeout=RUN_TIMEOUT_SECONDS)
                 self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                 print(run.stdout.strip())
 
@@ -66,10 +76,10 @@ class PopulationCapacityTests(unittest.TestCase):
         out = ROOT / 'build/population-capacity';out.mkdir(parents=True, exist_ok=True)
         script = out / 'test.cmd'
         script.write_text(f'@echo off\ncall "{vs}\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul\n'
-            f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{ROOT / "tests/population_capacity.cpp"}" /Fe:"{out / "test.exe"}" /Fo:"{out / "test.obj"}"\n'
-            'if errorlevel 1 exit /b 1\n'
-            f'"{out / "test.exe"}"\n', encoding='utf-8')
-        result = subprocess.run(['cmd','/d','/c',str(script)], capture_output=True, text=True, timeout=90)
+            f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{ROOT / "tests/population_capacity.cpp"}" /Fe:"{out / "test.exe"}" /Fo:"{out / "test.obj"}"\n', encoding='utf-8')
+        build = subprocess.run(['cmd','/d','/c',str(script)], capture_output=True, text=True, timeout=COMPILE_TIMEOUT_SECONDS)
+        self.assertEqual(build.returncode,0,build.stdout+build.stderr)
+        result = subprocess.run([str(out / 'test.exe')], capture_output=True, text=True, timeout=RUN_TIMEOUT_SECONDS)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('queue: bounded, complete, stale entries, reset PASS',result.stdout)
 

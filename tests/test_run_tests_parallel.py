@@ -16,6 +16,7 @@ import textwrap
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "run_tests_parallel.py"
@@ -23,16 +24,6 @@ SCRIPT = ROOT / "tools" / "run_tests_parallel.py"
 _spec = importlib.util.spec_from_file_location("forgepact_run_tests_parallel", SCRIPT)
 runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(runner)
-
-# Python 3.14 colours unittest's summary when the calling shell sets
-# FORCE_COLOR (agent shells do), and an escape-prefixed "FAILED" no longer
-# starts with "FAILED". PYTHON_COLORS=0 outranks FORCE_COLOR, so every
-# subprocess here, and the runner's workers it inherits to, prints plain text.
-PLAIN_ENV = {key: value for key, value in os.environ.items()
-             if key not in ("FORCE_COLOR", "PYTHON_COLORS", "NO_COLOR")}
-PLAIN_ENV.update({"PYTHON_COLORS": "0", "NO_COLOR": "1"})
-
-ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 MIXED = {
@@ -80,12 +71,31 @@ def write_suite(root, files):
         (root / name).write_text(textwrap.dedent(body), encoding="utf-8")
 
 
-def tail(stderr):
-    """unittest's closing 'Ran N tests' and status lines, timing dropped.
+ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
-    Escape sequences are stripped first, as a second guard behind PLAIN_ENV.
+
+def child_env(force_color=False):
+    """The environment every child process of these tests runs in.
+
+    Python 3.14+ colours unittest's status line (and the traceback text it
+    keeps) when FORCE_COLOR or PYTHON_COLORS=1 is set, even into a pipe, and
+    the comparisons below read that text. So colour is switched off for every
+    child, whatever shell runs the suite. Read at call time, not import time.
+    force_color=True is for the positive control only: it turns colour on.
     """
-    lines = [ANSI_ESCAPE.sub("", line) for line in stderr.splitlines() if line.strip()]
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("FORCE_COLOR", "PYTHON_COLORS", "NO_COLOR")}
+    if force_color:
+        env["FORCE_COLOR"] = "3"
+    else:
+        env["NO_COLOR"] = "1"
+    return env
+
+
+def tail(stderr):
+    """unittest's closing 'Ran N tests' and status lines, timing dropped."""
+    lines = [ANSI_SGR.sub("", line) for line in stderr.splitlines()]
+    lines = [line for line in lines if line.strip()]
     ran = next(line for line in reversed(lines) if line.startswith("Ran "))
     status = next(line for line in reversed(lines) if line.startswith(("OK", "FAILED")))
     return ran.split(" in ")[0], status
@@ -99,10 +109,10 @@ class FixtureSuiteTests(unittest.TestCase):
             suite.mkdir()
             write_suite(suite, files)
             serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "suite"],
-                                    cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
+                                    cwd=tmp, capture_output=True, text=True, env=child_env())
             parallel = subprocess.run([sys.executable, str(SCRIPT), "-j", jobs,
                                        "--start-dir", "suite", "--state-dir", str(tmp / "state")],
-                                      cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
+                                      cwd=tmp, capture_output=True, text=True, env=child_env())
             return serial, parallel
 
     def test_failures_errors_and_skips_are_reported_as_serial_reports_them(self):
@@ -135,7 +145,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "2", "--start-dir", str(tmp),
                                   "--state-dir", str(tmp / "state")],
-                                 capture_output=True, text=True, env=PLAIN_ENV)
+                                 capture_output=True, text=True, env=child_env())
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertIn("test_e_crash (worker exit 3)", run.stderr)
         self.assertNotIn("never loaded", run.stderr)
@@ -162,7 +172,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, {f"test_solo_{i}.py": self.SOLO for i in range(3)})
             return subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", str(tmp),
                                    "--state-dir", str(tmp / "state"), *extra],
-                                  capture_output=True, text=True, env=PLAIN_ENV)
+                                  capture_output=True, text=True, env=child_env())
 
     def test_a_group_never_runs_more_copies_than_its_limit(self):
         run = self.run_solo()
@@ -226,7 +236,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(tmp, files)
             return subprocess.run([sys.executable, str(SCRIPT), "-j", jobs, "--start-dir", str(tmp),
                                    "--state-dir", str(tmp / "state")],
-                                  capture_output=True, text=True, env=PLAIN_ENV)
+                                  capture_output=True, text=True, env=child_env())
 
     def test_an_exclusive_module_runs_last_and_alone(self):
         run = self.run_exclusive()
@@ -268,13 +278,13 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(suite, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
                                   "--state-dir", str(tmp / "state"), *extra],
-                                 cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
+                                 cwd=tmp, capture_output=True, text=True, env=child_env())
             ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
             reference = tmp / "reference"
             reference.mkdir()
             write_suite(reference, PASSING)
             serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "reference"],
-                                    cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
+                                    cwd=tmp, capture_output=True, text=True, env=child_env())
         return run, ran, serial
 
     def test_an_excluded_module_does_not_run_and_is_named(self):
@@ -327,7 +337,7 @@ class FixtureSuiteTests(unittest.TestCase):
             write_suite(suite, files)
             run = subprocess.run([sys.executable, str(SCRIPT), "-j", "3", "--start-dir", "suite",
                                   "--state-dir", str(tmp / "state"), *extra],
-                                 cwd=tmp, capture_output=True, text=True, env=PLAIN_ENV)
+                                 cwd=tmp, capture_output=True, text=True, env=child_env())
             ran = sorted(f.name[len("ran-"):] for f in suite.glob("ran-*"))
         return run, ran
 
@@ -378,6 +388,40 @@ class FixtureSuiteTests(unittest.TestCase):
                 self.assertFalse(runner.exclusive_of(name, tmp), name)
 
 
+class ForceColorTests(unittest.TestCase):
+    """Every test here must fail on code that lets FORCE_COLOR reach a child."""
+
+    def test_tail_reads_a_coloured_summary_as_plain_text(self):
+        stderr = ("\x1b[1mRan 3 tests in 0.001s\x1b[0m\n\n"
+                  "\x1b[1;31mFAILED\x1b[0m (\x1b[1;31merrors=1\x1b[0m)\n")
+        self.assertEqual(tail(stderr), ("Ran 3 tests", "FAILED (errors=1)"))
+
+    def test_a_forced_colour_environment_does_not_change_either_summary(self):
+        with mock.patch.dict(os.environ, {"FORCE_COLOR": "3", "PYTHON_COLORS": "1"}):
+            serial, parallel = FixtureSuiteTests.run_both(self, MIXED)
+        self.assertNotIn("\x1b", serial.stderr)
+        self.assertNotIn("\x1b", parallel.stderr)
+        self.assertEqual(tail(parallel.stderr), tail(serial.stderr), parallel.stderr)
+
+
+@unittest.skipIf(sys.version_info < (3, 14), "the stdlib colours unittest output from 3.14")
+class ForceColorControlTests(unittest.TestCase):
+    """Positive control: FORCE_COLOR does colour a piped child, so the tests
+    above guard against something real on this Python."""
+
+    def test_a_serial_child_with_force_color_emits_an_escape_sequence(self):
+        with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
+            tmp = Path(tmp)
+            suite = tmp / "suite"
+            suite.mkdir()
+            write_suite(suite, MIXED)
+            serial = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "suite"],
+                                    cwd=tmp, capture_output=True, text=True,
+                                    env=child_env(force_color=True))
+        status = [line for line in serial.stderr.splitlines() if "FAILED" in line][-1]
+        self.assertIn("\x1b[", status)
+
+
 class CoverageTests(unittest.TestCase):
     def test_the_real_suite_loads_exactly_what_serial_discovery_runs(self):
         discovered = runner.discover(ROOT / "tests")
@@ -392,7 +436,7 @@ class CoverageTests(unittest.TestCase):
         # From the hub root, a bare `tests` would be the hub's suite.
         with tempfile.TemporaryDirectory(prefix="forgepact-runner-") as tmp:
             listed = subprocess.run([sys.executable, str(SCRIPT), "--list"], cwd=tmp,
-                                    capture_output=True, text=True, env=PLAIN_ENV, check=True).stdout.split()
+                                    capture_output=True, text=True, env=child_env(), check=True).stdout.split()
         self.assertEqual(Counter(listed), Counter(runner.discover(ROOT / "tests")))
 
     def test_a_missing_extra_or_doubled_id_is_a_problem(self):
@@ -419,7 +463,7 @@ class CoverageTests(unittest.TestCase):
         full = runner.discover(ROOT / "tests")
         run = subprocess.run([sys.executable, str(SCRIPT), "--list", "--exclude-module", "test_panel_e2e*",
                               "--exclude-module", "test_panel_perf"],
-                             capture_output=True, text=True, env=PLAIN_ENV, check=True)
+                             capture_output=True, text=True, env=child_env(), check=True)
         listed = run.stdout.split()
         gone = [i for i in full if runner.module_of(i) == "test_panel_perf"
                 or runner.module_of(i).startswith("test_panel_e2e")]

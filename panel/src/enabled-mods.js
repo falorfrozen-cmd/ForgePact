@@ -20,7 +20,7 @@ export const BOOLEAN_MODS = [
   'map_reveal', 'headhunter', 'tyrant', 'beacon', 'mod_filter_max_relics',
   'mod_orb_pickup_radius', 'mod_pet_quest_pickup', 'mod_pet_relic_pickup', 'mod_pet_loot_unstick', 'mod_auto_prospect',
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
-  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery',
+  'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery', 'mod_loot_announce',
   'mod_gem_mythic', 'mod_gem_maxroll',
   'satanic_follow', 'satanic_everywhere',
 ];

@@ -4,9 +4,20 @@
 // the way ModuleMain.cpp's adapter does: frames arrive on a clock, the monitor
 // wakes every kWakeMs, and each wake hands the Detector what it can see (the
 // newest frame's time, focus, the last room change, the two tags). Here the
-// clock is simulated, so ten seconds of 60 fps take no time; the per-mod
-// accounting, the installer's tag thunks and the clean-shutdown marker run for
-// real.
+// clock is simulated, so ten seconds of 60 fps take no time; the installer's
+// tag thunks and the clean-shutdown marker run for real.
+//
+// The per-mod accounting runs on a clock this file controls: compiled with
+// /DFORGEPACT_INCIDENT_HARNESS_CLOCK, the header's Qpc() reads
+// HarnessClockQpc() below instead of QueryPerformanceCounter. In its
+// controlled mode time moves only when Spin(ms) moves it, so a scenario's
+// charge is exact and a busy machine cannot move it. descheduled-not-charged
+// pins that property of this harness's clock: a real Sleep inside a scope
+// does not reach it. It says nothing about the shipped accounting, which
+// reads the real counter and does charge a scope the time its thread was
+// descheduled. One scenario, real-clock-control, shows that: it reads the
+// real counter through the same seam, with lower bounds only, since
+// preemption only ever adds time.
 //
 // Usage:  incident_monitor_harness.exe <incident_shutdown_probe.dll> <work dir> <fixture dir>
 //         incident_monitor_harness.exe --child <exit|terminate> <probe.dll> <marker path>
@@ -18,9 +29,15 @@
 // process exits 0 only when every scenario passed.
 // tests/test_incident_monitor_behavior.py compiles and runs it.
 
+#ifndef FORGEPACT_INCIDENT_HARNESS_CLOCK
+#error "compile with /DFORGEPACT_INCIDENT_HARNESS_CLOCK: the accounting scenarios need the harness's clock"
+#endif
+
 #include <ForgePact/IncidentMonitor.hpp>
 
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -31,58 +48,69 @@ namespace inc = ForgePact::Incident;
 
 namespace {
 
-int g_Failures = 0;
+// ---- the accounting's clock ---------------------------------------------------
+//
+// Real until a scenario asks for the controlled one. Controlled, it starts far
+// from zero (a zero start means "no clock running" to the accounting, and a
+// zero frame time "no frame yet") and only Spin moves it.
+//
+// Both modes tick at the harness's own frequency, not the host's. The host's
+// counter need not divide into milliseconds (the ACPI PM timer runs at
+// 3,579,545 Hz, so 1 ms is 3579.545 ticks), and a Spin rounded to whole ticks
+// there drifts by a fraction of a tick each time, which the sampled scope
+// multiplies by kSampleEvery: a failure on one machine whose log shows the
+// expected values. At 10 MHz every Spin the scenarios use is whole ticks.
+constexpr int64_t kHarnessQpcFrequency = 10'000'000;
+constexpr int64_t kHarnessTicksPerMs = kHarnessQpcFrequency / 1000;
+static_assert(kHarnessQpcFrequency % 1000 == 0, "the controlled clock must count whole ticks per millisecond");
 
-// Set while Timed() runs a scenario: Report keeps the result here instead of
-// printing it, so a failed attempt can be run again.
-struct Captured {
-    std::string name;
-    bool ok = false;
-    std::string detail;
-};
-Captured* g_Capture = nullptr;
+bool g_ClockControlled = false;
+int64_t g_ControlledQpc = int64_t{ 1 } << 40;
+
+// The host's counter, rescaled to kHarnessQpcFrequency. Split into whole
+// seconds and the rest so the multiply cannot overflow on a counter that has
+// run for days.
+int64_t RealQpc() noexcept
+{
+    static const int64_t host = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f.QuadPart > 0 ? f.QuadPart : 1;
+    }();
+    LARGE_INTEGER v;
+    QueryPerformanceCounter(&v);
+    return v.QuadPart / host * kHarnessQpcFrequency + v.QuadPart % host * kHarnessQpcFrequency / host;
+}
+
+// Runs `scenario` with the accounting's clock under the harness's control.
+void OnControlledClock(void (*scenario)())
+{
+    g_ClockControlled = true;
+    scenario();
+    g_ClockControlled = false;
+}
+
+} // namespace
+
+int64_t ForgePact::Incident::HarnessClockQpc() noexcept
+{
+    return g_ClockControlled ? g_ControlledQpc : RealQpc();
+}
+
+int64_t ForgePact::Incident::HarnessClockFrequency() noexcept
+{
+    return kHarnessQpcFrequency;
+}
+
+namespace {
+
+int g_Failures = 0;
 
 void Report(const char* name, bool ok, const std::string& detail)
 {
-    if (g_Capture) {
-        *g_Capture = { name, ok, detail };
-        return;
-    }
     std::printf("%s | %s | %s\n", name, ok ? "pass" : "fail", detail.c_str());
     std::fflush(stdout);
     if (!ok) ++g_Failures;
-}
-
-// The accounting scenarios time real work on the wall clock. A thread
-// preempted inside a timed scope is charged the time it spent descheduled,
-// and on a loaded machine (the parallel suite) one preemption pushed a 1 ms
-// scope to 68 ms. Preemption only ever adds time, so a lower bound cannot
-// pass by luck, and an upper bound a bug breaks (a scope counted twice, an
-// original charged to its mod) breaks on every attempt: run the scenario up
-// to kTimedAttempts times and report the first clean one, or the last. The
-// thread runs at raised priority meanwhile, so the suite's other work
-// preempts it less often.
-constexpr int kTimedAttempts = 10;
-
-void Timed(void (*scenario)())
-{
-    const DWORD priorityClass = GetPriorityClass(GetCurrentProcess());
-    const int threadPriority = GetThreadPriority(GetCurrentThread());
-    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-    Captured result;
-    int attempt = 0;
-    while (attempt < kTimedAttempts) {
-        ++attempt;
-        g_Capture = &result;
-        scenario();
-        g_Capture = nullptr;
-        if (result.ok) break;
-    }
-    SetThreadPriority(GetCurrentThread(), threadPriority);
-    SetPriorityClass(GetCurrentProcess(), priorityClass);
-    if (attempt > 1) result.detail += " | attempt " + std::to_string(attempt) + " of " + std::to_string(kTimedAttempts);
-    Report(result.name.c_str(), result.ok, result.detail);
 }
 
 std::string Num(double v)
@@ -203,13 +231,31 @@ struct Sim {
     }
 };
 
-// Busy-waits on the clock: Sleep's granularity is too coarse to give a scope
-// a known cost.
+// Work of a known cost: moves the controlled clock on by exactly `ms`, and
+// takes no time. Outside the controlled clock it would move nothing anyone
+// reads, and a step that is not whole ticks would be rounded, so either
+// stops the run instead.
 void Spin(double ms)
 {
-    const int64_t end = inc::Qpc() + static_cast<int64_t>(ms * static_cast<double>(inc::QpcFrequency()) / 1000.0);
-    while (inc::Qpc() < end) {}
+    if (!g_ClockControlled) {
+        std::fprintf(stderr, "Spin(%.1f) outside the controlled clock\n", ms);
+        std::abort();
+    }
+    const double ticks = ms * static_cast<double>(kHarnessTicksPerMs);
+    if (ticks != std::floor(ticks) || inc::QpcFrequency() != kHarnessQpcFrequency) {
+        std::fprintf(stderr, "Spin(%g) is not whole ticks of the controlled clock (%lld Hz)\n", ms,
+                     static_cast<long long>(inc::QpcFrequency()));
+        std::abort();
+    }
+    g_ControlledQpc += static_cast<int64_t>(ticks);
 }
+
+// Every Spin is whole ticks at a fixed frequency, so the controlled clock's
+// charges are exact; the tolerance only covers a row stored as a float.
+bool Exactly(double ms, double expected) { return std::fabs(ms - expected) < 0.001; }
+
+// Real time on the counter itself, past the seam: what a real Sleep took.
+double RealMsSince(int64_t start) { return inc::QpcToMs(RealQpc() - start); }
 
 // ---- scenarios ------------------------------------------------------------
 
@@ -487,11 +533,12 @@ void PerModAccounting()
               && rows[0].mod == inc::Mod::density && rows[1].mod == inc::Mod::gems
               && rows[2].mod == inc::Mod::miner && rows[3].mod == inc::Mod::drops;
     if (ok) {
-        ok = rows[0].avgMs >= 12.0 && rows[0].avgMs <= 24.0    // 1 ms x 16, not 1 ms
-             && rows[1].avgMs >= 7.5 && rows[1].avgMs <= 11.0
-             && rows[3].avgMs >= 0.9 && rows[3].avgMs <= 1.8;  // nested drops counted once
-        // Every frame's duration covers the scopes that ran in it.
-        for (const auto& f : frames) ok = ok && f.frameMs >= 26.0;
+        ok = Exactly(rows[0].avgMs, 16.0) && Exactly(rows[0].worstMs, 16.0)   // 1 ms x 16, not 1 ms
+             && Exactly(rows[1].avgMs, 8.0) && Exactly(rows[1].worstMs, 8.0)
+             && Exactly(rows[2].avgMs, 2.0) && Exactly(rows[2].worstMs, 2.0)
+             && Exactly(rows[3].avgMs, 1.0) && Exactly(rows[3].worstMs, 1.0); // nested drops counted once
+        // Every frame's duration is the scopes that ran in it: 8 + 2 + 16 x 1 + 1.
+        for (const auto& f : frames) ok = ok && Exactly(f.frameMs, 27.0);
     }
     inc::Episode e;
     e.kind = inc::Kind::hitch;
@@ -541,7 +588,7 @@ void GameOriginalExcluded()
         inc::IncidentScope scope(inc::Mod::hudlabels);
         FP_GAME_ORIGINAL(Spin(10.0));
     });
-    const bool ok = f.frameMs >= 10.0 && ModMs(f, inc::Mod::hudlabels) < 1.0;
+    const bool ok = Exactly(f.frameMs, 10.0) && ModMs(f, inc::Mod::hudlabels) == 0.0;
     Report("game-original-excluded", ok, FrameText(f, { inc::Mod::hudlabels }));
 }
 
@@ -554,7 +601,7 @@ void OwnWorkCharged()
         FP_GAME_ORIGINAL(Spin(10.0));
     });
     const double ms = ModMs(f, inc::Mod::hudlabels);
-    const bool ok = f.frameMs >= 15.0 && ms >= 4.5 && ms <= 6.5;
+    const bool ok = Exactly(f.frameMs, 15.0) && Exactly(ms, 5.0);
     Report("own-work-charged", ok, FrameText(f, { inc::Mod::hudlabels }));
 }
 
@@ -568,7 +615,7 @@ void GameOriginalOuterClock()
         inc::IncidentScope create(inc::Mod::density);
         FP_GAME_ORIGINAL(Spin(10.0));
     });
-    const bool ok = f.frameMs >= 10.0 && ModMs(f, inc::Mod::density) < 1.0;
+    const bool ok = Exactly(f.frameMs, 10.0) && ModMs(f, inc::Mod::density) == 0.0;
     Report("game-original-outer-clock", ok, FrameText(f, { inc::Mod::density }));
 }
 
@@ -593,7 +640,7 @@ void OwnWorkInsideGameOriginal()
         FP_GAME_ORIGINAL(GameWorkCallingADropHook());
     });
     const double ms = ModMs(f, inc::Mod::drops);
-    const bool ok = f.frameMs >= 10.0 && ms >= 1.5 && ms <= 3.0;
+    const bool ok = Exactly(f.frameMs, 10.0) && Exactly(ms, 2.0);
     Report("own-work-inside-game-original", ok, FrameText(f, { inc::Mod::drops }));
 }
 
@@ -610,7 +657,7 @@ void FrameSelfTime()
     const double frameMs = ModMs(f, inc::Mod::frame);
     const double densityMs = ModMs(f, inc::Mod::density);
     // The rows are stored as float; the slack covers their rounding.
-    bool ok = frameMs >= 1.5 && frameMs <= 3.0 && densityMs >= 3.5 && densityMs <= 5.5
+    bool ok = Exactly(frameMs, 2.0) && Exactly(densityMs, 4.0) && Exactly(f.frameMs, 6.0)
               && frameMs + densityMs <= f.frameMs + 0.01;
     // A sampled scope's untimed calls pause the frame's clock too: sixteen
     // calls of 0.5 ms, one of them timed and counted sixteen times.
@@ -620,12 +667,61 @@ void FrameSelfTime()
         for (int call = 0; call < 16; ++call) { inc::IncidentSampledScope create(inc::Mod::density); Spin(0.5); }
     });
     const double sampledFrame = ModMs(s, inc::Mod::frame);
-    ok = ok && sampledFrame >= 1.5 && sampledFrame <= 3.0 && ModMs(s, inc::Mod::density) >= 6.0;
+    ok = ok && Exactly(sampledFrame, 2.0) && Exactly(ModMs(s, inc::Mod::density), 8.0) && Exactly(s.frameMs, 10.0);
     // The table ranks `frame` with the others.
     const std::string top = inc::TopMod({ { inc::Mod::frame, 2.0, 2.0 }, { inc::Mod::density, 1.0, 1.0 } });
     ok = ok && top.rfind("frame 2.0", 0) == 0;
     Report("frame-self-time", ok, FrameText(f, { inc::Mod::frame, inc::Mod::density }) + " | sampled "
            + FrameText(s, { inc::Mod::frame, inc::Mod::density }) + " | top " + top);
+}
+
+// ---- a busy machine (ForgePact #165) ---------------------------------------
+//
+// On the real clock a thread descheduled inside a scope is charged the time
+// it was away: on a loaded machine one preemption pushed a 1 ms scope to
+// 68 ms. That is the shipped accounting's behaviour, and these two pin what
+// each of the harness's clocks does with that time.
+
+// Target: the harness's controlled clock is immune to a deschedule. A real
+// Sleep inside a timed scope, which gives up the processor the way a
+// preemption takes it, moves nothing the controlled clock reads, so the mod
+// is charged only the controlled work beside it. This is a property of the
+// test's clock, which is what keeps the accounting scenarios load-proof; the
+// shipped accounting, on the real counter, still charges the time away
+// (real-clock-control).
+void DescheduledNotCharged()
+{
+    double sleptMs = 0.0;
+    const inc::FrameSample f = OneFrame([&sleptMs] {
+        inc::IncidentScope scope(inc::Mod::gems);
+        Spin(3.0);
+        const int64_t start = RealQpc();
+        Sleep(30);
+        sleptMs = RealMsSince(start);
+        Spin(2.0);
+    });
+    const bool ok = Exactly(f.frameMs, 5.0) && Exactly(ModMs(f, inc::Mod::gems), 5.0) && sleptMs >= 10.0;
+    Report("descheduled-not-charged", ok,
+           FrameText(f, { inc::Mod::gems }) + " | slept " + Num(sleptMs) + " ms on the real clock");
+}
+
+// Baseline and positive control: the accounting reads the real counter. On
+// the real clock the same scope is charged at least the time it was away,
+// and its frame lasts at least that long. Lower bounds only: preemption only
+// ever adds time, so a busy machine cannot fail this.
+void RealClockControl()
+{
+    double sleptMs = 0.0;
+    const inc::FrameSample f = OneFrame([&sleptMs] {
+        inc::IncidentScope scope(inc::Mod::gems);
+        const int64_t start = RealQpc();
+        Sleep(30);
+        sleptMs = RealMsSince(start);
+    });
+    const double ms = ModMs(f, inc::Mod::gems);
+    // The scope's own readings bracket the Sleep's; the row is a float.
+    const bool ok = sleptMs >= 10.0 && ms >= sleptMs - 0.01 && f.frameMs >= ms - 0.01;
+    Report("real-clock-control", ok, FrameText(f, { inc::Mod::gems }) + " | slept " + Num(sleptMs) + " ms on the real clock");
 }
 
 // Inside the guard the in-mod channel keeps the mod and adds the mark; a
@@ -1060,12 +1156,14 @@ int main(int argc, char** argv)
     FreezeMenuRoomNeverEnds();
     Unfocused();
     RateLimit();
-    Timed(PerModAccounting);
-    Timed(GameOriginalExcluded);
-    Timed(OwnWorkCharged);
-    Timed(GameOriginalOuterClock);
-    Timed(OwnWorkInsideGameOriginal);
-    Timed(FrameSelfTime);
+    OnControlledClock(PerModAccounting);
+    OnControlledClock(GameOriginalExcluded);
+    OnControlledClock(OwnWorkCharged);
+    OnControlledClock(GameOriginalOuterClock);
+    OnControlledClock(OwnWorkInsideGameOriginal);
+    OnControlledClock(FrameSelfTime);
+    OnControlledClock(DescheduledNotCharged);
+    RealClockControl();
     GameOriginalInMod();
     WorstJudgedVsOverall();
     HookTagThunk();

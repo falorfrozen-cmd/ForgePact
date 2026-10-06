@@ -170,7 +170,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 141 switch clicks, 75 Turn off buttons, one theme step per theme', () => {
+test('the counts: 141 switch clicks, 76 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -180,11 +180,12 @@ test('the counts: 141 switch clicks, 75 Turn off buttons, one theme step per the
     + NATIVE_SWITCHED_RANGES.length);
   // The dungeon chest and Goburin's Head pity switches' ids have no `sw_`
   // prefix: each adds a Turn off button and no `#sw_` click. Jump through
-  // scenery's native boolean adds one more Turn off button, and the two
-  // Satanic Zone control switches two more. The three skill sliders (#160)
-  // add three switch clicks and one Turn off button each.
+  // scenery's native boolean adds one more Turn off button, the two
+  // Satanic Zone control switches two more, and Loot announcements' native
+  // boolean (#17) one more. The three skill sliders (#160) add three switch
+  // clicks and one Turn off button each.
   assert.equal(switches.length, 141);
-  assert.equal(quick.length, 75);
+  assert.equal(quick.length, 76);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -273,7 +274,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
     ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
-      'satanic_follow', 'satanic_everywhere', 'mod_jump_scenery']);
+      'satanic_follow', 'satanic_everywhere', 'mod_jump_scenery', 'mod_loot_announce']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
@@ -347,8 +348,8 @@ test('the show key\'s select follows the native booleans: its switch on, Ctrl, N
   const [on, off] = [nativeAt, nativeAt + 1];
   assert.equal(steps[on].control, parent);
   // The switch's own steps left it off, and the select is disabled while it
-  // is; the native booleans after it (the Satanic Zone switches and Jump
-  // through scenery) leave it alone.
+  // is; the native booleans after it (the Satanic Zone switches, Jump
+  // through scenery and Loot announcements) leave it alone.
   assert.equal(steps[nativeAt + 3].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));
   for (let i = nativeAt + 4; i < at; i++) assert.notEqual(steps[i].control, parent, i);

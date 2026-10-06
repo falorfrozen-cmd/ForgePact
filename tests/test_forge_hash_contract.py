@@ -122,6 +122,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Goburin's Head pity (ForgePact #134): the Mods tab's switch and range
     # (test_gamba_pity_contract.py pins it).
     "gambapity",
+    # Loot announcements, Mods > Quality of Life (ForgePact #17;
+    # test_loot_announce_contract.py).
+    "lootann",
 }
 
 

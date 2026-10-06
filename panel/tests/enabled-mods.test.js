@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 23);
+  assert.equal(BOOLEAN_MODS.length, 24);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -111,6 +111,13 @@ test('jump through scenery is an entry while on and off by default', () => {
   assert.ok(BOOLEAN_MODS.includes('mod_jump_scenery'));
   assert.equal(DEFAULTS.mod_jump_scenery, false);
   assert.deepEqual(enabledControls(cfg({ mod_jump_scenery: true })), ['mod_jump_scenery']);
+});
+
+test('loot announcements is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_loot_announce'));
+  assert.equal(DEFAULTS.mod_loot_announce, false);
+  assert.deepEqual(enabledControls(cfg({ mod_loot_announce: true })), ['mod_loot_announce']);
+  assert.deepEqual(enabledControls(cfg({ mod_loot_announce: false })), []);
 });
 
 test('the skill timer is an entry for any style but off', () => {

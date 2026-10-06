@@ -88,6 +88,8 @@ QOL_CONTROL_IDS = [
     "mod_hidden_loot_key",
     # Jump through scenery (forgepact-16-jump-scenery-mod).
     "mod_jump_scenery",
+    # Loot announcements (forgepact-issue-17-loot-announcements).
+    "mod_loot_announce",
     "mod_skill_timer_style",
     # Goburin's Head pity (forgepact-134-goburins-head-pity-mod): the switch and
     # its range.

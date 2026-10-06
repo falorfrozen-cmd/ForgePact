@@ -109,6 +109,11 @@
         <span class="val" id="mjsval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Loot announcements<br><span class="feature-description">Announces in chat when a Heroic, Angelic or Unholy item drops, like online play does. Items you drop yourself are not announced. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_loot_announce"><span class="sl"></span></label>
+        <span class="val" id="mlaval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style" aria-label="Timed skill countdown">
             <option value="off">Off</option>
