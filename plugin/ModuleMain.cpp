@@ -52290,6 +52290,7 @@ static bool g_GambaPityHooked = false;          // both splices are in
 static bool g_GambaPityLoaded = false;          // the counter file was read
 static std::string g_GambaPityError;            // the last load/save refusal, empty when none
 static bool g_GambaPityVersionError = false;    // g_GambaPityError is the unknown-version text
+static bool g_GambaPitySaveError = false;       // g_GambaPityError is a save's refusal
 
 // The scripts gambapity holds, as "A, B" - empty when it holds none. The
 // research build's gambaprobe refuses while this is non-empty.
@@ -52373,7 +52374,9 @@ static std::filesystem::path GambaPityPath()
 
 // The core's text, version 2: `{"version":2,"count":<n>}`. Saved whenever the
 // count changes - an explosion's addition, and each reset. A save that lands
-// replaces a file of another version, so its status error goes with it.
+// replaces a file of another version, so its status error goes with it, and so
+// does an earlier save's refusal. A refused rename removes its .tmp rather than
+// leaving it beside the file (Live 1, 2026-10-06).
 static void GambaPitySave()
 {
     try {
@@ -52385,17 +52388,22 @@ static void GambaPitySave()
         std::error_code ec;
         std::filesystem::rename(tmp, path, ec);
         if (ec) {
+            std::error_code removed;
+            std::filesystem::remove(tmp, removed);
             g_GambaPityError = "could not save " + path.string();
             g_GambaPityVersionError = false;
+            g_GambaPitySaveError = true;
             return;
         }
-        if (g_GambaPityVersionError) {
+        if (g_GambaPityVersionError || g_GambaPitySaveError) {
             g_GambaPityError.clear();
             g_GambaPityVersionError = false;
+            g_GambaPitySaveError = false;
         }
     } catch (...) {
         g_GambaPityError = "could not save the gambapity counter";
         g_GambaPityVersionError = false;
+        g_GambaPitySaveError = true;
     }
 }
 
@@ -52413,8 +52421,13 @@ static void GambaPityLoad()
         const std::filesystem::path path = GambaPityPath();
         std::error_code ec;
         if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 4096) {
-            std::ifstream in(path, std::ios::binary);
-            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            // The stream closes before the migration's save: Windows refuses to
+            // rename the .tmp over a file this process still holds open.
+            std::string text;
+            {
+                std::ifstream in(path, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
             const GP::CounterFile file = GP::ParseCounterFile(text);
             g_GambaPity.SetCount(file.count);
             if (file.legacy) {

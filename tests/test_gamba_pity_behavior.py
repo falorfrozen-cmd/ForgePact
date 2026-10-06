@@ -30,51 +30,58 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def core_text():
+    header = (ROOT / "plugin/include/ForgePact/GambaPity.hpp").read_text(encoding="utf-8")
+    return "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
+
+
+def compile_and_run(code, out, stem):
+    """Compile `code` at /W4 (MSVC on Windows, c++ elsewhere), run it, and
+    return (compiler output, program stdout). Skips when no compiler exists."""
+    out.mkdir(parents=True, exist_ok=True)
+    cpp = out / f"{stem}.cpp"
+    cpp.write_text(code, encoding="utf-8")
+    binary = out / (f"{stem}.exe" if os.name == "nt" else stem)
+    if os.name == "nt":
+        vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        if not vswhere.is_file():
+            raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
+        install = subprocess.check_output(
+            [str(vswhere), "-latest", "-products", "*", "-requires",
+             "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+            text=True).strip()
+        if not install:
+            raise unittest.SkipTest("Visual Studio C++ toolchain not installed")
+        vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
+        batch = out / f"compile-{stem}.cmd"
+        batch.write_text(
+            f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
+            f'cl /nologo /std:c++20 /EHsc /O2 /W4 /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{binary}" /Fo:"{out / (stem + ".obj")}"\n'
+            f'exit /b %errorlevel%\n', encoding="utf-8")
+        command = ["cmd", "/d", "/c", str(batch)]
+    else:
+        compiler = shutil.which("c++")
+        if not compiler:
+            raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
+        command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(binary)]
+    # The compiler speaks the machine's locale; decode leniently so a
+    # localized diagnostic cannot itself crash the test.
+    result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    (out / f"compile-{stem}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+    if result.returncode:
+        raise AssertionError(result.stdout + result.stderr)
+    run = subprocess.run([str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    (out / f"run-{stem}.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+    return result.stdout + result.stderr, run.stdout
+
+
 class GambaPityBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        header = (ROOT / "plugin/include/ForgePact/GambaPity.hpp").read_text(encoding="utf-8")
-        core = "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
-        out = ROOT / "build/gamba-pity-behavior"
-        out.mkdir(parents=True, exist_ok=True)
         code = (ROOT / "tests/gamba_pity_harness.cpp").read_text(encoding="utf-8")
-        code = code.replace("// PRODUCTION_GAMBAPITY", core)
-        cpp = out / "gambapity.cpp"
-        cpp.write_text(code, encoding="utf-8")
-        cls.binary = out / ("gambapity.exe" if os.name == "nt" else "gambapity")
-        if os.name == "nt":
-            vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
-            if not vswhere.is_file():
-                raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
-            install = subprocess.check_output(
-                [str(vswhere), "-latest", "-products", "*", "-requires",
-                 "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
-                text=True).strip()
-            if not install:
-                raise unittest.SkipTest("Visual Studio C++ toolchain not installed")
-            vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
-            batch = out / "compile.cmd"
-            batch.write_text(
-                f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-                f'cl /nologo /std:c++20 /EHsc /O2 /W4 /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "gambapity.obj"}"\n'
-                f'exit /b %errorlevel%\n', encoding="utf-8")
-            command = ["cmd", "/d", "/c", str(batch)]
-        else:
-            compiler = shutil.which("c++")
-            if not compiler:
-                raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
-            command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
-        # The compiler speaks the machine's locale; decode leniently so a
-        # localized diagnostic cannot itself crash the test.
-        result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
+        code = code.replace("// PRODUCTION_GAMBAPITY", core_text())
         # /W4 is the bar: a warning in the decision core is a finding, not noise.
-        cls.compile_output = result.stdout + result.stderr
-        run = subprocess.run([str(cls.binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        cls.output = run.stdout
-        (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+        cls.compile_output, cls.output = compile_and_run(code, ROOT / "build/gamba-pity-behavior", "gambapity")
 
     def line(self, label):
         for line in self.output.split("\n"):
@@ -271,6 +278,63 @@ class GambaPityBehaviorTests(unittest.TestCase):
                       "lines/below_ground_unread", "lines/baseline_read",
                       "lines/natural_build", "lines/migration", "lines/version_error"):
             self.assertScenario(label)
+
+
+class GambaPityCounterFileTests(unittest.TestCase):
+    """The adapter's REAL GambaPityPath, GambaPitySave and GambaPityLoad,
+    lifted from ModuleMain.cpp and run on a scratch directory
+    (tests/gamba_pity_file_harness.cpp). Live 1 (2026-10-06): the migration
+    renamed over a file its load still held open, which Windows refuses."""
+
+    FILE_START = "static std::filesystem::path GambaPityPath()"
+    FILE_END = "// ---- the splices"
+
+    @classmethod
+    def setUpClass(cls):
+        plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
+        start = plugin.index(cls.FILE_START)
+        adapter = plugin[start:plugin.index(cls.FILE_END, start)]
+        code = (ROOT / "tests/gamba_pity_file_harness.cpp").read_text(encoding="utf-8")
+        code = code.replace("// PRODUCTION_GAMBAPITY_FILE", adapter).replace("// PRODUCTION_GAMBAPITY", core_text())
+        cls.compile_output, cls.output = compile_and_run(code, ROOT / "build/gamba-pity-file", "gambapity_file")
+
+    def scenario(self, label):
+        for line in self.output.split("\n"):
+            if line.split(" ")[1:2] == [label]:
+                return line
+        raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+
+    def assertScenarios(self, *labels):
+        for label in labels:
+            self.assertTrue(self.scenario(label).startswith("PASS "), self.scenario(label))
+
+    def test_all_scenarios_pass(self):
+        self.assertIn("RESULT OK", self.output, self.output)
+        self.assertNotIn("FAIL ", self.output, self.output)
+
+    def test_the_adapter_compiles_without_warnings(self):
+        self.assertNotRegex(self.compile_output, r"warning C\d+", self.compile_output)
+
+    def test_baseline_a_version_2_file_loads_silently_and_stays(self):
+        self.assertScenarios("baseline/v2_loads_its_count", "baseline/v2_is_silent", "baseline/v2_leaves_no_tmp")
+
+    def test_a_legacy_file_is_rewritten_as_version_2_on_its_load(self):
+        self.assertScenarios("target/legacy_reads_as_zero", "target/legacy_prints_the_migration_line_once",
+                             "target/legacy_file_is_rewritten_as_v2", "target/legacy_leaves_no_tmp",
+                             "target/legacy_leaves_no_error", "target/legacy_next_load_is_silent")
+
+    def test_a_failed_save_leaves_no_tmp_and_a_landed_save_clears_it(self):
+        self.assertScenarios("target/failed_save_names_itself", "target/failed_save_leaves_no_tmp",
+                             "target/landed_save_clears_the_save_error", "target/landed_save_writes_the_count")
+
+    def test_an_unknown_version_shows_its_error_until_a_save_lands(self):
+        self.assertScenarios("target/unknown_version_shows_its_error", "target/unknown_version_is_left_alone",
+                             "target/landed_save_clears_the_version_error",
+                             "target/landed_save_replaces_the_unknown_file")
+
+    def test_control_a_landed_save_keeps_a_read_error(self):
+        self.assertScenarios("control/landed_save_keeps_a_read_error")
+
 
 if __name__ == "__main__":
     unittest.main()

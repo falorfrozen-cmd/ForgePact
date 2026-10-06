@@ -42,7 +42,10 @@ plugin/ModuleMain.cpp on comment-stripped source:
   `forgepact_gem_tables.json`, written atomically (temp file then
   `std::filesystem::rename`) through the core's `CounterFileText` and read
   through its `ParseCounterFile`; an explosion's addition is saved when it is
-  seen, and an older spin file prints the migration line and is rewritten;
+  seen, and an older spin file prints the migration line and is rewritten,
+  the load's stream closed first (Windows refuses the rename over an open
+  file, Live 1); a refused rename removes its `.tmp`, and a save that lands
+  clears an earlier save's refusal as well as the version error;
 - `gambapity status` carries every counter (no `gold=`) and surfaces
   `g_GambaPityError` (the last load/save refusal), and every action line is
   fixed text from the core;
@@ -532,14 +535,50 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("g_GambaPityVersionError = true;", unknown)
         self.assertNotIn("GambaPitySave();", unknown)
         # The first save that lands replaces that file, and the version error
-        # goes with it; a save that fails names itself instead.
+        # goes with it; a save that fails names itself instead, and the next
+        # save that lands clears that too.
         landed = save[save.index("std::filesystem::rename(tmp, path, ec);"):]
-        self.assertLess(landed.index("if (ec) {"), landed.index("if (g_GambaPityVersionError) {"))
-        cleared = landed[landed.index("if (g_GambaPityVersionError) {"):]
+        self.assertLess(landed.index("if (ec) {"), landed.index("if (g_GambaPityVersionError || g_GambaPitySaveError) {"))
+        cleared = landed[landed.index("if (g_GambaPityVersionError || g_GambaPitySaveError) {"):]
         cleared = cleared[:cleared.index("}")]
         self.assertIn("g_GambaPityError.clear();", cleared)
         self.assertIn("g_GambaPityVersionError = false;", cleared)
+        self.assertIn("g_GambaPitySaveError = false;", cleared)
         self.assertEqual(load.count("GambaPitySave();"), 1)
+
+    def test_a_refused_save_removes_its_tmp_and_flags_itself(self):
+        # Live 1 (2026-10-06): a refused rename left forgepact_gamba_pity.json.tmp
+        # beside the file. The refusal removes it before it returns.
+        save = self.body("static void GambaPitySave()")
+        refused = save[save.index("if (ec) {"):]
+        refused = refused[:refused.index("return;")]
+        self.assertIn("std::filesystem::remove(tmp, removed);", refused)
+        self.assertIn('g_GambaPityError = "could not save " + path.string();', refused)
+        self.assertIn("g_GambaPitySaveError = true;", refused)
+        caught = save[save.index("} catch (...) {"):]
+        self.assertIn("g_GambaPitySaveError = true;", caught)
+        self.assertIn("static bool g_GambaPitySaveError = false;", self.block)
+
+    def test_the_load_closes_its_stream_before_the_migration_saves(self):
+        # Live 1 (2026-10-06): the migration renamed the .tmp over a file the
+        # load still held open, which Windows refuses, so the older file stayed.
+        # The stream's scope ends (or it is closed) before GambaPitySave.
+        load = self.body("static void GambaPityLoad()")
+        opened = load.index("std::ifstream in(path, std::ios::binary);")
+        saved = load.index("GambaPitySave();")
+        self.assertLess(opened, saved)
+        between = load[opened:saved]
+        depth, closed = 0, False
+        for ch in between:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth < 0:
+                    closed = True
+                    break
+        self.assertTrue(closed or "in.close();" in between,
+                        "the ifstream is still in scope at the migration's GambaPitySave()")
         # The core writes exactly version 2.
         self.assertIn("inline constexpr int64_t kCounterFileVersion = 2;", self.header)
         self.assertIn("inline std::string CounterFileText(int count)", self.header)
