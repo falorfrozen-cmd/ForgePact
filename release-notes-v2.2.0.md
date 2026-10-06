@@ -10,8 +10,8 @@ shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
-switch, also off by default, makes a slot machine drop the charm at
-the next explosion after the number of spins you set.
+switch, also off by default, counts the slot machine explosions that drop no
+charm, and the one that reaches the number you set drops the charm.
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -229,22 +229,21 @@ experience.
   doors and zone gates was not reached, and what the game does at the edge
   of the walkable map has not been observed.
 - **Goburin's Head pity (#134).** A new switch in Mods → Quality of Life, off
-  by default, with a slider from 10 to 1000 spins. Until now, the one-of-a-kind
-  charm the slot machine can give, Goburin's Head, was pure luck. With the
-  switch on, a machine drops Goburin's Head when it explodes, at the first
-  explosion after the number of spins you set, and the count starts over. If
-  ForgePact sees a charm the game dropped at that explosion, it adds none; a
-  charm the game drops later or farther from the machine would not be seen
-  (no such drop has been observed), and with Sleep loot your filter hides on,
-  a charm your filter hides would not be seen either. Each spin costs 10,000 gold, so the count
-  is the least gold it takes. The count carries over between sessions and
-  between machines, and the machine's payouts between explosions don't use it
-  up. If the charm drops on its own at any count, the count starts over. The
-  spin that makes a machine explode may not be counted, so the count can read
-  one fewer than you counted. In a test game, a machine that exploded after
-  the count was reached dropped exactly one Goburin's Head, and the count
-  started over. A charm the game drops on its own, and the reset that
-  follows, have not been watched in a live game yet.
+  by default, with a slider from 1 to 20. Until now, the one-of-a-kind charm
+  the slot machine can give, Goburin's Head, was pure luck. With the switch
+  on, ForgePact counts each slot machine explosion without a head, and the
+  explosion that reaches the number you set drops Goburin's Head; then the
+  count starts over. If ForgePact sees a charm the game dropped at that
+  explosion, it adds none; a charm the game drops later or farther from the
+  machine would not be seen (no such drop has been observed), and with Sleep
+  loot your filter hides on, a charm your filter hides would not be seen
+  either. The count carries over between sessions and between machines, and
+  the machine's payouts don't change it. If the charm drops on its own at any
+  count, the count starts over. A count saved by an earlier test version
+  starts again at 0. In a test game, a machine that exploded once the count
+  was reached dropped exactly one Goburin's Head, and the count started over;
+  the count of explosions itself has not been confirmed in play yet. A charm the game drops on its own, and the reset that follows, have
+  not been watched in a live game yet.
 
 ## Changed
 

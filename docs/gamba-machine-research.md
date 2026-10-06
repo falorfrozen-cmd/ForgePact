@@ -77,6 +77,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   build (`own-head-builds=1`), and the counter reset to 0. So
   `fallback-drop` is `proven`. Not observed: a below-threshold explosion (no
   second machine appeared) and a natural head.
+- **Phase 6 (2026-10-06):** the owner switched the count from spins to
+  explosions ("yes, switch to explosions"): `gambapity` now counts each
+  machine explosion without a head when it is seen, and the explosion that
+  brings the count to the number set (1 to 20, default 10) drops the head.
+  The `PickUpGoldCheck` spin hook is retired, `status` drops `gold=`, and the
+  counter file gains a format version (`{"version":2,"count":<n>}`; phase
+  5's unversioned spin count loads as 0, said once). The trigger, the settle
+  span, the natural-head signals, the unread refusals and the drop route are
+  phase 5's, unchanged. § Live procedure 6 checks the count in play.
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -1366,6 +1375,53 @@ may not exist on another machine; the outline is repeated here.
   expected finding.
 - **what it decides**: § Decision's `fallback-drop`, `proven` when the
   forced head was placed, read back and seen once, `failed` otherwise.
+
+## Live procedure 6 (explosion count, player build)
+
+Written for phase 6, which counts explosions without a head instead of
+spins. The full procedure is in the toolkit workorder
+`forgepact-goburins-head-pity-6-explosion-count`, context file, § "Live
+procedure 1 (final gate, player build)"; its capture, written by the live
+operator, is that workorder's `-live-1.md`. Both are local working notes
+under the toolkit's `.claude/workorders/`, which is not committed, so they
+may not exist on another machine; the outline is repeated here.
+
+- **build**: the player DLL from `plugin_build\build.bat`
+  (`BloodPactPlugin_ship.dll`), installed only after the owner says so.
+- **character**: slot 14 "Sorak". `shop.ini`'s gold is read, not changed
+  (about 25 spins of 10,000 per machine; stop below 50,000).
+  `forgepact_gamba_pity.json` is recorded before; it is expected to hold
+  phase 5's unversioned `{"count":12}`, and is written as that from the
+  backend if it does not, so the migration has a legacy file. It is written
+  back to its starting bytes at teardown.
+- **control**: `ping` -> `pong (YYTK 4.0.1)`. **marker**: the first
+  `gambapity status` answers a status line with `explosions=` and no `gold=`
+  field, which only this build prints.
+- **steps**: `gambapity status` (`migrate`: the line `gambapity: the counter
+  file held a spin count from an older version; the explosion count starts
+  at 0`, then `count=0`, and the file reads `{"version":2,"count":0}`), sent
+  again (`migrate-once`: no second migration line); `gambapity 2` (`armed`);
+  `reveal` and `hiddenloot` noted and set as in Live procedure 5; zones until
+  the game places a machine A (`machine-seen`); the person spins A, and after
+  at least 3 spins `status` still reads `count=0` while the gold has fallen
+  (`spin-no-count`); A is spun to its explosion (`first-below`: `explosion
+  id=<A> count=1 threshold=2`, then the below line with `count=1`, and no
+  head by A); zones until a second machine B (`second-machine-seen`), spun
+  to its explosion (`second-forces`: `explosion id=<B> count=2 threshold=2`,
+  then the `forced Goburin's Head` line and `count=0 ... explosions=2
+  forced=1`; `drop-detected`: `own-head-builds=1` and `ground check after
+  the drop: heads=1`; `one-head`: exactly one head by B, `natural=0`). The
+  counter file reads `{"version":2,"count":1}` after A and
+  `{"version":2,"count":0}` after B (`counter-file`). Teardown: `gambapity
+  off`, `reveal` and `hiddenloot` restored, the saves restored and the
+  counter file written back to its starting bytes.
+- **checks**: `dll-hash`, `marker` and `control` for the session; `migrate`,
+  `migrate-once`, `armed`, `machine-seen`, `spin-no-count`, `first-below`,
+  `second-machine-seen`, `second-forces`, `drop-detected`, `one-head` and
+  `counter-file` must pass. `natural-head` cannot be arranged, and its
+  `not-observed` is the expected finding.
+- **what it decides**: whether the explosion without a head is the unit in
+  play: one counted below the threshold, the one that reaches it forced.
 
 ## Results
 
