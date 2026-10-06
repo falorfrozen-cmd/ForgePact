@@ -10,9 +10,8 @@ shows it again while you hold a key. A new **Pet collects relics** switch,
 also off by default, has your pet pick up the relics lying around you. A new
 **Jump through scenery** switch, off by default, lets your jump carry you over
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
-switch, also off by default, is meant to make a slot machine drop the charm
-at the next explosion after the number of spins you set (not yet watched in
-a live game).
+switch, also off by default, makes a slot machine drop the charm at
+the next explosion after the number of spins you set.
 And when the game crashes, freezes or drops frames badly, ForgePact now saves a
 report you can attach to a bug report, without a notification: you find it on
 the panel's Setup tab.
@@ -242,8 +241,10 @@ experience.
   between machines, and the machine's payouts between explosions don't use it
   up. If the charm drops on its own at any count, the count starts over. The
   spin that makes a machine explode may not be counted, so the count can read
-  one fewer than you counted. The forced drop and this reset have not been
-  watched in a live game yet.
+  one fewer than you counted. In a test game, a machine that exploded after
+  the count was reached dropped exactly one Goburin's Head, and the count
+  started over. A charm the game drops on its own, and the reset that
+  follows, have not been watched in a live game yet.
 
 ## Changed
 

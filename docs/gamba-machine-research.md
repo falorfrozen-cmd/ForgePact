@@ -68,8 +68,15 @@ instrumented). Reading or changing the player's gold balance from the plugin.
   loader route, unless a natural head was seen at that explosion (the ground
   check, a head build in the window, or a machine-self `(0, 98)` build).
   `gambaprobe` gains the `window full` line (N2) and the by-name fix (N1)
-  (§ Instrument). § Live procedure 5 checks the force in play; until its
-  results are recorded, the forced drop is not confirmed.
+  (§ Instrument). § Live procedure 5 checked the force in play (below).
+- **Live procedure 5:** ran on 2026-10-06 with the player build (§ Results,
+  `### Live 5 results`): one natural machine exploded at a count over the
+  threshold, and the mod dropped exactly one Goburin's Head at it through
+  the loader route, read back on the first attempt; the ground check after
+  the drop saw that head (`heads=1`) and the head-build detector counted its
+  build (`own-head-builds=1`), and the counter reset to 0. So
+  `fallback-drop` is `proven`. Not observed: a below-threshold explosion (no
+  second machine appeared) and a natural head.
 - **Phase 1c (2026-10-04):** the local reading, the `scp` and `stamp` spawn
   routes, the extension-function rows and `fnwalk` are in (§ Static reading,
   § Instrument); § Live procedure 3 ran on 2026-10-04 (§ Results, `### Live 3
@@ -1661,6 +1668,76 @@ procedure 4 gives it. Two machines are two samples, one explosion each.
 Live 4 relabels `pity-design` and keeps `explosion-rule` at `not-observed`
 (below).
 
+### Live 5 results
+
+**One natural machine exploded with the count over the threshold, and the
+mod dropped exactly one Goburin's Head at it** (2026-10-06, starting from the
+Town of Inoya; slot 14 "Sorak"; the player build
+`BloodPactPlugin_ship.dll` from this branch, SHA-256
+`e01251d6b0f9fef7d0ebcbe8743ac9d45f8e71cb43f1f70aacc2523fd0a946c4`, the
+installed DLL's hash equal to the built one; map reveal already on,
+`hiddenloot` already off). The capture is the toolkit's
+`.claude/workorders/forgepact-goburins-head-pity-5-explosion-force-live-1.md`,
+a local working note not copied here. Each finding names the check
+§ Live procedure 5 gives it. One machine is one sample.
+
+- **Measured, the session (`dll-hash`, `control`, `marker`, `armed`):** `ping`
+  answered `pong (YYTK 4.0.1)`; `gambapity status` answered `gambapity: off
+  count=12 threshold=0 gold=120000 explosions=0 forced=0 ...`, a line only
+  this build prints, with the counter file at `{"count":12}` from earlier
+  sessions; `gambapity 10` answered `gambapity: on count=12 threshold=10
+  ...`, so the first explosion had to force.
+- **Measured, the poll's positive control (`machine-seen`):** `gambapity:
+  machine id=367244 seen sprite=Slot_Machine_01_spr heads-nearby=0`, with
+  `machines=1` in `status`, before the first spin.
+- **Measured, the spin count (`spin-count`):** the person reported 12 spins,
+  the last of which exploded the machine, and the count went from 12 to 24
+  by the explosion line (`count=24`): 12 machine-self debits for the
+  person's 12. No `status` was sent between spins, so the count was read
+  only before and at the explosion, not one spin at a time. In this sample
+  every spin the person counted was debited, the exploding one included;
+  Live 4's machine 1 read 12 debits against the person's 13. Two machines
+  disagree, so whether the exploding spin is debited stays **not
+  established**: one sample each way.
+- **Measured, payouts did not force (`payout-no-force`):** the HUD gold went
+  from 299,389 to 229,769 over the 12 spins, 120,000 debited, so about
+  50,380 came back in payouts (the person did not itemise them); no
+  `forced` line came before the explosion line.
+- **Measured, the trigger (`explosion-trigger`):** `gambapity: explosion
+  id=367244 count=24 threshold=10 frame=50736`, then `explosions=1` in
+  `status`: the per-frame sprite read saw the live-to-destroyed change on the
+  machine it had seen first.
+- **Measured, the forced drop (`forced-head`):** at the deadline, `gambapity:
+  forced Goburin's Head at 7920,3448 (rarity 10, attempt 1) and reset the
+  counter`: the loader route (`json_parse`, `InitItemFromJson`, then
+  `LootGroundCreateFromItem` with the local player as `self`) placed a
+  ground item at the machine's position that `instance_exists` confirmed on
+  the first attempt, and the built item's rarity field read 10. Afterwards
+  `status` read `count=0 forced=1 gold=0` and the counter file
+  `{"count":0}`.
+- **Measured, both head detectors saw it (`drop-detected`):** `gambapity:
+  ground check after the drop: heads=1` (the ground check's control: it
+  found the charm on a `Loot_Ground_obj` near the machine) and
+  `own-head-builds=1` (the head-build detector's control: the forced drop's
+  own `CreateItemNew` returned the charm, inside the own-drop scope, so it
+  did not count as natural).
+- **Measured, one head (`one-head`):** the screenshot after the explosion
+  shows one `Goburin's Head | SS` ground label beside the wrecked machine and
+  no second; the owner reported "one goburin head"; `natural=0`. The head
+  was not picked up this session, so the item in the inventory was not
+  inspected.
+- **Not observed, the below-threshold control (`below-control`):** no second
+  machine appeared, so `gambapity 1000` was not sent and `below=0`.
+- **Not observed, a natural head (`natural-head`):** no `the explosion's own
+  Goburin's Head was seen` or `natural Goburin's Head build` line,
+  `natural=0`. The game did not drop its own head in this sample, which
+  could not be arranged; the natural-head reset stays unconfirmed in play.
+- **Teardown:** `gambapity off`, the saves restored from the session's
+  backup (`changed [], added [], missing []` after), and the counter file
+  written back to its starting bytes (`{"count":12}`, the starting hash).
+
+Live 5 sets `fallback-drop` to `proven` (below).
+
 ## Decision
 
 roll-route: script
@@ -1671,9 +1748,20 @@ drop-route: LootGroundCreate
 
 counter-route: both
 
-fallback-drop: not-run
+fallback-drop: proven
 
 pity-design: drop-ourselves
+
+Live 5 (§ Results, `### Live 5 results`) ran the player build's force on one
+natural machine: at its explosion, with the count over the threshold, the
+loader route placed one Goburin's Head at the machine, `instance_exists`
+confirmed it on the first attempt, the ground check after the drop and the
+head-build detector both saw it, exactly one head lay by the wreck, and the
+counter reset. So `fallback-drop` is `proven`, and `drop-ourselves` is the
+shipped design. The natural-head signals and the below-threshold path were
+not exercised (no natural head, no second machine). The same session's 12
+debits for the person's 12 spins leave whether the exploding spin is debited
+open, against Live 4's 12 for 13.
 
 Live 4 (§ Results, `### Live 4 results`) observed two explosions: each is
 the machine's sprite changing to `Slot_Machine_01_Destroyed_spr` at the end
@@ -1708,7 +1796,7 @@ the machine is not destroyed by it (`machines=2` before and after) — what ends
 `LootGroundCreate`. A pity counter can count both events from the machine-self
 hooks that fired — spins through `PickUpGoldCheck` (`a1=-10000`, one per spin)
 and payouts through `GetUniqueRepoStruct`/`LootGroundCreate` — so
-`counter-route` is `both`. `fallback-drop` is `not-run` (the `gambaprobe drop`
+`counter-route` is `both`. `fallback-drop` was `not-run` until Live 5 (the `gambaprobe drop`
 command was refused by the auto-mode permission classifier before it was sent,
 and was not worked around). With the roll a script and the drop a script, phase
 2 forces a named script's result rather than answering a builtin RNG, so
@@ -1759,8 +1847,9 @@ machine's spin and payout and answered several of the rest; what stays open:
   undefined)`, but the mapping to the picks and builds was not read.
 - **The machine's state keys** in the protected store (spin count, gold spent,
   threshold): the state rows were blind, so no key was read.
-- **The charm's rarity code** (7 Angelic or 10 Unholy, or neither):
-  `fallback-drop` did not run.
+- **The charm's rarity code** (7 Angelic or 10 Unholy, or neither) on a
+  head the game drops itself. The head the pity builds through the loader
+  route read rarity 10 (Live 5); no natural head has been read.
 - **Where the odds live.** The price is measured at 10,000 gold a spin (the
   gold debit through `PickUpGoldCheck`); the 750 (or whichever odds constant)
   was not seen, and neither appears as a literal in the bodies read.
@@ -1772,7 +1861,8 @@ machine's spin and payout and answered several of the rest; what stays open:
   12 debits (13 other machine-self calls, person 13) and 9 debits (person
   8/9). Still open: whether the exploding spin is debited (machine 1's 13
   calls against 12 debits suggest it is not, which would make machine 2's
-  count 9-10), what decides when a machine explodes (`explosion-rule`; two samples
+  count 9-10; Live 5's machine read 12 debits for the person's 12 spins,
+  the exploding one included, so the samples disagree), what decides when a machine explodes (`explosion-rule`; two samples
   at different counts cannot tell a random roll per spin from a per-machine
   threshold), whether a destroyed machine can still be spun (the owner's
   report says it cannot; not tried), and the route Goburin's Head takes when
@@ -1780,3 +1870,10 @@ machine's spin and payout and answered several of the rest; what stays open:
   the head drops in the unmodded game; neither sample dropped one, so
   whether an explosion that drops the head builds it through the build rows
   is not observed.
+- **The pity's paths Live 5 did not reach.** A below-threshold explosion
+  keeping the counter (`below-control`, no second machine appeared), a
+  natural head seen at an explosion and the reset it makes (`natural-head`,
+  the game did not drop one), a refused or abandoned force, and whether
+  the natural-head signals would see a head the game drops are all not
+  observed in play; the explosion decision is pinned by the pity's
+  behaviour test.
