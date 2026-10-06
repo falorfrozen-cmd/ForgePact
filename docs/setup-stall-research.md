@@ -1,9 +1,13 @@
 # Setup stall - what the one-time start-up setup spends its 2.5 s on (ForgePact #151)
 
-Status (2026-10-06): **measured in Live 1.** The detour is 97.5% of the
-setup's `hooks` time, and each detour costs about two system-wide thread
-snapshots, as the static reading predicted. The owner chose fix route (a),
-patching Aurie's freeze; it goes to a follow-up workorder (see "Fix routes").
+Status (2026-10-06): **fixed, and measured in Live 2.** Live 1 measured the
+detour at 97.5% of the setup's `hooks` time, each detour costing about two
+system-wide thread snapshots, as the static reading predicted. The owner chose
+fix route (a), patching Aurie's freeze; it is built as the hub's
+`third_party/aurie/` patch series `hs.1` and ships as ForgePact 2.2.0's
+`AurieCore.dll` (see "Fix routes"). Live 2, with only that DLL changed,
+measured the setup at 47.8 ms against Live 1's 1268.7 ms and a detour at
+1.6 ms against 68.7 ms (see "Live 2").
 
 ## Question
 
@@ -246,6 +250,99 @@ What this shows:
   whole; the per-snapshot attribution rests on the ratio and the static
   reading.
 
+## Live 2
+
+2026-10-06, the owner's machine, with the patched `AurieCore.dll` (hub
+`third_party/aurie/`, series `hs.1`, SHA-256 `3cf98af9...ac06800cb`, equal to
+the `dll.sha256` its `AurieCore-BUILD-INFO.json` records) installed over
+upstream's v2.0.2 release DLL. Everything else was Live 1's: the same player
+build (`BloodPactPlugin_ship.dll`, SHA-256 `c700a482...0efc85`, equal to the
+installed DLL), YYToolkit, `capture.request` present (Case A), slot 14 for
+Case C, both cases in one launch. Case B was not run, by the owner's choice.
+Capture: `.claude/workorders/forgepact-151-aurie-freeze-live-1.md` in the hub
+(Live procedure 1 of workorder `forgepact-151-aurie-freeze`; a local workorder
+file, not committed). Every one of its eleven checks passed. Every number below
+is measured on 2026-10-06, read from `out.txt`, `aurie.log` and the commands'
+replies.
+
+**Which DLL ran, and whether its freeze stopped the game's threads.** This
+launch's `aurie.log` carried `[hs] Aurie Core 2.0.2, Hero Siege patch series
+hs.1 (hero-siege-offline-toolkit, third_party/aurie)` and `[hs] MmCreateHook
+freeze: per-process thread walk, first freeze suspended 4 thread(s) in 2
+pass(es), 0 not suspendable`, and no `FELL BACK` line. So N = 4, P = 2, K = 0:
+the freeze suspended threads, so a fast detour below is not a freeze that did
+nothing. The first freeze runs before YYToolkit is mapped, while the game has
+few threads; at `plugin_ready` the game had 77. The log prints only the first
+freeze's counts, so how many threads each later freeze suspended is not
+observed.
+
+**Positive control.** `pong (YYTK 4.0.1)`, and `incident stat`'s first line
+began `incident: frames 2040`. The `incident setup` probe still times one
+system-wide thread snapshot the way the unpatched freeze walked: 38.5, 37.9 and
+37.6 ms (median 37.9) at the main menu, 6663-6664 threads system-wide and 77 in
+this process, against Live 1's median of 32.8 ms over about 6012 threads. The
+machine's walk was as slow as in Live 1, slightly slower, so the drop below is
+the patched freeze, not a quieter machine.
+
+**Case A: item truth requested, against Live 1.**
+
+| Value | Live 1 (upstream Aurie) | Live 2 (series `hs.1`) |
+| --- | --- | --- |
+| existing line | `setup 1268.7 ms`, `config 0.3 ms, hooks 1268.3 ms` | `incident: setup 47.8 ms at frame 301: config 0.4 ms, hooks 47.4 ms (InstallCustomForgeItemHooks+InstallItemTruth 42.7 ms, CaptureAngelicScriptCode 4.1 ms, LoadCustomForgeEntries 0.4 ms)` |
+| installs, detours | 18, 18 | 18, 18 |
+| resolve | 0.1 ms | 0.0 ms |
+| detour | 1237.0 ms, worst 80.0 ms (`fp_customforge_new`) | 28.1 ms, worst 2.2 ms (`fp_customforge_new`) |
+| log | 4.9 ms | 3.7 ms |
+| rest | 20.9 ms | 9.3 ms |
+| outside installers | 5.4 ms | 6.3 ms |
+| detour share of `hooks` | 97.5% | 59.3% |
+| per detour | 68.7 ms | 1.56 ms |
+| per detour / median snapshot | 2.10x | 0.041x |
+| session at the main menu | 19 installs, 1324.9 ms of detours, worst 87.9 ms | `installs since load 19, detours 19, detour 31.0 ms total, worst 2.9 ms fp_hh_hudlabels` |
+
+The setup line was identical across three `incident setup` calls, and the
+same 18 `HOOK INSTALLED` lines as Live 1 Case A came before it, with no
+`TABLE-ONLY` line in the whole session (40 `HOOK INSTALLED` lines: the 18,
+`DrawHudBuffs`, the `ExitProcess` marker hook and the 20 of Case C).
+`incident stat` read `hooks tagged 19, untagged 0` and `reports written 0` at
+the main menu.
+
+**Case C: installs after the setup (same launch, in town).** Before:
+`installs since load 19, detours 19, detour 31.0 ms total` (D0 = 19).
+`dropmult relic 2` installed the same 20 drop hooks (`DropRelic` through
+`DropOreMaterials`). After: `installs since load 39, detours 39, detour 66.0 ms
+total, worst 2.9 ms fp_hh_hudlabels`, so the 20 cost 35.0 ms of detours,
+1.75 ms each (Live 1: 1452.3 ms, 72.6 ms each). The setup line was unchanged.
+`incident stat` seconds later: per-mod `ipc 0.06 / 122.12` (Live 1:
+`ipc 0.23 / 1542.58`), worst judged frame 123.8 ms, slow judged frames 0,
+episodes 0, `reports written 0` (Live 1: one PERF report), `hooks tagged 39,
+untagged 0`. `dropmult relic 1` answered `dropmult relic -> 1`. `hs_stop_game`
+ended the process without force, and `out.txt` ended `==== clean shutdown ====`.
+
+What this shows:
+
+- **The patch removed the setup's stall** (measured): the start-up setup
+  fell from 1268.7 ms to 47.8 ms, about 26 times shorter, and a detour from
+  68.7 ms to 1.56 ms, about 44 times cheaper, while the system-wide snapshot
+  the old freeze took twice cost the same or more (37.9 against 32.8 ms).
+- **Hooks attach as before** (measured): the same 18 and 20 hooks, no
+  `TABLE-ONLY`, every hook tagged.
+- **On-demand installs no longer hold a frame for seconds** (measured): the
+  worst `ipc` frame over the minute that held `dropmult relic 2` fell from
+  1542.58 ms to 122.12 ms, and no report was written.
+- **The detour is no longer the setup's time** (measured): 28.1 of 47.4 ms;
+  the installers' other parts (13.0 ms) and the time outside them (6.3 ms)
+  are now a large share of what is left.
+- **Not observed:** what the other roughly 87 ms of the 122.12 ms `ipc` frame
+  was (the detours were 35.0 ms; the instrument splits only the setup's
+  installs by part, not an on-demand batch); the 950.5 ms worst frame
+  `incident stat` listed as not judged after the character load (it fell in
+  a room change's grace and was not attributed); the fallback path (no
+  `FELL BACK` line, so upstream's walk did not run); how many threads each
+  freeze after the first suspended; two threads freezing at once; Case B; a
+  second session, so the variation between sessions Live 1 saw is not
+  re-measured with the patch.
+
 ## Fix routes
 
 The measured cost each route works against: **one detour costs 66-73 ms on
@@ -255,10 +352,24 @@ system-wide thread snapshots of about 32 ms each. Everything else an install
 does costs about 1.4 ms (Case A: resolve, log and rest came to 25.9 ms
 over 18 installs, most of it the rest and the log).
 
-**Chosen: (a), patch Aurie's freeze** (the owner, 2026-10-06, after Live 1).
-A follow-up workorder plans it. The options, with the risk each carries:
+**Chosen and built: (a), patch Aurie's freeze** (the owner, 2026-10-06, after
+Live 1). As built, it is the hub's `third_party/aurie/`: upstream Aurie
+v2.0.2 pinned, plus two documented patches, `0001-series-identity.patch` (an
+`[hs]` identity line in `aurie.log`) and `0002-per-process-hook-freeze.patch`
+(the freeze around every hook write and removal lists this process's threads
+through ntdll's `NtGetNextThread`, walks until no new thread appears, waits
+until each suspension lands and resumes exactly the threads it suspended,
+falling back to upstream's walk with a `FELL BACK` log line when it cannot).
+`MmCreateHook`, its signature and every caller are unchanged, and the plugin's
+source is untouched. The hub's `tools/build_aurie.py` builds it with a host
+test and a marker check; ForgePact pins the DLL in `tools/toolchain-pins.json`
+and ships it as `AurieCore.dll` with `AurieCore-NOTICE.md` from 2.2.0, so a
+player presses Install Mod Plugin once to receive it.
+`third_party/aurie/README.md` is the guide and holds the launch gate, which
+Live 2 above filled. The options, with the risk each carries:
 
-- **(a) Patch Aurie's freeze to walk only the game's threads.** Chosen. The
+- **(a) Patch Aurie's freeze to walk only the game's threads.** Chosen and
+  built; Live 2 measured it at 1.56 ms a detour. The
   freeze and the resume would stop paying for the whole system's threads (about
   6000 entries in Live 1, 76 of them the game's), so the cost falls at the
   root for the setup and for every on-demand install alike. It keeps

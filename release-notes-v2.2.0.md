@@ -327,8 +327,12 @@ experience.
   about 69 ms per attachment: in our testing the main menu held for about 1.3
   seconds at start-up with Item truth on, and turning on a relic drop
   multiplier in town froze the game for about 1.5 seconds. This release ships
-  a modified `AurieCore.dll` that looks only at the game itself. Mods attach
-  exactly as before and do the same things; only the pause gets shorter.
+  a modified `AurieCore.dll` that looks only at the game itself. On the same
+  computer it now costs under 2 ms per attachment: the start-up hold went
+  from about 1.3 seconds to about 0.05 seconds, and turning on the relic drop
+  multiplier in town held the game for about 0.1 seconds instead of 1.5.
+  Mods attach exactly as before and do the same things; only the pause gets
+  shorter.
   `AurieCore-NOTICE.md` in the `modfiles` folder says what was changed and
   where its source is.
 ## How to update
