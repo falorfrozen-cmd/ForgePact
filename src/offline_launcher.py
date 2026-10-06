@@ -534,7 +534,13 @@ def launch_game(path: Path, *, validate_extra: Callable[[], str] | None = None,
         child_env["SteamGameId"] = APP_ID
         if runtime.parent != path.parent:
             child_env["PATH"] = str(runtime.parent) + os.pathsep + child_env.get("PATH", "")
-        process = subprocess.Popen([str(path)], cwd=str(path.parent), env=child_env)
+        # CREATE_DEFAULT_ERROR_MODE: without it the game inherits this process's
+        # error mode, and with SEM_NOGPFAULTERRORBOX set Windows writes no dump
+        # and logs no Application Error event when the game crashes (guide Known
+        # Limitations item 25; ForgePact #173). getattr: subprocess defines the
+        # constant only on Windows, and hs-drive's tests import this module.
+        process = subprocess.Popen([str(path)], cwd=str(path.parent), env=child_env,
+                                   creationflags=getattr(subprocess, "CREATE_DEFAULT_ERROR_MODE", 0))
         message = "Modded Hero Siege launch requested through the built-in HS Offline Launcher."
         _report(attempt, "started", message, process.pid)
         try:
