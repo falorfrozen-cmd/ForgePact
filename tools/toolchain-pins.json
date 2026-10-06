@@ -45,9 +45,9 @@
     },
     {
       "dest": "modfiles_shipped/AurieCore.dll",
-      "url": "https://github.com/AurieFramework/Aurie/releases/download/v2.0.2/AurieCore.dll",
-      "sha256": "18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae",
-      "provenance": "Aurie Framework release v2.0.2, unmodified"
+      "url": "https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit/releases/download/aurie-v2.0.2-hs.1/AurieCore.dll",
+      "sha256": "3cf98af99a0ef38dea1a2d4627e6466631f6e7dd2b254b1a80e5438ac06800cb",
+      "provenance": "modified Aurie (AurieCore v2.0.2), built from the hub's third_party/aurie/ patch series (series_revision hs.1) at hub commit 3fcdf0d9c67d822874b368108cd99795a5f09753 (provisional: the publish step sets the commit the release is cut from); see aurie-modified/AurieCore-NOTICE.md for the corresponding-source pointer and aurie-modified/AurieCore-BUILD-INFO.json for the build record"
     },
     {
       "dest": "modfiles_shipped/AuriePatcher.exe",

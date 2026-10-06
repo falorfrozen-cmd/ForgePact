@@ -8,9 +8,19 @@ shipping path and remains here for its research notes and tools.
 ## Aurie Framework
 - Repository: https://github.com/AurieFramework/Aurie
 - License: AGPL-3.0
-- Used as: the mod loader / framework. The compiled `AurieCore.dll` and the
-  `AuriePatcher.exe` shipped in the release come from Aurie Framework, **unmodified**.
-  Their corresponding source is available at the repository above.
+- Used as: the mod loader / framework. The `AuriePatcher.exe` shipped in the
+  release is Aurie Framework's v2.0.2 release binary, **unmodified**; its
+  corresponding source is available at the repository above.
+- The `AurieCore.dll` shipped in the release is a **modified** build of Aurie
+  v2.0.2 (ForgePact issue #151: the freeze Aurie applies while it writes a hook
+  walks only the game's own threads instead of every thread on the system).
+  Like YYToolkit's, it is built from a patch series maintained in the
+  [hero-siege-offline-toolkit](https://github.com/falorfrozen-cmd/hero-siege-offline-toolkit)
+  hub's `third_party/aurie/`, not from source kept in this repository.
+  `aurie-modified/AurieCore-NOTICE.md` is the modification notice and the
+  pointer at that series (upstream pin, patch filenames, build tool), and
+  `aurie-modified/AurieCore-BUILD-INFO.json` is the build record; both ship in
+  the release's `modfiles/` beside the DLL.
 
 ## YYToolkit (YYTK)
 - Repository: https://github.com/AurieFramework/YYToolkit
