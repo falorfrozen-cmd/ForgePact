@@ -318,9 +318,10 @@ experience.
   shortly after you entered an area, although those packs had not appeared
   yet. Each icon now stays until the game creates that pack: an ancient pack
   when you get close, a colossal chest's monsters when you open the chest.
-  Mini boss, legion and champion icons stay until that pack is killed. Leaving
-  an area and coming back no longer brings back icons for packs that were
-  already created.
+  Mini boss icons, whose packs the game creates as you arrive, are meant to
+  stay until that pack is killed (legion and champion icons follow the same
+  rule, but have not been seen in a test yet). Leaving an area and coming
+  back no longer brings back icons for packs that were already created.
 
 - **The two Monster Rarity rows are named for the monsters they make (#159).**
   On the World tab, the row called **Rare** raised normal monsters to what the
