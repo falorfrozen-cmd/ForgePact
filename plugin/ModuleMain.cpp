@@ -9008,16 +9008,6 @@ static bool PackMarkerIconPath(int kind, std::string& gmlPath, std::string& abso
     absolutePath = file;
     return true;
 }
-#ifdef FORGEPACT_RELEASE
-// Issue #181: the members rule (retire a miniboss, legion or champion marker
-// once its recorded members are gone) has no positive control for its alive
-// read; in Live 4 it read packs gone while their monsters were on screen. The
-// player build therefore keeps those markers until their spawner goes and
-// writes no such retirement into the birth memory; the read is still made
-// and shown (`packmarks stat`'s ends= gone=, gonerule=off). Set at load,
-// before any marker exists; PackMarkers.hpp's class comment has the rule.
-static const bool g_PackGoneRuleOff = [] { ForgePact::PackMarkers::Instance().SetPackGoneRetires(false); return true; }();
-#endif
 static void InstallPackMarkerHook()
 {
     if (g_PackMarkerHookAttempted) return;

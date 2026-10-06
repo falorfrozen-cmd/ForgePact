@@ -323,10 +323,11 @@ experience.
   bosses were alive, but the check behind this is not confirmed yet, so an
   icon may still disappear before its pack is dead. Legion and champion icons
   follow the same rule but have not been seen in a test yet. Leaving an area
-  and coming back no longer brings back icons for packs that were already
-  created. For mini boss, legion and champion packs this rests on the same
-  unconfirmed check: their icons are meant to come back only while the pack
-  is still alive.
+  and coming back no longer brings back icons for normal, ambush, ancient or
+  colossal chest packs that were already created. A mini boss, legion or
+  champion pack that is still alive keeps its icon when you return; once that
+  pack is killed its icon is meant to stay gone, but this rests on the same
+  unconfirmed check, so a killed pack's icon can still come back.
 
 - **The two Monster Rarity rows are named for the monsters they make (#159).**
   On the World tab, the row called **Rare** raised normal monsters to what the
