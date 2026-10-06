@@ -88,6 +88,19 @@ static void LogDrop(const char* fn, RValue& res, int argc, RValue** A);
   #define BP_LOGDROP(a,b,c,d) LogDrop(a,b,c,d)
 #endif
 
+// crashwatch (ForgePact #173): the sink for DropManager.hpp's gold
+// breadcrumbs, defined here, before that header is included, for the reason
+// BP_LOGDROP is. Research build only: with no sink the points compile to
+// nothing, so the player build's gold hooks are what they were. The bodies sit
+// with the rest of crashwatch, below GoldTraceCommand.
+#ifndef FORGEPACT_RELEASE
+static void CrashWatchGoldCrumb(const char* script, bool done, long ordinal, int mult,
+                                const RValue* handed, const RValue* passed);
+static void CrashWatchNoteGoldMult(int mult);
+#define FP_GOLD_CRUMB_SINK(script, done, ordinal, mult, handed, passed) \
+    CrashWatchGoldCrumb(script, done, ordinal, mult, handed, passed)
+#endif
+
 // The Angelic roll research probe's note from inside ForgePact::DropManager's
 // hook bodies (docs/angelic-roll-hook-research.md), placed here beside
 // BP_LOGDROP for the same reason. The player build compiles it to nothing, so
@@ -21289,6 +21302,11 @@ static void SetDropMult(const std::string& name, int n)
     // (the filter moved to GetRelicQuest in #125).
     if (l == "relic") { g_mult_DropRelic = n; Out("dropmult " + name + " -> " + std::to_string(n)); return; }
     ForgePact::DropManager::Instance().SetMultiplier(name, n);
+#ifndef FORGEPACT_RELEASE
+    // crashwatch's heartbeat names the gold multiplier in force (#173); the
+    // two places that set it tell it, since DropManager keeps it private.
+    if (l == "gold") CrashWatchNoteGoldMult(n);
+#endif
 }
 
 // ===== Chaos Tower spawn-rate hooks (instrument + force) =====
@@ -25660,6 +25678,9 @@ static void CompSetBuffs(bool on)
     ForgePact::DropManager::Instance().SetDropItemMultRaw(on ? 3 : 1);
     ForgePact::DropManager::Instance().SetDropItemBossMultRaw(on ? 3 : 1);
     ForgePact::DropManager::Instance().SetDropGoldMultRaw(on ? 3 : 1);
+#ifndef FORGEPACT_RELEASE
+    CrashWatchNoteGoldMult(on ? 3 : 1);   // crashwatch's heartbeat (#173)
+#endif
     g_mult_DropRelic     = on ? 2 : 1;
     ForgePact::DropManager::Instance().SetDropBossGemsMultRaw(on ? 2 : 1);
     ForgePact::DropManager::Instance().SetDropDungeonKeysMultRaw(on ? 2 : 1);
@@ -49199,6 +49220,336 @@ static void GoldTraceCommand(const std::string& rest)
 #endif
 
 #ifndef FORGEPACT_RELEASE
+// ===== crashwatch (ForgePact #173) ===========================================
+// Research build only, not in kPlayerCommands. The 2026-10-04 `dropmult gold
+// 100` crash left nothing behind but a missing clean-shutdown line, so this
+// writes what a dead game cannot: bp_ipc\crashwatch.txt, one line at a time,
+// each closed on disk before game code runs again.
+//
+//   crashwatch on | off | status   switch it; each replies with the status line
+//   crashwatch crash confirm       the instrument's positive control: an access
+//                                  violation on the game thread, on purpose
+//
+// While on it writes a heartbeat (`hb `) every kCrashWatchHeartbeatFrames
+// frames, a `gold <script> enter`/`done` line around each call into the
+// DropGold and DropMonsterGold originals (DropManager.hpp's breadcrumb points;
+// crashwatch installs no hook of its own, it rides DropManager's and the frame
+// callback), and an `exception` line for each fatal exception any thread
+// raises. The trap is a first-registered vectored handler that only logs and
+// always continues the search, so whatever would have handled or ended the
+// game still does. It writes with Win32 calls from a fixed buffer: no
+// allocation, no stream, no g_OutFileLock and no YYToolkit call, since the
+// heap or the thread it runs on may be what just broke.
+static constexpr const char kCrashWatchFileName[] = "crashwatch.txt";
+static constexpr uint32_t kCrashWatchHeartbeatFrames = 15;
+static constexpr long kCrashWatchMaxLines = 50000;          // a session, all kinds but the reserved two
+static constexpr long kCrashWatchMaxExceptionLines = 32;    // a session; counted on after the cap
+static constexpr DWORD kCrashWatchHeapCorruption = 0xC0000374;   // STATUS_HEAP_CORRUPTION (ntstatus.h)
+
+static std::atomic<bool> g_CrashWatchOn{ false };   // read by the trap, from any thread
+static bool g_CrashWatchFileFresh = false;          // truncated once, at the session's first `on`
+static char g_CrashWatchPath[MAX_PATH] = {};        // filled before the trap is installed
+static volatile long g_CrashWatchLines = 0;         // lines written under the cap
+static volatile long g_CrashWatchOverCap = 0;       // lines not written: the cap was reached
+static volatile long g_CrashWatchHeartbeats = 0;
+static volatile long g_CrashWatchCrumbs = 0;
+static volatile long g_CrashWatchExceptions = 0;    // fatal exceptions seen while on, written or not
+static volatile long g_CrashWatchExceptionLines = 0;
+static PVOID g_CrashWatchTrapHandle = nullptr;
+static std::atomic<DWORD> g_CrashWatchGameThread{ 0 };
+static uint32_t g_CrashWatchFramesOn = 0;
+static double g_CrashWatchCoinIdx = -2.0;           // -2: not resolved yet; below 0 after: not found
+// The heartbeat's gold columns. DropManager keeps its multiplier and counters
+// private, so the multiplier is told by the two places that set it
+// (SetDropMult, CompSetBuffs) and each hook's call count is the per-session
+// ordinal its last breadcrumb carried.
+static int g_CrashWatchGoldMult = 1;
+static long g_CrashWatchDropGoldCalls = 0;
+static long g_CrashWatchMonsterGoldCalls = 0;
+// The process's modules, their bases and file names, listed at `on`, so the
+// trap names the module a fault is in without asking the loader (whose lock a
+// dying thread may hold). A module loaded after `on` is named `unlisted`.
+struct CrashWatchModule {
+    uintptr_t base;
+    char name[48];
+};
+static constexpr int kCrashWatchMaxModules = 256;
+static CrashWatchModule g_CrashWatchModules[kCrashWatchMaxModules] = {};
+static std::atomic<int> g_CrashWatchModuleCount{ 0 };
+
+// Fixed-buffer text helpers for the trap: no allocation, no CRT formatting.
+static int CrashWatchPutText(char* buf, int pos, int cap, const char* text)
+{
+    while (text && *text && pos < cap - 1) buf[pos++] = *text++;
+    return pos;
+}
+
+static int CrashWatchPutHex(char* buf, int pos, int cap, unsigned long long value, int minDigits)
+{
+    char digits[16];
+    int n = 0;
+    do { digits[n++] = "0123456789ABCDEF"[value & 0xF]; value >>= 4; } while (value && n < 16);
+    while (n < minDigits && n < 16) digits[n++] = '0';
+    while (n > 0 && pos < cap - 1) buf[pos++] = digits[--n];
+    return pos;
+}
+
+// Appends one line (`text` ends in '\n') and closes the file before returning,
+// so it is on disk whatever happens next. Win32 file calls only; the trap
+// writes through it. A `reserved` line (an exception, the deliberate crash's
+// announcement) is not held to kCrashWatchMaxLines: the exception cap bounds
+// the first, and the second happens once.
+static bool CrashWatchWrite(const char* text, int len, bool reserved)
+{
+    if (len <= 0 || !g_CrashWatchPath[0]) return false;
+    if (!reserved) {
+        if (InterlockedIncrement(&g_CrashWatchLines) > kCrashWatchMaxLines) {
+            InterlockedDecrement(&g_CrashWatchLines);
+            InterlockedIncrement(&g_CrashWatchOverCap);
+            return false;
+        }
+    }
+    HANDLE file = CreateFileA(g_CrashWatchPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    WriteFile(file, text, static_cast<DWORD>(len), &written, nullptr);
+    CloseHandle(file);
+    return true;
+}
+
+static bool CrashWatchIsFatal(DWORD code)
+{
+    return code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_STACK_OVERFLOW
+        || code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION
+        || code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_ARRAY_BOUNDS_EXCEEDED
+        || code == kCrashWatchHeapCorruption;
+}
+
+// The trap. Logs a fatal exception and lets the search go on: it never handles
+// one and never resumes execution, so the game's own handlers, the incident
+// monitor and Windows Error Reporting see exactly what they would without it.
+static LONG CALLBACK CrashWatchTrap(PEXCEPTION_POINTERS info)
+{
+    if (!info || !info->ExceptionRecord || !g_CrashWatchOn.load(std::memory_order_relaxed))
+        return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+    if (!CrashWatchIsFatal(code)) return EXCEPTION_CONTINUE_SEARCH;
+    InterlockedIncrement(&g_CrashWatchExceptions);
+    if (InterlockedIncrement(&g_CrashWatchExceptionLines) > kCrashWatchMaxExceptionLines)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    const uintptr_t at = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    PVOID base = nullptr;
+    RtlPcToFileHeader(info->ExceptionRecord->ExceptionAddress, &base);
+    const uintptr_t moduleBase = reinterpret_cast<uintptr_t>(base);
+    const char* module = moduleBase ? "unlisted" : "no-module";
+    const int listed = g_CrashWatchModuleCount.load(std::memory_order_acquire);
+    for (int i = 0; moduleBase && i < listed; ++i) {
+        if (g_CrashWatchModules[i].base == moduleBase) { module = g_CrashWatchModules[i].name; break; }
+    }
+    namespace inc = ForgePact::Incident;
+    const char* hookId = inc::g_Accounting.InHookId();
+    const inc::InModState inMod = inc::g_Accounting.InModNow();
+
+    char line[256];
+    const int cap = static_cast<int>(sizeof(line));
+    int pos = CrashWatchPutText(line, 0, cap, "exception 0x");
+    pos = CrashWatchPutHex(line, pos, cap, code, 8);
+    pos = CrashWatchPutText(line, pos, cap, " at ");
+    pos = CrashWatchPutText(line, pos, cap, module);
+    pos = CrashWatchPutText(line, pos, cap, "+0x");
+    pos = CrashWatchPutHex(line, pos, cap, moduleBase ? at - moduleBase : at, 1);
+    pos = CrashWatchPutText(line, pos, cap, " thread=");
+    pos = CrashWatchPutText(line, pos, cap,
+        GetCurrentThreadId() == g_CrashWatchGameThread.load(std::memory_order_relaxed) ? "game" : "other");
+    pos = CrashWatchPutText(line, pos, cap, " in-hook=");
+    pos = CrashWatchPutText(line, pos, cap, hookId && *hookId ? hookId : "none");
+    pos = CrashWatchPutText(line, pos, cap, " in-mod=");
+    pos = CrashWatchPutText(line, pos, cap, inc::ModName(inMod.mod));
+    pos = CrashWatchPutText(line, pos, cap, inMod.gameOriginal ? " game-original=yes" : " game-original=no");
+    line[pos++] = '\n';
+    CrashWatchWrite(line, pos, true);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// "2026-10-06T21:00:00.123Z"
+static std::string CrashWatchUtcNow()
+{
+    SYSTEMTIME t{};
+    GetSystemTime(&t);
+    char text[32];
+    sprintf_s(text, "%04u-%02u-%02uT%02u:%02u:%02u.%03uZ", t.wYear, t.wMonth, t.wDay,
+              t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    return text;
+}
+
+static void CrashWatchWriteLine(const std::string& line)
+{
+    const std::string text = line + "\n";
+    CrashWatchWrite(text.c_str(), static_cast<int>(text.size()), false);
+}
+
+static void CrashWatchEnsurePath()
+{
+    if (g_CrashWatchPath[0]) return;
+    const std::string path = IPC_DIR + "\\" + kCrashWatchFileName;
+    strncpy_s(g_CrashWatchPath, path.c_str(), _TRUNCATE);
+}
+
+// Lists the process's modules for the trap. Called at `on` while the trap is
+// not installed yet or crashwatch is off, so the trap never reads a half-written row.
+static void CrashWatchListModules()
+{
+    HMODULE modules[kCrashWatchMaxModules] = {};
+    DWORD needed = 0;
+    g_CrashWatchModuleCount.store(0, std::memory_order_release);
+    if (!K32EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &needed)) return;
+    const int count = std::min<int>(kCrashWatchMaxModules, static_cast<int>(needed / sizeof(HMODULE)));
+    int listed = 0;
+    for (int i = 0; i < count; ++i) {
+        char path[MAX_PATH] = {};
+        if (!modules[i] || !GetModuleFileNameA(modules[i], path, MAX_PATH)) continue;
+        const char* slash = strrchr(path, '\\');
+        g_CrashWatchModules[listed].base = reinterpret_cast<uintptr_t>(modules[i]);
+        strncpy_s(g_CrashWatchModules[listed].name, slash ? slash + 1 : path, _TRUNCATE);
+        ++listed;
+    }
+    g_CrashWatchModuleCount.store(listed, std::memory_order_release);
+}
+
+static void CrashWatchNoteGoldMult(int mult) { g_CrashWatchGoldMult = mult; }
+
+// DropManager.hpp's breadcrumb sink (FP_GOLD_CRUMB_SINK, defined at the top of
+// this file). Runs inside the gold hooks on the game thread, before and after
+// each original; keeps the hook's call count whether or not crashwatch is on.
+static void CrashWatchValueText(const RValue* value, char* text, size_t size)
+{
+    if (!value) { strcpy_s(text, size, "missing"); return; }
+    switch (value->m_Kind) {
+    case VALUE_REAL:  sprintf_s(text, size, "%.10g", value->ToDouble()); return;
+    case VALUE_INT32: sprintf_s(text, size, "%ld", static_cast<long>(value->ToInt32())); return;
+    case VALUE_INT64: sprintf_s(text, size, "%lld", static_cast<long long>(value->ToInt64())); return;
+    default: sprintf_s(text, size, "kind%d", static_cast<int>(value->m_Kind)); return;
+    }
+}
+
+static void CrashWatchGoldCrumb(const char* script, bool done, long ordinal, int mult,
+                                const RValue* handed, const RValue* passed)
+{
+    if (!script) return;
+    const bool monster = strcmp(script, "DropMonsterGold") == 0;
+    (monster ? g_CrashWatchMonsterGoldCalls : g_CrashWatchDropGoldCalls) = ordinal;
+    if (!g_CrashWatchOn.load(std::memory_order_relaxed)) return;
+    char line[256];
+    int len = 0;
+    if (done) {
+        len = sprintf_s(line, "gold %s done #%ld\n", script, ordinal);
+    } else if (monster) {
+        len = sprintf_s(line, "gold %s enter #%ld x%d\n", script, ordinal, mult);
+    } else {
+        char handedText[40], passedText[40];
+        CrashWatchValueText(handed, handedText, sizeof(handedText));
+        CrashWatchValueText(passed, passedText, sizeof(passedText));
+        len = sprintf_s(line, "gold %s enter #%ld x%d a4 %s -> %s\n", script, ordinal, mult, handedText, passedText);
+    }
+    if (CrashWatchWrite(line, len, false)) InterlockedIncrement(&g_CrashWatchCrumbs);
+}
+
+// From FrameCallback, every frame: a heartbeat line every
+// kCrashWatchHeartbeatFrames frames while on. The room, the coin count and the
+// gold columns say where the game was and what it was doing when it stopped.
+static void CrashWatchTick(uint32_t frame)
+{
+    if (!g_CrashWatchOn.load(std::memory_order_relaxed)) return;
+    g_CrashWatchGameThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    if (++g_CrashWatchFramesOn % kCrashWatchHeartbeatFrames != 0) return;
+    std::string coins = "?";
+    try {
+        if (g_CrashWatchCoinIdx == -2.0) {
+            g_CrashWatchCoinIdx = -1.0;   // resolved once, as LootCensus resolves it
+            g_CrashWatchCoinIdx = g_Yytk->CallBuiltin("asset_get_index",
+                { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Coin_obj))) }).ToDouble();
+        }
+        if (g_CrashWatchCoinIdx >= 0)
+            coins = std::to_string((long)g_Yytk->CallBuiltin("instance_number", { RValue(g_CrashWatchCoinIdx) }).ToDouble());
+    } catch (...) { coins = "?"; }
+    CrashWatchWriteLine("hb " + CrashWatchUtcNow() + " frame=" + std::to_string(frame)
+        + " room=" + CurrentRoomName() + " coins=" + coins
+        + " gold=x" + std::to_string(g_CrashWatchGoldMult)
+        + " DropGold=" + std::to_string(g_CrashWatchDropGoldCalls)
+        + " DropMonsterGold=" + std::to_string(g_CrashWatchMonsterGoldCalls));
+    InterlockedIncrement(&g_CrashWatchHeartbeats);
+}
+
+// The positive control: an access violation on the game thread, with no `try`
+// around it here (and /EHsc's `catch (...)` in PollCommands does not catch a
+// structured exception). Announced first, in out.txt and in the file.
+static __declspec(noinline) void CrashWatchCrashOnPurpose()
+{
+    const char* announcement = "crashwatch: crashing on purpose (positive control)";
+    Out(announcement);
+    CrashWatchEnsurePath();
+    const std::string text = std::string(announcement) + "\n";
+    CrashWatchWrite(text.c_str(), static_cast<int>(text.size()), true);
+    int* volatile target = nullptr;
+    *target = 173;
+}
+
+static std::string CrashWatchStatus()
+{
+    return std::string("crashwatch: ") + (g_CrashWatchOn.load() ? "on" : "off")
+        + ", heartbeats=" + std::to_string(g_CrashWatchHeartbeats)
+        + " gold-crumbs=" + std::to_string(g_CrashWatchCrumbs)
+        + " exceptions=" + std::to_string(g_CrashWatchExceptions)
+        + " lines=" + std::to_string(g_CrashWatchLines) + " of " + std::to_string(kCrashWatchMaxLines)
+        + " (" + std::to_string(g_CrashWatchOverCap) + " after the cap)"
+        + " -> bp_ipc\\" + kCrashWatchFileName;
+}
+
+static void CrashWatchCommand(const std::string& rest)
+{
+    std::string arg;
+    const std::string verb = Lower(FirstToken(rest, arg));
+    if (verb.empty() || verb == "status") {
+        Out(CrashWatchStatus());
+    } else if (verb == "on") {
+        CrashWatchEnsurePath();
+        if (!g_CrashWatchFileFresh) {
+            HANDLE file = CreateFileA(g_CrashWatchPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+            g_CrashWatchFileFresh = true;
+        }
+        g_CrashWatchGameThread.store(GetCurrentThreadId());
+        if (!g_CrashWatchOn.load()) CrashWatchListModules();
+        CrashWatchWriteLine("crashwatch on " + CrashWatchUtcNow() + " pid=" + std::to_string(GetCurrentProcessId())
+            + " heartbeat every " + std::to_string(kCrashWatchHeartbeatFrames) + " frames, "
+            + std::to_string(g_CrashWatchModuleCount.load()) + " modules listed");
+        g_CrashWatchOn = true;
+        if (!g_CrashWatchTrapHandle) g_CrashWatchTrapHandle = AddVectoredExceptionHandler(1, CrashWatchTrap);
+        Out(CrashWatchStatus());
+    } else if (verb == "off") {
+        if (g_CrashWatchTrapHandle) {
+            RemoveVectoredExceptionHandler(g_CrashWatchTrapHandle);
+            g_CrashWatchTrapHandle = nullptr;
+        }
+        if (g_CrashWatchOn.load()) CrashWatchWriteLine("crashwatch off " + CrashWatchUtcNow());
+        g_CrashWatchOn = false;
+        Out(CrashWatchStatus());
+    } else if (verb == "crash") {
+        if (Lower(TrimCopy(arg)) != "confirm") {
+            Out("crashwatch: refused - crash needs the word confirm (crashwatch crash confirm); nothing was done");
+            return;
+        }
+        CrashWatchCrashOnPurpose();
+    } else {
+        Out("crashwatch: usage -> crashwatch on | off | status | crash confirm");
+    }
+}
+#endif
+
+#ifndef FORGEPACT_RELEASE
 // ---- #95 part 2: what a filter-hidden ground item costs --------------------
 // docs/hidden-loot-research.md, Live 1 of workorder forgepact-issue-95. Four
 // instruments: `lootspawn` puts copies of one bag item on the ground around
@@ -49452,14 +49803,15 @@ static void LootFlagCommand(bool show)
 #endif
 
 // The Live 1 research instruments of the dev2 bug batch (`lootcensus`,
-// `goldtrace`) and of #95 part 2 (`lootspawn`, `lootsleep`, `loothide`,
-// `lootshow`), dispatched from their own function for the C1061 reason
+// `goldtrace`), of #95 part 2 (`lootspawn`, `lootsleep`, `loothide`,
+// `lootshow`) and of #173 (`crashwatch`), dispatched from their own function for the C1061 reason
 // HandleMenuProbeCommand gives. Answers false in the player build.
 static bool HandleLiveOneResearchCommand(const std::string& lc, const std::string& rest)
 {
 #ifndef FORGEPACT_RELEASE
     if (lc == "lootcensus") { LootCensus(); return true; }
     if (lc == "goldtrace") { GoldTraceCommand(rest); return true; }
+    if (lc == "crashwatch") { CrashWatchCommand(rest); return true; }
     if (lc == "lootspawn") { LootSpawnCommand(rest); return true; }
     if (lc == "lootsleep") { LootSleepCommand(rest); return true; }
     if (lc == "loothide") { LootFlagCommand(false); return true; }
@@ -55569,6 +55921,7 @@ void FrameCallback(FWFrame& FrameContext)
     KuyrukIsle();
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
+    CrashWatchTick(fc);   // crashwatch's heartbeat (#173); returns at once while off
     JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
     GpFrameTick();   // gambaprobe's live machines; returns at once while nothing is armed or on
 #endif
