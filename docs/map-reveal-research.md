@@ -1034,9 +1034,10 @@ back. 24 checks: 21 passed, 1 failed (`miniboss-held`), 2 were not observed
   That is the gap Live procedure 2 must close. **Open caveat**, not a finding about the game:
   Live procedure 2 (the player build) settles it with a slow, deliberate
   miniboss fight. Measured beside it: the miniboss spawners still exist
-  after the kill, and every protected value and instance variable they
-  carry reads the same before the warp, after it and after the kill
-  (`spawnPack` 2, its zone state 1, its self-destroy value 0), apart from
+  after the kill, and on the two read in full (262691 before the warp, 5 s
+  after and after the kill; 262694 5 s after and after the kill) every
+  protected value and instance variable they carry reads the same at each
+  read (`spawnPack` 2, its zone state 1, its self-destroy value 0), apart from
   the image index, which advanced throughout; alarms and other built-in
   variables were not read. So none of the values read marks the pack's
   death (not observed, not ruled out).
