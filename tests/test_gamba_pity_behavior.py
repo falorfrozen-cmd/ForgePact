@@ -1,22 +1,24 @@
 """Run gambapity's real decision core against controlled calls.
 
-`gambapity` (ForgePact #134 phase 5, player build) guarantees Goburin's Head
-from the gamba machine: the first machine that explodes after the configured
-number of spins drops exactly one head, and the counter starts over. The
-counter, the explosion watch and the deadline's decision live in
+`gambapity` (ForgePact #134 phase 6, player build) guarantees Goburin's Head
+from the gamba machine: it counts the machine explosions that did not drop a
+head, and the explosion that brings the count to the configured number drops
+exactly one head and starts the count over. The count, the explosion watch,
+the deadline's decision and the counter file's text live in
 plugin/include/ForgePact/GambaPity.hpp, game-independent by contract, and
 these scenarios pin the decisions ModuleMain.cpp's adapter takes from it,
 compiled whole.
 
-Baseline: off, nothing counts and nothing forces; only a machine-self spin
-counts; the gold equivalent is count * 10000; `off` keeps the count; a natural
-head resets it. Target: a live-to-destroyed sprite change is one explosion,
-decided once its settle span has passed; at the threshold with no head signal
-it forces, a confirmed force resets and a refused one keeps the count; below
-the threshold the count is kept; a new ground head, a head build in the
-look-back or settle span, or a machine-self (0, 98) build makes it natural at
-any count; a room change abandons it; two machines in one span force at most
-once; spins without an explosion never force; every line is fixed text.
+Baseline: off, nothing counts and nothing forces; `off` keeps the count; a
+natural head resets it. Target: a live-to-destroyed sprite change is one
+explosion, counted the moment it is seen while on and decided once its settle
+span has passed; the explosion whose own addition reached the threshold, with
+no head signal, forces, a confirmed force resets and a refused one keeps the
+count; below the threshold, or abandoned by a room change, the count is kept;
+a new ground head, a head build in the look-back or settle span, or a
+machine-self (0, 98) build makes it natural at any count; two machines in one
+span force at most once; the counter file is version 2 and an older spin file
+reads as 0; every line is fixed text.
 """
 import os
 import shutil
@@ -89,25 +91,34 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_the_core_compiles_without_warnings(self):
         self.assertNotRegex(self.compile_output, r"warning C\d+", self.compile_output)
 
-    def test_the_gold_equivalent_is_count_times_10000(self):
-        for label in ("table/gold_per_spin", "core/gold_equivalent_is_count_times_10000",
-                      "core/gold_equivalent_tracks_the_count"):
-            self.assertScenario(label)
-
     # ---- baseline: off, nothing happens --------------------------------
 
     def test_off_never_counts_or_forces(self):
-        for label in ("baseline/off_a_spin_never_counts", "baseline/off_a_natural_drop_leaves_the_count",
+        for label in ("baseline/off_a_natural_drop_leaves_the_count",
                       "baseline/off_status", "baseline/off_an_explosion_never_forces",
                       "baseline/off_clears_pending_explosions"):
             self.assertScenario(label)
 
-    # ---- the counter: nothing but a spin raises it ---------------------
+    def test_an_explosion_while_off_does_not_count(self):
+        self.assertScenario("baseline/an_explosion_while_off_does_not_count")
 
-    def test_only_a_machine_self_spin_counts(self):
-        for label in ("counter/another_objects_spin_never_counts", "counter/only_a_machine_self_spin_counts",
-                      "counter/a_natural_drop_resets", "counter/off_keeps_the_counter"):
+    # ---- the counter: an explosion counts one, at detection ------------
+
+    def test_an_explosion_counts_one_at_detection_and_its_line_shows_the_new_count(self):
+        for label in ("counter/an_explosion_counts_one_at_detection", "counter/a_natural_drop_resets",
+                      "counter/off_keeps_the_counter"):
             self.assertScenario(label)
+
+    def test_first_sight_and_a_vanished_machine_count_nothing(self):
+        self.assertScenario("counter/first_sight_and_a_vanished_machine_count_nothing")
+
+    def test_threshold_2_from_0_the_first_is_below_and_the_second_forces(self):
+        for label in ("target/threshold_2_from_0_the_first_explosion_is_below_at_count_1",
+                      "target/threshold_2_from_0_the_second_explosion_forces_and_a_confirmed_force_leaves_0"):
+            self.assertScenario(label)
+
+    def test_threshold_1_forces_every_explosion_without_a_head(self):
+        self.assertScenario("target/threshold_1_forces_every_explosion_without_a_head")
 
     # ---- target: the machine watch -------------------------------------
 
@@ -185,7 +196,7 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_machines_seen_and_unread_reads_are_counted(self):
         self.assertScenario("counter/machines_seen_and_unread_reads_are_counted")
 
-    # ---- target: the room, two machines, payouts -----------------------
+    # ---- target: the room, two machines -------------------------------
 
     def test_a_room_change_abandons_a_pending_explosion_and_keeps_the_counter(self):
         self.assertScenario("target/a_room_change_abandons_a_pending_explosion_and_keeps_the_counter")
@@ -193,11 +204,31 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_a_room_change_clears_the_machine_records(self):
         self.assertScenario("target/a_room_change_clears_the_machine_records")
 
+    def test_an_abandoned_explosion_still_counts_and_the_next_one_forces(self):
+        for label in ("target/an_abandoned_explosion_still_counts_and_the_next_one_forces",
+                      "target/an_abandoned_explosion_below_the_threshold_still_counts"):
+            self.assertScenario(label)
+
     def test_two_machines_in_one_settle_span_force_at_most_once(self):
         self.assertScenario("target/two_machines_in_one_settle_span_force_at_most_once")
 
-    def test_spins_without_an_explosion_never_force(self):
-        self.assertScenario("target/spins_without_an_explosion_never_force")
+    def test_the_explosion_that_reached_the_threshold_forces_and_the_other_is_below(self):
+        self.assertScenario("target/the_explosion_that_reached_the_threshold_forces_and_the_other_is_below")
+
+    # ---- the counter file ----------------------------------------------
+
+    def test_the_counter_file_round_trips_version_2(self):
+        for label in ("table/counter_file_version", "file/version_2_round_trips_byte_for_byte"):
+            self.assertScenario(label)
+
+    def test_a_legacy_spin_file_parses_to_0_flagged_legacy(self):
+        self.assertScenario("file/a_legacy_spin_file_parses_to_0_flagged_legacy")
+
+    def test_an_unknown_version_parses_to_0_flagged_with_its_number(self):
+        self.assertScenario("file/an_unknown_version_parses_to_0_flagged_with_its_number")
+
+    def test_an_empty_or_malformed_file_parses_to_0_unflagged(self):
+        self.assertScenario("file/empty_or_malformed_parses_to_0_unflagged")
 
     # ---- the lines, byte for byte --------------------------------------
 
@@ -210,7 +241,7 @@ class GambaPityBehaviorTests(unittest.TestCase):
                       "lines/natural_seen", "lines/below", "lines/refused", "lines/abandoned",
                       "lines/ground_after_drop_unread", "lines/machine_seen_unread",
                       "lines/below_ground_unread", "lines/baseline_read",
-                      "lines/natural_build"):
+                      "lines/natural_build", "lines/migration", "lines/version_error"):
             self.assertScenario(label)
 
 if __name__ == "__main__":

@@ -11,43 +11,48 @@
 
 namespace ForgePact::GambaPity {
 
-// ---- gambapity's decision core (ForgePact #134 phase 5, player build) -------
+// ---- gambapity's decision core (ForgePact #134 phase 6, player build) -------
 //
 // The Mods -> Quality of Life switch `gambapity` guarantees Goburin's Head
 // (the unique charm at repository type 10 / sub 0 / base 98, key
-// `charms_goburins_head`) from the gamba machine (Slot_Machine_01_obj): the
-// first machine that explodes after the configured number of spins drops
-// exactly one head, and the counter starts over. ModuleMain.cpp's adapter feeds
-// this header the measured events and carries out what it decides:
+// `charms_goburins_head`) from the gamba machine (Slot_Machine_01_obj): it
+// counts the machine explosions that did not drop a head, and the explosion
+// that brings the count to the configured number drops exactly one head and
+// starts the count over. ModuleMain.cpp's adapter feeds this header the
+// measured events and carries out what it decides:
 //
-//   - a spin: one machine-self PickUpGoldCheck with a1=-10000 (counts one);
 //   - a machine seen in a frame, by id, and whether its sprite is the
 //     destroyed one. Live 4 measured the explosion as the machine's sprite
 //     changing to Slot_Machine_01_Destroyed_spr with the instance kept, so a
 //     live-to-destroyed change is one explosion, and a machine already
-//     destroyed at first sight is none;
+//     destroyed at first sight is none. While on, an explosion adds one to the
+//     count the moment it is seen, so one abandoned by a room change still
+//     counts;
 //   - a Goburin's Head build (CreateItemNew returned the charm, any self),
 //     and a machine-self CreateDefaultParams (0, 98);
 //   - at the explosion's deadline, the ground heads near the machine.
 //
-// Payouts are not an input, so no payout can force or reset. The decision is
-// made kSettleFrames presented frames after the sprite change, in this order:
-// the room changed -> abandoned (counter kept); a natural-head signal in the
-// window -> natural (no force, counter reset, at any count); on and the count
-// at the threshold -> force (a confirmed drop resets, a refused one keeps the
-// counter so the next explosion forces), unless the ground near the machine
-// did not read, now or at its first sight -> ground-unread (refused, counter
-// kept: a second head is worse than a late one); otherwise below (counter
-// kept).
+// Spins and payouts are not an input, so neither can count, force or reset.
+// The decision is made kSettleFrames presented frames after the sprite
+// change, in this order: the room changed -> abandoned (count kept); a
+// natural-head signal in the window -> natural (no force, count reset, this
+// explosion's own addition included, at any count); on, the count at the
+// threshold and this explosion's own addition the one that reached it ->
+// force (a confirmed drop resets, a refused one keeps the count so the next
+// explosion forces), unless the ground near the machine did not read, now or
+// at its first sight -> ground-unread (refused, count kept: a second head is
+// worse than a late one); otherwise below (count kept).
+//
+// The counter file's text, both ways (CounterFileText, ParseCounterFile), is
+// here too: version 2 holds the explosion count, and an unversioned file is
+// the older spin count, read as 0.
 //
 // It is game-independent by contract - numbers, strings, frame numbers and
 // machine/instance ids, never an instance, an RValue or a game constant - so
 // tests/gamba_pity_harness.cpp compiles it whole, the way GambaProbe.hpp is.
 // The adapter supplies the machine-self predicate, the sprite comparison (by
-// name) and the charm identity; this core holds no file I/O.
+// name), the charm identity and the file I/O.
 
-// One spin debits exactly 10,000 gold, so the counter - spins - reads as gold.
-inline constexpr int64_t kGoldPerSpin = 10000;
 // The settle span: the decision waits this many presented frames after the
 // sprite change, so a head the game builds after the change can appear first.
 inline constexpr int64_t kSettleFrames = 60;
@@ -78,6 +83,7 @@ struct Explosion {
     int64_t room = -1;        // the room at the sprite change
     double x = 0.0, y = 0.0;  // the machine's position at the sprite change
     std::string signal;       // "build" / "machine-build" once one fell in the window
+    int countAfter = 0;       // the count its own addition brought the counter to; 0 when it did not count
 };
 
 // The deadline's decision for one explosion.
@@ -98,28 +104,12 @@ public:
     void SetThreshold(int threshold) { threshold_ = threshold; }
     int Threshold() const { return threshold_; }
 
-    // The current spin count: the spins seen since the last reset.
+    // The current count: the explosions without a head since the last reset.
     int Count() const { return count_; }
 
-    // Restore the persisted count (the adapter reads the counter file; this
-    // core holds no file I/O).
+    // Restore the persisted count (the adapter reads the counter file through
+    // ParseCounterFile; this core holds no file I/O).
     void SetCount(int count) { count_ = count > 0 ? count : 0; }
-
-    // The gold equivalent of the count, one spin = kGoldPerSpin gold. Named
-    // once here so the status line shares it (the panel's value box shows the
-    // spin count, not the gold).
-    int64_t GoldEquivalent() const { return static_cast<int64_t>(count_) * kGoldPerSpin; }
-
-    // ---- spins ---------------------------------------------------------------
-    // A spin: one machine-self PickUpGoldCheck with a1=-10000. Counts only
-    // while on and machine-self; returns whether it counted. Nothing but a
-    // spin raises the counter.
-    bool OnSpin(bool machineSelf)
-    {
-        if (!enabled_ || !machineSelf) return false;
-        ++count_;
-        return true;
-    }
 
     // A natural charm drop starts the guarantee over, at any count. The
     // machine-self CreateDefaultParams (0, 98) reset calls this directly.
@@ -153,7 +143,9 @@ public:
     // One machine read in frame `frame`. First sight records the machine and
     // returns FirstSeen (the adapter then takes its ground baseline); a later
     // live-to-destroyed change registers one pending explosion and returns
-    // Exploded. A machine already destroyed at first sight never explodes.
+    // Exploded, and while on adds one to the count at once (the explosion line
+    // then shows the count with it). A machine already destroyed at first
+    // sight never explodes.
     Sighting ObserveMachine(int64_t id, bool destroyed, int64_t frame, double x, double y)
     {
         auto it = machines_.find(id);
@@ -174,6 +166,12 @@ public:
         // A head build in the look-back belongs to this explosion.
         for (const auto& b : recentBuilds_)
             if (b.first >= frame - kLookBackFrames && e.signal.empty()) e.signal = b.second;
+        // Counted at detection, so an explosion a room change abandons still
+        // counts. Off, nothing counts.
+        if (enabled_) {
+            ++count_;
+            e.countAfter = count_;
+        }
         pending_.push_back(e);
         ++explosions_;
         return Sighting::Exploded;
@@ -270,8 +268,11 @@ public:
     // `ground` the charm heads lying near the machine now, and `groundRead`
     // whether that scan read to the end. Abandoned, natural, below and
     // ground-unread are final here; a force waits for ForceConfirmed or
-    // ForceRefused. A force needs both ground reads - the machine's baseline
-    // and this one - since only they can rule out a head the game placed.
+    // ForceRefused. A force needs this explosion's own addition to have
+    // reached the threshold (an explosion still pending never forces on a
+    // later one's addition, so two in one settle span force at most once),
+    // and both ground reads - the machine's baseline and this one - since
+    // only they can rule out a head the game placed.
     Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)
     {
         Decision d;
@@ -293,7 +294,7 @@ public:
             ++natural_;
             return d;
         }
-        if (enabled_ && threshold_ > 0 && count_ >= threshold_) {
+        if (enabled_ && threshold_ > 0 && count_ >= threshold_ && e.countAfter >= threshold_) {
             if (!groundRead || !baselineRead) {
                 ++refused_;
                 ++groundUnread_;
@@ -324,8 +325,8 @@ public:
         if (groundId >= 0) ownHeads_.insert(groundId);
     }
 
-    // The forced drop was refused: the counter is kept, so the next explosion
-    // tries again.
+    // The forced drop was refused: the count is kept, so the next explosion's
+    // addition is past the threshold and it tries again.
     void ForceRefused() { ++refused_; }
 
     size_t Pending() const { return pending_.size(); }
@@ -348,7 +349,6 @@ public:
         return std::string("gambapity: ") + (enabled_ ? "on" : "off")
             + " count=" + std::to_string(count_)
             + " threshold=" + std::to_string(threshold_)
-            + " gold=" + std::to_string(GoldEquivalent())
             + " explosions=" + std::to_string(explosions_)
             + " forced=" + std::to_string(forced_)
             + " natural=" + std::to_string(natural_)
@@ -429,6 +429,20 @@ public:
         return "gambapity: a natural Goburin's Head build reset the counter";
     }
 
+    // An unversioned counter file (the older spin count) was read as 0; the
+    // adapter prints this once and rewrites the file as version 2.
+    static std::string MigrationLine()
+    {
+        return "gambapity: the counter file held a spin count from an older version; the explosion count starts at 0";
+    }
+
+    // The status line's error suffix for a counter file of another version.
+    static std::string VersionErrorText(int64_t version)
+    {
+        return "the gambapity counter file has version " + std::to_string(version)
+            + ", which this build does not read; the explosion count starts at 0";
+    }
+
 private:
     struct Machine {
         bool destroyed = false;
@@ -473,5 +487,85 @@ private:
     int groundUnread_ = 0;     // forces refused because a ground scan did not read
     int belowGroundUnread_ = 0; // below outcomes whose ground scan (or baseline) did not read
 };
+
+// ---- the counter file --------------------------------------------------------
+// %LOCALAPPDATA%\Hero_Siege\forgepact_gamba_pity.json holds the count. The
+// adapter reads and writes the file; the text is this header's, both ways.
+// Version 2 is the explosion count. The phase-5 file, `{"count":<n>}` with no
+// version, held spins and counts as version 1.
+inline constexpr int64_t kCounterFileVersion = 2;
+
+// Exactly `{"version":2,"count":<n>}`: no spaces, no newline.
+inline std::string CounterFileText(int count)
+{
+    return "{\"version\":" + std::to_string(kCounterFileVersion) + ",\"count\":" + std::to_string(count > 0 ? count : 0) + "}";
+}
+
+// What a counter file's text held. `legacy`: an unversioned spin count, read
+// as 0 (the adapter prints MigrationLine once and rewrites the file).
+// `unknown`: another version, read as 0 (the adapter shows VersionErrorText
+// and leaves the file until the count next changes). A missing, empty or
+// unparseable text is 0 with neither flag.
+struct CounterFile {
+    int count = 0;
+    bool legacy = false;
+    bool unknown = false;
+    int64_t version = 0;   // the unknown version's number
+};
+
+namespace detail {
+inline bool CounterFileSpace(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+
+// An integer member `"<key>":<n>` of a one-level JSON object. `present` when
+// the key is there; true when its value is a whole number of at most nine
+// digits followed by `,` or `}` (white space allowed around it).
+inline bool CounterFileInt(const std::string& text, const std::string& key, bool& present, int64_t& value)
+{
+    const std::string quoted = "\"" + key + "\"";
+    size_t i = text.find(quoted);
+    present = i != std::string::npos;
+    if (!present) return false;
+    i += quoted.size();
+    while (i < text.size() && CounterFileSpace(text[i])) ++i;
+    if (i >= text.size() || text[i] != ':') return false;
+    ++i;
+    while (i < text.size() && CounterFileSpace(text[i])) ++i;
+    bool negative = false;
+    if (i < text.size() && text[i] == '-') { negative = true; ++i; }
+    const size_t start = i;
+    int64_t n = 0;
+    while (i < text.size() && text[i] >= '0' && text[i] <= '9' && i - start < 9) n = n * 10 + (text[i++] - '0');
+    if (i == start || (i < text.size() && text[i] >= '0' && text[i] <= '9')) return false;
+    while (i < text.size() && CounterFileSpace(text[i])) ++i;
+    if (i >= text.size() || (text[i] != ',' && text[i] != '}')) return false;
+    value = negative ? -n : n;
+    return true;
+}
+} // namespace detail
+
+inline CounterFile ParseCounterFile(const std::string& text)
+{
+    CounterFile file;
+    size_t first = 0, last = text.size();
+    while (first < last && detail::CounterFileSpace(text[first])) ++first;
+    while (last > first && detail::CounterFileSpace(text[last - 1])) --last;
+    if (last - first < 2 || text[first] != '{' || text[last - 1] != '}') return file;
+    bool hasVersion = false, hasCount = false;
+    int64_t version = 0, count = 0;
+    const bool versionRead = detail::CounterFileInt(text, "version", hasVersion, version);
+    const bool countRead = detail::CounterFileInt(text, "count", hasCount, count);
+    if (hasVersion) {
+        if (!versionRead) return file;   // a version that is not a number: unparseable
+        if (version != kCounterFileVersion) {
+            file.unknown = true;
+            file.version = version;
+            return file;
+        }
+        if (countRead && count > 0) file.count = static_cast<int>(count);
+        return file;
+    }
+    if (countRead) file.legacy = true;   // the older spin count, never read as explosions
+    return file;
+}
 
 } // namespace ForgePact::GambaPity
