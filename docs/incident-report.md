@@ -97,6 +97,13 @@ narrow statement, not an exoneration.
   frames of 250 ms or more, `window yes|no` and `menu yes|no` (whether the
   room the frame thread last sampled is a menu room); a third line carries
   the tagged and untagged hook counts and the report write errors.
+- **The `incident setup` command** (ForgePact#151) prints the setup's
+  install-cost line (or `incident: setup installs not measured yet`), the
+  session's install totals since load (`installs since load <n>, detours
+  <d>, detour <ms> ms total, worst <ms> ms <hook id>`, which also count
+  on-demand installs) and one thread snapshot timed on the spot, the
+  positive control for the detour's cost. Its reasoning and measurements are
+  in [setup-stall-research.md](setup-stall-research.md).
 
 ## The report
 
@@ -287,7 +294,12 @@ that fails to write is counted, and the `incident: report written` line says
   continues through every research installer). The clock readings go
   through `ForgePact::Incident::Qpc()`. Bounding or moving the setup is not
   decided here; Live 3 measured which installer costs what (see "Live
-  results"); bounding it is ForgePact#151.
+  results"); bounding it is ForgePact#151. Since #151 the block prints a
+  second line right after it, `incident: setup installs <n>, detours <d>:
+  resolve ... ms, detour ... ms (worst ... ms <hook id>), log ... ms, rest
+  ... ms, outside installers ... ms`, which splits the hook installs by
+  part. #151's Live 1 measured the detour (Aurie's `MmCreateHook`) at 97.5%
+  of the `hooks` value; see [setup-stall-research.md](setup-stall-research.md).
 - **The panel's route leaves a trace.** `/api/state`'s `incidents` carries
   `reports`, `lastExit` and `exitWatch` (`pidHeld`, `exitsSeen`,
   `lastCode`), so "the game exited cleanly" is told apart from "no exit was
