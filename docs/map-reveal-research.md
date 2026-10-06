@@ -986,7 +986,7 @@ back. 24 checks: 21 passed, 1 failed (`miniboss-held`), 2 were not observed
   census. ` unread=` stayed 0 for the whole session.
 - **The protected pack state at arrival (measured).** Before any warp the
   census tallied `spawnPack` as: normal 1 on 50 spawners and 3 on the 12
-  already born (the same 12 whose `enemyArray` was an array), ambush 0 on all
+  already born (as many as had an array as `enemyArray`, 12), ambush 0 on all
   9, ancient 1 on all 10, colossal chest 0 on all 6, miniboss 2 on all 4.
   So the four miniboss spawners already read born at arrival, as the static
   reading predicted, and here, unlike Live 3, their creates were attributed
@@ -1026,16 +1026,20 @@ back. 24 checks: 21 passed, 1 failed (`miniboss-held`), 2 were not observed
   After the kill all four read `alive=0/1`, `packgone=4`, no miniboss
   marker left. The control spawner gave no positive control either: its
   member read said `alive=0/8` 5 s after its birth, while monsters were on
-  screen and the nearest `Skeletal_Trooper_obj` was 1089 px away. So the
-  "alive" half of the member read has no positive control in
-  this session: it may have retired miniboss markers early, and the owner's
-  view did not settle it. **Open caveat**, not a finding about the game:
+  screen and the nearest `Skeletal_Trooper_obj` was 1089 px away. The
+  member read did return members (`members=1/1` on all four miniboss
+  spawners at arrival, and on 262691 before the warp), but no alive read
+  agreed with a member visibly alive at the same time, so it may have
+  retired miniboss markers early, and the owner's view did not settle it.
+  That is the gap Live procedure 2 must close. **Open caveat**, not a finding about the game:
   Live procedure 2 (the player build) settles it with a slow, deliberate
   miniboss fight. Measured beside it: the miniboss spawners still exist
   after the kill, and every protected value and instance variable they
   carry reads the same before the warp, after it and after the kill
   (`spawnPack` 2, its zone state 1, its self-destroy value 0), apart from
-  the image index, so nothing on the spawner marks the pack's death.
+  the image index, which advanced throughout; alarms and other built-in
+  variables were not read. So none of the values read marks the pack's
+  death (not observed, not ruled out).
 - **A revisit holds (route `revisit: holds`, measured).** After leaving by
   waypoint and coming back, no marker returned for any spawner retired
   before leaving: `remembered=` covered at least as many as had been born
