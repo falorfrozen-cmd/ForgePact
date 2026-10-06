@@ -318,13 +318,15 @@ experience.
   shortly after you entered an area, although those packs had not appeared
   yet. Each icon now stays until the game creates that pack: an ancient pack
   when you get close, a colossal chest's monsters when you open the chest.
-  Mini boss icons, whose packs the game creates as you arrive, stay for the
-  rest of your visit, even after the pack is killed: ForgePact cannot yet
-  reliably tell when that pack is dead, so it keeps the icon rather than risk
-  removing it early. Legion and champion icons
+  Mini boss icons, whose packs the game creates as you arrive, are meant to
+  stay until that pack is killed. In testing they stayed while the mini
+  bosses were alive, but the check behind this is not confirmed yet, so an
+  icon may still disappear before its pack is dead. Legion and champion icons
   follow the same rule but have not been seen in a test yet. Leaving an area
   and coming back no longer brings back icons for packs that were already
-  created.
+  created. For mini boss, legion and champion packs this rests on the same
+  unconfirmed check: their icons are meant to come back only while the pack
+  is still alive.
 
 - **The two Monster Rarity rows are named for the monsters they make (#159).**
   On the World tab, the row called **Rare** raised normal monsters to what the
