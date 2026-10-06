@@ -19,6 +19,10 @@
 // real counter through the same seam, with lower bounds only, since
 // preemption only ever adds time.
 //
+// The install cost (ForgePact #151) runs the same way: its line, window and
+// sums on the controlled clock, and the thread snapshot probe on the real one,
+// with lower bounds only.
+//
 // Usage:  incident_monitor_harness.exe <incident_shutdown_probe.dll> <work dir> <fixture dir>
 //         incident_monitor_harness.exe --child <exit|terminate> <probe.dll> <marker path>
 //
@@ -724,6 +728,134 @@ void RealClockControl()
     Report("real-clock-control", ok, FrameText(f, { inc::Mod::gems }) + " | slept " + Num(sleptMs) + " ms on the real clock");
 }
 
+// ---- what a hook install costs (ForgePact #151) -----------------------------
+//
+// One install the way ModuleMain.cpp's HookOneScript and HookBuiltin time
+// theirs: an InstallTimer for the whole call, and each part read through
+// inc::Qpc() around the work it names. A negative `detourMs` is an install
+// that never reached its detour (the name did not resolve). On the
+// controlled clock every part is exact.
+void FakeInstall(inc::InstallCost& cost, const char* id, double resolveMs, double detourMs, double logMs, double restMs)
+{
+    inc::InstallTimer install(id, cost);
+    int64_t t = inc::Qpc();
+    Spin(resolveMs);
+    install.parts.resolve += inc::Qpc() - t;
+    Spin(restMs);
+    if (detourMs >= 0.0) {
+        t = inc::Qpc();
+        Spin(detourMs);
+        install.parts.detour += inc::Qpc() - t;
+        install.parts.detoured = true;
+    }
+    t = inc::Qpc();
+    Spin(logMs);
+    install.parts.log += inc::Qpc() - t;
+}
+
+// Target: the setup's cost line names every part, exactly. Three installs in
+// the window, one of which never reached its detour, against a `hooks` value
+// of 230 ms: 8.5 ms of it was spent outside the two installers. Before the
+// setup the line says it has nothing yet; a setup with no detour names none.
+void SetupCostLine()
+{
+    inc::InstallCost cost;
+    const std::string before = cost.SetupLine();
+    cost.OpenSetup();
+    FakeInstall(cost, "fp_create_item_new", 1.0, 95.0, 0.5, 0.5);
+    FakeInstall(cost, "fp_tip_draw_text", 1.0, 120.0, 0.5, 0.5);
+    FakeInstall(cost, "fp_missing_script", 2.0, -1.0, 0.5, 0.0);
+    cost.CloseSetup();
+    const std::string line = cost.SetupMeasured(230.0);
+    const std::string want = "incident: setup installs 3, detours 2: resolve 4.0 ms, detour 215.0 ms (worst 120.0 ms "
+                             "fp_tip_draw_text), log 1.5 ms, rest 1.0 ms, outside installers 8.5 ms";
+    inc::InstallCost none;
+    none.OpenSetup();
+    FakeInstall(none, "fp_missing_script", 2.0, -1.0, 0.5, 0.0);
+    none.CloseSetup();
+    const std::string noDetour = none.SetupMeasured(2.5);
+    const bool ok = line == want && cost.SetupLine() == line && before == "incident: setup installs not measured yet"
+                    && noDetour.find("detours 0: ") != std::string::npos
+                    && noDetour.find("(worst 0.0 ms none)") != std::string::npos;
+    Report("setup-cost-line", ok, line + " | before: " + before + " | no detour: " + noDetour);
+}
+
+// Target: an install outside the setup window reaches the session totals
+// only. One before the window opens and one after it closes (an on-demand
+// `dropmult`), each with a slower detour than the setup's own: the setup line
+// is the same before and after the late one, and the session counts all three.
+void SetupCostOutsideSetup()
+{
+    inc::InstallCost cost;
+    FakeInstall(cost, "fp_before_setup", 0.5, 150.0, 0.5, 0.0);
+    cost.OpenSetup();
+    FakeInstall(cost, "fp_create_item_new", 1.0, 95.0, 0.5, 0.5);
+    cost.CloseSetup();
+    const std::string setup = cost.SetupMeasured(100.0);
+    const std::string sessionBefore = cost.SessionLine();
+    FakeInstall(cost, "fp_drop_relic", 0.5, 200.0, 0.5, 0.0);
+    const std::string session = cost.SessionLine();
+    const bool ok = setup == "incident: setup installs 1, detours 1: resolve 1.0 ms, detour 95.0 ms (worst 95.0 ms "
+                             "fp_create_item_new), log 0.5 ms, rest 0.5 ms, outside installers 3.0 ms"
+                    && cost.SetupLine() == setup
+                    && sessionBefore == "incident: installs since load 2, detours 2, detour 245.0 ms total, worst 150.0 ms "
+                                        "fp_before_setup"
+                    && session == "incident: installs since load 3, detours 3, detour 445.0 ms total, worst 200.0 ms "
+                                  "fp_drop_relic";
+    Report("setup-cost-outside-setup", ok, setup + " | " + sessionBefore + " | after: " + session);
+}
+
+// Target: resolve, detour, log, rest and outside installers add up to the
+// setup line's `hooks` value, on parts that are not round numbers.
+void SetupCostSums()
+{
+    inc::InstallCost cost;
+    cost.OpenSetup();
+    FakeInstall(cost, "fp_a", 0.1875, 47.8125, 0.0625, 0.3125);
+    FakeInstall(cost, "fp_b", 1.0625, 51.4375, 0.4375, 0.0625);
+    FakeInstall(cost, "fp_c", 0.8125, -1.0, 0.1875, 0.0);
+    cost.CloseSetup();
+    const double hooksMs = 117.3;
+    cost.SetupMeasured(hooksMs);
+    const inc::InstallCost::Parts p = cost.SetupParts();
+    const double sum = p.resolveMs + p.detourMs + p.logMs + p.restMs + p.outsideMs;
+    const bool ok = std::fabs(sum - hooksMs) < 0.1 && p.outsideMs > 0.0 && Exactly(p.detourMs, 99.25);
+    Report("setup-cost-sums", ok, "resolve " + Num(p.resolveMs) + " + detour " + Num(p.detourMs) + " + log " + Num(p.logMs)
+           + " + rest " + Num(p.restMs) + " + outside " + Num(p.outsideMs) + " = " + Num(sum) + " of hooks " + Num(hooksMs));
+}
+
+DWORD WINAPI IdleThread(LPVOID release)
+{
+    WaitForSingleObject(static_cast<HANDLE>(release), INFINITE);
+    return 0;
+}
+
+// Positive control for the live session's split: the snapshot probe sees
+// threads at all. On the real clock, so lower bounds only: starting kIdle
+// threads that wait raises this process's count by at least kIdle, the
+// system-wide count holds at least this process's, and the time is not
+// negative.
+void ThreadSnapshot()
+{
+    constexpr unsigned kIdle = 4;
+    const inc::ThreadSnapshotResult before = inc::ThreadSnapshot();
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::vector<HANDLE> threads;
+    for (unsigned i = 0; i < kIdle && release; ++i)
+        if (HANDLE h = CreateThread(nullptr, 0, &IdleThread, release, 0, nullptr)) threads.push_back(h);
+    const inc::ThreadSnapshotResult during = inc::ThreadSnapshot();
+    if (release) SetEvent(release);
+    for (HANDLE h : threads) {
+        WaitForSingleObject(h, 5000);
+        CloseHandle(h);
+    }
+    if (release) CloseHandle(release);
+    const bool ok = threads.size() == kIdle && before.ok && during.ok && during.processThreads >= before.processThreads + kIdle
+                    && during.systemThreads >= during.processThreads && before.ms >= 0.0 && during.ms >= 0.0;
+    Report("thread-snapshot", ok, inc::ThreadSnapshotLine(during) + " | before " + std::to_string(before.processThreads)
+           + " in this process, started " + std::to_string(threads.size()));
+}
+
 // Inside the guard the in-mod channel keeps the mod and adds the mark; a
 // freeze there says it was inside the game function the hook wraps.
 void StallInGameOriginal(Sim& sim, inc::InModState& seen)
@@ -1164,6 +1296,10 @@ int main(int argc, char** argv)
     OnControlledClock(FrameSelfTime);
     OnControlledClock(DescheduledNotCharged);
     RealClockControl();
+    OnControlledClock(SetupCostLine);
+    OnControlledClock(SetupCostOutsideSetup);
+    OnControlledClock(SetupCostSums);
+    ThreadSnapshot();
     GameOriginalInMod();
     WorstJudgedVsOverall();
     HookTagThunk();

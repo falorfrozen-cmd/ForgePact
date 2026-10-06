@@ -30,6 +30,12 @@ The accounting charges a mod only for ForgePact's own code (the owner,
 2026-10-02): the game original a hook wraps runs inside the guard and is
 charged to nobody, and every row, `frame` included, is self time.
 
+ForgePact #151 adds the install cost: three scenarios on the controlled clock
+pin the setup's cost line exactly, keep an install outside the setup window
+out of it, and check that its five parts add up to the `hooks` value; one on
+the real clock (lower bounds only) is the thread snapshot probe's positive
+control: it must see the idle threads it just started.
+
 tests/incident_shutdown_probe.cpp is a DLL that arms the clean-shutdown marker
 and starts the monitor's thread, as the plugin does. The harness loads it in a
 child that ends through ExitProcess (the marker's second writer, the static
@@ -72,6 +78,10 @@ EXPECTED = (
     "frame-self-time",
     "descheduled-not-charged",
     "real-clock-control",
+    "setup-cost-line",
+    "setup-cost-outside-setup",
+    "setup-cost-sums",
+    "thread-snapshot",
     "game-original-in-mod",
     "worst-judged-vs-overall",
     "hook-tag-thunk",
@@ -233,6 +243,40 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         detail = self.scenario("real-clock-control")
         self.assertIn(" ms on the real clock", detail)
         self.assertNotIn("gems 0.0 |", detail)
+
+    # ForgePact #151. Target: the setup's cost line splits every hook install
+    # into its parts, exactly, on the controlled clock: what the live session
+    # reads to say whether the detours are the 2.5 s.
+    def test_target_the_setup_cost_line_names_every_part(self):
+        detail = self.scenario("setup-cost-line")
+        self.assertTrue(detail.startswith(
+            "incident: setup installs 3, detours 2: resolve 4.0 ms, detour 215.0 ms (worst 120.0 ms fp_tip_draw_text),"
+            " log 1.5 ms, rest 1.0 ms, outside installers 8.5 ms | "), detail)
+        self.assertIn("| before: incident: setup installs not measured yet |", detail)
+        self.assertIn("detours 0: ", detail)
+        self.assertIn("(worst 0.0 ms none)", detail)
+
+    # Target: an install after the setup (an on-demand `dropmult`) reaches the
+    # session totals and leaves the setup line alone.
+    def test_target_an_install_outside_the_setup_counts_only_for_the_session(self):
+        detail = self.scenario("setup-cost-outside-setup")
+        self.assertIn("incident: setup installs 1, detours 1: ", detail)
+        self.assertIn("incident: installs since load 2, detours 2, detour 245.0 ms total, worst 150.0 ms fp_before_setup",
+                      detail)
+        self.assertIn("| after: incident: installs since load 3, detours 3, detour 445.0 ms total, worst 200.0 ms"
+                      " fp_drop_relic", detail)
+
+    def test_target_the_five_parts_add_up_to_the_hooks_value(self):
+        self.assertIn("of hooks 117.3", self.scenario("setup-cost-sums"))
+
+    # Positive control for the live split: the snapshot probe, on the real
+    # clock, sees the threads this process just started. Lower bounds only.
+    def test_baseline_the_thread_snapshot_sees_this_process_threads(self):
+        detail = self.scenario("thread-snapshot")
+        self.assertTrue(detail.startswith("incident: thread snapshot "), detail)
+        self.assertIn(" threads system-wide, ", detail)
+        self.assertIn(" in this process | before ", detail)
+        self.assertIn("started 4", detail)
 
     def test_target_a_freeze_inside_a_game_original_says_so(self):
         detail = self.scenario("game-original-in-mod")
