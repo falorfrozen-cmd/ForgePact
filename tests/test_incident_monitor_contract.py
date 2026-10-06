@@ -712,6 +712,9 @@ class IncidentMonitorContractTests(unittest.TestCase):
         existing = setup.index('Out("incident: setup "')
         cost = setup.index("Out(inc::g_InstallCost.SetupMeasured(")
         self.assertLess(existing, cost)
+        # The profile build's fp_pop_* installs run after the window closes,
+        # or the cost line would count installs outside its `hooks` value.
+        self.assertLess(cost, setup.index("PopulationProfile::InstallScriptTimings();"))
         # Printed once, from the existing line's own `hooks` value.
         self.assertEqual(self.plugin.count("g_InstallCost.SetupMeasured("), 1)
         self.assertIn("SetupMeasured(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0)", setup)

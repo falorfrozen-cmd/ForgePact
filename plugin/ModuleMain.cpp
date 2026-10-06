@@ -55592,9 +55592,6 @@ void FrameCallback(FWFrame& FrameContext)
             SetupLapStart(); InstallHook(); hooksEnd = ForgePact::Incident::Qpc(); Trace("3-installhook-ok");
         }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
-#ifdef FORGEPACT_POPULATION_PROFILE
-        ForgePact::PopulationProfile::InstallScriptTimings();
-#endif
 #ifndef FORGEPACT_RELEASE
         try { LoadCoopConfigAndMaybeStart(); Trace("4-coop-ok"); }
         catch (...) { Out("coop auto-start EXCEPTION"); Trace("X-coop-cppexception"); }
@@ -55609,6 +55606,11 @@ void FrameCallback(FWFrame& FrameContext)
         // ForgePact #151: the same `hooks` value split by install part, right
         // after the line above (its literals live in IncidentMonitor.hpp).
         Out(inc::g_InstallCost.SetupMeasured(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0));
+        // The profiling installs come after the setup window has closed
+        // (SetupSlowest above), so the cost line's parts add up to `hooks`.
+#ifdef FORGEPACT_POPULATION_PROFILE
+        ForgePact::PopulationProfile::InstallScriptTimings();
+#endif
     }
 
     // Orb pickup: the player position the globe step hooks pull toward, read
