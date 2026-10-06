@@ -18,6 +18,7 @@ What these tests pin is the part that is easy to get quietly wrong:
 - the installers the probe attaches around are byte-for-byte unchanged.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -377,7 +378,7 @@ class ToggleProbeContractTests(unittest.TestCase):
                 capture_output=True, check=True,
             ).stdout.decode("utf-8").replace("\r\n", "\n")
         except (OSError, subprocess.CalledProcessError) as exc:
-            self.skipTest(f"origin/main is not readable here: {exc}")
+            history_unreadable(self, f"origin/main is not readable here: {exc}")
         working = self.plugin.replace("\r\n", "\n")
         for signature in ("static void InstallHeadLabelHook()", "static void InstallBuffHooks()",
                           "static void CoopRenderTick()"):
@@ -1100,6 +1101,25 @@ BANNED_DRAW_NAMES = (
     "Fraction", "TimerTotal", "timerTotal", "Denominator", "draw_line", "draw_arc",
     "draw_primitive", "draw_sprite", "draw_ellipse", "draw_rectangle_colour",
 )
+
+
+def history_unreadable(testcase, why: str):
+    """End a test whose git history read failed: skip locally, fail in CI.
+
+    Eight tests here compare today's source with an earlier commit or
+    `origin/main`. A contributor's shallow clone cannot read those, so without
+    `CI` they skip. GitHub Actions sets `CI=true`, and there a skip would hide
+    that the pins never ran -- the release build's depth-1 checkout did exactly
+    that until ForgePact#176 -- so the test fails instead and names the fix.
+    tests/test_ci_history_pins.py pins both halves of this rule.
+    """
+    if os.environ.get("CI", "").strip().lower() == "true":
+        testcase.fail(
+            f"{why}: this CI checkout lacks the git history these contract pins "
+            "compare against; give its actions/checkout step `fetch-depth: 0` "
+            "(ForgePact#176)."
+        )
+    testcase.skipTest(why)
 
 
 def git_show(ref_path: str):
@@ -2218,7 +2238,7 @@ class ToggleGuardContractTests(unittest.TestCase):
     def test_indicator_decide_is_unchanged_from_ab6fed5(self):
         old = git_show("ab6fed5:plugin/include/ForgePact/ToggleSkillMod.hpp")
         if old is None:
-            self.skipTest("ab6fed5 is not readable here")
+            history_unreadable(self, "ab6fed5 is not readable here")
         sig = "static ToggleIndicatorState Decide("
         self.assertEqual(function_body(old, sig), function_body(self.header.replace("\r\n", "\n"), sig))
 
@@ -2430,7 +2450,7 @@ class ToggleGuardContractTests(unittest.TestCase):
     def test_talent_use_hook_is_unchanged_from_ab6fed5(self):
         old = git_show("ab6fed5:plugin/ModuleMain.cpp")
         if old is None:
-            self.skipTest("ab6fed5 is not readable here")
+            history_unreadable(self, "ab6fed5 is not readable here")
         sig = "static RValue& HookTalentUse("
         self.assertEqual(function_body(old, sig), function_body(self.plugin.replace("\r\n", "\n"), sig))
 
@@ -2770,7 +2790,7 @@ class SkillTimerBuffContractTests(unittest.TestCase):
     def test_object_row_model_is_unchanged_from_30a851c(self):
         old = git_show("30a851c:plugin/include/ForgePact/SkillTimerMod.hpp")
         if old is None:
-            self.skipTest("30a851c is not readable here")
+            history_unreadable(self, "30a851c is not readable here")
         sig = "class SkillTimerModel {"
         old_body = old[old.index(sig):old.index("\n};", old.index(sig))]
         new_body = self.header.replace("\r\n", "\n")
@@ -2994,7 +3014,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # assert_hook_draw_hud_buffs_unchanged_plus_skilltimer above.
         old = git_show("62a67d2:plugin/ModuleMain.cpp")
         if old is None:
-            self.skipTest("git cannot read 62a67d2")
+            history_unreadable(self, "git cannot read 62a67d2")
         for signature in UNCHANGED_SINCE_T1:
             new_body = function_body(self.plugin, signature)
             old_body = function_body(old, signature)
@@ -3012,7 +3032,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # entry named explicitly - anything else appearing still fails.
         old = git_show("62a67d2:plugin/ModuleMain.cpp")
         if old is None:
-            self.skipTest("git cannot read 62a67d2")
+            history_unreadable(self, "git cannot read 62a67d2")
         pattern = r"static const std::unordered_set<std::string> kPlayerCommands = \{(.*?)\};"
         as_set = lambda text: {tok.strip().strip('"') for tok in text.split(",") if tok.strip()}
         now = as_set(re.search(pattern, self.plugin, re.S).group(1))
@@ -3649,7 +3669,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # - it also covers everything phase R has touched since T1.
         old = git_show("7169440:plugin/ModuleMain.cpp")
         if old is None:
-            self.skipTest("git cannot read 7169440")
+            history_unreadable(self, "git cannot read 7169440")
         for signature in UNCHANGED_SINCE_T1:
             new_body = function_body(self.plugin, signature)
             old_body = function_body(old, signature)
@@ -3661,7 +3681,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                 self.assertEqual(new_body, old_body, signature)
         old_hpp = git_show("7169440:plugin/include/ForgePact/ToggleSkillMod.hpp")
         if old_hpp is None:
-            self.skipTest("git cannot read 7169440")
+            history_unreadable(self, "git cannot read 7169440")
         new_hpp = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "ToggleSkillMod.hpp").read_text(
             encoding="utf-8").replace("\r\n", "\n")
         # NARROWED in phase S: the whole-file equality is replaced by
@@ -3682,7 +3702,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # into (row 0's two aliases, whose only callers are in here).
         old = git_show("2f40223:plugin/ModuleMain.cpp")
         if old is None:
-            self.skipTest("git cannot read 2f40223")
+            history_unreadable(self, "git cannot read 2f40223")
         signatures = list(UNCHANGED_PROBE_BODIES)
         signatures += sorted({
             m.group(0) for m in re.finditer(r"^static [\w:<>&* ]*?\bTgProbeTgl\w*\(", self.plugin, re.M)

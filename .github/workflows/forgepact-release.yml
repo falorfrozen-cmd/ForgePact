@@ -167,11 +167,16 @@ jobs:
 
       # The plugin and panel source, the packaging script, tools/cut_release.py,
       # tests/ and the compile line all come from the tag, never from main.
+      # Full history: tests/test_toggle_skill_contract.py compares the source
+      # with earlier commits and origin/main, and under CI=true it fails when
+      # it cannot read them. At the default depth 1 they were skipped and the
+      # release reported a green suite that never ran them (ForgePact#176).
       - name: Check out the tagged ForgePact tree
         uses: actions/checkout@v4
         with:
           ref: refs/tags/${{ steps.tag.outputs.tag }}
           path: ForgePact
+          fetch-depth: 0
 
       - name: Record the source commit
         id: source_commit
