@@ -73,6 +73,8 @@
   "#boss_rarity",
   "#mod_dungeon_chest",
   "#dungeon_chest_pct",
+  "#mod_gambapity",
+  "#gambapity",
   "#dungeon_chest_countdown"
  ],
  "steps": [
@@ -6791,6 +6793,189 @@
   },
   {
    "step": 524,
+   "control": "subtab:qol",
+   "action": "click"
+  },
+  {
+   "step": 525,
+   "control": "#mod_gambapity",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_gambapity",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity 10"
+     ]
+    }
+   }
+  },
+  {
+   "step": 526,
+   "control": "#gambapity",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "gambapity",
+        "value": 20
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity 20"
+     ]
+    }
+   }
+  },
+  {
+   "step": 527,
+   "control": "#gambapity",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "gambapity",
+        "value": 1
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 528,
+   "control": "#gambapity",
+   "action": "type",
+   "value": "5",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "gambapity",
+        "value": 5
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity 5"
+     ]
+    }
+   }
+  },
+  {
+   "step": 529,
+   "control": "#mod_gambapity",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_gambapity",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity off"
+     ]
+    }
+   }
+  },
+  {
+   "step": 530,
+   "control": "#gambapity",
+   "action": "max",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "gambapity",
+        "value": 20
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": []
+    }
+   }
+  },
+  {
+   "step": 531,
+   "control": "#mod_gambapity",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "mod_gambapity",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "gambapity 20"
+     ]
+    }
+   }
+  },
+  {
+   "step": 532,
+   "control": "#enabledMods .quick-disable[data-for=\"mod_gambapity\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 529
+    },
+    "cmds": {
+     "same": 529
+    }
+   }
+  },
+  {
+   "step": 533,
+   "control": "subtab:gameplay",
+   "action": "click"
+  },
+  {
+   "step": 534,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
@@ -6803,7 +6988,7 @@
    }
   },
   {
-   "step": 525,
+   "step": 535,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "chat",
@@ -6827,7 +7012,7 @@
    }
   },
   {
-   "step": 526,
+   "step": 536,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "both",
@@ -6851,7 +7036,7 @@
    }
   },
   {
-   "step": 527,
+   "step": 537,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "head",
@@ -6875,7 +7060,7 @@
    }
   },
   {
-   "step": 528,
+   "step": 538,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {

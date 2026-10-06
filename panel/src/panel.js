@@ -290,6 +290,18 @@ function dungeonChestPaint(v){
   const on=document.getElementById('mod_dungeon_chest').checked,val=document.getElementById('dcpval');
   val.textContent=on?v+'%':'off';val.className='val '+(on?'':'off');
 }
+// Goburin's Head pity's value box: the number of machine explosions without a
+// head while its switch is on, "off" while it is off (the count is kept either
+// way).
+// The slider's number as an ordinal for its toast: 1st, 2nd, 3rd, 4th ... 11th-13th, 20th.
+function gambapityOrdinal(n){
+  const t=n%100;
+  return n+((t>=11&&t<=13)?'th':(['th','st','nd','rd'][n%10]||'th'));
+}
+function gambapityPaint(v){
+  const on=document.getElementById('mod_gambapity').checked,val=document.getElementById('gppval');
+  val.textContent=on?v:'off';val.className='val '+(on?'':'off');
+}
 function typable(r,valEl){
   if(!r||!valEl||valEl.dataset.typable)return;
   valEl.dataset.typable='1'; valEl.style.cursor='text'; valEl.title='Click to type a value';
@@ -506,6 +518,10 @@ async function boot(){
     dungeonChestPaint(c.dungeon_chest_pct??75);
     document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';
     syncDungeonChestCountdown(mdc);
+    const mgp=!!c.mod_gambapity;
+    document.getElementById('mod_gambapity').checked=mgp;
+    document.getElementById('gambapity').value=c.gambapity??10;
+    gambapityPaint(c.gambapity??10);
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -677,6 +693,21 @@ function bind(){
   document.getElementById('dungeon_chest_countdown').onchange=async(e)=>{
     const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'dungeon_chest_countdown',value:e.target.value})});
     toast('Dungeon chest countdown: '+e.target.selectedOptions[0].textContent+' - '+(res.ok||res.err));
+  };
+  // Goburin's Head pity: the dungeon chest's switch-plus-slider shape. The
+  // value follows the drag (input) and is posted on release (change); the
+  // switch repaints before its POST, so a lost server still leaves the box right.
+  // A typed count is rounded to the whole number the server keeps, so the box,
+  // the POST and the toast agree; with the switch off the slider still moves
+  // and is saved, but nothing counts, so the toast says "(while on)".
+  const gpp=document.getElementById('gambapity');
+  gpp.oninput=()=>gambapityPaint(Math.round(sliderVal(gpp)));
+  gpp.onchange=async()=>{const v=Math.round(sliderVal(gpp)),on=document.getElementById('mod_gambapity').checked;const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head'+(on?'':' (while on)')+' - '+(res.ok||res.err))};
+  typable(gpp,document.getElementById('gppval'));
+  document.getElementById('mod_gambapity').onchange=async(e)=>{
+    gambapityPaint(+gpp.value);
+    const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_gambapity',value:e.target.checked})});
+    toast('Goburin\'s Head pity '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
   };
   document.getElementById('autoapply').onchange=async(e)=>{
     await j('/api/set',{method:'POST',body:JSON.stringify({key:'auto_apply',value:e.target.checked})});
@@ -1172,7 +1203,7 @@ function showHiddenLootKey(c){
 }
 export function refreshSavedControls(){
   if(!ST?.cfg||document.querySelector('.numedit'))return;
-  const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient',dungeon_chest_pct:'dungeon_chest_pct'};
+  const c=ST.cfg,map={den:'density',enemyspeed:'enemy_speed',angelic_items:'angelic_items',rarity_rare:'rarity_rare',rarity_ancient:'rarity_ancient',dungeon_chest_pct:'dungeon_chest_pct',gambapity:'gambapity'};
   // Switches first: each range's oninput below reads its switch to paint "off".
   paintSwitches(c);
   const painted=[];
@@ -1187,7 +1218,7 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_jump_scenery:'mod_jump_scenery',mod_loot_announce:'mod_loot_announce',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll',mod_dungeon_chest:'mod_dungeon_chest'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_jump_scenery:'mod_jump_scenery',mod_loot_announce:'mod_loot_announce',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll',mod_dungeon_chest:'mod_dungeon_chest',mod_gambapity:'mod_gambapity'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   document.getElementById('boss_rarity').value=c.boss_rarity||'off';
@@ -1201,6 +1232,7 @@ export function refreshSavedControls(){
   dungeonChestPaint(c.dungeon_chest_pct??75);
   document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';
   syncDungeonChestCountdown(!!c.mod_dungeon_chest);
+  gambapityPaint(c.gambapity??10);
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   showHiddenLootKey(c);

@@ -517,7 +517,7 @@ async function modsCardsQol({ page }) {
   await subtab(page, 'subtab-qol');
   const got = await $(page, modCards, ['qolCard', CHILD_CONTROLS]);
   assert(got.transparent, `#qolCard is still drawn as a card (${got.wrapper})`);
-  assert(got.top === 18 && got.raised === 18, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 18`);
+  assert(got.top === 19 && got.raised === 19, `Quality of Life: ${got.top} top-level cards (${got.raised} raised), not 19`);
   assert(got.unitsAreTops, `Quality of Life: the cards are not the column's ${got.units} mods`);
   assert(got.perCard.every((p) => p.controls.length === 1), 'A Quality of Life card does not hold exactly one mod: ' + JSON.stringify(got.perCard));
   assert(got.childHome.length === CHILD_CONTROLS.length && got.childHome.every((c) => c.parentInSame), 'A child row is not in its parent\'s card: ' + JSON.stringify(got.childHome));

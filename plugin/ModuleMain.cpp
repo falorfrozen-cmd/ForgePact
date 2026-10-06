@@ -46813,6 +46813,2324 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 }
 
 #ifndef FORGEPACT_RELEASE
+// The scripts the `gambapity` mod holds, as "A, B"; gambaprobe's `hook`
+// refuses while it is non-empty. Research build only: nothing in the player
+// build asks. Defined with the gambapity adapter, below.
+static std::string GambaPityHeldScripts();
+#endif
+
+#ifndef FORGEPACT_RELEASE
+// ---- gambaprobe: the gamba machine phase 1 instrument (ForgePact #134) ----
+// docs/gamba-machine-research.md holds the static search, the readings, the
+// live procedure and the decision this instrument serves. Research build
+// only, never in kPlayerCommands, dispatched from HandleGambaProbeCommand,
+// which sits inside this guard with its RunCommand line, so neither the verb
+// nor the handler's name reaches a player build.
+//
+// How the gamba machine takes a spin, when it explodes and where it rolls
+// and builds its prize (Goburin's Head) is unmeasured, and the static reading
+// found no script that does any of it: the machine is an object, and its
+// logic is in its own events. So `hook` reaches every candidate at once:
+//
+//   - the machine's object events, through the compiled-code table:
+//     GetNamedRoutinePointer resolves no gml_Object_* name on this build, so
+//     each `gml_Object_<machine>_<event>` row is found by name in the table
+//     (FsFindGmlRow, the walk `evcount` and the frame profiler use) and
+//     native-detoured at the row's own function with the (self, other) event
+//     signature, only once AddrIsExecutableInModule says the function is game
+//     code; a row whose function a mod swapped reads `row=swapped` and is
+//     skipped;
+//   - the scripts the machine's events call, the Create closure among them,
+//     by their hs-game-sdk constants through HookOneScript (both routes);
+//   - the RNG and instance builtins, by name through HookBuiltin.
+//
+// A function another install already detours is not detoured again. A
+// shared row (GPV, LootGroundCreate, LootGroundCreateFromItem, CreateItemNew,
+// DropItem, GetUniqueRepoStruct, CreateDefaultParams,
+// instance_create_depth/_layer, and instance_destroy while co-op's or
+// destroywatch's hook holds it) has the existing installer run if it has not
+// been, and the probe then reaches it by what that hook's saved original is:
+//   - a trampoline (the holder detoured natively): the probe's detour is
+//     spliced into the saved original, so the holder's body calls the probe,
+//     which calls the trampoline (`shared`);
+//   - the game's own function (the holder is table-only, as the research
+//     build's item-inspect hooks on LootGroundCreateFromItem and CreateItemNew
+//     are): the probe detours that function itself, behind
+//     AddrIsExecutableInModule, so the holder's body and compiled GML's
+//     direct calls both reach it (`detoured-under`, angelicprobe's Rule 2);
+//   - this plugin's own code (the holder sits behind another table-only
+//     hook): nothing the probe can splice or detour sees every call, so the
+//     row stays `missing` and says why.
+// A script row that comes up `table-only` is blind to direct calls, and
+// `hook` names it.
+//
+// Every row counts its calls. While the probe is armed (`hook`, until `off`)
+// or its lever is on, a call is classified by its self: a gamba machine (an
+// object index equal to Slot_Machine_01_obj's, resolved by name), another
+// self inside a machine's own event, or anything else; the first two are
+// logged, kTraceLinesPerKey lines per key (kTraceLinesPerRow per row, enough
+// for kTraceKeysPerRow full keys) in one window, repeats skipped
+// (plugin/include/ForgePact/GambaProbe.hpp holds those decisions, which
+// tests/gamba_probe_harness.cpp compiles whole). The window starts over on
+// `trace`, `hook` again and every `spawn`. The one lever,
+// `rng <builtin> <value> [count] [args <text>]`, is aimed: it answers the next
+// `count` calls of that one RNG builtin whose self is a machine (and, with
+// `args`, whose argument text is the one a trace line showed) with `value`,
+// without running the game's function, and counts every other machine-self
+// RNG call it let through as `passed`.
+// The one per-frame piece, GpFrameTick, returns at once while nothing is
+// armed or on.
+//
+// Replan 1 (Live 1 came back INSTRUMENT-BLIND: every machine `spawn` created
+// was cleaned up in the step after its Create_0, before its first Step_0, and
+// the protected-store rows counted nothing while the machine's events ran):
+//   - `spawn [depth|game|layer|self]` tries the creation routes apart: today's
+//     instance_create_depth (the control), the game's own instance_create
+//     script by name with the local player as self, instance_create_layer on
+//     the player's own layer value, and instance_create_depth with the player
+//     as self;
+//   - the caller walk: CleanUp_0, Alarm_9 and the window's first Create_0 print
+//     the instance's state and its return-address stack before the original
+//     runs, each frame named by the compiled-code table row it falls in (the
+//     rows whose function is game code, copied and sorted once per `hook`);
+//   - the by-name route: at the first `hook` each script row's short and
+//     gml_Script_ names are looked up, and a functions-array routine they reach
+//     besides the row's own function is detoured too (HookBuiltin), feeding the
+//     row - or, reached from several rows, its own `byname-shared` row;
+//   - instance_change, layer_destroy_instances, instance_deactivate_object and
+//     room_goto rows, a call whose first argument names a machine counted as
+//     `machine-arg=`, and `selftest`, one irandom through the builtin row.
+//
+// Phase 4, the explosion watch (the owner ruled on 2026-10-05 that the pity
+// fires on the machine's explosion, which nothing had observed yet):
+//   - each tick reads every live machine's sprite by name (sprite_index
+//     through variable_instance_get, named by sprite_get_name) and hands the
+//     core the id and name; the core prints a machine's first sight, a sprite
+//     change and a machine the refresh no longer finds, and the last two open
+//     a window;
+//   - every build-row call (CreateDefaultParams, GetUniqueRepoStruct,
+//     LootGroundCreate, LootGroundCreateFromItem, CreateLootInFreePos,
+//     CreateItemNew, DropItem, DropUniqueItems), whatever its self, goes into
+//     the core's ring before the self filter, so a window replays the builds
+//     of the transition's own step, which run before the end-of-frame tick;
+//   - inside a window those rows and instance_create_layer/_depth and
+//     instance_destroy print a window line for any self, and each
+//     CreateItemNew is followed by what it built (itemType, the definition's
+//     j/b/c, rarity "27" and name "28"), under the window's own line cap and
+//     never the trace budget; `window [frames]` opens one by hand, the
+//     positive control.
+#include <ForgePact/GambaProbe.hpp>
+
+namespace GpNs = ForgePact::GambaProbe;
+
+using GpEventFn = void (*)(CInstance*, CInstance*);
+static const ForgePact::FrameProfiler::GmlEntry* FsFindGmlRow(const std::string& name);   // with `evcount`, below
+static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();                    // with `frameprof`, below
+static HMODULE GpSelfModule();                                                            // with `hook`, below
+
+static constexpr size_t kGpValueMax = 200;   // one value's text in a line
+static constexpr int kGpMaxMachines = 64;    // machines a tick looks at
+
+static GpNs::Probe g_GpCore;
+static GpNs::Watch g_GpWatch;          // phase 4: the explosion watch (machine sprites, the build-row ring, the window)
+static bool g_GpBusy = false;          // game thread only: the probe's own reads inside a detour
+static int g_GpEventDepth = 0;         // inside a machine's own event (game thread)
+static bool g_GpHooked = false;        // `hook` has run
+
+// The live machines, refreshed each frame while the probe is active and on a
+// machine's own event: an instance gets in only by an object_index equal to
+// Slot_Machine_01_obj's.
+struct GpMachine {
+    CInstance*  inst;
+    long long   id;
+    std::string sprite;   // the refresh's sprite name for the explosion watch (`?` when not a sprite)
+};
+static std::vector<GpMachine> g_GpMachines;
+static bool g_GpMachinesRead = false;   // the last refresh ran to its end: only then is a missing machine `gone`
+
+// DropItem's holder is DropManager's Hook_DropItem (installed at startup in
+// this build by InstallDropMultHooks); the manager hands its saved original
+// out by name to research instruments.
+static PFUNC_YYGMLScript* GpDropItemHolder()
+{
+    return ForgePact::DropManager::Instance().ResearchHeldOriginal(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem));
+}
+
+// ---- the script rows ------------------------------------------------------------
+// One row per script in docs/gamba-machine-research.md § Instrument. SAFE,
+// hs-game-sdk constant, holder: nullptr for a row the probe detours itself,
+// else the saved original of the hook that already holds the script (the
+// row is then shared or detoured under it). The row's name is always the
+// constant's own value - the closure's moves with every game patch and is
+// never spelled here.
+#define GAMBAPROBE_SCRIPTS(X) \
+    /* the machine's Create closure */ \
+    X(Closure, gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0, nullptr) \
+    /* the protected variable store, where the machine keeps its state */ \
+    X(GPV, gml_Script_GPV, &g_Orig_GPV_Trace) \
+    X(SPV, gml_Script_SPV, nullptr) \
+    X(InitPV, gml_Script_InitPV, nullptr) \
+    X(FPV, gml_Script_FPV, nullptr) \
+    /* gold */ \
+    X(GetGoldAmount, gml_Script_GetGoldAmount, nullptr) \
+    X(GoldOperationPending, gml_Script_GoldOperationPending, nullptr) \
+    X(GetGoldCounterHash, gml_Script_GetGoldCounterHash, nullptr) \
+    X(PickUpGoldCheck, gml_Script_PickUpGoldCheck, nullptr) \
+    /* use, input, effects */ \
+    X(LootBlocksUseKey, gml_Script_LootBlocksUseKey, nullptr) \
+    X(CheckUseKey, gml_Script_CheckUseKey, nullptr) \
+    X(InputPressed, gml_Script_InputPressed, nullptr) \
+    X(NetworkSendClientEffect, gml_Script_NetworkSendClientEffect, nullptr) \
+    X(PlaySound3D, gml_Script_PlaySound3D, nullptr) \
+    /* ground placement and item building */ \
+    X(LootGroundCreate, gml_Script_LootGroundCreate, &ForgePact::MiningOre::originalLoot) \
+    X(LootGroundCreateFromItem, gml_Script_LootGroundCreateFromItem, &g_Orig_LootGroundCreateFromItem) \
+    X(CreateLootInFreePos, gml_Script_CreateLootInFreePos, nullptr) \
+    X(CreateItemNew, gml_Script_CreateItemNew, &g_Orig_CreateItemNew) \
+    X(DropItem, gml_Script_DropItem, GpDropItemHolder()) \
+    X(DropUniqueItems, gml_Script_DropUniqueItems, nullptr) \
+    /* the unique pick: the pair the Angelic roll uses */ \
+    X(GetUniqueRepoStruct, gml_Script_GetUniqueRepoStruct, &g_Orig_GetUniqueRepoStruct) \
+    X(CreateDefaultParams, gml_Script_CreateDefaultParams, &g_Orig_CreateDefaultParams) \
+    /* the game's own dice scripts */ \
+    X(CprIrandom, gml_Script_cpr_irandom, nullptr) \
+    X(CprRand32, gml_Script_cpr_rand32, nullptr)
+
+#define GP_ROW_INDEX(SAFE, CONSTANT, HOLDER) kGpScript_##SAFE,
+enum GpScriptIndex : int { GAMBAPROBE_SCRIPTS(GP_ROW_INDEX) kGpScriptCount };
+#undef GP_ROW_INDEX
+
+static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+
+#define GP_DEFINE_DETOUR(SAFE, CONSTANT, HOLDER) \
+    static RValue& GpDetour_##SAFE(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) { \
+        return GpOnScript(kGpScript_##SAFE, S, O, R, argc, A); \
+    }
+GAMBAPROBE_SCRIPTS(GP_DEFINE_DETOUR)
+#undef GP_DEFINE_DETOUR
+
+struct GpScriptRow {
+    const char*        label;     // the SDK constant's value without gml_Script_, as HookOneScript takes it
+    const char*        hookId;
+    PVOID              detour;
+    PFUNC_YYGMLScript* holder;    // a shared row: the existing hook's saved original
+    const char*        sdkName;   // the SDK constant's own value, gml_Script_<label>: the by-name lookup's second name
+    PFUNC_YYGMLScript  orig = nullptr;
+    GpNs::Route        route = GpNs::Route::Missing;
+    bool               tried = false;
+    std::string        status;
+    uint64_t           lastShown = 0;
+    // The by-name route (replan 1), read at the first `hook`.
+    GpNs::NameLookup   shortName;
+    GpNs::NameLookup   fullName;
+    GpNs::ByName       byname = GpNs::ByName::NotRead;
+    std::string        bynameNote;
+    uintptr_t          ownFunction = 0;   // the row's own function, for `fnwalk`'s same/other classification
+};
+
+#define GP_SCRIPT_ENTRY(SAFE, CONSTANT, HOLDER) \
+    { SdkShortScriptName(HeroSiege::Scripts::CONSTANT), "fp_gp_" #SAFE, (PVOID)GpDetour_##SAFE, HOLDER, \
+      HeroSiege::Scripts::CONSTANT.data() },
+static GpScriptRow g_GpScriptRows[] = {
+    GAMBAPROBE_SCRIPTS(GP_SCRIPT_ENTRY)
+};
+#undef GP_SCRIPT_ENTRY
+#undef GAMBAPROBE_SCRIPTS
+static_assert(sizeof(g_GpScriptRows) / sizeof(g_GpScriptRows[0]) == (size_t)kGpScriptCount, "one gambaprobe row per script");
+
+// ---- the builtin rows, in GambaProbe.hpp's kBuiltins order ------------------------
+struct GpBuiltinRow {
+    TRoutine    orig = nullptr;
+    GpNs::Route route = GpNs::Route::Missing;
+    bool        tried = false;
+    std::string status;
+    uint64_t    lastShown = 0;
+};
+static GpBuiltinRow g_GpBuiltinRows[GpNs::kBuiltinCount];
+static const char* const kGpBuiltinHookIds[GpNs::kBuiltinCount] = {
+    "fp_gp_b_irnd", "fp_gp_b_irng", "fp_gp_b_rnd", "fp_gp_b_rrng", "fp_gp_b_chs", "fp_gp_b_idst", "fp_gp_b_icd", "fp_gp_b_icl",
+    "fp_gp_b_ichg", "fp_gp_b_ldi", "fp_gp_b_ido", "fp_gp_b_rgo",
+    "fp_gp_b_getv", "fp_gp_b_setv", "fp_gp_b_setu",
+};
+
+static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+#define GP_BUILTIN_DETOUR(I) \
+    static void GpBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
+        GpOnBuiltin(I, Result, S, O, argc, Args); \
+    }
+GP_BUILTIN_DETOUR(0) GP_BUILTIN_DETOUR(1) GP_BUILTIN_DETOUR(2) GP_BUILTIN_DETOUR(3)
+GP_BUILTIN_DETOUR(4) GP_BUILTIN_DETOUR(5) GP_BUILTIN_DETOUR(6) GP_BUILTIN_DETOUR(7)
+GP_BUILTIN_DETOUR(8) GP_BUILTIN_DETOUR(9) GP_BUILTIN_DETOUR(10) GP_BUILTIN_DETOUR(11)
+GP_BUILTIN_DETOUR(12) GP_BUILTIN_DETOUR(13) GP_BUILTIN_DETOUR(14)
+#undef GP_BUILTIN_DETOUR
+static const TRoutine kGpBuiltinDetours[GpNs::kBuiltinCount] = {
+    GpBuiltin_0, GpBuiltin_1, GpBuiltin_2, GpBuiltin_3, GpBuiltin_4, GpBuiltin_5, GpBuiltin_6, GpBuiltin_7,
+    GpBuiltin_8, GpBuiltin_9, GpBuiltin_10, GpBuiltin_11, GpBuiltin_12, GpBuiltin_13, GpBuiltin_14,
+};
+static_assert(GpNs::kBuiltinCount == 15, "one detour per builtin row");
+
+// ---- the by-name routines (replan 1) -------------------------------------------------
+// A functions-array routine a script row's name reaches besides the row's own
+// function, detoured with the builtin signature as a second attachment. One
+// slot per distinct routine: reached from one row it feeds that row's
+// counters (`byname=detoured`); from several, its own core row after the
+// script rows (`byname-shared`). Filled once, at the first `hook`.
+static constexpr int kGpByNameSlots = 48;   // two names per script row at most
+struct GpByNameSlot {
+    uintptr_t        routine = 0;
+    std::string      name;          // the name that reached it, as HookBuiltin takes it
+    std::vector<int> scripts;       // the script rows that reach it
+    TRoutine         orig = nullptr;
+    bool             attached = false;
+    std::string      status;
+    uint64_t         calls = 0;     // calls through this attachment
+    uint64_t         lastShown = 0;
+};
+static GpByNameSlot g_GpByNameSlots[kGpByNameSlots];
+static int g_GpByNameSlotCount = 0;
+static bool g_GpByNameRead = false;
+
+static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+template <int N>
+static void GpByNameDetour(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    GpOnByName(N, Result, S, O, argc, Args);
+}
+template <int... N>
+static constexpr std::array<TRoutine, sizeof...(N)> GpByNameDetourTable(std::integer_sequence<int, N...>)
+{
+    return { { &GpByNameDetour<N>... } };
+}
+static const std::array<TRoutine, kGpByNameSlots> kGpByNameDetours =
+    GpByNameDetourTable(std::make_integer_sequence<int, kGpByNameSlots>{});
+
+// A slot's core row: after every script row.
+static int GpByNameRow(int slot) { return GpNs::ScriptRowOf((int)kGpScriptCount + slot); }
+
+// ---- the event rows, in GambaProbe.hpp's kEvents order ----------------------------
+struct GpEventRow {
+    GpEventFn   orig = nullptr;
+    GpNs::Route route = GpNs::Route::Missing;
+    bool        tried = false;
+    std::string name;      // gml_Object_<machine>_<event>, composed from the SDK's object name
+    std::string status;
+    uint64_t    lastShown = 0;
+};
+static GpEventRow g_GpEventRows[GpNs::kEventCount];
+static const char* const kGpEventHookIds[GpNs::kEventCount] = {
+    "fp_gp_e_create", "fp_gp_e_alarm0", "fp_gp_e_alarm9", "fp_gp_e_step", "fp_gp_e_cleanup",
+};
+
+static void GpOnEvent(int event, CInstance* S, CInstance* O);
+#define GP_EVENT_DETOUR(I) \
+    static void GpEvent_##I(CInstance* S, CInstance* O) { GpOnEvent(I, S, O); }
+GP_EVENT_DETOUR(0) GP_EVENT_DETOUR(1) GP_EVENT_DETOUR(2) GP_EVENT_DETOUR(3) GP_EVENT_DETOUR(4)
+#undef GP_EVENT_DETOUR
+static const GpEventFn kGpEventDetours[GpNs::kEventCount] = { GpEvent_0, GpEvent_1, GpEvent_2, GpEvent_3, GpEvent_4 };
+static_assert(GpNs::kEventCount == 5, "one detour per event row");
+
+static std::string GpBuiltinName(int i) { return std::string(GpNs::kBuiltins[i].name); }
+
+// The core's rows: events, builtins, this table's scripts, then one per
+// by-name slot. Sized once; sizing again would zero every count.
+static void GpEnsureRows()
+{
+    if (g_GpCore.RowCount() != GpByNameRow(kGpByNameSlots))
+        g_GpCore.SetScriptRowCount((int)kGpScriptCount + kGpByNameSlots);
+}
+
+// ---- the machine, and who a call's self is -----------------------------------------
+
+// Slot_Machine_01_obj by its SDK name; -1 when it did not resolve.
+static int GpResolveMachineObject()
+{
+    int obj = -1;
+    try {
+        obj = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Slot_Machine_01_obj))) }).ToDouble();
+    } catch (...) { obj = -1; }
+    g_GpCore.SetMachineObject(obj >= 0 ? obj : -1);
+    return g_GpCore.MachineObject();
+}
+
+static std::string GpMachineName()
+{
+    return std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Slot_Machine_01_obj));
+}
+
+// The object index of an instance handle, read by name the way N1ObjectIndex
+// accepts it (VALUE_REF included); -1 when it is not one.
+static int GpObjectIndexOf(const RValue& handle)
+{
+    int obj = -1;
+    try {
+        if (!N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("object_index") }), obj)) return -1;
+    } catch (...) { return -1; }
+    return obj;
+}
+
+static long long GpIdOf(const RValue& handle)
+{
+    try { return (long long)g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }).ToDouble(); }
+    catch (...) { return -1; }
+}
+
+// The machine's object index for a known machine instance, -1 for anything
+// else. Membership was decided by object_index (GpRefreshMachines,
+// GpNoteMachine), so this is the predicate's input, not a kind check.
+static int GpSelfObject(CInstance* S)
+{
+    if (!S) return -1;
+    for (const GpMachine& m : g_GpMachines) if (m.inst == S) return g_GpCore.MachineObject();
+    return -1;
+}
+
+static long long GpMachineId(CInstance* S)
+{
+    for (const GpMachine& m : g_GpMachines) if (m.inst == S) return m.id;
+    return -1;
+}
+
+// A machine's own event: its self's object index, read once and remembered
+// when it is a machine, so a machine created this frame counts at once.
+static int GpNoteMachine(CInstance* S)
+{
+    if (!S) return -1;
+    const int known = GpSelfObject(S);
+    if (known >= 0) return known;
+    int obj = -1;
+    long long id = -1;
+    g_GpBusy = true;
+    try {
+        const RValue self = S->ToRValue();
+        obj = GpObjectIndexOf(self);
+        if (g_GpCore.IsMachine(obj)) id = GpIdOf(self);
+    } catch (...) { obj = -1; }
+    g_GpBusy = false;
+    if (g_GpCore.IsMachine(obj) && g_GpMachines.size() < (size_t)kGpMaxMachines) g_GpMachines.push_back({ S, id, std::string() });
+    return obj;
+}
+
+// A machine's sprite by name, the module's sprite read (tgprobe's slots):
+// sprite_index through variable_instance_get, named by sprite_get_name. A
+// value that is not a sprite reads `?`, never a guess; IsNumericInstanceRead
+// only keeps a value that is no number or reference from reaching
+// sprite_exists, whose conversion error no catch sees.
+static std::string GpSpriteName(const RValue& handle)
+{
+    try {
+        const RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("sprite_index") });
+        if (!IsNumericInstanceRead(spr) || !g_Yytk->CallBuiltin("sprite_exists", { spr }).ToBoolean()) return "?";
+        const std::string name = g_Yytk->CallBuiltin("sprite_get_name", { spr }).ToString();
+        return name.empty() ? std::string("?") : name;
+    } catch (...) { return "?"; }
+}
+
+// Every live machine, by the instance-handle rule: instance_find's handle
+// through HhResolveInstance (which accepts the VALUE_REF this runner
+// returns), kept only when its object_index is the machine's own, with its
+// sprite's name for the explosion watch. g_GpMachinesRead says whether the
+// refresh ran to its end: a refresh that threw or had no machine object
+// proves nothing gone.
+static void GpRefreshMachines()
+{
+    const int obj = g_GpCore.MachineObject();
+    std::vector<GpMachine> found;
+    bool read = false;
+    g_GpBusy = true;
+    try {
+        if (obj >= 0) {
+            const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)obj) }).ToDouble();
+            for (int i = 0; i < n && i < kGpMaxMachines; ++i) {
+                const RValue handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)obj), RValue((double)i) });
+                CInstance* inst = HhResolveInstance(handle);
+                if (!inst || !g_GpCore.IsMachine(GpObjectIndexOf(handle))) continue;
+                found.push_back({ inst, GpIdOf(handle), GpSpriteName(handle) });
+            }
+            read = true;
+        }
+    } catch (...) { read = false; }
+    g_GpBusy = false;
+    g_GpMachines.swap(found);
+    g_GpMachinesRead = read;
+}
+
+static std::string GpMachinesText()
+{
+    std::string ids;
+    for (const GpMachine& m : g_GpMachines) ids += (ids.empty() ? "" : ",") + std::to_string(m.id);
+    return std::to_string(g_GpMachines.size()) + (ids.empty() ? std::string() : " (id " + ids + ")");
+}
+
+// ---- describing a call -------------------------------------------------------------
+
+static std::string GpValueText(const RValue& v)
+{
+    std::string d = Describe(v);
+    if (d == "object/struct") {
+        try {
+            CInstance* g = nullptr;
+            g_Yytk->GetGlobalInstance(&g);
+            RValue js;
+            g_Yytk->CallBuiltinEx(js, "json_stringify", g, g, { v });
+            d = "struct" + js.ToString();
+        } catch (...) {}
+    }
+    if (d.size() > kGpValueMax) d = d.substr(0, kGpValueMax) + "...(cut)";
+    return d;
+}
+
+// Up to six described arguments; `key` becomes the first argument's text, so
+// a GPV/SPV line is told apart per state key.
+static std::string GpScriptArgs(int argc, RValue** A, std::string& key)
+{
+    std::string a;
+    key.clear();
+    for (int i = 0; A && i < argc && i < 6; ++i) {
+        const std::string d = A[i] ? GpValueText(*A[i]) : std::string("?");
+        if (i == 0) key = d;
+        a += " a" + std::to_string(i) + "=" + d;
+    }
+    return a;
+}
+
+static std::string GpBuiltinArgs(int argc, RValue* Args)
+{
+    std::string a;
+    for (int i = 0; Args && i < argc && i < 6; ++i) a += " a" + std::to_string(i) + "=" + GpValueText(Args[i]);
+    return a;
+}
+
+static std::string GpSelfText(GpNs::Seen seen, CInstance* S)
+{
+    if (seen == GpNs::Seen::Machine) return "machine id=" + std::to_string(GpMachineId(S));
+    std::string d = "(unresolved)";
+    try { d = PpDescribeSelf(S); } catch (...) {}
+    return seen == GpNs::Seen::InEvent ? d + " scope=machine-event" : d;
+}
+
+static uint64_t GpHash(const std::string& s) { return (uint64_t)std::hash<std::string>{}(s); }
+
+// A row whose trace budget is spent only counts: its calls are not described.
+static bool GpCanLog(int row)
+{
+    return g_GpCore.RowCounters(row).logged < (uint64_t)GpNs::kTraceLinesPerRow;
+}
+
+// One budgeted line for a machine-self or in-event call, after the call so
+// it carries the result. `key` is what the line is about (a script's first
+// argument, a builtin's argument text): one key writes at most
+// kTraceLinesPerKey lines a window, and a repeat of its last line spends
+// nothing and prints nothing then: it is counted (`repeats=`), named by
+// `status` and carried by the key's next line as `(+<n> repeat(s) ...)`.
+static void GpLogCall(int row, const std::string& label, const std::string& selfText, int argc,
+                      const std::string& args, const std::string& key, const std::string& ret)
+{
+    if (!g_GpCore.TakeTraceLine(row, GpHash(key), GpHash(args + " ret=" + ret), key)) return;
+    const uint64_t folded = g_GpCore.TakenRepeats();
+    const std::string carried = folded
+        ? "(+" + std::to_string(folded) + " repeat(s) of this key's previous line, not logged) " : std::string();
+    Out("gambaprobe " + carried + label + " #" + std::to_string(g_GpCore.RowCounters(row).calls) + " self=" + selfText + " argc="
+        + std::to_string(argc) + args + " ret=" + ret + " frame=" + std::to_string((int64_t)g_RuntimeFrame));
+}
+
+// ---- the explosion watch (phase 4) ---------------------------------------------------
+// The lines it prints, composed by GambaProbe.hpp (the behavior test pins
+// them byte for byte, Live procedure 4 reads them):
+//   gambaprobe machine id=<id> sprite=<name> frame=<f>
+//   gambaprobe machine id=<id> sprite <old> -> <new> frame=<f>
+//   gambaprobe machine id=<id> gone frame=<f>
+//   gambaprobe window open reason=<sprite|gone|command> id=<id or -> frame=<f> replayed=<n> span=<frames>
+//   gambaprobe window extended reason=<sprite|gone|command> id=<id or -> end=<f> frame=<f>
+//   gambaprobe window <row> self=<self> argc=<n> <args> frame=<f>
+//   gambaprobe window replay <row> self=<self> argc=<n> <args> frame=<f>
+//   gambaprobe window built itemType=<t> j=<j> b=<b> c=<c> rarity=<r> name=<name> self=<self> frame=<f>
+//   gambaprobe window capped <object key> frame=<f>
+//   gambaprobe window closed build-lines=<n> build-dropped=<n> instance-lines=<n> instance-dropped=<n> capped=<n> frame=<f>
+//   gambaprobe watch: machines-seen=<n> transitions=<n> windows=<n> window=<open end=<f> frame=<now> remaining=<n>|closed>
+//       ring=<n> instance-ring=<n> build-dropped=<n> instance-dropped=<n> capped=<n>   (status)
+
+// The rows whose calls build or place an item: the ring holds their calls for
+// any self, and a window prints them.
+static bool GpIsBuildRow(int script)
+{
+    switch (script) {
+    case kGpScript_CreateDefaultParams:
+    case kGpScript_GetUniqueRepoStruct:
+    case kGpScript_LootGroundCreate:
+    case kGpScript_LootGroundCreateFromItem:
+    case kGpScript_CreateLootInFreePos:
+    case kGpScript_CreateItemNew:
+    case kGpScript_DropItem:
+    case kGpScript_DropUniqueItems:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static int64_t GpFrame() { return (int64_t)g_RuntimeFrame; }
+
+// The by-name slot whose call the watch already fed, while that call's
+// original runs: a script row it reaches through the script's own function
+// is not fed again, so one call is not logged under two labels. Null when no
+// by-name original is running; GpNs::FedMarkScope sets and restores it.
+static thread_local GpNs::FedMark* g_GpByNameFed = nullptr;
+// N1: only the first call the running slot routes is the one it fed; that
+// call consumes the mark in place (GpNs::ConsumeFedMark), so every later call
+// inside the same original, nested or a sibling, is fed as a call of its own.
+static bool GpFedByName(int script)
+{
+    if (!g_GpByNameFed || g_GpByNameFed->slot < 0) return false;
+    const std::vector<int>& rows = g_GpByNameSlots[g_GpByNameFed->slot].scripts;
+    return GpNs::ConsumeFedMark(g_GpByNameFed->slot, std::find(rows.begin(), rows.end(), script) != rows.end());
+}
+
+// A build-row call of an active probe, any self, its arguments already
+// described: pushed into the build ring and, inside a window, printed as a
+// window line under the build cap (before the original, so the calls it
+// makes print after it). True when it fell inside a window; `selfText` is
+// then the self as the line named it.
+static bool GpWatchCall(const std::string& label, GpNs::Seen seen, CInstance* S, int argc, const std::string& args,
+                        std::string& selfText)
+{
+    const int64_t frame = GpFrame();
+    g_GpBusy = true;
+    try {
+        selfText = GpSelfText(seen, S);
+        const bool window = g_GpWatch.InWindow(frame);
+        g_GpWatch.Push({ label, selfText, argc, args, frame });
+        if (window && g_GpWatch.TakeBuildLine(frame)) Out(GpNs::WindowCallLine(label, selfText, argc, args, frame));
+        // N2: a refusal by the window's build cap says so, once per window.
+        if (window) for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
+        g_GpBusy = false;
+        return window;
+    } catch (...) {}
+    g_GpBusy = false;
+    return false;
+}
+
+// A build row reached through its script's own function (GpOnScript).
+static bool GpWatchScript(const char* label, GpNs::Seen seen, CInstance* S, int argc, RValue** A, std::string& selfText)
+{
+    std::string key, args;
+    g_GpBusy = true;
+    try { args = GpScriptArgs(argc, A, key); } catch (...) {}
+    g_GpBusy = false;
+    return GpWatchCall(label, seen, S, argc, args, selfText);
+}
+
+// What a CreateItemNew inside a window built, read after the original
+// returned it: its itemType, its itemDefinitionStruct's j/b/c and its
+// itemInfoStruct's rarity "27" and name "28" (docs/RUNTIME_DATA_MODELS.md
+// § 16.3), each `?` when it does not read. Goburin's Head is itemType 10,
+// j 0, b 98, c 1.
+static void GpWatchBuilt(const RValue& item, const std::string& selfText)
+{
+    const int64_t frame = GpFrame();
+    if (!g_GpWatch.TakeBuildLine(frame)) {
+        // N2: a refusal by the window's build cap says so, once per window.
+        for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
+        return;
+    }
+    double type = 0, j = 0, b = 0, c = 0, rarity = 0;
+    bool hasType = false, hasJ = false, hasB = false, hasC = false, hasRarity = false;
+    std::string name = "?";
+    g_GpBusy = true;
+    try {
+        if (g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) {
+            hasType = TryStructNumber(item, "itemType", type);
+            const RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
+            if (g_Yytk->CallBuiltin("is_struct", { def }).ToBoolean()) {
+                hasJ = TryStructNumber(def, "j", j);
+                hasB = TryStructNumber(def, "b", b);
+                hasC = TryStructNumber(def, "c", c);
+            }
+            const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemInfoStruct") });
+            if (g_Yytk->CallBuiltin("is_struct", { info }).ToBoolean()) {
+                hasRarity = TryStructNumber(info, "27", rarity);
+                const std::string n = StructKey(info, "28");
+                if (!n.empty()) name = n;
+            }
+        }
+    } catch (...) {}
+    try {
+        Out(GpNs::WindowBuiltLine(GpNs::OptionalNumberText(hasType, type), GpNs::OptionalNumberText(hasJ, j),
+                                  GpNs::OptionalNumberText(hasB, b), GpNs::OptionalNumberText(hasC, c),
+                                  GpNs::OptionalNumberText(hasRarity, rarity), name, selfText, frame));
+    } catch (...) {}
+    g_GpBusy = false;
+}
+
+static GpNs::ArgTarget GpArgTarget(const RValue& arg, CInstance* S, CInstance* O);   // with the builtin detour, below
+
+// The object an instance call is about, the key of its per-object window
+// cap: a create's object argument (the fourth, for instance_create_layer and
+// instance_create_depth alike), or the object of what instance_destroy ends
+// (its argument's, read by name through GpArgTarget, or its self's). The
+// argument's read is handed back in `target` (`targetRead` true), so the
+// by-argument rule (GpMachineArg) does not read it a second time.
+static std::string GpInstanceKey(int builtin, CInstance* S, CInstance* O, int argc, RValue* Args, GpNs::ArgTarget& target,
+                                 bool& targetRead)
+{
+    const std::string row = GpBuiltinName(builtin);
+    if (static_cast<GpNs::Builtin>(builtin) != GpNs::Builtin::InstanceDestroy)
+        return row + " " + (Args && argc > 3 ? GpValueText(Args[3]) : std::string("?"));
+    if (!Args || argc < 1) return row + " object=" + std::to_string(S ? GpObjectIndexOf(S->ToRValue()) : -1);
+    target = GpArgTarget(Args[0], S, O);
+    targetRead = true;
+    if (target.kind == GpNs::ArgKind::All) return row + " all";
+    return row + " object=" + std::to_string(target.object);
+}
+
+// An instance create/destroy call of an active probe, any self: described
+// before the original (instance_destroy may take its self with it), pushed
+// into the instance ring - apart from the build ring, so a burst of effects
+// cannot evict a build - and, inside a window, printed as a window line under
+// the instance cap and its object's share of it, never the build cap.
+// The first refusal of an object's share in a window prints its `capped`
+// line, so a cap that hid (say) the explosion's coins is named.
+static void GpWatchBuiltin(int builtin, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args, GpNs::ArgTarget& target,
+                           bool& targetRead)
+{
+    const int64_t frame = GpFrame();
+    const std::string label = GpBuiltinName(builtin);
+    g_GpBusy = true;
+    try {
+        const std::string self = GpSelfText(seen, S);
+        const std::string args = GpBuiltinArgs(argc, Args);
+        const std::string key = GpInstanceKey(builtin, S, O, argc, Args, target, targetRead);
+        const bool window = g_GpWatch.InWindow(frame);
+        g_GpWatch.Push({ label, self, argc, args, frame, GpNs::CallKind::Instance, key });
+        if (window && g_GpWatch.TakeInstanceLine(frame, key)) Out(GpNs::WindowCallLine(label, self, argc, args, frame));
+        for (const std::string& line : g_GpWatch.TakeCappedLines(frame)) Out(line);
+    } catch (...) {}
+    g_GpBusy = false;
+}
+
+// The end-of-frame piece: a window whose span has run closes, then the
+// refreshed machines go to the core (a refresh that did not run to its end
+// proves nothing gone, so it is not polled).
+static void GpWatchTick()
+{
+    const int64_t frame = GpFrame();
+    const std::string closed = g_GpWatch.Tick(frame);
+    if (!closed.empty()) Out(closed);
+    if (!g_GpMachinesRead) return;
+    std::vector<GpNs::MachineSight> seen;
+    for (const GpMachine& m : g_GpMachines) seen.push_back({ m.id, m.sprite });
+    for (const std::string& line : g_GpWatch.Poll(frame, seen)) Out(line);
+}
+
+// ---- the detours -------------------------------------------------------------------
+
+static RValue& GpTraceScript(GpScriptRow& t, int row, GpNs::Seen seen, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+
+static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    GpScriptRow& t = g_GpScriptRows[script];
+    if (g_GpBusy) return t.orig ? t.orig(S, O, R, argc, A) : R;   // the probe's own call
+    // N1: whether a running by-name call already fed this one (consuming its
+    // mark in place), read first. A consumed mark stays consumed, so the calls
+    // this original makes are their own; a call that did not consume the mark
+    // leaves it in place for the first matching call further in. No scope
+    // here: restoring a mark on return would bring back one consumed inside.
+    const bool fedByName = GpFedByName(script);
+    const int row = GpNs::ScriptRowOf(script);
+    const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
+    // The explosion watch, before the self filter: a build row's call, any
+    // self, into the ring and, inside a window, a window line; a
+    // CreateItemNew inside a window is followed by what it built.
+    std::string watchSelf;
+    if (seen != GpNs::Seen::Idle && GpIsBuildRow(script) && !fedByName && GpWatchScript(t.label, seen, S, argc, A, watchSelf)
+        && script == kGpScript_CreateItemNew) {
+        RValue& built = GpTraceScript(t, row, seen, S, O, R, argc, A);
+        GpWatchBuilt(built, watchSelf);
+        return built;
+    }
+    return GpTraceScript(t, row, seen, S, O, R, argc, A);
+}
+
+// The machine-self trace, exactly as before the watch: idle and other selves
+// run the original untouched, a spent row only counts, and a machine-self or
+// in-event call is logged after the call with its result.
+static RValue& GpTraceScript(GpScriptRow& t, int row, GpNs::Seen seen, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other) return t.orig ? t.orig(S, O, R, argc, A) : R;
+    if (!GpCanLog(row)) return t.orig ? t.orig(S, O, R, argc, A) : R;   // budget spent: counted, not described
+    std::string key, args, selfText;
+    g_GpBusy = true;
+    try { args = GpScriptArgs(argc, A, key); selfText = GpSelfText(seen, S); } catch (...) {}
+    g_GpBusy = false;
+    RValue& r = t.orig ? t.orig(S, O, R, argc, A) : R;
+    g_GpBusy = true;
+    try { GpLogCall(row, t.label, selfText, argc, args, key, GpValueText(r)); } catch (...) {}
+    g_GpBusy = false;
+    return r;
+}
+
+// The value the lever writes in place of the builtin's own result: the
+// value itself, or for `choose` the call's own argument it names.
+static RValue GpAnswerValue(int builtin, const GpNs::RngDecision& d, int argc, RValue* Args)
+{
+    if (GpNs::kBuiltins[builtin].kind == GpNs::AnswerKind::ArgumentIndex) {
+        const int i = (int)d.value;
+        if (Args && i >= 0 && i < argc) return Args[i];
+    }
+    return RValue(d.value);
+}
+
+// GML's instance keywords as a builtin receives them.
+static constexpr double kGpSelfKeyword = -1.0;
+static constexpr double kGpOtherKeyword = -2.0;
+static constexpr double kGpAllKeyword = -3.0;
+
+// What an instance builtin's first argument names, read by name with no kind
+// check: `all`; `self`/`other` (the call's own); an instance - it exists and
+// its own id is the argument - with its object_index; or an object index that
+// exists, and whether it is an ancestor of the machine's object. Anything
+// else, or a read that throws, names nothing. A value that is no number or
+// reference is never read as one (ToDouble on it raises the runner's own
+// error, which no catch sees: IsNumericInstanceRead); an instance handed over
+// any other way is resolved by HhResolveInstance.
+static GpNs::ArgTarget GpArgTarget(const RValue& arg, CInstance* S, CInstance* O)
+{
+    GpNs::ArgTarget a;
+    try {
+        if (!IsNumericInstanceRead(arg)) {
+            if (HhResolveInstance(arg)) {
+                a.kind = GpNs::ArgKind::Instance;
+                a.object = GpObjectIndexOf(arg);
+            }
+            return a;
+        }
+        const double v = arg.ToDouble();
+        if (!std::isfinite(v)) return a;
+        if (v == kGpAllKeyword) { a.kind = GpNs::ArgKind::All; return a; }
+        if (v == kGpSelfKeyword || v == kGpOtherKeyword) {
+            CInstance* who = v == kGpSelfKeyword ? S : O;
+            if (!who) return a;
+            a.kind = GpNs::ArgKind::Instance;
+            a.object = GpObjectIndexOf(who->ToRValue());
+            return a;
+        }
+        if (g_Yytk->CallBuiltin("instance_exists", { arg }).ToBoolean() && (double)GpIdOf(arg) == v) {
+            a.kind = GpNs::ArgKind::Instance;
+            a.object = GpObjectIndexOf(arg);
+            return a;
+        }
+        if (v >= 0.0 && v == std::floor(v) && g_Yytk->CallBuiltin("object_exists", { RValue(v) }).ToBoolean()) {
+            a.kind = GpNs::ArgKind::Object;
+            a.object = (int)v;
+            const int machine = g_GpCore.MachineObject();
+            a.machineAncestor = machine >= 0
+                && g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)machine), RValue(v) }).ToBoolean();
+        }
+    } catch (...) { a = GpNs::ArgTarget{}; }
+    return a;
+}
+
+// The by-argument rule for a call whose self is not a machine: does its first
+// argument name one? Read before the original, which may end that instance;
+// `known` is the explosion watch's read of the same argument, when it made
+// one (instance_destroy), so it is not read twice.
+static bool GpMachineArg(int builtin, int row, GpNs::Seen seen, CInstance* S, CInstance* O, int argc, RValue* Args,
+                         const GpNs::ArgTarget* known)
+{
+    if (!Args || argc < 1 || !GpNs::BuiltinChecksArgument(static_cast<GpNs::Builtin>(builtin))) return false;
+    GpNs::ArgTarget target;
+    if (known) target = *known;
+    else {
+        g_GpBusy = true;
+        try { target = GpArgTarget(Args[0], S, O); } catch (...) {}
+        g_GpBusy = false;
+    }
+    return g_GpCore.NoteMachineArg(row, seen, g_GpCore.ArgNamesMachine(target));
+}
+
+static void GpOnBuiltin(int builtin, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    GpBuiltinRow& t = g_GpBuiltinRows[builtin];
+    if (g_GpBusy) { if (t.orig) t.orig(Result, S, O, argc, Args); return; }   // the probe's own call
+    const int row = GpNs::BuiltinRowOf(static_cast<GpNs::Builtin>(builtin));
+    // The argument text is described only when the core asks: a machine-self
+    // call of the lever's target while the lever names `args`. It is the same
+    // text a trace line prints, so the operator copies it from there.
+    const GpNs::RngDecision d = g_GpCore.DecideRng(static_cast<GpNs::Builtin>(builtin), [S]() { return GpSelfObject(S); },
+                                                   g_GpEventDepth > 0, argc, [argc, Args]() {
+                                                       std::string a;
+                                                       g_GpBusy = true;
+                                                       try { a = GpBuiltinArgs(argc, Args); } catch (...) { a.clear(); }
+                                                       g_GpBusy = false;
+                                                       return a;
+                                                   });
+    if (d.answer) {
+        Result = GpAnswerValue(builtin, d, argc, Args);
+        g_GpBusy = true;
+        try {
+            Out("gambaprobe rng: answered " + GpBuiltinName(builtin) + " #" + std::to_string(g_GpCore.RowCounters(row).calls)
+                + " self=" + GpSelfText(d.seen, S) + " argc=" + std::to_string(argc) + GpBuiltinArgs(argc, Args) + " with "
+                + GpValueText(Result) + " (the game's own " + GpBuiltinName(builtin) + " did not run) frame="
+                + std::to_string((int64_t)g_RuntimeFrame));
+            if (g_GpCore.TakeRngFinished())
+                Out("gambaprobe: rng answered " + std::to_string(g_GpCore.RngAnswered()) + " - lever off (count reached)");
+        } catch (...) {}
+        g_GpBusy = false;
+        return;
+    }
+    if (d.seen == GpNs::Seen::Idle) {
+        if (t.orig) t.orig(Result, S, O, argc, Args);
+        return;
+    }
+    // The explosion watch: an instance create/destroy call, whatever its
+    // self, goes into the instance ring and, inside a window, is a window
+    // line, apart from the trace budget below.
+    GpNs::ArgTarget target;
+    bool targetRead = false;
+    if (GpNs::BuiltinInWindow(static_cast<GpNs::Builtin>(builtin)))
+        GpWatchBuiltin(builtin, d.seen, S, O, argc, Args, target, targetRead);
+    // Another self's instance_destroy / instance_change /
+    // instance_deactivate_object whose first argument names a machine is
+    // counted and logged too (machine-arg=).
+    const bool byArg = d.seen != GpNs::Seen::Machine && GpMachineArg(builtin, row, d.seen, S, O, argc, Args, targetRead ? &target : nullptr);
+    if ((d.seen == GpNs::Seen::Other && !byArg) || !GpCanLog(row)) {
+        if (t.orig) t.orig(Result, S, O, argc, Args);
+        return;
+    }
+    // Described before the call: instance_destroy may take its self with it.
+    std::string args, selfText;
+    g_GpBusy = true;
+    try {
+        args = GpBuiltinArgs(argc, Args);
+        selfText = GpSelfText(d.seen, S);
+        if (byArg) selfText += " machine-arg";
+    } catch (...) {}
+    g_GpBusy = false;
+    if (t.orig) t.orig(Result, S, O, argc, Args);
+    g_GpBusy = true;
+    // Keyed by the argument text, so one call shape a machine repeats every
+    // frame spends its own kTraceLinesPerKey, not the row.
+    try { GpLogCall(row, GpBuiltinName(builtin), selfText, argc, args, args, GpValueText(Result)); } catch (...) {}
+    g_GpBusy = false;
+}
+
+// A by-name slot's line label: the row it feeds, or the rows that share it.
+static std::string GpByNameLabel(int slot)
+{
+    const GpByNameSlot& b = g_GpByNameSlots[slot];
+    if (b.scripts.size() == 1) return std::string(g_GpScriptRows[b.scripts[0]].label) + " by-name(" + b.name + ")";
+    std::string rows;
+    for (const int s : b.scripts) rows += (rows.empty() ? "" : ",") + std::string(g_GpScriptRows[s].label);
+    return "byname-shared " + b.name + " (rows " + rows + ")";
+}
+
+// A by-name routine's call (replan 1), with the builtin signature: counted on
+// the row that reaches it (byname=detoured) or on its own byname-shared row,
+// and described like a script row's call - `argc`, up to six arguments keyed
+// by the first, the result - under the same machine-self filter. Never
+// answered.
+// The explosion watch on a by-name routine: a slot any build row reaches is
+// a build-row call (ring, window line), and one CreateItemNew reaches has
+// its built item read after the original. True when the built line is due;
+// `fed` says whether the call went to the watch at all (the original then
+// runs under a mark of its own, GpNs::FedMarkScope).
+static bool GpWatchByName(int slot, GpNs::Seen seen, CInstance* S, int argc, RValue* Args, std::string& selfText, bool& fed)
+{
+    const GpByNameSlot& b = g_GpByNameSlots[slot];
+    fed = false;
+    if (seen == GpNs::Seen::Idle || std::none_of(b.scripts.begin(), b.scripts.end(), GpIsBuildRow)) return false;
+    fed = true;
+    std::string args;
+    g_GpBusy = true;
+    try { args = GpBuiltinArgs(argc, Args); } catch (...) {}
+    g_GpBusy = false;
+    const bool window = GpWatchCall(GpByNameLabel(slot), seen, S, argc, args, selfText);
+    return window && std::find(b.scripts.begin(), b.scripts.end(), (int)kGpScript_CreateItemNew) != b.scripts.end();
+}
+
+static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    GpByNameSlot& b = g_GpByNameSlots[slot];
+    if (g_GpBusy || !b.attached || b.scripts.empty()) { if (b.orig) b.orig(Result, S, O, argc, Args); return; }   // the probe's own call
+    ++b.calls;
+    const int row = b.scripts.size() == 1 ? GpNs::ScriptRowOf(b.scripts[0]) : GpByNameRow(slot);
+    const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
+    // The explosion watch, before the self filter (build rows only).
+    std::string watchSelf;
+    bool fed = false;
+    const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf, fed);
+    // A fed call's original runs under a mark of its own; an unfed one leaves
+    // the outer mark current, so a consumption inside it holds after it returns.
+    if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {
+        {
+            GpNs::FedMarkScope scope(g_GpByNameFed, fed, slot);
+            if (b.orig) b.orig(Result, S, O, argc, Args);
+        }
+        if (readBuilt) GpWatchBuilt(Result, watchSelf);
+        return;
+    }
+    std::string key, args, selfText;
+    g_GpBusy = true;
+    try {
+        args = GpBuiltinArgs(argc, Args);
+        if (Args && argc > 0) key = GpValueText(Args[0]);
+        selfText = GpSelfText(seen, S);
+    } catch (...) {}
+    g_GpBusy = false;
+    {
+        GpNs::FedMarkScope scope(g_GpByNameFed, fed, slot);
+        if (b.orig) b.orig(Result, S, O, argc, Args);
+    }
+    if (readBuilt) GpWatchBuilt(Result, watchSelf);
+    g_GpBusy = true;
+    try { GpLogCall(row, GpByNameLabel(slot), selfText, argc, args, key, GpValueText(Result)); } catch (...) {}
+    g_GpBusy = false;
+}
+
+// ---- the caller walk (replan 1) ------------------------------------------------------
+// The compiled-code table's rows whose function is game code, sorted, read
+// once per `hook` (GpLoadCodeRows), and the two images a frame is named by.
+static std::vector<GpNs::CodeRow> g_GpCodeRows;
+static GpNs::CodeModule g_GpGameImage;
+static GpNs::CodeModule g_GpPluginImage;
+
+// A loaded module's image span, from its own in-memory headers, and its file
+// name.
+static GpNs::CodeModule GpModuleImage(HMODULE mod)
+{
+    GpNs::CodeModule m;
+    if (!mod) return m;
+    const auto base = reinterpret_cast<uintptr_t>(mod);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return m;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return m;
+    m.base = base;
+    m.end = base + nt->OptionalHeader.SizeOfImage;
+    char path[MAX_PATH] = { 0 };
+    GetModuleFileNameA(mod, path, MAX_PATH);
+    const char* name = path;
+    for (const char* c = path; *c; ++c) if (*c == '\\' || *c == '/') name = c + 1;
+    m.name = name;
+    return m;
+}
+
+// The table FsFindGmlRow walks, from the same anchor and with the same
+// validity test, copied: only rows whose function AddrIsExecutableInModule
+// places in Hero_Siege.exe (a row a mod swapped points elsewhere and names no
+// game frame).
+static size_t GpLoadCodeRows(HMODULE mainMod)
+{
+    using ForgePact::FrameProfiler::GmlEntry;
+    g_GpGameImage = GpModuleImage(mainMod);
+    g_GpPluginImage = GpModuleImage(GpSelfModule());
+    std::vector<GpNs::CodeRow> rows;
+    const GmlEntry* anchor = FrameProfGmlAnchor();
+    if (anchor && g_GpGameImage.base) {
+        const uintptr_t base = g_GpGameImage.base;
+        const uintptr_t end = g_GpGameImage.end;
+        auto looksValid = [&](const GmlEntry* e) {
+            const auto p = reinterpret_cast<uintptr_t>(e);
+            if (p < base || p + sizeof(GmlEntry) > end) return false;
+            const auto nm = reinterpret_cast<uintptr_t>(e->name);
+            return nm >= base && nm + 5 <= end && std::memcmp(e->name, "gml_", 4) == 0;
+        };
+        const GmlEntry* first = anchor;
+        while (looksValid(first - 1)) --first;
+        for (const GmlEntry* e = first; looksValid(e); ++e)
+            if (e->function && AddrIsExecutableInModule(mainMod, e->function))
+                rows.push_back({ reinterpret_cast<uintptr_t>(e->function), e->name });
+    }
+    GpNs::SortCodeRows(rows);
+    g_GpCodeRows.swap(rows);
+    return g_GpCodeRows.size();
+}
+
+// One of the instance's values on the caller line, by the instance-handle
+// rule; `?` when the read fails or is not a number.
+static std::string GpInstanceNumber(const RValue& self, const char* name)
+{
+    try {
+        const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue(name) });
+        return IsNumericInstanceRead(v) ? GpNs::NumberText(v.ToDouble()) : std::string("?");
+    } catch (...) { return "?"; }
+}
+
+static std::string GpAlarmText(CInstance* S, int alarm)
+{
+    try {
+        RValue v;
+        if (S && AurieSuccess(g_Yytk->GetBuiltin("alarm", S, alarm, v)) && IsNumericInstanceRead(v))
+            return GpNs::NumberText(v.ToDouble());
+    } catch (...) {}
+    return "?";
+}
+
+// Before the event's original runs, while the instance is still readable:
+// one line of its state, then its return-address stack, each frame named by
+// GpNs::FrameText. Printed only; nothing is kept past the lines.
+static void GpCallerWalk(int event, CInstance* S, long long id)
+{
+    g_GpBusy = true;
+    try {
+        const RValue self = S->ToRValue();
+        Out("gambaprobe " + std::string(GpNs::kEvents[event].event) + "-caller id=" + std::to_string(id) + " object_index="
+            + GpInstanceNumber(self, "object_index") + " x=" + GpInstanceNumber(self, "x") + " y=" + GpInstanceNumber(self, "y")
+            + " layer=" + GpInstanceNumber(self, "layer") + " depth=" + GpInstanceNumber(self, "depth") + " alarm9="
+            + GpAlarmText(S, 9) + " alarm11=" + GpAlarmText(S, 11) + " frame=" + std::to_string((int64_t)g_RuntimeFrame));
+        PVOID frames[GpNs::kCallerWalkFrames] = { nullptr };
+        const USHORT got = RtlCaptureStackBackTrace(1, GpNs::kCallerWalkFrames, frames, nullptr);
+        for (USHORT k = 0; k < got; ++k) {
+            const auto frame = reinterpret_cast<uintptr_t>(frames[k]);
+            if (!frame) continue;
+            // The function holding the frame, as the image's unwind table says.
+            uintptr_t functionStart = 0;
+            DWORD64 imageBase = 0;
+            if (const PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry((DWORD64)frame, &imageBase, nullptr))
+                functionStart = (uintptr_t)imageBase + fn->BeginAddress;
+            GpNs::CodeModule other;
+            if (!g_GpGameImage.Contains(frame) && !g_GpPluginImage.Contains(frame)) {
+                HMODULE mod = nullptr;
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       reinterpret_cast<LPCSTR>(frames[k]), &mod))
+                    other = GpModuleImage(mod);
+            }
+            Out(GpNs::FrameText((int)k, frame, functionStart, g_GpCodeRows, g_GpGameImage, g_GpPluginImage, other));
+        }
+    } catch (...) { Out("gambaprobe " + std::string(GpNs::kEvents[event].event) + "-caller: EXCEPTION reading the instance or the stack"); }
+    g_GpBusy = false;
+}
+
+// Inside a machine's own event, so a call another self makes from it (a
+// `with` block, a struct method) is told apart from the rest of the game.
+struct GpEventScope {
+    GpEventScope() { ++g_GpEventDepth; }
+    ~GpEventScope() { --g_GpEventDepth; }
+};
+
+static void GpOnEvent(int event, CInstance* S, CInstance* O)
+{
+    GpEventRow& t = g_GpEventRows[event];
+    if (g_GpBusy) { if (t.orig) t.orig(S, O); return; }
+    const int row = GpNs::EventRowOf(static_cast<GpNs::Event>(event));
+    const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpNoteMachine(S); }, g_GpEventDepth > 0);
+    if (seen != GpNs::Seen::Machine) { if (t.orig) t.orig(S, O); return; }
+    const long long id = GpMachineId(S);
+    // Who runs this event: CleanUp_0's and Alarm_9's first walks of the
+    // window and its first Create_0's, before the original; the rest counted.
+    if (g_GpCore.TakeCallerWalk(static_cast<GpNs::Event>(event))) GpCallerWalk(event, S, id);
+    {
+        GpEventScope scope;
+        if (t.orig) t.orig(S, O);
+    }
+    if (event == (int)GpNs::Event::CleanUp)
+        g_GpMachines.erase(std::remove_if(g_GpMachines.begin(), g_GpMachines.end(),
+                                          [S](const GpMachine& m) { return m.inst == S; }), g_GpMachines.end());
+    // Keyed by the instance: each machine's Step_0 writes its own
+    // kTraceLinesPerKey lines a window, and the count carries the rest.
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    if (!g_GpCore.TakeTraceLine(row, (uint64_t)id, (uint64_t)frame)) return;
+    Out("gambaprobe event " + std::string(GpNs::kEvents[event].event) + " #" + std::to_string(g_GpCore.RowCounters(row).calls)
+        + " id=" + std::to_string(id) + " frame=" + std::to_string(frame));
+}
+
+// ---- hook ---------------------------------------------------------------------------
+
+// This plugin's own module: a saved original inside it is another of this
+// plugin's hooks (a tagged thunk), never a trampoline.
+static HMODULE GpSelfModule()
+{
+    HMODULE self = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&GpSelfModule), &self);
+    return self;
+}
+
+// Is a holder's saved original a trampoline - the holder natively detoured?
+// Game code there means the holder fell back to the table only; this
+// plugin's code there means it sits behind another of this plugin's hooks.
+static bool GpHolderIsNative(const void* saved, std::string& why)
+{
+    if (!saved) { why = "its hook is not installed"; return false; }
+    if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved)) { why = "its hook came up table-only"; return false; }
+    if (AddrIsExecutableInModule(GpSelfModule(), saved)) { why = "its hook sits behind another ForgePact hook (table-only)"; return false; }
+    return true;
+}
+
+// The existing installer of a shared script row, run when its hook is not
+// in yet. Returns the holder's name.
+static std::string GpInstallScriptHolder(PFUNC_YYGMLScript* slot, bool& signatureTried)
+{
+    if (slot == &g_Orig_GPV_Trace) {
+        if (!g_Orig_GPV_Trace)
+            HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GPV), "bp_gpvtrace", (PVOID)Hook_GPV_Trace,
+                          &g_Orig_GPV_Trace);
+        return "Hook_GPV_Trace (abysstrace)";
+    }
+    if (slot == &ForgePact::MiningOre::originalLoot) {
+        if (!*slot) ForgePact::MiningOre::Install();
+        return "the mining-ore reward hook";
+    }
+    if (slot == GpDropItemHolder()) {
+        if (!*slot) ForgePact::DropManager::Instance().InstallHooks();   // at x1 pass-through, as goldtrace installs them
+        return "DropManager's Hook_DropItem";
+    }
+    // Installed at startup in this build with a dozen other table hooks;
+    // never run again here, since a second run re-swaps every one of their
+    // table entries. Not installed, the row is the probe's own.
+    if (slot == &g_Orig_LootGroundCreateFromItem) return "Hook_LootGroundCreateFromItem (item inspect)";
+    if (!*slot && !signatureTried) {
+        signatureTried = true;
+        InstallSignatureAngelicHooks();
+    }
+    if (slot == &g_Orig_CreateItemNew) return "Hook_CreateItemNew (InstallSignatureAngelicHooks)";
+    if (slot == &g_Orig_GetUniqueRepoStruct) return "Hook_GetUniqueRepoStruct (InstallSignatureAngelicHooks)";
+    return "Hook_CreateDefaultParams (InstallSignatureAngelicHooks)";
+}
+
+// Which of the probe's builtins `citrace`, `jumpprobe` or `jumpscenery` holds
+// now: a builtin detours once, and a probe beside their hook would read its
+// own zero.
+static std::string GpBuiltinsHeldIn(const std::string& names)
+{
+    std::string held;
+    for (int i = 0; i < GpNs::kBuiltinCount; ++i) {
+        const std::string n = GpBuiltinName(i);
+        size_t at = 0;
+        while ((at = names.find(n, at)) != std::string::npos) {
+            const bool startOk = at == 0 || names[at - 1] == ' ' || names[at - 1] == ',';
+            const bool endOk = at + n.size() == names.size() || names[at + n.size()] == ',';
+            if (startOk && endOk) { held += (held.empty() ? "" : ", ") + n; break; }
+            at += n.size();
+        }
+    }
+    return held;
+}
+
+static std::string GpJumpProbeHolders()
+{
+    std::string names;
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i)
+        if (g_JpBuiltinRows[i].installed) names += (names.empty() ? "" : ",") + JpBuiltinName(i);
+    return names;
+}
+
+static std::string GpRowLine(const std::string& what, GpNs::Route route, const std::string& status)
+{
+    return "gambaprobe hook: " + what + (status.empty() ? std::string() : " (" + status + ")") + " "
+        + std::string(GpNs::RouteName(route));
+}
+
+static void GpInstallEvents(HMODULE mainMod)
+{
+    const std::string machine = GpMachineName();
+    for (int i = 0; i < GpNs::kEventCount; ++i) {
+        GpEventRow& t = g_GpEventRows[i];
+        if (t.tried && t.route != GpNs::Route::Missing) {
+            Out(GpRowLine("event " + t.name, t.route, "already in"));
+            continue;
+        }
+        t.tried = true;
+        t.name = "gml_Object_" + machine + "_" + std::string(GpNs::kEvents[i].event);
+        const ForgePact::FrameProfiler::GmlEntry* entry = FsFindGmlRow(t.name);
+        if (!entry || !entry->function) {
+            t.status = "row=missing: no compiled-code table row by that name";
+            Out(GpRowLine("event " + t.name, t.route, t.status));
+            continue;
+        }
+        PVOID fn = const_cast<PVOID>(entry->function);
+        if (!AddrIsExecutableInModule(mainMod, fn)) {
+            t.status = "row=swapped: the row's function is not game code - a mod swapped it; skipped";
+            Out(GpRowLine("event " + t.name, t.route, t.status));
+            continue;
+        }
+        const GpEventFn tagged = TaggedThunks<GpEventFn>::Tagged(kGpEventHookIds[i], kGpEventDetours[i]);
+        PVOID tramp = nullptr;
+        const AurieStatus hs = MmCreateHook(g_ArSelfModule, kGpEventHookIds[i], fn, reinterpret_cast<PVOID>(tagged), &tramp);
+        if (!AurieSuccess(hs) || !tramp) {
+            t.status = "MmCreateHook st=" + std::to_string((int)hs);
+            Out(GpRowLine("event " + t.name, t.route, t.status));
+            continue;
+        }
+        t.orig = reinterpret_cast<GpEventFn>(tramp);
+        t.route = GpNs::Route::Detoured;
+        t.status.clear();
+        Out(GpRowLine("event " + t.name, t.route, ""));
+    }
+}
+
+// Rule 2 (angelicprobe's): a ForgePact hook holds the script's table entry
+// table-only, so its saved original is still the game's own function. The
+// probe detours that function itself, only once AddrIsExecutableInModule says
+// it is game code: the holder's body and compiled GML's direct calls both
+// reach the probe, which calls the trampoline. The holder is left as it is.
+static void GpDetourUnder(GpScriptRow& t, HMODULE mainMod, const std::string& holder)
+{
+    const PVOID fn = (PVOID)*t.holder;
+    if (!AddrIsExecutableInModule(mainMod, fn)) {
+        t.status = "held by " + holder + ", whose saved original is not game code; not detoured";
+        return;
+    }
+    const PFUNC_YYGMLScript tagged = TaggedThunks<PFUNC_YYGMLScript>::Tagged(t.hookId,
+                                                                            reinterpret_cast<PFUNC_YYGMLScript>(t.detour));
+    PVOID tramp = nullptr;
+    const AurieStatus hs = MmCreateHook(g_ArSelfModule, t.hookId, fn, reinterpret_cast<PVOID>(tagged), &tramp);
+    if (!AurieSuccess(hs) || !tramp) {
+        t.status = "held table-only by " + holder + ", and the detour under it failed: MmCreateHook st="
+            + std::to_string((int)hs) + " (another detour on the game's function?)";
+        return;
+    }
+    t.orig = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
+    t.route = GpNs::Route::DetouredUnder;
+    t.status = "under table-only " + holder;
+}
+
+// ---- the by-name route (replan 1) -------------------------------------------------
+// One name's lookup: its index (GetNamedRoutineIndex) and, for a
+// functions-array index, the routine GetNamedRoutinePointer returns and
+// whether AddrIsExecutableInModule places it in Hero_Siege.exe.
+static GpNs::NameLookup GpLookUpName(const char* name, HMODULE mainMod)
+{
+    GpNs::NameLookup n;
+    int index = -1;
+    try {
+        if (!AurieSuccess(g_Yytk->GetNamedRoutineIndex(name, &index)) || index < 0) return n;
+    } catch (...) { return n; }
+    n.resolved = true;
+    n.index = index;
+    if (!GpNs::NamesRoutine(n)) return n;
+    PVOID p = nullptr;
+    try { if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &p))) p = nullptr; } catch (...) { p = nullptr; }
+    n.routine = reinterpret_cast<uintptr_t>(p);
+    n.routineIsGameCode = p && AddrIsExecutableInModule(mainMod, p);
+    return n;
+}
+
+// The row's own function, read before the probe installs anything: the game
+// function a table-only holder saved, else the script's table entry
+// (CScript::m_Functions, the compiled-code table row), cross-checked against
+// the row FsFindGmlRow finds by the gml_Script_ name (`table-row=`).
+static uintptr_t GpRowFunction(GpScriptRow& t, HMODULE mainMod, std::string& note)
+{
+    const ForgePact::FrameProfiler::GmlEntry* row = FsFindGmlRow(t.sdkName);
+    const void* entry = nullptr;
+    const GpNs::NameLookup* scriptName = GpNs::NamesScript(t.shortName) ? &t.shortName
+        : GpNs::NamesScript(t.fullName) ? &t.fullName : nullptr;
+    if (scriptName) {
+        PVOID p = nullptr;
+        const char* name = scriptName == &t.shortName ? t.label : t.sdkName;
+        try {
+            if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &p)) && p) {
+                const CScript* sc = reinterpret_cast<const CScript*>(p);
+                if (sc->m_Functions) {
+                    entry = (const void*)sc->m_Functions->m_ScriptFunction;
+                    note = std::string("table-row=") + (!row ? "missing" : (const void*)row == (const void*)sc->m_Functions ? "same" : "differs");
+                }
+            }
+        } catch (...) { entry = nullptr; }
+    }
+    if (!entry && row) {
+        entry = row->function;
+        note = "table-row=read";
+    }
+    if (t.holder && *t.holder && AddrIsExecutableInModule(mainMod, (const void*)*t.holder)) entry = (const void*)*t.holder;
+    return reinterpret_cast<uintptr_t>(entry);
+}
+
+static void GpNoteByName(GpScriptRow& t, const std::string& note)
+{
+    t.bynameNote += (t.bynameNote.empty() ? "" : "; ") + note;
+}
+
+// The slot of a routine, made on first sight; -1 once every slot is taken.
+static int GpByNameSlotOf(uintptr_t routine, const char* name)
+{
+    for (int s = 0; s < g_GpByNameSlotCount; ++s) if (g_GpByNameSlots[s].routine == routine) return s;
+    if (g_GpByNameSlotCount >= kGpByNameSlots) return -1;
+    GpByNameSlot& b = g_GpByNameSlots[g_GpByNameSlotCount];
+    b.routine = routine;
+    b.name = name;
+    return g_GpByNameSlotCount++;
+}
+
+// Detour the by-name slots from `from` on: one HookBuiltin per routine, only
+// when AddrIsExecutableInModule places it in the game and its name still
+// resolves to the routine first read. `fnwalk` runs this again for the slots
+// it added after the first hook; an attached slot is left as it is.
+static void GpAttachByNameSlots(HMODULE mainMod, int from)
+{
+    for (int s = from; s < g_GpByNameSlotCount; ++s) {
+        GpByNameSlot& b = g_GpByNameSlots[s];
+        if (b.attached) continue;
+        const std::string id = "fp_gp_n_" + std::to_string(s);
+        PVOID now = nullptr;
+        if (!AddrIsExecutableInModule(mainMod, (const void*)b.routine)) {
+            b.status = "the routine is not executable code inside Hero_Siege.exe; not detoured";
+        } else if (!AurieSuccess(g_Yytk->GetNamedRoutinePointer(b.name.c_str(), &now)) || (uintptr_t)now != b.routine) {
+            b.status = b.name + " no longer resolves to the routine first read; not detoured";
+        } else if (!HookBuiltin(b.name.c_str(), id.c_str(), (PVOID)kGpByNameDetours[(size_t)s], &b.orig) || !b.orig) {
+            b.status = "HookBuiltin on " + b.name + " failed: see its line above";
+        } else {
+            b.attached = true;
+            b.status.clear();
+        }
+    }
+}
+
+// Recompute each script row's by-name word from its slots: a row whose every
+// routine is attached reads detoured, or shared when one routine is reached
+// from several rows; a row with a failed attachment reads missing.
+static void GpReclassifyByName()
+{
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        GpScriptRow& t = g_GpScriptRows[i];
+        bool hasSlot = false;
+        int sharing = 0;
+        for (int s = 0; s < g_GpByNameSlotCount; ++s) {
+            const GpByNameSlot& b = g_GpByNameSlots[s];
+            if (std::find(b.scripts.begin(), b.scripts.end(), i) == b.scripts.end()) continue;
+            hasSlot = true;
+            if (!b.attached) {
+                t.byname = GpNs::ByName::Missing;
+                GpNoteByName(t, "the by-name routine " + b.name + " was not detoured (" + b.status + ")");
+                sharing = -1;
+                break;
+            }
+            if ((int)b.scripts.size() > sharing) sharing = (int)b.scripts.size();
+        }
+        if (!hasSlot || sharing < 0) continue;
+        t.byname = GpNs::WithSharing(GpNs::ByName::Detoured, sharing);
+    }
+}
+
+// At the first `hook`, before any script row is installed: every row's two
+// lookups, its by-name route, and one HookBuiltin detour per routine a row's
+// name reaches besides the row's own function - only once
+// AddrIsExecutableInModule says it is game code and the name still resolves
+// to it. A routine whose detour fails leaves its rows `missing`, saying why.
+static void GpInstallByName(HMODULE mainMod)
+{
+    if (g_GpByNameRead) return;
+    g_GpByNameRead = true;
+    std::vector<uintptr_t> own((size_t)kGpScriptCount, 0);
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        GpScriptRow& t = g_GpScriptRows[i];
+        t.shortName = GpLookUpName(t.label, mainMod);
+        t.fullName = GpLookUpName(t.sdkName, mainMod);
+        t.ownFunction = GpRowFunction(t, mainMod, t.bynameNote);
+        own[(size_t)i] = t.ownFunction;
+        t.byname = GpNs::ClassifyByName(t.shortName, t.fullName, own[(size_t)i]);
+        if (t.byname == GpNs::ByName::Missing)
+            GpNoteByName(t, !t.fullName.resolved ? std::string(t.sdkName) + " does not resolve"
+                                                 : std::string("a name's routine has no pointer or is not game code"));
+        if (t.byname != GpNs::ByName::Detoured) continue;
+        for (const GpNs::NameLookup* n : { &t.shortName, &t.fullName }) {
+            const uintptr_t r = GpNs::OtherRoutine(*n, own[(size_t)i]);
+            if (!r) continue;
+            const int s = GpByNameSlotOf(r, n == &t.shortName ? t.label : t.sdkName);
+            if (s < 0) {
+                t.byname = GpNs::ByName::Missing;
+                GpNoteByName(t, "no by-name slot left");
+                break;
+            }
+            std::vector<int>& rows = g_GpByNameSlots[s].scripts;
+            if (std::find(rows.begin(), rows.end(), i) == rows.end()) rows.push_back(i);
+        }
+    }
+    GpAttachByNameSlots(mainMod, 0);
+    GpReclassifyByName();
+}
+
+// A script row's hook line: the route and its status as for every row, then
+// what the by-name lookup found, ending with `idx=<short>/<gml_Script_>
+// byname=<same|detoured|shared|missing>`.
+static std::string GpScriptRowLine(const GpScriptRow& t, const std::string& status)
+{
+    return GpRowLine(std::string("script ") + t.label, t.route, status)
+        + (t.bynameNote.empty() ? std::string() : " [" + t.bynameNote + "]") + " "
+        + GpNs::ByNameText(t.byname, t.shortName, t.fullName);
+}
+
+// One phase's milliseconds on the performance counter; `a`/`b` are the tick
+// counts at its start and end. The timing line is the `hook` freeze's
+// measurement (research), not a fix.
+static long long GpMs(long long a, long long b)
+{
+    static const LARGE_INTEGER freq = []() { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+    return static_cast<long long>((static_cast<double>(b - a) * 1000.0) / static_cast<double>(freq.QuadPart));
+}
+
+// The two phases of GpInstallScripts, timed for the `hook` freeze's line.
+static long long g_GpBynameMs = 0;
+static long long g_GpScriptsMs = 0;
+
+// Script rows. The by-name lookups first, before any row is installed; then
+// a held row by what its holder's saved original is (the block comment
+// above); every other row through HookOneScript, whose own first install
+// validates the table entry with AddrIsExecutableInModule before its inline
+// detour.
+static void GpInstallScripts(HMODULE mainMod)
+{
+    LARGE_INTEGER a, b, c;
+    QueryPerformanceCounter(&a);
+    GpInstallByName(mainMod);
+    QueryPerformanceCounter(&b);
+    bool signatureTried = false;
+    for (GpScriptRow& t : g_GpScriptRows) {
+        if (t.tried && t.route != GpNs::Route::Missing) {
+            Out(GpScriptRowLine(t, "already in"));
+            continue;
+        }
+        t.tried = true;
+        std::string holder;
+        if (t.holder) holder = GpInstallScriptHolder(t.holder, signatureTried);
+        if (t.holder && *t.holder) {
+            const void* saved = (const void*)*t.holder;
+            if (AddrIsExecutableInModule(mainMod, saved)) {
+                GpDetourUnder(t, mainMod, holder);
+                Out(GpScriptRowLine(t, t.status));
+                continue;
+            }
+            std::string why;
+            if (!GpHolderIsNative(saved, why)) {
+                t.status = "held by " + holder + ", but " + why + "; not spliced";
+                Out(GpScriptRowLine(t, t.status));
+                continue;
+            }
+            t.orig = *t.holder;
+            *t.holder = reinterpret_cast<PFUNC_YYGMLScript>(t.detour);
+            t.route = GpNs::Route::Shared;
+            t.status = "through " + holder;
+            Out(GpScriptRowLine(t, t.status));
+            continue;
+        }
+        bool native = false;
+        if (!HookOneScript(t.label, t.hookId, t.detour, &t.orig, &native) || !t.orig) {
+            t.status = "not found by name (see the hook line above)";
+            Out(GpScriptRowLine(t, t.status));
+            continue;
+        }
+        t.route = native ? GpNs::Route::Detoured : GpNs::Route::TableOnly;
+        t.status = native ? std::string() : "another install holds the table entry; only table calls reach this row";
+        if (t.holder) t.status += std::string(native ? "" : "; ") + "its holder, " + holder + ", is not installed";
+        Out(GpScriptRowLine(t, t.status));
+    }
+    QueryPerformanceCounter(&c);
+    g_GpBynameMs = GpMs(a.QuadPart, b.QuadPart);
+    g_GpScriptsMs = GpMs(b.QuadPart, c.QuadPart);
+}
+
+static void GpInstallBuiltins(HMODULE mainMod)
+{
+    if (!g_OrigICD || !g_OrigICL) InstallCreateHooks();
+    for (int i = 0; i < GpNs::kBuiltinCount; ++i) {
+        GpBuiltinRow& t = g_GpBuiltinRows[i];
+        const std::string name = GpBuiltinName(i);
+        if (t.tried && t.route != GpNs::Route::Missing) {
+            Out(GpRowLine("builtin " + name, t.route, "already in"));
+            continue;
+        }
+        t.tried = true;
+        // A builtin another install already hooks is shared: create's two
+        // with the density hooks, instance_destroy with co-op's or
+        // destroywatch's when one of them holds it.
+        TRoutine* holder = nullptr;
+        std::string holderName;
+        const auto b = static_cast<GpNs::Builtin>(i);
+        if (b == GpNs::Builtin::InstanceCreateDepth) { holder = &g_OrigICD; holderName = "HookICD (density)"; }
+        else if (b == GpNs::Builtin::InstanceCreateLayer) { holder = &g_OrigICL; holderName = "HookICL (density)"; }
+        else if (b == GpNs::Builtin::InstanceDestroy && g_OrigInstDestroy) { holder = &g_OrigInstDestroy; holderName = "HookInstanceDestroy (co-op)"; }
+        else if (b == GpNs::Builtin::InstanceDestroy && g_OrigDestroy) { holder = &g_OrigDestroy; holderName = "HookDestroy (destroywatch)"; }
+        if (holder) {
+            std::string why;
+            if (!GpHolderIsNative((const void*)*holder, why)) {
+                t.status = "held by " + holderName + ", but " + why + "; not spliced";
+                Out(GpRowLine("builtin " + name, t.route, t.status));
+                continue;
+            }
+            t.orig = *holder;
+            *holder = kGpBuiltinDetours[i];
+            t.route = GpNs::Route::Shared;
+            t.status = "through " + holderName;
+            Out(GpRowLine("builtin " + name, t.route, t.status));
+            continue;
+        }
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+        if (!AurieSuccess(st) || !p) {
+            t.status = "not found by name, st=" + std::to_string((int)st);
+            Out(GpRowLine("builtin " + name, t.route, t.status));
+            continue;
+        }
+        if (!AddrIsExecutableInModule(mainMod, p)) {
+            t.status = "the builtin is not executable code inside Hero_Siege.exe - another hook may hold it";
+            Out(GpRowLine("builtin " + name, t.route, t.status));
+            continue;
+        }
+        if (!HookBuiltin(name.c_str(), kGpBuiltinHookIds[i], (PVOID)kGpBuiltinDetours[i], &t.orig) || !t.orig) {
+            t.status = "HookBuiltin: see its line above";
+            Out(GpRowLine("builtin " + name, t.route, t.status));
+            continue;
+        }
+        t.route = GpNs::Route::Detoured;
+        t.status.clear();
+        Out(GpRowLine("builtin " + name, t.route, ""));
+    }
+}
+
+// `hook`: every row, once; again, it re-arms (every row's trace budget starts
+// over, as `trace` does) and names each row's route. Refused while citrace, jumpprobe or
+// jumpscenery holds one of the probe's builtins.
+static void GpInstall()
+{
+    const std::string citrace = GpBuiltinsHeldIn(JpCitraceHolders() + (g_OrigCi_InstanceDestroy ? ",instance_destroy" : "")
+        + (g_OrigCi_InstanceChange ? ",instance_change" : "")
+        + (g_OrigCi_InstanceDeactivateObject ? ",instance_deactivate_object" : ""));
+    if (!citrace.empty()) {
+        Out("gambaprobe hook: refused - citrace holds " + citrace + " (a builtin detours once, and its hook would read"
+            " as this probe's zero); nothing hooked. Relaunch without `citrace` to run gambaprobe.");
+        return;
+    }
+    const std::string jumpprobe = GpBuiltinsHeldIn(GpJumpProbeHolders());
+    if (!jumpprobe.empty()) {
+        Out("gambaprobe hook: refused - jumpprobe holds " + jumpprobe + "; nothing hooked. Relaunch without `jumpprobe hook`.");
+        return;
+    }
+    const std::string jumpscenery = GpBuiltinsHeldIn(JumpSceneryHeldHooks());
+    if (!jumpscenery.empty()) {
+        Out("gambaprobe hook: refused - jumpscenery holds " + jumpscenery + "; nothing hooked. Relaunch without turning"
+            " `jumpscenery` on.");
+        return;
+    }
+    const std::string gambapity = GambaPityHeldScripts();
+    if (!gambapity.empty()) {
+        Out("gambaprobe hook: refused - gambapity holds " + gambapity + "; nothing hooked. Relaunch without `gambapity`.");
+        return;
+    }
+    if (GpResolveMachineObject() < 0) {
+        Out("gambaprobe hook: refused - " + GpMachineName() + " did not resolve by name (asset_get_index); nothing hooked");
+        return;
+    }
+    GpEnsureRows();
+    HMODULE mainMod = GetModuleHandleA(nullptr);
+    // Time each phase, so the `hook` freeze's cause is named (research only).
+    LARGE_INTEGER t0, t1, t2, t3, t4;
+    QueryPerformanceCounter(&t0);
+    // The caller walk's names for a frame: read again on every `hook`.
+    const size_t codeRows = GpLoadCodeRows(mainMod);
+    QueryPerformanceCounter(&t1);
+    GpInstallEvents(mainMod);
+    QueryPerformanceCounter(&t2);
+    GpInstallScripts(mainMod);
+    QueryPerformanceCounter(&t3);
+    GpInstallBuiltins(mainMod);
+    QueryPerformanceCounter(&t4);
+    int rows = 0, missing = 0, detoured = 0, under = 0, shared = 0, tableOnly = 0;
+    auto tally = [&](GpNs::Route r) {
+        ++rows;
+        if (r == GpNs::Route::Missing) ++missing;
+        else if (r == GpNs::Route::Detoured) ++detoured;
+        else if (r == GpNs::Route::DetouredUnder) ++under;
+        else if (r == GpNs::Route::Shared) ++shared;
+        else ++tableOnly;
+    };
+    std::string blind;
+    for (const GpEventRow& t : g_GpEventRows) tally(t.route);
+    for (const GpScriptRow& t : g_GpScriptRows) {
+        tally(t.route);
+        if (t.route == GpNs::Route::TableOnly) blind += (blind.empty() ? "" : ", ") + std::string(t.label);
+    }
+    for (const GpBuiltinRow& t : g_GpBuiltinRows) tally(t.route);
+    g_GpHooked = true;
+    g_GpCore.ResetTrace();
+    g_GpCore.SetArmed(true);
+    GpRefreshMachines();
+    Out("gambaprobe hook: " + std::to_string(rows) + " rows, " + std::to_string(missing) + " missing, " + std::to_string(tableOnly)
+        + " table-only (" + std::to_string(detoured) + " detoured, " + std::to_string(under) + " detoured-under, "
+        + std::to_string(shared) + " shared); armed, machine object " + std::to_string(g_GpCore.MachineObject())
+        + ", machines now " + GpMachinesText());
+    Out("gambaprobe hook: took " + std::to_string(GpMs(t0.QuadPart, t4.QuadPart)) + " ms (events "
+        + std::to_string(GpMs(t1.QuadPart, t2.QuadPart)) + ", byname " + std::to_string(g_GpBynameMs) + ", scripts "
+        + std::to_string(g_GpScriptsMs) + ", builtins " + std::to_string(GpMs(t3.QuadPart, t4.QuadPart)) + ", table "
+        + std::to_string(GpMs(t0.QuadPart, t1.QuadPart)) + ")");
+    if (!blind.empty())
+        Out("gambaprobe hook: WARNING - table-only, blind to compiled GML's direct calls: " + blind + ". A `not-observed`"
+            " from these rows measures the instrument, not the game.");
+    int byname[5] = { 0, 0, 0, 0, 0 };
+    for (const GpScriptRow& t : g_GpScriptRows) ++byname[(int)t.byname];
+    int attached = 0;
+    for (int s = 0; s < g_GpByNameSlotCount; ++s) if (g_GpByNameSlots[s].attached) ++attached;
+    Out("gambaprobe hook: by name - same=" + std::to_string(byname[(int)GpNs::ByName::Same]) + " detoured="
+        + std::to_string(byname[(int)GpNs::ByName::Detoured]) + " shared=" + std::to_string(byname[(int)GpNs::ByName::Shared])
+        + " missing=" + std::to_string(byname[(int)GpNs::ByName::Missing]) + " (" + std::to_string(attached)
+        + " by-name routine(s) detoured); the caller walk names frames by " + std::to_string(codeRows)
+        + " compiled-code rows of game code" + (codeRows ? std::string() : std::string(" - NONE: every game frame prints as exe+")));
+    Out("  Next: `gambaprobe selftest` (the irandom row must move by one), then `gambaprobe spawn [depth|game|layer|self|scp|stamp]`,"
+        " then `gambaprobe status` - create= and alarm9= must reach 1 and step= climb, or the machine did not survive (the"
+        " CleanUp_0-caller lines name who removed it). `gambaprobe trace` right before each measured spin.");
+}
+
+// ---- fnwalk: the functions-array walk --------------------------------------------
+// The runtime's functions array is the dispatch table whose 24-byte entries
+// are (name, routine, argument count) - the layout `citrace dispatchdump`'s
+// notes measured 2026-09-11 and YYTK patch 0004 validates with. The by-name
+// route's GetNamedRoutineIndex returns one index per name, so it cannot show
+// that a same-named `gml_Script_<short>` entry sits in the array besides the
+// script's own function; `fnwalk` walks the array by validation only (never an
+// address) and detours those entries through the by-name slots, so `status`
+// prints the word.
+
+// The dispatch table's entry layout, measured 2026-09-11: a name pointer, then
+// a routine, then an argument count.
+static constexpr size_t kGpFnName = 0;
+static constexpr size_t kGpFnRoutine = 8;
+static constexpr size_t kGpFnArgc = 16;
+static constexpr size_t kGpFnEntry = 24;
+
+// A bounded, graphic-ASCII C string ('!'..'~') at `p`; empty when the read
+// is not one. This is what an entry's first qword points at.
+static std::string GpReadName(const char* p)
+{
+    if (!p || IsBadReadPtr((void*)p, 1)) return {};
+    size_t len = 0;
+    while (len < 128 && !IsBadReadPtr((void*)(p + len), 1) && p[len] != '\0') {
+        const unsigned char c = static_cast<unsigned char>(p[len]);
+        if (c < static_cast<unsigned char>('!') || c > static_cast<unsigned char>('~')) return {};
+        ++len;
+    }
+    if (len == 0 || len >= 128) return {};
+    return std::string(p, len);
+}
+
+// One 24-byte entry at `e`: a terminated graphic-ASCII name, a routine
+// AddrIsExecutableInModule places in Hero_Siege.exe, an argument count 0..16.
+static bool GpEntryValid(const unsigned char* e, HMODULE mainMod)
+{
+    if (GpReadName(*reinterpret_cast<const char* const*>(e + kGpFnName)).empty()) return false;
+    if (!AddrIsExecutableInModule(mainMod, *reinterpret_cast<void* const*>(e + kGpFnRoutine))) return false;
+    const int argc = *reinterpret_cast<const int*>(e + kGpFnArgc);
+    return argc >= 0 && argc <= 16;
+}
+
+// The main module's writable section ranges, [start, end), from its own
+// section headers: where the functions array's entries live.
+static std::vector<std::pair<uintptr_t, uintptr_t>> GpWritableData(HMODULE mod)
+{
+    std::vector<std::pair<uintptr_t, uintptr_t>> ranges;
+    if (!mod) return ranges;
+    const auto base = reinterpret_cast<uintptr_t>(mod);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return ranges;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return ranges;
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE) {
+            const uintptr_t size = sec[i].Misc.VirtualSize ? sec[i].Misc.VirtualSize : sec[i].SizeOfRawData;
+            if (size) ranges.emplace_back(base + sec[i].VirtualAddress, base + sec[i].VirtualAddress + size);
+        }
+    }
+    return ranges;
+}
+
+// The routine a name resolves to, or 0; `ok` false when it did not resolve.
+static uintptr_t GpRoutineOf(const char* name, bool& ok)
+{
+    PVOID p = nullptr;
+    try { ok = AurieSuccess(g_Yytk->GetNamedRoutinePointer(name, &p)) && p; }
+    catch (...) { ok = false; p = nullptr; }
+    return ok ? reinterpret_cast<uintptr_t>(p) : 0;
+}
+
+// A matching entry to detour once the table has validated, buffered so a
+// failed validation changes nothing.
+struct GpFnWalkOther {
+    uintptr_t   routine;
+    std::string name;
+    int         row;
+};
+
+// `fnwalk`: locate the functions array by validation, walk at most 20,000
+// entries, print one line per entry whose name is a script row's short name or
+// its gml_Script_ form, and detour every `other` routine through the by-name
+// slots. A table that fails any check prints `table not found (<check>)` and
+// changes nothing; no RVA and nothing stored past the command.
+static void GpFnWalk(HMODULE mainMod)
+{
+    if (!g_GpByNameRead) {
+        Out("gambaprobe fnwalk: refused - run `gambaprobe hook` first (a row's own function is unknown otherwise)");
+        return;
+    }
+    bool ok = false;
+    const uintptr_t camera = GpRoutineOf("camera_create", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (camera_create did not resolve)"); return; }
+    const uintptr_t isUndefined = GpRoutineOf("is_undefined", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (is_undefined did not resolve)"); return; }
+    const uintptr_t instanceCreateLayer = GpRoutineOf("instance_create_layer", ok);
+    if (!ok) { Out("gambaprobe fnwalk: table not found (instance_create_layer did not resolve)"); return; }
+
+    // The first entry's `function` qword (at +8) equals camera_create's
+    // routine; scan the writable data for an aligned qword equal to it, and
+    // accept the 24-byte entry around it only when its first eight entries
+    // parse under one layout.
+    unsigned char* base = nullptr;
+    for (const auto& [start, end] : GpWritableData(mainMod)) {
+        // The entry's name field is the qword before its function, so a
+        // candidate is an entry only when that qword is inside the section.
+        for (uintptr_t a = start + 8; a + 8 <= end; a += 8) {
+            if (*reinterpret_cast<const uintptr_t*>(a) != camera) continue;
+            unsigned char* e = reinterpret_cast<unsigned char*>(a - 8);
+            bool valid = true;
+            for (int i = 0; i < 8; ++i) if (!GpEntryValid(e + static_cast<size_t>(i) * kGpFnEntry, mainMod)) { valid = false; break; }
+            if (valid) { base = e; break; }
+        }
+        if (base) break;
+    }
+    if (!base) {
+        Out("gambaprobe fnwalk: table not found (no aligned qword equal to camera_create's routine with eight valid entries)");
+        return;
+    }
+
+    std::unordered_map<std::string, int> byName;
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        byName[g_GpScriptRows[i].label] = i;
+        byName[g_GpScriptRows[i].sdkName] = i;
+    }
+    bool foundIsUndefined = false;
+    bool foundInstanceCreateLayer = false;
+    int walked = 0;
+    std::vector<std::string> lines;
+    std::vector<GpFnWalkOther> others;
+    for (int i = 0; i < 20000; ++i) {
+        unsigned char* e = base + static_cast<size_t>(i) * kGpFnEntry;
+        if (IsBadReadPtr(e, kGpFnEntry)) break;
+        const std::string name = GpReadName(*reinterpret_cast<const char* const*>(e + kGpFnName));
+        if (name.empty()) break;
+        ++walked;
+        const uintptr_t fn = *reinterpret_cast<const uintptr_t*>(e + kGpFnRoutine);
+        if (name == "is_undefined" && fn == isUndefined) foundIsUndefined = true;
+        if (name == "instance_create_layer" && fn == instanceCreateLayer) foundInstanceCreateLayer = true;
+        const auto it = byName.find(name);
+        if (it == byName.end()) continue;
+        const int row = it->second;
+        const uintptr_t own = g_GpScriptRows[row].ownFunction;
+        const bool exe = AddrIsExecutableInModule(mainMod, reinterpret_cast<const void*>(fn));
+        lines.push_back("gambaprobe fnwalk: " + name + " idx=" + std::to_string(i) + " routine="
+                        + (fn == own ? "same" : (exe ? "other" : "not-exe")));
+        if (fn != own && exe) others.push_back({ fn, name, row });
+    }
+    if (!foundIsUndefined || !foundInstanceCreateLayer) {
+        Out("gambaprobe fnwalk: table not found (the other two names were not found by walking)");
+        return;
+    }
+    Out("gambaprobe fnwalk: table at " + std::to_string(walked) + " entries");
+    for (const std::string& line : lines) Out(line);
+    if (others.empty()) return;
+    // Detour every `other` routine through the by-name slots, so `status`
+    // prints `byname=detoured|shared` where the walk found one.
+    const int startSlot = g_GpByNameSlotCount;
+    for (const GpFnWalkOther& o : others) {
+        const int s = GpByNameSlotOf(o.routine, o.name.c_str());
+        if (s < 0) continue;
+        std::vector<int>& rows = g_GpByNameSlots[s].scripts;
+        if (std::find(rows.begin(), rows.end(), o.row) == rows.end()) rows.push_back(o.row);
+    }
+    GpAttachByNameSlots(mainMod, startSlot);
+    GpReclassifyByName();
+}
+
+// ---- spawn, rng, drop, status, off ---------------------------------------------------
+
+// The local player's position, by the instance-handle rule; its handle and
+// instance too when asked.
+static bool GpPlayerXY(double& x, double& y, CInstance** inst, RValue* handle = nullptr)
+{
+    RValue p;
+    if (!HhResolveLocalPlayer(p)) return false;
+    try {
+        x = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") }).ToDouble();
+        y = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("y") }).ToDouble();
+        if (inst) *inst = HhResolveInstance(p);
+        if (handle) *handle = p;
+        return std::isfinite(x) && std::isfinite(y);
+    } catch (...) { return false; }
+}
+
+// `trace`: a new trace window - every row's and every key's budget starts
+// over, so the spin about to be measured is described; the counts continue.
+static void GpTrace()
+{
+    const int spent = g_GpCore.SpentRows();
+    g_GpCore.ResetTrace();
+    Out("gambaprobe trace: every row's trace budget starts over (" + std::to_string(GpNs::kTraceLinesPerRow) + " lines per row, "
+        + std::to_string(GpNs::kTraceLinesPerKey) + " per key); " + std::to_string(spent) + " row(s) had spent theirs; counts continue"
+        + (g_GpHooked ? std::string() : std::string(" - nothing is hooked yet: `gambaprobe hook` first")));
+}
+
+// `spawn [depth|game|layer|self|scp [xyo|oxy]|stamp]`'s routes, each a
+// different creation path (docs/gamba-machine-research.md § Live procedure 2
+// and 3):
+//   depth  instance_create_depth(x, y, 0, machine) - Live 1's call, the control;
+//   game   the game's own instance_create script by name, self = other = the
+//          local player, (x, y, machine) - the call the game's effect case makes;
+//   layer  instance_create_layer(x, y, <the player's own layer value>, machine);
+//   self   instance_create_depth through CallBuiltinEx with the player as self
+//          and other;
+//   scp    the game's own stamping spawner sCP(x, y, object) by its SDK short
+//          name, (x, y, machine) by default, (machine, x, y) for `oxy`;
+//   stamp  the `game` route's creation, then the pSpwd stamp sCP also sets
+//          (GetVariable/SetVariable by name with the player as self and other).
+// No route stores an address, a layer name, an effect id or a pSpwd key.
+static const char* const kGpSpawnRoutes[] = { "depth", "game", "layer", "self", "scp", "stamp" };
+
+// One extension-function call by name, with the player as self and other, as
+// sCP makes them. `failed` names the step when the call did not run: name not
+// resolved (the function does not exist) or dispatch failed.
+static bool GpExtCall(CInstance* self, const char* name, const std::vector<RValue>& args, RValue& result, std::string& failed)
+{
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallBuiltinEx(result, name, self, self, args); }
+    catch (...) { failed = std::string("dispatch failed: ") + name + " threw"; return false; }
+    if (!AurieSuccess(st)) {
+        failed = st == AURIE_OBJECT_NOT_FOUND ? std::string("name not resolved: ") + name
+                                              : std::string("dispatch failed: ") + name + ", st=" + std::to_string((int)st);
+        return false;
+    }
+    return true;
+}
+
+// One route's call. `failed` names the step that failed: name not resolved,
+// no player layer, no pSpwd, or dispatch failed. `stampTail` is the reply's
+// `pSpwd key=<v> before=<v> after=<v>` tail (empty except for `stamp`).
+static void GpSpawnCall(const std::string& route, const std::string& scpOrder, double x, double y, const RValue& player,
+                        CInstance* self, RValue& id, std::string& stampTail, std::string& failed)
+{
+    const RValue machine((double)g_GpCore.MachineObject());
+    try {
+        if (route == "depth") {
+            id = g_Yytk->CallBuiltin("instance_create_depth", { RValue(x), RValue(y), RValue(0.0), machine });
+            return;
+        }
+        if (route == "self") {
+            const AurieStatus st = g_Yytk->CallBuiltinEx(id, "instance_create_depth", self, self,
+                                                         { RValue(x), RValue(y), RValue(0.0), machine });
+            if (!AurieSuccess(st)) failed = "dispatch failed: instance_create_depth with the player as self, st=" + std::to_string((int)st);
+            return;
+        }
+        if (route == "layer") {
+            const RValue layer = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("layer") });
+            if (!IsNumericInstanceRead(layer)) { failed = "no player layer: the player's `layer` read " + Describe(layer); return; }
+            id = g_Yytk->CallBuiltin("instance_create_layer", { RValue(x), RValue(y), layer, machine });
+            return;
+        }
+        // scp: the game's own stamping spawner sCP(x, y, object), by its SDK
+        // short name, asset_get_index then script_execute (ApCallScript, the
+        // game route's path), (x, y, machine) by default and (machine, x, y)
+        // for `oxy`.
+        if (route == "scp") {
+            const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_sCP);
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+            if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+                failed = std::string("name not resolved: asset_get_index refused ") + script;
+                return;
+            }
+            const std::vector<RValue> args = scpOrder == "oxy"
+                ? std::vector<RValue>{ machine, RValue(x), RValue(y) }
+                : std::vector<RValue>{ RValue(x), RValue(y), machine };
+            if (!ApCallScript(script, self, args, id))
+                failed = std::string("dispatch failed: script_execute of ") + script + " threw or returned a failure status";
+            return;
+        }
+        // stamp: the game route's creation, then the pSpwd stamp sCP sets.
+        if (route == "stamp") {
+            const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_instance_create);
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+            if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+                failed = std::string("name not resolved: asset_get_index refused ") + script;
+                return;
+            }
+            if (!ApCallScript(script, self, { RValue(x), RValue(y), machine }, id))
+                failed = std::string("dispatch failed: script_execute of ") + script + " threw or returned a failure status";
+            if (!failed.empty()) return;
+            // The pSpwd variable holds the key the stamp writes to; read it by
+            // the instance-handle rule, then GetVariable/SetVariable(true)/
+            // GetVariable through the extension functions, as sCP does.
+            RValue pSpwd;
+            try { pSpwd = g_Yytk->CallBuiltin("variable_instance_get", { id, RValue("pSpwd") }); }
+            catch (...) { failed = "no pSpwd on the instance: variable_instance_get threw"; return; }
+            if (!IsNumericInstanceRead(pSpwd)) { failed = "no pSpwd on the instance: the `pSpwd` read " + Describe(pSpwd); return; }
+            RValue before, after;
+            if (!GpExtCall(self, "GetVariable", { pSpwd }, before, failed)) return;
+            if (!GpExtCall(self, "SetVariable", { pSpwd, RValue(true) }, after, failed)) return;
+            if (!GpExtCall(self, "GetVariable", { pSpwd }, after, failed)) return;
+            stampTail = " pSpwd key=" + Describe(pSpwd) + " before=" + Describe(before) + " after=" + Describe(after);
+            return;
+        }
+        // game: asset_get_index of the script's short name, then script_execute
+        // through CallBuiltinEx (ApCallScript, DungeonChestChat's route).
+        const char* script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_instance_create);
+        const RValue index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) });
+        if (!IsNumericInstanceRead(index) || index.ToDouble() < 0) {
+            failed = std::string("name not resolved: asset_get_index refused ") + script;
+            return;
+        }
+        if (!ApCallScript(script, self, { RValue(x), RValue(y), machine }, id))
+            failed = std::string("dispatch failed: script_execute of ") + script + " threw or returned a failure status";
+    } catch (...) { failed = "dispatch failed: the " + route + " route threw"; }
+}
+
+// `spawn [route]`: one machine at the local player through one route (depth
+// when none is named; scp also takes `xyo`/`oxy`). A new trace window first,
+// so the new machine's Create_0, its caller walk and its first state reads are
+// described.
+static void GpSpawn(const std::vector<std::string>& tail)
+{
+    const std::string route = tail.empty() ? std::string(kGpSpawnRoutes[0]) : Lower(tail[0]);
+    bool known = false;
+    for (const char* r : kGpSpawnRoutes) known = known || route == r;
+    std::string scpOrder;
+    if (route == "scp" && tail.size() == 2) scpOrder = Lower(tail[1]);
+    if (!known || tail.size() > (route == "scp" ? 2 : 1) || (!scpOrder.empty() && scpOrder != "xyo" && scpOrder != "oxy")) {
+        Out("gambaprobe spawn: usage -> spawn [depth|game|layer|self|scp [xyo|oxy]|stamp] (default depth); nothing spawned");
+        return;
+    }
+    if (GpResolveMachineObject() < 0) {
+        Out("gambaprobe spawn: route=" + route + " refused - name not resolved: " + GpMachineName() + " (asset_get_index)");
+        return;
+    }
+    double x = 0.0, y = 0.0;
+    CInstance* self = nullptr;
+    RValue player;
+    if (!GpPlayerXY(x, y, &self, &player) || !self) {
+        Out("gambaprobe spawn: route=" + route + " refused - no player (load a character)");
+        return;
+    }
+    g_GpCore.ResetTrace();
+    RValue id;
+    std::string failed;
+    std::string stampTail;
+    GpSpawnCall(route, scpOrder, x, y, player, self, id, stampTail, failed);
+    if (!failed.empty()) { Out("gambaprobe spawn: route=" + route + " refused - " + failed + "; nothing spawned"); return; }
+    CInstance* inst = HhResolveInstance(id);
+    if (!inst) {
+        Out("gambaprobe spawn: route=" + route + " refused - result not an instance: answered " + Describe(id)
+            + " (it may have been created and removed already: see the CleanUp_0-caller lines)");
+        return;
+    }
+    const long long n = GpIdOf(id);
+    const int obj = GpObjectIndexOf(id);
+    if (GpSelfObject(inst) < 0 && g_GpMachines.size() < (size_t)kGpMaxMachines) g_GpMachines.push_back({ inst, n });
+    Out("gambaprobe spawn: route=" + route + " id=" + std::to_string(n) + " object=" + std::to_string(obj)
+        + " at " + std::to_string((int)x) + "," + std::to_string((int)y) + stampTail + "; trace budget started over");
+    if (g_GpEventRows[(int)GpNs::Event::Create].route == GpNs::Route::Missing)
+        Out("gambaprobe spawn: WARNING - the event rows are not detoured (`gambaprobe hook` first), so create= and alarm9= cannot count");
+}
+
+// `selftest`: one irandom(100) through CallBuiltin, outside the busy guard,
+// so it reaches the irandom row the way any call does. The row must move by
+// one; if it does not, the builtin rows are blind and nothing from them counts.
+static std::string GpRowState(GpNs::Route route, bool tried, const std::string& status);   // with `status`, below
+static void GpSelfTest()
+{
+    GpEnsureRows();
+    const int row = GpNs::BuiltinRowOf(GpNs::Builtin::Irandom);
+    const GpBuiltinRow& t = g_GpBuiltinRows[(int)GpNs::Builtin::Irandom];
+    const uint64_t before = g_GpCore.RowCounters(row).calls;
+    std::string answer = "?";
+    try { answer = Describe(g_Yytk->CallBuiltin("irandom", { RValue(100.0) })); } catch (...) { answer = "an exception"; }
+    const uint64_t after = g_GpCore.RowCounters(row).calls;
+    Out("gambaprobe selftest: irandom row calls=" + std::to_string(before) + " -> " + std::to_string(after) + " ("
+        + (after == before + 1 ? std::string("moved by one: the builtin rows see a call")
+                               : std::string("did NOT move by one: the builtin rows are blind, INSTRUMENT-BLIND"))
+        + "; irandom(100) answered " + answer + "; row " + GpRowState(t.route, t.tried, t.status) + ")");
+}
+
+// `rng <builtin> <value> [count] [args <text>]` / `rng off` / `rng`. The
+// lever is aimed at one RNG builtin and, with `args`, at one argument text -
+// everything after `args`, as a trace line prints it (`a0=real:100.000000
+// a1=real:5.000000`: GpValueText's kind prefix and std::to_string digits) - so an
+// idle per-frame call or a reel roll the machine makes before the prize roll
+// cannot take the answer.
+static void GpRng(const std::vector<std::string>& tail)
+{
+    const std::string usage = "gambaprobe rng: usage -> rng <irandom|irandom_range|random|random_range|choose> <value> [count 1.."
+        + std::to_string(GpNs::kRngMaxCount) + ", default 1] [args <argument text exactly as a trace line prints it, e.g. a0=real:100.000000 a1=real:5.000000>] | rng off | rng";
+    if (tail.empty()) { Out(g_GpCore.RngLine()); return; }
+    if (Lower(tail[0]) == "off") { g_GpCore.RngOff(); Out("gambaprobe rng: off - " + g_GpCore.RngLine()); return; }
+    GpNs::Builtin target = GpNs::Builtin::Irandom;
+    if (!GpNs::BuiltinByName(Lower(tail[0]), target) || GpNs::kBuiltins[(int)target].kind == GpNs::AnswerKind::NotRng) {
+        Out(usage + "; `" + tail[0] + "` is not an RNG builtin row; nothing changed");
+        return;
+    }
+    double value = 0.0;
+    int64_t count = 1;
+    size_t next = 2;
+    std::string args;
+    try {
+        if (tail.size() < 2) throw 0;
+        size_t used = 0;
+        value = std::stod(tail[1], &used);
+        if (used != tail[1].size()) throw 0;
+        if (tail.size() > 2 && Lower(tail[2]) != "args") {
+            count = std::stoll(tail[2], &used);
+            if (used != tail[2].size()) throw 0;
+            next = 3;
+        }
+        if (tail.size() > next) {
+            if (Lower(tail[next]) != "args" || tail.size() == next + 1) throw 0;
+            for (size_t i = next + 1; i < tail.size(); ++i) args += (args.empty() ? "" : " ") + tail[i];
+        }
+    } catch (...) { Out(usage + "; nothing changed"); return; }
+    GpEnsureRows();
+    if (!g_GpCore.SetRng(target, value, count, args)) { Out(usage + "; nothing changed"); return; }
+    GpResolveMachineObject();
+    GpRefreshMachines();
+    const bool targetHooked = g_GpBuiltinRows[(int)target].route != GpNs::Route::Missing;
+    Out("gambaprobe rng: ON target=" + g_GpCore.RngTargetText() + " value=" + GpNs::NumberText(value) + " count="
+        + std::to_string(count) + " - the next " + std::to_string(count) + " " + g_GpCore.RngTargetText()
+        + " call(s) whose self is a gamba machine answer " + GpNs::NumberText(value) + " (choose: its argument #"
+        + GpNs::NumberText(value) + "); every other machine-self RNG call passes through untouched and counts as passed;"
+        " machines now " + GpMachinesText());
+    // Each of these leaves the lever ON and answering nothing; say so now.
+    if (!targetHooked)
+        Out("gambaprobe rng: WARNING - " + GpBuiltinName((int)target) + " is not hooked, so nothing can be answered: `gambaprobe hook` first");
+    if (g_GpCore.MachineObject() < 0)
+        Out("gambaprobe rng: WARNING - " + GpMachineName() + " did not resolve by name, so no call is a machine's");
+    else if (g_GpMachines.empty())
+        Out("gambaprobe rng: WARNING - no gamba machine exists now; `gambaprobe spawn` one, or `status` stays INERT");
+}
+
+// `drop`: Goburin's Head through the loader route sigdrop and BuildAngelicPool
+// use - json_parse, InitItemFromJson with the global instance as self,
+// LootGroundCreateFromItem(x, y, item) at the local player - and the built
+// item's rarity code (itemInfoStruct field 27).
+static void GpDrop()
+{
+    const AngelicBase* head = nullptr;
+    for (const AngelicBase& a : kAngelicBases) if (std::string_view(a.key) == "charms_goburins_head") head = &a;
+    if (!head) { Out("gambaprobe drop: refused - Goburin's Head is not a kAngelicBases row"); return; }
+    double x = 0.0, y = 0.0;
+    CInstance* player = nullptr;
+    if (!GpPlayerXY(x, y, &player)) { Out("gambaprobe drop: refused - no local player (load a character)"); return; }
+    const char* stage = "start";
+    try {
+        CInstance* g = nullptr;
+        g_Yytk->GetGlobalInstance(&g);
+        if (!g) { Out("gambaprobe drop: refused - no global instance"); return; }
+        const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
+        const std::string json = "{\"w\":1,\"a\":" + std::to_string(seed) + ",\"j\":" + std::to_string(head->sub) + ",\"b\":"
+            + std::to_string(head->b) + ",\"c\":1}";
+        const std::string key = "0-0-1-" + std::to_string(head->type);
+        stage = "json_parse";
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (!g_Yytk->CallBuiltin("is_struct", { parsed }).ToBoolean()) { Out("gambaprobe drop: json_parse gave " + Describe(parsed)); return; }
+        stage = "InitItemFromJson";
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson.data(), g, g,
+                                                        { parsed, RValue(key) });
+        if (!AurieSuccess(st) || !g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) {
+            Out("gambaprobe drop: InitItemFromJson (key " + key + ") st=" + std::to_string((int)st) + " gave " + Describe(item));
+            return;
+        }
+        stage = "itemInfoStruct";
+        double rarity = -1.0;
+        std::string name = "?";
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemInfoStruct") });
+        if (g_Yytk->CallBuiltin("is_struct", { info }).ToBoolean()) {
+            TryStructNumber(info, "27", rarity);
+            name = StructKey(info, "28");
+        }
+        stage = "the ground drop";
+        CInstance* self = player ? player : g;
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem.data(), self, self,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out("gambaprobe drop: built rarity=" + GpNs::NumberText(rarity) + " but LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        Out("gambaprobe drop: built rarity=" + GpNs::NumberText(rarity) + " dropped at " + std::to_string((int)x) + "," + std::to_string((int)y)
+            + " (" + head->name + ", definition " + json + ", key " + key + ", name " + name + ", returned " + Describe(res) + ")");
+    } catch (...) { Out(std::string("gambaprobe drop: EXCEPTION at ") + stage); }
+}
+
+static std::string GpRowState(GpNs::Route route, bool tried, const std::string& status)
+{
+    if (!tried) return "not hooked: `gambaprobe hook` first";
+    return std::string(GpNs::RouteName(route)) + (status.empty() ? std::string() : " - " + status);
+}
+
+static void GpShowRow(int row, const std::string& what, GpNs::Route route, bool tried, const std::string& status, uint64_t& lastShown,
+                      const std::string& tail = std::string())
+{
+    const uint64_t calls = g_GpCore.RowCounters(row).calls;
+    Out("  " + what + " [" + GpRowState(route, tried, status) + "] " + g_GpCore.RowText(row) + " new=" + std::to_string(calls - lastShown)
+        + tail);
+    lastShown = calls;
+}
+
+// A script row's by-name tail on `status`: the calls its by-name routines
+// took (byname-calls=, detoured or shared), then `idx=<short>/<gml_Script_>
+// byname=<word>`.
+static std::string GpByNameStatusTail(int script)
+{
+    const GpScriptRow& t = g_GpScriptRows[script];
+    uint64_t calls = 0;
+    for (int s = 0; s < g_GpByNameSlotCount; ++s) {
+        const GpByNameSlot& b = g_GpByNameSlots[s];
+        if (std::find(b.scripts.begin(), b.scripts.end(), script) != b.scripts.end()) calls += b.calls;
+    }
+    const bool reached = t.byname == GpNs::ByName::Detoured || t.byname == GpNs::ByName::Shared;
+    return (reached ? " byname-calls=" + std::to_string(calls) : std::string()) + " "
+        + GpNs::ByNameText(t.byname, t.shortName, t.fullName);
+}
+
+// `status`: the probe's line (on/off, the machine's events, every counter
+// summed), the lever's line, then, once `hook` has run, every row's counters
+// and route (a row whose install failed still prints), and which rows have
+// spent their trace budget.
+static void GpStatus()
+{
+    Out(g_GpCore.StatusLine());
+    Out("gambaprobe: machines=" + GpMachinesText() + " hooked=" + (g_GpHooked ? "yes" : "no"));
+    Out(g_GpWatch.StatusLine(GpFrame()));
+    Out(g_GpCore.RngLine());
+    if (!g_GpHooked) return;
+    if (g_GpCore.SpentRows() > 0)
+        Out("gambaprobe: BUDGET SPENT on " + std::to_string(g_GpCore.SpentRows()) + " row(s) (marked below): their calls since"
+            " are counted, not described - send `gambaprobe trace` before the next spin");
+    for (int i = 0; i < GpNs::kEventCount; ++i) {
+        GpEventRow& t = g_GpEventRows[i];
+        GpShowRow(GpNs::EventRowOf(static_cast<GpNs::Event>(i)), "event " + std::string(GpNs::kEvents[i].event), t.route, t.tried, t.status, t.lastShown);
+    }
+    for (int i = 0; i < (int)kGpScriptCount; ++i) {
+        GpScriptRow& t = g_GpScriptRows[i];
+        GpShowRow(GpNs::ScriptRowOf(i), std::string("script ") + t.label, t.route, t.tried, t.status, t.lastShown,
+                  GpByNameStatusTail(i));
+    }
+    // A by-name routine several rows reach is its own row.
+    for (int s = 0; s < g_GpByNameSlotCount; ++s) {
+        GpByNameSlot& b = g_GpByNameSlots[s];
+        if (b.scripts.size() < 2) continue;
+        GpShowRow(GpByNameRow(s), GpByNameLabel(s), b.attached ? GpNs::Route::Detoured : GpNs::Route::Missing, true, b.status,
+                  b.lastShown, " byname-calls=" + std::to_string(b.calls));
+    }
+    for (int i = 0; i < GpNs::kBuiltinCount; ++i) {
+        GpBuiltinRow& t = g_GpBuiltinRows[i];
+        GpShowRow(GpNs::BuiltinRowOf(static_cast<GpNs::Builtin>(i)), "builtin " + GpBuiltinName(i), t.route, t.tried, t.status, t.lastShown);
+    }
+}
+
+static void GpOff()
+{
+    g_GpCore.Off();
+    g_GpMachines.clear();
+    g_GpMachinesRead = false;
+    const std::string closed = g_GpWatch.Off(GpFrame());
+    if (!closed.empty()) Out(closed);
+    Out("gambaprobe: off - nothing is logged or answered; the hooks stay in (they cannot come out while the game runs)"
+        " and only count calls");
+}
+
+// `window [frames]`: the explosion watch's window, opened by hand - the
+// positive control that a window logs other selves' builds and reads what
+// CreateItemNew built (Live procedure 4's window-control). Default
+// kWindowSpanDefault frames, at most kWindowSpanMax. Refused while the probe
+// is not hooked and active: no call would reach the window.
+static void GpWindow(const std::vector<std::string>& tail)
+{
+    if (!g_GpHooked || !g_GpCore.Active()) {
+        Out("gambaprobe window: refused - the probe is not hooked and armed (`gambaprobe hook` first)");
+        return;
+    }
+    long long frames = 0;
+    if (!tail.empty()) {
+        try { frames = std::stoll(tail[0]); }
+        catch (...) {
+            Out("gambaprobe window: refused - `" + tail[0] + "` is not a frame count (gambaprobe window [frames])");
+            return;
+        }
+    }
+    for (const std::string& line : g_GpWatch.Open(GpNs::WindowReason::Command, -1, GpFrame(), GpNs::WindowSpan(frames))) Out(line);
+}
+
+// The one per-frame piece, from FrameCallback: refreshes the live machines
+// the detours compare their self against, and feeds the explosion watch
+// their sprites. Returns at once while nothing is armed or on.
+static void GpFrameTick()
+{
+    if (!g_GpCore.Active()) return;
+    GpRefreshMachines();
+    GpWatchTick();
+}
+
+static void GpUsage()
+{
+    Out("gambaprobe: research instrument for docs/gamba-machine-research.md (research build only); " + g_GpCore.StatusLine());
+    Out("  hook                       detour the machine's events (compiled-code table), its scripts (HookOneScript) and the"
+        " RNG/instance builtins (HookBuiltin), share or detour under the ones another install holds, and arm; each row ends"
+        " detoured, detoured-under, shared, table-only or missing, and each script row's line with idx=<short>/<gml_Script_>"
+        " byname=same|detoured|shared|missing (the first hook also detours a by-name routine a script's name reaches)."
+        " Again: re-arm. Refused while citrace, jumpprobe or jumpscenery holds a builtin");
+    Out("  selftest                   one irandom(100) through CallBuiltin: the irandom row's calls= must move by one");
+    Out("  fnwalk                     walk the runtime's functions array by validation and detour a script row's same-named"
+        " entry besides its own function (status then prints byname=detoured|shared where one was found)");
+    Out("  trace                      a new trace window: every row's budget and caller walks start over (send it right before"
+        " each measured spin)");
+    Out("  spawn [depth|game|layer|self|scp [xyo|oxy]|stamp]  one " + GpMachineName() + " at the local player: depth = instance_create_depth"
+        " depth 0 (the control, the default), game = the game's instance_create script with the player as self, layer ="
+        " instance_create_layer on the player's layer, self = instance_create_depth with the player as self, scp = the game's"
+        " sCP spawner (oxy flips its argument order), stamp = the game route plus the pSpwd stamp; starts a new"
+        " trace window. CleanUp_0, Alarm_9 and the window's first Create_0 print a <event>-caller line and its frames");
+    Out("  rng <builtin> <value> [count] [args <text>]  answer the next count (default 1, at most " + std::to_string(GpNs::kRngMaxCount)
+        + ") calls of that RNG builtin whose self is a machine - with args, only those whose argument text (exactly as a trace"
+        " line prints it, e.g. args a0=real:100.000000 a1=real:5.000000) matches - with value (choose: its argument #value); other machine-self RNG calls pass and are counted;"
+        " rng off | rng");
+    Out("  drop                       Goburin's Head through the loader route at the player, with its rarity code");
+    Out("  window [frames]            open the explosion watch's window by hand (default " + std::to_string(GpNs::kWindowSpanDefault)
+        + " frames, at most " + std::to_string(GpNs::kWindowSpanMax) + "): it replays the last "
+        + std::to_string(GpNs::kWindowLookBackFrames) + " frames of build-row and instance calls, then logs every build row and"
+        " instance_create_layer/_depth/instance_destroy call for any self, and what each CreateItemNew built (build lines up to "
+        + std::to_string(GpNs::kWindowBuildLineCap) + ", instance lines up to " + std::to_string(GpNs::kWindowInstanceLineCap) + ", "
+        + std::to_string(GpNs::kWindowInstanceLinesPerObject) + " per object, each counted when dropped; spans are presented"
+        " frames); window again while one is open extends it and tops both caps up; a machine's sprite change or"
+        " disappearance opens one by itself");
+    Out("  status                     on/off, events, the lever, every row's counters (first " + std::to_string(GpNs::kTraceLinesPerRow)
+        + " new lines per row, " + std::to_string(GpNs::kTraceLinesPerKey) + " per key, are logged each window; BUDGET SPENT"
+        " marks a row that only counts; repeats= counts lines identical to their key's last, unlogged-repeats names"
+        " the keys holding them)");
+    Out("  off | 0                    disarm and lever off; the hooks stay and only count");
+}
+
+static void GpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { GpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "hook") { GpInstall(); return; }
+    if (sub == "trace") { GpTrace(); return; }
+    if (sub == "selftest") { GpSelfTest(); return; }
+    if (sub == "fnwalk") { GpFnWalk(GetModuleHandleA(nullptr)); return; }
+    if (sub == "spawn") { GpSpawn(tail); return; }
+    if (sub == "rng") { GpRng(tail); return; }
+    if (sub == "drop") { GpDrop(); return; }
+    if (sub == "window") { GpWindow(tail); return; }
+    if (sub == "status" || sub == "stat") { GpStatus(); return; }
+    if (sub == "off" || sub == "0") { GpOff(); return; }
+    GpUsage();
+}
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand. Unlike the other probes' handlers it sits inside
+// the guard with its RunCommand line: its name says what it is for.
+static bool HandleGambaProbeCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "gambaprobe") { GpCommand(rest); return true; }
+    return false;
+}
+#endif // FORGEPACT_RELEASE (gambaprobe)
+
+#ifndef FORGEPACT_RELEASE
 // `goldtrace on|off|stat`, the #77 instrument whose writer, GoldTraceAppend,
 // sits above LogDrop.
 static void GoldTraceCommand(const std::string& rest)
@@ -51044,6 +53362,730 @@ static void LootAnnProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (lootannprobe)
 
+// ============================================================================
+// gambapity (ForgePact #134 phase 6, player build): the Goburin's Head pity
+// ============================================================================
+// The Mods -> Quality of Life switch `gambapity` guarantees Goburin's Head
+// (the unique charm at repository type 10 / sub 0 / base 98, the
+// `charms_goburins_head` row of kAngelicBases) from the gamba machine
+// (Slot_Machine_01_obj): it counts the machine explosions that did not drop a
+// head, and the explosion that brings the count to the configured number
+// drops exactly one head and starts the count over. The count, the explosion
+// watch, the deadline's decision and the counter file's text are
+// plugin/include/ForgePact/GambaPity.hpp, game-independent by contract; this
+// adapter feeds it the measured events and carries out what it decides:
+//
+//   - the explosion: Live 4 measured it as the machine's sprite_index changing
+//     from Slot_Machine_01_spr to Slot_Machine_01_Destroyed_spr, with the
+//     instance kept and no item built. Once a frame, from FrameCallback, while
+//     the mod is on, every live machine is read and its sprite compared by
+//     name, so a sprite reference's value kind never matters. Each explosion
+//     adds one to the count when it is seen, and the count is saved then;
+//   - the natural-head signals: a Goburin's Head lying near the machine that
+//     was not there at its first sight (the ground check), a CreateItemNew
+//     that returned the charm inside the explosion's window (read after the
+//     original returns, any self), and a machine-self CreateDefaultParams
+//     (0, 98), which also resets the counter at once.
+//
+// At the explosion's deadline the room, the mod's state and the ground are
+// read again at the point of use (a ground scan that does not read refuses
+// the force with `ground unread` and keeps the counter, since a second head is
+// worse than a late one), and a forced head goes through the loader
+// route angelicdrop uses (json_parse, InitItemFromJson, then
+// LootGroundCreateFromItem with the local player as self), read back with
+// instance_exists and tried up to three times, inside an own-drop scope so
+// its own CreateItemNew is counted as own-head-builds, never as a natural
+// head. Spins and payouts are no input: phase 5's PickUpGoldCheck spin hook is
+// retired, and no payout path forces, rewrites or resets.
+//
+// Every line it prints is the core's fixed text (GambaPity.hpp's *Line
+// functions, pinned byte for byte by the behaviour test), read by the live
+// procedure: `gambapity: machine id=<id> seen sprite=<name> heads-nearby=<n>`
+// once per machine (the poll's positive control),
+// `gambapity: explosion id=<id> count=<n> threshold=<t> frame=<f>` at the
+// sprite change, and at the deadline one of the forced (then `ground check
+// after the drop: heads=<n>`), natural, below, refused or abandoned lines.
+//
+// The machine self is read by the instance-handle rule - variable_instance_get
+// through N1ObjectIndex, the masked predicate that accepts the flagged
+// object-index kind this runner returns - never a kind check. CreateDefaultParams and CreateItemNew are already held by
+// the Angelic roll's hooks (g_Orig_CreateDefaultParams, g_Orig_CreateItemNew),
+// so gambapity splices its detours into those saved trampolines rather than
+// hooking the scripts a second time, and hooks nothing of its own. Both
+// splices install lazily on the first `gambapity <count>`, so an all-off game
+// pays nothing, and each runs the original unchanged.
+#include <ForgePact/GambaPity.hpp>
+
+// The charm's repository identifier (type, sub, base): the
+// `charms_goburins_head` row of kAngelicBases, named by its keys, not a game
+// index. The row is the single source of truth: GambaPityCharmRow() resolves
+// it by key and GambaPityInstallHooks refuses the mod if these copies do not
+// match, so re-validating the row re-validates the mod.
+static constexpr int kGambaPityCharmType = 10;
+static constexpr int kGambaPityCharmSub = 0;
+static constexpr int kGambaPityCharmBase = 98;
+// The explosion count the panel's switch accepts: the same range as
+// src/forgepact.py's GAMBA_PITY_RANGE and Mods.svelte's min/max, pinned
+// against each other in tests/test_gamba_pity_contract.py.
+static constexpr int kGambaPityMin = 1;
+static constexpr int kGambaPityMax = 20;
+
+// The kAngelicBases row the charm is (by key, not index) - the same lookup
+// gambaprobe's `drop` uses.
+static const AngelicBase* GambaPityCharmRow()
+{
+    for (const AngelicBase& a : kAngelicBases)
+        if (std::string_view(a.key) == "charms_goburins_head") return &a;
+    return nullptr;
+}
+// The constants above match the row they name: the row is the single source of
+// truth, so this is checked once when the mod arms rather than trusting the
+// copies.
+static bool GambaPityCharmConstantsMatch()
+{
+    const AngelicBase* head = GambaPityCharmRow();
+    return head && head->type == kGambaPityCharmType && head->sub == kGambaPityCharmSub && head->b == kGambaPityCharmBase;
+}
+
+static ForgePact::GambaPity::Pity g_GambaPity;
+static int g_GambaPityMachineObject = -1;      // Slot_Machine_01_obj's index, by name; -1 unresolved
+static PFUNC_YYGMLScript g_GambaPityCdpOrig = nullptr;    // CreateDefaultParams' trampoline (spliced)
+static PFUNC_YYGMLScript g_GambaPityItemOrig = nullptr;   // CreateItemNew's trampoline (spliced)
+static bool g_GambaPityHooked = false;          // both splices are in
+static bool g_GambaPityLoaded = false;          // the counter file was read
+static std::string g_GambaPityError;            // the last load/save refusal, empty when none
+static bool g_GambaPityVersionError = false;    // g_GambaPityError is the unknown-version text
+static bool g_GambaPitySaveError = false;       // g_GambaPityError is a save's refusal
+
+// The scripts gambapity holds, as "A, B" - empty when it holds none. The
+// research build's gambaprobe refuses while this is non-empty.
+#ifndef FORGEPACT_RELEASE
+static std::string GambaPityHeldScripts()
+{
+    std::string held;
+    if (g_GambaPityCdpOrig) held += "CreateDefaultParams";
+    if (g_GambaPityItemOrig) held += (held.empty() ? "" : ", ") + std::string("CreateItemNew");
+    return held;
+}
+#endif
+
+// The plugin's own module handle, for "is this our own code?" checks (the
+// `AurieModule*` g_ArSelfModule is opaque, so the handle is read by address).
+static HMODULE GambaPitySelfModule()
+{
+    HMODULE self = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&GambaPitySelfModule), &self);
+    return self;
+}
+
+// ---- the machine self, by the instance-handle rule -------------------------
+static int GambaPityResolveMachineObject()
+{
+    int obj = -1;
+    try {
+        obj = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+            HeroSiege::Objects::GameObject::Slot_Machine_01_obj))) }).ToDouble();
+    } catch (...) { obj = -1; }
+    return obj >= 0 ? obj : -1;
+}
+
+// The machine's object_index, read through variable_instance_get and
+// N1ObjectIndex - the masked predicate that accepts the flagged object-index
+// kind this runner returns - never a kind check. (CallerObjectIndex's
+// unmasked comparison rejects that kind, so it would answer -1 for every
+// machine and the mod would silently take no machine build for a natural head.)
+// Elsewhere gambapity does go through one unmasked comparison:
+// IsNumericInstanceRead, for the machine's sprite_index and an instance's id.
+// A flagged kind there reads as unread - the machine is skipped and counted
+// in `unread=`, a ground item makes the scan unread and refuses the force -
+// so it fails visibly, never as a silent "nothing here".
+static int GambaPityObjectIndex(CInstance* S)
+{
+    if (!S) return -1;
+    try {
+        RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") });
+        int idx = -1;
+        return N1ObjectIndex(oi, idx) ? idx : -1;
+    } catch (...) { return -1; }
+}
+
+// Whether S is a gamba machine, by its object_index - never a kind check.
+static bool GambaPityIsMachine(CInstance* S)
+{
+    return g_GambaPityMachineObject >= 0 && GambaPityObjectIndex(S) == g_GambaPityMachineObject;
+}
+
+// A natural charm build: CreateDefaultParams' first two arguments are the
+// charm's sub/base (0, 98). The third is not checked - it is true (unique) or
+// undefined (normal) by tier, so it is no signal.
+static bool GambaPityIsCharmBuild(int argc, RValue** A)
+{
+    double s = 0.0, b = 0.0;
+    return argc > 1 && A && A[0] && A[1]
+        && SigNumber(*A[0], s) && SigNumber(*A[1], b)
+        && s == (double)kGambaPityCharmSub && b == (double)kGambaPityCharmBase;
+}
+
+// ---- the persistent counter ------------------------------------------------
+// %LOCALAPPDATA%\Hero_Siege\forgepact_gamba_pity.json, the
+// forgepact_gem_tables.json pattern: next to it, written atomically, game
+// thread only.
+static std::filesystem::path GambaPityPath()
+{
+    const std::filesystem::path truth = ForgePact::ItemTruth::Root();   // ...\Hero_Siege\itemtruth
+    return truth.empty() ? std::filesystem::path() : truth.parent_path() / L"forgepact_gamba_pity.json";
+}
+
+// The core's text, version 2: `{"version":2,"count":<n>}`. Saved whenever the
+// count changes - an explosion's addition, and each reset. A save that lands
+// replaces a file of another version, so its status error goes with it, and so
+// does an earlier save's refusal. A refused rename removes its .tmp rather than
+// leaving it beside the file (Live 1, 2026-10-06).
+static void GambaPitySave()
+{
+    try {
+        const std::filesystem::path path = GambaPityPath();
+        if (path.empty()) return;
+        std::filesystem::path tmp = path;
+        tmp += L".tmp";
+        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << ForgePact::GambaPity::CounterFileText(g_GambaPity.Count()); }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            std::error_code removed;
+            std::filesystem::remove(tmp, removed);
+            g_GambaPityError = "could not save " + path.string();
+            g_GambaPityVersionError = false;
+            g_GambaPitySaveError = true;
+            return;
+        }
+        if (g_GambaPityVersionError || g_GambaPitySaveError) {
+            g_GambaPityError.clear();
+            g_GambaPityVersionError = false;
+            g_GambaPitySaveError = false;
+        }
+    } catch (...) {
+        g_GambaPityError = "could not save the gambapity counter";
+        g_GambaPityVersionError = false;
+        g_GambaPitySaveError = true;
+    }
+}
+
+// Read through the core's ParseCounterFile. An unversioned file is phase 5's
+// spin count, never read as explosions: the count starts at 0, the migration
+// line is printed once, and the file is rewritten as version 2 at once, so the
+// next launch is silent. Another version starts at 0 with the status line's
+// error, and the file is left until the count next changes.
+static void GambaPityLoad()
+{
+    if (g_GambaPityLoaded) return;
+    g_GambaPityLoaded = true;
+    namespace GP = ForgePact::GambaPity;
+    try {
+        const std::filesystem::path path = GambaPityPath();
+        std::error_code ec;
+        if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 4096) {
+            // The stream closes before the migration's save: Windows refuses to
+            // rename the .tmp over a file this process still holds open.
+            std::string text;
+            {
+                std::ifstream in(path, std::ios::binary);
+                text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+            const GP::CounterFile file = GP::ParseCounterFile(text);
+            g_GambaPity.SetCount(file.count);
+            if (file.legacy) {
+                Out(GP::Pity::MigrationLine());
+                GambaPitySave();
+            } else if (file.unknown) {
+                g_GambaPityError = GP::Pity::VersionErrorText(file.version);
+                g_GambaPityVersionError = true;
+            }
+        }
+    } catch (...) { g_GambaPityError = "could not read the gambapity counter"; }
+}
+
+// ---- the splices -----------------------------------------------------------
+// The frame the decision core counts in: FrameCallback's presented frames.
+static int64_t GambaPityFrame() { return (int64_t)g_RuntimeFrame; }
+
+// CreateDefaultParams: the game's own build, always, unchanged. Afterwards a
+// machine-self build of the charm's sub/base (0, 98) is a natural head: it
+// resets the counter at once and is a signal for any explosion whose window
+// holds it. Nothing here rewrites, forces or logs a payout.
+static RValue& GambaPityCdpDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_GambaPityCdpOrig ? g_GambaPityCdpOrig(S, O, R, argc, A) : R;
+    if (g_GambaPity.Enabled() && GambaPityIsCharmBuild(argc, A) && GambaPityIsMachine(S)) {
+        g_GambaPity.OnMachineCharmBuild(GambaPityFrame());
+        GambaPitySave();
+        Out(ForgePact::GambaPity::Pity::NaturalBuildLine());
+    }
+    return r;
+}
+
+// ---- reading an item and the ground ----------------------------------------
+// A field of a struct-like value - a struct through variable_struct_*, an
+// instance handle (either kind, IsInstanceHandle) through variable_instance_*.
+// False when the owner holds no such field or is neither.
+static bool GambaPityField(const RValue& owner, const std::string& name, RValue& value)
+{
+    try {
+        if (g_Yytk->CallBuiltin("is_struct", { owner }).ToBoolean()) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            value = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
+            return true;
+        }
+        if (HeroSiege::Player::IsInstanceHandle(owner)) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            value = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static bool GambaPityNumberField(const RValue& owner, const std::string& name, double& value)
+{
+    RValue v;
+    return GambaPityField(owner, name, v) && SigNumber(v, value);
+}
+
+// Is this item instance Goburin's Head? Its own itemType (10) and its
+// definition's j/b (0/98) - the charm's repository identifier, read from the
+// fields the SDK documents (RUNTIME_DATA_MODELS §10.7, §20.1). A level- or
+// name-shaped field is never evidence. Three answers, because the ground
+// check must not take "could not read it" for "not the charm": a field that
+// does not read is Unread, and only a read that differs is NotCharm.
+enum class GambaPityCharmRead { Charm, NotCharm, Unread };
+static GambaPityCharmRead GambaPityReadCharm(const RValue& item)
+{
+    double type = -1.0, j = -1.0, b = -1.0;
+    RValue def;
+    if (!GambaPityNumberField(item, std::string(HeroSiege::Player::kItemInstanceTypeField), type)) return GambaPityCharmRead::Unread;
+    if (type != (double)kGambaPityCharmType) return GambaPityCharmRead::NotCharm;
+    if (!GambaPityField(item, std::string(HeroSiege::Player::kItemInstanceDefinitionField), def)
+        || !GambaPityNumberField(def, "j", j) || !GambaPityNumberField(def, "b", b)) return GambaPityCharmRead::Unread;
+    return j == (double)kGambaPityCharmSub && b == (double)kGambaPityCharmBase ? GambaPityCharmRead::Charm
+                                                                               : GambaPityCharmRead::NotCharm;
+}
+static bool GambaPityIsCharmItem(const RValue& item)
+{
+    return GambaPityReadCharm(item) == GambaPityCharmRead::Charm;
+}
+
+// CreateItemNew: the game's own build, always, unchanged. Read after the
+// original returns: a returned charm, any self, is a head build - our own
+// inside the forced drop's own-drop scope (own-head-builds, the detector's
+// control), else a natural-head signal for an explosion whose window holds it.
+static RValue& GambaPityItemDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& built = g_GambaPityItemOrig ? g_GambaPityItemOrig(S, O, R, argc, A) : R;
+    if (g_GambaPity.Enabled() && GambaPityIsCharmItem(built)) g_GambaPity.OnHeadBuild(GambaPityFrame());
+    return built;
+}
+
+// The instance id behind a handle or a bare id, or -1.
+static int64_t GambaPityIdOf(const RValue& value)
+{
+    try {
+        if (HeroSiege::Player::IsInstanceHandle(value)) {
+            const RValue id = g_Yytk->CallBuiltin("variable_instance_get", { value, RValue("id") });
+            return IsNumericInstanceRead(id) ? (int64_t)id.ToDouble() : -1;
+        }
+        double number = -1.0;
+        return SigNumber(value, number) && number >= 0.0 ? (int64_t)number : -1;
+    } catch (...) { return -1; }
+}
+
+static bool GambaPityXY(const RValue& inst, double& x, double& y)
+{
+    try {
+        const RValue rx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") });
+        const RValue ry = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") });
+        return SigNumber(rx, x) && SigNumber(ry, y);
+    } catch (...) { return false; }
+}
+
+// Loot_Ground_obj's object index, by its SDK name; -1 unresolved.
+static int g_GambaPityLootObject = -1;
+static int GambaPityLootObject()
+{
+    if (g_GambaPityLootObject < 0) {
+        try {
+            g_GambaPityLootObject = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(
+                HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        } catch (...) { g_GambaPityLootObject = -1; }
+        if (g_GambaPityLootObject < 0) g_GambaPityLootObject = -1;
+    }
+    return g_GambaPityLootObject;
+}
+
+// The ground check: the instance ids of every Loot_Ground_obj within
+// kGroundRadius of (x, y) whose itemInstance is Goburin's Head. It does not
+// depend on how the head was built (measured on 42 ground relics, §10.7).
+// `read` is true only when the scan read to the end: an empty list then means
+// "scanned, none", never "could not look". Anything the scan cannot read - the
+// object unresolved, the scan throwing, an instance that is not a handle or
+// whose position does not read, or an item near the machine whose identity or
+// id does not read - makes it unread, with `stage` saying which.
+struct GambaPityGroundScan {
+    bool read = false;
+    std::string stage;
+    std::vector<int64_t> heads;
+};
+static GambaPityGroundScan GambaPityGroundHeads(double x, double y)
+{
+    GambaPityGroundScan scan;
+    const int loot = GambaPityLootObject();
+    if (loot < 0) { scan.stage = "Loot_Ground_obj did not resolve"; return scan; }
+    const double radius = ForgePact::GambaPity::kGroundRadius;
+    try {
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)loot) }).ToDouble();
+        for (int i = 0; i < n; ++i) {
+            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)loot), RValue((double)i) });
+            double gx = 0.0, gy = 0.0;
+            if (!HeroSiege::Player::IsInstanceHandle(inst) || !GambaPityXY(inst, gx, gy)) {
+                scan.stage = "a ground item did not read";
+                return scan;
+            }
+            if ((gx - x) * (gx - x) + (gy - y) * (gy - y) > radius * radius) continue;
+            RValue item;
+            const GambaPityCharmRead charm = GambaPityField(inst, std::string(HeroSiege::Player::kGroundItemInstanceField), item)
+                ? GambaPityReadCharm(item) : GambaPityCharmRead::Unread;
+            if (charm == GambaPityCharmRead::NotCharm) continue;
+            const int64_t id = charm == GambaPityCharmRead::Charm ? GambaPityIdOf(inst) : -1;
+            if (id < 0) {
+                scan.stage = "a ground item near the machine did not read";
+                return scan;
+            }
+            scan.heads.push_back(id);
+        }
+    } catch (...) {
+        scan.stage = "the scan threw";
+        return scan;
+    }
+    scan.read = true;
+    return scan;
+}
+
+// ---- the forced drop -------------------------------------------------------
+// Our own forced drop, for its whole length: a head build inside it is ours
+// (own-head-builds), never a natural-head signal.
+struct GambaPityOwnDropScope {
+    GambaPityOwnDropScope() { g_GambaPity.BeginOwnDrop(); }
+    ~GambaPityOwnDropScope() { g_GambaPity.EndOwnDrop(); }
+};
+
+// LootGroundCreateFromItem returned no live instance for 86-191 of 1,000 calls
+// in another feature, and nothing was placed for those (§18.5), so a drop is
+// confirmed by its own return and built and placed again while it is not.
+static constexpr int kGambaPityDropAttempts = 3;
+
+// Drop one Goburin's Head at (x, y) through the loader route angelicdrop uses
+// (SpawnAngelicItem): json_parse of the charm's definition, InitItemFromJson
+// with the global instance as self, then LootGroundCreateFromItem with the
+// local player as self (#124 Live 1: 49 of 49 placements). Returns "" with the
+// built item's rarity, the attempt and the placed instance's id, or the stage
+// that refused. A call that returned no live instance placed nothing, so the
+// retry cannot make two heads.
+static std::string GambaPityDropHead(double x, double y, int& rarity, int& attempt, int64_t& groundId)
+{
+    const AngelicBase* row = GambaPityCharmRow();
+    if (!row) return "no charm row";
+    RValue playerValue;
+    if (!HhResolveLocalPlayer(playerValue)) return "no local player";
+    CInstance* player = HhResolveInstance(playerValue);
+    if (!player) return "no local player";
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) return "no global instance";
+    // Each attempt's item key is "0-0-<ms>-<type>", <ms> taken once and moved
+    // on by one per attempt, so three attempts in one millisecond never share
+    // a key.
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    RValue placed;   // the last attempt's return, named in the refusal
+    for (attempt = 1; attempt <= kGambaPityDropAttempts; ++attempt) {
+        try {
+            const long long seed = 100000000LL + (long long)(std::uniform_real_distribution<double>(0.0, 899999999.0)(TyRng()));
+            const std::string key = "0-0-" + std::to_string(ms + attempt - 1) + "-" + std::to_string(row->type);
+            const std::string json = "{\"w\":1,\"a\":" + std::to_string(seed) + ",\"j\":" + std::to_string(row->sub)
+                + ",\"b\":" + std::to_string(row->b) + ",\"c\":1}";
+            RValue parsed;
+            g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+            if (!g_Yytk->CallBuiltin("is_struct", { parsed }).ToBoolean()) return "json_parse failed";
+            RValue item;
+            const AurieStatus built = g_Yytk->CallGameScriptEx(item, "gml_Script_InitItemFromJson", g, g, { parsed, RValue(key) });
+            if (!AurieSuccess(built) || !g_Yytk->CallBuiltin("is_struct", { item }).ToBoolean()) return "InitItemFromJson failed";
+            double rar = -1.0;
+            RValue info;
+            if (GambaPityField(item, "itemInfoStruct", info) && GambaPityNumberField(info, "27", rar)) rarity = (int)rar;
+            placed = RValue();
+            const AurieStatus st = g_Yytk->CallGameScriptEx(placed, "gml_Script_LootGroundCreateFromItem", player, player,
+                                                            { RValue(x), RValue(y), item });
+            if (!AurieSuccess(st)) return "LootGroundCreateFromItem failed";
+            // The read-back: the returned instance (a handle or a bare id)
+            // exists. Anything else is never handed to instance_exists.
+            double number = -1.0;
+            const bool handle = HeroSiege::Player::IsInstanceHandle(placed);
+            if ((handle || (SigNumber(placed, number) && number >= 0.0))
+                && g_Yytk->CallBuiltin("instance_exists", { placed }).ToBoolean()) {
+                groundId = GambaPityIdOf(placed);
+                return "";
+            }
+        } catch (...) {
+            // Whether a head was placed is unknown, so never try again.
+            return "the drop threw";
+        }
+    }
+    attempt = kGambaPityDropAttempts;
+    std::string returned = "?";
+    try { returned = Describe(placed); } catch (...) {}
+    return "LootGroundCreateFromItem returned no live instance (returned " + returned + ")";
+}
+
+// ---- the machine watch and the deadline ------------------------------------
+// The machine's destroyed sprite, by name (Live 4, G18; the Python SDK's
+// sprite table lists it). Sprites are compared by name, never by value kind.
+static constexpr const char* kGambaPityDestroyedSprite = "Slot_Machine_01_Destroyed_spr";
+// More machines than a room holds; a cap, not a measurement.
+static constexpr int kGambaPityMaxMachines = 16;
+
+// The machine's sprite_index, named by sprite_get_name behind
+// IsNumericInstanceRead and sprite_exists; "?" when it is not a sprite.
+static std::string GambaPitySpriteName(const RValue& handle)
+{
+    try {
+        const RValue spr = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("sprite_index") });
+        if (!IsNumericInstanceRead(spr) || !g_Yytk->CallBuiltin("sprite_exists", { spr }).ToBoolean()) return "?";
+        const std::string name = g_Yytk->CallBuiltin("sprite_get_name", { spr }).ToString();
+        return name.empty() ? std::string("?") : name;
+    } catch (...) { return "?"; }
+}
+
+// Every live Slot_Machine_01_obj, once: first sight takes the ground baseline
+// and prints the machine line (the poll's positive control), and a baseline
+// that did not read is retried while the machine is live, every
+// kBaselineRetryFrames, until one reads (the `baseline read` line); a live-to-
+// destroyed change prints the explosion line. instance_find on the machine's
+// own object already names the machine, so nothing re-identifies it; a machine
+// whose id, sprite or position does not read (or past the cap) is skipped for
+// the frame and counted as `unread=`, never dropped silently.
+static void GambaPityWatchMachines(int64_t frame)
+{
+    namespace GP = ForgePact::GambaPity;
+    int n = 0;
+    try { n = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)g_GambaPityMachineObject) }).ToDouble(); }
+    catch (...) { g_GambaPity.NoteMachineUnread(); return; }
+    for (int i = kGambaPityMaxMachines; i < n; ++i) g_GambaPity.NoteMachineUnread();
+    for (int i = 0; i < n && i < kGambaPityMaxMachines; ++i) {
+        RValue handle;
+        try { handle = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_GambaPityMachineObject), RValue((double)i) }); }
+        catch (...) { g_GambaPity.NoteMachineUnread(); continue; }
+        const int64_t id = GambaPityIdOf(handle);
+        const std::string sprite = id < 0 ? std::string("?") : GambaPitySpriteName(handle);
+        double x = 0.0, y = 0.0;
+        if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) {   // an unread machine decides nothing
+            g_GambaPity.NoteMachineUnread();
+            continue;
+        }
+        switch (g_GambaPity.ObserveMachine(id, sprite == kGambaPityDestroyedSprite, frame, x, y)) {
+        case GP::Sighting::FirstSeen: {
+            const GambaPityGroundScan scan = GambaPityGroundHeads(x, y);
+            g_GambaPity.SetBaseline(id, scan.heads, scan.read);
+            Out(GP::Pity::MachineSeenLine(id, sprite, scan.read ? std::to_string(scan.heads.size())
+                                                                : "unread (" + scan.stage + ")"));
+            break;
+        }
+        case GP::Sighting::Exploded:
+            // The explosion added one to the count: saved now, so one that a
+            // room change abandons, or a game closed before its deadline,
+            // still counts.
+            GambaPitySave();
+            Out(g_GambaPity.ExplosionLine(id, frame));
+            break;
+        case GP::Sighting::None:
+            // A live machine whose baseline has not read yet: the ground is
+            // scanned again, throttled (NeedsBaseline books the next try), and
+            // the first scan that reads sets the baseline.
+            if (g_GambaPity.NeedsBaseline(id, frame)) {
+                const GambaPityGroundScan scan = GambaPityGroundHeads(x, y);
+                g_GambaPity.SetBaseline(id, scan.heads, scan.read);
+                if (scan.read) Out(GP::Pity::BaselineReadLine(id, (int)scan.heads.size()));
+            }
+            break;
+        }
+    }
+}
+
+// One explosion at its deadline, decided at the point of use: the mod's state
+// and the room are read again, and the ground near the machine is checked
+// before anything is dropped; a scan that did not read refuses the force
+// (`ground unread`), counter kept. After a drop, the ground is checked again.
+static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t room)
+{
+    namespace GP = ForgePact::GambaPity;
+    GambaPityGroundScan ground;
+    if (room == e.room) ground = GambaPityGroundHeads(e.x, e.y);
+    const GP::Decision d = g_GambaPity.Decide(e, room, ground.heads, ground.read);
+    // Which ground read failed: this scan, or the machine's baseline (no scan
+    // of it ever read before the explosion).
+    const std::string unreadStage = ground.read ? std::string("the machine's baseline scan") : ground.stage;
+    switch (d.outcome) {
+    case GP::Outcome::GroundUnread:
+        Out(GP::Pity::RefusedLine("ground unread (" + unreadStage + ")"));
+        return;
+    case GP::Outcome::Abandoned:
+        Out(GP::Pity::AbandonedLine(e.id));
+        return;
+    case GP::Outcome::Natural:
+        GambaPitySave();   // the counter reset
+        Out(GP::Pity::NaturalSeenLine(d.signal));
+        return;
+    case GP::Outcome::Below:
+        // An unread ground below the threshold skipped the natural ground
+        // signal: the line says so (and below-ground-unread= counts it).
+        Out(g_GambaPity.BelowLine(e, d.groundUnread ? unreadStage : std::string()));
+        return;
+    case GP::Outcome::Force:
+        break;
+    }
+    int rarity = -1, attempt = 0;
+    int64_t groundId = -1;
+    std::string refused;
+    {
+        GambaPityOwnDropScope own;
+        refused = GambaPityDropHead(e.x, e.y, rarity, attempt, groundId);
+    }
+    if (!refused.empty()) {
+        g_GambaPity.ForceRefused();
+        Out(GP::Pity::RefusedLine(refused));
+        return;
+    }
+    g_GambaPity.ForceConfirmed(e, groundId);
+    GambaPitySave();   // the counter reset
+    Out(GP::Pity::ForcedLine(e.x, e.y, rarity, attempt));
+    const GambaPityGroundScan after = GambaPityGroundHeads(e.x, e.y);
+    Out(after.read ? GP::Pity::GroundAfterDropLine(g_GambaPity.NewHeads(e.id, after.heads))
+                   : GP::Pity::GroundAfterDropUnreadLine(after.stage));
+}
+
+// FrameCallback's per-frame tick (player build). Returns at once while the
+// mod is off, so an all-off game pays one branch; with no machine in the room
+// it costs one instance_number. A frame whose room cannot be read sees and
+// decides nothing, so "unreadable" never compares equal to a room.
+static void GambaPityTick()
+{
+    if (!g_GambaPity.Enabled() || !g_GambaPityHooked) return;
+    const int64_t room = CurrentRoomKey();
+    if (room == INT64_MIN) return;
+    const int64_t frame = GambaPityFrame();
+    g_GambaPity.OnRoom(room);
+    GambaPityWatchMachines(frame);
+    for (const ForgePact::GambaPity::Explosion& e : g_GambaPity.TakeDue(frame)) GambaPityDecide(e, room);
+}
+
+// ---- install ---------------------------------------------------------------
+// The two splices, lazily on the first `gambapity <count>`. Returns "" when
+// both are in, else why the mod stays off.
+static std::string GambaPityInstallHooks()
+{
+#ifndef FORGEPACT_RELEASE
+    // Coexistence with gambaprobe: one holder per spliced script, each naming
+    // the other. gambaprobe's other rows (its PickUpGoldCheck among them) are
+    // no longer gambapity's, so they do not block it.
+    std::string probeHeld;
+    if (g_GpScriptRows[kGpScript_CreateDefaultParams].orig) probeHeld += "CreateDefaultParams";
+    if (g_GpScriptRows[kGpScript_CreateItemNew].orig)
+        probeHeld += (probeHeld.empty() ? "" : ", ") + std::string("CreateItemNew");
+    if (!probeHeld.empty())
+        return "gambaprobe holds " + probeHeld + "; the mod stays off. Relaunch without `gambaprobe hook`.";
+#endif
+    if (!GambaPityCharmConstantsMatch())
+        return "the charm constants do not match the kAngelicBases charms_goburins_head row; the mod stays off";
+    if (g_GambaPityMachineObject < 0) {
+        g_GambaPityMachineObject = GambaPityResolveMachineObject();
+        if (g_GambaPityMachineObject < 0)
+            return std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Slot_Machine_01_obj))
+                + " did not resolve by name; the mod stays off";
+    }
+    if (!g_GambaPityCdpOrig) {
+        // CreateDefaultParams (read for the machine-self (0, 98) natural reset)
+        // is already held by the Angelic roll's hook (g_Orig_CreateDefaultParams);
+        // splice our detour into its saved trampoline rather than hooking the
+        // script a second time.
+        if (!g_Orig_CreateDefaultParams) InstallSignatureAngelicHooks();
+        if (!g_Orig_CreateDefaultParams)
+            return "CreateDefaultParams is not hooked (the Angelic roll's hook did not install); the mod stays off";
+        const void* saved = (const void*)g_Orig_CreateDefaultParams;
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved))
+            return "CreateDefaultParams is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+        if (AddrIsExecutableInModule(GambaPitySelfModule(), saved))
+            return "CreateDefaultParams sits behind another ForgePact hook (table-only); the mod stays off";
+        g_GambaPityCdpOrig = g_Orig_CreateDefaultParams;
+        g_Orig_CreateDefaultParams = reinterpret_cast<PFUNC_YYGMLScript>(GambaPityCdpDetour);
+    }
+    if (!g_GambaPityItemOrig) {
+        // The placement's script is already held by the Angelic roll's hook
+        // (g_Orig_CreateItemNew, the #74 rewrite point); splice our detour into
+        // its saved trampoline the same way.
+        if (!g_Orig_CreateItemNew) InstallSignatureAngelicHooks();
+        if (!g_Orig_CreateItemNew)
+            return "CreateItemNew is not hooked (the Angelic roll's hook did not install); the mod stays off";
+        const void* saved = (const void*)g_Orig_CreateItemNew;
+        if (AddrIsExecutableInModule(GetModuleHandleA(nullptr), saved))
+            return "CreateItemNew is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+        if (AddrIsExecutableInModule(GambaPitySelfModule(), saved))
+            return "CreateItemNew sits behind another ForgePact hook (table-only); the mod stays off";
+        g_GambaPityItemOrig = g_Orig_CreateItemNew;
+        g_Orig_CreateItemNew = reinterpret_cast<PFUNC_YYGMLScript>(GambaPityItemDetour);
+    }
+    return "";
+}
+
+// `gambapity <count>|off|status` (the panel's switch and range, in machine
+// explosions without a head). `off` keeps the count; a forced head or a
+// natural one resets it, a spin or a payout never does.
+static void GambaPityCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg.empty() || arg == "status" || arg == "stat") {
+        GambaPityLoad();
+        // The last load/save refusal, beside the status line (the gems: saved
+        // pattern): a refusal must be readable, never only written.
+        Out(g_GambaPity.StatusLine() + (g_GambaPityError.empty() ? std::string() : " - " + g_GambaPityError));
+        return;
+    }
+    if (arg == "off" || arg == "0") {
+        GambaPityLoad();
+        g_GambaPity.Off();
+        Out(g_GambaPity.StatusLine());
+        return;
+    }
+    int count = 0;
+    try {
+        size_t k = 0;
+        count = std::stoi(arg, &k);
+        if (k != arg.size()) count = 0;
+    } catch (...) { count = 0; }
+    if (count < kGambaPityMin || count > kGambaPityMax) {
+        Out("gambapity: usage gambapity <count>|off|status, count " + std::to_string(kGambaPityMin)
+            + ".." + std::to_string(kGambaPityMax) + " (unchanged: " + std::to_string(g_GambaPity.Threshold()) + ")");
+        return;
+    }
+    GambaPityLoad();
+    if (!g_GambaPityHooked) {
+        const std::string why = GambaPityInstallHooks();
+        if (!why.empty()) { Out("gambapity: refused - " + why); return; }
+        g_GambaPityHooked = true;
+    }
+    g_GambaPity.SetThreshold(count);
+    g_GambaPity.SetEnabled(true);
+    Out(g_GambaPity.StatusLine());
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -51064,7 +54106,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider", "lootann"
+        "jumpscenery", "skillslider", "gambapity", "lootann"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -51147,6 +54189,9 @@ static void RunCommand(const std::string& line)
     if (HandleRestartProbeCommand(lc, rest)) return;
     if (HandleSkillProbeCommand(lc, rest)) return;
     if (HandleJumpProbeCommand(lc, rest)) return;
+#ifndef FORGEPACT_RELEASE
+    if (HandleGambaProbeCommand(lc, rest)) return;
+#endif
     if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
@@ -51232,6 +54277,9 @@ static void RunCommand(const std::string& line)
     // Skill sliders (Modifiers > Skills, #160): `skillslider <lever> <value>`
     // and `skillslider list`; the same standalone early return.
     if (lc == "skillslider") { ForgePact::SkillSlidersMod::Instance().HandleCommand(rest); return; }
+    // Goburin's Head pity (Mods > Quality of Life, #134): the switch-and-range's
+    // command, the same standalone early return.
+    if (lc == "gambapity") { GambaPityCommand(rest); return; }
     // Mining ore amount and the Miner's Helmet: standalone early returns for
     // the same reason, so the else-if chain below keeps main's length.
     if (lc == "miningore") { ForgePact::MiningOre::Command(rest); return; }
@@ -52479,6 +55527,7 @@ void FrameCallback(FWFrame& FrameContext)
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
     JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
+    GpFrameTick();   // gambaprobe's live machines; returns at once while nothing is armed or on
 #endif
 
     // one-time setup once the runner is fully alive: load config + install hook
@@ -52708,6 +55757,11 @@ void FrameCallback(FWFrame& FrameContext)
     // (JumpScenery.hpp). The decisions happen inside the hooked calls, at the
     // point of use. Returns at once while it is off.
     if (g_Setup) JumpSceneryTick();
+
+    // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
+    // sprites, once a frame, and each explosion's decision at its deadline
+    // (GambaPityTick). Returns at once while it is off.
+    if (g_Setup) GambaPityTick();
 
 #ifndef FORGEPACT_RELEASE
     // ForgePact #68's Live 1f instrument: the button probe's frame poll

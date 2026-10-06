@@ -361,6 +361,13 @@ DEFAULTS = {
     # style"): one of DUNGEON_CHEST_COUNTDOWN_FORMS, above the head by
     # default, the plugin's own default; only sent while the switch is on.
     "dungeon_chest_countdown": "head",
+    # Goburin's Head pity (issue #134): while the switch is on, the plugin
+    # counts gamba machine explosions without a head, and the explosion that
+    # reaches this number drops Goburin's Head and starts the count over.
+    # Off by default; the number (an integer in GAMBA_PITY_RANGE) is kept
+    # while off and sends nothing.
+    "mod_gambapity": False,
+    "gambapity": 10,
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
     # rate (1 in 7,500), every step above adds a die.
     "angelic_items": 1,
@@ -467,6 +474,11 @@ def load_cfg() -> dict:
             pass
     for key in DISABLED_SPAWNER_KEYS:
         cfg.get("spawners", {}).pop(key, None)
+    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (an older
+    # version's spin count such as 100) loads as the default, so the panel
+    # shows and sends that rather than a slider pinned at its end.
+    if gambapity_value(cfg.get("gambapity")) is None:
+        cfg["gambapity"] = GAMBA_PITY_DEFAULT
     return cfg
 
 
@@ -935,6 +947,33 @@ def dungeon_chest_countdown_cmd(cfg: dict):
     return f"dungeonchest countdown {form.strip().lower()}"
 
 
+# Goburin's Head pity (issue #134): the allowed range of machine explosions
+# without a head before the forced one, and its default; the slider steps by 1.
+GAMBA_PITY_RANGE = (1, 20)
+GAMBA_PITY_DEFAULT = 10
+
+
+def gambapity_value(value):
+    """`value` as the integer it rounds to, or None when it is not a number
+    (a bool or a string is not) or rounds outside GAMBA_PITY_RANGE."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    count = int(round(value))
+    lo, hi = GAMBA_PITY_RANGE
+    return count if lo <= count <= hi else None
+
+
+def gambapity_cmd(cfg: dict) -> str:
+    """Plugin command for the gambapity pair: the count while the switch is on,
+    `off` otherwise. A hand-edited invalid count sends the default."""
+    if not cfg.get("mod_gambapity", False):
+        return "gambapity off"
+    count = gambapity_value(cfg.get("gambapity", GAMBA_PITY_DEFAULT))
+    return f"gambapity {GAMBA_PITY_DEFAULT if count is None else count}"
+
+
 ENEMY_SPEED_MAX = 300   # percent; x4 is where ranged sprinters stop being fair
 ENEMY_SPEED_STEP = 5
 
@@ -1218,6 +1257,10 @@ def build_cmds(cfg: dict) -> list:
         countdown = dungeon_chest_countdown_cmd(cfg)
         if countdown:
             out.append(countdown)
+    if cfg.get("mod_gambapity", False):
+        # Only while the switch is on (all-off startup stays empty): the count
+        # rides the switch, and a hand-edited invalid count sends the default.
+        out.append(gambapity_cmd(cfg))
     if angelic_one_in(cfg.get("angelic_items", 1)) > 0:
         out.append(angelic_cmd(cfg))
     if enemy_speed_pct(cfg.get("enemy_speed", 0)) > 0:
@@ -2948,6 +2991,14 @@ class H(BaseHTTPRequestHandler):
                         self._json({"err": "invalid dungeon chest countdown"}, 400)
                         return
                     cfg[key] = val.strip().lower()
+                elif key == "mod_gambapity":
+                    cfg[key] = bool(val)
+                elif key == "gambapity":
+                    count = gambapity_value(val)
+                    if count is None:
+                        self._json({"err": "invalid gambapity count"}, 400)
+                        return
+                    cfg[key] = count
                 elif key == "theme":
                     if not isinstance(val, str) or not THEME_NAME.fullmatch(val):
                         self._json({"err": "invalid theme"}, 400)
@@ -3104,6 +3155,18 @@ class H(BaseHTTPRequestHandler):
                         # (the select is disabled while it is off).
                         if cfg.get("mod_dungeon_chest", False):
                             send_cmds([dungeon_chest_countdown_cmd(cfg)], cfg)
+                    elif key == "mod_gambapity":
+                        # Always explicit, off included: `gambapity off` turns a
+                        # live game's pity counter back off (the counter is
+                        # kept). Turning it on restates the count.
+                        send_cmds([gambapity_cmd(cfg)], cfg)
+                    elif key == "gambapity":
+                        # Stored either way; sent only while the switch is on.
+                        # The panel never disables the slider: moved while the
+                        # switch is off, the count is saved here, sent when the
+                        # switch is turned on, and the toast says "(while on)".
+                        if cfg.get("mod_gambapity", False):
+                            send_cmds([gambapity_cmd(cfg)], cfg)
                     elif key == "angelic_items":
                         send_cmds([angelic_cmd(eff)], cfg)
                     elif key in ("enemy_speed", "enemy_speed_ct"):

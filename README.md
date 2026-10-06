@@ -48,6 +48,7 @@ none of these diagnostic hooks or the recorder. See
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Items below Heroic, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
+| **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-20>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 20. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
@@ -192,7 +193,7 @@ main sections: Setup, Modifiers, World, Loot and Mods. The Mods page itself
 has three sub-tabs at the top, and each mod sits in its own card: **Quality of Life**,
 everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
-toggle marker/guard and the timed skill countdown), **Items**, the custom
+toggle marker/guard, the timed skill countdown and Goburin's Head pity), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
 Crown, Beacon), and **Gameplay**, which holds the Bosses setting and Dungeon
 chest opens early. Quality of
@@ -1448,6 +1449,48 @@ on the ground is announced in the in-game chat.
   were not tried.
 
 `lootann stat` prints whether the switch is on and its counters.
+
+## Goburin's Head pity
+
+Mods → Quality of Life → **Goburin's Head pity** (plugin command
+`gambapity <1-20>` / `gambapity off`, `gambapity status` for its state). Off by
+default.
+
+In the game, Goburin's Head, the one-of-a-kind charm the slot machine can give,
+is pure luck. With this on, ForgePact guarantees it after a number of machine
+explosions you choose.
+
+- **The slider.** From 1 to 20 (default 10), the number of slot machine
+  explosions without a head; click the value to type it. The explosion that
+  reaches that number drops Goburin's Head at the machine, and the count
+  starts over. The slider keeps its number while the switch is off, but
+  nothing counts then.
+- **One head per explosion.** An explosion drops at most one head. If the
+  game drops the charm itself at that explosion, ForgePact adds none.
+- **A head of the game's own resets the count.** Whenever ForgePact sees the
+  game drop Goburin's Head at an explosion, at any count, the count starts
+  over.
+- **The count carries over** between machines and between sessions. It is
+  kept in `forgepact_gamba_pity.json`, next to the panel's settings in
+  `%LOCALAPPDATA%\Hero_Siege`. Spins and the machine's payouts don't change
+  it; only explosions do.
+- **What is not seen.** A charm the game drops later than about a second
+  after the explosion, or farther from the machine, would not be seen, and
+  that explosion could then give two. With **Sleep loot your filter hides**
+  on, a charm your filter hides would not be seen either.
+- **Checked in play** (2026-10-06, on the player build): with the number at
+  2, spinning changed nothing, the first machine to explode dropped nothing
+  and was counted, and the second dropped exactly one Goburin's Head at the
+  machine and the count started over. Across five natural machine explosions
+  in three test sessions, the
+  game never dropped the head on its own, so **a head the game drops on its
+  own, and the reset that follows, have not been observed** in a live game
+  yet.
+
+`gambapity status` (or bare `gambapity`) prints whether the switch is on, the
+count, your number and its counters; `gambapity off` turns it off and keeps the
+count. The research build's `gambaprobe` explosion watch is not in the player
+build.
 
 ## Extra packs as you approach (lighter frames at high density)
 

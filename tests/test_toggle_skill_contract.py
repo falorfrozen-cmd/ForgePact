@@ -862,6 +862,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             "satzone",
             # Skill sliders (ForgePact #160; test_skill_sliders_contract.py).
             "skillslider",
+            # Goburin's Head pity (ForgePact #134; test_gamba_pity_contract.py).
+            "gambapity",
             # Loot announcements (ForgePact #17;
             # test_loot_announce_contract.py).
             "lootann",
@@ -3047,7 +3049,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # test_jump_scenery_mod_contract.py), `satzone` is Satanic Zone
         # control (ForgePact #157, test_satanic_zone_control.py),
         # `skillslider` is the skill sliders (ForgePact #160,
-        # test_skill_sliders_contract.py), and `lootann` is Loot
+        # test_skill_sliders_contract.py), `gambapity` is Goburin's Head pity
+        # (ForgePact #134, test_gamba_pity_contract.py), and `lootann` is Loot
         # announcements (ForgePact #17, test_loot_announce_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
@@ -3056,7 +3059,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone", "skillslider", "lootann"})
+                                        "jumpscenery", "satzone", "skillslider", "gambapity", "lootann"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

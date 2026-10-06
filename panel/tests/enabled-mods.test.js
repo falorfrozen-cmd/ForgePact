@@ -157,6 +157,20 @@ test('density is an entry only while switched on above x1, through den_on', () =
   assert.deepEqual(enabledControls(cfg({ density_on: true, density: 1 })), [], 'x1 is the default');
 });
 
+test('Goburin’s Head pity is an entry while its switch is on, whatever the count, and off by default', () => {
+  assert.equal(DEFAULTS.mod_gambapity, false, 'off by default');
+  assert.equal(DEFAULTS.gambapity, 10);
+  assert.ok(!BOOLEAN_MODS.includes('mod_gambapity'), 'its off is `gambapity off`, not a `verb 0` boolean');
+  for (const count of [1, 10, 20]) {
+    assert.deepEqual(enabledControls(cfg({ mod_gambapity: true, gambapity: count })), ['mod_gambapity'], count);
+  }
+  // The count rides on the switch's entry: moved with the switch off, it is
+  // still nothing on.
+  assert.deepEqual(enabledControls(cfg({ gambapity: 5 })), []);
+  const { mod_gambapity, gambapity, ...older } = cfg();
+  assert.deepEqual(enabledControls(older), [], 'an older config without the keys reads as off');
+});
+
 test('the switch ids: 43 table rows plus four top-level sliders, never density', () => {
   // 40 table rows before the three skill sliders (#160) joined percent_stats.
   const ids = sliderSwitchIds(cfg());
@@ -216,11 +230,11 @@ test('never entries: panel settings, scopes, child options, the theme and the Sa
   assert.deepEqual(enabledControls({ ...c, map_reveal: true }), ['map_reveal']);
 });
 
-test('entries come out in rule order: booleans, skill timer, bosses, dungeon chest, density, sliders', () => {
+test('entries come out in rule order: booleans, skill timer, bosses, dungeon chest, gambapity, density, sliders', () => {
   const c = withSection('stats', 'exp', 5, {
     beacon: true, map_reveal: true, mod_skill_timer_style: 'arc', boss_rarity: 'ancient', mod_dungeon_chest: true,
-    density_on: true, density: 2, rarity_rare: 10,
+    mod_gambapity: true, density_on: true, density: 2, rarity_rare: 10,
   });
   assert.deepEqual(enabledControls(c),
-    ['map_reveal', 'beacon', 'mod_skill_timer_style', 'boss_rarity', 'mod_dungeon_chest', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
+    ['map_reveal', 'beacon', 'mod_skill_timer_style', 'boss_rarity', 'mod_dungeon_chest', 'mod_gambapity', 'den_on', 'sw_stats_exp', 'sw_rarity_rare']);
 });

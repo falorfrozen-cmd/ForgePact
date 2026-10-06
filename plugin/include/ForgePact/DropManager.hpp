@@ -154,7 +154,10 @@ public:
     // original of five of the hooks below, by the name each was installed
     // under, so a research instrument can tell a trampoline (the hook is
     // native) from the game's own function (it fell back to table-only).
-    // Read-only; nullptr for any other name.
+    // angelicprobe only reads it; gambaprobe (docs/gamba-machine-research.md)
+    // splices its own detour into DropItem's slot when it holds a trampoline,
+    // so the hook below calls the probe, which calls the trampoline. nullptr
+    // for any other name.
     PFUNC_YYGMLScript* ResearchHeldOriginal(std::string_view shortName) {
         if (shortName == "DropItem")         return &m_Orig_DropItem;
         if (shortName == "DropItemBoss")     return &m_Orig_DropItemBoss;

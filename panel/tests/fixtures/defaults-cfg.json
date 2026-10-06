@@ -36,6 +36,8 @@
  "mod_dungeon_chest": false,
  "dungeon_chest_pct": 75,
  "dungeon_chest_countdown": "head",
+ "mod_gambapity": false,
+ "gambapity": 10,
  "angelic_items": 1,
  "enemy_speed": 0,
  "enemy_speed_ct": true,
