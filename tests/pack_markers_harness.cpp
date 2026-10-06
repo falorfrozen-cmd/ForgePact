@@ -274,6 +274,13 @@ static void setState(int64_t id, RValue state) {
 
 int main() {
     resetWorld();
+    // Issue #181, shipped: a fresh instance retires by `kind` in both builds
+    // (Live 4 measured each kind's birth signal). The scenarios below up to
+    // the policy section pin the old `timer` rules, so they select it
+    // explicitly rather than relying on the default.
+    check("retire/default_is_kind", PackMarkers::Instance().GetRetire() == PackMarkers::Retire::Kind
+        && std::string(PackMarkers::RetireName(PackMarkers::Instance().GetRetire())) == "kind");
+    PackMarkers::Instance().SetRetire(PackMarkers::Retire::Timer);
     // Zone one: 300 plain packs, 4 champion packs, 2 ancient packs, 1 mini boss,
     // 3 legion spawners. Everything initialises immediately except spawner 7.
     for (int i = 0; i < 300; ++i) world.spawners.push_back({ 1000 + i, 10, 100.0 * i, 50.0 * i, true, i != 7, false });
@@ -508,7 +515,8 @@ int main() {
     auto st = [](int kind) -> const PackMarkers::KindStats& { return pm().Stats(kind); };
     // Rotations: the rotating check visits every marker within ceil(n/32) frames.
     auto rotation = []() { return (pm().Count() + PackMarkers::kValidatePerFrame - 1) / PackMarkers::kValidatePerFrame; };
-    check("retire/default_is_timer", pm().GetRetire() == Retire::Timer
+    // Still `timer` here: selected at the top of main, not the default.
+    check("retire/timer_selected_explicitly", pm().GetRetire() == Retire::Timer
         && std::string(PackMarkers::RetireName(Retire::Timer)) == "timer" && std::string(PackMarkers::RetireName(Retire::State)) == "state");
     // Switching policy at runtime keeps every marker held.
     {

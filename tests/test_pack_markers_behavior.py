@@ -28,8 +28,11 @@ class PackMarkersBehaviorTests(unittest.TestCase):
             if not line.strip().startswith("#pragma once")
             and '#include "Common.hpp"' not in line
         )
-        out = ROOT / "build/pack-markers-behavior"
+        # One directory per process: two runs at once (the criteria runner's
+        # parallel jobs) would otherwise race on the same .obj and .exe.
+        out = ROOT / "build/pack-markers-behavior" / f"run-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.out = out
         code = (ROOT / "tests/pack_markers_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_PACKMARKERS", klass)
         cpp = out / "packmarkers.cpp"
@@ -66,6 +69,11 @@ class PackMarkersBehaviorTests(unittest.TestCase):
         run = subprocess.run([str(cls.binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         cls.output = run.stdout
         (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        # The output is in the assertions; the per-process build is not kept.
+        shutil.rmtree(cls.out, ignore_errors=True)
 
     def line(self, label):
         for line in self.output.split("\n"):
@@ -141,9 +149,15 @@ class PackMarkersBehaviorTests(unittest.TestCase):
     def test_baseline_an_attributed_create_retires_the_marker_at_once(self):
         self.assertScenario("attributed/retires_at_once")
 
-    # Issue #181: the retirement policy, `timer` (today's rules) or `state`.
-    def test_the_retirement_policy_defaults_to_timer_and_switches_at_runtime(self):
-        self.assertScenario("retire/default_is_timer")
+    # Issue #181, shipped: a fresh instance retires by `kind` (Live 4); the
+    # scenarios pinning the old rules select `timer` explicitly.
+    def test_the_kind_policy_is_the_default(self):
+        self.assertScenario("retire/default_is_kind")
+
+    # Issue #181: the retirement policy, `timer` (the old rules), `state` or
+    # `kind`, switchable at runtime.
+    def test_the_retirement_policy_switches_at_runtime(self):
+        self.assertScenario("retire/timer_selected_explicitly")
         self.assertScenario("retire/selectable_at_runtime")
 
     # Issue #181 target: under `state`, only a gone spawner or its own

@@ -40325,7 +40325,7 @@ static void PackMarksCommand(const std::string& rest)
         //   packmarks census         - the store getter's control line, then a one-shot walk of every creator of each kind: enemyCreatorTimer, enemyArray, the protected pack state
         //   packmarks census <kind>  - one line per spawner of that kind (kind by icon name: normal, ambush, ancient, champion, colossal_chest, legion, miniboss)
         //   packmarks creator <id>   - one spawner: object, kind, protected values, recorded members, nearest living instances, every variable
-        //   packmarks retire timer|state|kind   - the marker retirement policy (default timer)
+        //   packmarks retire timer|state|kind   - the marker retirement policy (default kind, the shipped rule; timer and state are the older ones)
         auto& pm = ForgePact::PackMarkers::Instance();
         auto& st = pm.StyleRef();
         std::string a2; const std::string a1 = Lower(FirstToken(rest, a2));

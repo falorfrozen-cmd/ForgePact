@@ -639,5 +639,46 @@ class TestPackMarkerSecondInstrument(unittest.TestCase):
                 self.assertEqual(build.count(f"if ({orig})"), build.count("packBirth.Completed();"))
 
 
+class TestPackMarkerShippedPolicy(unittest.TestCase):
+    """Issue #181, shipped: `kind` is the retirement policy in both builds,
+    each kind on the signal Live 4 measured (champion and legion on the
+    static reading), and `packmarks retire` stays a research-build form."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.header = _strip_comments((FORGEPACT_INCLUDE_DIR / "PackMarkers.hpp").read_text(encoding="utf-8"))
+        plugin = _strip_comments(PLUGIN_SRC.read_text(encoding="utf-8"))
+        cls.command = _function_body(plugin, "static void PackMarksCommand(const std::string& rest)")
+        cls.player_command = _strip_research_blocks(cls.command)
+
+    def test_kind_is_the_default_in_both_builds(self):
+        self.assertIn("std::atomic<Retire> m_Retire{ Retire::Kind };", self.header)
+        self.assertNotIn("m_Retire{ Retire::Timer }", self.header)
+        # The header has no build switch, so the player build gets the same default.
+        self.assertNotIn("FORGEPACT_RELEASE", self.header)
+
+    def test_each_kind_keeps_its_measured_rule(self):
+        rows = re.findall(r"\{ Signal::(\w+),\s*([\d.]+), Mode::(\w+) \}", self.header)
+        self.assertEqual(rows, [
+            ("EnemyArray", "0.0", "Birth"),     # normal
+            ("EnemyArray", "0.0", "Birth"),     # ambush
+            ("PackState", "2.0", "Birth"),      # ancient
+            ("PackState", "2.0", "PackGone"),   # champion
+            ("PackState", "2.0", "Birth"),      # colossal_chest
+            ("PackState", "2.0", "PackGone"),   # legion
+            ("PackState", "2.0", "PackGone"),   # miniboss
+        ])
+
+    def test_the_birth_memory_keeps_both_keys(self):
+        # Live 4: a revisit gave every spawner a new id, so the position key stays.
+        remember = _function_body(self.header, "void Remember(const Marker& m)")
+        self.assertIn("m_MemoryIds.insert(", remember)
+        self.assertIn("m_MemoryPositions.insert(", remember)
+
+    def test_the_player_build_cannot_switch_the_policy(self):
+        self.assertIn("SetRetire(", self.command)
+        self.assertNotIn("SetRetire(", self.player_command)
+
+
 if __name__ == "__main__":
     unittest.main()

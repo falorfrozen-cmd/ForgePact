@@ -312,6 +312,16 @@ experience.
 
 ## Fixed
 
+- **Map Reveal's pack icons no longer turn generic a few seconds after you
+  arrive (#181).** With Map Reveal's pack markers on, the special icons
+  (ancient, mini boss, colossal chest and the rest) gave way to plain ones
+  shortly after you entered an area, although those packs had not appeared
+  yet. Each icon now stays until the game creates that pack: an ancient pack
+  when you get close, a colossal chest's monsters when you open the chest.
+  Mini boss, legion and champion icons stay until that pack is killed. Leaving
+  an area and coming back no longer brings back icons for packs that were
+  already created.
+
 - **The two Monster Rarity rows are named for the monsters they make (#159).**
   On the World tab, the row called **Rare** raised normal monsters to what the
   game shows as an Ancient (yellow name), and the row called **Ancient** raised

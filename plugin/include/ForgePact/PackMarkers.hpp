@@ -46,13 +46,16 @@ namespace ForgePact {
 // when no icon could be loaded.
 //
 // Retirement (issue #181): a marker goes when its pack is born or its spawner
-// is gone, under one of two policies, chosen at runtime (`packmarks retire`
-// in the research build):
-// - `timer` (the default): a create the hooks attribute to the spawner
-//   retires it at once; the rotating check retires it when the spawner is
-//   gone, when its `enemyCreatorTimer` was seen as a number and no longer is,
-//   or when the timer was never seen as a number for kUnarmedGiveUpFrames
-//   after listing ("spent before we looked").
+// is gone. `kind` is the policy in both builds; the research build can switch
+// to the two older ones at runtime (`packmarks retire timer|state|kind`):
+// - `timer` (the default before issue #181): a create the hooks attribute to
+//   the spawner retires it at once; the rotating check retires it when the
+//   spawner is gone, when its `enemyCreatorTimer` was seen as a number and no
+//   longer is, or when the timer was never seen as a number for
+//   kUnarmedGiveUpFrames after listing ("spent before we looked"). The
+//   ancient and miniboss spawners carry no `enemyCreatorTimer` (Live 1), so
+//   that third rule gave their markers up a few seconds after arrival
+//   although their packs were unborn: the issue's symptom.
 // - `state`: the rotating check retires it when the spawner is gone, or when
 //   the spawner's own `enemyArray`, read by name, is an array - undefined
 //   before and while armed, an array once the pack is born
@@ -60,27 +63,33 @@ namespace ForgePact {
 //   not an attributed create, which runs inside the birth before the
 //   spawner's state says born. The question is asked of the spawner itself,
 //   where the marker is used, not of anything cached.
-// - `kind`: the rotating check retires it when the spawner is gone, or by the
-//   kind's own entry in kKindRules: normal and ambush on `enemyArray` as under
-//   `state`; the five other kinds on their protected pack state, the store
-//   record the spawner's `spawnPack` variable names (a key, not the state),
-//   read through the game's getter by name and refused for any key that is
-//   not a whole number in 0..262143 (RUNTIME_DATA_MODELS 13.7: a bad key
-//   faulted the game). A `birth`-mode kind retires when its signal reads
-//   born, and one listed already born gets no marker at all. A `packgone`-mode
-//   kind (miniboss, legion, champion: built at zone arrival, owner's decision
-//   2026-10-06) keeps its marker after the birth until every recorded member
-//   of its pack is gone. A read that cannot be made keeps the marker and is
-//   counted (`Unread()`), so "held because unread" shows beside "unborn".
+// - `kind` (the default, shipped for issue #181): the rotating check retires
+//   it when the spawner is gone, or by the kind's own entry in kKindRules:
+//   normal and ambush on `enemyArray` as under `state`; the five other kinds
+//   on their protected pack state, the store record the spawner's `spawnPack`
+//   variable names (a key, not the state), read through the game's getter by
+//   name and refused for any key that is not a whole number in 0..262143
+//   (RUNTIME_DATA_MODELS 13.7: a bad key faulted the game). A `birth`-mode
+//   kind retires when its signal reads born, and one listed already born gets
+//   no marker at all. A `packgone`-mode kind (miniboss, legion, champion:
+//   built at zone arrival, owner's decision 2026-10-06) keeps its marker
+//   after the birth until every recorded member of its pack is gone; one
+//   whose pack our hooks never saw created keeps it until its spawner goes.
+//   Open caveat: the members' alive read has no positive control yet (Live
+//   4 read a miniboss pack gone 5 s after the warp while two of its
+//   monsters were on screen); the player-build live session settles it. A read that cannot be made keeps the marker and is counted (`Unread()`),
+//   so "held because unread" shows beside "unborn". Why each kind's signal
+//   (Live 4, 2026-10-06, docs/map-reveal-research.md "Live 4 results"): a
+//   normal birth moved `enemyArray` to an array and the state 1 -> 3; an
+//   ancient birth moved the state 1 -> 3 as the owner saw the pack appear; a
+//   colossal chest opening moved its spawners 0 -> 2; the miniboss spawners
+//   already read 2 at arrival. Champion and legion were not observed live
+//   and ride the miniboss's rule on the static reading.
 // The birth memory: a spawner retired by a birth rule is remembered for the
 // whole game session by its id and by room, kind and position, recorded under
 // every policy and applied only under `kind`, so a revisited zone does not
-// mark a pack again that was already created.
-// Issue #181: the special packs' icons gave way to generic ones a few seconds
-// after arrival. A special-kind spawner without `enemyCreatorTimer` would be
-// given up by the `timer` policy's third rule although unborn; that is the
-// suspected cause, not yet measured, and the per-kind retirement accounting
-// and the census below are what the research build measures it with.
+// mark a pack again that was already created. Both keys stay: Live 4's
+// revisit gave every spawner a new id, so only the position key matched.
 //
 // Everything below is header-only and reaches the game only through
 // g_Yytk->CallBuiltin, so tests/pack_markers_harness.cpp can compile the real
@@ -109,7 +118,8 @@ public:
     // one kind's rule can change alone. The signal: the spawner's enemyArray
     // turning into an array (RUNTIME_DATA_MODELS 11.2, measured on normal and
     // ambush), or its protected pack state at or above the threshold (2 for
-    // all five by the static reading at replan 2, not yet measured). The mode:
+    // all five; measured in Live 4 on ancient, colossal chest and miniboss,
+    // champion and legion by static reading only). The mode:
     // `birth` retires the marker when the signal reads born; `packgone` reads
     // and counts it (`held`) but keeps the marker until the pack is gone.
     enum class Signal : uint8_t { EnemyArray = 0, PackState };
@@ -1060,7 +1070,7 @@ private:
     std::vector<Marker> m_Markers;
     std::unordered_map<int64_t, size_t> m_Index;
     std::unordered_map<int64_t, bool> m_Spent;   // ids whose pack was born or which were spent; never re-marked this zone
-    std::atomic<Retire> m_Retire{ Retire::Timer };
+    std::atomic<Retire> m_Retire{ Retire::Kind };
     uint64_t m_Frame{ 0 };
     KindStats m_Stats[KindCount];
     std::unordered_map<int64_t, uint8_t> m_KindOf;   // every id listed this zone -> its kind
