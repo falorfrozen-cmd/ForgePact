@@ -8,7 +8,7 @@
     "tree": "294c7a2ce9b52a2adcaa87c7aac2859cfe6a2a39"
   },
   "hub": {
-    "commit": "3fcdf0d9c67d822874b368108cd99795a5f09753",
+    "commit": "b650302ceb0e13af2a40f40aed03e0d5a6de136f",
     "patch_directory_dirty": false
   },
   "patches": [
@@ -70,9 +70,9 @@
     ]
   },
   "source": {
-    "name": "aurie-source-f167df48e62c.zip",
-    "id": "f167df48e62cde1b799c5ece71ec09238d0fc50fbefdbb519b97fb62c4656454",
-    "sha256": "355250e7b6ff8b61fd694e51e6bfda36a0fb0f04043a5848d427af141f33cbcd"
+    "name": "aurie-source-daa28744eef0.zip",
+    "id": "daa28744eef05be8443b1c431ad33783fafcae889d85f70b0307f9dce228bec4",
+    "sha256": "cf271b2921b05c7b1f9052e629dd8f38960c4ab275fc4225b3fe7fa5648784e4"
   },
   "live_gameplay_verified": false
 }
