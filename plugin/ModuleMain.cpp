@@ -9008,6 +9008,16 @@ static bool PackMarkerIconPath(int kind, std::string& gmlPath, std::string& abso
     absolutePath = file;
     return true;
 }
+#ifdef FORGEPACT_RELEASE
+// Issue #181: the members rule (retire a miniboss, legion or champion marker
+// once its recorded members are gone) has no positive control for its alive
+// read; in Live 4 it read packs gone while their monsters were on screen. The
+// player build therefore keeps those markers until their spawner goes and
+// writes no such retirement into the birth memory; the read is still made
+// and shown (`packmarks stat`'s ends= gone=, gonerule=off). Set at load,
+// before any marker exists; PackMarkers.hpp's class comment has the rule.
+static const bool g_PackGoneRuleOff = [] { ForgePact::PackMarkers::Instance().SetPackGoneRetires(false); return true; }();
+#endif
 static void InstallPackMarkerHook()
 {
     if (g_PackMarkerHookAttempted) return;
@@ -40252,6 +40262,34 @@ static void PackMarksCreator(const std::string& arg)
                 + std::to_string(members.objects[i].alive) + "/" + std::to_string(members.objects[i].recorded);
     }
     Out(head + " members: " + memberText);
+    // The alive read's control, per recorded member (at most eight): its
+    // recorded id and that id's alive read (the exact call the members rule
+    // makes), then the id instance_nearest returns for the same object from
+    // the spawner and the same alive read on that id. The read is proven only
+    // where a recorded id equals the id of a visibly living instance and
+    // reads alive=1; a nearest id that reads 1 while the recorded one reads 0
+    // says the recorded id is not the pack member on screen.
+    std::string ids;
+    const auto memberList = pm.MemberList(id);
+    for (size_t i = 0; i < memberList.size() && i < 8; ++i) {
+        const auto& [member, object] = memberList[i];
+        std::string found = "none", foundAlive = "-", same = "-";
+        if (placed && object >= 0) {
+            try {
+                const RValue closest = g_Yytk->CallBuiltin("instance_nearest", { RValue(x), RValue(y), RValue((double)object) });   // not `near`: windef.h
+                if (IsNumericInstanceRead(closest) && closest.ToDouble() >= 0) {
+                    const int64_t nearId = static_cast<int64_t>(closest.ToDouble());
+                    found = std::to_string(nearId);
+                    foundAlive = PM::MemberReadAlive(nearId) ? "1" : "0";
+                    same = nearId == member ? "1" : "0";
+                }
+            } catch (...) {}
+        }
+        ids += std::string(ids.empty() ? "" : " ") + std::to_string(member) + "/" + PackMarksObjectName(object)
+            + "/alive=" + (PM::MemberReadAlive(member) ? "1" : "0")
+            + "/nearest=" + found + "/nearestAlive=" + foundAlive + "/same=" + same;
+    }
+    Out(head + " ids: " + (ids.empty() ? std::string("none") : ids));
     // The nearest living instance of each object attributed to it (this
     // zone's creates and the session's members, at most eight) and of
     // Enemy_Parent_obj, in whole pixels; `none` when there is none.
@@ -40403,6 +40441,16 @@ static void PackMarksCommand(const std::string& rest)
             Out(std::string("packmarks retire -> ") + PM::RetireName(pm.GetRetire()));
             return;
         }
+        // The members rule for `packgone`-mode markers (on by default here,
+        // off in the player build until its alive read has a control).
+        if (a1 == "gonerule") {
+            const std::string v = Lower(TrimCopy(a2));
+            if (v == "on" || v == "1") pm.SetPackGoneRetires(true);
+            else if (v == "off" || v == "0") pm.SetPackGoneRetires(false);
+            else if (!v.empty()) { Out("packmarks: usage -> packmarks gonerule on|off"); return; }
+            Out(std::string("packmarks gonerule -> ") + (pm.PackGoneRetires() ? "on" : "off"));
+            return;
+        }
         if (a1 == "creator") { PackMarksCreator(a2); return; }
 #endif
         if (a1 == "style") {
@@ -40468,6 +40516,21 @@ static void PackMarksCommand(const std::string& rest)
                 + " iconWrites=" + std::to_string(g_PackMarkerIconWrites) + " iconWriteErrors=" + std::to_string(g_PackMarkerIconWriteErrors)
                 + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off")
                 + " kinds=" + kinds + " unread=" + std::to_string(pm.Unread());
+            // Both builds: how this zone's `packgone`-mode markers (champion,
+            // legion, miniboss) ended or would have, so a report separates a
+            // spawner that went (destroyed=) from the members read turning
+            // gone (gone=, counted whether or not it may retire) and a marker
+            // that read retired (packgone=, only with gonerule=on).
+            std::string ends;
+            for (int k = 0; k < (int)ForgePact::PackMarkers::KindCount; ++k) {
+                if (ForgePact::PackMarkers::kKindRules[k].mode != ForgePact::PackMarkers::Mode::PackGone) continue;
+                const auto& s = pm.Stats(k);
+                ends += std::string(ends.empty() ? "" : ",") + ForgePact::PackMarkers::kKindNames[k]
+                    + ":destroyed=" + std::to_string(s.retired[ForgePact::PackMarkers::ReasonDestroyed])
+                    + "/gone=" + std::to_string(s.goneRead)
+                    + "/packgone=" + std::to_string(s.retired[ForgePact::PackMarkers::ReasonPackGone]);
+            }
+            line += " ends=" + ends + " gonerule=" + (pm.PackGoneRetires() ? "on" : "off");
 #ifndef FORGEPACT_RELEASE
             line += std::string(" retire=") + ForgePact::PackMarkers::RetireName(pm.GetRetire());
 #endif
