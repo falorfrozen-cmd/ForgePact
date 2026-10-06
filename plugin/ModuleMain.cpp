@@ -52198,24 +52198,24 @@ static void DungeonProbeCommand(const std::string& rest)
 #endif // FORGEPACT_RELEASE (dungeonprobe)
 
 // ============================================================================
-// gambapity (ForgePact #134 phase 5, player build): the Goburin's Head pity
+// gambapity (ForgePact #134 phase 6, player build): the Goburin's Head pity
 // ============================================================================
 // The Mods -> Quality of Life switch `gambapity` guarantees Goburin's Head
 // (the unique charm at repository type 10 / sub 0 / base 98, the
 // `charms_goburins_head` row of kAngelicBases) from the gamba machine
-// (Slot_Machine_01_obj): the first machine that explodes after the configured
-// number of spins drops exactly one head, and the counter starts over. The
-// counter, the explosion watch and the deadline's decision are
+// (Slot_Machine_01_obj): it counts the machine explosions that did not drop a
+// head, and the explosion that brings the count to the configured number
+// drops exactly one head and starts the count over. The count, the explosion
+// watch, the deadline's decision and the counter file's text are
 // plugin/include/ForgePact/GambaPity.hpp, game-independent by contract; this
 // adapter feeds it the measured events and carries out what it decides:
 //
-//   - a spin: one machine-self PickUpGoldCheck with a1=-10000 (the 10,000-gold
-//     debit, one call per spin);
 //   - the explosion: Live 4 measured it as the machine's sprite_index changing
 //     from Slot_Machine_01_spr to Slot_Machine_01_Destroyed_spr, with the
 //     instance kept and no item built. Once a frame, from FrameCallback, while
 //     the mod is on, every live machine is read and its sprite compared by
-//     name, so a sprite reference's value kind never matters;
+//     name, so a sprite reference's value kind never matters. Each explosion
+//     adds one to the count when it is seen, and the count is saved then;
 //   - the natural-head signals: a Goburin's Head lying near the machine that
 //     was not there at its first sight (the ground check), a CreateItemNew
 //     that returned the charm inside the explosion's window (read after the
@@ -52230,7 +52230,8 @@ static void DungeonProbeCommand(const std::string& rest)
 // LootGroundCreateFromItem with the local player as self), read back with
 // instance_exists and tried up to three times, inside an own-drop scope so
 // its own CreateItemNew is counted as own-head-builds, never as a natural
-// head. Payouts are no input: no payout path forces, rewrites or resets.
+// head. Spins and payouts are no input: phase 5's PickUpGoldCheck spin hook is
+// retired, and no payout path forces, rewrites or resets.
 //
 // Every line it prints is the core's fixed text (GambaPity.hpp's *Line
 // functions, pinned byte for byte by the behaviour test), read by the live
@@ -52245,9 +52246,9 @@ static void DungeonProbeCommand(const std::string& rest)
 // object-index kind this runner returns - never a kind check. CreateDefaultParams and CreateItemNew are already held by
 // the Angelic roll's hooks (g_Orig_CreateDefaultParams, g_Orig_CreateItemNew),
 // so gambapity splices its detours into those saved trampolines rather than
-// hooking the scripts a second time; PickUpGoldCheck is gambapity's own
-// HookOneScript. Every hook installs lazily on the first `gambapity <count>`,
-// so an all-off game pays nothing, and each runs the original unchanged.
+// hooking the scripts a second time, and hooks nothing of its own. Both
+// splices install lazily on the first `gambapity <count>`, so an all-off game
+// pays nothing, and each runs the original unchanged.
 #include <ForgePact/GambaPity.hpp>
 
 // The charm's repository identifier (type, sub, base): the
@@ -52258,10 +52259,7 @@ static void DungeonProbeCommand(const std::string& rest)
 static constexpr int kGambaPityCharmType = 10;
 static constexpr int kGambaPityCharmSub = 0;
 static constexpr int kGambaPityCharmBase = 98;
-// A spin debits exactly 10,000 gold: PickUpGoldCheck's second argument carries
-// -10000 on a machine's spin.
-static constexpr double kGambaPitySpinGold = -10000.0;
-// The spin count the panel's switch accepts: the same range as
+// The explosion count the panel's switch accepts: the same range as
 // src/forgepact.py's GAMBA_PITY_RANGE and Mods.svelte's min/max, pinned
 // against each other in tests/test_gamba_pity_contract.py.
 static constexpr int kGambaPityMin = 10;
@@ -52286,11 +52284,9 @@ static bool GambaPityCharmConstantsMatch()
 
 static ForgePact::GambaPity::Pity g_GambaPity;
 static int g_GambaPityMachineObject = -1;      // Slot_Machine_01_obj's index, by name; -1 unresolved
-static PFUNC_YYGMLScript g_GambaPitySpinOrig = nullptr;   // PickUpGoldCheck's original
 static PFUNC_YYGMLScript g_GambaPityCdpOrig = nullptr;    // CreateDefaultParams' trampoline (spliced)
 static PFUNC_YYGMLScript g_GambaPityItemOrig = nullptr;   // CreateItemNew's trampoline (spliced)
-static bool g_GambaPityHooked = false;          // every hook is in
-static bool g_GambaPitySpinNative = false;      // PickUpGoldCheck is an inline detour
+static bool g_GambaPityHooked = false;          // both splices are in
 static bool g_GambaPityLoaded = false;          // the counter file was read
 static std::string g_GambaPityError;            // the last load/save refusal, empty when none
 
@@ -52302,7 +52298,6 @@ static std::string GambaPityHeldScripts()
     std::string held;
     if (g_GambaPityCdpOrig) held += "CreateDefaultParams";
     if (g_GambaPityItemOrig) held += (held.empty() ? "" : ", ") + std::string("CreateItemNew");
-    if (g_GambaPitySpinOrig) held += (held.empty() ? "" : ", ") + std::string("PickUpGoldCheck");
     return held;
 }
 #endif
@@ -52332,7 +52327,7 @@ static int GambaPityResolveMachineObject()
 // N1ObjectIndex - the masked predicate that accepts the flagged object-index
 // kind this runner returns - never a kind check. (CallerObjectIndex's
 // unmasked comparison rejects that kind, so it would answer -1 for every
-// machine and the mod would silently count no spins and force no roll.)
+// machine and the mod would silently take no machine build for a natural head.)
 // Elsewhere gambapity does go through one unmasked comparison:
 // IsNumericInstanceRead, for the machine's sprite_index and an instance's id.
 // A flagged kind there reads as unread - the machine is skipped and counted
@@ -52352,13 +52347,6 @@ static int GambaPityObjectIndex(CInstance* S)
 static bool GambaPityIsMachine(CInstance* S)
 {
     return g_GambaPityMachineObject >= 0 && GambaPityObjectIndex(S) == g_GambaPityMachineObject;
-}
-
-// A spin: the second argument is the -10000 gold debit.
-static bool GambaPityIsSpin(int argc, RValue** A)
-{
-    double a1 = 0.0;
-    return argc > 1 && A && A[1] && SigNumber(*A[1], a1) && a1 == kGambaPitySpinGold;
 }
 
 // A natural charm build: CreateDefaultParams' first two arguments are the
@@ -52382,29 +52370,8 @@ static std::filesystem::path GambaPityPath()
     return truth.empty() ? std::filesystem::path() : truth.parent_path() / L"forgepact_gamba_pity.json";
 }
 
-static void GambaPityLoad()
-{
-    if (g_GambaPityLoaded) return;
-    g_GambaPityLoaded = true;
-    try {
-        const std::filesystem::path path = GambaPityPath();
-        std::error_code ec;
-        if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 4096) {
-            std::ifstream in(path, std::ios::binary);
-            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            const std::string key = "\"count\"";
-            const size_t at = text.find(key);
-            if (at != std::string::npos) {
-                size_t i = at + key.size();
-                while (i < text.size() && (text[i] == ' ' || text[i] == ':')) ++i;
-                const size_t start = i;
-                while (i < text.size() && (std::isdigit((unsigned char)text[i]) || text[i] == '-')) ++i;
-                if (i > start) g_GambaPity.SetCount(std::stoi(text.substr(start, i - start)));
-            }
-        }
-    } catch (...) { g_GambaPityError = "could not read the gambapity counter"; }
-}
-
+// The core's text, version 2: `{"version":2,"count":<n>}`. Saved whenever the
+// count changes - an explosion's addition, and each reset.
 static void GambaPitySave()
 {
     try {
@@ -52412,23 +52379,42 @@ static void GambaPitySave()
         if (path.empty()) return;
         std::filesystem::path tmp = path;
         tmp += L".tmp";
-        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << "{\"count\":" << g_GambaPity.Count() << "}"; }
+        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << ForgePact::GambaPity::CounterFileText(g_GambaPity.Count()); }
         std::error_code ec;
         std::filesystem::rename(tmp, path, ec);
         if (ec) { g_GambaPityError = "could not save " + path.string(); return; }
     } catch (...) { g_GambaPityError = "could not save the gambapity counter"; }
 }
 
-// ---- the detours -----------------------------------------------------------
-// PickUpGoldCheck: count one spin, then run the game's own call.
-static RValue& GambaPitySpinDetour(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+// Read through the core's ParseCounterFile. An unversioned file is phase 5's
+// spin count, never read as explosions: the count starts at 0, the migration
+// line is printed once, and the file is rewritten as version 2 at once, so the
+// next launch is silent. Another version starts at 0 with the status line's
+// error, and the file is left until the count next changes.
+static void GambaPityLoad()
 {
-    if (g_GambaPity.Enabled() && GambaPityIsMachine(S) && GambaPityIsSpin(argc, A)) {
-        if (g_GambaPity.OnSpin(true)) GambaPitySave();
-    }
-    return g_GambaPitySpinOrig ? g_GambaPitySpinOrig(S, O, R, argc, A) : R;
+    if (g_GambaPityLoaded) return;
+    g_GambaPityLoaded = true;
+    namespace GP = ForgePact::GambaPity;
+    try {
+        const std::filesystem::path path = GambaPityPath();
+        std::error_code ec;
+        if (!path.empty() && std::filesystem::is_regular_file(path, ec) && std::filesystem::file_size(path, ec) < 4096) {
+            std::ifstream in(path, std::ios::binary);
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const GP::CounterFile file = GP::ParseCounterFile(text);
+            g_GambaPity.SetCount(file.count);
+            if (file.legacy) {
+                Out(GP::Pity::MigrationLine());
+                GambaPitySave();
+            } else if (file.unknown) {
+                g_GambaPityError = GP::Pity::VersionErrorText(file.version);
+            }
+        }
+    } catch (...) { g_GambaPityError = "could not read the gambapity counter"; }
 }
 
+// ---- the splices -----------------------------------------------------------
 // The frame the decision core counts in: FrameCallback's presented frames.
 static int64_t GambaPityFrame() { return (int64_t)g_RuntimeFrame; }
 
@@ -52722,6 +52708,10 @@ static void GambaPityWatchMachines(int64_t frame)
             break;
         }
         case GP::Sighting::Exploded:
+            // The explosion added one to the count: saved now, so one that a
+            // room change abandons, or a game closed before its deadline,
+            // still counts.
+            GambaPitySave();
             Out(g_GambaPity.ExplosionLine(id, frame));
             break;
         case GP::Sighting::None:
@@ -52806,18 +52796,18 @@ static void GambaPityTick()
 }
 
 // ---- install ---------------------------------------------------------------
-// The three hooks, lazily on the first `gambapity <count>`. Returns "" when
-// every hook is in, else why the mod stays off.
+// The two splices, lazily on the first `gambapity <count>`. Returns "" when
+// both are in, else why the mod stays off.
 static std::string GambaPityInstallHooks()
 {
 #ifndef FORGEPACT_RELEASE
-    // Coexistence with gambaprobe: one holder per script, each naming the other.
+    // Coexistence with gambaprobe: one holder per spliced script, each naming
+    // the other. gambaprobe's other rows (its PickUpGoldCheck among them) are
+    // no longer gambapity's, so they do not block it.
     std::string probeHeld;
     if (g_GpScriptRows[kGpScript_CreateDefaultParams].orig) probeHeld += "CreateDefaultParams";
     if (g_GpScriptRows[kGpScript_CreateItemNew].orig)
         probeHeld += (probeHeld.empty() ? "" : ", ") + std::string("CreateItemNew");
-    if (g_GpScriptRows[kGpScript_PickUpGoldCheck].orig)
-        probeHeld += (probeHeld.empty() ? "" : ", ") + std::string("PickUpGoldCheck");
     if (!probeHeld.empty())
         return "gambaprobe holds " + probeHeld + "; the mod stays off. Relaunch without `gambaprobe hook`.";
 #endif
@@ -52829,15 +52819,6 @@ static std::string GambaPityInstallHooks()
             return std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Slot_Machine_01_obj))
                 + " did not resolve by name; the mod stays off";
     }
-    if (!g_GambaPitySpinOrig) {
-        bool native = false;
-        if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_PickUpGoldCheck), "fp_gambapity_spin",
-                           (PVOID)GambaPitySpinDetour, &g_GambaPitySpinOrig, &native) || !g_GambaPitySpinOrig)
-            return "PickUpGoldCheck was not found by name; the mod stays off";
-        g_GambaPitySpinNative = native;
-    }
-    if (!g_GambaPitySpinNative)
-        return "PickUpGoldCheck is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
     if (!g_GambaPityCdpOrig) {
         // CreateDefaultParams (read for the machine-self (0, 98) natural reset)
         // is already held by the Angelic roll's hook (g_Orig_CreateDefaultParams);
@@ -52872,8 +52853,9 @@ static std::string GambaPityInstallHooks()
     return "";
 }
 
-// `gambapity <count>|off|status` (the panel's switch and range). `off` keeps
-// the counter; a forced head or a natural one resets it, a payout never does.
+// `gambapity <count>|off|status` (the panel's switch and range, in machine
+// explosions without a head). `off` keeps the count; a forced head or a
+// natural one resets it, a spin or a payout never does.
 static void GambaPityCommand(const std::string& rest)
 {
     const std::string arg = Lower(TrimCopy(rest));
