@@ -116,17 +116,20 @@ Each point is a static reading, in my own words.
   reports the client (`ReportClient`) and returns false, without touching the
   balance. A second `ReportClient` call site exists in it; the condition that
   reaches it was not read.
-- **None of its named callees ends the game.** They are `GetCounterHash`,
-  `ReportClient`, `DecryptStringApi`, `string_sha256`, `ShowDebug`,
-  `GetCurrenciesSetLogParams` and `ApiRequest`. Its 58 unnamed callees were not
-  read.
-- **`ReportClient` does not end the game on its named paths.** Its named
-  callees are `GetGameStateReport`, `ApiRequestRegion`, `string_sha256` and
+- **The bodies of `PickUpGoldCheck` and `ReportClient` themselves make no
+  call that ends the game.** `PickUpGoldCheck`'s named callees are
+  `GetCounterHash`, `ReportClient`, `DecryptStringApi`, `string_sha256`,
+  `ShowDebug`, `GetCurrenciesSetLogParams` and `ApiRequest`; its 58 unnamed
+  callees were not read. `ReportClient`'s named callees are
+  `GetGameStateReport`, `ApiRequestRegion`, `string_sha256` and
   `DecryptStringApi`: it builds a state report and sends it online (hub
   `docs/RUNTIME_DATA_MODELS.md` § 7.5). It has about 200 direct call sites,
   many of them in `CheatDetection`.
-- **So a pickup that fails the game's own check is reported, not fatal**, on
-  the named paths read. For the unnamed callees this is not established.
+- **Of those named callees, only `GetCounterHash` and `ShowDebug` were read.**
+  `ApiRequest`, `ApiRequestRegion`, `GetGameStateReport`, `DecryptStringApi`,
+  `GetCurrenciesSetLogParams` and `string_sha256` were not, so whether a
+  pickup that fails the game's own check can end the game through them is not
+  established.
 - **`DropGold` and `DropMonsterGold` are not named in this project** (their
   `symbols.csv` rows point outside the exe, because that dump ran with table
   hooks in place), so #77's reading of them (hub `RUNTIME_DATA_MODELS.md`
