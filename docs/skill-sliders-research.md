@@ -21,7 +21,7 @@ amount, `StatAOESkillSize` element 0 for the AoE, and stat 75 through
 `ReturnSpecificStat` inside the player's own `LoadAllModifiers` for the speed
 (the stat form; the instance form did not ship). Only `Player_obj` and
 `Universal_Double_Cast_obj` count. The panel draws them as Modifiers → Skills,
-and ForgePact 2.3.0's release notes carry them. Design, scope, the `projprobe`
+and ForgePact 2.2.0's release notes carry them. Design, scope, the `projprobe`
 exclusion, tests and verification status: the hub guide's section "Skill
 sliders (`skillslider`, issue #160)" (`docs/submodules/ForgePact/instructions.md`).
 Status there: verified live on 2026-10-04 (`## Implementation live 1`, at the
