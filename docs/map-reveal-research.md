@@ -581,28 +581,33 @@ kept. A future session picking this up should:
 
 ### The symptom
 
-Reported by the owner from play, not yet reproduced under instrumentation:
-with Map Reveal and its pack markers on, a new area first shows one icon per
-unspawned pack by kind (ambush, ancient, champion, colossal chest, legion,
-miniboss, normal), and a few seconds later the special-kind icons give way to
-generic ones while the player has not gone near the packs. The marker list
+Reported by the owner from play, and reproduced under instrumentation in
+Live 1 below: with Map Reveal and its pack markers on, a new area first shows
+one icon per unspawned pack by kind (ambush, ancient, champion, colossal
+chest, legion, miniboss, normal; Live 1 saw ancient and miniboss icons go,
+the other special kinds were not in that zone), and a few seconds later the
+special-kind icons give way to generic ones while the player has not gone
+near the packs. The marker list
 gives a marker up when its spawner has not shown a numeric
 `enemyCreatorTimer` within 600 frames of being listed, which is 5 s at 120 fps
 and 10 s at 60 fps, about the delay described.
 
 ### The candidates, and what decides each
 
-Five explanations fit the report. The instrument below is built so one live
-session tells them apart; until it runs, none is measured.
+Five explanations fit the report. The instrument below was built so one live
+session tells them apart; as written here, before that session, none was
+measured. What Live 1 measured is under `### Live 1 results`.
 
-- **H1, unarmed give-up (the leading candidate).** The six special spawner
-  kinds never show a numeric `enemyCreatorTimer`, so every special marker is
-  dropped 600 frames after listing. A mixed cluster then shows the normal skull
-  (the rarest kind wins only among the markers left), and a spot holding only
-  special packs loses its icon. Static support only: the SDK's script table
-  has a Create-event closure for `Enemy_Creator_obj` and none for the other
-  six creator objects, and `enemyCreatorTimer` has only ever been measured on
-  `Enemy_Creator_obj` (the hub's `docs/RUNTIME_DATA_MODELS.md` § 11.2).
+- **H1, unarmed give-up (the leading candidate before Live 1).** If the six
+  special spawner kinds never show a numeric `enemyCreatorTimer`, every
+  special marker is dropped 600 frames after listing. A mixed cluster then
+  shows the normal skull (the rarest kind wins only among the markers left),
+  and a spot holding only special packs loses its icon. The support before
+  Live 1 was static only: the SDK's script table has a Create-event closure
+  for `Enemy_Creator_obj` and none for the other six creator objects, and
+  `enemyCreatorTimer` had only been measured on `Enemy_Creator_obj` (the
+  hub's `docs/RUNTIME_DATA_MODELS.md` § 11.2). Live 1 then read it absent on
+  the ancient, miniboss, ambush and colossal chest spawners it sampled.
   Decided by `givenup=` per kind in `packmarks why`, with `age=` near 600.
 - **H2, a false birth.** A spawner creates enemy-family objects that are not
   its pack (idle `*_Passive_obj` monsters come with the spawner,
@@ -684,8 +689,8 @@ below are read from it.
 
 What each check showed:
 
-- **The icons are ours, and the game draws none of its own (H5 ruled out,
-  measured).** At arrival in A, `enumerations=18` and `iconDraws=781`; the
+- **The skull and devil icons are ours; the game draws none of them (H5
+  ruled out, measured).** At arrival in A, `enumerations=18` and `iconDraws=781`; the
   owner saw white skulls, devil icons and coloured dots. With `reveal packs 0`
   only the coloured dots remained, which the owner called vanilla.
 - **The sprites are not lost (H4 ruled out, measured).** `loaded=7/7` at
@@ -695,35 +700,54 @@ What each check showed:
   full read; by then all were gone, `givenup=15` at `age=600..602` and
   `givenup=3` at `age=600..603`, with no other retirement. The census found
   `enemyCreatorTimer` and `enemyArray` both absent (`variable_instance_exists`
-  false) on all 18, so neither variable was ever going to arm them. The owner
-  saw the devil icons go within 30 s, leaving the skulls and the dots.
-  The census counted all 18 as `lost`, a pack still to come that the map no
-  longer showed.
+  false) on all 18, at arrival and 30 s later, so as far as those two reads
+  show, neither variable was going to arm them. The owner saw the devil icons
+  go within 30 s, leaving the skulls and the dots. The census counted all 18
+  as `lost`; on a kind with no `enemyArray`, `lost` only says the spawner has
+  no marker and cannot tell a born pack from one still to come.
+- **The special spawners carry no timer in B either (measured).** Under
+  `state` in B the census read `enemyCreatorTimer` absent on all 9 ambush,
+  10 ancient, 6 colossal chest and 4 miniboss spawners, at arrival and 30 s
+  later; only the normal spawners carried one. So the 600-frame give-up
+  would have dropped those markers too under `timer`.
 - **No false birth retired a special marker (H2 not observed under `timer`,
   measured).** Ancient and miniboss had `attributed=0` and no attributed
   creates in A. Normal spawners did have creates attributed to them (58:
   `Skeleton_Mage_Fire_obj`, `Imp_Passive_obj`, `Hell_Beast_Passive_obj`).
   Later in the session, under `state`, miniboss spawners had creates
   attributed too (`Hellspawn_Guardsman_obj` 4 in B, `Servant_of_Devil_obj` 3
-  on the revisit) and none of them retired a marker, which is what `state`
-  is meant to do.
+  on the revisit), from spawners about 3000 px from the player, and their
+  markers held. Whether those creates were a miniboss birth is not
+  established; if they were, a born pack's marker held, which is not what
+  the marker is for.
 - **No early birth (H3 not observed, measured).** At 30 s in A no special
-  spawner had an `enemyArray` at all, so nothing showed a born pack.
-- **`state` keeps every kind (measured).** In B, 80 markers (normal 51, ambush
-  9, ancient 10, colossal chest 6, miniboss 4) all held from arrival to 30 s
-  later, every kind `lost=0 stale=0 givenup=0`, and the owner confirmed the
-  icons stayed.
+  spawner had an `enemyArray` at all, so the census could show no born
+  pack, and ancient and miniboss had `attributed=0`: no create was
+  attributed to them. The attribution itself was shown working on special
+  spawners later, when the forced ambush birth in B had 42 creates
+  attributed.
+- **`state` keeps every kind (measured by the owner's eye).** In B, 80
+  markers (normal 51, ambush 9, ancient 10, colossal chest 6, miniboss 4) all
+  held from arrival to 30 s later, every kind `lost=0 stale=0 givenup=0`, and
+  the owner confirmed the icons stayed. The counters could not have failed
+  here: under `state` nothing retires a marker but a spawner that no longer
+  exists or an `enemyArray` that is an array, so the evidence is what the
+  owner saw.
 - **`state` still retires born packs, for the kinds it can read (measured).**
   Warping beside an ambush marker turned 6 of the 9 ambush spawners'
   `enemyArray` from undefined to an array: `marked` 9 → 3, `stateborn=6`,
   `stale=0`, with 42 creates attributed. One more normal pack was born at the
   same time (`enemyArray` 11 → 12 arrays, `stateborn` 11 → 12). The owner saw
   packs appear, a mix of both.
-- **The revisit stayed clean (measured).** Back in A under `state`, 10 s
-  after arrival every kind read `stale=0`, with normal 92, ancient 15 and
-  miniboss 3 marked. Not explained by this session: on the revisit all 92
-  normal spawners read `enemyArray` undefined, including the 10 that read as
-  an array before the player left.
+- **The revisit read `stale=0`, but that proves little (measured).** Back in
+  A under `state`, 10 s after arrival every kind read `stale=0`, with normal
+  92, ancient 15 and miniboss 3 marked. On the revisit all 92 normal
+  spawners read `enemyArray` undefined, including the 10 that read as an
+  array before the player left, so no spawner could count as `stale`:
+  `stale=0` held by construction. And `state` appears to have marked those
+  10 spent normal spawners again (normal `marked=92`, where 82 were unspawned
+  before the player left). Why the arrays read undefined on the revisit is
+  not established.
 - **Champion and legion were not observed.** Neither zone had a spawner of
   either kind (`inames` found no ambush or legion instance in A; B had none
   of champion or legion), so nothing here is measured for them.
@@ -736,5 +760,60 @@ every kind in B and retired the forced ambush birth and the normal births.
 `state`. Those spawners carry no `enemyArray` (nor does the colossal chest),
 so under `state` their marker goes only when the spawner itself no longer
 exists, and no birth of either kind was forced in this session. A follow-up
-session on the same build, Live procedure 3 of the same workorder, is planned
-to settle it.
+session on the same build, Live procedure 3 of the same workorder, tested
+it; its results follow.
+
+### Live 3 results
+
+Run 2026-10-06 on the same research build (installed DLL SHA-256
+`d2bb1c72…`), character slot 14, saves backed up and restored clean
+afterwards, `forgepact.json` unchanged. One fresh zone, Satanic The Depths of
+Hell (zone level 514), under `retire state` throughout: 92 normal, 15 ancient
+and 3 miniboss spawners listed, no other kind. The player was warped beside
+an ancient marker, then a miniboss marker, then a normal marker as the
+control, then a second ancient marker, about 5 s per warp, with the owner
+watching. Six checks passed, one failed and one was not observed. The
+capture is the hub's `.claude/workorders/forgepact-181-map-reveal-icons-live-3.md`.
+
+- **The build and the instrument answered (pass, measured).** The DLL hash
+  matched, `ping` answered, `packmarks why` printed its per-kind lines,
+  `packmarks retire state` took, and `packmarks stat` read `hook=native` with
+  `retire=state` about 2 s later.
+- **Both kinds under test were present (pass, measured).** `listed=15` for
+  ancient and `listed=3` for miniboss, all marked, `givenup=0` on both: under
+  `state` neither kind was given up, as in Live 1's zone B.
+- **A normal birth still retires its marker (control, pass, measured).** At
+  the normal warp, normal `stateborn` rose 35 → 48 and the census's
+  `enemyArray` array count 35 → 48, with `kinds` normal 57 → 44; the owner
+  saw monsters there ("same for normal"). Whether the normal icon left the
+  minimap was not reported by the owner.
+- **An ancient birth does not retire its marker under `state` (fail,
+  measured).** At both ancient warps (markers 263690 and 264438) the owner
+  saw monsters appear ("ancient warps spawned enemies") and saw the ancient
+  markers stay ("ancient markers are not cleared as well"). Ancient
+  `destroyed=0` and `stateborn=0` throughout, `kinds` ancient 15 → 15, and
+  the census unchanged at `timer=0/0/15/0 enemyArray=0/0/15/0`: every
+  ancient spawner still existed and still carried neither variable after the
+  birth. Creates attributed to ancient spawners rose 0 → 3 at the first
+  ancient warp, 3 → 7 at the miniboss warp and 7 → 10 at the second ancient
+  warp (`Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
+  `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2).
+- **A miniboss birth was not observed.** The owner saw the miniboss markers
+  stay. Miniboss `attributed=0` with no creates, `destroyed=0`,
+  `stateborn=0`, `kinds` miniboss 3 → 3 and the census unchanged. A
+  screenshot at the miniboss warp shows named monsters ("Sacrilegious
+  Goliath", "Infernal Mystic") nearby, but no create was attributed to a
+  miniboss spawner and the owner did not say whether a miniboss pack
+  appeared, so whether one was born is not established.
+
+**Route: `kinds-birth: kept`.** The `state` candidate does not retire an
+ancient marker at a birth the owner saw, because the ancient spawner outlives
+its birth and carries no `enemyArray` to read; so `state` as built cannot
+ship as the fix. The measured lead: a create attributed to an ancient spawner
+coincided with each ancient birth the owner saw, while the spawner's
+variables did not change. Whether it marks every ancient birth, and nothing
+else, is not established. For miniboss spawners no birth signal is
+established: Live 1's attributed creates are not shown to be births, and in
+this session named monsters showed near the miniboss warp with no create
+attributed to a miniboss spawner. The
+shipping retirement rule is being redesigned from these results.
