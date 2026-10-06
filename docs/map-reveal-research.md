@@ -576,3 +576,97 @@ kept. A future session picking this up should:
    corrected to describe what `MapRevealManager` actually already does
    (mechanics/waypoints/quest markers, not enemies/loot), with no further
    code.
+
+## 11. Pack marker icons replaced a few seconds after arrival (issue #181)
+
+### The symptom
+
+Reported by the owner from play, not yet reproduced under instrumentation:
+with Map Reveal and its pack markers on, a new area first shows one icon per
+unspawned pack by kind (ambush, ancient, champion, colossal chest, legion,
+miniboss, normal), and a few seconds later the special-kind icons give way to
+generic ones while the player has not gone near the packs. The marker list
+gives a marker up when its spawner has not shown a numeric
+`enemyCreatorTimer` within 600 frames of being listed, which is 5 s at 120 fps
+and 10 s at 60 fps, about the delay described.
+
+### The candidates, and what decides each
+
+Five explanations fit the report. The instrument below is built so one live
+session tells them apart; until it runs, none is measured.
+
+- **H1, unarmed give-up (the leading candidate).** The six special spawner
+  kinds never show a numeric `enemyCreatorTimer`, so every special marker is
+  dropped 600 frames after listing. A mixed cluster then shows the normal skull
+  (the rarest kind wins only among the markers left), and a spot holding only
+  special packs loses its icon. Static support only: the SDK's script table
+  has a Create-event closure for `Enemy_Creator_obj` and none for the other
+  six creator objects, and `enemyCreatorTimer` has only ever been measured on
+  `Enemy_Creator_obj` (the hub's `docs/RUNTIME_DATA_MODELS.md` § 11.2).
+  Decided by `givenup=` per kind in `packmarks why`, with `age=` near 600.
+- **H2, a false birth.** A spawner creates enemy-family objects that are not
+  its pack (idle `*_Passive_obj` monsters come with the spawner,
+  `docs/population-performance-analysis.md` § 8), so the create hooks report a
+  birth, the marker is retired and the game's own dots show in its place.
+  Decided by `attributed=` and the `creates:` names in `packmarks why`, read
+  against `packmarks census` still showing the creator's `enemyArray` as not an
+  array.
+- **H3, a real early birth.** The special packs really are born on arrival,
+  and the marker hands over to the game's dots by design (the README's Full
+  Map Reveal row: "its real dots replace the marker"). Decided by the census
+  showing `enemyArray` as an array 30 s after arrival without the player
+  going near.
+- **H4, the icons are lost.** The icon sprites stop drawing and the
+  dots-by-kind fallback shows. Decided by `loaded=7/7` and a growing
+  `iconDraws=` in `packmarks stat` at arrival and 30 s later.
+- **H5, the varied icons were the game's own.** What shows at arrival is the
+  game's own per-type minimap drawing, and our markers then draw over it.
+  Decided by `enumerations=` and `iconDraws=` at arrival and a screenshot with
+  the markers off.
+
+Ruled out statically: one kind's enumeration counting another kind's
+spawners. The SDK's parent table lists all seven creator objects as root
+objects, so `instance_number` and `instance_find` on one never return another's
+instances.
+
+### The instrument
+
+Research build (`build.bat dev`) only, except the `kinds=` field. Counts are
+per zone, reset when the zone generation changes.
+
+- `packmarks stat`, both builds, gains
+  `kinds=normal:<n>,ambush:<n>,ancient:<n>,champion:<n>,colossal_chest:<n>,legion:<n>,miniboss:<n>`,
+  the markers held now per kind; the research build adds `retire=timer` or
+  `retire=state`.
+- `packmarks why` prints one line per kind,
+  `packmarks why <kind>: listed=<n> marked=<n> spawned=<n> destroyed=<n> timergone=<n> givenup=<n> stateborn=<n> attributed=<n> age=<min>..<max> frame=<f>`:
+  the retirements by rule, every create the hooks attributed to a spawner of
+  that kind whether or not it retired the marker, and the frames between
+  listing and retirement (`-1..-1` when none). Then, per kind,
+  `packmarks why <kind> creates: <ObjectName>=<n> ...`, the four objects
+  created most often, named by the runtime's `object_get_name`, or `none`.
+- `packmarks census` walks every spawner of each kind once (never per frame)
+  and prints
+  `packmarks census <kind>: creators=<n> marked=<n> timer=<number>/<undefined>/<absent>/<other> enemyArray=<array>/<undefined>/<absent>/<other> lost=<n> stale=<n>`.
+  `absent` means `variable_instance_exists` is false; `lost` is a spawner with
+  no marker whose `enemyArray` is not an array (a pack still to come that the
+  map no longer shows); `stale` is a marked spawner whose `enemyArray` is an
+  array (a born pack still drawn as unspawned).
+- `packmarks retire timer|state` picks the retirement rule for the session and
+  answers `packmarks retire -> timer` or `-> state`. `timer` is today's
+  behaviour. `state` is the candidate fix: a marker goes only when its
+  spawner no longer exists or the spawner's own `enemyArray`, read by name, is
+  an array (undefined before and while armed, an array once spawned:
+  `docs/RUNTIME_DATA_MODELS.md` § 11.2 in the hub, measured on
+  `Enemy_Creator_obj` only). Nothing else retires it, so an absent
+  timer, a timer that went away and an attributed create all keep the marker.
+  The check is made on the spawner itself, where the marker is used.
+
+### Where the results go
+
+The session that decides between these is Live procedure 1 of the hub
+workorder `forgepact-181-map-reveal-icons` (capture
+`forgepact-181-map-reveal-icons-live-1.md`): two fresh zones, one under each
+rule, a forced birth by warping next to a special marker, and a revisit. Its
+results are recorded here, under `### Live 1 results`, by that workorder's
+record round. Nothing above is a result yet.
