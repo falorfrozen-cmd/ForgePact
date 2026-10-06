@@ -38,9 +38,10 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 
 - **Phase:** research for Goburin's Head pity (ForgePact #134). Phases 1 and
   1c measured the machine, phase 3 wrote the pity mod (`gambapity`, on this
-  branch and unreleased), phase 4 measures the explosion it must fire on, and
-  phase 5 fires it on the explosion. Nothing of the research instrument is player-visible, and the player build
-  is free of it.
+  branch and unreleased), phase 4 measures the explosion it must fire on,
+  phase 5 fires it on the explosion, and phase 6 counts explosions instead of
+  spins. Nothing of the research instrument is player-visible, and the player
+  build is free of it.
 - **Instrument:** `gambaprobe` (§ Instrument), research build only, on the
   ForgePact branch `134-goburins-head-pity-research`.
 - **Live procedure 1:** ran on 2026-10-04 and came back INSTRUMENT-BLIND: every
@@ -1393,14 +1394,23 @@ may not exist on another machine; the outline is repeated here.
   `forgepact_gamba_pity.json` is recorded before; it is expected to hold
   phase 5's unversioned `{"count":12}`, and is written as that from the
   backend if it does not, so the migration has a legacy file. It is written
-  back to its starting bytes at teardown.
+  back to its starting bytes at teardown. The plugin reads the file once per
+  process, on the first `gambapity` command, and the panel sends one at
+  launch while its switch is on, so `mod_gambapity` (and `gambapity`) in
+  ForgePact's `forgepact.json` are recorded before launch, `mod_gambapity`
+  is set false from the backend if it is on, and both are restored at
+  teardown; no `gambapity` command goes before the first `status`.
 - **control**: `ping` -> `pong (YYTK 4.0.1)`. **marker**: the first
   `gambapity status` answers a status line with `explosions=` and no `gold=`
   field, which only this build prints.
 - **steps**: `gambapity status` (`migrate`: the line `gambapity: the counter
   file held a spin count from an older version; the explosion count starts
-  at 0`, then `count=0`, and the file reads `{"version":2,"count":0}`), sent
-  again (`migrate-once`: no second migration line); `gambapity 2` (`armed`);
+  at 0`, then `count=0`, and the file reads `{"version":2,"count":0}`;
+  `out.txt` is searched from launch on for the migration line, so one
+  printed before the first `status` is seen too); `migrate-once`: the file
+  reading `{"version":2,"count":0}` right after that, which is what makes
+  the next launch silent - a second `status` in the same process cannot
+  show it, since the file is read once per process; `gambapity 2` (`armed`);
   `reveal` and `hiddenloot` noted and set as in Live procedure 5; zones until
   the game places a machine A (`machine-seen`); the person spins A, and after
   at least 3 spins `status` still reads `count=0` while the gold has fallen
@@ -1413,7 +1423,8 @@ may not exist on another machine; the outline is repeated here.
   the drop: heads=1`; `one-head`: exactly one head by B, `natural=0`). The
   counter file reads `{"version":2,"count":1}` after A and
   `{"version":2,"count":0}` after B (`counter-file`). Teardown: `gambapity
-  off`, `reveal` and `hiddenloot` restored, the saves restored and the
+  off`, `reveal` and `hiddenloot` restored, `forgepact.json`'s
+  `mod_gambapity` and `gambapity` restored, the saves restored and the
   counter file written back to its starting bytes.
 - **checks**: `dll-hash`, `marker` and `control` for the session; `migrate`,
   `migrate-once`, `armed`, `machine-seen`, `spin-no-count`, `first-below`,
@@ -1836,7 +1847,9 @@ exploding spin is debited is not established, so they did not share one
 spin count or one gold total, but two samples
 cannot tell a random roll per spin from a threshold drawn per machine or
 read from the machine's state. `counter-route` stays `both`: spins through
-`PickUpGoldCheck`, and explosions through the watch's sprite change.
+`PickUpGoldCheck`, and explosions through the watch's sprite change. The
+key records which events a counter could read; the shipped counter (phase 6)
+counts only explosions.
 
 Live 3 measured a natural machine's spin and payout (the `scp` and `stamp`
 spawn routes both failed, so no spawned machine could be spun). The prize roll
@@ -1933,3 +1946,8 @@ machine's spin and payout and answered several of the rest; what stays open:
   the natural-head signals would see a head the game drops are all not
   observed in play; the explosion decision is pinned by the pity's
   behaviour test.
+- **The phase-6 explosion count.** Counting explosions without a head (each
+  added when seen, the one that reaches the threshold forced), the counter
+  file's version 2 and its migration from phase 5's spin count are not
+  observed in play until Live procedure 6 runs; until then only the
+  behaviour and contract tests pin them.

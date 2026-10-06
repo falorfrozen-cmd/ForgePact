@@ -35,11 +35,13 @@ namespace ForgePact::GambaPity {
 // Spins and payouts are not an input, so neither can count, force or reset.
 // The decision is made kSettleFrames presented frames after the sprite
 // change, in this order: the room changed -> abandoned (count kept); a
-// natural-head signal in the window -> natural (no force, count reset, this
-// explosion's own addition included, at any count); on, the count at the
-// threshold and this explosion's own addition the one that reached it ->
-// force (a confirmed drop resets, a refused one keeps the count so the next
-// explosion forces), unless the ground near the machine did not read, now or
+// natural-head signal in the window -> natural (no force, at any count: this
+// explosion's addition and every one before it leave the count); on, the
+// count at the threshold, this explosion's own addition the one that reached
+// it and no force confirmed since it was added -> force (a confirmed drop
+// takes this explosion's addition and every one before it out of the count,
+// keeping a later pending explosion's; a refused one keeps the count so the
+// next explosion forces), unless the ground near the machine did not read, now or
 // at its first sight -> ground-unread (refused, count kept: a second head is
 // worse than a late one); otherwise below (count kept).
 //
@@ -84,6 +86,7 @@ struct Explosion {
     double x = 0.0, y = 0.0;  // the machine's position at the sprite change
     std::string signal;       // "build" / "machine-build" once one fell in the window
     int countAfter = 0;       // the count its own addition brought the counter to; 0 when it did not count
+    int64_t addSeq = 0;       // its addition's place among this session's additions (1, 2, ...); 0 when it did not count
 };
 
 // The deadline's decision for one explosion.
@@ -111,9 +114,23 @@ public:
     // ParseCounterFile; this core holds no file I/O).
     void SetCount(int count) { count_ = count > 0 ? count : 0; }
 
-    // A natural charm drop starts the guarantee over, at any count. The
-    // machine-self CreateDefaultParams (0, 98) reset calls this directly.
-    void OnNaturalDrop() { count_ = 0; }
+    // A natural charm build with no explosion of its own - the machine-self
+    // CreateDefaultParams (0, 98) - starts the guarantee over, at any count:
+    // every addition so far goes.
+    void OnNaturalDrop()
+    {
+        count_ = 0;
+        clearedThrough_ = added_;
+    }
+
+    // Where explosion `e` stands in the count now: the count less the
+    // additions made after it. An explosion that did not count, or whose
+    // addition a reset already took, stands at 0 or below.
+    int64_t Position(const Explosion& e) const
+    {
+        if (e.addSeq <= 0 || e.addSeq <= clearedThrough_) return 0;
+        return static_cast<int64_t>(count_) - (added_ - e.addSeq);
+    }
 
     // `gambapity off`: disarmed, the counter kept. The machine records and any
     // pending explosion go too, so turning it on again starts every machine
@@ -171,6 +188,7 @@ public:
         if (enabled_) {
             ++count_;
             e.countAfter = count_;
+            e.addSeq = ++added_;
         }
         pending_.push_back(e);
         ++explosions_;
@@ -268,11 +286,14 @@ public:
     // `ground` the charm heads lying near the machine now, and `groundRead`
     // whether that scan read to the end. Abandoned, natural, below and
     // ground-unread are final here; a force waits for ForceConfirmed or
-    // ForceRefused. A force needs this explosion's own addition to have
-    // reached the threshold (an explosion still pending never forces on a
-    // later one's addition, so two in one settle span force at most once),
+    // ForceRefused. A force needs this explosion to stand at the threshold
+    // in the count (Position: an explosion still pending never forces on a
+    // later one's addition), to have been added after the last confirmed
+    // force (so explosions pending at the same time make at most one head),
     // and both ground reads - the machine's baseline and this one - since
-    // only they can rule out a head the game placed.
+    // only they can rule out a head the game placed. A natural outcome
+    // takes this explosion's addition and every one before it out of the
+    // count; a later pending explosion's addition stays.
     Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)
     {
         Decision d;
@@ -290,11 +311,11 @@ public:
         if (fresh > 0 || !e.signal.empty()) {
             d.signal = fresh > 0 ? std::string("ground") : e.signal;
             d.outcome = Outcome::Natural;
-            OnNaturalDrop();
+            ResetThrough(e);
             ++natural_;
             return d;
         }
-        if (enabled_ && threshold_ > 0 && count_ >= threshold_ && e.countAfter >= threshold_) {
+        if (enabled_ && threshold_ > 0 && count_ >= threshold_ && Position(e) >= threshold_ && e.addSeq > forcedThrough_) {
             if (!groundRead || !baselineRead) {
                 ++refused_;
                 ++groundUnread_;
@@ -317,10 +338,13 @@ public:
 
     // The forced head was placed and read back (its ground instance id, kept
     // so a later explosion's ground check does not take it for natural): the
-    // counter resets.
-    void ForceConfirmed(int64_t groundId)
+    // count drops by this explosion's standing - its addition and every one
+    // before it - so a later pending explosion's addition is kept, and no
+    // explosion added before now can force.
+    void ForceConfirmed(const Explosion& e, int64_t groundId)
     {
-        count_ = 0;
+        ResetThrough(e);
+        forcedThrough_ = added_;
         ++forced_;
         if (groundId >= 0) ownHeads_.insert(groundId);
     }
@@ -451,6 +475,21 @@ private:
         std::set<int64_t> baseline;   // charm heads near it at first sight
     };
 
+    // Take explosion `e`'s addition and every one before it out of the count
+    // (the count keeps only the additions after it). Nothing when a reset
+    // already took it; an explosion that did not count resets everything.
+    void ResetThrough(const Explosion& e)
+    {
+        if (e.addSeq <= 0) {
+            OnNaturalDrop();
+            return;
+        }
+        if (e.addSeq <= clearedThrough_) return;
+        const int64_t after = added_ - e.addSeq;
+        count_ = static_cast<int>(std::max<int64_t>(0, std::min<int64_t>(count_, after)));
+        clearedThrough_ = e.addSeq;
+    }
+
     // A head build at `frame`: our own inside the own-drop scope, else a
     // signal for every pending explosion whose window holds it, and kept for
     // the look-back of an explosion seen within kLookBackFrames.
@@ -469,6 +508,9 @@ private:
     bool enabled_ = false;
     int threshold_ = 0;
     int count_ = 0;
+    int64_t added_ = 0;           // additions this session (each counted explosion's addSeq)
+    int64_t clearedThrough_ = 0;  // the last addSeq a reset took out of the count
+    int64_t forcedThrough_ = 0;   // added_ at the last confirmed force: nothing added by then forces
     int64_t room_ = -1;
     bool ownDrop_ = false;
     std::map<int64_t, Machine> machines_;

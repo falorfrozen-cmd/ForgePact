@@ -418,7 +418,30 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("~GambaPityOwnDropScope() { g_GambaPity.EndOwnDrop(); }", self.code)
         # A confirmed drop resets, a refused one keeps the counter.
         self.assertIn("g_GambaPity.ForceRefused();", decide)
-        self.assertIn("g_GambaPity.ForceConfirmed(groundId);", decide)
+        self.assertIn("g_GambaPity.ForceConfirmed(e, groundId);", decide)
+
+    def test_a_reset_takes_only_its_explosions_standing_and_one_force_per_pending_set(self):
+        # A confirmed force and a natural head take this explosion's addition
+        # and every one before it; a later pending explosion's addition stays.
+        confirmed = function_body(self.header, "void ForceConfirmed(const Explosion& e, int64_t groundId)")
+        self.assertIn("ResetThrough(e);", confirmed)
+        self.assertIn("forcedThrough_ = added_;", confirmed)
+        self.assertNotIn("count_ = 0;", confirmed)
+        decide = function_body(self.header, "Decision Decide(const Explosion& e, int64_t room, const std::vector<int64_t>& ground, bool groundRead = true)")
+        natural = decide[decide.index("d.outcome = Outcome::Natural;"):]
+        natural = natural[:natural.index("return d;")]
+        self.assertIn("ResetThrough(e);", natural)
+        self.assertNotIn("OnNaturalDrop();", natural)
+        # Explosions pending when a force was confirmed never force.
+        self.assertIn("Position(e) >= threshold_ && e.addSeq > forcedThrough_", decide)
+        reset = function_body(self.header, "void ResetThrough(const Explosion& e)")
+        self.assertIn("const int64_t after = added_ - e.addSeq;", reset)
+        self.assertIn("clearedThrough_ = e.addSeq;", reset)
+        # The machine-self (0, 98) build has no explosion: every addition goes.
+        drop = function_body(self.header, "void OnNaturalDrop()")
+        self.assertIn("count_ = 0;", drop)
+        self.assertIn("clearedThrough_ = added_;", drop)
+        self.assertIn("OnNaturalDrop();", function_body(self.header, "void OnMachineCharmBuild(int64_t frame)"))
 
     def test_the_forced_drop_is_the_loader_route_with_a_bounded_retry_and_a_read_back(self):
         drop = self.body("static std::string GambaPityDropHead(")
@@ -499,7 +522,16 @@ class GambaPityContract(unittest.TestCase):
         unknown = load[load.index("} else if (file.unknown) {"):]
         unknown = unknown[:unknown.index("}", 1)]
         self.assertIn("g_GambaPityError = GP::Pity::VersionErrorText(file.version);", unknown)
+        self.assertIn("g_GambaPityVersionError = true;", unknown)
         self.assertNotIn("GambaPitySave();", unknown)
+        # The first save that lands replaces that file, and the version error
+        # goes with it; a save that fails names itself instead.
+        landed = save[save.index("std::filesystem::rename(tmp, path, ec);"):]
+        self.assertLess(landed.index("if (ec) {"), landed.index("if (g_GambaPityVersionError) {"))
+        cleared = landed[landed.index("if (g_GambaPityVersionError) {"):]
+        cleared = cleared[:cleared.index("}")]
+        self.assertIn("g_GambaPityError.clear();", cleared)
+        self.assertIn("g_GambaPityVersionError = false;", cleared)
         self.assertEqual(load.count("GambaPitySave();"), 1)
         # The core writes exactly version 2.
         self.assertIn("inline constexpr int64_t kCounterFileVersion = 2;", self.header)
@@ -533,6 +565,17 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn('"mod_gambapity": False,\n    "gambapity": 10,', python)
         svelte = MODS_SVELTE.read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertIn('id="gambapity" min="1" max="20" step="1" value="10"', svelte)
+
+    def test_the_slider_toast_names_the_ordinal_explosion_without_a_head(self):
+        from test_release_hook_contract import function_body as body
+        from test_panel_performance import run_node
+        panel = (ROOT / "panel" / "src" / "panel.js").read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("toast('Goburin\\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head - '", panel)
+        ordinal = "function gambapityOrdinal(n){" + body(panel, "function gambapityOrdinal(n)") + "}"
+        values = [1, 2, 3, 4, 10, 11, 12, 13, 20, 21, 22, 23, 111]
+        got = run_node(ordinal, f"console.log(JSON.stringify({values}.map(gambapityOrdinal)));")
+        self.assertEqual(got, ["1st", "2nd", "3rd", "4th", "10th", "11th", "12th", "13th", "20th", "21st", "22nd",
+                               "23rd", "111th"])
 
     def _load_cfg_from(self, saved):
         if str(SDK_PYTHON) not in sys.path:

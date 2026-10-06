@@ -293,6 +293,11 @@ function dungeonChestPaint(v){
 // Goburin's Head pity's value box: the number of machine explosions without a
 // head while its switch is on, "off" while it is off (the count is kept either
 // way).
+// The slider's number as an ordinal for its toast: 1st, 2nd, 3rd, 4th ... 11th-13th, 20th.
+function gambapityOrdinal(n){
+  const t=n%100;
+  return n+((t>=11&&t<=13)?'th':(['th','st','nd','rd'][n%10]||'th'));
+}
 function gambapityPaint(v){
   const on=document.getElementById('mod_gambapity').checked,val=document.getElementById('gppval');
   val.textContent=on?v:'off';val.className='val '+(on?'':'off');
@@ -690,7 +695,7 @@ function bind(){
   // switch repaints before its POST, so a lost server still leaves the box right.
   const gpp=document.getElementById('gambapity');
   gpp.oninput=()=>gambapityPaint(sliderVal(gpp));
-  gpp.onchange=async()=>{const v=sliderVal(gpp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity at explosion '+v+' without a head - '+(res.ok||res.err))};
+  gpp.onchange=async()=>{const v=sliderVal(gpp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity: drops at the '+gambapityOrdinal(v)+' explosion without a head - '+(res.ok||res.err))};
   typable(gpp,document.getElementById('gppval'));
   document.getElementById('mod_gambapity').onchange=async(e)=>{
     gambapityPaint(+gpp.value);

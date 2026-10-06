@@ -52289,6 +52289,7 @@ static PFUNC_YYGMLScript g_GambaPityItemOrig = nullptr;   // CreateItemNew's tra
 static bool g_GambaPityHooked = false;          // both splices are in
 static bool g_GambaPityLoaded = false;          // the counter file was read
 static std::string g_GambaPityError;            // the last load/save refusal, empty when none
+static bool g_GambaPityVersionError = false;    // g_GambaPityError is the unknown-version text
 
 // The scripts gambapity holds, as "A, B" - empty when it holds none. The
 // research build's gambaprobe refuses while this is non-empty.
@@ -52371,7 +52372,8 @@ static std::filesystem::path GambaPityPath()
 }
 
 // The core's text, version 2: `{"version":2,"count":<n>}`. Saved whenever the
-// count changes - an explosion's addition, and each reset.
+// count changes - an explosion's addition, and each reset. A save that lands
+// replaces a file of another version, so its status error goes with it.
 static void GambaPitySave()
 {
     try {
@@ -52382,8 +52384,19 @@ static void GambaPitySave()
         { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << ForgePact::GambaPity::CounterFileText(g_GambaPity.Count()); }
         std::error_code ec;
         std::filesystem::rename(tmp, path, ec);
-        if (ec) { g_GambaPityError = "could not save " + path.string(); return; }
-    } catch (...) { g_GambaPityError = "could not save the gambapity counter"; }
+        if (ec) {
+            g_GambaPityError = "could not save " + path.string();
+            g_GambaPityVersionError = false;
+            return;
+        }
+        if (g_GambaPityVersionError) {
+            g_GambaPityError.clear();
+            g_GambaPityVersionError = false;
+        }
+    } catch (...) {
+        g_GambaPityError = "could not save the gambapity counter";
+        g_GambaPityVersionError = false;
+    }
 }
 
 // Read through the core's ParseCounterFile. An unversioned file is phase 5's
@@ -52409,6 +52422,7 @@ static void GambaPityLoad()
                 GambaPitySave();
             } else if (file.unknown) {
                 g_GambaPityError = GP::Pity::VersionErrorText(file.version);
+                g_GambaPityVersionError = true;
             }
         }
     } catch (...) { g_GambaPityError = "could not read the gambapity counter"; }
@@ -52772,7 +52786,7 @@ static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t ro
         Out(GP::Pity::RefusedLine(refused));
         return;
     }
-    g_GambaPity.ForceConfirmed(groundId);
+    g_GambaPity.ForceConfirmed(e, groundId);
     GambaPitySave();   // the counter reset
     Out(GP::Pity::ForcedLine(e.x, e.y, rarity, attempt));
     const GambaPityGroundScan after = GambaPityGroundHeads(e.x, e.y);

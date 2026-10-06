@@ -149,7 +149,7 @@ int main()
         const Decision second = due.size() == 1 ? p.Decide(due[0], 7, kNoHeads) : Decision();
         const bool forces = second.outcome == Outcome::Force && p.Count() == 2
             && secondLine == "gambapity: explosion id=101 count=2 threshold=2 frame=300";
-        p.ForceConfirmed(9001);
+        p.ForceConfirmed(due[0], 9001);
         check("target/threshold_2_from_0_the_second_explosion_forces_and_a_confirmed_force_leaves_0",
               below && forces && p.Count() == 0 && p.Forced() == 1 && p.Below() == 1 && p.Explosions() == 2,
               secondLine + " | " + p.StatusLine());
@@ -163,9 +163,10 @@ int main()
                 p.ObserveMachine(id, false, id * 1000 - 50, 0.0, 0.0);
                 p.SetBaseline(id, kNoHeads);
             }
-            if (p.Decide(ExplodeAndWait(p, id, id * 1000), 7, kNoHeads).outcome == Outcome::Force) {
+            const Explosion e = ExplodeAndWait(p, id, id * 1000);
+            if (p.Decide(e, 7, kNoHeads).outcome == Outcome::Force) {
                 ++forces;
-                p.ForceConfirmed(-1);
+                p.ForceConfirmed(e, -1);
             }
         }
         check("target/threshold_1_forces_every_explosion_without_a_head", forces == 3 && p.Forced() == 3 && p.Count() == 0
@@ -208,7 +209,7 @@ int main()
         const Decision d = p.Decide(e, 7, kNoHeads);
         check("target/at_the_threshold_with_no_signal_the_decision_is_force", e.id == 100 && e.countAfter == 10
               && d.outcome == Outcome::Force && p.Count() == 10, p.StatusLine());
-        p.ForceConfirmed(9001);
+        p.ForceConfirmed(e, 9001);
         check("target/a_confirmed_force_resets_the_counter", p.Count() == 0 && p.Forced() == 1, p.StatusLine());
     }
     {
@@ -316,7 +317,7 @@ int main()
         p.BeginOwnDrop();
         const bool own = p.OnHeadBuild(160);
         p.EndOwnDrop();
-        p.ForceConfirmed(9001);
+        p.ForceConfirmed(e, 9001);
         const bool counted = d.outcome == Outcome::Force && own && p.OwnHeadBuilds() == 1 && !p.InOwnDrop();
         p.SetCount(12);
         p.ObserveMachine(101, false, 170, 330.0, 480.0);
@@ -333,15 +334,17 @@ int main()
         Pity p = Armed(10, 12);
         p.ObserveMachine(101, false, 50, 400.0, 480.0);
         p.SetBaseline(101, kNoHeads);
-        p.Decide(ExplodeAndWait(p, 100, 100), 7, kNoHeads);
-        p.ForceConfirmed(9001);
+        const Explosion pe = ExplodeAndWait(p, 100, 100);
+        p.Decide(pe, 7, kNoHeads);
+        p.ForceConfirmed(pe, 9001);
         p.SetCount(12);
         const Decision ours = p.Decide(ExplodeAndWait(p, 101, 300), 7, { 9001 });
         Pity q = Armed(10, 12);
         q.ObserveMachine(101, false, 50, 400.0, 480.0);
         q.SetBaseline(101, kNoHeads);
-        q.Decide(ExplodeAndWait(q, 100, 100), 7, kNoHeads);
-        q.ForceConfirmed(9001);
+        const Explosion qe = ExplodeAndWait(q, 100, 100);
+        q.Decide(qe, 7, kNoHeads);
+        q.ForceConfirmed(qe, 9001);
         const Decision theirs = q.Decide(ExplodeAndWait(q, 101, 300), 7, { 9001, 9002 });
         check("target/our_earlier_forced_head_near_a_second_machine_is_not_natural",
               ours.outcome == Outcome::Force && p.Natural() == 0
@@ -480,14 +483,16 @@ int main()
             if (p.Decide(e, 7, kNoHeads).outcome == Outcome::Force) {
                 ++forces;
                 forcedId = e.id;
-                p.ForceConfirmed(-1);
+                p.ForceConfirmed(e, -1);
             }
         }
         check("target/two_machines_in_one_settle_span_force_at_most_once",
               due.size() == 2 && forces == 1 && forcedId == 101 && p.Forced() == 1 && p.Below() == 1 && p.Count() == 0,
               p.StatusLine());
-        // From 1: the first brings the count to 2 and forces; after its reset
-        // the second is below.
+        // From 1: the first brings the count to 2 and forces; its reset takes
+        // its own addition and the one before it, and keeps the second's, so
+        // the count is 1, and the second, pending when the force was
+        // confirmed, is below.
         Pity q = Armed(2, 1);
         q.ObserveMachine(101, false, 0, 900.0, 480.0);
         q.SetBaseline(101, kNoHeads);
@@ -500,12 +505,72 @@ int main()
             if (q.Decide(e, 7, kNoHeads).outcome == Outcome::Force) {
                 ++forces;
                 forcedId = e.id;
-                q.ForceConfirmed(-1);
+                q.ForceConfirmed(e, -1);
             }
         }
         check("target/the_explosion_that_reached_the_threshold_forces_and_the_other_is_below",
-              due.size() == 2 && forces == 1 && forcedId == 100 && q.Forced() == 1 && q.Below() == 1 && q.Count() == 0,
+              due.size() == 2 && forces == 1 && forcedId == 100 && q.Forced() == 1 && q.Below() == 1 && q.Count() == 1,
               q.StatusLine());
+    }
+
+    {
+        // Threshold 1, three explosions in one span: one head, and the two
+        // later additions stay, so the count is 2. Explosions pending when a
+        // force was confirmed never force; the next explosion, added after
+        // it, does, and its reset takes every addition before it.
+        Pity p = Armed(1, 0);
+        p.ObserveMachine(101, false, 0, 600.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.ObserveMachine(102, false, 0, 900.0, 480.0);
+        p.SetBaseline(102, kNoHeads);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);
+        p.ObserveMachine(101, true, 105, 600.0, 480.0);
+        p.ObserveMachine(102, true, 110, 900.0, 480.0);
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        int forces = 0;
+        int64_t forcedId = -1;
+        for (const Explosion& e : due) {
+            if (p.Decide(e, 7, kNoHeads).outcome == Outcome::Force) {
+                ++forces;
+                forcedId = e.id;
+                p.ForceConfirmed(e, -1);
+            }
+        }
+        check("target/three_explosions_in_one_span_at_threshold_1_make_one_head_and_leave_2",
+              due.size() == 3 && forces == 1 && forcedId == 100 && p.Forced() == 1 && p.Below() == 2 && p.Count() == 2,
+              p.StatusLine());
+        p.ObserveMachine(103, false, 300, 0.0, 0.0);
+        p.SetBaseline(103, kNoHeads);
+        const Explosion next = ExplodeAndWait(p, 103, 400);
+        const Decision d = p.Decide(next, 7, kNoHeads);
+        p.ForceConfirmed(next, -1);
+        check("target/explosions_pending_together_force_at_most_once_and_a_later_one_forces",
+              d.outcome == Outcome::Force && p.Forced() == 2 && p.Count() == 0, p.StatusLine());
+    }
+    {
+        // A natural head at an earlier explosion takes its addition and every
+        // one before it, and keeps a later pending explosion's.
+        Pity p = Armed(10, 3);
+        p.ObserveMachine(101, false, 0, 2000.0, 480.0);
+        p.SetBaseline(101, kNoHeads);
+        p.ObserveMachine(100, true, 100, 320.0, 480.0);
+        p.ObserveMachine(101, true, 110, 2000.0, 480.0);
+        std::vector<Explosion> due = p.TakeDue(110 + kSettleFrames);
+        const bool counted = p.Count() == 5;
+        const Decision a = due.size() == 2 ? p.Decide(due[0], 7, { 555 }) : Decision();
+        const bool kept = p.Count() == 1;
+        const Decision b = due.size() == 2 ? p.Decide(due[1], 7, kNoHeads) : Decision();
+        check("target/a_natural_head_keeps_a_later_pending_explosions_addition",
+              counted && a.outcome == Outcome::Natural && kept && b.outcome == Outcome::Below && p.Count() == 1, p.StatusLine());
+        // A machine-self (0, 98) build has no explosion of its own: every
+        // addition goes, a pending one's included.
+        Pity q = Armed(10, 3);
+        q.ObserveMachine(100, true, 100, 320.0, 480.0);
+        q.OnMachineCharmBuild(500);
+        due = q.TakeDue(100 + kSettleFrames);
+        const Decision c = due.size() == 1 ? q.Decide(due[0], 7, kNoHeads) : Decision();
+        check("target/a_machine_build_resets_every_addition_to_0",
+              c.outcome == Outcome::Below && q.Count() == 0, q.StatusLine());
     }
 
     // ---- the counter file ---------------------------------------------------

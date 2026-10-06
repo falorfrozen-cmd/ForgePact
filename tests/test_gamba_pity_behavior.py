@@ -215,6 +215,19 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_the_explosion_that_reached_the_threshold_forces_and_the_other_is_below(self):
         self.assertScenario("target/the_explosion_that_reached_the_threshold_forces_and_the_other_is_below")
 
+    # ---- target: a reset keeps a later pending explosion's addition ----
+
+    def test_explosions_pending_together_force_at_most_once(self):
+        for label in ("target/three_explosions_in_one_span_at_threshold_1_make_one_head_and_leave_2",
+                      "target/explosions_pending_together_force_at_most_once_and_a_later_one_forces"):
+            self.assertScenario(label)
+
+    def test_a_natural_head_keeps_a_later_pending_explosions_addition(self):
+        self.assertScenario("target/a_natural_head_keeps_a_later_pending_explosions_addition")
+
+    def test_a_machine_build_resets_every_addition_to_0(self):
+        self.assertScenario("target/a_machine_build_resets_every_addition_to_0")
+
     # ---- the counter file ----------------------------------------------
 
     def test_the_counter_file_round_trips_version_2(self):
