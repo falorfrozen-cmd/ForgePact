@@ -795,8 +795,9 @@ capture is the hub's `.claude/workorders/forgepact-181-map-reveal-icons-live-3.m
   the census unchanged at `timer=0/0/15/0 enemyArray=0/0/15/0`: every
   ancient spawner still existed and still carried neither variable after the
   birth. Creates attributed to ancient spawners rose 0 → 3 at the first
-  ancient warp, 3 → 7 at the miniboss warp and 7 → 10 at the second ancient
-  warp (`Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
+  ancient warp, 3 → 7 at the miniboss warp and 7 → 10 between the control
+  read and 5 s after the second ancient warp (about 3.5 min)
+  (`Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
   `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2).
 - **A miniboss birth was not observed.** The owner saw the miniboss markers
   stay. Miniboss `attributed=0` with no creates, `destroyed=0`,
@@ -804,15 +805,20 @@ capture is the hub's `.claude/workorders/forgepact-181-map-reveal-icons-live-3.m
   screenshot at the miniboss warp shows named monsters ("Sacrilegious
   Goliath", "Infernal Mystic") nearby, but no create was attributed to a
   miniboss spawner and the owner did not say whether a miniboss pack
-  appeared, so whether one was born is not established.
+  appeared, so whether one was born is not established. Ancient-attributed
+  creates rose 3 → 7 at that same warp, so the named monsters may belong to
+  an ancient pack.
 
 **Route: `kinds-birth: kept`.** The `state` candidate does not retire an
-ancient marker at a birth the owner saw, because the ancient spawner outlives
-its birth and carries no `enemyArray` to read; so `state` as built cannot
+ancient marker at warps where the owner saw monsters appear, because the
+ancient spawner outlives its birth and carries no `enemyArray` to read; so `state` as built cannot
 ship as the fix. The measured lead: a create attributed to an ancient spawner
-coincided with each ancient birth the owner saw, while the spawner's
-variables did not change. Whether it marks every ancient birth, and nothing
-else, is not established. For miniboss spawners no birth signal is
+coincided with the warps where the owner saw monsters appear, while the
+spawner's variables did not change. Normal packs were born at both ancient
+warps too, so the owner's report does not single out an ancient pack; the
+3 → 7 ancient creates came at the miniboss warp; and the 7 → 10 rise spans
+about 3.5 minutes, not just the warp. Whether it marks every ancient
+birth, and nothing else, is not established. For miniboss spawners no birth signal is
 established: Live 1's attributed creates are not shown to be births, and in
 this session named monsters showed near the miniboss warp with no create
 attributed to a miniboss spawner. The
