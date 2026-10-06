@@ -925,6 +925,57 @@ int main()
         check("watch/the_by_name_mark_feeds_only_the_first_matching_call",
               !other && kept && first && mark == -1 && !second && !unmarked && none == -1);
     }
+    {
+        // F1: a mark consumed inside a nested call stays consumed. Slots 3 and
+        // 5 both route script 10; script 20 is routed by neither. `script`
+        // stands for GpFedByName: true means skipped as already fed.
+        FedMark* cur = nullptr;
+        auto script = [&cur](int s) {
+            return cur && cur->slot >= 0 && ConsumeFedMark(cur->slot, s == 10);
+        };
+        bool direct = false, directSibling = true, viaScript = false, scriptSibling = true;
+        bool viaUnfed = false, unfedSibling = true, ownMark = false, outerSibling = false, unfedNoMark = true;
+        {
+            FedMarkScope a(cur, true, 3);                // A, a fed by-name call
+            direct = script(10);                         // B consumes A's mark
+            directSibling = script(10);                  // B' is fed as its own
+        }
+        const bool cleared = cur == nullptr;
+        {
+            FedMarkScope a(cur, true, 3);
+            const bool x = script(20);                   // X routes nowhere: the mark stays
+            viaScript = !x && script(10);                // B, inside X, consumes it
+            scriptSibling = script(10);                  // B', X's sibling, after X returned
+        }
+        {
+            FedMarkScope a(cur, true, 3);
+            {
+                FedMarkScope a2(cur, false, 5);          // an unfed by-name call inside A
+                viaUnfed = script(10);                   // B consumes A's mark through it
+            }
+            unfedSibling = script(10);                   // A2's scope never brings it back
+        }
+        {
+            FedMarkScope a(cur, true, 3);
+            {
+                FedMarkScope a2(cur, true, 5);           // a fed by-name call: a mark of its own
+                ownMark = script(10);
+            }
+            outerSibling = script(10);                   // A's mark was untouched: this call consumes it
+        }
+        {
+            FedMarkScope a2(cur, false, 5);              // unfed, with no outer mark
+            unfedNoMark = script(10);
+        }
+        // Negative control: restoring the slot by value (the scope this
+        // replaced) brings the consumed mark back for B'.
+        int byValue = 3;
+        { const int prev = byValue; ConsumeFedMark(byValue, true); byValue = prev; }
+        const bool byValueBack = ConsumeFedMark(byValue, true);
+        check("watch/a_consumed_by_name_mark_never_comes_back",
+              direct && !directSibling && cleared && viaScript && !scriptSibling && viaUnfed && !unfedSibling
+              && ownMark && outerSibling && !unfedNoMark && cur == nullptr && byValueBack);
+    }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
     return failures ? 1 : 0;

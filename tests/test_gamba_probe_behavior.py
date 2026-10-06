@@ -267,6 +267,10 @@ class GambaProbeBehaviorTests(unittest.TestCase):
         """N1: the by-name mark is consumed by the first call its slot routes."""
         self.assertScenario("watch/the_by_name_mark_feeds_only_the_first_matching_call")
 
+    def test_a_consumed_by_name_mark_never_comes_back(self):
+        """F1: A -> B (consumes) -> sibling B' is fed, through a nested script or an unfed by-name call."""
+        self.assertScenario("watch/a_consumed_by_name_mark_never_comes_back")
+
     def test_the_decision_keys(self):
         for label in ("decision/six_keys_in_order", "decision/listed_labels_valid", "decision/pending_only_before_live_1",
                       "decision/drop_route_takes_a_name", "decision/unlisted_label_or_key_refused"):

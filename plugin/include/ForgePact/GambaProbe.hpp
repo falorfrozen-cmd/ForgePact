@@ -1044,6 +1044,28 @@ inline bool ConsumeFedMark(int& mark, bool slotRoutesThisScript)
     mark = -1;
     return true;
 }
+// The mark a by-name original runs under. A script call consumes it in place
+// (ConsumeFedMark on `slot`); nothing ever writes a slot back into it.
+struct FedMark { int slot = -1; };
+// Runs one by-name original under a mark. `fed` true: the original gets a mark
+// of its own, and the outer mark, as it stands then, is current again when it
+// returns. `fed` false: the outer mark stays current, so a call inside that
+// consumes it consumes it for the outer frame too. The scope restores a
+// pointer, never a slot, so a mark a nested call consumed never comes back.
+class FedMarkScope {
+public:
+    FedMarkScope(FedMark*& current, bool fed, int slot) : current_(current), prev_(current), own_{ fed ? slot : -1 }
+    {
+        if (fed) current_ = &own_;
+    }
+    ~FedMarkScope() { current_ = prev_; }
+    FedMarkScope(const FedMarkScope&) = delete;
+    FedMarkScope& operator=(const FedMarkScope&) = delete;
+private:
+    FedMark*& current_;
+    FedMark* prev_;
+    FedMark own_;
+};
 inline std::string OptionalNumberText(bool read, double v) { return read ? NumberText(v) : std::string("?"); }
 
 class Watch {

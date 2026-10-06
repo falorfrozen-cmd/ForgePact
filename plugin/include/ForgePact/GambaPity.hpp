@@ -56,6 +56,9 @@ inline constexpr int64_t kSettleFrames = 60;
 inline constexpr int64_t kLookBackFrames = 30;
 // The ground check's radius around the machine, in room pixels.
 inline constexpr double kGroundRadius = 256.0;
+// A machine whose first-sight ground scan did not read is scanned again, at
+// most once per this many frames, while it is still live.
+inline constexpr int64_t kBaselineRetryFrames = 30;
 
 // What a machine sighting was.
 enum class Sighting { None, FirstSeen, Exploded };
@@ -81,6 +84,7 @@ struct Explosion {
 struct Decision {
     Outcome outcome = Outcome::Below;
     std::string signal;       // the natural outcome's signal: ground, build or machine-build
+    bool groundUnread = false; // a below outcome whose ground scan (or baseline) did not read
 };
 
 class Pity {
@@ -154,7 +158,7 @@ public:
     {
         auto it = machines_.find(id);
         if (it == machines_.end()) {
-            machines_[id] = Machine{ destroyed, false, {} };
+            machines_[id] = Machine{ destroyed, false, frame + kBaselineRetryFrames, {} };
             ++machinesSeen_;
             return Sighting::FirstSeen;
         }
@@ -177,14 +181,36 @@ public:
 
     // The ground heads (Loot_Ground_obj instance ids holding the charm) near a
     // machine at its first sight: the baseline a later head is compared with.
-    // `read` false: the scan did not read, so the baseline is unknown and the
-    // machine's explosion can never be forced (Decide answers GroundUnread).
+    // `read` false: the scan did not read, so the baseline is unknown and,
+    // until a later scan reads (NeedsBaseline), the machine's explosion cannot
+    // be forced (Decide answers GroundUnread). An unread scan never replaces a
+    // baseline that read.
     void SetBaseline(int64_t id, const std::vector<int64_t>& heads, bool read = true)
     {
         auto it = machines_.find(id);
-        if (it == machines_.end()) return;
+        if (it == machines_.end() || (it->second.baselineRead && !read)) return;
         it->second.baseline = std::set<int64_t>(heads.begin(), heads.end());
         it->second.baselineRead = read;
+    }
+
+    // Should the adapter scan the ground again for this machine's baseline at
+    // `frame`? Only while the machine is still live (a scan after its
+    // explosion could take the explosion's own head for the baseline), its
+    // baseline has not read, and kBaselineRetryFrames have passed since the
+    // last try; a true answer books the next try.
+    bool NeedsBaseline(int64_t id, int64_t frame)
+    {
+        auto it = machines_.find(id);
+        if (it == machines_.end() || it->second.destroyed || it->second.baselineRead) return false;
+        if (frame < it->second.nextBaselineTry) return false;
+        it->second.nextBaselineTry = frame + kBaselineRetryFrames;
+        return true;
+    }
+
+    bool BaselineRead(int64_t id) const
+    {
+        auto it = machines_.find(id);
+        return it != machines_.end() && it->second.baselineRead;
     }
 
     // A machine instance the watch found but could not read (its id, sprite or
@@ -278,6 +304,12 @@ public:
             return d;
         }
         ++below_;
+        // Below with a ground that did not read: the natural ground signal was
+        // not checked, so say so (BelowLine's tag) and count it.
+        if (!groundRead || !baselineRead) {
+            d.groundUnread = true;
+            ++belowGroundUnread_;
+        }
         d.outcome = Outcome::Below;
         return d;
     }
@@ -307,6 +339,7 @@ public:
     int MachinesSeen() const { return machinesSeen_; }
     int MachinesUnread() const { return machinesUnread_; }
     int GroundUnread() const { return groundUnread_; }
+    int BelowGroundUnread() const { return belowGroundUnread_; }
 
     // ---- the lines gambapity prints (fixed text; the contract test and the
     // live procedure read them) ------------------------------------------------
@@ -325,7 +358,8 @@ public:
             + " own-head-builds=" + std::to_string(ownHeadBuilds_)
             + " machines=" + std::to_string(machinesSeen_)
             + " unread=" + std::to_string(machinesUnread_)
-            + " ground-unread=" + std::to_string(groundUnread_);
+            + " ground-unread=" + std::to_string(groundUnread_)
+            + " below-ground-unread=" + std::to_string(belowGroundUnread_);
     }
 
     // `headsNearby` is the baseline's count, or "unread (<stage>)" when the
@@ -365,10 +399,19 @@ public:
         return "gambapity: the explosion's own Goburin's Head was seen (" + signal + "); no force, counter reset";
     }
 
-    std::string BelowLine() const
+    // `unreadStage` non-empty: the ground (or the baseline) did not read, so the
+    // natural ground signal was not checked, and the line says why.
+    std::string BelowLine(const std::string& unreadStage = std::string()) const
     {
         return "gambapity: explosion below the threshold (count=" + std::to_string(count_)
-            + " threshold=" + std::to_string(threshold_) + "); counter kept";
+            + " threshold=" + std::to_string(threshold_) + "); counter kept"
+            + (unreadStage.empty() ? std::string() : "; ground unread (" + unreadStage + ")");
+    }
+
+    // A baseline retry that read, for a machine whose first-sight scan did not.
+    static std::string BaselineReadLine(int64_t id, int headsNearby)
+    {
+        return "gambapity: machine id=" + std::to_string(id) + " baseline read heads-nearby=" + std::to_string(headsNearby);
     }
 
     static std::string RefusedLine(const std::string& stage)
@@ -389,7 +432,8 @@ public:
 private:
     struct Machine {
         bool destroyed = false;
-        bool baselineRead = false;    // the first-sight scan read to the end
+        bool baselineRead = false;    // a baseline scan read to the end
+        int64_t nextBaselineTry = 0;  // the frame of the next baseline retry while unread
         std::set<int64_t> baseline;   // charm heads near it at first sight
     };
 
@@ -427,6 +471,7 @@ private:
     int machinesSeen_ = 0;     // machines seen for the first time (cumulative)
     int machinesUnread_ = 0;   // machine reads skipped (an id, sprite or position that did not read)
     int groundUnread_ = 0;     // forces refused because a ground scan did not read
+    int belowGroundUnread_ = 0; // below outcomes whose ground scan (or baseline) did not read
 };
 
 } // namespace ForgePact::GambaPity

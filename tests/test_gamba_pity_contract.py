@@ -293,6 +293,22 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn('if (id < 0 || sprite == "?" || !GambaPityXY(handle, x, y)) {', watch)
         self.assertIn("g_GambaPity.SetBaseline(id, scan.heads, scan.read);", watch)
         self.assertIn('"unread (" + scan.stage + ")"', watch)
+        # Round 2 (F2): a baseline that did not read is retried while the
+        # machine is live, throttled by the core, and the first scan that
+        # reads sets it (an unread one never replaces a read one, in the core).
+        retry = watch[watch.index("case GP::Sighting::None:"):]
+        self.assertIn("if (g_GambaPity.NeedsBaseline(id, frame)) {", retry)
+        self.assertLess(retry.index("g_GambaPity.NeedsBaseline(id, frame)"), retry.index("GambaPityGroundHeads(x, y)"))
+        self.assertLess(retry.index("GambaPityGroundHeads(x, y)"), retry.index("g_GambaPity.SetBaseline(id, scan.heads, scan.read);"))
+        self.assertIn("if (scan.read) Out(GP::Pity::BaselineReadLine(id, (int)scan.heads.size()));", retry)
+        self.assertEqual(watch.count("g_GambaPity.SetBaseline(id, scan.heads, scan.read);"), 2)
+        self.assertNotIn("Sighting::Exploded", retry)
+        needs = function_body(self.header, "bool NeedsBaseline(int64_t id, int64_t frame)")
+        self.assertIn("it->second.destroyed || it->second.baselineRead", needs)
+        self.assertIn("it->second.nextBaselineTry = frame + kBaselineRetryFrames;", needs)
+        self.assertIn("inline constexpr int64_t kBaselineRetryFrames = 30;", self.header)
+        baseline = function_body(self.header, "void SetBaseline(int64_t id, const std::vector<int64_t>& heads, bool read = true)")
+        self.assertIn("(it->second.baselineRead && !read)) return;", baseline)
         sprite = self.body("static std::string GambaPitySpriteName(")
         self.assertIn('RValue("sprite_index")', sprite)
         self.assertIn("IsNumericInstanceRead(spr)", sprite)
@@ -364,6 +380,17 @@ class GambaPityContract(unittest.TestCase):
         self.assertLess(decide.index("case GP::Outcome::GroundUnread:"), decide.index("GambaPityDropHead("))
         # The after-drop check names its stage when it does not read.
         self.assertIn("GP::Pity::GroundAfterDropUnreadLine(after.stage)", decide)
+        # Round 2 (F3): a below outcome whose ground did not read says so,
+        # with the same stage the refusal names.
+        self.assertIn("const std::string unreadStage = ground.read ? std::string(\"the machine's baseline scan\") : ground.stage;",
+                      decide)
+        self.assertIn('GP::Pity::RefusedLine("ground unread (" + unreadStage + ")")', decide)
+        self.assertIn("Out(g_GambaPity.BelowLine(d.groundUnread ? unreadStage : std::string()));", decide)
+        below = self.header[self.header.index("++below_;"):]
+        below = below[:below.index("return d;")]
+        self.assertIn("if (!groundRead || !baselineRead) {", below)
+        self.assertIn("++belowGroundUnread_;", below)
+        self.assertIn("d.groundUnread = true;", below)
         self.assertLess(decide.index("GambaPityDropHead("), decide.index("GP::Pity::GroundAfterDropLine("))
         self.assertEqual(decide.count("GambaPityGroundHeads("), 2)
         # The own-drop scope is around the drop.
@@ -401,12 +428,12 @@ class GambaPityContract(unittest.TestCase):
     def test_the_status_line_and_the_action_lines_are_the_cores_fixed_text(self):
         for name in ("MachineSeenLine", "ExplosionLine", "ForcedLine", "GroundAfterDropLine", "GroundAfterDropUnreadLine",
                      "NaturalSeenLine",
-                     "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine"):
+                     "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine", "BaselineReadLine"):
             self.assertIn(name + "(", self.code, name + " is never printed")
             self.assertIn(name + "(", self.header)
         line = self.header[self.header.index("std::string StatusLine() const"):]
         for field in ("count", "threshold", "gold", "explosions", "forced", "natural", "below", "refused",
-                      "abandoned", "own-head-builds", "machines", "unread", "ground-unread"):
+                      "abandoned", "own-head-builds", "machines", "unread", "ground-unread", "below-ground-unread"):
             self.assertIn('" ' + field + '="', line, field)
         # Every line the adapter prints itself keeps the gambapity prefix.
         printed = re.findall(r'Out\("([^"]*)', strip_research_blocks(self.code))

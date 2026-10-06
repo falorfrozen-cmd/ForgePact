@@ -812,9 +812,12 @@ armed:
   the watch once, by its by-name slot, and the script row its original
   reaches is not fed again. Until phase 5 the mark covered the whole original,
   so every other call inside it was skipped as already fed. Now only the
-  first call the slot routes consumes the mark, and that call's own original
-  runs with no mark, so any later call is fed as its own. It is dormant on
-  this build: the by-name route is blind (§ Live 3 results).
+  first call the slot routes consumes the mark, in place, so any later call
+  inside that original, nested or a sibling, is fed as its own. A consumed
+  mark never comes back: no scope restores a slot value on return, only the
+  pointer to the mark that was current before a fed by-name call (phase 5
+  round 2). It is dormant on this build: the by-name route is blind
+  (§ Live 3 results).
 - **What a window cannot show.** A `CreateItemNew` that a window replays from
   the ring has no `built` line, because the item was read only for calls
   inside a window; `head-route`'s `GetUniqueRepoStruct` with `10, 0, 98`

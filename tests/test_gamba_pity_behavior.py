@@ -177,6 +177,11 @@ class GambaPityBehaviorTests(unittest.TestCase):
     def test_an_unread_ground_below_the_threshold_is_below_and_a_build_is_still_natural(self):
         self.assertScenario("target/an_unread_ground_below_the_threshold_is_below_and_a_build_is_still_natural")
 
+    def test_an_unread_first_sight_is_retried_until_it_reads_then_forces(self):
+        for label in ("target/an_unread_first_sight_then_a_retry_that_reads_then_a_force",
+                      "target/no_baseline_retry_after_the_explosion"):
+            self.assertScenario(label)
+
     def test_machines_seen_and_unread_reads_are_counted(self):
         self.assertScenario("counter/machines_seen_and_unread_reads_are_counted")
 
@@ -204,6 +209,7 @@ class GambaPityBehaviorTests(unittest.TestCase):
         for label in ("lines/machine_seen", "lines/explosion", "lines/forced", "lines/ground_after_drop",
                       "lines/natural_seen", "lines/below", "lines/refused", "lines/abandoned",
                       "lines/ground_after_drop_unread", "lines/machine_seen_unread",
+                      "lines/below_ground_unread", "lines/baseline_read",
                       "lines/natural_build"):
             self.assertScenario(label)
 

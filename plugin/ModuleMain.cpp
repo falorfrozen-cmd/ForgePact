@@ -47336,21 +47336,17 @@ static int64_t GpFrame() { return (int64_t)g_RuntimeFrame; }
 
 // The by-name slot whose call the watch already fed, while that call's
 // original runs: a script row it reaches through the script's own function
-// is not fed again, so one call is not logged under two labels.
-static thread_local int g_GpByNameFed = -1;
-struct GpByNameFedScope {
-    int prev;
-    explicit GpByNameFedScope(int slot) : prev(g_GpByNameFed) { g_GpByNameFed = slot; }
-    ~GpByNameFedScope() { g_GpByNameFed = prev; }
-};
+// is not fed again, so one call is not logged under two labels. Null when no
+// by-name original is running; GpNs::FedMarkScope sets and restores it.
+static thread_local GpNs::FedMark* g_GpByNameFed = nullptr;
 // N1: only the first call the running slot routes is the one it fed; that
-// call consumes the mark (GpNs::ConsumeFedMark), so a later call inside the
-// same original is fed as a call of its own.
+// call consumes the mark in place (GpNs::ConsumeFedMark), so every later call
+// inside the same original, nested or a sibling, is fed as a call of its own.
 static bool GpFedByName(int script)
 {
-    if (g_GpByNameFed < 0) return false;
-    const std::vector<int>& rows = g_GpByNameSlots[g_GpByNameFed].scripts;
-    return GpNs::ConsumeFedMark(g_GpByNameFed, std::find(rows.begin(), rows.end(), script) != rows.end());
+    if (!g_GpByNameFed || g_GpByNameFed->slot < 0) return false;
+    const std::vector<int>& rows = g_GpByNameSlots[g_GpByNameFed->slot].scripts;
+    return GpNs::ConsumeFedMark(g_GpByNameFed->slot, std::find(rows.begin(), rows.end(), script) != rows.end());
 }
 
 // A build-row call of an active probe, any self, its arguments already
@@ -47498,11 +47494,11 @@ static RValue& GpOnScript(int script, CInstance* S, CInstance* O, RValue& R, int
     GpScriptRow& t = g_GpScriptRows[script];
     if (g_GpBusy) return t.orig ? t.orig(S, O, R, argc, A) : R;   // the probe's own call
     // N1: whether a running by-name call already fed this one (consuming its
-    // mark), read first. Only then does this call's original run with no mark,
-    // so the calls it makes are their own; a call that did not consume the
-    // mark leaves it in place for the first matching call further in.
+    // mark in place), read first. A consumed mark stays consumed, so the calls
+    // this original makes are their own; a call that did not consume the mark
+    // leaves it in place for the first matching call further in. No scope
+    // here: restoring a mark on return would bring back one consumed inside.
     const bool fedByName = GpFedByName(script);
-    GpByNameFedScope unmarked(fedByName ? -1 : g_GpByNameFed);
     const int row = GpNs::ScriptRowOf(script);
     const GpNs::Seen seen = g_GpCore.Observe(row, [S]() { return GpSelfObject(S); }, g_GpEventDepth > 0);
     // The explosion watch, before the self filter: a build row's call, any
@@ -47700,7 +47696,7 @@ static std::string GpByNameLabel(int slot)
 // a build-row call (ring, window line), and one CreateItemNew reaches has
 // its built item read after the original. True when the built line is due;
 // `fed` says whether the call went to the watch at all (the original then
-// runs under GpByNameFedScope).
+// runs under a mark of its own, GpNs::FedMarkScope).
 static bool GpWatchByName(int slot, GpNs::Seen seen, CInstance* S, int argc, RValue* Args, std::string& selfText, bool& fed)
 {
     const GpByNameSlot& b = g_GpByNameSlots[slot];
@@ -47726,10 +47722,11 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
     std::string watchSelf;
     bool fed = false;
     const bool readBuilt = GpWatchByName(slot, seen, S, argc, Args, watchSelf, fed);
-    const int mark = fed ? slot : g_GpByNameFed;
+    // A fed call's original runs under a mark of its own; an unfed one leaves
+    // the outer mark current, so a consumption inside it holds after it returns.
     if (seen == GpNs::Seen::Idle || seen == GpNs::Seen::Other || !GpCanLog(row)) {
         {
-            GpByNameFedScope scope(mark);
+            GpNs::FedMarkScope scope(g_GpByNameFed, fed, slot);
             if (b.orig) b.orig(Result, S, O, argc, Args);
         }
         if (readBuilt) GpWatchBuilt(Result, watchSelf);
@@ -47744,7 +47741,7 @@ static void GpOnByName(int slot, RValue& Result, CInstance* S, CInstance* O, int
     } catch (...) {}
     g_GpBusy = false;
     {
-        GpByNameFedScope scope(mark);
+        GpNs::FedMarkScope scope(g_GpByNameFed, fed, slot);
         if (b.orig) b.orig(Result, S, O, argc, Args);
     }
     if (readBuilt) GpWatchBuilt(Result, watchSelf);
@@ -52691,7 +52688,9 @@ static std::string GambaPitySpriteName(const RValue& handle)
 }
 
 // Every live Slot_Machine_01_obj, once: first sight takes the ground baseline
-// and prints the machine line (the poll's positive control); a live-to-
+// and prints the machine line (the poll's positive control), and a baseline
+// that did not read is retried while the machine is live, every
+// kBaselineRetryFrames, until one reads (the `baseline read` line); a live-to-
 // destroyed change prints the explosion line. instance_find on the machine's
 // own object already names the machine, so nothing re-identifies it; a machine
 // whose id, sprite or position does not read (or past the cap) is skipped for
@@ -52726,6 +52725,14 @@ static void GambaPityWatchMachines(int64_t frame)
             Out(g_GambaPity.ExplosionLine(id, frame));
             break;
         case GP::Sighting::None:
+            // A live machine whose baseline has not read yet: the ground is
+            // scanned again, throttled (NeedsBaseline books the next try), and
+            // the first scan that reads sets the baseline.
+            if (g_GambaPity.NeedsBaseline(id, frame)) {
+                const GambaPityGroundScan scan = GambaPityGroundHeads(x, y);
+                g_GambaPity.SetBaseline(id, scan.heads, scan.read);
+                if (scan.read) Out(GP::Pity::BaselineReadLine(id, (int)scan.heads.size()));
+            }
             break;
         }
     }
@@ -52741,9 +52748,12 @@ static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t ro
     GambaPityGroundScan ground;
     if (room == e.room) ground = GambaPityGroundHeads(e.x, e.y);
     const GP::Decision d = g_GambaPity.Decide(e, room, ground.heads, ground.read);
+    // Which ground read failed: this scan, or the machine's baseline (no scan
+    // of it ever read before the explosion).
+    const std::string unreadStage = ground.read ? std::string("the machine's baseline scan") : ground.stage;
     switch (d.outcome) {
     case GP::Outcome::GroundUnread:
-        Out(GP::Pity::RefusedLine("ground unread (" + (ground.read ? std::string("the machine's first-sight scan") : ground.stage) + ")"));
+        Out(GP::Pity::RefusedLine("ground unread (" + unreadStage + ")"));
         return;
     case GP::Outcome::Abandoned:
         Out(GP::Pity::AbandonedLine(e.id));
@@ -52753,7 +52763,9 @@ static void GambaPityDecide(const ForgePact::GambaPity::Explosion& e, int64_t ro
         Out(GP::Pity::NaturalSeenLine(d.signal));
         return;
     case GP::Outcome::Below:
-        Out(g_GambaPity.BelowLine());
+        // An unread ground below the threshold skipped the natural ground
+        // signal: the line says so (and below-ground-unread= counts it).
+        Out(g_GambaPity.BelowLine(d.groundUnread ? unreadStage : std::string()));
         return;
     case GP::Outcome::Force:
         break;

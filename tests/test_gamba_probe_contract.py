@@ -899,24 +899,33 @@ class GambaProbeContract(unittest.TestCase):
         for path in on_by_name.split("if (readBuilt) GpWatchBuilt(Result, watchSelf);")[:2]:
             self.assertIn("if (b.orig) b.orig(Result, S, O, argc, Args);", path[-200:])
             # Round 2: the original runs under the by-name marker, so the
-            # script row it reaches is not fed a second time.
-            self.assertIn("GpByNameFedScope scope(mark);", path[-200:])
-        self.assertIn("const int mark = fed ? slot : g_GpByNameFed;", on_by_name)
-        self.assertIn("static thread_local int g_GpByNameFed = -1;", self.code)
+            # script row it reaches is not fed a second time. Phase 5 round 2
+            # (F1): a fed call gets a mark of its own and an unfed one leaves
+            # the outer mark current; the scope restores a pointer, never a
+            # slot, so a mark consumed inside never comes back.
+            self.assertIn("GpNs::FedMarkScope scope(g_GpByNameFed, fed, slot);", path[-200:])
+        self.assertNotIn("const int mark", on_by_name)
+        self.assertIn("static thread_local GpNs::FedMark* g_GpByNameFed = nullptr;", self.code)
+        self.assertNotIn("GpByNameFedScope", self.code)
         fed_by_name = self.body("static bool GpFedByName(int script)")
-        self.assertIn("g_GpByNameSlots[g_GpByNameFed].scripts", fed_by_name)
+        self.assertIn("g_GpByNameSlots[g_GpByNameFed->slot].scripts", fed_by_name)
+        scope = braced_block(self.header, "class FedMarkScope {")
+        self.assertIn("~FedMarkScope() { current_ = prev_; }", scope)
+        self.assertIn("if (fed) current_ = &own_;", scope)
+        self.assertNotIn("slot =", scope)
         script = self.body("static RValue& GpOnScript(")
         self.assertLess(script.index("!fedByName"), script.index("GpWatchScript("))
         # Phase 5 (N1): the mark is consumed by the first call the slot
         # routes, read before anything else, and this call's original runs
         # with no mark, so a later call inside the same by-name original is
         # fed as its own.
-        self.assertIn("return GpNs::ConsumeFedMark(g_GpByNameFed, ", fed_by_name)
+        self.assertIn("return GpNs::ConsumeFedMark(g_GpByNameFed->slot, ", fed_by_name)
         consume = braced_block(self.header, "inline bool ConsumeFedMark(int& mark, bool slotRoutesThisScript)\n{")
         self.assertIn("mark = -1;", consume)
-        order = [script.index(s) for s in ("const bool fedByName = GpFedByName(script);", "GpByNameFedScope unmarked(fedByName ? -1 : g_GpByNameFed);",
-                                           "g_GpCore.Observe(")]
-        self.assertEqual(order, sorted(order))
+        # F1: and no scope in GpOnScript, whose restore on return would bring
+        # back a mark a call inside it consumed.
+        self.assertNotIn("Scope", script)
+        self.assertLess(script.index("const bool fedByName = GpFedByName(script);"), script.index("g_GpCore.Observe("))
         self.assertEqual(script.count("GpFedByName("), 1)
 
     def test_a_window_prints_its_lines_for_any_self_apart_from_the_trace_budget(self):
