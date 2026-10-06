@@ -6741,7 +6741,7 @@
     },
     "cmds": {
      "is": [
-      "gambapity 100"
+      "gambapity 10"
      ]
     }
    }
@@ -6757,14 +6757,14 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 1000
+        "value": 20
        }
       }
      ]
     },
     "cmds": {
      "is": [
-      "gambapity 1000"
+      "gambapity 20"
      ]
     }
    }
@@ -6780,14 +6780,14 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 10
+        "value": 1
        }
       }
      ]
     },
     "cmds": {
      "is": [
-      "gambapity 10"
+      "gambapity 1"
      ]
     }
    }
@@ -6796,7 +6796,7 @@
    "step": 524,
    "control": "#gambapity",
    "action": "type",
-   "value": "250",
+   "value": "5",
    "expect": {
     "posts": {
      "is": [
@@ -6804,14 +6804,14 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 250
+        "value": 5
        }
       }
      ]
     },
     "cmds": {
      "is": [
-      "gambapity 250"
+      "gambapity 5"
      ]
     }
    }
@@ -6850,7 +6850,7 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 1000
+        "value": 20
        }
       }
      ]
@@ -6878,7 +6878,7 @@
     },
     "cmds": {
      "is": [
-      "gambapity 1000"
+      "gambapity 20"
      ]
     }
    }

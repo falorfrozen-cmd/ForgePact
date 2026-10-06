@@ -118,13 +118,13 @@
             <option value="fade">Fade</option>
         </select>
     </div>
-    <!-- Goburin's Head pity (issue #134): a switch and a slider, the dungeon chest's shape. The slider counts spins;
-         the plugin drops the head at the first machine explosion after that many (a payout never uses the count up).
+    <!-- Goburin's Head pity (issue #134): a switch and a slider, the dungeon chest's shape. The slider counts gamba
+         machine explosions without a head, 1 to 20; the plugin drops the head at the explosion that reaches it.
          The value beside the slider is typable and reads "off" while the switch is off. -->
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Goburin's Head pity<br><span class="feature-description">A slot machine drops Goburin's Head at the next explosion after this many spins. Each spin costs 10,000 gold. Payouts don't use the count up, and it carries over between sessions and machines. If the game drops the charm itself, the count starts over. Off by default.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Goburin's Head pity<br><span class="feature-description">Each slot machine explosion without a head counts one. The explosion that reaches this number drops Goburin's Head, and the count starts over. The count carries over between sessions and machines, and if the game drops the charm itself, it starts over. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_gambapity" aria-label="Goburin's Head pity"><span class="sl"></span></label>
-        <input type="range" id="gambapity" min="10" max="1000" step="10" value="100" aria-label="Spins before the guaranteed charm">
+        <input type="range" id="gambapity" min="1" max="20" step="1" value="10" aria-label="Machine explosions without a head before the guaranteed charm">
         <span class="val off" id="gppval" style="width:64px">off</span>
     </div>
 </div>

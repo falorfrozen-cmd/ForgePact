@@ -504,7 +504,7 @@ test('a switch-plus-range pair\'s contract is literal and last: off sends `<verb
   assert.deepEqual(NATIVE_SWITCHED_RANGES, [{ key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay',
     verb: 'dungeonchest', rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' },
   { key: 'mod_gambapity', range: 'gambapity', tab: 'tab:mods', sub: 'subtab:qol', verb: 'gambapity',
-    rest: 100, min: 10, max: 1000, typed: 250 }]);
+    rest: 10, min: 1, max: 20, typed: 5 }]);
   const steps = DERIVED.steps;
   const at = steps.length - NATIVE_RANGE_STEPS;
   for (const n of NATIVE_SWITCHED_RANGES) {

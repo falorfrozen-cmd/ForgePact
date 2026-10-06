@@ -356,13 +356,13 @@ DEFAULTS = {
     # style"): one of DUNGEON_CHEST_COUNTDOWN_FORMS, above the head by
     # default, the plugin's own default; only sent while the switch is on.
     "dungeon_chest_countdown": "head",
-    # Goburin's Head pity (issue #134): while the switch is on, the first gamba
-    # machine that explodes after this many spins drops Goburin's Head (the
-    # plugin drops it and starts the count over; a payout never uses it up).
-    # Off by default; the count (an integer in GAMBA_PITY_RANGE, one spin =
-    # 10,000 gold) is kept while off and sends nothing.
+    # Goburin's Head pity (issue #134): while the switch is on, the plugin
+    # counts gamba machine explosions without a head, and the explosion that
+    # reaches this number drops Goburin's Head and starts the count over.
+    # Off by default; the number (an integer in GAMBA_PITY_RANGE) is kept
+    # while off and sends nothing.
     "mod_gambapity": False,
-    "gambapity": 100,
+    "gambapity": 10,
     # Angelic / Unholy drops: 1 = off, 2 = one die per kill at the Angelic Key's own
     # rate (1 in 7,500), every step above adds a die.
     "angelic_items": 1,
@@ -469,6 +469,11 @@ def load_cfg() -> dict:
             pass
     for key in DISABLED_SPAWNER_KEYS:
         cfg.get("spawners", {}).pop(key, None)
+    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (an older
+    # version's spin count such as 100) loads as the default, so the panel
+    # shows and sends that rather than a slider pinned at its end.
+    if gambapity_value(cfg.get("gambapity")) is None:
+        cfg["gambapity"] = GAMBA_PITY_DEFAULT
     return cfg
 
 
@@ -937,10 +942,10 @@ def dungeon_chest_countdown_cmd(cfg: dict):
     return f"dungeonchest countdown {form.strip().lower()}"
 
 
-# Goburin's Head pity (issue #134): the count's allowed range (one spin =
-# 10,000 gold) and its default; the slider steps by 10.
-GAMBA_PITY_RANGE = (10, 1000)
-GAMBA_PITY_DEFAULT = 100
+# Goburin's Head pity (issue #134): the allowed range of machine explosions
+# without a head before the forced one, and its default; the slider steps by 1.
+GAMBA_PITY_RANGE = (1, 20)
+GAMBA_PITY_DEFAULT = 10
 
 
 def gambapity_value(value):

@@ -290,8 +290,9 @@ function dungeonChestPaint(v){
   const on=document.getElementById('mod_dungeon_chest').checked,val=document.getElementById('dcpval');
   val.textContent=on?v+'%':'off';val.className='val '+(on?'':'off');
 }
-// Goburin's Head pity's value box: the spin count while its switch is on,
-// "off" while it is off (the count is kept either way).
+// Goburin's Head pity's value box: the number of machine explosions without a
+// head while its switch is on, "off" while it is off (the count is kept either
+// way).
 function gambapityPaint(v){
   const on=document.getElementById('mod_gambapity').checked,val=document.getElementById('gppval');
   val.textContent=on?v:'off';val.className='val '+(on?'':'off');
@@ -510,8 +511,8 @@ async function boot(){
     syncDungeonChestCountdown(mdc);
     const mgp=!!c.mod_gambapity;
     document.getElementById('mod_gambapity').checked=mgp;
-    document.getElementById('gambapity').value=c.gambapity??100;
-    gambapityPaint(c.gambapity??100);
+    document.getElementById('gambapity').value=c.gambapity??10;
+    gambapityPaint(c.gambapity??10);
   rarityLoad(c);
   document.getElementById('hhval').className='val '+(hh?'':'off');
   document.getElementById('exepath').value=c.game_exe||'';
@@ -689,7 +690,7 @@ function bind(){
   // switch repaints before its POST, so a lost server still leaves the box right.
   const gpp=document.getElementById('gambapity');
   gpp.oninput=()=>gambapityPaint(sliderVal(gpp));
-  gpp.onchange=async()=>{const v=sliderVal(gpp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity after '+v+' spins - '+(res.ok||res.err))};
+  gpp.onchange=async()=>{const v=sliderVal(gpp);const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'gambapity',value:v})});toast('Goburin\'s Head pity at explosion '+v+' without a head - '+(res.ok||res.err))};
   typable(gpp,document.getElementById('gppval'));
   document.getElementById('mod_gambapity').onchange=async(e)=>{
     gambapityPaint(+gpp.value);
@@ -1214,7 +1215,7 @@ export function refreshSavedControls(){
   dungeonChestPaint(c.dungeon_chest_pct??75);
   document.getElementById('dungeon_chest_countdown').value=c.dungeon_chest_countdown||'head';
   syncDungeonChestCountdown(!!c.mod_dungeon_chest);
-  gambapityPaint(c.gambapity??100);
+  gambapityPaint(c.gambapity??10);
   syncRevealPacks(!!c.map_reveal,!!c.map_reveal_packs,!!c.map_reveal_spawn);
   syncProspectBag(!!c.mod_auto_prospect,!!c.mod_auto_prospect_bag);
   showHiddenLootKey(c);

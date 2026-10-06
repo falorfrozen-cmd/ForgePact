@@ -1,18 +1,19 @@
-"""Contract tests for the `gambapity` mod (ForgePact #134, phase 5).
+"""Contract tests for the `gambapity` mod (ForgePact #134, phase 6).
 
 `gambapity` guarantees Goburin's Head (the unique charm at repository type 10 /
-sub 0 / base 98, key `charms_goburins_head`) from the gamba machine: the first
-machine that explodes after the configured number of spins drops exactly one
-head, and the counter starts over. The decision core is
-plugin/include/ForgePact/GambaPity.hpp (exercised by
+sub 0 / base 98, key `charms_goburins_head`) from the gamba machine: it counts
+the machine explosions that did not drop a head, and the explosion that brings
+the count to the configured number drops exactly one head and starts the count
+over. The decision core is plugin/include/ForgePact/GambaPity.hpp (exercised by
 test_gamba_pity_behavior.py); this test pins the adapter in
 plugin/ModuleMain.cpp on comment-stripped source:
 
 - it is a player command - `gambapity` is in `kPlayerCommands` and dispatched
   from its own command as a standalone early return - while `gambaprobe` and
   every `Gp*`/`GambaProbe` symbol vanish from the player build;
-- the three hooks are by SDK constant through `HookOneScript` (`PickUpGoldCheck`
-  is gambapity's own) or spliced into the Angelic roll's saved trampolines
+- the phase-5 spin hook is retired: no `PickUpGoldCheck`, no `HookOneScript`
+  and none of its symbols in gambapity's code;
+- the two hooks are spliced into the Angelic roll's saved trampolines
   (`g_Orig_CreateDefaultParams`, `g_Orig_CreateItemNew`), and a table-only
   hook is refused with a message naming the row, never silently armed;
 - the payout force is retired: neither splice writes a struct, nothing calls
@@ -37,19 +38,22 @@ plugin/ModuleMain.cpp on comment-stripped source:
 - the charm is named by its repository keys (10 / 0 / 98) and tied to the
   `kAngelicBases` `charms_goburins_head` row, and the machine by its SDK object
   name, never a hand-written index or a field guess;
-- the counter persists to `forgepact_gamba_pity.json` beside
+- the count persists to `forgepact_gamba_pity.json` beside
   `forgepact_gem_tables.json`, written atomically (temp file then
-  `std::filesystem::rename`);
-- `gambapity status` carries every counter and surfaces `g_GambaPityError`
-  (the last load/save refusal), and every action line is fixed text from the
-  core;
-- the plugin-side spin-count range equals `src/forgepact.py`'s
-  `GAMBA_PITY_RANGE = (10, 1000)` and `Mods.svelte`'s `min`/`max`;
+  `std::filesystem::rename`) through the core's `CounterFileText` and read
+  through its `ParseCounterFile`; an explosion's addition is saved when it is
+  seen, and an older spin file prints the migration line and is rewritten;
+- `gambapity status` carries every counter (no `gold=`) and surfaces
+  `g_GambaPityError` (the last load/save refusal), and every action line is
+  fixed text from the core;
+- the plugin-side explosion-count range equals `src/forgepact.py`'s
+  `GAMBA_PITY_RANGE = (1, 20)` and `Mods.svelte`'s `min`/`max`, and a saved
+  count outside it (an older spin count) loads as the default, 10;
 - `GambaPityFallbackDrop` is gone;
 - no hex or RVA literal reaches a call;
 - in the research build, `gambaprobe hook` refuses while `gambapity` holds one
-  of its scripts, and `gambapity` refuses while `gambaprobe` holds them, each
-  naming the holder.
+  of its two spliced scripts, and `gambapity` refuses while `gambaprobe` holds
+  them, each naming the holder.
 """
 import re
 import sys
@@ -72,7 +76,7 @@ if str(TESTS_DIR) not in sys.path:
 
 from test_release_hook_contract import function_body, strip_comments, strip_research_blocks  # noqa: E402
 
-BLOCK_START = "// gambapity (ForgePact #134 phase 5, player build): the Goburin's Head pity"
+BLOCK_START = "// gambapity (ForgePact #134 phase 6, player build): the Goburin's Head pity"
 BLOCK_END = "static void RunCommand(const std::string& line)"
 
 # The charm's repository identifier: type, sub, base.
@@ -82,6 +86,9 @@ DESTROYED_SPRITE = "Slot_Machine_01_Destroyed_spr"
 # The payout force (phase 3), retired before it shipped.
 RETIRED = ("GambaPityForceParams", "GambaPityForceType", "g_GambaPityForcePending", "GambaPityIsPrizeBuild",
            "GambaPityLogPrizeBuild", "OnPrizeRoll", "gambapity: prize build")
+# The spin hook (phase 5), retired when the count became explosions (phase 6).
+RETIRED_SPIN = ("fp_gambapity_spin", "GambaPitySpinDetour", "g_GambaPitySpinOrig", "g_GambaPitySpinNative",
+                "GambaPityIsSpin", "kGambaPitySpinGold")
 
 
 def without_strings(code):
@@ -146,13 +153,11 @@ class GambaPityContract(unittest.TestCase):
 
     # ---- the hooks -----------------------------------------------------------
 
-    def test_the_hooks_are_by_sdk_constant_or_a_spliced_trampoline(self):
-        sdk = sdk_scripts()
-        self.assertIn("gml_Script_PickUpGoldCheck", sdk, "not an hs-game-sdk script constant")
+    def test_the_hooks_are_spliced_trampolines_and_nothing_is_hooked_of_its_own(self):
         install = self.body("static std::string GambaPityInstallHooks()")
-        # PickUpGoldCheck is gambapity's own HookOneScript.
-        self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_PickUpGoldCheck), \"fp_gambapity_spin\",",
-                      install)
+        # The spin hook is retired: gambapity hooks nothing itself.
+        self.assertNotIn("HookOneScript", self.code)
+        self.assertNotIn("PickUpGoldCheck", self.code)
         # CreateDefaultParams and CreateItemNew are already held by the Angelic
         # roll's hooks: each is spliced into that saved trampoline, never hooked
         # a second time.
@@ -162,12 +167,21 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("if (!g_Orig_CreateItemNew) InstallSignatureAngelicHooks();", install)
         self.assertIn("g_GambaPityItemOrig = g_Orig_CreateItemNew;", install)
         self.assertIn("g_Orig_CreateItemNew = reinterpret_cast<PFUNC_YYGMLScript>(GambaPityItemDetour);", install)
-        self.assertEqual(install.count("HookOneScript("), 1, "only the unheld script is HookOneScript'd")
+        # Negative control: the install is the one read, and the SDK still
+        # names the retired script (so its absence here is a choice).
+        self.assertIn("GambaPityCharmConstantsMatch()", install)
+        self.assertIn("gml_Script_PickUpGoldCheck", sdk_scripts())
+
+    def test_the_spin_hook_is_retired(self):
+        for word in RETIRED_SPIN:
+            self.assertNotIn(word, self.code, word + " survives in gambapity's code")
+            self.assertNotIn(word, strip_comments(self.plugin), word + " survives in ModuleMain.cpp")
+        for word in ("OnSpin", "kGoldPerSpin", "GoldEquivalent"):
+            self.assertNotIn(word, self.header, word + " survives in GambaPity.hpp")
+            self.assertNotIn(word, self.code, word + " survives in gambapity's code")
 
     def test_a_table_only_hook_is_refused_with_the_row_named(self):
         install = self.body("static std::string GambaPityInstallHooks()")
-        self.assertIn('return "PickUpGoldCheck is hooked table-only, so the game\'s own calls would pass the mod by; the mod stays off";',
-                      install)
         self.assertIn('return "CreateDefaultParams is hooked table-only, so the game\'s own calls would pass the mod by; the mod stays off";',
                       install)
         self.assertIn('return "CreateItemNew is hooked table-only, so the game\'s own calls would pass the mod by; the mod stays off";',
@@ -216,13 +230,6 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn("head->type == kGambaPityCharmType && head->sub == kGambaPityCharmSub && head->b == kGambaPityCharmBase",
                       self.code)
         self.assertIn("if (!GambaPityCharmConstantsMatch())", self.code)
-
-    def test_a_spin_is_one_machine_self_pickupgoldcheck_with_a1_negative_10000(self):
-        self.assertIn("static constexpr double kGambaPitySpinGold = -10000.0;", self.code)
-        spin = self.body("static bool GambaPityIsSpin(")
-        self.assertIn("argc > 1", spin)
-        self.assertIn("A[1]", spin)
-        self.assertIn("a1 == kGambaPitySpinGold", spin)
 
     # ---- the payout force is retired ---------------------------------------
 
@@ -317,6 +324,18 @@ class GambaPityContract(unittest.TestCase):
         # First sight takes the baseline and prints the poll's positive control.
         self.assertIn("GP::Pity::MachineSeenLine(", watch)
         self.assertIn("g_GambaPity.ExplosionLine(id, frame)", watch)
+
+    def test_an_explosions_addition_is_saved_when_it_is_seen(self):
+        watch = self.body("static void GambaPityWatchMachines(")
+        exploded = watch[watch.index("case GP::Sighting::Exploded:"):]
+        exploded = exploded[:exploded.index("break;")]
+        self.assertIn("GambaPitySave();", exploded)
+        self.assertLess(exploded.index("GambaPitySave();"), exploded.index("Out(g_GambaPity.ExplosionLine(id, frame));"))
+        # The resets save too: a confirmed force, a natural head at the
+        # explosion and a machine-self (0, 98) build.
+        decide = self.body("static void GambaPityDecide(")
+        self.assertEqual(decide.count("GambaPitySave();"), 2, "the natural and the confirmed-force resets")
+        self.assertIn("GambaPitySave();", self.body("static RValue& GambaPityCdpDetour("))
 
     def test_the_destroyed_sprite_is_a_python_sdk_sprite_name(self):
         self.assertIn('static constexpr const char* kGambaPityDestroyedSprite = "' + DESTROYED_SPRITE + '";', self.code)
@@ -428,13 +447,18 @@ class GambaPityContract(unittest.TestCase):
     def test_the_status_line_and_the_action_lines_are_the_cores_fixed_text(self):
         for name in ("MachineSeenLine", "ExplosionLine", "ForcedLine", "GroundAfterDropLine", "GroundAfterDropUnreadLine",
                      "NaturalSeenLine",
-                     "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine", "BaselineReadLine"):
+                     "BelowLine", "RefusedLine", "AbandonedLine", "NaturalBuildLine", "BaselineReadLine", "MigrationLine",
+                     "VersionErrorText"):
             self.assertIn(name + "(", self.code, name + " is never printed")
             self.assertIn(name + "(", self.header)
         line = self.header[self.header.index("std::string StatusLine() const"):]
-        for field in ("count", "threshold", "gold", "explosions", "forced", "natural", "below", "refused",
+        line = line[:line.index("}")]
+        for field in ("count", "threshold", "explosions", "forced", "natural", "below", "refused",
                       "abandoned", "own-head-builds", "machines", "unread", "ground-unread", "below-ground-unread"):
             self.assertIn('" ' + field + '="', line, field)
+        # The count is explosions: the status line has no gold field.
+        self.assertNotIn('" gold="', line)
+        self.assertNotIn("gold=", self.header)
         # Every line the adapter prints itself keeps the gambapity prefix.
         printed = re.findall(r'Out\("([^"]*)', strip_research_blocks(self.code))
         self.assertTrue(printed)
@@ -455,6 +479,32 @@ class GambaPityContract(unittest.TestCase):
         load = self.body("static void GambaPityLoad()")
         self.assertIn("if (g_GambaPityLoaded) return;", load)
         self.assertIn("g_GambaPityLoaded = true;", load)
+        self.assertIn("std::filesystem::file_size(path, ec) < 4096", load)
+
+    def test_the_counter_file_goes_through_the_cores_text_both_ways(self):
+        save = self.body("static void GambaPitySave()")
+        self.assertIn("out << ForgePact::GambaPity::CounterFileText(g_GambaPity.Count());", save)
+        load = self.body("static void GambaPityLoad()")
+        self.assertIn("const GP::CounterFile file = GP::ParseCounterFile(text);", load)
+        self.assertIn("g_GambaPity.SetCount(file.count);", load)
+        # No hand parse of the count beside the core's.
+        self.assertNotIn('"\\"count\\""', load)
+        self.assertNotIn("std::stoi", load)
+        # An older spin file: the migration line once (the load runs once), and
+        # the file rewritten as version 2 at once.
+        legacy = load[load.index("if (file.legacy) {"):]
+        legacy = legacy[:legacy.index("}")]
+        self.assertLess(legacy.index("Out(GP::Pity::MigrationLine());"), legacy.index("GambaPitySave();"))
+        # Another version: the status line's error, the file left alone.
+        unknown = load[load.index("} else if (file.unknown) {"):]
+        unknown = unknown[:unknown.index("}", 1)]
+        self.assertIn("g_GambaPityError = GP::Pity::VersionErrorText(file.version);", unknown)
+        self.assertNotIn("GambaPitySave();", unknown)
+        self.assertEqual(load.count("GambaPitySave();"), 1)
+        # The core writes exactly version 2.
+        self.assertIn("inline constexpr int64_t kCounterFileVersion = 2;", self.header)
+        self.assertIn("inline std::string CounterFileText(int count)", self.header)
+        self.assertIn("inline CounterFile ParseCounterFile(const std::string& text)", self.header)
 
     # ---- the status line -----------------------------------------------------
 
@@ -464,7 +514,7 @@ class GambaPityContract(unittest.TestCase):
         self.assertIn('" threshold="', line)
         self.assertIn('" explosions="', line)
         self.assertIn('" own-head-builds="', line)
-        self.assertIn("GoldEquivalent()", line)
+        self.assertNotIn("GoldEquivalent", self.header)
         command = self.body("static void GambaPityCommand(")
         self.assertIn('if (arg.empty() || arg == "status" || arg == "stat") {', command)
         # The last load/save refusal is read beside the status line, not only
@@ -473,14 +523,44 @@ class GambaPityContract(unittest.TestCase):
                       command)
 
     def test_the_plugin_range_matches_python_and_the_panel(self):
-        self.assertIn("static constexpr int kGambaPityMin = 10;", self.code)
-        self.assertIn("static constexpr int kGambaPityMax = 1000;", self.code)
+        self.assertIn("static constexpr int kGambaPityMin = 1;", self.code)
+        self.assertIn("static constexpr int kGambaPityMax = 20;", self.code)
         command = self.body("static void GambaPityCommand(")
         self.assertIn("count < kGambaPityMin || count > kGambaPityMax", command)
-        python = FORGEPACT_PY.read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.assertIn("GAMBA_PITY_RANGE = (10, 1000)", python)
+        python = FORGEPACT_PY.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+        self.assertIn("GAMBA_PITY_RANGE = (1, 20)", python)
+        self.assertIn("GAMBA_PITY_DEFAULT = 10", python)
+        self.assertIn('"mod_gambapity": False,\n    "gambapity": 10,', python)
         svelte = MODS_SVELTE.read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.assertIn('id="gambapity" min="10" max="1000"', svelte)
+        self.assertIn('id="gambapity" min="1" max="20" step="1" value="10"', svelte)
+
+    def _load_cfg_from(self, saved):
+        if str(SDK_PYTHON) not in sys.path:
+            sys.path.insert(0, str(SDK_PYTHON))
+        src = str(ROOT / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        import json
+        import tempfile
+        from unittest import mock
+        import forgepact  # noqa: E402  (only here: the other tests read source text)
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "forgepact.json"
+            config.write_text(json.dumps(saved), encoding="utf-8")
+            with mock.patch.object(forgepact, "CONFIG", config):
+                return forgepact.load_cfg(), forgepact
+
+    def test_a_saved_count_outside_the_range_loads_as_the_default(self):
+        # An older version's spin count (100) is no explosion count: it loads
+        # as the default, so the panel shows and sends 10.
+        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 100})
+        self.assertEqual(cfg["gambapity"], 10)
+        self.assertEqual(forgepact.gambapity_cmd(cfg), "gambapity 10")
+        self.assertTrue(cfg["mod_gambapity"])
+        # Control: a count in range is kept.
+        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 7})
+        self.assertEqual(cfg["gambapity"], 7)
+        self.assertEqual(forgepact.gambapity_cmd(cfg), "gambapity 7")
 
     def test_the_fallback_drop_is_gone(self):
         self.assertNotIn("GambaPityFallbackDrop", self.code)
@@ -499,7 +579,10 @@ class GambaPityContract(unittest.TestCase):
     def test_the_decision_core_is_game_independent(self):
         for word in ("RValue", "CInstance", "g_Yytk", "YYTK", "Aurie", "CallBuiltin", "CallGameScript"):
             self.assertNotIn(word, self.header)
-        self.assertIn("inline constexpr int64_t kGoldPerSpin = 10000;", self.header)
+        # No file I/O in the core either: the adapter reads and writes the file.
+        for word in ("fstream", "std::filesystem", "FILE*"):
+            self.assertNotIn(word, self.header)
+        self.assertIn("class Pity", self.header)   # control: the header is the one read
 
     # ---- coexistence with gambaprobe (research build) -----------------------
 
@@ -511,14 +594,17 @@ class GambaPityContract(unittest.TestCase):
         held = self.body("static std::string GambaPityHeldScripts()")
         self.assertIn('held += "CreateDefaultParams"', held)
         self.assertIn('held += (held.empty() ? "" : ", ") + std::string("CreateItemNew")', held)
-        self.assertIn('held += (held.empty() ? "" : ", ") + std::string("PickUpGoldCheck")', held)
+        # Only the two spliced scripts: the spin hook is retired.
+        self.assertNotIn("PickUpGoldCheck", held)
 
     def test_gambapity_refuses_while_gambaprobe_holds_the_shared_scripts(self):
         install = self.body("static std::string GambaPityInstallHooks()")
         self.assertIn('"gambaprobe holds "', install)
         self.assertIn("kGpScript_CreateDefaultParams", install)
         self.assertIn("kGpScript_CreateItemNew", install)
-        self.assertIn("kGpScript_PickUpGoldCheck", install)
+        # A gambaprobe holding only PickUpGoldCheck no longer blocks gambapity.
+        self.assertNotIn("kGpScript_PickUpGoldCheck", install)
+        self.assertNotIn("PickUpGoldCheck", install)
         # The check is research-build only: the player build never names gambaprobe.
         self.assertNotIn("kGpScript_CreateDefaultParams", self.shipped)
 

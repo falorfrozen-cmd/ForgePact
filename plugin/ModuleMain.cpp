@@ -52262,8 +52262,8 @@ static constexpr int kGambaPityCharmBase = 98;
 // The explosion count the panel's switch accepts: the same range as
 // src/forgepact.py's GAMBA_PITY_RANGE and Mods.svelte's min/max, pinned
 // against each other in tests/test_gamba_pity_contract.py.
-static constexpr int kGambaPityMin = 10;
-static constexpr int kGambaPityMax = 1000;
+static constexpr int kGambaPityMin = 1;
+static constexpr int kGambaPityMax = 20;
 
 // The kAngelicBases row the charm is (by key, not index) - the same lookup
 // gambaprobe's `drop` uses.

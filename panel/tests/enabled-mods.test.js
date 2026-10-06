@@ -152,14 +152,14 @@ test('density is an entry only while switched on above x1, through den_on', () =
 
 test('Goburin’s Head pity is an entry while its switch is on, whatever the count, and off by default', () => {
   assert.equal(DEFAULTS.mod_gambapity, false, 'off by default');
-  assert.equal(DEFAULTS.gambapity, 100);
+  assert.equal(DEFAULTS.gambapity, 10);
   assert.ok(!BOOLEAN_MODS.includes('mod_gambapity'), 'its off is `gambapity off`, not a `verb 0` boolean');
-  for (const count of [10, 100, 1000]) {
+  for (const count of [1, 10, 20]) {
     assert.deepEqual(enabledControls(cfg({ mod_gambapity: true, gambapity: count })), ['mod_gambapity'], count);
   }
   // The count rides on the switch's entry: moved with the switch off, it is
   // still nothing on.
-  assert.deepEqual(enabledControls(cfg({ gambapity: 250 })), []);
+  assert.deepEqual(enabledControls(cfg({ gambapity: 5 })), []);
   const { mod_gambapity, gambapity, ...older } = cfg();
   assert.deepEqual(enabledControls(older), [], 'an older config without the keys reads as off');
 });
