@@ -16,7 +16,10 @@ player-build hook installer tags its hook with the in-hook id (D8), and
 line the live checks look for. out.txt has one writer at a time. The keys the
 plugin reads from the panel's files are the shared fixture's and the panel's.
 Every call into the game's original from a timed body sits inside the guard,
-and the plugin shows the player no notice of any report.
+and the plugin shows the player no notice of any report. Both installers time
+their name lookup, detour and log writes (ForgePact #151), the setup prints
+their cost after its own line, and `incident setup` runs the read-only
+thread snapshot probe, which nothing else calls.
 """
 import json
 import re
@@ -674,6 +677,79 @@ class IncidentMonitorContractTests(unittest.TestCase):
         # A lap outside the setup records nothing (a later `InstallHook` call).
         lap = strip_comments(function_body(self.plugin, "static void SetupLap(const char* name)"))
         self.assertIn("if (!g_SetupLapQpc) return;", lap)
+
+    # ForgePact #151: what each hook install costs, by part. The parts are read
+    # on the monitor's clock, around the work they name, in both installers;
+    # the installers themselves keep every guard and their one detour
+    # (test_every_installer_tags_its_hook, test_release_hook_contract.py).
+    def test_both_installers_time_their_resolve_detour_and_log(self):
+        for signature in ("static bool HookOneScript(", "static bool HookBuiltin("):
+            body = strip_comments(function_body(self.plugin, signature))
+            self.assertIn("ForgePact::Incident::InstallTimer install(", body, signature)
+            for call, part in (("GetNamedRoutinePointer(", "install.parts.resolve += ForgePact::Incident::Qpc() - "),
+                               ("MmCreateHook(", "install.parts.detour += ForgePact::Incident::Qpc() - ")):
+                at = body.index(call)
+                read = body.rfind("ForgePact::Incident::Qpc();", 0, at)
+                self.assertGreaterEqual(read, 0, (signature, call))
+                # Nothing else runs between the clock read and the call.
+                self.assertNotIn(";", body[read + len("ForgePact::Incident::Qpc();"):at].replace("PVOID tramp = nullptr;", ""),
+                                 (signature, call))
+                self.assertLess(at, body.index(part, at), (signature, call))
+            self.assertIn("install.parts.detoured = true;", body, signature)
+            # Every log line goes through the one timed writer.
+            self.assertEqual(body.count("Out("), 1, signature)
+            writer = body[body.index("Out("):]
+            self.assertIn("install.parts.log += ForgePact::Incident::Qpc() - ", writer[:writer.index("};")])
+            self.assertNotIn("QueryPerformanceCounter", body, signature)
+
+    def test_the_setup_window_and_its_cost_line(self):
+        self.assertIn("g_InstallCost.OpenSetup();",
+                      strip_comments(function_body(self.plugin, "static void SetupLapStart()")))
+        self.assertIn("g_InstallCost.CloseSetup();",
+                      strip_comments(function_body(self.plugin, "static std::string SetupSlowest(size_t n)")))
+        frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
+        setup = brace_block(frame, SETUP_BLOCK)
+        existing = setup.index('Out("incident: setup "')
+        cost = setup.index("Out(inc::g_InstallCost.SetupMeasured(")
+        self.assertLess(existing, cost)
+        # The profile build's fp_pop_* installs run after the window closes,
+        # or the cost line would count installs outside its `hooks` value.
+        self.assertLess(cost, setup.index("PopulationProfile::InstallScriptTimings();"))
+        # Printed once, from the existing line's own `hooks` value.
+        self.assertEqual(self.plugin.count("g_InstallCost.SetupMeasured("), 1)
+        self.assertIn("SetupMeasured(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0)", setup)
+        # The lines live in the header, so ModuleMain.cpp keeps its one
+        # `"incident: setup ` literal (the test above).
+        for literal in ('"incident: setup installs "', '"incident: setup installs not measured yet"',
+                        '"incident: installs since load "', '"incident: thread snapshot "', '" threads system-wide, "',
+                        '" in this process"', '"outside installers "'):
+            self.assertIn(literal.strip('"'), self.header, literal)
+        self.assertIn("inline constinit InstallCost g_InstallCost;", self.header)
+        self.assertIn("static_assert(std::is_trivially_destructible_v<InstallCost>", self.header)
+
+    def test_the_verb_answers_setup(self):
+        command = strip_comments(function_body(self.plugin, "static void IncidentCommand(const std::string& rest)"))
+        self.assertIn('if (sub == "setup") {', command)
+        answer = command[command.index('if (sub == "setup") {'):]
+        answer = answer[:answer.index("return;")]
+        lines = [line for line in code_lines(answer) if line.startswith("Out(")]
+        self.assertEqual(lines, ["Out(inc::g_InstallCost.SetupLine());", "Out(inc::g_InstallCost.SessionLine());",
+                                 "Out(inc::ThreadSnapshotLine(inc::ThreadSnapshot()));"])
+        self.assertIn('Out("usage: incident stat|setup");', command)
+        self.assertNotIn('"usage: incident stat"', self.plugin)
+
+    def test_the_snapshot_probe_only_reads_and_runs_only_on_the_verb(self):
+        probe = strip_comments(function_body(self.header, "inline ThreadSnapshotResult ThreadSnapshot() noexcept"))
+        self.assertIn("CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)", probe)
+        self.assertIn("Thread32Next(", probe)
+        self.assertIn("CloseHandle(", probe)
+        for forbidden in ("OpenThread", "SuspendThread", "ResumeThread", "TerminateThread", "GetThreadContext"):
+            self.assertNotIn(forbidden, probe, forbidden)
+        # Never at setup, never on the monitor thread: the one call is the verb's.
+        code = strip_comments(self.plugin)
+        self.assertEqual(len(re.findall(r"\bThreadSnapshot\(\)", code)), 1)
+        command = strip_comments(function_body(self.plugin, "static void IncidentCommand(const std::string& rest)"))
+        self.assertIn("inc::ThreadSnapshot()", command)
 
 
 if __name__ == "__main__":

@@ -2144,17 +2144,32 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
 // The detour goes to a TaggedThunks thunk, not to `dest` itself: it marks the
 // hook's id as the one the frame thread is in (ForgePact #76's freeze report)
 // and calls `dest`. See HookOneScript below.
+//
+// ForgePact #151: the install is timed by part (the name lookup, the detour,
+// the log writes) for the setup's cost line and `incident setup`
+// (IncidentMonitor.hpp's InstallCost). The clock reads change nothing here.
 static bool HookBuiltin(const char* name, const char* id, PVOID dest, TRoutine* origOut)
 {
+    ForgePact::Incident::InstallTimer install(id && *id ? id : name);
+    const auto logLine = [&install](const std::string& line) {
+        const int64_t at = ForgePact::Incident::Qpc();
+        Out(line);
+        install.parts.log += ForgePact::Incident::Qpc() - at;
+    };
     PVOID p = nullptr;
+    int64_t t = ForgePact::Incident::Qpc();
     AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
-    if (!AurieSuccess(st) || !p) { Out(std::string("hookbuiltin ") + name + ": not found st=" + std::to_string((int)st)); return false; }
+    install.parts.resolve += ForgePact::Incident::Qpc() - t;
+    if (!AurieSuccess(st) || !p) { logLine(std::string("hookbuiltin ") + name + ": not found st=" + std::to_string((int)st)); return false; }
     const TRoutine tagged = TaggedThunks<TRoutine>::Tagged(id && *id ? id : name, reinterpret_cast<TRoutine>(dest));
     PVOID tramp = nullptr;
+    t = ForgePact::Incident::Qpc();
     AurieStatus hs = MmCreateHook(g_ArSelfModule, id, p, reinterpret_cast<PVOID>(tagged), &tramp);
-    if (!AurieSuccess(hs)) { Out(std::string("hookbuiltin ") + name + ": failed st=" + std::to_string((int)hs)); return false; }
+    install.parts.detour += ForgePact::Incident::Qpc() - t;
+    install.parts.detoured = true;
+    if (!AurieSuccess(hs)) { logLine(std::string("hookbuiltin ") + name + ": failed st=" + std::to_string((int)hs)); return false; }
     *origOut = reinterpret_cast<TRoutine>(tramp);
-    Out(std::string("HOOK INSTALLED on builtin ") + name);
+    logLine(std::string("HOOK INSTALLED on builtin ") + name);
     return true;
 }
 
@@ -2307,16 +2322,27 @@ static bool HookOneScriptTable(const char* shortName, const char* id, PVOID dest
 // freeze report can name the hook, and calls `dest` with the same arguments.
 // The thunk is only a different destination; the body still receives the
 // trampoline, and the same `dest` installed again gets the same thunk.
+//
+// ForgePact #151: timed by part like HookBuiltin above; the guards, their
+// order and the one detour are unchanged.
 static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFUNC_YYGMLScript* origOut,
                           bool* nativeOut)
 {
+    ForgePact::Incident::InstallTimer install(id && *id ? id : shortName);
+    const auto logLine = [&install](const std::string& line) {
+        const int64_t at = ForgePact::Incident::Qpc();
+        Out(line);
+        install.parts.log += ForgePact::Incident::Qpc() - at;
+    };
     if (nativeOut) *nativeOut = false;
     std::string full = std::string("gml_Script_") + shortName;
     PVOID p = nullptr;
+    int64_t t = ForgePact::Incident::Qpc();
     AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
-    if (!AurieSuccess(st) || !p) { Out(std::string("hook ") + shortName + ": not found st=" + std::to_string((int)st)); return false; }
+    install.parts.resolve += ForgePact::Incident::Qpc() - t;
+    if (!AurieSuccess(st) || !p) { logLine(std::string("hook ") + shortName + ": not found st=" + std::to_string((int)st)); return false; }
     CScript* sc = reinterpret_cast<CScript*>(p);
-    if (!sc || !sc->m_Functions) { Out(std::string("hook ") + shortName + ": null functions"); return false; }
+    if (!sc || !sc->m_Functions) { logLine(std::string("hook ") + shortName + ": null functions"); return false; }
 
     const PFUNC_YYGMLScript tagged = TaggedThunks<PFUNC_YYGMLScript>::Tagged(id && *id ? id : shortName,
                                                                             reinterpret_cast<PFUNC_YYGMLScript>(dest));
@@ -2333,7 +2359,10 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
             why = "table entry is not code inside Hero_Siege.exe";
         } else {
             PVOID tramp = nullptr;
+            t = ForgePact::Incident::Qpc();
             AurieStatus ns = MmCreateHook(g_ArSelfModule, id, (PVOID)tableEntry, reinterpret_cast<PVOID>(tagged), &tramp);
+            install.parts.detour += ForgePact::Incident::Qpc() - t;
+            install.parts.detoured = true;
             if (AurieSuccess(ns) && tramp) {
                 *origOut = reinterpret_cast<PFUNC_YYGMLScript>(tramp);
                 native = true;
@@ -2344,12 +2373,12 @@ static bool HookOneScript(const char* shortName, const char* id, PVOID dest, PFU
         }
         if (!native) {
             *origOut = tableEntry;
-            Out(std::string("hook ") + shortName + ": TABLE-ONLY (" + why
+            logLine(std::string("hook ") + shortName + ": TABLE-ONLY (" + why
                 + ") - direct compiled-GML calls will bypass this hook");
         }
     }
     sc->m_Functions->m_ScriptFunction = tagged;
-    Out(std::string("HOOK INSTALLED on ") + shortName);
+    logLine(std::string("HOOK INSTALLED on ") + shortName);
     return true;
 }
 
@@ -21764,10 +21793,13 @@ struct SetupLapTime {
 static std::vector<SetupLapTime> g_SetupLaps;
 static int64_t g_SetupLapQpc = 0;
 
+// The laps are also the window ForgePact #151's install accounting calls the
+// setup: SetupLapStart opens it, SetupSlowest closes it.
 static void SetupLapStart()
 {
     g_SetupLaps.clear();
     g_SetupLapQpc = ForgePact::Incident::Qpc();
+    ForgePact::Incident::g_InstallCost.OpenSetup();
 }
 
 static void SetupLap(const char* name)
@@ -21788,6 +21820,7 @@ static std::string SetupSlowest(size_t n)
         out += std::string(i ? ", " : "") + laps[i].name + " " + ForgePact::Incident::Fixed(laps[i].ms, 1) + " ms";
     g_SetupLaps.clear();
     g_SetupLapQpc = 0;
+    ForgePact::Incident::g_InstallCost.CloseSetup();
     return out.empty() ? std::string("no installer timed") : out;
 }
 
@@ -51725,10 +51758,20 @@ static void IncidentFrameTick()
 }
 
 // `incident stat`, on the frame thread: the monitor's last published counters.
+// `incident setup` (ForgePact #151): the setup's install cost line, the
+// session's install totals, and one timed thread snapshot, the positive
+// control for the detour part. The snapshot runs here and nowhere else.
 static void IncidentCommand(const std::string& rest)
 {
+    namespace inc = ForgePact::Incident;
     const std::string sub = Lower(TrimCopy(rest));
-    if (!sub.empty() && sub != "stat" && sub != "status") { Out("usage: incident stat"); return; }
+    if (sub == "setup") {
+        Out(inc::g_InstallCost.SetupLine());
+        Out(inc::g_InstallCost.SessionLine());
+        Out(inc::ThreadSnapshotLine(inc::ThreadSnapshot()));
+        return;
+    }
+    if (!sub.empty() && sub != "stat" && sub != "status") { Out("usage: incident stat|setup"); return; }
     for (const auto& line : ForgePact::Incident::StatLines(ForgePact::Incident::Monitor::Instance().Snapshot()))
         Out(line);
 }
@@ -55950,9 +55993,6 @@ void FrameCallback(FWFrame& FrameContext)
             SetupLapStart(); InstallHook(); hooksEnd = ForgePact::Incident::Qpc(); Trace("3-installhook-ok");
         }
         catch (...) { Out("setup EXCEPTION"); Trace("X-setup-cppexception"); }
-#ifdef FORGEPACT_POPULATION_PROFILE
-        ForgePact::PopulationProfile::InstallScriptTimings();
-#endif
 #ifndef FORGEPACT_RELEASE
         try { LoadCoopConfigAndMaybeStart(); Trace("4-coop-ok"); }
         catch (...) { Out("coop auto-start EXCEPTION"); Trace("X-coop-cppexception"); }
@@ -55964,6 +56004,14 @@ void FrameCallback(FWFrame& FrameContext)
         Out("incident: setup " + inc::Fixed(inc::QpcToMs(setupEnd - setupStart), 1) + " ms at frame " + std::to_string(fc)
             + ": config " + inc::Fixed(inc::QpcToMs(configEnd - setupStart), 1) + " ms, hooks "
             + inc::Fixed(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0, 1) + " ms (" + SetupSlowest(3) + ")");
+        // ForgePact #151: the same `hooks` value split by install part, right
+        // after the line above (its literals live in IncidentMonitor.hpp).
+        Out(inc::g_InstallCost.SetupMeasured(hooksEnd > configEnd ? inc::QpcToMs(hooksEnd - configEnd) : 0.0));
+        // The profiling installs come after the setup window has closed
+        // (SetupSlowest above), so the cost line's parts add up to `hooks`.
+#ifdef FORGEPACT_POPULATION_PROFILE
+        ForgePact::PopulationProfile::InstallScriptTimings();
+#endif
     }
 
     // Orb pickup: the player position the globe step hooks pull toward, read
