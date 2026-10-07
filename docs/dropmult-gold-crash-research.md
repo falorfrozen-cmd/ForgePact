@@ -13,9 +13,13 @@ deaths were the deliberate crash (the instrument's positive control, which
 every instrument caught) and the two graceful closes, each of which exited
 `0xC0000409` after `==== clean shutdown ====` (guide Known Limitations item
 25). What ended the game on 2026-10-04 is still not established. #173 stays
-open: the next game that dies under hs-drive or the panel now leaves an exit
-code, a dump and an Application Error record, and on the research build a
-`crashwatch` trail. Details: "Results".
+open: a game hs-drive launched that dies now leaves its exit code, and an
+access violation also leaves a dump, an Application Error record and, on the
+research build, a `crashwatch` trap line (measured once, for one access
+violation in our DLL). A fast-fail (`0xC0000409`) or an external termination
+never reaches the trap, so it would leave the heartbeat trail and the exit
+code only. The panel's launch takes the same `launch_game` route but was not
+exercised in these sessions. Details: "Results".
 
 2026-10-06: the research phase. The game vanished during a research-build
 session on 2026-10-04, seconds after `dropmult gold 100`, and left no dump, no
@@ -358,13 +362,16 @@ All 14 checks recorded: 12 pass, 2 not observed (`direct-gold`,
   x100 for about 6 minutes and 61 coins (scaled sum 346,500, HUD +444,990),
   with one room change at x100 (`Act_01_01` -> `Town_01_rm`, 08:01:57 UTC).
   The game stayed alive, with no exception line.
-- **`gambaprobe hook` did not install the set the procedure expected
-  (measured).** Its summary read `44 rows, 3 missing, 0 table-only (32
-  detoured, 1 detoured-under, 8 shared)`: the builtins `GetVariable`,
-  `SetVariable` and `SetVariableToUndefined` were not found by name, where the
-  procedure expected 0 missing. The 2026-10-04 session listed 37 rows; which
-  rows that list had or lacked against today's 44 was not compared. Phase C
-  therefore ran without those three builtin detours.
+- **`gambaprobe hook` installed its known set (measured).** Its summary read
+  `44 rows, 3 missing, 0 table-only (32 detoured, 1 detoured-under, 8
+  shared)`: the builtins `GetVariable`, `SetVariable` and
+  `SetVariableToUndefined` were not found by name. That is already measured
+  (`gamba-machine-research.md`, Live 3 and 4; hub
+  `docs/RUNTIME_DATA_MODELS.md`): they do not resolve by name on this runner,
+  so the procedure's expected "0 missing" was the wrong expectation, not a
+  deviation of this session. Phase C ran without those three builtin
+  detours. The 2026-10-04 session listed 37 rows; whether that list included
+  the three is not established.
 - **The install froze the game for 6 s (measured).** `gambaprobe hook: took
   6020 ms` (5835 ms of it in the table phase), then a `STALL 3422 ms` line, a
   `FREEZE 6 s without a frame | in-hook none | in-mod ipc` and its incident
@@ -429,9 +436,12 @@ minimums for this session.
   may have left coins on the ground (Phase C's was taken at `coins=1`). That is
   #77's 1.3 x, now over the 153 coins of those windows at x10 and x100, on
   both builds, mostly at zone level 243 (Live 1) and at 514 (Live 2).
-- The instruments work: a crash under hs-drive now leaves an exit code, a
-  dump, an Application Error record and, on the research build, a trap line
-  naming our module and offset.
+- The instruments work, as far as the positive control reaches: one access
+  violation in our DLL under hs-drive left its exit code, a dump, an
+  Application Error record and a trap line naming our module and offset. A
+  fast-fail (`0xC0000409`) or an external termination never reaches the
+  vectored trap; for those the heartbeat trail and `exits` are the evidence.
+  The panel's launch route (the same `launch_game`) was not exercised.
 
 ## Not established
 
@@ -446,9 +456,10 @@ minimums for this session.
 - **Whether `gambaprobe`'s armed detours, or a room change under them, can end
   the game.** Not observed in Live 1's Phase C (61 coins at x100, one room
   change), which ran without three builtin detours its list names
-  (`GetVariable`, `SetVariable`, `SetVariableToUndefined`, not found by name).
-  Why those three did not resolve, and whether the 2026-10-04 session hooked
-  them, is not established.
+  (`GetVariable`, `SetVariable`, `SetVariableToUndefined`, which do not
+  resolve by name on this runner, as `gamba-machine-research.md` already
+  measured). Whether the 2026-10-04 session's 37-row list included them is not
+  established.
 - **What made the frames slow** in Live 1 (`PERF sustained 2.9x` in Phase B, a
   266 ms hitch in Phase C, the owner's low FPS in Phase A) and why `gambaprobe
   hook` took 6 s to install. Not attributed.
