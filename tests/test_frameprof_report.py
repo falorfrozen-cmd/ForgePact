@@ -175,5 +175,189 @@ class ReportToolTests(unittest.TestCase):
             self.assertIn("<svg", page)
 
 
+PAGE_SECTIONS = ("Where the frame thread's time goes", "Heaviest events", "Heaviest game code",
+                 "Game code's own time", "Heaviest built-ins", "Per second", "Slowest frames",
+                 "Call stacks", "CPU per thread")
+
+
+class PhaseBaselineTests(unittest.TestCase):
+    """What the tool printed and drew before the runner-phase split: the split
+    adds a block after these lines and a section to the page, and changes
+    neither."""
+
+    def test_summary_lines_are_unchanged(self):
+        self.assertEqual(report_tool.summary_lines(sample_report()), [
+            "capture: 30.0 s, 7500 samples at 250/s",
+            "frames: 1500 at 50.0 fps; median 18.0 ms, 95% under 30.0 ms, worst 180.0 ms; 6 over 50 ms, 2 over 100 ms",
+            "frame thread: working 80.0%, waiting 20.0%; CPU: frame thread 82% of one core, "
+            "every other game thread together 30% of one core",
+            "time split: game code 60.0%; graphics driver 10.0%; GameMaker runtime 10.0%; idle (frame limiter) 20.0%",
+            "heaviest events: Enemy_Health_Bar_Parent_obj Draw GUI 12.0% | <script>alert(1)</script> 0.1%",
+            "heaviest game code: Enemy_Health_Bar_Parent_obj Draw GUI 12.0% | DrawEnemyHealthBars 11.3%",
+            "game code's own time: DrawEnemyHealthBars 9.3%",
+            "heaviest built-ins: draw_sprite_ext() 4.0%",
+            "slow frame 180 ms at 12.5 s in Act_01_01: game code: ZoneGenPopulatePresetObjects (40)",
+            "profiler cost: at most 70 us per sample, at most 1.75% of the frame thread's time",
+        ])
+
+    def test_the_page_keeps_every_section(self):
+        text = html.unescape(report_tool.build_html(sample_report(), report_tool.parse_stacks(STACKS), "t"))
+        positions = [text.index(section) for section in PAGE_SECTIONS]
+        self.assertEqual(positions, sorted(positions), "the sections keep their order")
+
+
+# A capture shaped like the game's: a frame loop whose per-frame function has
+# a step branch and a draw branch, and whose other branch holds the frame
+# limiter (spinning, and reading the clock) and a wait on the display. 200
+# samples, so every share below is a round number.
+LOOP = "unknown code;Hero_Siege.exe!0x100;Hero_Siege.exe!0x200"
+PER_FRAME = LOOP + ";Hero_Siege.exe!0x300"
+PHASE_STACKS = "".join(f"{line}\n" for line in (
+    f"{PER_FRAME};Hero_Siege.exe!0x400;Hero_Siege.exe!0x500;A_obj Step;ScriptA;Hero_Siege.exe!0x510 40",
+    f"{PER_FRAME};Hero_Siege.exe!0x400;Hero_Siege.exe!0x500;Hero_Siege.exe!0x530 10",
+    f"{PER_FRAME};Hero_Siege.exe!0x400;Hero_Siege.exe!0x520 30",
+    f"{PER_FRAME};Hero_Siege.exe!0x600;Hero_Siege.exe!0x700;B_obj Draw GUI;DrawScript;d3d11.dll!0x10 20",
+    f"{PER_FRAME};Hero_Siege.exe!0x600;Hero_Siege.exe!0x700;B_obj Draw GUI;DrawScript 20",
+    f"{PER_FRAME};Hero_Siege.exe!0x600;Hero_Siege.exe!0x720 20",
+    f"{LOOP};Hero_Siege.exe!0x800;Hero_Siege.exe!0x900 30",
+    f"{LOOP};Hero_Siege.exe!0x800;Hero_Siege.exe!0x900;ntdll.dll!RtlQueryPerformanceCounter 10",
+    f"{LOOP};Hero_Siege.exe!0x800;dxgi.dll!0x20;ntdll.dll!NtWaitForSingleObject 20",
+))
+PHASE_BUCKETS = {"game": 60, "game_wait": 0, "graphics": 20, "gpu_wait": 20, "mods": 0, "runtime": 60,
+                 "idle": 0, "spin": 40, "unknown": 0}
+
+
+def phase_report(**counts):
+    """sample_report() with the bucket counts the plugin would have written for
+    PHASE_STACKS, any of them overridden, and its frame limiter."""
+    buckets = dict(PHASE_BUCKETS, **counts)
+    total = sum(buckets.values())
+    return sample_report(
+        buckets=[{"key": k, "name": k, "samples": v, "percent": 100.0 * v / total} for k, v in buckets.items()],
+        spinWait={"function": "Hero_Siege.exe!0x900", "samples": buckets["spin"], "percent": 20.0})
+
+
+class PhaseTargetTests(unittest.TestCase):
+    """The runner-phase split: where the runner's step phase and draw phase
+    start on the stacks, what each costs, and what lies outside both."""
+
+    def test_each_stack_gets_the_plugins_bucket(self):
+        bucket = report_tool.stack_bucket
+        spin = "Hero_Siege.exe!0x900"
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "A_obj Step", "ScriptA", "draw_sprite_ext()"], spin), "game")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "ScriptA", "ntdll.dll!NtWaitForSingleObject"], spin), "game_wait")
+        self.assertEqual(bucket(["A_obj Draw", "Hero_Siege.exe!0x1", "nvwgf2umx.dll!0x10"], spin), "graphics")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "dxgi.dll!0x20", "KERNELBASE.dll!WaitForSingleObjectEx"], spin),
+                         "gpu_wait")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "BloodPactPlugin.dll!0x10"], spin), "mods")
+        # Game code under a mod's hook is still game code.
+        self.assertEqual(bucket(["BloodPactPlugin.dll!0x10", "A_obj Step", "Hero_Siege.exe!0x1"], spin), "game")
+        self.assertEqual(bucket(["unknown code", "Hero_Siege.exe!0x1"], spin), "runtime")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "ntdll.dll!NtDelayExecution"], spin), "idle")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", spin], spin), "spin")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", spin, "ntdll.dll!RtlQueryPerformanceCounter"], spin), "spin")
+        self.assertEqual(bucket(["(no frames)"], spin), "unknown")
+        # Negative controls: a clock read is the limiter's only under the
+        # limiter and with nothing but runtime on the stack; a wait export in
+        # a module that is not Windows' own does not wait; with no limiter in
+        # the capture nothing spins.
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "ntdll.dll!RtlQueryPerformanceCounter"], spin), "runtime")
+        self.assertEqual(bucket(["A_obj Step", spin, "ntdll.dll!RtlQueryPerformanceCounter"], spin), "game")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", "Hero_Siege.exe!WaitForThing"], spin), "runtime")
+        self.assertEqual(bucket(["Hero_Siege.exe!0x1", spin], None), "runtime")
+
+    def test_both_phases_are_found_with_their_shares_and_callees(self):
+        lines = report_tool.phase_lines(phase_report(), report_tool.parse_stacks(PHASE_STACKS))
+        self.assertEqual(lines, [
+            "runner phases:",
+            "  step phase: Hero_Siege.exe!0x400, called from Hero_Siege.exe!0x300: 40.0% of samples "
+            "(game 20.0%, runtime 20.0%)",
+            "    Hero_Siege.exe!0x500 25.0%, runtime only 5.0%",
+            "    Hero_Siege.exe!0x520 15.0%, runtime only 15.0%",
+            "  draw phase: Hero_Siege.exe!0x600, called from Hero_Siege.exe!0x300: 30.0% of samples "
+            "(game 10.0%, graphics 10.0%, runtime 10.0%)",
+            "    Hero_Siege.exe!0x700 20.0%, runtime only 0.0%",
+            "    Hero_Siege.exe!0x720 10.0%, runtime only 10.0%",
+            "  outside the phases: 30.0% of samples (gpu_wait 10.0%, spin 20.0%)",
+            "runner phases: buckets agree with the capture",
+        ])
+
+    def test_the_derived_buckets_total_the_captures(self):
+        derived = report_tool.derived_buckets(phase_report(), report_tool.parse_stacks(PHASE_STACKS))
+        self.assertEqual(derived, PHASE_BUCKETS)
+
+    def test_a_bucket_that_disagrees_is_named(self):
+        lines = report_tool.phase_lines(phase_report(runtime=57), report_tool.parse_stacks(PHASE_STACKS))
+        self.assertEqual(lines[-1], "runner phases: buckets differ from the capture by 3 samples "
+                                    "(runtime tool 60 capture 57)")
+
+    def test_a_mixed_node_is_no_dispatcher(self):
+        # Under 0x400 the events are 90% step and 10% draw: below the 95%
+        # rule, so the step phase is not found there or anywhere, while the
+        # pure draw branch beside it still is.
+        def stacks(step, draw):
+            return report_tool.parse_stacks(
+                f"{LOOP};Hero_Siege.exe!0x400;Hero_Siege.exe!0x500;A_obj Step;ScriptA {step}\n"
+                f"{LOOP};Hero_Siege.exe!0x400;Hero_Siege.exe!0x500;C_obj Draw;ScriptC {draw}\n"
+                f"{LOOP};Hero_Siege.exe!0x600;B_obj Draw GUI;DrawScript 100\n")
+        lines = report_tool.phase_lines(phase_report(), stacks(90, 10))
+        self.assertIn("  step phase: not found", lines)
+        self.assertTrue(any(l.startswith("  draw phase: Hero_Siege.exe!0x600, called from Hero_Siege.exe!0x200:")
+                            for l in lines), lines)
+        # Positive control: at exactly 95% the same node is the step phase.
+        lines = report_tool.phase_lines(phase_report(), stacks(95, 5))
+        self.assertTrue(any(l.startswith("  step phase: Hero_Siege.exe!0x400, called from Hero_Siege.exe!0x200:")
+                            for l in lines), lines)
+        self.assertEqual(report_tool.DISPATCHER_PURITY_PERCENT, 95)
+        self.assertEqual(report_tool.DISPATCHER_MIN_PERCENT, 1)
+
+    def test_a_phase_inside_the_other_is_counted_once(self):
+        # A draw dispatcher whose few step events sit under one callee: that
+        # callee is the step phase too, and its samples are inside the phases
+        # once, so nothing is left outside.
+        stacks = report_tool.parse_stacks(
+            f"{LOOP};Hero_Siege.exe!0x600;B_obj Draw GUI;DrawScript 96\n"
+            f"{LOOP};Hero_Siege.exe!0x600;Hero_Siege.exe!0x610;A_obj Step;ScriptA 4\n")
+        lines = report_tool.phase_lines(phase_report(), stacks)
+        self.assertIn("  step phase: Hero_Siege.exe!0x610, called from Hero_Siege.exe!0x600: 4.0% of samples "
+                      "(game 4.0%)", lines)
+        self.assertIn("  outside the phases: 0.0% of samples", lines)
+
+    def test_events_straight_under_the_thread_start_find_nothing(self):
+        lines = report_tool.phase_lines(sample_report(), report_tool.parse_stacks(STACKS))
+        self.assertEqual(lines[0], "runner phases: not found (no step or draw dispatcher on the stacks)")
+        self.assertNotIn("step phase", "\n".join(lines))
+
+    def test_no_stacks_file_finds_nothing(self):
+        self.assertEqual(report_tool.phase_lines(phase_report(), None),
+                         ["runner phases: not found (no stacks file)"])
+
+    def test_the_page_has_a_runner_phases_section(self):
+        page = html.unescape(report_tool.build_html(phase_report(), report_tool.parse_stacks(PHASE_STACKS), "t"))
+        section = page[page.index("Runner phases"):]
+        for text in ("Hero_Siege.exe!0x400", "Hero_Siege.exe!0x600", "Outside the phases",
+                     "buckets agree with the capture"):
+            self.assertIn(text, section)
+        empty = html.unescape(report_tool.build_html(sample_report(), [], "t"))
+        self.assertIn("not found (no stacks file)", empty[empty.index("Runner phases"):])
+
+    def test_main_prints_the_block_after_the_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "cap.json"
+            capture.write_text(json.dumps(phase_report()), encoding="utf-8")
+            (Path(tmp) / "cap.stacks.txt").write_text(PHASE_STACKS, encoding="utf-8")
+            with mock.patch("builtins.print") as printed:
+                self.assertEqual(report_tool.main([str(capture), "--no-html"]), 0)
+            out = [c.args[0] for c in printed.call_args_list]
+            summary = report_tool.summary_lines(phase_report())
+            self.assertEqual(out[:len(summary)], summary)
+            self.assertEqual(out[len(summary)], "runner phases:")
+            self.assertEqual(out[-1], "runner phases: buckets agree with the capture")
+            (Path(tmp) / "cap.stacks.txt").unlink()
+            with mock.patch("builtins.print") as printed:
+                report_tool.main([str(capture), "--no-html"])
+            self.assertEqual(printed.call_args_list[-1].args[0], "runner phases: not found (no stacks file)")
+
+
 if __name__ == "__main__":
     unittest.main()
