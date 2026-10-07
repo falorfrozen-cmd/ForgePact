@@ -12,8 +12,10 @@ across five room changes; the player build ran x100 for 5 coins. The only
 deaths were the deliberate crash (the instrument's positive control, which
 every instrument caught) and the two graceful closes, each of which exited
 `0xC0000409` after `==== clean shutdown ====` (guide Known Limitations item
-25). What ended the game on 2026-10-04 is still not established. #173 stays
-open: a game hs-drive launched that dies now leaves its exit code, and an
+25). What ended the game on 2026-10-04 is still not established. #173 was
+closed as not reproduced on 2026-10-07, by the owner's decision; a recurrence
+should reopen it, or open a new issue, with the crash evidence the instruments
+now capture: a game hs-drive launched that dies now leaves its exit code, and an
 access violation also leaves a dump, an Application Error record and, on the
 research build, a `crashwatch` trap line (measured once, for one access
 violation in our DLL). A fast-fail (`0xC0000409`) or an external termination
