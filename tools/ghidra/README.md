@@ -41,10 +41,12 @@ do:
 - a fresh import and symbol naming: `ImportSymbols.java`;
 - bulk dumps to files, which the hub's `tools/decomp_index.py scan` then indexes:
   `DecompileTo.java`, with `DecompileToLong.java` and `DecompileToHuge.java` for
-  functions that need a longer timeout;
+  functions that need a longer timeout, and `DecompileAround.java` for a call site
+  where the `-noanalysis` import left no function for the MCP to decompile;
 - byte-level scans the reference table cannot answer: `FindCallers.java` and its
-  siblings (`FindWrites.java`, `FindPointers.java`, `FindRvaTable.java`,
-  `ListCallsIn.java`, `DecompileAround.java`);
+  siblings (`FindWrites.java`, `FindPointers.java`, `FindRvaTable.java`);
+- the call targets and strings of a region the decompiler cannot finish:
+  `ListCallsIn.java`;
 - the slot-name table: `FindSlotNames.java`.
 
 A standalone ForgePact clone has no `tools/ghidra_mcp.py` and no MCP server, so there the
