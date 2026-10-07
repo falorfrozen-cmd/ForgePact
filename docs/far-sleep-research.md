@@ -89,7 +89,11 @@ walk.
 
 Tried and dropped: hiding the empty `Game_Layer_#` layers (4,321 of 5,501)
 saved only about 1.5 points, and an instance moving onto a hidden layer would
-not be drawn.
+not be drawn. A later static reading (2026-10-07) adds a stronger reason:
+`layer_set_visible` deactivates every instance on a layer it hides, and
+reactivates them when it shows the layer again. Hiding a non-empty layer is
+therefore deactivation, not just skipping its draw
+([main-thread offload research](main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer)).
 
 ## What sleeps, and what never does
 

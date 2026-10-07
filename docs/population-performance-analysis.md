@@ -75,6 +75,14 @@ names are the game's; the numbers are constants it uses.
   enemies counted at 7300 px) already showed this; the decompile confirms the
   monster pass only toggles flags. Deactivation (`DeactivateObject`,
   `instance_deactivate_object`) is used for props and their lights.
+  **Correction, 2026-10-07** (static reading): that last sentence is wrong.
+  `ActivateDeactivateProps` deactivates nothing; it culls props, like
+  monsters, by setting `visible` (and a prop's `light.visible`), and the
+  every-30-frames walk over the player box above is this function's.
+  `DeactivateObject` is called only from `Satanic_Cube_obj`'s Alarm 2 and the
+  `Labyrinth_Trigger_*` collisions. See
+  [main-thread offload research, layers, visibility and the light renderer](main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer)
+  and the hub's `docs/RUNTIME_DATA_MODELS.md` § 5.13.
 
 ### 2.3 What runs for every living monster, every frame
 
