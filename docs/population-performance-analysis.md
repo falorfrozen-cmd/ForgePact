@@ -71,10 +71,9 @@ names are the game's; the numbers are constants it uses.
   per frame) and the effect timers run **only for monsters inside the player
   box**. Far monsters do not step in vanilla either - the Beacon's "zero scans
   beyond 1500 px" was this box, not GameMaker deactivation.
-- Not observed: the creator census found 271/271 awake, and the enemy loop's
-  box pass only toggles flags. The census (enemies counted at 7300 px)
-  already showed this; the decompile confirms the
-  monster pass only toggles flags. Deactivation (`DeactivateObject`,
+- Monster deactivation by the game was not observed: the creator census
+  (271/271 awake, enemies counted at 7300 px) found none, and the decompile
+  shows the enemy loop's box pass only toggles flags. Deactivation (`DeactivateObject`,
   `instance_deactivate_object`) is used for props and their lights.
   **Correction, 2026-10-07** (static reading): that last sentence is wrong.
   `ActivateDeactivateProps` deactivates nothing; it culls props, like

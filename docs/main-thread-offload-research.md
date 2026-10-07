@@ -624,8 +624,9 @@ what the runtime route's levers were judged against in [The lever](#the-lever).
   [population-performance-analysis.md](population-performance-analysis.md)
   § 2.2's "Deactivation ... is used for props and their lights", are wrong by
   these readings. The game's own box pass hides props, monsters, shadows and
-  health bars through `visible` and deactivates nothing; its one deactivating
-  script has direct (`call rel32`) callers only in the two places above.
+  health bars through `visible` and deactivates nothing; the deactivating
+  script `DeactivateObject` has direct (`call rel32`) callers only in the two
+  places above.
 - **The light renderer.** `Darkness_Overlay_obj`'s Draw runs the Bulb
   renderer's Update. Its hard-light pass walks every registered point light
   each frame: it drops a light whose weak reference died or that was

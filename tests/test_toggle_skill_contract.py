@@ -868,6 +868,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Loot announcements (ForgePact #17;
             # test_loot_announce_contract.py).
             "lootann",
+            # Fill the map as you approach (ForgePact #183;
+            # test_rolling_fill_contract.py).
+            "fillroll",
         }
         self.assertEqual(entries, expected)
 
@@ -3070,8 +3073,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # control (ForgePact #157, test_satanic_zone_control.py),
         # `skillslider` is the skill sliders (ForgePact #160,
         # test_skill_sliders_contract.py), `gambapity` is Goburin's Head pity
-        # (ForgePact #134, test_gamba_pity_contract.py), and `lootann` is Loot
-        # announcements (ForgePact #17, test_loot_announce_contract.py).
+        # (ForgePact #134, test_gamba_pity_contract.py), `lootann` is Loot
+        # announcements (ForgePact #17, test_loot_announce_contract.py), and
+        # `fillroll` is Fill the map as you approach (ForgePact #183,
+        # test_rolling_fill_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3079,7 +3084,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone", "skillslider", "gambapity", "lootann"})
+                                        "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
+                                        "fillroll"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
