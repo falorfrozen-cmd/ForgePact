@@ -5,12 +5,24 @@ mechanism in words, and every quoted log line is ForgePact's own output.
 
 ## Status
 
-2026-10-06: **research phase under way; no route is known yet.** The game
-vanished during a research-build session on 2026-10-04, seconds after
-`dropmult gold 100`, and left no dump, no event-log record and no exit code.
-This phase adds the instruments that would have answered "what ended it" and
-plans one research-build session (Live procedure 1) and one player-build
-session (Live procedure 2) that separate the candidates. What was built:
+2026-10-07: **`crash-route: not-reproduced`.** Both sessions ran, and nothing
+died during play in either. The research build ran x100 gold for about 9
+minutes and 100 coins, with and without `gambaprobe hook`'s detours armed and
+across five room changes; the player build ran x100 for 5 coins. The only
+deaths were the deliberate crash (the instrument's positive control, which
+every instrument caught) and the two graceful closes, each of which exited
+`0xC0000409` after `==== clean shutdown ====` (guide Known Limitations item
+25). What ended the game on 2026-10-04 is still not established. #173 stays
+open: the next game that dies under hs-drive or the panel now leaves an exit
+code, a dump and an Application Error record, and on the research build a
+`crashwatch` trail. Details: "Results".
+
+2026-10-06: the research phase. The game vanished during a research-build
+session on 2026-10-04, seconds after `dropmult gold 100`, and left no dump, no
+event-log record and no exit code. This phase added the instruments that would
+have answered "what ended it" and planned one research-build session (Live
+procedure 1) and one player-build session (Live procedure 2) that separate the
+candidates. What was built:
 
 - `launch_game` (`src/offline_launcher.py`) now starts the game with
   `CREATE_DEFAULT_ERROR_MODE`, so a crash gets Windows' own dump and
@@ -169,7 +181,8 @@ before a live session. Detail: hub `docs/tools/hs-drive-mcp.md` § "Exit codes".
 
 `crashwatch on|off|status|crash confirm`, dispatched from
 `HandleLiveOneResearchCommand`; the player build answers `command unavailable
-in player build: crashwatch status`. Every form but `crash` replies with the
+in player build: crashwatch` (the refusal names the verb only, measured Live 2,
+2026-10-07). Every form but `crash` replies with the
 status line: `crashwatch: on|off, heartbeats=<n> gold-crumbs=<n>
 exceptions=<n> lines=<n> of 50000 (<k> after the cap) -> bp_ipc\crashwatch.txt`.
 Any other argument replies with the usage.
@@ -196,8 +209,11 @@ Any other argument replies with the usage.
   logs only the fatal kinds (access violation, stack overflow, illegal or
   privileged instruction, integer divide by zero, array bounds, heap
   corruption) as `exception 0x<code> at <module>+0x<offset>
-  thread=<game|other> in-hook=<id|none> in-mod=<mod|none>`, the tags taken
-  from the incident monitor's accounting. It always continues the search, so
+  thread=<game|other> in-hook=<id|none> in-mod=<mod|none>
+  game-original=<yes|no>`, the tags taken from the incident monitor's
+  accounting (they describe the game thread, whichever thread faulted).
+  `<module>` is the file name the DLL was loaded under: an installed research
+  DLL reads `BloodPactPlugin.dll`, not `_rel`. It always continues the search, so
   it changes nothing about how the game handles the exception. It writes with
   Win32 file calls from a fixed buffer, with no allocation, no C++ stream, no
   shared log lock and no YYToolkit call. `off` removes it.
@@ -231,7 +247,8 @@ the workorder's last commit and is asked before the DLL is installed. Control:
    still answers. `crashwatch crash confirm`: the game is gone within 10 s.
    Expected: `hs_status` lists that PID with exit code `0xC0000005`; the file
    ends with the announcement followed by `exception 0xC0000005 at
-   BloodPactPlugin_rel.dll+0x... thread=game`; a new dump in `CrashDumps` and an
+   BloodPactPlugin.dll+0x... thread=game` (the installed name; the procedure
+   as first written said `_rel`); a new dump in `CrashDumps` and an
    Application Error record for `Hero_Siege.exe`, code `0xc0000005`; the
    relaunch reports `CRASH previous session ended without a clean shutdown`.
 3. **Phase A, x10, no research hook armed.** A Hell combat zone near level
@@ -273,7 +290,8 @@ research: a fail or a "not observed" there is the finding.
 Player build (`plugin_build/BloodPactPlugin_ship.dll`), the same sitting,
 after Live procedure 1's teardown, from the save backup it restored; slot 14.
 Control: `ping`; marker: `crashwatch status` -> `command unavailable in player
-build: crashwatch status`.
+build: crashwatch` (amended after the session, which showed the refusal names
+the verb only).
 
 1. **Setup** as Live procedure 1 step 1; control, marker.
 2. **x10**: a Hell combat zone, `dropmult gold 10`, kill and pick up for at
@@ -294,20 +312,155 @@ x10-control; the rest are research.
 
 ## Results
 
-The record round writes this section from the two sessions' captures.
+Both sessions ran on 2026-10-07, one sitting, slot 14 "Sorak", launched by
+hs-drive (with `CREATE_DEFAULT_ERROR_MODE`, after the server was reconnected).
+Each claim below is labelled measured, not observed, or not run.
+
+### Live 1 results
+
+Research DLL, SHA-256 `cbe36c96...79bb`, installed and hashed by the lease.
+All 14 checks recorded: 12 pass, 2 not observed (`direct-gold`,
+`crash-evidence`). Session validity and instrument acceptance both hold.
+
+- **Setup (measured).** The first `hs_status` had no `exits` field: the
+  server was still the pre-change one. After the owner reconnected it,
+  `exits` was present and empty (`hsdrive-current`). `hs_launch` reported
+  `exit_watch: held`. Control `pong (YYTK 4.0.1)`; marker `crashwatch: off`.
+- **The positive control (measured; every instrument fired).** `crashwatch
+  crash` refused, naming `confirm`, and `ping` still answered. `crashwatch
+  crash confirm` ended the game at once. `hs_status`'s `exits` read the PID
+  with `0xC0000005`. `crashwatch.txt` ended with the announcement, then
+  `exception 0xC0000005 at BloodPactPlugin.dll+0x1A90DA thread=game
+  in-hook=none in-mod=ipc game-original=no`. The module is named by the file it
+  was installed as (`BloodPactPlugin.dll`), not `BloodPactPlugin_rel.dll` as
+  the procedure's text had it. Windows wrote `Hero_Siege.exe.28660.dmp`
+  (63 MB) and an Application Error 1000 record (faulting module
+  `BloodPactPlugin.dll`, `0xc0000005`). So the launch flag reached the game,
+  and a crash under hs-drive now leaves a dump. On the relaunch the incident
+  monitor's `CRASH previous session ended without a clean shutdown` line
+  appeared in `out.txt` after `hs_launch`'s reply, not in it, and read `exit
+  unknown | module unknown` although hs-drive held the code and a dump existed.
+- **Phase A, x10, no research hook (measured; the gold path's positive
+  control).** About 196 s in Outskirts of Inoya (`Act_01_01`) over two owner
+  rounds. Coin lines 1/8 to 8/8, each `<a> -> <10a>`. 45 `DropMonsterGold
+  enter` / `DropGold enter` / `DropGold done` / `DropMonsterGold done`
+  quartets, properly nested. `coins=` rose with each drop (up to 3) and fell
+  back to 0 within about 0.3-2 s; `room=` changed at each exit. HUD gold
+  +27,508 for 21,160 scaled.
+- **Phase B, x100, no research hook (measured).** About 3 minutes
+  (07:49:31-07:52:30 UTC), 39 coins at x100 (coin lines `<a> -> <100a>`, for
+  example `34 -> 3400`, `51 -> 5100`), scaled sum 185,900; HUD gold +234,260.
+  Four room changes at x100 (`Act_01_01` -> `Town_01_rm` -> `Act_05_02` ->
+  `Town_05_rm`). The game stayed alive, with no exception line.
+- **Phase C, the #173 conditions (measured).** `debuglog` and `gambaprobe
+  hook` armed in town, two `gambaprobe spawn`s (each machine cleaned up on its
+  first frame, as on 2026-10-04). Then x10 for about 97 s and 13 coins, and
+  x100 for about 6 minutes and 61 coins (scaled sum 346,500, HUD +444,990),
+  with one room change at x100 (`Act_01_01` -> `Town_01_rm`, 08:01:57 UTC).
+  The game stayed alive, with no exception line.
+- **`gambaprobe hook` did not install the set the procedure expected
+  (measured).** Its summary read `44 rows, 3 missing, 0 table-only (32
+  detoured, 1 detoured-under, 8 shared)`: the builtins `GetVariable`,
+  `SetVariable` and `SetVariableToUndefined` were not found by name, where the
+  procedure expected 0 missing. The 2026-10-04 session listed 37 rows; which
+  rows that list had or lacked against today's 44 was not compared. Phase C
+  therefore ran without those three builtin detours.
+- **The install froze the game for 6 s (measured).** `gambaprobe hook: took
+  6020 ms` (5835 ms of it in the table phase), then a `STALL 3422 ms` line, a
+  `FREEZE 6 s without a frame | in-hook none | in-mod ipc` and its incident
+  report; the game recovered by itself.
+- **Frame cost (measured; cause not established).** During Phase B, `PERF
+  sustained 2.9x for 2 s | baseline 6.9 ms | during 19.9 ms` in `Act_01_01`;
+  during Phase C at x100, one `PERF hitch 266 ms frame`. During Phase A's
+  first round (x10, `crashwatch` on) the owner remarked that the FPS was low.
+  None of these was attributed to a cause.
+- **Every gold call was monster gold (measured).** 158 `DropGold` hook calls,
+  158 `DropMonsterGold`, and every `DropGold enter` directly preceded by a
+  `DropMonsterGold enter`; at `off` the file held 632 breadcrumbs, one `enter`
+  and one `done` for each. A direct `DropGold` at x100 was not observed; the
+  owner did not report opening a chest or breakable (`direct-gold`).
+- **Nothing died in Phases A-C** (`crash-evidence` not observed): `exits`
+  carried only the deliberate crash's PID throughout.
+- **Teardown (measured).** The graceful `hs_stop_game` closed the game in
+  6.6 s; `exits` read `0xC0000409` for it, with `==== clean shutdown ====` the
+  last `out.txt` line. Live 2's capture lists `Hero_Siege.exe.14736.dmp`
+  (10:02:33 local) as the dump before its own, so this close also left a dump.
+  Saves restored and inspected clean.
+
+### Live 2 results
+
+Player DLL, SHA-256 `f40b0162...2dbb`, hashed by the lease. Checks: dll-hash,
+control, x10-control, x100-scaled, x100-player and close-exitcode pass;
+`crash-evidence` recorded the close-time death (nothing died during play).
+`marker` was recorded fail against the procedure's old text, because the
+refusal reads `command unavailable in player build: crashwatch`, naming the
+verb only; that refusal is itself the evidence that the player build has no
+`crashwatch`, and the procedure was amended to it. The owner dropped the play
+minimums for this session.
+
+- **x10 (measured).** In Satanic The Depths of Hell, zone level 514: three
+  coin lines (`48 -> 480`, `59 -> 590`, `36 -> 360`), HUD gold +1,859 for
+  1,430 scaled.
+- **x100 (measured).** `dropmult gold 100`, `ping`, then five coin lines
+  (`44 -> 4400` to `53 -> 5300`), HUD gold +29,900 for 23,000 scaled, in the
+  same zone, about a minute, no zone change. The game stayed alive and
+  answered `ping` afterwards (`x100-player`).
+- **The close (measured).** The graceful `hs_stop_game` closed the game in
+  7.2 s; `exits` read `0xC0000409`, after `==== clean shutdown ====`. Windows
+  logged an Application Error 1000 (faulting module `ucrtbase.dll`, exception
+  `0xc0000409`), a Windows Error Reporting `BEX64` event, and wrote
+  `Hero_Siege.exe.34868.dmp` (60 MB). That is the signature of the tracker
+  producer's exit-time abort (guide Known Limitations item 25); the dump's
+  stack was not read in this round, so the attribution rests on that
+  signature. The relaunch to read the incident line was not run.
+
+### What the two sessions settle
+
+- x100 gold, at the drop and at the pickup, did not end the game on either
+  build in about 10 minutes and 105 coins, with five room changes at x100 on
+  the research build and none on the player build. Not observed is not "does
+  not happen": one sitting, one character, monster gold only.
+- `gambaprobe`'s armed detours (minus the three missing builtins) with x100
+  and a room change did not end the game either: not observed.
+- What a scaled coin credits (measured, a game fact, folded into hub
+  `docs/RUNTIME_DATA_MODELS.md` § 13.10): the HUD rise was exactly 1.3 x the
+  coins' summed scaled amounts in three of the five play windows (Phase A, and
+  both of Live 2's), and 1.26 x and 1.28 x in Phases B and C, whose readings
+  may have left coins on the ground (Phase C's was taken at `coins=1`). That is
+  #77's 1.3 x, now over the 153 coins of those windows at x10 and x100, on
+  both builds, mostly at zone level 243 (Live 1) and at 514 (Live 2).
+- The instruments work: a crash under hs-drive now leaves an exit code, a
+  dump, an Application Error record and, on the research build, a trap line
+  naming our module and offset.
 
 ## Not established
 
 - **What ended the game on 2026-10-04.** Every candidate under "What the
-  evidence rules in and out" is open; none has been observed.
+  evidence rules in and out" is open. Live 1 and Live 2 reproduced none of
+  them: no death during play was observed.
 - **Whether x100 coins crash the game at a drop or a pickup.** Not observed on
-  2026-10-04 (no x100 coin existed) nor in Live 2 of #77 (x100 coins dropped
-  and were picked up, player build, no crash observed).
+  2026-10-04 (no x100 coin existed), in Live 2 of #77, nor in 2026-10-07's
+  Live 1 (100 coins, research build) and Live 2 (5 coins, player build).
+  Monster gold only: a direct `DropGold` (chests, breakables) at x100 was not
+  exercised.
 - **Whether `gambaprobe`'s armed detours, or a room change under them, can end
-  the game.** Not observed.
+  the game.** Not observed in Live 1's Phase C (61 coins at x100, one room
+  change), which ran without three builtin detours its list names
+  (`GetVariable`, `SetVariable`, `SetVariableToUndefined`, not found by name).
+  Why those three did not resolve, and whether the 2026-10-04 session hooked
+  them, is not established.
+- **What made the frames slow** in Live 1 (`PERF sustained 2.9x` in Phase B, a
+  266 ms hitch in Phase C, the owner's low FPS in Phase A) and why `gambaprobe
+  hook` took 6 s to install. Not attributed.
+- **Why the incident monitor's relaunch line read `exit unknown | module
+  unknown`** after the deliberate crash, when hs-drive held the code and
+  Windows had written a dump. Not investigated.
+- **Whether the close-time `0xC0000409` dumps of 2026-10-07 are the tracker
+  producer's abort.** The signature matches item 25 (`ucrtbase.dll`, after the
+  clean-shutdown line); the dumps' stacks were not read.
 - **hs-drive's own error mode** (whether the games it launched before this
   phase inherited `SEM_NOGPFAULTERRORBOX`). Not measured; the launch flag makes
-  it irrelevant from this phase on.
+  it irrelevant from this phase on (Live 1's deliberate crash dumped).
 - **What `PickUpGoldCheck`'s second `ReportClient` call site checks**, and what
   its 58 unnamed callees do. Not read.
 - **Where a `Coin_obj` hands its value to `PickUpGoldCheck`**, and which in-game
