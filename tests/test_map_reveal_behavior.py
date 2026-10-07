@@ -39,13 +39,20 @@ class MapRevealBehaviorTests(unittest.TestCase):
         plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
         header = (ROOT / "plugin/include/ForgePact/MapRevealManager.hpp").read_text(encoding="utf-8")
 
-        # The real class, verbatim, minus the include of Common.hpp (the
+        rolling = (ROOT / "plugin/include/ForgePact/RollingFill.hpp").read_text(encoding="utf-8")
+
+        # The real classes, verbatim, minus the include of Common.hpp (the
         # harness supplies the stand-ins Common.hpp would have pulled in).
-        klass = "\n".join(
-            line for line in header.split("\n")
-            if not line.strip().startswith("#pragma once")
-            and '#include "Common.hpp"' not in line
-        )
+        # MapRevealManager includes RollingFill (`fillroll`, #183), which is
+        # injected first, so its include line goes too.
+        def injectable(text):
+            return "\n".join(
+                line for line in text.split("\n")
+                if not line.strip().startswith("#pragma once")
+                and '#include "Common.hpp"' not in line
+                and "#include <ForgePact/RollingFill.hpp>" not in line
+            )
+        klass = injectable(rolling) + "\n" + injectable(header)
         hook = implementation(plugin, "static void Hook_distance_to_object(")
 
         out = ROOT / "build/map-reveal-behavior"
