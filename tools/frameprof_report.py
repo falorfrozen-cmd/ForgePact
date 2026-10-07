@@ -14,6 +14,13 @@ scripts and built-ins, the slow frames, a per-second timeline, CPU per thread
 and an icicle chart of the stacks. The page is self-contained - no network,
 no script - so it can be opened straight from disk or attached to a report.
 
+From the stacks it also splits the frame thread's time into the runner's step
+phase, its draw phase and the rest (presenting the frame, the frame limiter):
+each phase is found as the outermost runtime function under which nearly all
+the object events are that phase's, never from an address. The buckets it
+derives from the stacks' labels are checked against the plugin's, and a
+"runner phases" line says whether they agree.
+
 Without a path it finds the game the way tools/ipc.ps1 does, from the panel's
 own %LOCALAPPDATA%\\Hero_Siege\\forgepact.json, and takes the newest capture.
 """
@@ -21,6 +28,7 @@ import argparse
 import html
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -144,6 +152,292 @@ def summary_lines(report):
                  f"at most {cap['pausePercentOfTime']:.2f}% of the frame thread's time"
                  + (f"; sampling slowed to {cap['hzLowest']}/s at times to stay near "
                     f"{cap['pauseBudgetPercent']:.0f}%" if cap.get("rateCuts") else ""))
+    return lines
+
+
+# ---- the runner's phases --------------------------------------------------------
+#
+# Each stack's bucket is derived again from its labels, mirroring Classify and
+# IsSpinSample in plugin/include/ForgePact/FrameProfiler.hpp, so that a phase's
+# time can be split the way the plugin splits the whole capture. The plugin
+# also sorts modules by their path (\driverstore\, \mods\, \windows\), which a
+# stacks file does not keep; the parity line shows any difference that makes.
+
+#: The bucket keys, in the order the plugin writes them.
+BUCKET_KEYS = ("game", "game_wait", "graphics", "gpu_wait", "mods", "runtime", "idle", "spin", "unknown")
+
+#: ClassifyModule's kGraphics, kGraphicsPrefix and kMods.
+GRAPHICS_MODULES = frozenset((
+    "d3d11.dll", "dxgi.dll", "d3d12.dll", "d3d12core.dll", "d3d10warp.dll", "d3d9.dll", "dxcore.dll",
+    "d3d11on12.dll", "d3dcompiler_47.dll", "opengl32.dll", "vulkan-1.dll", "gameoverlayrenderer64.dll",
+))
+GRAPHICS_PREFIXES = (
+    "nvwgf2um", "nvldumd", "nvd3dum", "nvoglv", "amdxx", "atidxx", "atiumd", "amdxc", "amdihk",
+    "igd10", "igd12", "igdumd", "igdusc", "igc64", "igdgmm", "igxelp",
+)
+MOD_PREFIXES = ("bloodpactplugin", "yytoolkit", "auriecore", "hsafkexpedition", "hsofflinetracker")
+
+#: Windows' own DLLs, standing in for the plugin's \windows\ path rule: only an
+#: export of one of these can be a blocking wait (IsWaitExport).
+SYSTEM_MODULES = frozenset((
+    "ntdll.dll", "kernelbase.dll", "kernel32.dll", "win32u.dll", "user32.dll", "gdi32.dll", "gdi32full.dll",
+    "combase.dll", "rpcrt4.dll", "sechost.dll", "advapi32.dll", "ucrtbase.dll", "msvcrt.dll", "msvcp_win.dll",
+    "ole32.dll", "oleaut32.dll", "shell32.dll", "shlwapi.dll", "ws2_32.dll", "mswsock.dll", "winmm.dll",
+    "dsound.dll", "xaudio2_9.dll", "xinput1_4.dll", "dinput8.dll", "hid.dll", "setupapi.dll", "cfgmgr32.dll",
+    "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dll", "uxtheme.dll", "dwmapi.dll", "imm32.dll", "msctf.dll",
+    "powrprof.dll", "mmdevapi.dll", "audioses.dll", "avrt.dll", "version.dll", "wininet.dll", "winhttp.dll",
+    "iphlpapi.dll", "dnsapi.dll", "nsi.dll", "sspicli.dll", "kernel.appcore.dll", "windows.storage.dll",
+    "coremessaging.dll", "textinputframework.dll",
+))
+WAIT_EXPORT_WORDS = ("Wait", "Delay", "YieldExecution", "RemoveIoCompletion")
+CLOCK_READS = frozenset(("RtlQueryPerformanceCounter", "QueryPerformanceCounter"))
+NO_FRAMES = "(no frames)"
+
+#: The runner's event kinds by phase, as GmlEventName writes them. Every
+#: other event kind (Create, User Event, Room Start, ...) is in neither.
+STEP_EVENTS = frozenset(("Begin Step", "Step", "End Step"))
+STEP_EVENT_PATTERN = re.compile(r"Alarm \d+|Collision with .+")
+DRAW_EVENTS = frozenset(("Draw", "Draw Begin", "Draw End", "Draw GUI", "Draw GUI Begin", "Draw GUI End",
+                         "Pre-Draw", "Post-Draw"))
+DRAW_EVENT_PATTERN = re.compile(r"Draw \d+")
+
+#: A runtime function is a phase's dispatcher when at least this share of the
+#: object events beneath it are that phase's ...
+DISPATCHER_PURITY_PERCENT = 95
+#: ... and those events are at least this share of all samples.
+DISPATCHER_MIN_PERCENT = 1
+#: The callees listed under each dispatcher.
+DISPATCHER_CALLEES = 8
+
+
+def _module_and_name(label: str):
+    """('module.dll' lowercased, 'Export' or '0x<rva>') for a module frame, else None."""
+    module, bang, name = label.partition("!")
+    return (module.lower(), name) if bang else None
+
+
+def is_game_code(label: str) -> bool:
+    """A game script or object event: no module, not a built-in, not unknown."""
+    return "!" not in label and label not in ("unknown code", NO_FRAMES) and not label.endswith("()")
+
+
+def _frame_class(label: str):
+    """'game', 'graphics' or 'mod' for a frame that decides a bucket; None for
+    one that passes through (runtime, built-ins, system, unknown code)."""
+    if is_game_code(label):
+        return "game"
+    parts = _module_and_name(label)
+    if not parts:
+        return None
+    module = parts[0]
+    if module in GRAPHICS_MODULES or module.startswith(GRAPHICS_PREFIXES):
+        return "graphics"
+    if module.startswith(MOD_PREFIXES):
+        return "mod"
+    return None
+
+
+def _is_export(name: str) -> bool:
+    return not re.fullmatch(r"0x[0-9A-Fa-f]+", name)
+
+
+def _is_wait(label: str) -> bool:
+    parts = _module_and_name(label)
+    if not parts or parts[0] not in SYSTEM_MODULES or not _is_export(parts[1]):
+        return False
+    return any(word in parts[1] for word in WAIT_EXPORT_WORDS)
+
+
+def _is_clock_read(label: str) -> bool:
+    parts = _module_and_name(label)
+    return bool(parts) and parts[1] in CLOCK_READS
+
+
+def runtime_only(frames) -> bool:
+    """No game code, graphics driver or mod anywhere on the stack."""
+    return all(_frame_class(f) is None for f in frames)
+
+
+def stack_bucket(frames, spin_label) -> str:
+    """The plugin's bucket key for one stack (outermost frame first), from its
+    labels; `spin_label` is the capture's spinWait.function, or None."""
+    if not frames or frames == [NO_FRAMES]:
+        return "unknown"
+    leaf = frames[-1]
+    if spin_label and runtime_only(frames):
+        if leaf == spin_label or (len(frames) >= 2 and _is_clock_read(leaf) and frames[-2] == spin_label):
+            return "spin"
+    wait = _is_wait(leaf)
+    for label in reversed(frames):
+        kind = _frame_class(label)
+        if kind == "graphics":
+            return "gpu_wait" if wait else "graphics"
+        if kind == "game":
+            return "game_wait" if wait else "game"
+        if kind == "mod":
+            return "mods"
+    return "idle" if wait else "runtime"
+
+
+def _spin_label(report):
+    return (report.get("spinWait") or {}).get("function")
+
+
+def derived_buckets(report, stacks):
+    """{bucket key: samples} summed over the stacks' own buckets."""
+    spin = _spin_label(report)
+    totals = dict.fromkeys(BUCKET_KEYS, 0)
+    for frames, count in stacks:
+        key = stack_bucket(frames, spin)
+        totals[key] = totals.get(key, 0) + count
+    return totals
+
+
+def parity_line(report, stacks) -> str:
+    derived = derived_buckets(report, stacks)
+    capture = {b["key"]: b["samples"] for b in report.get("buckets", [])}
+    keys = list(BUCKET_KEYS) + [k for k in capture if k not in BUCKET_KEYS]
+    differ = [(k, derived.get(k, 0), capture.get(k, 0)) for k in keys if derived.get(k, 0) != capture.get(k, 0)]
+    if not differ:
+        return "runner phases: buckets agree with the capture"
+    by = sum(abs(a - b) for _, a, b in differ)
+    return (f"runner phases: buckets differ from the capture by {by} samples ("
+            + ", ".join(f"{k} tool {a} capture {b}" for k, a, b in differ) + ")")
+
+
+def event_phase(label: str):
+    """'step' or 'draw' for an object event of that phase, 'other' for any
+    other object event, None for a label that is not an object event."""
+    if not is_game_code(label) or " " not in label or label.endswith(" (script file)"):
+        return None
+    event = label.split(" ", 1)[1]
+    if event in STEP_EVENTS or STEP_EVENT_PATTERN.fullmatch(event):
+        return "step"
+    if event in DRAW_EVENTS or DRAW_EVENT_PATTERN.fullmatch(event):
+        return "draw"
+    return "other"
+
+
+def _new_node(label, parent):
+    return {"label": label, "parent": parent, "events": {"step": 0, "draw": 0, "other": 0},
+            "rows": [], "children": {}}
+
+
+def runner_phases(report, stacks):
+    """The runner's step and draw dispatchers on the stacks, and what lies
+    outside both.
+
+    Each stack's runtime side is its frames before the first game-code frame
+    (all of them when it has none), and its event is its outermost game-code
+    frame's, when that is an object event. A runtime-side node is phase P's
+    dispatcher when at least DISPATCHER_PURITY_PERCENT of the event samples
+    beneath it are P's, those are at least DISPATCHER_MIN_PERCENT of all
+    samples, and no node above it qualifies for P.
+    """
+    spin = _spin_label(report)
+    rows = []
+    root = _new_node("all samples", None)
+    total = 0
+    for frames, count in stacks:
+        bucket = stack_bucket(frames, spin)
+        rows.append((frames, count, bucket, runtime_only(frames)))
+        total += count
+        if bucket == "unknown":
+            continue
+        first_game = next((i for i, f in enumerate(frames) if is_game_code(f)), len(frames))
+        phase = event_phase(frames[first_game]) if first_game < len(frames) else None
+        node = root
+        for depth, label in enumerate(frames[:first_game]):
+            child = node["children"].get(label)
+            if child is None:
+                child = node["children"][label] = _new_node(label, node)
+                child["depth"] = depth + 1
+            child["rows"].append(len(rows) - 1)
+            if phase:
+                child["events"][phase] += count
+            node = child
+
+    def qualifies(node, phase):
+        kind = node["events"][phase]
+        events = sum(node["events"].values())
+        return (kind * 100 >= DISPATCHER_PURITY_PERCENT * events
+                and kind * 100 >= DISPATCHER_MIN_PERCENT * total and kind > 0)
+
+    def find(node, phase, out):
+        for child in sorted(node["children"].values(), key=lambda c: (-sum(rows[i][1] for i in c["rows"]), c["label"])):
+            if qualifies(child, phase):
+                out.append(child)
+            else:
+                find(child, phase, out)
+        return out
+
+    def split(indices):
+        buckets = dict.fromkeys(BUCKET_KEYS, 0)
+        for i in indices:
+            buckets[rows[i][2]] += rows[i][1]
+        return buckets
+
+    result = {"total": total, "step": [], "draw": []}
+    # A stack under both a step and a draw dispatcher (one phase's handful of
+    # events below the other's) is inside the phases once, not twice.
+    inside = set()
+    for phase in ("step", "draw"):
+        for node in find(root, phase, []):
+            callees = {}
+            for i in node["rows"]:
+                frames, count, _, only = rows[i]
+                if len(frames) > node["depth"]:
+                    c = callees.setdefault(frames[node["depth"]], [0, 0])
+                    c[0] += count
+                    c[1] += count if only else 0
+            buckets = split(node["rows"])
+            inside.update(node["rows"])
+            result[phase].append({
+                "label": node["label"],
+                "parent": node["parent"]["label"] if node["parent"] is not root else "(none)",
+                "samples": sum(buckets.values()),
+                "buckets": buckets,
+                "callees": [{"label": label, "samples": c[0], "runtimeOnly": c[1]}
+                            for label, c in sorted(callees.items(), key=lambda kv: (-kv[1][0], kv[0]))
+                            ][:DISPATCHER_CALLEES],
+            })
+    outside = split(i for i in range(len(rows)) if i not in inside)
+    result["outside"] = {"samples": sum(outside.values()), "buckets": outside}
+    return result
+
+
+def _share(value, total) -> str:
+    return pct(100.0 * value / total if total else 0.0)
+
+
+def _bucket_split(buckets, total) -> str:
+    parts = ", ".join(f"{k} {_share(v, total)}" for k, v in buckets.items() if v)
+    return f" ({parts})" if parts else ""
+
+
+def phase_lines(report, stacks):
+    """The `runner phases:` block printed after the summary lines. `stacks` is
+    None (or empty) when the capture has no stacks file."""
+    if not stacks:
+        return ["runner phases: not found (no stacks file)"]
+    found = runner_phases(report, stacks)
+    total = found["total"]
+    if not found["step"] and not found["draw"]:
+        return ["runner phases: not found (no step or draw dispatcher on the stacks)", parity_line(report, stacks)]
+    lines = ["runner phases:"]
+    for phase in ("step", "draw"):
+        if not found[phase]:
+            lines.append(f"  {phase} phase: not found")
+        for d in found[phase]:
+            lines.append(f"  {phase} phase: {d['label']}, called from {d['parent']}: "
+                         f"{_share(d['samples'], total)} of samples{_bucket_split(d['buckets'], total)}")
+            for c in d["callees"]:
+                lines.append(f"    {c['label']} {_share(c['samples'], total)}, "
+                             f"runtime only {_share(c['runtimeOnly'], total)}")
+    outside = found["outside"]
+    lines.append(f"  outside the phases: {_share(outside['samples'], total)} of samples"
+                 f"{_bucket_split(outside['buckets'], total)}")
+    lines.append(parity_line(report, stacks))
     return lines
 
 
@@ -281,6 +575,46 @@ def icicle_svg(root):
             f"style='min-width:900px' role='img' aria-label='Call stacks'>" + "".join(rects) + "</svg></div>")
 
 
+def phases_html(report, stacks):
+    """The page's "Runner phases" section: phase_lines() as tables."""
+    head = ("<h2>Runner phases</h2><p class='note'>The runner's step phase (Begin Step, Step, End Step, alarms, "
+            "collisions) and its draw phase, each found on the stacks as the outermost runtime function under "
+            f"which at least {DISPATCHER_PURITY_PERCENT}% of the object events are that phase's. Shares are of all "
+            "samples; runtime only means no game code, graphics driver or mod anywhere on the stack.</p>")
+    if not stacks:
+        return head + "<p class='note'>Runner phases: not found (no stacks file).</p>"
+    found = runner_phases(report, stacks)
+    total = found["total"]
+    names = {b["key"]: b["name"] for b in report.get("buckets", [])}
+
+    def split(buckets):
+        return ", ".join(f"{names.get(k, k)} {_share(v, total)}" for k, v in buckets.items() if v) or "nothing"
+
+    parts = [head]
+    if not found["step"] and not found["draw"]:
+        parts.append("<p class='note'>Runner phases: not found (no step or draw dispatcher on the stacks).</p>")
+    else:
+        for phase in ("step", "draw"):
+            if not found[phase]:
+                parts.append(f"<p class='note'>{phase.capitalize()} phase: not found.</p>")
+            for d in found[phase]:
+                rows = "".join(
+                    f"<tr><td class='name'>{esc(c['label'])}</td><td class='num'>{_share(c['samples'], total)}</td>"
+                    f"<td class='num'>{_share(c['runtimeOnly'], total)}</td></tr>" for c in d["callees"])
+                parts.append(
+                    f"<p><b>{phase.capitalize()} phase</b>: <code>{esc(d['label'])}</code>, called from "
+                    f"<code>{esc(d['parent'])}</code> - {_share(d['samples'], total)} of samples "
+                    f"({esc(split(d['buckets']))})</p>"
+                    "<table><tr><th>Calls</th><th>Share</th><th>Runtime only</th></tr>" + rows + "</table>")
+        outside = found["outside"]
+        parts.append(f"<p><b>Outside the phases</b>: {_share(outside['samples'], total)} of samples "
+                     f"({esc(split(outside['buckets']))})</p>")
+    parity = parity_line(report, stacks)
+    agree = parity.endswith("agree with the capture")
+    parts.append(f"<p class='{'note' if agree else 'warn'}'>{esc(parity[0].upper() + parity[1:])}.</p>")
+    return "".join(parts)
+
+
 def build_html(report, stacks, title="Frame profile"):
     cap, frames, threads = report["capture"], report["frames"], report["threads"]
     cards = [
@@ -347,6 +681,7 @@ def build_html(report, stacks, title="Frame profile"):
         "Hover a box for its name. Blue: game events and scripts, orange: built-ins, grey: runtime and system, "
         "green: graphics, purple: mods.</p>",
         icicle_svg(build_tree(stacks)),
+        phases_html(report, stacks),
         "<h2>CPU per thread</h2>",
         "<table><tr><th>Thread</th><th>Name</th><th>% of one core</th></tr>" + thread_rows + "</table>",
         f"<p class='note'>Profiler cost: at most {cap['pauseUsAvg']:.0f} µs per sample, at most "
@@ -368,7 +703,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     path = Path(args.capture) if args.capture else default_capture()
     report, stacks = load(path)
-    for line in summary_lines(report):
+    for line in summary_lines(report) + phase_lines(report, stacks):
         print(line)
     if not args.no_html:
         out = Path(args.html) if args.html else path.with_suffix(".html")

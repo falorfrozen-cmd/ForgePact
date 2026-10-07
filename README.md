@@ -13,7 +13,9 @@ The optional **Really spawn every pack on arrival (heavy)** sub-toggle, which
 populates the whole zone early, still lags at high density: its v3 run at 4x
 recorded latest scheduled work at 7.694 seconds and a peak frame interval of
 232.430ms against a five-second target, and those counters do not prove every
-group finished spawning.
+group finished spawning. **Fill the map as you approach** (Mods → Quality of
+Life, off by default) limits that pass to the packs within about 3,000 px of
+you and makes the rest as you come near them.
 
 The next local candidate shares caller classification within each existing
 creation hook. Its production-body fixture reduced 2000 caller-object reads to
@@ -50,6 +52,7 @@ none of these diagnostic hooks or the recorder. See
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Items below Heroic, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-20>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 20. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
+| **Fill The Map As You Approach** | Mods → Quality of Life, off by default; matters only while Full Map Reveal's **Really spawn every pack on arrival** is on (plugin command `fillroll 1` / `fillroll 0`, `fillroll stat`). Instead of every pack in the zone being born when you arrive, only the packs within about 3,000 px of you are, and the rest are born as you come near them, so a filled zone holds far fewer living monsters and the game walks fewer of them every frame. Nothing is hidden, paused or put to sleep. In Act_01_02 at 2x with the map filled, the work per frame fell from 6.2 ms to 5.4 ms, with 682 monsters alive instead of 2,092 ([details](#fill-the-map-as-you-approach-lighter-frames-while-the-map-is-filled)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
 | **Satanic Zone: Choose The Zone** | Off by default. **Keep the zone you are in satanic** makes wherever you go count as the Satanic Zone; **Every zone counts as satanic** makes the game's own "is this a Satanic Zone?" answer yes everywhere. The `satzone` command pins one exact zone (`satzone pin here`, `satzone pin <index>`, `satzone off`). With both off the game rolls its own zone exactly as before. Not yet confirmed in a live game |
@@ -1523,7 +1526,9 @@ copy's appear when it is made, still far outside the screen.
   spawners within 1,500 px of the player.
 - **When it steps aside.** With Reveal full map's **Really spawn every pack on
   arrival (heavy)**, every copy is made at once as before, because that pass
-  needs all of them. While the Beacon or Tyrant's Crown has monsters hunting
+  needs all of them. With **Fill the map as you approach** on as well, that
+  pass is limited to the spawners near you, so the copies keep being made
+  as you approach under it too. While the Beacon or Tyrant's Crown has monsters hunting
   you, the reach grows to their wake radius plus 500 px (4,500 px by default;
   the whole zone for a whole-map hunt), so the hunt finds what it would find
   without the switch. A zone you come back to gets its spawners back from the
@@ -1533,6 +1538,49 @@ copy's appear when it is made, still far outside the screen.
 
 How it works and the measurements:
 [`docs/population-performance-analysis.md`](docs/population-performance-analysis.md#8-rolling-density-copies-2026-09-28).
+
+## Fill the map as you approach (lighter frames while the map is filled)
+
+Mods → Quality of Life → **Fill the map as you approach** (plugin command
+`fillroll 1|0`, `fillroll <px>` for a reach between 1,500 and 20,000 px,
+`fillroll stat` for its state). Off by default, and it only matters while
+Reveal full map's **Really spawn every pack on arrival** is on.
+
+Really spawn every pack on arrival tells every monster spawner in the zone
+that you are standing next to it, so every pack in the zone is born in the
+first seconds after you arrive. A filled zone at 2x density holds about 2,000
+monsters, each with its shadow and its health bar, and the game walks all of
+them every frame wherever you are. In our frame profile the game's own work,
+which grows with the number of things it walks, was the largest part of a
+filled zone's frame (47% in Act_01_02 at 2x). With this switch on, only the spawners
+within about 3,000 px of you are told you are next to them. The ones further
+out are told the truth, and their packs are born as you come near: the fill
+keeps answering for the whole time you are in the zone, so a spawner you come
+within reach of is filled at its next check. Nothing is deactivated, hidden or
+paused, and the monsters around you are the ones you would meet anyway.
+
+- **Turning it off** while the fill is on fills the rest of the zone you are
+  in, as turning Really spawn every pack on arrival on does.
+- **With Extra packs as you approach** on as well, Monster Density's copies
+  keep being made as you approach under the fill too, instead of all at once.
+- **Pack markers, the Beacon and Tyrant's Crown** work as without the switch.
+- **Co-op.** Only your own character counts; it has not been tried with other
+  players.
+- **Measured.** In Act_01_02 (Fields of Battle) at 2x density with the map
+  filled, the frame thread did 5.4 ms of work a frame with the switch on and
+  6.2 ms after turning it off let the whole zone fill, about 12% less, with
+  682 monsters alive instead of 2,092 (one pair of 30 s captures,
+  2026-10-07). On our machine both runs stayed near the 144 fps limit;
+  walking a filled zone at normal speed, other acts and co-op were not tried
+  ([the lever, measured](docs/main-thread-offload-research.md#the-lever-measured)).
+
+`fillroll stat` prints whether it is on, the reach, whether the fill is on,
+how many times it answered and held back in this zone, the number of
+monsters, your position and the room's size.
+
+How it works and why this was chosen over the other ways of lightening a
+filled zone:
+[`docs/main-thread-offload-research.md`](docs/main-thread-offload-research.md#the-lever).
 
 ## Skill Haste and All Skills
 

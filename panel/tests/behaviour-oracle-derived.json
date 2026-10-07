@@ -56,6 +56,7 @@
   "#satanic_everywhere",
   "#mod_jump_scenery",
   "#mod_loot_announce",
+  "#fill_rolling",
   "#mod_hidden_loot_key",
   "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
   "#sw_percent_stats_skillhaste",
@@ -5479,6 +5480,78 @@
   },
   {
    "step": 452,
+   "control": "#fill_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "fill_rolling",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "fillroll 1"
+     ]
+    }
+   }
+  },
+  {
+   "step": 453,
+   "control": "#fill_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "key": "fill_rolling",
+        "value": false
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "is": [
+      "fillroll 0"
+     ]
+    }
+   }
+  },
+  {
+   "step": 454,
+   "control": "#fill_rolling",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 452
+    },
+    "cmds": {
+     "same": 452
+    }
+   }
+  },
+  {
+   "step": 455,
+   "control": "#enabledMods .quick-disable[data-for=\"fill_rolling\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 453
+    },
+    "cmds": {
+     "same": 453
+    }
+   }
+  },
+  {
+   "step": 456,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -5491,7 +5564,7 @@
    }
   },
   {
-   "step": 453,
+   "step": 457,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "17",
@@ -5515,7 +5588,7 @@
    }
   },
   {
-   "step": 454,
+   "step": 458,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "0",
@@ -5539,7 +5612,7 @@
    }
   },
   {
-   "step": 455,
+   "step": 459,
    "control": "#mod_hidden_loot_key",
    "action": "select",
    "value": "164",
@@ -5563,7 +5636,7 @@
    }
   },
   {
-   "step": 456,
+   "step": 460,
    "control": "#mod_hidden_loot",
    "action": "click",
    "expect": {
@@ -5576,12 +5649,12 @@
    }
   },
   {
-   "step": 457,
+   "step": 461,
    "control": "tab:modifiers",
    "action": "click"
   },
   {
-   "step": 458,
+   "step": 462,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "max",
    "expect": {
@@ -5605,7 +5678,7 @@
    }
   },
   {
-   "step": 459,
+   "step": 463,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "min",
    "expect": {
@@ -5629,20 +5702,20 @@
    }
   },
   {
-   "step": 460,
+   "step": 464,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 458
+     "same": 462
     },
     "cmds": {
-     "same": 458
+     "same": 462
     }
    }
   },
   {
-   "step": 461,
+   "step": 465,
    "control": "#sw_percent_stats_skillhaste",
    "action": "click",
    "expect": {
@@ -5659,82 +5732,82 @@
      ]
     },
     "cmds": {
-     "same": 459
-    }
-   }
-  },
-  {
-   "step": 462,
-   "control": "#sw_percent_stats_skillhaste",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.skillhaste",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 460
-    }
-   }
-  },
-  {
-   "step": 463,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_skillhaste\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 461
-    },
-    "cmds": {
-     "same": 461
-    }
-   }
-  },
-  {
-   "step": 464,
-   "control": "#sw_percent_stats_skillhaste",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.skillhaste",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 462
-    }
-   }
-  },
-  {
-   "step": 465,
-   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 459
-    },
-    "cmds": {
-     "same": 459
+     "same": 463
     }
    }
   },
   {
    "step": 466,
+   "control": "#sw_percent_stats_skillhaste",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.skillhaste",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 464
+    }
+   }
+  },
+  {
+   "step": 467,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_skillhaste\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 465
+    },
+    "cmds": {
+     "same": 465
+    }
+   }
+  },
+  {
+   "step": 468,
+   "control": "#sw_percent_stats_skillhaste",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.skillhaste",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 466
+    }
+   }
+  },
+  {
+   "step": 469,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"skillhaste\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 463
+    },
+    "cmds": {
+     "same": 463
+    }
+   }
+  },
+  {
+   "step": 470,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "max",
    "expect": {
@@ -5758,7 +5831,7 @@
    }
   },
   {
-   "step": 467,
+   "step": 471,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "min",
    "expect": {
@@ -5782,20 +5855,20 @@
    }
   },
   {
-   "step": 468,
+   "step": 472,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 466
+     "same": 470
     },
     "cmds": {
-     "same": 466
+     "same": 470
     }
    }
   },
   {
-   "step": 469,
+   "step": 473,
    "control": "#sw_percent_stats_allskills",
    "action": "click",
    "expect": {
@@ -5812,87 +5885,87 @@
      ]
     },
     "cmds": {
-     "same": 467
-    }
-   }
-  },
-  {
-   "step": 470,
-   "control": "#sw_percent_stats_allskills",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.allskills",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 468
-    }
-   }
-  },
-  {
-   "step": 471,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_allskills\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 469
-    },
-    "cmds": {
-     "same": 469
-    }
-   }
-  },
-  {
-   "step": 472,
-   "control": "#sw_percent_stats_allskills",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.allskills",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 470
-    }
-   }
-  },
-  {
-   "step": 473,
-   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 467
-    },
-    "cmds": {
-     "same": 467
+     "same": 471
     }
    }
   },
   {
    "step": 474,
+   "control": "#sw_percent_stats_allskills",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.allskills",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 472
+    }
+   }
+  },
+  {
+   "step": 475,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_allskills\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 473
+    },
+    "cmds": {
+     "same": 473
+    }
+   }
+  },
+  {
+   "step": 476,
+   "control": "#sw_percent_stats_allskills",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.allskills",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 474
+    }
+   }
+  },
+  {
+   "step": 477,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"allskills\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 471
+    },
+    "cmds": {
+     "same": 471
+    }
+   }
+  },
+  {
+   "step": 478,
    "control": "tab:loot",
    "action": "click"
   },
   {
-   "step": 475,
+   "step": 479,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "max",
    "expect": {
@@ -5916,7 +5989,7 @@
    }
   },
   {
-   "step": 476,
+   "step": 480,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "min",
    "expect": {
@@ -5940,20 +6013,20 @@
    }
   },
   {
-   "step": 477,
+   "step": 481,
    "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 475
+     "same": 479
     },
     "cmds": {
-     "same": 475
+     "same": 479
     }
    }
   },
   {
-   "step": 478,
+   "step": 482,
    "control": "#sw_drops_mining_ore_rolls",
    "action": "click",
    "expect": {
@@ -5970,87 +6043,87 @@
      ]
     },
     "cmds": {
-     "same": 476
-    }
-   }
-  },
-  {
-   "step": 479,
-   "control": "#sw_drops_mining_ore_rolls",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "drops.mining_ore_rolls",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 477
-    }
-   }
-  },
-  {
-   "step": 480,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_drops_mining_ore_rolls\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 478
-    },
-    "cmds": {
-     "same": 478
-    }
-   }
-  },
-  {
-   "step": 481,
-   "control": "#sw_drops_mining_ore_rolls",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "drops.mining_ore_rolls",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 479
-    }
-   }
-  },
-  {
-   "step": 482,
-   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 476
-    },
-    "cmds": {
-     "same": 476
+     "same": 480
     }
    }
   },
   {
    "step": 483,
+   "control": "#sw_drops_mining_ore_rolls",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore_rolls",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 481
+    }
+   }
+  },
+  {
+   "step": 484,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_drops_mining_ore_rolls\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 482
+    },
+    "cmds": {
+     "same": 482
+    }
+   }
+  },
+  {
+   "step": 485,
+   "control": "#sw_drops_mining_ore_rolls",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "drops.mining_ore_rolls",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 483
+    }
+   }
+  },
+  {
+   "step": 486,
+   "control": "input[type=range][data-sec=\"drops\"][data-key=\"mining_ore_rolls\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 480
+    },
+    "cmds": {
+     "same": 480
+    }
+   }
+  },
+  {
+   "step": 487,
    "control": "tab:modifiers",
    "action": "click"
   },
   {
-   "step": 484,
+   "step": 488,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projspeed\"]",
    "action": "max",
    "expect": {
@@ -6074,7 +6147,7 @@
    }
   },
   {
-   "step": 485,
+   "step": 489,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projspeed\"]",
    "action": "min",
    "expect": {
@@ -6098,20 +6171,20 @@
    }
   },
   {
-   "step": 486,
+   "step": 490,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projspeed\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 484
+     "same": 488
     },
     "cmds": {
-     "same": 484
+     "same": 488
     }
    }
   },
   {
-   "step": 487,
+   "step": 491,
    "control": "#sw_percent_stats_projspeed",
    "action": "click",
    "expect": {
@@ -6128,82 +6201,82 @@
      ]
     },
     "cmds": {
-     "same": 485
-    }
-   }
-  },
-  {
-   "step": 488,
-   "control": "#sw_percent_stats_projspeed",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.projspeed",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 486
-    }
-   }
-  },
-  {
-   "step": 489,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_projspeed\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 487
-    },
-    "cmds": {
-     "same": 487
-    }
-   }
-  },
-  {
-   "step": 490,
-   "control": "#sw_percent_stats_projspeed",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.projspeed",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 488
-    }
-   }
-  },
-  {
-   "step": 491,
-   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projspeed\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 485
-    },
-    "cmds": {
-     "same": 485
+     "same": 489
     }
    }
   },
   {
    "step": 492,
+   "control": "#sw_percent_stats_projspeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.projspeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 490
+    }
+   }
+  },
+  {
+   "step": 493,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_projspeed\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 491
+    },
+    "cmds": {
+     "same": 491
+    }
+   }
+  },
+  {
+   "step": 494,
+   "control": "#sw_percent_stats_projspeed",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.projspeed",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 492
+    }
+   }
+  },
+  {
+   "step": 495,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projspeed\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 489
+    },
+    "cmds": {
+     "same": 489
+    }
+   }
+  },
+  {
+   "step": 496,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projamount\"]",
    "action": "max",
    "expect": {
@@ -6227,7 +6300,7 @@
    }
   },
   {
-   "step": 493,
+   "step": 497,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projamount\"]",
    "action": "min",
    "expect": {
@@ -6251,20 +6324,20 @@
    }
   },
   {
-   "step": 494,
+   "step": 498,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projamount\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 492
+     "same": 496
     },
     "cmds": {
-     "same": 492
+     "same": 496
     }
    }
   },
   {
-   "step": 495,
+   "step": 499,
    "control": "#sw_percent_stats_projamount",
    "action": "click",
    "expect": {
@@ -6281,82 +6354,82 @@
      ]
     },
     "cmds": {
-     "same": 493
-    }
-   }
-  },
-  {
-   "step": 496,
-   "control": "#sw_percent_stats_projamount",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.projamount",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 494
-    }
-   }
-  },
-  {
-   "step": 497,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_projamount\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 495
-    },
-    "cmds": {
-     "same": 495
-    }
-   }
-  },
-  {
-   "step": 498,
-   "control": "#sw_percent_stats_projamount",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.projamount",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 496
-    }
-   }
-  },
-  {
-   "step": 499,
-   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projamount\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 493
-    },
-    "cmds": {
-     "same": 493
+     "same": 497
     }
    }
   },
   {
    "step": 500,
+   "control": "#sw_percent_stats_projamount",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.projamount",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 498
+    }
+   }
+  },
+  {
+   "step": 501,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_projamount\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 499
+    },
+    "cmds": {
+     "same": 499
+    }
+   }
+  },
+  {
+   "step": 502,
+   "control": "#sw_percent_stats_projamount",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.projamount",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 500
+    }
+   }
+  },
+  {
+   "step": 503,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"projamount\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 497
+    },
+    "cmds": {
+     "same": 497
+    }
+   }
+  },
+  {
+   "step": 504,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"aoesize\"]",
    "action": "max",
    "expect": {
@@ -6380,7 +6453,7 @@
    }
   },
   {
-   "step": 501,
+   "step": 505,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"aoesize\"]",
    "action": "min",
    "expect": {
@@ -6404,20 +6477,20 @@
    }
   },
   {
-   "step": 502,
+   "step": 506,
    "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"aoesize\"]",
    "action": "max",
    "expect": {
     "posts": {
-     "same": 500
+     "same": 504
     },
     "cmds": {
-     "same": 500
+     "same": 504
     }
    }
   },
   {
-   "step": 503,
+   "step": 507,
    "control": "#sw_percent_stats_aoesize",
    "action": "click",
    "expect": {
@@ -6434,87 +6507,87 @@
      ]
     },
     "cmds": {
-     "same": 501
-    }
-   }
-  },
-  {
-   "step": 504,
-   "control": "#sw_percent_stats_aoesize",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.aoesize",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 502
-    }
-   }
-  },
-  {
-   "step": 505,
-   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_aoesize\"]",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "same": 503
-    },
-    "cmds": {
-     "same": 503
-    }
-   }
-  },
-  {
-   "step": 506,
-   "control": "#sw_percent_stats_aoesize",
-   "action": "click",
-   "expect": {
-    "posts": {
-     "is": [
-      {
-       "url": "/api/set",
-       "body": {
-        "section": "switches",
-        "key": "percent_stats.aoesize",
-        "value": true
-       }
-      }
-     ]
-    },
-    "cmds": {
-     "same": 504
-    }
-   }
-  },
-  {
-   "step": 507,
-   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"aoesize\"]",
-   "action": "min",
-   "expect": {
-    "posts": {
-     "same": 501
-    },
-    "cmds": {
-     "same": 501
+     "same": 505
     }
    }
   },
   {
    "step": 508,
+   "control": "#sw_percent_stats_aoesize",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.aoesize",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 506
+    }
+   }
+  },
+  {
+   "step": 509,
+   "control": "#enabledMods .quick-disable[data-for=\"sw_percent_stats_aoesize\"]",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "same": 507
+    },
+    "cmds": {
+     "same": 507
+    }
+   }
+  },
+  {
+   "step": 510,
+   "control": "#sw_percent_stats_aoesize",
+   "action": "click",
+   "expect": {
+    "posts": {
+     "is": [
+      {
+       "url": "/api/set",
+       "body": {
+        "section": "switches",
+        "key": "percent_stats.aoesize",
+        "value": true
+       }
+      }
+     ]
+    },
+    "cmds": {
+     "same": 508
+    }
+   }
+  },
+  {
+   "step": 511,
+   "control": "input[type=range][data-sec=\"percent_stats\"][data-key=\"aoesize\"]",
+   "action": "min",
+   "expect": {
+    "posts": {
+     "same": 505
+    },
+    "cmds": {
+     "same": 505
+    }
+   }
+  },
+  {
+   "step": 512,
    "control": "tab:setup",
    "action": "click"
   },
   {
-   "step": 509,
+   "step": 513,
    "control": "#openreports",
    "action": "click",
    "expect": {
@@ -6532,17 +6605,17 @@
    }
   },
   {
-   "step": 510,
+   "step": 514,
    "control": "tab:mods",
    "action": "click"
   },
   {
-   "step": 511,
+   "step": 515,
    "control": "subtab:gameplay",
    "action": "click"
   },
   {
-   "step": 512,
+   "step": 516,
    "control": "#boss_rarity",
    "action": "select",
    "value": "ancient",
@@ -6566,7 +6639,7 @@
    }
   },
   {
-   "step": 513,
+   "step": 517,
    "control": "#boss_rarity",
    "action": "select",
    "value": "off",
@@ -6590,34 +6663,34 @@
    }
   },
   {
-   "step": 514,
+   "step": 518,
    "control": "#boss_rarity",
    "action": "select",
    "value": "ancient",
    "expect": {
     "posts": {
-     "same": 512
+     "same": 516
     },
     "cmds": {
-     "same": 512
+     "same": 516
     }
    }
   },
   {
-   "step": 515,
+   "step": 519,
    "control": "#enabledMods .quick-disable[data-for=\"boss_rarity\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 513
+     "same": 517
     },
     "cmds": {
-     "same": 513
+     "same": 517
     }
    }
   },
   {
-   "step": 516,
+   "step": 520,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
@@ -6641,7 +6714,7 @@
    }
   },
   {
-   "step": 517,
+   "step": 521,
    "control": "#dungeon_chest_pct",
    "action": "max",
    "expect": {
@@ -6664,7 +6737,7 @@
    }
   },
   {
-   "step": 518,
+   "step": 522,
    "control": "#dungeon_chest_pct",
    "action": "min",
    "expect": {
@@ -6687,7 +6760,7 @@
    }
   },
   {
-   "step": 519,
+   "step": 523,
    "control": "#dungeon_chest_pct",
    "action": "type",
    "value": "80",
@@ -6711,7 +6784,7 @@
    }
   },
   {
-   "step": 520,
+   "step": 524,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
@@ -6734,7 +6807,7 @@
    }
   },
   {
-   "step": 521,
+   "step": 525,
    "control": "#dungeon_chest_pct",
    "action": "max",
    "expect": {
@@ -6755,7 +6828,7 @@
    }
   },
   {
-   "step": 522,
+   "step": 526,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
@@ -6779,25 +6852,25 @@
    }
   },
   {
-   "step": 523,
+   "step": 527,
    "control": "#enabledMods .quick-disable[data-for=\"mod_dungeon_chest\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 520
+     "same": 524
     },
     "cmds": {
-     "same": 520
+     "same": 524
     }
    }
   },
   {
-   "step": 524,
+   "step": 528,
    "control": "subtab:qol",
    "action": "click"
   },
   {
-   "step": 525,
+   "step": 529,
    "control": "#mod_gambapity",
    "action": "click",
    "expect": {
@@ -6820,7 +6893,7 @@
    }
   },
   {
-   "step": 526,
+   "step": 530,
    "control": "#gambapity",
    "action": "max",
    "expect": {
@@ -6843,7 +6916,7 @@
    }
   },
   {
-   "step": 527,
+   "step": 531,
    "control": "#gambapity",
    "action": "min",
    "expect": {
@@ -6866,7 +6939,7 @@
    }
   },
   {
-   "step": 528,
+   "step": 532,
    "control": "#gambapity",
    "action": "type",
    "value": "5",
@@ -6890,7 +6963,7 @@
    }
   },
   {
-   "step": 529,
+   "step": 533,
    "control": "#mod_gambapity",
    "action": "click",
    "expect": {
@@ -6913,7 +6986,7 @@
    }
   },
   {
-   "step": 530,
+   "step": 534,
    "control": "#gambapity",
    "action": "max",
    "expect": {
@@ -6934,7 +7007,7 @@
    }
   },
   {
-   "step": 531,
+   "step": 535,
    "control": "#mod_gambapity",
    "action": "click",
    "expect": {
@@ -6957,38 +7030,38 @@
    }
   },
   {
-   "step": 532,
+   "step": 536,
    "control": "#enabledMods .quick-disable[data-for=\"mod_gambapity\"]",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 529
+     "same": 533
     },
     "cmds": {
-     "same": 529
+     "same": 533
     }
    }
   },
   {
-   "step": 533,
+   "step": 537,
    "control": "subtab:gameplay",
    "action": "click"
   },
   {
-   "step": 534,
+   "step": 538,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 522
+     "same": 526
     },
     "cmds": {
-     "same": 522
+     "same": 526
     }
    }
   },
   {
-   "step": 535,
+   "step": 539,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "chat",
@@ -7012,7 +7085,7 @@
    }
   },
   {
-   "step": 536,
+   "step": 540,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "both",
@@ -7036,7 +7109,7 @@
    }
   },
   {
-   "step": 537,
+   "step": 541,
    "control": "#dungeon_chest_countdown",
    "action": "select",
    "value": "head",
@@ -7060,15 +7133,15 @@
    }
   },
   {
-   "step": 538,
+   "step": 542,
    "control": "#mod_dungeon_chest",
    "action": "click",
    "expect": {
     "posts": {
-     "same": 520
+     "same": 524
     },
     "cmds": {
-     "same": 520
+     "same": 524
     }
    }
   }

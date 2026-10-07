@@ -8934,6 +8934,14 @@ static void Hook_distance_to_object(RValue& Result, CInstance* S, CInstance* O, 
         // per path rather than once before both. A standalone guard above
         // this line ran the same enemyCreatorTimer read a second time for
         // every creator on the open pack window, deciding nothing new.
+        //
+        // `fillroll` (#183) adds its reach check inside MayPopulate too, after
+        // readiness and before the admission request: a creator beyond the
+        // reach of the local player (or any creator, when no local player
+        // resolves) is declined there and so keeps its native answer below,
+        // unless the Beacon's own branch wants it. The player's position is
+        // read at most once a frame (RollingFill::PlayerPosition), and only
+        // for a ready creator, so a non-creator pays nothing more here.
         const bool revealOk = revealWants
             && ForgePact::MapRevealManager::Instance().MayPopulate(inst);
         if (!revealOk) {
@@ -27083,6 +27091,8 @@ static void FlushModState(uint32_t frame)
         body += ",\"queuedDensityCopies\":" + std::to_string(DeferredDensityPending());
         body += ",\"deferredDensityCopies\":" + std::to_string(g_DensityCopies.Pending() - (std::min)(g_DensityCopies.Pending(), DeferredDensityPending()));
         body += ",\"densityRollReach\":" + std::to_string(DensityRolling() ? std::llround(g_DensityReachNow) : 0LL);
+        body += ",\"fillRolling\":"; body += reveal.FillRolling() ? "true" : "false";
+        body += ",\"fillRollReach\":" + std::to_string(std::llround(ForgePact::RollingFill::Instance().Reach()));
         body += ",\"observedNativeBirthPacks\":" + std::to_string(reveal.NativeBirthPacks());
         body += ",\"completedDensityCopies\":" + std::to_string(g_DensityCopyCompleted);
         body += ",\"synchronousDensityFallbacks\":" + std::to_string(g_DensityCopyRefused);
@@ -50227,8 +50237,10 @@ static bool HandleLiveOneResearchCommand(const std::string& lc, const std::strin
 static const ForgePact::FrameProfiler::GmlEntry* FrameProfGmlAnchor();
 
 // ---- Rolling density copies: the reach and the command --------------------
-// The effective reach, once a second and on every `densityroll`. Filling the
-// map (`reveal spawn`) needs every copy at once, so it switches rolling off.
+// The effective reach, once a second and on every `densityroll` and
+// `fillroll`. Filling the map (`reveal spawn`) needs every copy at once, so it
+// switches rolling off - unless `fillroll` limits the fill to a reach of the
+// player too (#183), when the copies keep rolling as well.
 // While a hunt is on (Beacon, or Tyrant's Crown for rares and champions) the
 // monsters within the wake radius keep stepping and hunting, and `beaconspawn`
 // makes the spawners there give birth - every spawner when the radius is off -
@@ -50241,7 +50253,7 @@ static void DensityRollRefresh()
     if (g_DensityRollReach > 0.0) {
         auto& reveal = ForgePact::MapRevealManager::Instance();
         reach = g_DensityRollReach;
-        if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();
+        if (reveal.IsEnabled() && reveal.PacksEnabled() && !reveal.FillRolling()) reach = std::numeric_limits<double>::infinity();
         else if (HuntPolicy() != 0) {
             if (g_BeWakeRadius < 0.0 || (g_BeWakeRadius == 0.0 && g_BeSpawnNear && BeaconActive()))
                 reach = std::numeric_limits<double>::infinity();
@@ -50272,6 +50284,66 @@ static void DensityRollCommand(const std::string& rest)
     line += " | copies waiting " + std::to_string(pending) + ", due " + std::to_string(DeferredDensityPending())
         + ", made " + std::to_string(g_DensityCopyCompleted);
     Out(line);
+}
+
+// ---- Fill the map as you approach (`fillroll`, RollingFill.hpp, #183) -----
+// `fillroll 1|0|<reach px>|stat` (the panel's switch sends 1 or 0). The rule
+// lives in MapRevealManager::MayPopulate, which Hook_distance_to_object's
+// reveal path already asks; this only sets it and reports. Every form answers
+// one line; a bad argument answers the usage line and changes nothing.
+static void FillRollCommand(const std::string& rest)
+{
+    std::string arg = Lower(rest);
+    arg.erase(0, arg.find_first_not_of(" \t"));
+    arg.erase(arg.find_last_not_of(" \t\r\n") + 1);
+    auto& reveal = ForgePact::MapRevealManager::Instance();
+    const auto& rolling = ForgePact::RollingFill::Instance();
+    double reach = ForgePact::RollingFill::kDefaultReach;
+    switch (ForgePact::RollingFill::Parse(arg, reach)) {
+    case ForgePact::RollingFill::Command::Usage: Out(ForgePact::RollingFill::kUsage); return;
+    case ForgePact::RollingFill::Command::On: reveal.SetFillRolling(true, reach); break;
+    case ForgePact::RollingFill::Command::Off: reveal.SetFillRolling(false); break;
+    case ForgePact::RollingFill::Command::Stat: break;
+    }
+    // densityroll's reach follows the switch (DensityRollRefresh); a toggle
+    // should not wait up to a second for it.
+    DensityRollRefresh();
+
+    // The reply's last three fields are read now, never cached: this is a
+    // command, not the hot path. Anything unreadable says so.
+    long monsters = -1;
+    std::string where = "none", room = "unknown";
+    try {
+        RValue eo = g_Yytk->CallBuiltin("asset_get_index", { RValue("Enemy_Parent_obj") });
+        if (eo.ToDouble() >= 0) monsters = (long)g_Yytk->CallBuiltin("instance_number", { eo }).ToDouble();
+    } catch (...) { monsters = -1; }
+    try {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            const double px = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }).ToDouble();
+            const double py = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }).ToDouble();
+            if (std::isfinite(px) && std::isfinite(py)) where = std::to_string(std::llround(px)) + "," + std::to_string(std::llround(py));
+        }
+    } catch (...) { where = "none"; }
+    try {
+        // room_width / room_height are built-ins: GetBuiltin, not variable_global_get.
+        RValue rw, rh;
+        if (AurieSuccess(g_Yytk->GetBuiltin("room_width", nullptr, NULL_INDEX, rw))
+            && AurieSuccess(g_Yytk->GetBuiltin("room_height", nullptr, NULL_INDEX, rh))) {
+            const double w = rw.ToDouble(), h = rh.ToDouble();
+            if (std::isfinite(w) && std::isfinite(h)) room = std::to_string(std::llround(w)) + "x" + std::to_string(std::llround(h));
+        }
+    } catch (...) { room = "unknown"; }
+
+    const bool fillOn = reveal.IsEnabled() && reveal.PacksEnabled();
+    Out(std::string("fillroll: ") + (reveal.FillRolling() ? "on" : "off")
+        + " | reach " + std::to_string(std::llround(rolling.Reach()))
+        + " | fill " + (fillOn ? "on" : "off")
+        + " | answered " + std::to_string(rolling.Answered())
+        + " | held back " + std::to_string(rolling.HeldBack())
+        + " | monsters " + std::to_string(monsters)
+        + " | player " + where
+        + " | room " + room);
 }
 
 // ---- Far sleep (FarSleep.hpp): the adapter --------------------------------
@@ -54901,7 +54973,7 @@ static void RunCommand(const std::string& line)
         "autoprospect", "toggleborder", "toggleguard", "skilltimer", "menulayout", "restartanytime", "miningore", "miningrolls", "minerhelm", "packmarks",
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
-        "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
+        "stashmoveall", "stashmove", "densityroll", "fillroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
         "jumpscenery", "skillslider", "gambapity", "lootann"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
@@ -55062,6 +55134,8 @@ static void RunCommand(const std::string& line)
     if (lc == "lootann") { LootAnnounceCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
     if (lc == "densityroll") { DensityRollCommand(rest); return; }
+    // Fill the map as you approach: the Mods tab's switch, the same early return.
+    if (lc == "fillroll") { FillRollCommand(rest); return; }
     // Hidden loot sleep: the Mods tab's switch and its show key, the same
     // standalone early return.
     if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }

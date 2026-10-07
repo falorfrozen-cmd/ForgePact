@@ -125,6 +125,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Loot announcements, Mods > Quality of Life (ForgePact #17;
     # test_loot_announce_contract.py).
     "lootann",
+    # Fill the map as you approach, the Mods tab's switch (ForgePact #183;
+    # test_rolling_fill_contract.py).
+    "fillroll",
 }
 
 

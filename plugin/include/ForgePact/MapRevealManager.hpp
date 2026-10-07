@@ -3,6 +3,7 @@
 #include "Common.hpp"
 #include <ForgePact/PackAdmissionQueue.hpp>
 #include <ForgePact/AdaptivePopulationBudget.hpp>
+#include <ForgePact/RollingFill.hpp>
 
 namespace ForgePact {
 
@@ -34,6 +35,10 @@ namespace ForgePact {
 //    before admission. Ready callers never wait for an absent queue head. The pass
 //    extends while work is deferred, then returns to a relaxed atomic check.
 //    Native events still create the packs and all density copies normally.
+//
+//    `fillroll` (RollingFill, #183) limits that pass to creators within a
+//    reach of the local player, and keeps it armed for the whole zone visit
+//    so the rest are answered as the player comes near.
 class MapRevealManager {
 public:
     static MapRevealManager& Instance() {
@@ -92,6 +97,21 @@ public:
         Out(std::string("reveal spawn (fill the map): ") + (m_Packs ? "ACIK" : "KAPALI"));
     }
 
+    // `fillroll 1|0|<reach px>` - fill the map as you approach (RollingFill).
+    // The verb prints its own reply; this only changes the state.
+    //
+    // Turning it off while the fill is on re-arms the full pass for the zone
+    // being stood in, exactly as turning `reveal spawn` on does (through the
+    // readiness gate, never by opening the window directly), so the creators
+    // held back for distance are filled too.
+    bool FillRolling() const { return RollingFill::Instance().IsOn(); }
+    void SetFillRolling(bool on, double reach = RollingFill::kDefaultReach) {
+        RollingFill& rolling = RollingFill::Instance();
+        const bool was = rolling.IsOn();
+        rolling.Set(on, reach);
+        if (was && !on && m_Enabled && m_Packs) { m_PacksPending = true; m_PendingTicks = 0; }
+    }
+
     // Cheap pre-filter for Hook_distance_to_object: one relaxed atomic load,
     // false for all but a few seconds per zone. It answers "is a pack pass
     // running at all", NOT "may this creator be lied to" - see MayPopulate.
@@ -121,16 +141,25 @@ public:
     //
     // Readiness and stable identity are read only during the population pass.
     // Queue identities, never retained instances or deferred native calls.
+    //
+    // With `fillroll` on, the reach is decided after readiness and BEFORE the
+    // admission request: a creator held back for distance keeps its native
+    // answer and never takes, or queues for, an admission slot.
     bool MayPopulate(const RValue& creator) {
         if (m_SpawnWindow.load(std::memory_order_relaxed) <= 0) return false;
         if (!PopulationCapacityAvailable()) { m_CapacityWaiting = true; return false; }
         if (!CreatorIsReady(creator)) return false;
+        RollingFill& rolling = RollingFill::Instance();
+        const bool rollingOn = rolling.IsOn();
+        if (rollingOn && !rolling.Admits(creator)) return false;
         try {
             RValue id = g_Yytk->CallBuiltin("variable_instance_get", { creator, RValue("id") });
             if (id.m_Kind != VALUE_REAL && id.m_Kind != VALUE_INT32 && id.m_Kind != VALUE_INT64 && id.m_Kind != VALUE_REF) return false;
             const double n = id.ToDouble();
             if (!std::isfinite(n) || n < 0 || n > 9007199254740991.0 || std::floor(n) != n) return false;
-            return m_Admission.Request(static_cast<int64_t>(n),[]{return AdaptivePopulationBudget::Instance().ReservePack();});
+            const bool granted = m_Admission.Request(static_cast<int64_t>(n),[]{return AdaptivePopulationBudget::Instance().ReservePack();});
+            if (granted && rollingOn) rolling.NoteAnswered();
+            return granted;
         } catch (...) { return false; }
     }
 
@@ -172,6 +201,8 @@ public:
     // spamming GameMaker calls during dense combat; the spawn window has to
     // count down every frame, so it is handled before that throttle.
     void OnFrame(uint64_t frameCount) {
+        // Housekeeping only: `fillroll` reads the player again next frame.
+        RollingFill::Instance().BeginFrame();
         if (!m_Enabled) return;
         AdaptivePopulationBudget::Instance().ObserveBacklog(m_Admission.Pending(),DeferredDensityPending());
         AdaptivePopulationBudget::Instance().BeginFrame(frameCount,WantsPackSpawn() || m_PacksPending || DeferredDensityPending()>0);
@@ -196,6 +227,13 @@ public:
             if (!WindowIdentityValid()) { CloseSpawnWindow(); return; }
             // The old fixed timeout must not discard a dense zone's queue tail.
             if (m_Admission.HasDeferredWork() || m_CapacityWaiting || DeferredDensityPending()>0) w = (std::max)(w, 240);
+            // `fillroll`: the pass stays armed for the whole zone visit, so a
+            // creator the player comes within reach of later is answered at
+            // its next check. It is held at 1, a constant, so modstate does
+            // not churn; the identity check above still closes it on a zone
+            // change, and the budget's pass diagnostics stop where today's
+            // pass would have ended.
+            if (w == 1 && RollingFill::Instance().IsOn()) { AdaptivePopulationBudget::Instance().StopPass(); w = 2; }
             m_SpawnWindow.store(w - 1, std::memory_order_relaxed);
             // Freeze the elapsed diagnostic when scheduling ends. Otherwise
             // idle frames keep changing modstate and forcing disk rewrites.
@@ -271,6 +309,7 @@ private:
         m_LastGrid = INT64_MIN;
         m_LastRoom = INT64_MIN;
         ++m_ZoneGeneration;
+        RollingFill::Instance().ResetCounters();   // `fillroll stat` is per zone
         CloseSpawnWindow();
     }
 
@@ -366,6 +405,7 @@ private:
         m_LastGrid = gridKey;
         m_LastRoom = roomKey;
         ++m_ZoneGeneration;
+        RollingFill::Instance().ResetCounters();
 
         // New zone: arm the pack pass, but do NOT start lying yet - see
         // TryOpenSpawnWindow.  The zone-identity change fires while the new

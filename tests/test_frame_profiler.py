@@ -18,6 +18,7 @@ other ForgePact work, the header stays game-independent, and the code that
 runs while the frame thread is suspended stays free of anything that can
 take a lock.
 """
+import importlib.util
 import json
 import os
 import re
@@ -29,6 +30,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "FrameProfiler.hpp"
+_spec = importlib.util.spec_from_file_location("frameprof_report", ROOT / "tools" / "frameprof_report.py")
+report_tool = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(report_tool)
 
 
 def _body(source: str, signature: str) -> str:
@@ -132,6 +136,19 @@ class FrameProfilerBehaviorTests(unittest.TestCase):
         lines = [l for l in stacks.splitlines() if l.strip()]
         self.assertTrue(all(re.search(r" \d+$", l) for l in lines), lines[:3])
         self.assertTrue(any("Fake_Enemy_obj Step;FakeMiddle;fake_spin()" in l for l in lines), lines[:5])
+
+    def test_the_report_tool_derives_the_same_buckets(self):
+        # tools/frameprof_report.py buckets each stack again from its labels
+        # alone, for the runner-phase split. Summed over a report's stacks
+        # file, its buckets must be the plugin's, key for key, on every
+        # report the harness wrote: spinning, sleeping and game code alike.
+        self.assertTrue(self.reports)
+        reports = ROOT / "build" / "frame-profiler-behavior" / "reports"
+        for label, r in self.reports.items():
+            with self.subTest(report=label):
+                stacks = report_tool.parse_stacks((reports / r["files"]["stacks"]).read_text(encoding="utf-8"))
+                self.assertEqual(report_tool.derived_buckets(r, stacks),
+                                 {b["key"]: b["samples"] for b in r["buckets"]})
 
     def test_the_context_callback_lands_in_the_timeline(self):
         timeline = self.reports["chain"]["timeline"]
