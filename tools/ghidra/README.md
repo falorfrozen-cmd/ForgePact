@@ -10,6 +10,46 @@ Until 2026-10-04 the reading scripts lived in one researcher's `ghidra_scripts`
 folder, so nobody else could repeat a reading. They are here so that a second
 researcher can run the same reads.
 
+## In a hub checkout, ask the ghidra MCP server first
+
+In a toolkit (hub) checkout, agents reach the game first through the hub's `ghidra`
+MCP server, which serves a copy of the same named project. For a quick question (find
+a function, decompile it, list its callers or cross-references) it needs no headless
+run, and because it holds only the copy it never locks the research project, so a
+headless run can go on beside it.
+
+- **The first step is `py -3 -m tools.ghidra_mcp status`**, from the hub's root. It
+  prints a `missing` line for each absent piece, and the hub's `setup` subcommand fixes
+  them. The hub's `docs/tools/ghidra-mcp.md` describes the server, its setup and what it
+  refuses.
+- **Which agents carry it:** the `/workorder` phase agents that research or decide, which
+  are the `planner` and its effort variants, `implementer`, `implementer-medium`,
+  `consultant` and `consultant-max`. They list the server's tools as
+  `mcp__ghidra__<tool>` in their `tools:` lines.
+- **They carry read tools only:** search, list, decompile, cross-references, callers,
+  callees, call graph and function info. No rename, no write, no script run and no
+  debugger tool. The set is `AGENT_READ_TOOLS` in the hub's `tools/ghidra_mcp.py`, and
+  the hub's `tests/test_ghidra_agent_tools.py` pins those agents' tool lines to it. The
+  verifier, the scribe, `live-operator` and the reviewers carry none.
+- **An empty callers or xrefs answer means "not observed"**, the same as a zero from
+  `FindCallers.java` below: the reference table does not see every route a call can take.
+
+The headless scripts in this folder are now the fallback, for what the MCP reads cannot
+do:
+
+- a fresh import and symbol naming: `ImportSymbols.java`;
+- bulk dumps to files, which the hub's `tools/decomp_index.py scan` then indexes:
+  `DecompileTo.java`, with `DecompileToLong.java` and `DecompileToHuge.java` for
+  functions that need a longer timeout;
+- byte-level scans the reference table cannot answer: `FindCallers.java` and its
+  siblings (`FindWrites.java`, `FindPointers.java`, `FindRvaTable.java`,
+  `ListCallsIn.java`, `DecompileAround.java`);
+- the slot-name table: `FindSlotNames.java`.
+
+A standalone ForgePact clone has no `tools/ghidra_mcp.py` and no MCP server, so there the
+headless route below is the only one. Either way, what the server shows is decompiled
+output too, and the rule in "The output never enters a repository" below covers it.
+
 ## The scripts
 
 | Script | What it does |
