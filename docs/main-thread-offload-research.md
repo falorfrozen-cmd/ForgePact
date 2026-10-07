@@ -1,10 +1,16 @@
 # Main-thread offload - which part of the frame thread's time could move
 
-Status (2026-10-07): **research, nothing offloaded.** The runner's own threads
-are a static reading (below); the frame thread's split into the runner's
-phases is measured on the 2026-09-28 captures and on Live 1's three captures
-of 2026-10-07, which also give each candidate's ceiling and the route
-([Decision](#decision)). Nothing here is a player-visible change.
+Status (2026-10-07): **research, nothing offloaded; one lever chosen, its
+live measurement pending.** The runner's own threads are a static reading
+(below); the frame thread's split into the runner's phases is measured on the
+2026-09-28 captures and on Live 1's three captures of 2026-10-07, which also
+give each candidate's ceiling and the route ([Decision](#decision)). For that
+route, the runtime, the static readings of layers, visibility and the light
+renderer rule out the other levers, and [The lever](#the-lever) chooses one:
+"Fill the map as you approach" (`fillroll`), a player switch that is off by
+default and changes one value inside a call the game already makes. Whether
+it saves frame time is measured in its own live session, not yet recorded
+here.
 
 ## Question
 
@@ -390,7 +396,10 @@ plugin's.
 
 Every walk ended at the frame thread's root except 0.02% (T), 0.04% (H1) and
 0.09% (H2) of samples, which ended early. That is well under the 2.4-point
-runtime/game-code margin. H1 and H2 found the same step and draw dispatchers
+runtime/game-code margin. The early-walk share was counted from each capture's
+`.stacks.txt`, not from the JSON's `walkEnds`, because `walkEnds` labels the
+frame thread's root `unknown_code` and so cannot tell a full walk from an early
+one. H1 and H2 found the same step and draw dispatchers
 as town, and outside the phases is 5.4-6.0%, so the step phase did not break
 up.
 
@@ -464,7 +473,7 @@ What these show, all measured on these three captures:
   most 0.64% (check `box-rebuild` fails for this reason; the failure is the
   finding). It was not among H1's rows either (under 0.45%).
   `DrawMinimapDynamic` was absent from both; `DrawMinimap` was 0.60% in H1.
-  The sampler does name it: it appears on the stacks of all three captures,
+  The sampler does name `ActivateDeactivateProps`: it appears on the stacks of all three captures,
   at 0.08%, 0.08% and 0.48% of samples, so the bound is a measurement, not a
   blind spot.
 - **These heavy-room numbers differ from frame-profiler.md's first Act_01_01
@@ -502,8 +511,9 @@ beside each for comparison.
     than drawing that has to stay on the frame thread is not established.
   - The heaviest event is `Controller_obj` Step, 9.39% (about 0.79 ms), all of
     the game code under it together.
-  - `ActivateDeactivateProps`, the 30-frame box rebuild, at most 0.64% (about
-    0.05 ms): below H2's 40th game-code row.
+  - `ActivateDeactivateProps`, the 30-frame box rebuild, measured at 0.48%
+    of H2's samples on the stacks (about 0.04 ms a frame), within its bound
+    of at most 0.64% (about 0.05 ms): it is below H2's 40th game-code row.
   - In H1 the largest was `timer_system_update`, 11.33% (10.52% its own time).
 - **Neither: the GameMaker runtime, 47.35%, about 4.00 ms a frame** (H1:
   48.34%): 18.7% in the step phase, 25.7% in the draw phase and 3.0% outside
@@ -527,12 +537,235 @@ The route was decided from H2, `frameprof-20261007-144936.json` (Act_01_02 at
 density 2 with the map filled), where the GameMaker runtime's 47.35% was the
 largest of the three bucket shares.
 
+## Static reading: layers, visibility and the light renderer
+
+**Static reading, 2026-10-07** (workorder forgepact-183-frame-thread-lever),
+made through the `ghidra` MCP server on the same build as above (the Ghidra
+import copy, SHA-256 `498d5885...`; the installed exe differs from it only in
+the `.aurie` section), and paraphrased here in our own words. The decompiled
+bodies stay on the researcher's machine. Every item is a static reading except
+the light pass's split, which is measured and labelled so. These readings are
+what the runtime route's levers were judged against in [The lever](#the-lever).
+
+- **Which layer an instance sits on: `UpdateDepth`.** The script takes a y
+  (the instance's own y unless one is passed) and an anchor (-1 unless one is
+  passed), and always records the y it was given in `yDepthSet`.
+  - With no anchor, it moves the instance to the room's `Game_Layer` whose
+    index is y halved, rounded toward zero and clamped to 0-5500, taken from
+    the game's `gameLayer` table for the room. So one `Game_Layer_i` covers
+    2 px of y, and it sits at depth -i.
+  - With an anchor, it does nothing while the anchor is within 4 px of y.
+    Past that, the index also adds the instance's `renderGroup`, an undefined
+    one counting as 0.
+  - The player, the mercenary and the enemy begin step pass an anchor, so they
+    change layer only after drifting more than 4 px.
+- **Who calls `UpdateDepth`.** 2,746 call sites: 2,007 in Create events
+  (mostly prop children, each run once), 601 in Step events and about 120 in
+  Alarm events.
+  - Every step: the player, the mercenary, ordinary monsters inside the player
+    box (through `enemyParentBeginStepFunc`), bosses, and player and enemy
+    projectiles.
+  - Once: shadows, props, ground effects, and monsters at creation and in
+    their Alarm 4.
+  - `Enemy_Health_Bar_Parent_obj` never calls it.
+- **A monster's health bar is not on a game layer.** It is created in
+  `Enemy_Parent_obj`'s Alarm 4 with `instance_create_layer`, on the
+  `Layer_UI_Controller_obj` layer (depth -12998).
+  - `updateLightShadowBarsPos` copies the monster's `visible`, x and y into
+    the bar. That it does so only after the monster moved is inferred, not
+    read.
+  - The bar's Draw GUI draws only while the bar is visible and either the
+    enemy health bar option or `healthBarDraw` is set, at the bar's own
+    coordinates converted through `GetGuiCoords`.
+- **The runner's draw passes skip a hidden layer, but not a hidden
+  instance.** The Pre-Draw pass, the layer-by-layer event pass (Post-Draw and
+  the three GUI events) and the main layer pass all walk the room's layers in
+  depth order, and pass over a layer whose visible flag is clear before
+  touching any of its elements. Inside a visible layer each instance's own
+  flags are tested, so an invisible instance is still visited on every walk;
+  only its event is not run.
+- **`layer_set_visible` deactivates.** It writes the layer's visible flag. On
+  a real change, for every layer kind but one, it also deactivates every
+  instance element on the layer when hiding it, and reactivates them when
+  showing it (the two helpers in the table below). What the layer kinds mean
+  is inferred.
+- **The fixed layers: `SetupRoomLayers`.** It is called only from `RoomGoto`
+  and creates these layers, with their depths:
+  - `Layer_Shadows` +4, `Particles_1` -11001, `Water_Overlay` -11500,
+    `Outline` -11601;
+  - `UI_7999` -11999, `UI_8000` -12000, `UI_COMBAT_TEXT` -12001, `Vignette`
+    -12500;
+  - `UI_Pickup_Log_obj` -12997, `UI_Controller_obj` -12998, `UI_9000` -13000,
+    `UI_9001` -13001;
+  - `Camera_obj` -13900, `Loot_Manager_obj` -13999, `UI_10000` -14000,
+    `Menu_Controller` -14001, `Darkness` -14002, `Color_Blind` -14003;
+  - `Layer_UI_Parent_0` to `_49` at -13000-i, kept in `global.uiLayer[room]`,
+    and `Game_Layer_0` to `Game_Layer_5500` at -i.
+- **`ActivateDeactivateProps` hides; it never deactivates.** Its body sits in
+  `ActivateDeactivateFuncs`, with a local variant beside it. It culls by the
+  `visible` flag:
+  - props (`Collision_Prop_obj`, `Destructible_NoCollision_Parent_obj`,
+    `Visual_Parent_obj`) against the view box `viewBoxL/R/T/B`, and one of
+    those blocks also sets the prop's `light.visible`;
+  - monsters (`Enemy_Child_Basic_obj`, through `monsterHandleArray`) against
+    the player box `playerBoxL/R/T/B`: it sets the monster's `visible`,
+    `myShadow.visible` and `myHealthBar.visible`, and clears `wasActive` and
+    `isMoving`;
+  - it also runs `m_CorpseStep` and `m_runEnemyBuffs`.
+- **`DeactivateObject`** removes an instance's light from the renderer and
+  then calls `instance_deactivate_object`. Only `Satanic_Cube_obj`'s Alarm 2
+  and the `Labyrinth_Trigger_*` collisions call it.
+- **This corrects two earlier statements.** `docs/RUNTIME_DATA_MODELS.md`
+  § 11.3's "it deactivates only props and their lights", and
+  [population-performance-analysis.md](population-performance-analysis.md)
+  § 2.2's "Deactivation ... is used for props and their lights", are wrong by
+  these readings. The game's own box pass hides props, monsters, shadows and
+  health bars through `visible` and deactivates nothing; its one deactivating
+  script is reached from the two places above.
+- **The light renderer.** `Darkness_Overlay_obj`'s Draw runs the Bulb
+  renderer's Update. Its hard-light pass walks every registered point light
+  each frame: it drops a light whose weak reference died or that was
+  destroyed, skips an invisible one, and tests a visible one against the
+  screen, drawing it when it is on screen. 168 Create events reference
+  `light`: flames, torches, braziers, lanterns and candles, and also
+  `Visual_Parent_obj`, `Enemy_Parent_obj`, `Player_obj`,
+  `Projectile_Player_obj`, `Skill_Ground_Effect_obj`, `Portal_Parent_obj` and
+  `Shrine_Parent_obj`. Which of them register a light in a given zone is not
+  established.
+
+**Measured beside it, the light pass's split.** Re-reading H2's `.stacks.txt`
+(`frameprof-20261007-144936`), the hard-light pass
+(`AccumulateHardLights@anon@28380@BulbRenderer@BulbRenderer`) is 9.11% of
+samples. Of that, struct member reads are 4.75%, on-screen tests 1.83%, sprite
+checks 0.37% and lock calls 0.13%; the rest is not split here. The per-light
+reads and tests are the largest part, and they run for every registered light
+whether or not it is drawn, so the pass's cost follows the number of
+registered lights.
+
+Addresses, absolute, for the same build (research addresses, never called
+from player code):
+
+| What | Address | Module offset |
+|---|---|---|
+| `UpdateDepth` | 0x146ddcd00 | `Hero_Siege.exe+0x6ddcd00` |
+| `SetupRoomLayers` | 0x146ddd9b0 | `Hero_Siege.exe+0x6ddd9b0` |
+| `layer_set_visible` | 0x14b53cc60 | `Hero_Siege.exe+0xb53cc60` |
+| Its deactivate helper (hiding) | 0x14b493940 | `Hero_Siege.exe+0xb493940` |
+| Its reactivate helper (showing) | 0x14b48e740 | `Hero_Siege.exe+0xb48e740` |
+| The same pass, reporting (Pre-Draw; skips hidden layers) | 0x14b610b30 | `Hero_Siege.exe+0xb610b30` |
+| `ActivateDeactivateProps` body | 0x1401f9060 | `Hero_Siege.exe+0x1f9060` |
+| `ActivateDeactivateProps`, local variant | 0x1401fdd40 | `Hero_Siege.exe+0x1fdd40` |
+| `DeactivateObject` | 0x140762190 | `Hero_Siege.exe+0x762190` |
+| Bulb renderer's hard-light pass | 0x1402d9d40 | `Hero_Siege.exe+0x2d9d40` |
+
+The layer-by-layer event pass and the main layer pass, also read here for how
+they treat a hidden layer, are in the table of "The per-frame functions".
+
+## The lever
+
+The owner's rule, 2026-10-07: choose the lever by the largest measured share
+it can reach, by changing one value inside a call the game already makes, and
+never by suspending the runtime (the hub's `AGENTS.md` § "Don't Suspend the
+Game's Own Runtime").
+
+**Chosen: fill the map as you approach (`fillroll`), off by default.** Map
+Reveal's fill (`reveal spawn 1`, "Really spawn every pack on arrival")
+already changes one value inside a call the game makes: its
+`distance_to_object` detour answers 0 to every spawner's own "is a player
+within 1,050 px" check, so every pack in the zone is born at arrival (§ 11.2
+of `docs/RUNTIME_DATA_MODELS.md`). The new switch narrows that answer to
+spawners within a reach of the local player, 3,000 px by default. Spawners
+further out keep the game's real answer and are born as the player comes
+near, as `densityroll` already does for density copies. A filled zone then
+holds far fewer living monsters at a time, and every runner walk over its
+instances is shorter. Nothing is deactivated, hidden or paused.
+
+What it can reach, in H2 (Act_01_02 at density 2, filled):
+
+- **Each monster is about three active instances:** the monster, its
+  `myShadow` and its `myHealthBar` (a static reading, above). 2,167 monsters
+  × 3 is about 6,500 of H2's 9,700 instances, so about 67% of what every
+  runner walk visits.
+- **Each active instance costs the runtime about 0.34 µs a frame.** Far
+  scenery sleep measured it: 4,204 props asleep took 1.42-1.44 ms a frame off
+  the runtime at density 5 (the module guide, "Far scenery sleep
+  (`farsleep`)", Measured). H2's own mean, the runtime's 47.35% of 8.44 ms
+  over about 9,700 instances, is 0.41 µs, which is an upper bound because not
+  all of the runtime's time is per instance.
+- **Expected saving: 1.1-1.7 ms a frame, 13-20% of H2's frame thread.** The
+  saved work is (monsters the fill holds back) × 3 instances × 0.34 µs, if
+  25-50% of the 2,167 monsters are within 3,000 px of the player. It is an
+  estimate to compare against, not a pass condition. The live A/B decides
+  `lever-result: saves` when H2 filled at once costs at least 5% more work per
+  frame than H2 with the rolling fill, and `lever-result: no-saving`
+  otherwise. Work per frame is (1000 / fps) × the frame thread's working
+  share, which stays comparable if the faster run reaches the 144 fps limiter.
+- **Perhaps some of the light renderer's 9.25% too.** `Enemy_Parent_obj`'s
+  Create references `light`, but whether monsters register lights in
+  Act_01_02 is not established; the lever's live check `light-follows`
+  records it.
+- **Nothing in H1 or town,** where the fill is off. That is by design, and
+  those rooms are its negative controls.
+
+Rejected, each with its number and its reason, so that none is proposed again
+without new evidence:
+
+- **Hide far `Game_Layer_#` layers.** The draw passes skip a hidden layer's
+  elements, and that walk is about 22.8% of H2. But `layer_set_visible`
+  deactivates every instance on a layer it hides and reactivates them when it
+  shows it (the reading above), so this is wholesale deactivation, the class
+  the rule above does not recommend. Writing the layer's visible flag
+  directly instead would rest on a struct layout, which the hub's `AGENTS.md`
+  § "Never Call an Address You Resolved by Hand" rules out. Ruled out by the
+  driver, 2026-10-07.
+- **Set instances' `visible` flag.** The runner still visits an invisible
+  instance on every walk; only its Draw event is skipped. The game's own
+  `ActivateDeactivateProps` already hides far props, monsters, shadows and
+  health bars that way. What is left to win is Draw-event game code, about
+  5.9% at most in H2: `Enemy_Child_Basic_obj` Draw 0.75%,
+  `Shadow_Parent_obj` Draw 0.37% and `Enemy_Health_Bar_Parent_obj` Draw GUI
+  4.75%. The game also rewrites `visible` itself (`updateLightShadowBarsPos`,
+  `ActivateDeactivateProps`), so a value we set would not hold.
+- **Cull far lights.** At most 9.25% (about 0.78 ms a frame), and in H2 only:
+  H1 has no `Darkness_Overlay_obj` Draw samples and town 0.68%. Its cost is a
+  GML loop over every registered point light. It would need either a hook on
+  an anonymous closure method
+  (`Update@anon@3631@BulbRenderer@BulbRenderer`, whose name changes with every
+  game patch, `docs/RUNTIME_DATA_MODELS.md` § 5.3), or ForgePact calling the
+  lights' own `RemoveFromRenderer` and `AddToRenderer`, and which objects own
+  the lights is not established. **It is the next lever** if `light-follows`
+  shows the light share stays after the rolling fill.
+- **Deactivate far monsters** (option C of
+  [population-performance-analysis.md](population-performance-analysis.md)):
+  the suspension class.
+- **Shrink the player box.** It changes which monsters the game steps
+  (`EnemyStepHandleNew`, 8.73% in H2), which is gameplay.
+- **Fewer `Game_Layer_#` layers.** The count is a constant in two scripts and
+  sets the depth-sorting resolution. The empty layers' overhead measured
+  about 1.5 points at density 1 (the far-sleep research).
+- **Far scenery sleep and `densityroll`** already reach H1's runtime: far
+  sleep took 8-8.5 points of runtime at density 5, and `densityroll` took
+  `timer_system_update` from 8.7% to 2.1%. They are shipped, not new. The
+  lever's live session measures far sleep's reach in H1 on this build, as
+  research.
+
+A stdlib model under `docs/models/` was considered and not built: the game's
+side is one documented comparison (§ 11.2 of `docs/RUNTIME_DATA_MODELS.md`),
+the only cost constant is a measurement, and the live A/B measures the saving
+directly.
+
 ## Not done here
 
 - **Candidates 2-4 (DXVK, a snapshot-worker-apply GML offload, child
   processes).** Nothing is installed, offloaded or spawned here. This research
   only states the most each one could win; each gets its own workorder, written
   against that record.
+- **Light culling, the next candidate for the runtime route.** It is not
+  built here (see [The lever](#the-lever) for why it is second). It becomes
+  the next lever only if the lever's live session (workorder
+  forgepact-183-frame-thread-lever, Live 1) records under `light-follows` that
+  the light renderer's share stays in H2 after the rolling fill; if the share
+  follows the monsters, the rolling fill already takes it.
 - **The working set of an idle child process** (asked for under candidate 4).
   Launching a second game instance risks Steam's single-instance check and the
   real saves, and `docs/RUNTIME_DATA_MODELS.md` § 5.9 already measures the
@@ -544,7 +777,9 @@ largest of the three bucket shares.
   the first later workorder that changes `frameprof`.
 - **Names beyond the listed functions.** Only the per-frame function, its other
   branch, the two dispatchers, and the step dispatcher's five and the draw
-  dispatcher's four heaviest runtime-only callees are named. Naming more of
+  dispatcher's four heaviest runtime-only callees are named, with the
+  functions of "Static reading: layers, visibility and the light renderer".
+  Naming more of
   the runtime goes to whichever candidate's workorder needs it.
 - **Whether `SaveFileGMAsync` reaches `buffer_save_async`.** It needs the
   `HookBuiltin` counter described above, in a live session; no candidate here
