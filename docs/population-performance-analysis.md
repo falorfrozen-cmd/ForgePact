@@ -71,16 +71,20 @@ names are the game's; the numbers are constants it uses.
   per frame) and the effect timers run **only for monsters inside the player
   box**. Far monsters do not step in vanilla either - the Beacon's "zero scans
   beyond 1500 px" was this box, not GameMaker deactivation.
-- The game never deactivates monsters. The creator census (271/271 awake,
-  enemies counted at 7300 px) already showed this; the decompile confirms the
+- Not observed: the creator census found 271/271 awake, and the enemy loop's
+  box pass only toggles flags. The census (enemies counted at 7300 px)
+  already showed this; the decompile confirms the
   monster pass only toggles flags. Deactivation (`DeactivateObject`,
   `instance_deactivate_object`) is used for props and their lights.
   **Correction, 2026-10-07** (static reading): that last sentence is wrong.
   `ActivateDeactivateProps` deactivates nothing; it culls props, like
   monsters, by setting `visible` (and a prop's `light.visible`), and the
   every-30-frames walk over the player box above is this function's.
-  `DeactivateObject` is called only from `Satanic_Cube_obj`'s Alarm 2 and the
-  `Labyrinth_Trigger_*` collisions. See
+  `DeactivateObject` has direct (`call rel32`) callers only in
+  `Satanic_Cube_obj`'s Alarm 2 and the `Labyrinth_Trigger_*` collisions;
+  direct calls to the `instance_deactivate_*` builtins and
+  `layer_set_visible`, and calls through `script_execute` or a method value,
+  were not searched, so other deactivation routes are not established. See
   [main-thread offload research, layers, visibility and the light renderer](main-thread-offload-research.md#static-reading-layers-visibility-and-the-light-renderer)
   and the hub's `docs/RUNTIME_DATA_MODELS.md` § 5.13.
 

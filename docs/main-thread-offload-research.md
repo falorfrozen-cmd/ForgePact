@@ -614,15 +614,18 @@ what the runtime route's levers were judged against in [The lever](#the-lever).
     `isMoving`;
   - it also runs `m_CorpseStep` and `m_runEnemyBuffs`.
 - **`DeactivateObject`** removes an instance's light from the renderer and
-  then calls `instance_deactivate_object`. Only `Satanic_Cube_obj`'s Alarm 2
-  and the `Labyrinth_Trigger_*` collisions call it.
+  then calls `instance_deactivate_object`. Its direct (`call rel32`) callers
+  are only `Satanic_Cube_obj`'s Alarm 2 and the `Labyrinth_Trigger_*`
+  collisions; direct calls to the `instance_deactivate_*` builtins and
+  `layer_set_visible`, and calls through `script_execute` or a method value,
+  were not searched, so other deactivation routes are not established.
 - **This corrects two earlier statements.** `docs/RUNTIME_DATA_MODELS.md`
   § 11.3's "it deactivates only props and their lights", and
   [population-performance-analysis.md](population-performance-analysis.md)
   § 2.2's "Deactivation ... is used for props and their lights", are wrong by
   these readings. The game's own box pass hides props, monsters, shadows and
   health bars through `visible` and deactivates nothing; its one deactivating
-  script is reached from the two places above.
+  script has direct (`call rel32`) callers only in the two places above.
 - **The light renderer.** `Darkness_Overlay_obj`'s Draw runs the Bulb
   renderer's Update. Its hard-light pass walks every registered point light
   each frame: it drops a light whose weak reference died or that was
@@ -653,7 +656,7 @@ from player code):
 | `layer_set_visible` | 0x14b53cc60 | `Hero_Siege.exe+0xb53cc60` |
 | Its deactivate helper (hiding) | 0x14b493940 | `Hero_Siege.exe+0xb493940` |
 | Its reactivate helper (showing) | 0x14b48e740 | `Hero_Siege.exe+0xb48e740` |
-| The same pass, reporting (Pre-Draw; skips hidden layers) | 0x14b610b30 | `Hero_Siege.exe+0xb610b30` |
+| The runner's Pre-Draw layer pass (skips hidden layers) | 0x14b610b30 | `Hero_Siege.exe+0xb610b30` |
 | `ActivateDeactivateProps` body | 0x1401f9060 | `Hero_Siege.exe+0x1f9060` |
 | `ActivateDeactivateProps`, local variant | 0x1401fdd40 | `Hero_Siege.exe+0x1fdd40` |
 | `DeactivateObject` | 0x140762190 | `Hero_Siege.exe+0x762190` |
