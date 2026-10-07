@@ -218,6 +218,20 @@ static bool AnyContains(const std::vector<std::string>& lines, const std::string
     return false;
 }
 
+// The sample count from the summary's first line ("frameprof: 1.5 s, 749
+// samples, ..."); 0 when no line carries one.
+static unsigned SamplesIn(const std::vector<std::string>& summary)
+{
+    for (const auto& l : summary) {
+        const size_t end = l.find(" samples");
+        if (end == std::string::npos || end == 0) continue;
+        const size_t start = l.rfind(' ', end - 1);
+        if (start == std::string::npos) continue;
+        try { return static_cast<unsigned>(std::stoul(l.substr(start + 1, end - start - 1))); } catch (...) {}
+    }
+    return 0;
+}
+
 // A capture that never finishes means the sampler deadlocked against the
 // frame thread; there is no recovering from that inside the process.
 static DWORD WINAPI Watchdog(LPVOID)
@@ -369,12 +383,35 @@ int main(int argc, char** argv)
     }
 
     // ---- a frame limiter that spins is waiting, not working ----
+    // The work is about an eighth of each frame, so the test's "some game
+    // code was seen" is a claim about a sample, and on a loaded machine the
+    // sampler gets few: 24 harnesses at a time left this capture as few as
+    // 67 samples of 749, and the full suites beside it fewer still, where no
+    // sample landing in the work is likely (ForgePact #190). So the capture
+    // runs again, twice as long, until it holds kSpinMinSamples (zero game
+    // samples in 100 at 1 in 8 is under 1 in 100,000), and a capture that
+    // still falls short fails as starved rather than as a wrong bucket.
     {
+        constexpr unsigned kSpinMinSamples = 100;
         g_Mode = SpinWait;
         Sleep(50);
         std::string why;
-        Result(profiler.Start(Params("spinning", 1.5, 500), why), "spinning/started", why);
-        Result(Finish("spinning", summary), "spinning/finished");
+        bool started = false, finished = false;
+        unsigned samples = 0;
+        double seconds = 1.5;
+        for (int attempt = 1; attempt <= 3; ++attempt, seconds *= 2) {
+            started = profiler.Start(Params("spinning", seconds, 500), why);
+            if (!started) break;
+            finished = Finish("spinning", summary);
+            if (!finished) break;
+            samples = SamplesIn(summary);
+            if (samples >= kSpinMinSamples) break;
+            std::printf("NOTE spinning/retry attempt %d: %u samples in %.1f s, under %u\n", attempt, samples,
+                        seconds, kSpinMinSamples);
+        }
+        Result(started, "spinning/started", why);
+        Result(finished, "spinning/finished");
+        Result(samples >= kSpinMinSamples, "spinning/enough_samples", std::to_string(samples));
         Result(AnyContains(summary, "the frame limiter spins instead of sleeping"), "spinning/summary_says_so");
     }
 
