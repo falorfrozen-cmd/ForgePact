@@ -148,6 +148,9 @@ class FrameProfilerBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(r["spinWait"])
         self.assertGreaterEqual(self.bucket(r, "spin"), 60.0)
         self.assertLessEqual(r["time"]["workingPercent"], 40.0)
+        # The harness recaptures until it has 100 samples (ForgePact #190):
+        # fewer, and "no game code seen" says the sampler was starved.
+        self.assertGreaterEqual(r["capture"]["samples"], 100, self.line("spinning/enough_samples"))
         self.assertGreater(self.bucket(r, "game"), 0.0)
         # A clock read under game code is not a frame limiter.
         self.assertIsNone(self.reports["chain"]["spinWait"])
