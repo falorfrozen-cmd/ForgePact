@@ -22,6 +22,14 @@ before the fix, it printed `monster_originals=100 gold_originals=10000`.
 Target scenarios pin one coin whose amount is scaled, arguments untouched at
 x1 and inside AFK FARM's reward scope, a non-number or infinite amount left
 alone and counted, and one log line per session.
+
+ForgePact #173: a research-build session at x100 ended with no `dropmult gold
+coin` line written. The baseline `coin_line_precedes_original` pins why that
+says no DropGold call reached the hook: the first coin line after a multiplier
+change is logged before the game's original runs. The `gold_crumbs` targets
+pin the breadcrumb points around both originals, through the harness's
+recording sink. The harness is built a second time without a sink, where the
+points must compile to nothing and every other scenario print the same.
 """
 import os
 import shutil
@@ -51,8 +59,14 @@ class DropGoldBehaviorTests(unittest.TestCase):
         code = code.replace("// PRODUCTION_DROPMANAGER", spliceable(HEADER.read_text(encoding="utf-8")))
         cpp = out / "dropgold.cpp"
         cpp.write_text(code, encoding="utf-8")
+        # The recording sink build, and the one with no sink (#173): there the
+        # breadcrumb points must compile to nothing, as in the player build.
+        cls.output = cls.build_and_run(out, cpp, "dropgold", None)
+        cls.output_no_sink = cls.build_and_run(out, cpp, "dropgold-nosink", "DROP_GOLD_HARNESS_NO_SINK")
 
-        cls.binary = out / ("dropgold.exe" if os.name == "nt" else "dropgold")
+    @staticmethod
+    def build_and_run(out, cpp, name, define):
+        binary = out / (name + ".exe" if os.name == "nt" else name)
         if os.name == "nt":
             vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
             if not vswhere.is_file():
@@ -64,35 +78,38 @@ class DropGoldBehaviorTests(unittest.TestCase):
             if not install:
                 raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
             vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
-            batch = out / "compile.cmd"
+            batch = out / f"compile-{name}.cmd"
+            flag = f" /D{define}" if define else ""
             batch.write_text(
                 f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-                f'cl /nologo /std:c++20 /EHsc /O2 "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "dropgold.obj"}"\n'
+                f'cl /nologo /std:c++20 /EHsc /O2{flag} "{cpp}" /Fe:"{binary}" /Fo:"{out / (name + ".obj")}"\n'
                 f'exit /b %errorlevel%\n', encoding="utf-8")
             command = ["cmd", "/d", "/c", str(batch)]
         else:
             compiler = shutil.which("c++")
             if not compiler:
                 raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
-            command = [compiler, "-std=c++20", "-O2", str(cpp), "-o", str(cls.binary)]
+            command = [compiler, "-std=c++20", "-O2", *([f"-D{define}"] if define else []),
+                       str(cpp), "-o", str(binary)]
 
         result = subprocess.run(command, cwd=out, capture_output=True, text=True)
-        (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        (out / f"compile-{name}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
 
-        run = subprocess.run([str(cls.binary)], capture_output=True, text=True)
-        cls.output = run.stdout
-        (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+        run = subprocess.run([str(binary)], capture_output=True, text=True)
+        (out / f"run-{name}.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+        return run.stdout
 
-    def line(self, label):
-        for line in self.output.split("\n"):
+    def line(self, label, output=None):
+        output = self.output if output is None else output
+        for line in output.split("\n"):
             if line.split(" ")[1:2] == [label]:
                 return line
-        raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+        raise AssertionError(f"scenario {label!r} not in harness output:\n{output}")
 
-    def assertScenario(self, label):
-        self.assertTrue(self.line(label).startswith("PASS "), self.line(label))
+    def assertScenario(self, label, output=None):
+        self.assertTrue(self.line(label, output).startswith("PASS "), self.line(label, output))
 
     def test_all_scenarios_pass(self):
         self.assertIn("RESULT OK", self.output, self.output)
@@ -144,6 +161,55 @@ class DropGoldBehaviorTests(unittest.TestCase):
         self.assertScenario("target/scaling_line_is_not_repeated")
         self.assertIn("LOG dropmult gold: x100 applied to the coin's amount (one coin per drop)",
                       self.output)
+
+    # ---- #173: the ordering, and the breadcrumbs ----------------------------------
+
+    def test_baseline_coin_line_precedes_original(self):
+        # At x10 and x100 the first `dropmult gold coin 1/8 at x<n>` line is
+        # logged before the game's DropGold runs, so a session that died with
+        # no such line had no DropGold call reach the hook. With and without
+        # a sink: the breadcrumbs change nothing about it.
+        for output in (self.output, self.output_no_sink):
+            self.assertScenario("baseline/coin_line_precedes_original", output)
+
+    def test_target_gold_crumbs_x100_monster_drop(self):
+        # MonsterGold enter, Gold enter (51 handed, 5100 passed), Gold done,
+        # MonsterGold done, each immediately around its original.
+        self.assertScenario("target/gold_crumbs_x100_monster_drop")
+        self.assertIn("[DropGold enter #", self.line("target/gold_crumbs_x100_monster_drop"))
+        self.assertIn(" x100 a4 51 -> 5100]", self.line("target/gold_crumbs_x100_monster_drop"))
+
+    def test_target_gold_crumbs_x1_handed_equals_passed(self):
+        self.assertScenario("target/gold_crumbs_x1_handed_equals_passed")
+
+    def test_target_gold_crumbs_non_numeric_unchanged(self):
+        self.assertScenario("target/gold_crumbs_non_numeric_unchanged")
+
+    def test_target_gold_crumbs_direct_drop_gold_only_gold_pair(self):
+        self.assertScenario("target/gold_crumbs_direct_drop_gold_only_gold_pair")
+
+    def test_target_gold_crumbs_reward_scope_records_x1(self):
+        self.assertScenario("target/gold_crumbs_reward_scope_records_x1")
+
+    def test_target_gold_crumbs_ordinal_rises_per_call(self):
+        self.assertScenario("target/gold_crumbs_ordinal_rises_per_call")
+
+    def test_without_a_sink_the_points_compile_to_nothing(self):
+        # The player build defines no sink. There each point is ((void)0), its
+        # arguments never evaluated, and the harness built that way prints
+        # exactly what the sink build prints, less the crumb scenarios.
+        header = HEADER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        no_sink = header[header.index("#ifdef FP_GOLD_CRUMB_SINK"):]
+        no_sink = no_sink[no_sink.index("#else"):no_sink.index("#endif")]
+        for point in ("FP_GOLD_CRUMB_ORDINAL", "FP_GOLD_CRUMB_ENTER", "FP_GOLD_CRUMB_DONE"):
+            self.assertRegex(no_sink, r"#define " + point + r"\([^)\n]*\)\s+\(\(void\)0\)\s*\n")
+        self.assertIn("RESULT OK", self.output_no_sink, self.output_no_sink)
+        crumb = ("PASS target/gold_crumbs_", "FAIL target/gold_crumbs_")
+        sink_lines = [l for l in self.output.split("\n") if not l.startswith(crumb)]
+        self.assertEqual(self.output_no_sink.split("\n"), sink_lines)
+        # Negative control: the crumb scenarios exist in the sink build only.
+        self.assertTrue(any(l.startswith(crumb) for l in self.output.split("\n")))
+        self.assertFalse(any(l.startswith(crumb) for l in self.output_no_sink.split("\n")))
 
 
 if __name__ == "__main__":

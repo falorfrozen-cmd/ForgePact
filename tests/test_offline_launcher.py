@@ -62,6 +62,43 @@ class OfflineLaunchTests(unittest.TestCase):
         self.assertEqual(self.exe.read_bytes(), original)
         self.assertEqual(result["launch"]["phase"], "started")
 
+    def test_game_starts_with_the_default_error_mode(self):
+        # ForgePact #173 / guide Known Limitations 25: a game that inherits
+        # SEM_NOGPFAULTERRORBOX leaves no dump and no Application Error event.
+        # 0x04000000 is Windows' value; create=True lets this run where
+        # subprocess has no such constant.
+        with patch.object(launcher.subprocess, "CREATE_DEFAULT_ERROR_MODE", 0x04000000, create=True):
+            result = self.launch()
+        self.assertEqual(result["pid"], 1234)
+        args, kwargs = self.spawn.call_args
+        self.assertTrue(kwargs["creationflags"] & 0x04000000)
+        # Every other expectation of the spawn still holds.
+        self.assertEqual(args, ([str(self.exe.resolve())],))
+        self.assertEqual(kwargs["cwd"], str(self.exe.parent))
+        self.assertEqual(kwargs["env"]["SteamAppId"], "269210")
+        self.assertNotIn("shell", kwargs)
+
+    def test_launch_works_where_subprocess_has_no_default_error_mode_flag(self):
+        # Negative control: a subprocess without the constant (Linux CI) still
+        # launches, with no flags, rather than raising AttributeError.
+        stub = SimpleNamespace(Popen=self.spawn)
+        with patch.object(launcher, "subprocess", stub):
+            result = self.launch()
+        self.assertEqual(result["pid"], 1234)
+        self.assertEqual(self.spawn.call_args.kwargs.get("creationflags", 0), 0)
+
+    def test_module_imports_where_subprocess_has_no_default_error_mode_flag(self):
+        import subprocess
+        import types
+        stub = types.ModuleType("subprocess")
+        stub.__dict__.update({k: v for k, v in vars(subprocess).items()
+                              if k not in ("CREATE_DEFAULT_ERROR_MODE", "__name__", "__spec__", "__loader__")})
+        spec = importlib.util.spec_from_file_location("offline_launcher_no_flag", launcher.__file__)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"subprocess": stub}):
+            spec.loader.exec_module(module)
+        self.assertTrue(callable(module.launch_game))
+
     def test_parent_runtime_is_added_only_to_child_environment(self):
         self.runtime.rename(self.exe.parent.parent / self.runtime.name)
         original = dict(launcher.os.environ)

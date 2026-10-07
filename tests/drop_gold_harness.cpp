@@ -23,6 +23,12 @@
 // its own 100 times - 10,000 coins, the freeze #77 reports. Target: one coin
 // whose amount is x100, arguments untouched at x1 and inside a reward scope, a
 // non-number amount left alone and counted, and one log line per session.
+//
+// #173 (a research-build game exit at x100 with no `dropmult gold coin` line
+// written): a baseline that the first coin line after a multiplier change is
+// already logged when DropGold's original runs, the ordering that reading
+// rests on; and targets for the breadcrumb points around both originals,
+// recorded through a sink this file defines (crashwatch's, in the plugin).
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -58,6 +64,16 @@ struct RValue {
 struct CInstance { int id = 0; };
 using PFUNC_YYGMLScript = RValue& (*)(CInstance*, CInstance*, RValue&, int, RValue**);
 
+// One gold breadcrumb (#173) as the recording sink below received it.
+struct Crumb {
+    std::string script;
+    bool done = false;
+    long ordinal = 0;
+    int mult = 0;
+    bool hasHanded = false, hasPassed = false;
+    RValue handed, passed;
+};
+
 struct World {
     std::map<std::string, void*> hooks;        // what HookOneScript was handed, by name
     bool rewardScope = false;
@@ -68,6 +84,10 @@ struct World {
     std::vector<std::vector<RValue>> goldArgs; // the values each DropGold original saw
     std::vector<RValue**> goldArrays;          // the array each DropGold original was handed
     std::vector<std::string> log;
+    std::vector<size_t> logAtGoldEntry;        // log lines already written as each DropGold original began
+    std::vector<Crumb> crumbs;                 // what the breadcrumb sink received, in order
+    std::vector<size_t> crumbsAtGoldEntry;     // crumbs already recorded as each original began
+    std::vector<size_t> crumbsAtMonsterEntry;
 };
 static World world;
 
@@ -94,6 +114,8 @@ inline bool Active() { return world.rewardScope; }
 // detour intercepts.
 static RValue& FakeDropGold(CInstance*, CInstance*, RValue& R, int argc, RValue** A) {
     ++world.goldOriginals;
+    world.logAtGoldEntry.push_back(world.log.size());
+    world.crumbsAtGoldEntry.push_back(world.crumbs.size());
     std::vector<RValue> seen;
     for (int i = 0; i < argc; ++i) seen.push_back(A && A[i] ? *A[i] : RValue());
     world.goldArgs.push_back(seen);
@@ -103,6 +125,7 @@ static RValue& FakeDropGold(CInstance*, CInstance*, RValue& R, int argc, RValue*
 static RValue g_GoldArgs[9];
 static RValue& FakeDropMonsterGold(CInstance* S, CInstance* O, RValue& R, int, RValue**) {
     ++world.monsterOriginals;
+    world.crumbsAtMonsterEntry.push_back(world.crumbs.size());
     g_GoldArgs[0] = RValue("389f7fbc8e058d61efa91d591e1dc5c5ad418fec");
     g_GoldArgs[1] = RValue(11024.0);
     g_GoldArgs[2] = RValue(4528.0);
@@ -131,6 +154,27 @@ static bool HookOneScript(const char* name, const char*, void* hook, PFUNC_YYGML
              : &FakeOther;
     return true;
 }
+
+// The gold breadcrumb sink (#173). The plugin defines one only in the research
+// build (crashwatch); with none, the header's points compile to nothing. The
+// runner builds this harness twice: with the recording sink below, and with
+// DROP_GOLD_HARNESS_NO_SINK, where every scenario but the crumb ones runs and
+// must print exactly what the sink build prints.
+#ifndef DROP_GOLD_HARNESS_NO_SINK
+static void RecordGoldCrumb(const char* script, bool done, long ordinal, int mult,
+                            const RValue* handed, const RValue* passed) {
+    Crumb c;
+    c.script = script;
+    c.done = done;
+    c.ordinal = ordinal;
+    c.mult = mult;
+    if (handed) { c.hasHanded = true; c.handed = *handed; }
+    if (passed) { c.hasPassed = true; c.passed = *passed; }
+    world.crumbs.push_back(c);
+}
+#define FP_GOLD_CRUMB_SINK(script, done, ordinal, mult, handed, passed) \
+    RecordGoldCrumb(script, done, ordinal, mult, handed, passed)
+#endif
 
 #define FORGEPACT_RELEASE 1
 #define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ((void)0)
@@ -301,6 +345,152 @@ static void TargetFirstScalingLogsOnce() {
     for (const auto& line : world.log) std::cout << "LOG " << line << "\n";
 }
 
+// ---- #173: the ordering the crash's evidence rests on, and the breadcrumbs --
+
+// A DropGold call at x1 so the next coin at another multiplier is the first
+// one after a change, which always logs (the per-coin count re-arms).
+static void ArmCoinLog() {
+    DropManager::Instance().SetMultiplier("gold", 1);
+    RValue a[9] = { RValue("fp"), RValue(1.0), RValue(2.0), RValue(1.0), RValue(3.0) };
+    RValue* args[9];
+    for (int i = 0; i < 9; ++i) args[i] = &a[i];
+    CallHooked("DropGold", 9, args);
+}
+
+// Baseline (holds on the header before the breadcrumbs too): the first coin
+// line after a multiplier change is already logged when the game's DropGold
+// runs. Out appends and closes out.txt per line, so in the crashed session
+// (#173) a missing coin line means no DropGold call reached the hook.
+static void BaselineCoinLinePrecedesOriginal() {
+    bool ok = true;
+    std::string detail;
+    for (int mult : { 10, 100 }) {
+        Fresh(1);
+        ArmCoinLog();
+        DropManager::Instance().SetMultiplier("gold", mult);
+        world.log.clear();
+        world.logAtGoldEntry.clear();
+        CallHooked("DropMonsterGold");
+        const std::string first = "dropmult gold coin 1/8 at x" + std::to_string(mult);
+        long at = -1;
+        for (size_t i = 0; i < world.log.size() && at < 0; ++i)
+            if (world.log[i].rfind(first, 0) == 0) at = (long)i;
+        const long before = world.logAtGoldEntry.size() == 1 ? (long)world.logAtGoldEntry[0] : -1;
+        ok = ok && at >= 0 && before > at;
+        detail += "x" + std::to_string(mult) + ":line=" + std::to_string(at)
+                + ",lines_at_original=" + std::to_string(before) + " ";
+    }
+    Report("baseline/coin_line_precedes_original", ok, detail);
+}
+
+#ifndef DROP_GOLD_HARNESS_NO_SINK
+static std::string CrumbValue(bool has, const RValue& v) {
+    if (!has) return "none";
+    if (v.m_Kind == VALUE_STRING) return "kind 1 '" + v.text + "'";
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64)
+        return "kind " + std::to_string(v.m_Kind);
+    return std::to_string((long long)v.number);
+}
+static std::string Crumbs() {
+    std::string s = "crumbs=";
+    for (const auto& c : world.crumbs) {
+        s += "[" + c.script + (c.done ? " done #" : " enter #") + std::to_string(c.ordinal)
+           + " x" + std::to_string(c.mult);
+        if (c.script == "DropGold" && !c.done)
+            s += " a4 " + CrumbValue(c.hasHanded, c.handed) + " -> " + CrumbValue(c.hasPassed, c.passed);
+        s += "]";
+    }
+    return s;
+}
+static bool IsCrumb(size_t i, const char* script, bool done, int mult) {
+    return i < world.crumbs.size() && world.crumbs[i].script == script
+        && world.crumbs[i].done == done && world.crumbs[i].mult == mult;
+}
+static bool Amount(size_t i, double handed, double passed) {
+    const Crumb& c = world.crumbs[i];
+    return c.hasHanded && c.hasPassed && c.handed.number == handed && c.passed.number == passed
+        && c.handed.m_Kind != VALUE_STRING && c.passed.m_Kind != VALUE_STRING;
+}
+
+// x100 monster drop: MonsterGold enter, Gold enter (51 handed, 5100 passed),
+// Gold done, MonsterGold done, each pair sharing its ordinal, and each point
+// immediately around its original (the fakes record how many crumbs exist as
+// they begin).
+static void TargetCrumbsX100MonsterDrop() {
+    Fresh(100);
+    CallHooked("DropMonsterGold");
+    bool ok = world.crumbs.size() == 4
+        && IsCrumb(0, "DropMonsterGold", false, 100) && IsCrumb(1, "DropGold", false, 100)
+        && IsCrumb(2, "DropGold", true, 100) && IsCrumb(3, "DropMonsterGold", true, 100);
+    ok = ok && Amount(1, 51.0, 5100.0)
+        && world.crumbs[0].ordinal == world.crumbs[3].ordinal
+        && world.crumbs[1].ordinal == world.crumbs[2].ordinal
+        && world.crumbsAtMonsterEntry.size() == 1 && world.crumbsAtMonsterEntry[0] == 1
+        && world.crumbsAtGoldEntry.size() == 1 && world.crumbsAtGoldEntry[0] == 2;
+    Report("target/gold_crumbs_x100_monster_drop", ok, Crumbs());
+}
+
+static void TargetCrumbsX1PassThrough() {
+    Fresh(1);
+    CallHooked("DropMonsterGold");
+    const bool ok = world.crumbs.size() == 4
+        && IsCrumb(0, "DropMonsterGold", false, 1) && IsCrumb(1, "DropGold", false, 1)
+        && IsCrumb(2, "DropGold", true, 1) && IsCrumb(3, "DropMonsterGold", true, 1)
+        && Amount(1, 51.0, 51.0);
+    Report("target/gold_crumbs_x1_handed_equals_passed", ok, Crumbs());
+}
+
+static void TargetCrumbsNonNumeric() {
+    Fresh(100);
+    world.monsterAmount = RValue("not a number");
+    CallHooked("DropMonsterGold");
+    bool ok = world.crumbs.size() == 4 && IsCrumb(1, "DropGold", false, 100) && IsCrumb(2, "DropGold", true, 100);
+    if (ok) {
+        const Crumb& c = world.crumbs[1];
+        ok = c.hasHanded && c.hasPassed
+          && c.handed.m_Kind == VALUE_STRING && c.handed.text == "not a number"
+          && c.passed.m_Kind == VALUE_STRING && c.passed.text == "not a number";
+    }
+    Report("target/gold_crumbs_non_numeric_unchanged", ok, Crumbs());
+}
+
+static void TargetCrumbsDirectDropGold() {
+    Fresh(100);
+    RValue a[9] = { RValue("fp"), RValue(1.0), RValue(2.0), RValue(1.0), RValue(7.0) };
+    RValue* args[9];
+    for (int i = 0; i < 9; ++i) args[i] = &a[i];
+    CallHooked("DropGold", 9, args);
+    const bool ok = world.crumbs.size() == 2
+        && IsCrumb(0, "DropGold", false, 100) && IsCrumb(1, "DropGold", true, 100)
+        && Amount(0, 7.0, 700.0) && world.crumbs[0].ordinal == world.crumbs[1].ordinal
+        && world.crumbsAtGoldEntry.size() == 1 && world.crumbsAtGoldEntry[0] == 1;
+    Report("target/gold_crumbs_direct_drop_gold_only_gold_pair", ok, Crumbs());
+}
+
+static void TargetCrumbsRewardScope() {
+    Fresh(100);
+    world.rewardScope = true;
+    CallHooked("DropMonsterGold");
+    const bool ok = world.crumbs.size() == 4
+        && IsCrumb(0, "DropMonsterGold", false, 1) && IsCrumb(1, "DropGold", false, 1)
+        && IsCrumb(2, "DropGold", true, 1) && IsCrumb(3, "DropMonsterGold", true, 1)
+        && Amount(1, 51.0, 51.0);
+    Report("target/gold_crumbs_reward_scope_records_x1", ok, Crumbs());
+}
+
+// The ordinal counts the session's calls per script: two drops, one apart.
+static void TargetCrumbsOrdinalRises() {
+    Fresh(100);
+    CallHooked("DropMonsterGold");
+    CallHooked("DropMonsterGold");
+    const bool ok = world.crumbs.size() == 8
+        && world.crumbs[4].ordinal == world.crumbs[0].ordinal + 1
+        && world.crumbs[5].ordinal == world.crumbs[1].ordinal + 1
+        && world.crumbs[0].ordinal >= 1 && world.crumbs[1].ordinal >= 1;
+    Report("target/gold_crumbs_ordinal_rises_per_call", ok, Crumbs());
+}
+#endif
+
 int main() {
     BaselineOtherTargetsKeepCountSemantics();
     TargetFirstScalingLogsOnce();
@@ -312,7 +502,20 @@ int main() {
     TargetNonNumericAmountIsLeftAlone();
     Report("target/scaling_line_is_not_repeated", g_ScalingLinesTotal == 1,
            "scaling_lines_total=" + std::to_string(g_ScalingLinesTotal));
-    for (const auto& line : world.log) std::cout << "LOG " << line << "\n";
+    // #173's scenarios run after every earlier one, so the per-coin counters
+    // those print are as before, and the log printed below is still the
+    // non-numeric scenario's.
+    const std::vector<std::string> lastLog = world.log;
+    BaselineCoinLinePrecedesOriginal();
+#ifndef DROP_GOLD_HARNESS_NO_SINK
+    TargetCrumbsX100MonsterDrop();
+    TargetCrumbsX1PassThrough();
+    TargetCrumbsNonNumeric();
+    TargetCrumbsDirectDropGold();
+    TargetCrumbsRewardScope();
+    TargetCrumbsOrdinalRises();
+#endif
+    for (const auto& line : lastLog) std::cout << "LOG " << line << "\n";
     std::cout << (g_Failures ? "RESULT FAIL " + std::to_string(g_Failures) : std::string("RESULT OK")) << "\n";
     return g_Failures ? 1 : 0;
 }

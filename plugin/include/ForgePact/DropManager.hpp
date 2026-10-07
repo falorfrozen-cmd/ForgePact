@@ -268,15 +268,44 @@ private:
             + " (arguments 1,2: " + GoldValueText(GoldArg(argc, A, 1)) + ", " + GoldValueText(GoldArg(argc, A, 2)) + ")");
     }
 
+    // Gold breadcrumbs (ForgePact #173): a point immediately before and after
+    // each call into the DropGold and DropMonsterGold originals, outside the
+    // game-original guard, so a game that dies inside one leaves an `enter`
+    // with no `done`. The including file supplies the sink before including
+    // this header:
+    //   FP_GOLD_CRUMB_SINK(const char* script, bool done, long ordinal,
+    //                      int mult, const RValue* handed, const RValue* passed)
+    // `ordinal` counts the session's calls of that hook (enter and done share
+    // it), `mult` is the multiplier in force (1 inside a reward scope), and
+    // for a DropGold enter `handed`/`passed` are argument 4 as the hook got it
+    // and as it hands it on (nullptr when missing, and for every other point).
+    // Only the research build defines a sink (crashwatch). With none, each
+    // point is ((void)0) and its arguments are never evaluated, so the player
+    // build compiles to what it did before the points existed.
+#ifdef FP_GOLD_CRUMB_SINK
+#define FP_GOLD_CRUMB_ORDINAL() static long goldCrumbCalls = 0; const long goldCrumb = ++goldCrumbCalls
+#define FP_GOLD_CRUMB_ENTER(script, mult, handed, passed) FP_GOLD_CRUMB_SINK(script, false, goldCrumb, mult, handed, passed)
+#define FP_GOLD_CRUMB_DONE(script, mult) FP_GOLD_CRUMB_SINK(script, true, goldCrumb, mult, nullptr, nullptr)
+#else
+#define FP_GOLD_CRUMB_ORDINAL() ((void)0)
+#define FP_GOLD_CRUMB_ENTER(script, mult, handed, passed) ((void)0)
+#define FP_GOLD_CRUMB_DONE(script, mult) ((void)0)
+#endif
+
     static RValue& Hook_DropGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
         FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropGold);
+        FP_GOLD_CRUMB_ORDINAL();
         const int mult = HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold;
         const RValue* amount = (A && argc > kDropGoldAmountArg) ? A[kDropGoldAmountArg] : nullptr;
         if (mult <= 1 || !mgr.m_Orig_DropGold) {
-            if (mgr.m_Orig_DropGold) LogGoldCoin(mgr, mult, argc, A, amount);
+            if (mgr.m_Orig_DropGold) {
+                LogGoldCoin(mgr, mult, argc, A, amount);
+                FP_GOLD_CRUMB_ENTER("DropGold", mult, amount, amount);
+            }
             RValue& _res = mgr.m_Orig_DropGold ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, A)) : R;
+            if (mgr.m_Orig_DropGold) FP_GOLD_CRUMB_DONE("DropGold", mult);
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
         }
@@ -295,7 +324,9 @@ private:
                     + "; the coin keeps the game's amount");
             }
             LogGoldCoin(mgr, mult, argc, A, amount);
+            FP_GOLD_CRUMB_ENTER("DropGold", mult, amount, amount);
             RValue& _res = FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, A));
+            FP_GOLD_CRUMB_DONE("DropGold", mult);
             BP_LOGDROP("DropGold", _res, argc, A);
             return _res;
         }
@@ -315,7 +346,9 @@ private:
                 + GoldNum(value) + " -> " + GoldNum(scaled.ToDouble()));
         }
         LogGoldCoin(mgr, mult, argc, A, &scaled);
+        FP_GOLD_CRUMB_ENTER("DropGold", mult, amount, &scaled);
         RValue& _res = FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropGold(S, O, R, argc, args.data()));
+        FP_GOLD_CRUMB_DONE("DropGold", mult);
         BP_LOGDROP("DropGold", _res, argc, args.data());
         return _res;
     }
@@ -327,8 +360,13 @@ private:
         FP_DROP_INCIDENT_SCOPE();
         auto& mgr = Instance();
         BP_DIAG_INCREMENT(mgr.m_Cnt_DropMonsterGold);
+        FP_GOLD_CRUMB_ORDINAL();
         // Once, whatever the multiplier: its one coin is scaled in DropGold.
+        if (mgr.m_Orig_DropMonsterGold)
+            FP_GOLD_CRUMB_ENTER("DropMonsterGold", HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold, nullptr, nullptr);
         RValue& _res = mgr.m_Orig_DropMonsterGold ? FP_DROP_GAME_ORIGINAL(mgr.m_Orig_DropMonsterGold(S, O, R, argc, A)) : R;
+        if (mgr.m_Orig_DropMonsterGold)
+            FP_GOLD_CRUMB_DONE("DropMonsterGold", HeroSiege::RewardScope::Active() ? 1 : mgr.m_Mult_DropGold);
         BP_LOGDROP("DropMonsterGold", _res, argc, A);
         return _res;
     }
