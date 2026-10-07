@@ -1915,22 +1915,69 @@ struct CreationCallerInfo {
         return object;
     }
 };
-// Pack markers: a spawner that creates a monster has given birth, so its map
-// marker goes now instead of when the rotating check reaches it. One
-// object_index read of the caller (shared through CreationCallerInfo) and,
-// only for a known spawner creating a monster, one id read. Nothing runs
-// while the markers are off.
-static void PackMarkerBirth(CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller)
+// Pack markers: a spawner that creates a monster is reported with the object
+// it created and its own object, which `packmarks why` counts per kind; under
+// the `timer` retirement policy its map marker goes now instead of when the
+// rotating check reaches it. One object_index read of the caller (shared
+// through CreationCallerInfo) and, only for a known spawner creating a
+// monster, one id read. Nothing runs while the markers are off.
+// The research build also reports a spawner's non-enemy creates
+// (`packmarks why <kind> other creates:`), before the enemy filter returns;
+// the player build filters non-enemy creates first and reports none of them.
+// An attributed enemy create hands its creator and object back through
+// `creatorOut`/`createdOut`, so PackMarkerBirthScope can record the instance
+// it made once the original call has returned.
+static void PackMarkerBirth(CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller, int64_t& creatorOut, int& createdOut)
 {
     if (!S || argc < 4 || !Args || !ForgePact::PackMarkers::Instance().Enabled()) return;
     try {
-        if (!IsEnemyObject((int)Args[3].ToDouble())) return;
+        const int created = (int)Args[3].ToDouble();
+#ifndef FORGEPACT_RELEASE
+        if (!IsEnemyObject(created)) {
+            if (!IsCachedCreatorObject(caller.ObjectIndex())) return;
+            const double id = InstanceIdOf(S->ToRValue());
+            if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0)
+                ForgePact::PackMarkers::Instance().NoteOtherCreate(static_cast<int64_t>(id), created, caller.ObjectIndex());
+            return;
+        }
+#endif
+        if (!IsEnemyObject(created)) return;
         if (!IsCachedCreatorObject(caller.ObjectIndex())) return;
         const double id = InstanceIdOf(S->ToRValue());
-        if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0)
-            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id));
+        if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0) {
+            ForgePact::PackMarkers::Instance().MarkSpawned(static_cast<int64_t>(id), created, caller.ObjectIndex());
+            creatorOut = static_cast<int64_t>(id);
+            createdOut = created;
+        }
     } catch (...) {}
 }
+// The pack's members: a spawner's attributed enemy create is reported before
+// the original call (PackMarkerBirth), and the instance it made is read from
+// the call's Result after it returned, as EnemyBornScope reads it, and
+// recorded as that spawner's member (`packgone` mode retires a marker once
+// every recorded member is gone). Only a route that ran the original marks
+// the scope completed; a result that is not an instance id records nothing.
+struct PackMarkerBirthScope {
+    RValue& result;
+    int64_t creator = -1;
+    int created = -1;
+    bool completed = false;
+    PackMarkerBirthScope(RValue& r, CInstance* S, int argc, RValue* Args, CreationCallerInfo& caller) : result(r)
+    {
+        PackMarkerBirth(S, argc, Args, caller, creator, created);
+    }
+    void Completed() { completed = true; }
+    ~PackMarkerBirthScope()
+    {
+        if (creator < 0 || !completed) return;
+        try {
+            if (!IsNumericInstanceRead(result)) return;
+            const double id = result.ToDouble();
+            if (std::isfinite(id) && id >= 0 && id <= 9007199254740991.0 && std::floor(id) == id)
+                ForgePact::PackMarkers::Instance().NoteMember(creator, static_cast<int64_t>(id), created);
+        } catch (...) {}
+    }
+};
 // Observe native success through the already-installed creation hooks. Store
 // only the caller identity before the call: native creation may remove self.
 // No event is replayed and no instance pointer survives the native call.
@@ -2022,14 +2069,14 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
 #ifndef FORGEPACT_RELEASE
     DpCreatorBirth(callerInfo, argc, Args);
 #endif
-    PackMarkerBirth(S, argc, Args, callerInfo);
+    PackMarkerBirthScope packBirth(Result, S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     // A hook installed earlier in this process cannot be removed safely while
     // the game is running.  With every related feature Off, take a true native
     // pass-through path: no object lookup, cache access or post-create work.
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); packBirth.Completed(); }
         return;
     }
 #endif
@@ -2046,14 +2093,14 @@ static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); }
+        if (g_OrigICD) { g_OrigICD(Result, S, O, argc, Args); populationBirth.Completed(); packBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICD) { DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false); populationBirth.Completed(); }
+    if (g_OrigICD) { DoMultiCreate(g_OrigICD, Result, S, O, argc, Args, objIdx, false); populationBirth.Completed(); packBirth.Completed(); }
 }
 static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
@@ -2066,11 +2113,11 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
 #ifndef FORGEPACT_RELEASE
     DpCreatorBirth(callerInfo, argc, Args);
 #endif
-    PackMarkerBirth(S, argc, Args, callerInfo);
+    PackMarkerBirthScope packBirth(Result, S, argc, Args, callerInfo);
     if (argc >= 4 && HeadhunterRunning()) { try { HhDeathEffectTrigger(S, (int)Args[3].ToDouble()); } catch (...) {} }
 #ifdef FORGEPACT_RELEASE
     if (ForgePact::DensityManager::Instance().Mult <= 1.0 && g_EnemyMultAll <= 1 && g_ObjMult.empty()) {
-        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); packBirth.Completed(); }
         return;
     }
 #endif
@@ -2084,14 +2131,14 @@ static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue
         && (DensityWindowActive() || IsCachedCreatorObject(objIdx));
     if (!densityCreate && g_EnemyMultAll <= 1 && g_SpecialCreateDepth == 0
         && ObjectMultiplier(objIdx) <= 1) {
-        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); }
+        if (g_OrigICL) { g_OrigICL(Result, S, O, argc, Args); populationBirth.Completed(); packBirth.Completed(); }
         return;
     }
 #endif
 #ifndef FORGEPACT_RELEASE
     WatchLog(ret, objIdx);
 #endif
-    if (g_OrigICL) { DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true); populationBirth.Completed(); }
+    if (g_OrigICL) { DoMultiCreate(g_OrigICL, Result, S, O, argc, Args, objIdx, true); populationBirth.Completed(); packBirth.Completed(); }
 }
 
 // The detour goes to a TaggedThunks thunk, not to `dest` itself: it marks the
@@ -40079,6 +40126,243 @@ static void ProjProbeCommand(const std::string& rest)
 }
 #endif // FORGEPACT_RELEASE (projprobe)
 
+#ifndef FORGEPACT_RELEASE
+// The second instrument's one-shot reads for `packmarks` (issue #181, Live
+// procedure 4 matches these lines exactly). Each runs once per command,
+// never per frame; every object and script is reached by name.
+
+// A number as these lines print it: whole numbers without decimals.
+static std::string PackMarksNumberText(double v)
+{
+    if (!std::isfinite(v)) return "other";
+    if (std::fabs(v) <= 9007199254740991.0 && std::floor(v) == v) return std::to_string(static_cast<long long>(v));
+    std::string s = std::to_string(v);
+    while (!s.empty() && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
+// A runtime value for these lines. ToDouble is asked only of a number kind
+// (IsNumericInstanceRead's comment: on any other kind it raises the runner's
+// error instead of throwing).
+static std::string PackMarksValueText(const RValue& v)
+{
+    try {
+        if ((static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu) == static_cast<uint32_t>(VALUE_UNDEFINED)) return "undefined";
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) return PackMarksNumberText(v.ToDouble());
+        if (v.m_Kind == VALUE_REF) return "ref:" + PackMarksNumberText(v.ToDouble());
+        if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
+        if (v.m_Kind == VALUE_STRING) {
+            std::string s = v.ToString();
+            for (char& c : s) if (c == '\r' || c == '\n' || c == ' ') c = '_';
+            return "\"" + s + "\"";
+        }
+        if (v.m_Kind == VALUE_ARRAY) return "array";
+        return Describe(v);
+    } catch (...) { return "unreadable"; }
+}
+// The runtime's own name for an object index, never a hand-typed table.
+static std::string PackMarksObjectName(int obj)
+{
+    try { return g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) }).ToString(); }
+    catch (...) { return "#" + std::to_string(obj); }
+}
+// `packmarks census getter:` - the store getter's control, as the boss
+// probe's (BossProbeGetterControl): gDataProtected[177] holds a key equal to
+// its index, and the slot is `proven` only when GPV and
+// PC_GetVariableGMLWrapper, both called by name, answer the same non-zero
+// number for it. The key guard runs before either call (a -1 key faulted the
+// game, RUNTIME_DATA_MODELS 5.8).
+static void PackMarksCensusGetter()
+{
+    std::string slot = "unreadable", gpvText = "unread", wrapText = "unread";
+    bool proven = false;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= 177) slot = "missing";
+        else {
+            const RValue key = g_Yytk->CallBuiltin("array_get", { arr, RValue(177.0) });
+            slot = PackMarksValueText(key);
+            if (ForgePact::PackMarkers::KeyInRange(key)) {
+                RValue gpv, wrap;
+                bool gpvOk = false, wrapOk = false;
+                try {
+                    gpv = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GPV.data(), { key });
+                    gpvText = PackMarksValueText(gpv);
+                    gpvOk = gpv.m_Kind == VALUE_REAL || gpv.m_Kind == VALUE_INT32 || gpv.m_Kind == VALUE_INT64;
+                } catch (...) { gpvText = "unreadable"; }
+                try {
+                    wrap = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data(), { key });
+                    wrapText = PackMarksValueText(wrap);
+                    wrapOk = wrap.m_Kind == VALUE_REAL || wrap.m_Kind == VALUE_INT32 || wrap.m_Kind == VALUE_INT64;
+                } catch (...) { wrapText = "unreadable"; }
+                proven = gpvOk && wrapOk && gpv.ToDouble() == wrap.ToDouble() && gpv.ToDouble() != 0.0;
+            }
+        }
+    } catch (...) {}
+    Out("packmarks census getter: gDataProtected[177]=" + slot + " GPV=" + gpvText + " wrapper=" + wrapText
+        + (proven ? " -> proven" : " -> unproven"));
+}
+// `packmarks census <kind>`: one line per spawner of that kind, read now.
+static void PackMarksCensusKind(int kind)
+{
+    using PM = ForgePact::PackMarkers;
+    const std::string name = PM::kKindNames[kind];
+    const auto list = PM::Instance().CensusList(kind);
+    for (size_t i = 0; i < list.size(); ++i) {
+        const PM::CensusEntry& e = list[i];
+        Out("packmarks census " + name + " #" + std::to_string(i + 1) + ": id=" + std::to_string(e.id)
+            + " x=" + PackMarksNumberText(e.x) + " y=" + PackMarksNumberText(e.y)
+            + " marked=" + (e.marked ? "1" : "0") + " born=" + (e.born ? "1" : "0")
+            + " spawnPack=" + PM::PackText(e.pack)
+            + " enemyArray=" + PM::kArrayTallyNames[e.enemyArray]
+            + " attributed=" + std::to_string(e.attributed)
+            + " members=" + std::to_string(e.membersAlive) + "/" + std::to_string(e.membersRecorded));
+    }
+    Out("packmarks census " + name + ": " + std::to_string(list.size()) + " spawners");
+}
+// `packmarks creator <id>`: one spawner, read now - what it is, its
+// protected values through their keys, its recorded pack members and how
+// many still exist, the nearest living instance of each object attributed to
+// it and of Enemy_Parent_obj, and every instance variable (the net for a
+// signal the static reading missed).
+static void PackMarksCreator(const std::string& arg)
+{
+    using PM = ForgePact::PackMarkers;
+    auto& pm = PM::Instance();
+    const std::string text = TrimCopy(arg);
+    bool digits = !text.empty() && text.size() <= 15;
+    for (char c : text) if (c < '0' || c > '9') digits = false;
+    if (!digits) { Out("packmarks: usage -> packmarks creator <id> (a non-negative whole number)"); return; }
+    const int64_t id = std::stoll(text);
+    const std::string head = "packmarks creator " + text;
+    const RValue inst((double)id);
+    bool exists = false, placed = false;
+    int object = -1;
+    double x = 0, y = 0;
+    try { exists = g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean(); } catch (...) {}
+    if (exists) {
+        try {
+            const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("object_index") });
+            if (IsNumericInstanceRead(oi)) object = static_cast<int>(oi.ToDouble());
+            const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") });
+            const RValue vy = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") });
+            if (IsNumericInstanceRead(vx) && IsNumericInstanceRead(vy)) { x = vx.ToDouble(); y = vy.ToDouble(); placed = true; }
+        } catch (...) {}
+    }
+    const int kind = pm.KindOf(id, object);
+    const PM::CreatorCreates creates = pm.CreatesOf(id);
+    Out(head + ": object=" + (object >= 0 ? PackMarksObjectName(object) : std::string("none"))
+        + " kind=" + (kind >= 0 ? std::string(PM::kKindNames[kind]) : std::string("none"))
+        + " x=" + (placed ? PackMarksNumberText(x) : std::string("none"))
+        + " y=" + (placed ? PackMarksNumberText(y) : std::string("none"))
+        + " exists=" + (exists ? "1" : "0")
+        + " attributed=" + std::to_string(creates.attributed));
+    // Protected values: `<name>=<key>-><value>` for each one the spawner
+    // carries; only a key the guard accepts reaches the getter.
+    static const char* const kProtected[] = {
+        "spawnPack", "zoneState", "destroySelf", "summoningPortal", "isWormhole", "eTyp", "etherRoll",
+        "enemySpawn", "loadAffixes", "specialType", "packType", "spawnAmount", "new_enemy",
+    };
+    std::string prot;
+    if (exists) {
+        for (const char* name : kProtected) {
+            const PM::PackRead r = PM::ReadProtected(inst, name);
+            if (r.bucket == PM::PackAbsent) continue;
+            const std::string value = r.bucket == PM::PackNumber ? PackMarksNumberText(r.value) : std::string(PM::kPackBucketNames[r.bucket]);
+            prot += std::string(prot.empty() ? "" : " ") + name + "=" + PackMarksValueText(r.key) + "->" + value;
+        }
+    }
+    Out(head + " protected: " + (prot.empty() ? std::string("none") : prot));
+    // Members recorded for the whole game session, each asked of the game now.
+    const PM::MemberCount members = pm.Members(id);
+    std::string memberText;
+    if (members.recorded == 0) memberText = "none";
+    else {
+        memberText = "alive=" + std::to_string(members.alive) + "/" + std::to_string(members.recorded);
+        for (size_t i = 0; i < members.objects.size() && i < 8; ++i)
+            memberText += " " + PackMarksObjectName(members.objects[i].object) + "="
+                + std::to_string(members.objects[i].alive) + "/" + std::to_string(members.objects[i].recorded);
+    }
+    Out(head + " members: " + memberText);
+    // The alive read's control, per recorded member (at most eight): its
+    // recorded id and that id's alive read (the exact call the members rule
+    // makes), then the id instance_nearest returns for the same object from
+    // the spawner and the same alive read on that id. The read is proven only
+    // where a recorded id equals the id of a visibly living instance and
+    // reads alive=1; a nearest id that reads 1 while the recorded one reads 0
+    // says the recorded id is not the pack member on screen.
+    std::string ids;
+    const auto memberList = pm.MemberList(id);
+    for (size_t i = 0; i < memberList.size() && i < 8; ++i) {
+        const auto& [member, object] = memberList[i];
+        std::string found = "none", foundAlive = "-", same = "-";
+        if (placed && object >= 0) {
+            try {
+                const RValue closest = g_Yytk->CallBuiltin("instance_nearest", { RValue(x), RValue(y), RValue((double)object) });   // not `near`: windef.h
+                if (IsNumericInstanceRead(closest) && closest.ToDouble() >= 0) {
+                    const int64_t nearId = static_cast<int64_t>(closest.ToDouble());
+                    found = std::to_string(nearId);
+                    foundAlive = PM::MemberReadAlive(nearId) ? "1" : "0";
+                    same = nearId == member ? "1" : "0";
+                }
+            } catch (...) {}
+        }
+        ids += std::string(ids.empty() ? "" : " ") + std::to_string(member) + "/" + PackMarksObjectName(object)
+            + "/alive=" + (PM::MemberReadAlive(member) ? "1" : "0")
+            + "/nearest=" + found + "/nearestAlive=" + foundAlive + "/same=" + same;
+    }
+    Out(head + " ids: " + (ids.empty() ? std::string("none") : ids));
+    // The nearest living instance of each object attributed to it (this
+    // zone's creates and the session's members, at most eight) and of
+    // Enemy_Parent_obj, in whole pixels; `none` when there is none.
+    std::string nearest;   // not `near`: windef.h defines it away
+    if (placed) {
+        std::vector<int> objects;
+        for (const auto& [obj, n] : creates.objects) if (objects.size() < 8) objects.push_back(obj);
+        for (const PM::MemberObject& m : members.objects)
+            if (objects.size() < 8 && std::find(objects.begin(), objects.end(), m.object) == objects.end()) objects.push_back(m.object);
+        const int parent = IsEnemyParentIndex();
+        if (parent >= 0) objects.push_back(parent);
+        for (int obj : objects) {
+            std::string px = "none";
+            try {
+                const RValue found = g_Yytk->CallBuiltin("instance_nearest", { RValue(x), RValue(y), RValue((double)obj) });
+                if (IsNumericInstanceRead(found) && found.ToDouble() >= 0) {
+                    const RValue nx = g_Yytk->CallBuiltin("variable_instance_get", { found, RValue("x") });
+                    const RValue ny = g_Yytk->CallBuiltin("variable_instance_get", { found, RValue("y") });
+                    if (IsNumericInstanceRead(nx) && IsNumericInstanceRead(ny))
+                        px = std::to_string(static_cast<long long>(std::llround(std::hypot(nx.ToDouble() - x, ny.ToDouble() - y))));
+                }
+            } catch (...) {}
+            nearest += (nearest.empty() ? "" : " ") + PackMarksObjectName(obj) + "=" + px;
+        }
+    }
+    Out(head + " near: " + (nearest.empty() ? std::string("none") : nearest));
+    // Every instance variable, values cut to 40 characters, eight per line.
+    std::vector<std::string> vars;
+    if (exists) {
+        try {
+            const RValue names = g_Yytk->CallBuiltin("variable_instance_get_names", { inst });
+            const int count = static_cast<int>(g_Yytk->CallBuiltin("array_length", { names }).ToDouble());
+            for (int i = 0; i < count; ++i) {
+                const std::string name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+                std::string value = "unreadable";
+                try { value = PackMarksValueText(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(name) })); } catch (...) {}
+                if (value.size() > 40) value.resize(40);
+                vars.push_back(name + "=" + value);
+            }
+        } catch (...) {}
+    }
+    if (vars.empty()) vars.push_back("none");
+    for (size_t i = 0; i < vars.size(); i += 8) {
+        std::string line;
+        for (size_t j = i; j < vars.size() && j < i + 8; ++j) line += (line.empty() ? "" : " ") + vars[j];
+        Out(head + " vars: " + line);
+    }
+}
+#endif // FORGEPACT_RELEASE (packmarks research reads)
+
 // Player command: tune the pack-marker look live until the defaults are
 // confirmed by eye, and read the marker accounting. A standalone early
 // return from RunCommand rather than one more `else if` in its chain,
@@ -40096,10 +40380,102 @@ static void PackMarksCommand(const std::string& rest)
         //   packmarks icons 0|1 | iconscale <mult> | reload           (the PNG icons; reload after replacing a file)
         //   packmarks cluster <world px|0> | badge 0|1                (nearby spawners drawn as one marker, with a count)
         //   packmarks list [n]   - the first n markers (id, kind, x, y, armed)
+        // Research build only (issue #181: which rule retires the special
+        // packs' markers; the live procedures match these lines exactly):
+        //   packmarks why            - per kind, retirements by rule this zone, held and remembered spawners, attributed creates, age at retirement, the four objects and the four non-enemy objects created most
+        //   packmarks census         - the store getter's control line, then a one-shot walk of every creator of each kind: enemyCreatorTimer, enemyArray, the protected pack state
+        //   packmarks census <kind>  - one line per spawner of that kind (kind by icon name: normal, ambush, ancient, champion, colossal_chest, legion, miniboss)
+        //   packmarks creator <id>   - one spawner: object, kind, protected values, recorded members, nearest living instances, every variable
+        //   packmarks retire timer|state|kind   - the marker retirement policy (default kind, the shipped rule; timer and state are the older ones)
         auto& pm = ForgePact::PackMarkers::Instance();
         auto& st = pm.StyleRef();
         std::string a2; const std::string a1 = Lower(FirstToken(rest, a2));
         auto number = [](const std::string& s, double fallback) { try { return std::stod(s); } catch (...) { return fallback; } };
+#ifndef FORGEPACT_RELEASE
+        using PM = ForgePact::PackMarkers;
+        if (a1 == "why") {
+            const auto marked = pm.KindCounts();
+            const auto held = pm.HeldNow();
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                const PM::KindStats& s = pm.Stats(k);
+                Out(std::string("packmarks why ") + PM::kKindNames[k] + ": listed=" + std::to_string(s.listed)
+                    + " marked=" + std::to_string(marked[k])
+                    + " spawned=" + std::to_string(s.retired[PM::ReasonSpawned])
+                    + " destroyed=" + std::to_string(s.retired[PM::ReasonDestroyed])
+                    + " timergone=" + std::to_string(s.retired[PM::ReasonTimerGone])
+                    + " givenup=" + std::to_string(s.retired[PM::ReasonGivenUp])
+                    + " stateborn=" + std::to_string(s.retired[PM::ReasonStateBorn])
+                    + " kindborn=" + std::to_string(s.retired[PM::ReasonKindBorn])
+                    + " packgone=" + std::to_string(s.retired[PM::ReasonPackGone])
+                    + " held=" + std::to_string(held[k].held)
+                    + " unlinked=" + std::to_string(held[k].unlinked)
+                    + " attributed=" + std::to_string(s.attributed)
+                    + " remembered=" + std::to_string(s.remembered)
+                    + " sameid=" + std::to_string(s.sameid)
+                    + " age=" + std::to_string(s.ageMin) + ".." + std::to_string(s.ageMax)
+                    + " frame=" + std::to_string(pm.Frame()));
+            }
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                std::string list;
+                for (const auto& [obj, n] : pm.TopCreates(k, 4))
+                    list += (list.empty() ? "" : " ") + PackMarksObjectName(obj) + "=" + std::to_string(n);
+                Out(std::string("packmarks why ") + PM::kKindNames[k] + " creates: " + (list.empty() ? std::string("none") : list));
+                std::string other;
+                for (const auto& [obj, n] : pm.TopOtherCreates(k, 4))
+                    other += (other.empty() ? "" : " ") + PackMarksObjectName(obj) + "=" + std::to_string(n);
+                Out(std::string("packmarks why ") + PM::kKindNames[k] + " other creates: " + (other.empty() ? std::string("none") : other));
+            }
+            return;
+        }
+        if (a1 == "census") {
+            const std::string which = Lower(TrimCopy(a2));
+            if (!which.empty()) {
+                for (int k = 0; k < (int)PM::KindCount; ++k)
+                    if (which == PM::kKindNames[k]) { PackMarksCensusKind(k); return; }
+                Out("packmarks: usage -> packmarks census [normal|ambush|ancient|champion|colossal_chest|legion|miniboss]");
+                return;
+            }
+            auto tally = [](const unsigned (&t)[PM::TallyCount]) {
+                return std::to_string(t[PM::TallyValue]) + "/" + std::to_string(t[PM::TallyUndefined]) + "/"
+                    + std::to_string(t[PM::TallyAbsent]) + "/" + std::to_string(t[PM::TallyOther]);
+            };
+            PackMarksCensusGetter();
+            const auto rows = pm.Census(true);
+            for (int k = 0; k < (int)PM::KindCount; ++k) {
+                const PM::CensusRow& row = rows[k];
+                Out(std::string("packmarks census ") + PM::kKindNames[k] + ": creators=" + std::to_string(row.creators)
+                    + " marked=" + std::to_string(row.marked)
+                    + " timer=" + tally(row.timer)
+                    + " enemyArray=" + tally(row.enemyArray)
+                    + " lost=" + std::to_string(row.lost)
+                    + " stale=" + std::to_string(row.stale)
+                    + " born=" + std::to_string(row.born)
+                    + " attributedUnborn=" + std::to_string(row.attributedUnborn)
+                    + " spawnPack=" + PM::SpawnPackTally(row));
+            }
+            return;
+        }
+        if (a1 == "retire") {
+            const std::string v = Lower(TrimCopy(a2));
+            if (v == "timer") pm.SetRetire(PM::Retire::Timer);
+            else if (v == "state") pm.SetRetire(PM::Retire::State);
+            else if (v == "kind") pm.SetRetire(PM::Retire::Kind);
+            else if (!v.empty()) { Out("packmarks: usage -> packmarks retire timer|state|kind"); return; }
+            Out(std::string("packmarks retire -> ") + PM::RetireName(pm.GetRetire()));
+            return;
+        }
+        // The members rule for `packgone`-mode markers (on by default in both
+        // builds; only this research build can switch it).
+        if (a1 == "gonerule") {
+            const std::string v = Lower(TrimCopy(a2));
+            if (v == "on" || v == "1") pm.SetPackGoneRetires(true);
+            else if (v == "off" || v == "0") pm.SetPackGoneRetires(false);
+            else if (!v.empty()) { Out("packmarks: usage -> packmarks gonerule on|off"); return; }
+            Out(std::string("packmarks gonerule -> ") + (pm.PackGoneRetires() ? "on" : "off"));
+            return;
+        }
+        if (a1 == "creator") { PackMarksCreator(a2); return; }
+#endif
         if (a1 == "style") {
             std::string k, r; k = Lower(FirstToken(a2, r));
             std::string sub, r2; sub = FirstToken(r, r2);
@@ -40146,7 +40522,12 @@ static void PackMarksCommand(const std::string& rest)
             }
             Out("packmarks list: " + std::to_string(shown) + " of " + std::to_string(pm.Count()));
         } else {
-            Out(std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
+            // Markers held now, per kind, in Kind order.
+            std::string kinds;
+            const auto counts = pm.KindCounts();
+            for (int k = 0; k < (int)ForgePact::PackMarkers::KindCount; ++k)
+                kinds += std::string(k ? "," : "") + ForgePact::PackMarkers::kKindNames[k] + ":" + std::to_string(counts[k]);
+            std::string line = std::string("packmarks: ") + (pm.Enabled() ? "ON" : "off")
                 + " hook=" + (g_Orig_DrawMinimapDynamic ? (g_PackMarkerHookNative ? "native" : "table-only") : (g_PackMarkerHookAttempted ? "failed" : "pending"))
                 + " marked=" + std::to_string(pm.Count()) + " spawned=" + std::to_string(pm.Spawned()) + " removed=" + std::to_string(pm.Removed())
                 + " enumerations=" + std::to_string(pm.Enumerations()) + " familyCalls=" + std::to_string(g_PackMarkerFamilyCalls)
@@ -40156,7 +40537,27 @@ static void PackMarksCommand(const std::string& rest)
                 + (pm.IconsTried() ? "" : " (not loaded yet)") + " viaAbsolute=" + std::to_string(pm.IconsViaAbsolute())
                 + " lastAddKind=" + std::to_string(pm.IconLastKind()) + " lastAddValue=" + std::to_string(pm.IconLastValue()) + " addThrows=" + std::to_string(pm.IconLoadThrows())
                 + " iconWrites=" + std::to_string(g_PackMarkerIconWrites) + " iconWriteErrors=" + std::to_string(g_PackMarkerIconWriteErrors)
-                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off"));
+                + " alpha=" + std::to_string(st.alpha) + " iconscale=" + std::to_string(st.iconScale) + " ring=" + (st.ring ? "on" : "off") + " outline=" + (st.outline ? "on" : "off")
+                + " kinds=" + kinds + " unread=" + std::to_string(pm.Unread());
+            // Both builds: how this zone's `packgone`-mode markers (champion,
+            // legion, miniboss) ended or would have, so a report separates a
+            // spawner that went (destroyed=) from the members read turning
+            // gone (gone=, counted whether or not it may retire) and a marker
+            // that read retired (packgone=, only with gonerule=on).
+            std::string ends;
+            for (int k = 0; k < (int)ForgePact::PackMarkers::KindCount; ++k) {
+                if (ForgePact::PackMarkers::kKindRules[k].mode != ForgePact::PackMarkers::Mode::PackGone) continue;
+                const auto& s = pm.Stats(k);
+                ends += std::string(ends.empty() ? "" : ",") + ForgePact::PackMarkers::kKindNames[k]
+                    + ":destroyed=" + std::to_string(s.retired[ForgePact::PackMarkers::ReasonDestroyed])
+                    + "/gone=" + std::to_string(s.goneRead)
+                    + "/packgone=" + std::to_string(s.retired[ForgePact::PackMarkers::ReasonPackGone]);
+            }
+            line += " ends=" + ends + " gonerule=" + (pm.PackGoneRetires() ? "on" : "off");
+#ifndef FORGEPACT_RELEASE
+            line += std::string(" retire=") + ForgePact::PackMarkers::RetireName(pm.GetRetire());
+#endif
+            Out(line);
         }
 }
 
@@ -55881,7 +56282,7 @@ void FrameCallback(FWFrame& FrameContext)
         if (wantMarks) {
             if (!g_PackMarkerHookAttempted && g_Setup && (g_RuntimeFrame % 60) == 0) InstallPackMarkerHook();
             if (g_Orig_DrawMinimapDynamic)
-                marks.OnFrame(g_RuntimeFrame, reveal.ZoneGeneration(), [&reveal] { return reveal.HasReadableMap(); });
+                marks.OnFrame(g_RuntimeFrame, reveal.ZoneGeneration(), [&reveal] { return reveal.HasReadableMap(); }, CurrentRoomKey());
         }
     }
 

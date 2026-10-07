@@ -576,3 +576,495 @@ kept. A future session picking this up should:
    corrected to describe what `MapRevealManager` actually already does
    (mechanics/waypoints/quest markers, not enemies/loot), with no further
    code.
+
+## 11. Pack marker icons replaced a few seconds after arrival (issue #181)
+
+### The symptom
+
+Reported by the owner from play, and reproduced under instrumentation in
+Live 1 below: with Map Reveal and its pack markers on, a new area first shows
+one icon per unspawned pack by kind (ambush, ancient, champion, colossal
+chest, legion, miniboss, normal; Live 1 saw ancient and miniboss icons go,
+the other special kinds were not in that zone), and a few seconds later the
+special-kind icons give way to generic ones while the player has not gone
+near the packs. The marker list
+gives a marker up when its spawner has not shown a numeric
+`enemyCreatorTimer` within 600 frames of being listed, which is 5 s at 120 fps
+and 10 s at 60 fps, about the delay described.
+
+### The candidates, and what decides each
+
+Five explanations fit the report. The instrument below was built so one live
+session tells them apart; as written here, before that session, none was
+measured. What Live 1 measured is under `### Live 1 results`.
+
+- **H1, unarmed give-up (the leading candidate before Live 1).** If the six
+  special spawner kinds never show a numeric `enemyCreatorTimer`, every
+  special marker is dropped 600 frames after listing. A mixed cluster then
+  shows the normal skull (the rarest kind wins only among the markers left),
+  and a spot holding only special packs loses its icon. The support before
+  Live 1 was static only: the SDK's script table has a Create-event closure
+  for `Enemy_Creator_obj` and none for the other six creator objects, and
+  `enemyCreatorTimer` had only been measured on `Enemy_Creator_obj` (the
+  hub's `docs/RUNTIME_DATA_MODELS.md` § 11.2). Live 1 then read it absent on
+  the ancient, miniboss, ambush and colossal chest spawners it sampled.
+  Decided by `givenup=` per kind in `packmarks why`, with `age=` near 600.
+- **H2, a false birth.** A spawner creates enemy-family objects that are not
+  its pack (idle `*_Passive_obj` monsters come with the spawner,
+  `docs/population-performance-analysis.md` § 8), so the create hooks report a
+  birth, the marker is retired and the game's own dots show in its place.
+  Decided by `attributed=` and the `creates:` names in `packmarks why`, read
+  against `packmarks census` still showing the creator's `enemyArray` as not an
+  array.
+- **H3, a real early birth.** The special packs really are born on arrival,
+  and the marker hands over to the game's dots by design (the README's Full
+  Map Reveal row: "its real dots replace the marker"). Decided by the census
+  showing `enemyArray` as an array 30 s after arrival without the player
+  going near.
+- **H4, the icons are lost.** The icon sprites stop drawing and the
+  dots-by-kind fallback shows. Decided by `loaded=7/7` and a growing
+  `iconDraws=` in `packmarks stat` at arrival and 30 s later.
+- **H5, the varied icons were the game's own.** What shows at arrival is the
+  game's own per-type minimap drawing, and our markers then draw over it.
+  Decided by `enumerations=` and `iconDraws=` at arrival and a screenshot with
+  the markers off.
+
+Ruled out statically: one kind's enumeration counting another kind's
+spawners. The SDK's parent table lists all seven creator objects as root
+objects, so `instance_number` and `instance_find` on one never return another's
+instances.
+
+### The instrument
+
+Research build (`build.bat dev`) only, except the `kinds=` field. Counts are
+per zone, reset when the zone generation changes.
+
+- `packmarks stat`, both builds, gains
+  `kinds=normal:<n>,ambush:<n>,ancient:<n>,champion:<n>,colossal_chest:<n>,legion:<n>,miniboss:<n>`,
+  the markers held now per kind; the research build adds `retire=timer` or
+  `retire=state`.
+- `packmarks why` prints one line per kind,
+  `packmarks why <kind>: listed=<n> marked=<n> spawned=<n> destroyed=<n> timergone=<n> givenup=<n> stateborn=<n> attributed=<n> age=<min>..<max> frame=<f>`:
+  the retirements by rule, every create the hooks attributed to a spawner of
+  that kind whether or not it retired the marker, and the frames between
+  listing and retirement (`-1..-1` when none). Then, per kind,
+  `packmarks why <kind> creates: <ObjectName>=<n> ...`, the four objects
+  created most often, named by the runtime's `object_get_name`, or `none`.
+- `packmarks census` walks every spawner of each kind once (never per frame)
+  and prints
+  `packmarks census <kind>: creators=<n> marked=<n> timer=<number>/<undefined>/<absent>/<other> enemyArray=<array>/<undefined>/<absent>/<other> lost=<n> stale=<n>`.
+  `absent` means `variable_instance_exists` is false; `lost` is a spawner with
+  no marker whose `enemyArray` is not an array (a pack still to come that the
+  map no longer shows); `stale` is a marked spawner whose `enemyArray` is an
+  array (a born pack still drawn as unspawned).
+- `packmarks retire timer|state` picks the retirement rule for the session and
+  answers `packmarks retire -> timer` or `-> state`. `timer` is today's
+  behaviour. `state` is the candidate fix: a marker goes only when its
+  spawner no longer exists or the spawner's own `enemyArray`, read by name, is
+  an array (undefined before and while armed, an array once spawned:
+  `docs/RUNTIME_DATA_MODELS.md` § 11.2 in the hub, measured on
+  `Enemy_Creator_obj` only). Nothing else retires it, so an absent
+  timer, a timer that went away and an attributed create all keep the marker.
+  The check is made on the spawner itself, where the marker is used.
+
+### Where the results go
+
+The session that decides between these is Live procedure 1 of the hub
+workorder `forgepact-181-map-reveal-icons` (capture
+`forgepact-181-map-reveal-icons-live-1.md`): two fresh zones, one under each
+rule, a forced birth by warping next to a special marker, and a revisit. Its
+results are recorded here, under `### Live 1 results`, by that workorder's
+record round. The sections above are the design; the results follow.
+
+### Live 1 results
+
+Run 2026-10-06 on the research build (installed DLL SHA-256 `d2bb1c72…`),
+character slot 14, saves backed up and restored clean afterwards. Zone A was
+The Depths of Hell (zone level 294) under `retire timer`, zone B Steam Train
+(zone level 293) under `retire state`, then a forced birth in B by warping
+beside an ambush marker, and a revisit of A. All 19 checks of the procedure
+passed. The capture is the hub's
+`.claude/workorders/forgepact-181-map-reveal-icons-live-1.md`; the numbers
+below are read from it.
+
+What each check showed:
+
+- **The skull and devil icons are ours; the game draws none of them (H5
+  ruled out, measured).** At arrival in A, `enumerations=18` and `iconDraws=781`; the
+  owner saw white skulls, devil icons and coloured dots. With `reveal packs 0`
+  only the coloured dots remained, which the owner called vanilla.
+- **The sprites are not lost (H4 ruled out, measured).** `loaded=7/7` at
+  arrival and 30 s later, with `iconDraws` growing from 781 to 4471.
+- **Unarmed give-up is the mechanism (H1, measured).** In A, 15 ancient and 3
+  miniboss spawners were listed and marked about a second before the first
+  full read; by then all were gone, `givenup=15` at `age=600..602` and
+  `givenup=3` at `age=600..603`, with no other retirement. The census found
+  `enemyCreatorTimer` and `enemyArray` both absent (`variable_instance_exists`
+  false) on all 18, at arrival and 30 s later, so as far as those two reads
+  show, neither variable was going to arm them. The owner saw the devil icons
+  go within 30 s, leaving the skulls and the dots. The census counted all 18
+  as `lost`; on a kind with no `enemyArray`, `lost` only says the spawner has
+  no marker and cannot tell a born pack from one still to come.
+- **The special spawners carry no timer in B either (measured).** Under
+  `state` in B the census read `enemyCreatorTimer` absent on all 9 ambush,
+  10 ancient, 6 colossal chest and 4 miniboss spawners, at arrival and 30 s
+  later; only the normal spawners carried one. So the 600-frame give-up
+  would have dropped those markers too under `timer`.
+- **No false birth retired a special marker (H2 not observed under `timer`,
+  measured).** Ancient and miniboss had `attributed=0` and no attributed
+  creates in A. Normal spawners did have creates attributed to them (58:
+  `Skeleton_Mage_Fire_obj`, `Imp_Passive_obj`, `Hell_Beast_Passive_obj`).
+  Later in the session, under `state`, miniboss spawners had creates
+  attributed too (`Hellspawn_Guardsman_obj` 4 in B, `Servant_of_Devil_obj` 3
+  on the revisit), from spawners about 3000 px from the player, and their
+  markers held. Whether those creates were a miniboss birth is not
+  established; if they were, a born pack's marker held, which is not what
+  the marker is for.
+- **No early birth (H3 not observed, measured).** At 30 s in A no special
+  spawner had an `enemyArray` at all, so the census could show no born
+  pack, and ancient and miniboss had `attributed=0`: no create was
+  attributed to them. The attribution itself was shown working on special
+  spawners later, when the forced ambush birth in B had 42 creates
+  attributed.
+- **`state` keeps every kind (measured by the owner's eye).** In B, 80
+  markers (normal 51, ambush 9, ancient 10, colossal chest 6, miniboss 4) all
+  held from arrival to 30 s later, every kind `lost=0 stale=0 givenup=0`, and
+  the owner confirmed the icons stayed. The counters could not have failed
+  here: under `state` nothing retires a marker but a spawner that no longer
+  exists or an `enemyArray` that is an array, so the evidence is what the
+  owner saw.
+- **`state` still retires born packs, for the kinds it can read (measured).**
+  Warping beside an ambush marker turned 6 of the 9 ambush spawners'
+  `enemyArray` from undefined to an array: `marked` 9 → 3, `stateborn=6`,
+  `stale=0`, with 42 creates attributed. One more normal pack was born at the
+  same time (`enemyArray` 11 → 12 arrays, `stateborn` 11 → 12). The owner saw
+  packs appear, a mix of both.
+- **The revisit read `stale=0`, but that proves little (measured).** Back in
+  A under `state`, 10 s after arrival every kind read `stale=0`, with normal
+  92, ancient 15 and miniboss 3 marked. On the revisit all 92 normal
+  spawners read `enemyArray` undefined, including the 10 that read as an
+  array before the player left, so no spawner could count as `stale`:
+  `stale=0` held by construction. And `state` appears to have marked those
+  10 spent normal spawners again (normal `marked=92`, where 82 were unspawned
+  before the player left). Why the arrays read undefined on the revisit is
+  not established.
+- **Champion and legion were not observed.** Neither zone had a spawner of
+  either kind (`inames` found no ambush or legion instance in A; B had none
+  of champion or legion), so nothing here is measured for them.
+
+**Route.** The mechanism behind #181 is unarmed give-up: the ancient and
+miniboss spawners carry no `enemyCreatorTimer`, so the 600-frame rule dropped
+their markers with no create attributed to them. The `state` candidate kept
+every kind in B and retired the forced ambush birth and the normal births.
+**Not established:** whether a born ancient or miniboss marker retires under
+`state`. Those spawners carry no `enemyArray` (nor does the colossal chest),
+so under `state` their marker goes only when the spawner itself no longer
+exists, and no birth of either kind was forced in this session. A follow-up
+session on the same build, Live procedure 3 of the same workorder, tested
+it; its results follow.
+
+### Live 3 results
+
+Run 2026-10-06 on the same research build (installed DLL SHA-256
+`d2bb1c72…`), character slot 14, saves backed up and restored clean
+afterwards, `forgepact.json` unchanged. One fresh zone, Satanic The Depths of
+Hell (zone level 514), under `retire state` throughout: 92 normal, 15 ancient
+and 3 miniboss spawners listed, no other kind. The player was warped beside
+an ancient marker, then a miniboss marker, then a normal marker as the
+control, then a second ancient marker, about 5 s per warp, with the owner
+watching. Six checks passed, one failed and one was not observed. The
+capture is the hub's `.claude/workorders/forgepact-181-map-reveal-icons-live-3.md`.
+
+- **The build and the instrument answered (pass, measured).** The DLL hash
+  matched, `ping` answered, `packmarks why` printed its per-kind lines,
+  `packmarks retire state` took, and `packmarks stat` read `hook=native` with
+  `retire=state` about 2 s later.
+- **Both kinds under test were present (pass, measured).** `listed=15` for
+  ancient and `listed=3` for miniboss, all marked, `givenup=0` on both: under
+  `state` neither kind was given up, as in Live 1's zone B.
+- **A normal birth still retires its marker (control, pass, measured).** At
+  the normal warp, normal `stateborn` rose 35 → 48 and the census's
+  `enemyArray` array count 35 → 48, with `kinds` normal 57 → 44; the owner
+  saw monsters there ("same for normal"). Whether the normal icon left the
+  minimap was not reported by the owner.
+- **The ancient markers stay under `state` at warps where the owner saw
+  monsters appear (fail, measured).** At both ancient warps (markers 263690 and 264438) the owner
+  saw monsters appear ("ancient warps spawned enemies") and saw the ancient
+  markers stay ("ancient markers are not cleared as well"). Ancient
+  `destroyed=0` and `stateborn=0` throughout, `kinds` ancient 15 → 15, and
+  the census unchanged at `timer=0/0/15/0 enemyArray=0/0/15/0`: every
+  ancient spawner still existed and still carried neither variable
+  afterwards. Creates attributed to ancient spawners rose 0 → 3 at the first
+  ancient warp, 3 → 7 at the miniboss warp and 7 → 10 between the control
+  read and 5 s after the second ancient warp (about 3.5 min)
+  (`Hell_Beast_Passive_obj` 3, `Skeleton_Mage_Fire_obj` 3,
+  `Imp_Passive_obj` 2, `Undead_Priest_Passive_obj` 2).
+- **A miniboss birth was not observed.** The owner saw the miniboss markers
+  stay. Miniboss `attributed=0` with no creates, `destroyed=0`,
+  `stateborn=0`, `kinds` miniboss 3 → 3 and the census unchanged. A
+  screenshot at the miniboss warp shows named monsters ("Sacrilegious
+  Goliath", "Infernal Mystic") nearby, but no create was attributed to a
+  miniboss spawner and the owner did not say whether a miniboss pack
+  appeared, so whether one was born is not established. Ancient-attributed
+  creates rose 3 → 7 at that same warp, so the named monsters may belong to
+  an ancient pack.
+
+**Route: `kinds-birth: kept`.** The `state` candidate does not retire an
+ancient marker at warps where the owner saw monsters appear, because the
+ancient spawner outlives those creates and carries no `enemyArray` to read; so `state` as built cannot
+ship as the fix. The measured lead: a create attributed to an ancient spawner
+coincided with the warps where the owner saw monsters appear, while the
+spawner's variables did not change. Normal packs were born at both ancient
+warps too, so the owner's report does not single out an ancient pack; the
+3 → 7 ancient creates came at the miniboss warp; and the 7 → 10 rise spans
+about 3.5 minutes, not just the warp. Whether it marks every ancient
+birth, and nothing else, is not established. For miniboss spawners no birth signal is
+established: Live 1's attributed creates are not shown to be births, and in
+this session named monsters showed near the miniboss warp with no create
+attributed to a miniboss spawner. The
+shipping retirement rule is being redesigned from these results.
+
+### The second instrument (Live 4)
+
+Live 3 left the ancient and miniboss birth unread: those spawners carry
+neither `enemyCreatorTimer` nor `enemyArray`, and an attributed create is a
+lead, not a measurement. The owner then asked for a measured rule for every
+kind before anything ships, for zone revisits not to bring back an icon for
+a pack already created, and for the kinds the game builds at zone arrival
+(miniboss, legion, champion) to keep their icon while the pack lives. This
+section is the design of the research build that measures those; as
+written, before its session, none of it is measured.
+
+**What the game is expected to do (static reading, not measured).** The
+shared facts are in the hub's `docs/RUNTIME_DATA_MODELS.md` § 11.2; in
+short, in our own words:
+
+- All seven creator objects make a record in the game's protected value
+  store when they are created and keep its key in their instance variable
+  `spawnPack`. The pack's state is that record's value, which only the
+  store's getter returns: reading `spawnPack` by name gives the key, not the
+  state (the same trap as a monster's `damage`, the hub's
+  `RUNTIME_DATA_MODELS.md` § 13.7). A key outside 0..262143 must never reach
+  the getter: a -1 key faulted the game (§ 5.8 there).
+- An ancient creator's state starts at 1. Once the player comes within
+  about 1200 px it becomes 2, and the pack is built the next frame (state
+  3); the creator stays. So an ancient pack exists at most a frame after
+  the state leaves 1, which is why the candidate below reads 2 or more as
+  born.
+- Miniboss, legion and champion creators build their pack on their own
+  timer or first steps after the zone is created, with no test of where the
+  player is, and then set the state to 2: by this reading they are built at
+  arrival, not on approach.
+- A colossal chest creator builds its wave when its state is set, which
+  opening the nearby `Colossal_Chest_obj` does; it then reads 2.
+- An ambush creator fills `enemyArray` when it builds (measured in Live 1);
+  for a normal creator, which state value means born was not read.
+- Not read: what the zone state restores on a revisit, and anything in the
+  miniboss, legion or champion creator that watches the pack after its
+  build.
+
+**What each new field reads** (the exact line shapes are in the hub's
+`docs/submodules/ForgePact/instructions.md`, Command Reference, the
+`packmarks why` row; research build only, except ` unread=`):
+
+- `packmarks stat` gains ` unread=<n>` in both builds: birth-signal reads
+  since the game started that could not be made. The research build adds
+  `retire=kind` beside `timer` and `state`.
+- `packmarks census` first prints a getter control on the boss probe's
+  known slot, `gDataProtected[177]`: `-> proven` when `GPV` and
+  `PC_GetVariableGMLWrapper`, both called by name, answer the same non-zero
+  number for its key, so every protected-state read has a positive control
+  through the same getter in the same session. Each kind line then adds `born=`
+  (spawners whose kind's signal reads born now), `attributedUnborn=`
+  (spawners with a create attributed to them this zone whose signal reads
+  unborn, the H2 question asked again per spawner) and `spawnPack=`, a tally
+  of the protected state by value.
+- `packmarks census <kind>` prints one line per spawner of that kind: its
+  id and position, whether it is marked and born, its protected state, its
+  `enemyArray` kind, its attributed creates and its pack members alive out
+  of those recorded.
+- `packmarks creator <id>` prints one spawner whole: its object and kind,
+  every protected value the static reading names (each as key and value,
+  the key guard first), its recorded members by object, the distance to the
+  nearest living instance of each object attributed to it and of
+  `Enemy_Parent_obj`, and every instance variable it carries. The last line
+  set is the net for a signal the static reading missed.
+- `packmarks why` adds, per kind, `kindborn=`, `packgone=`, `held=`,
+  `unlinked=`, `remembered=` and `sameid=` (below), and a second list,
+  `other creates:`, the four non-enemy objects that kind's spawners created
+  most, so a spawner's birth that makes no enemy-family object is still
+  seen.
+
+**The `kind` candidate (`packmarks retire kind`).** A marker is retired
+when its spawner no longer exists, or by its kind's own entry in one table
+(`kKindRules` in `PackMarkers.hpp`), asked of the spawner itself in the
+rotating check, where the marker is used:
+
+- normal and ambush: `enemyArray` is an array, as under `state` (measured
+  on both in Live 1).
+- ancient, champion, colossal_chest, legion, miniboss: the protected pack
+  state, read through `spawnPack` and the getter by name, is 2 or more (the
+  static reading above; not measured).
+- Nothing else: no timer, no give-up, no attributed create. A read that
+  cannot be made (a variable the kind needs is absent, the key guard refuses
+  the key, a read throws) keeps the marker and counts in ` unread=`, so
+  "held because unread" shows beside "held because unborn".
+- normal, ambush, ancient and colossal_chest are in `birth` mode: the marker
+  goes when the signal reads born (`kindborn=`), and a spawner already born
+  when it is listed gets no marker at all (counted `kindborn` at age 0).
+- miniboss, legion and champion are in `packgone` mode (the owner's
+  decision): the birth signal is read and counted (`held=`, markers held
+  now whose signal reads born) but retires nothing, and a spawner listed
+  already born still gets a marker. The marker goes when the spawner no
+  longer exists (`destroyed=`) or when its pack is gone (`packgone=`). It
+  stays drawn on the spawner; nothing is ever drawn on a monster.
+
+**The pack-gone signal is not established.** The static reading found no
+creator event that watches its pack after the build, and no variable on a
+built monster naming its creator, so neither the creator's state nor a link
+back from the monster is expected to tell us the pack died; both are
+readings of what was seen, not of everything (not read: the champion's
+steps after its build, and what the miniboss and legion creators do with
+`destroySelf` after theirs). Live 1 and Live 3 saw miniboss creators still
+present after arrival (measured), so the spawner's own end does not mark it
+either. The candidate is our own record instead: every enemy instance a
+spawner creates (the create hooks' attribution, now also keeping the
+created instance's id, read from the call's result after the original
+returns) is that spawner's member, kept per spawner id for the whole game
+session rather than per zone. Live 3 read miniboss `attributed=0` although
+the pack is built at arrival, and one explanation, not established, is that
+the build runs before the per-zone counters reset. The pack is gone when at
+least one member was recorded and none of them exists now
+(`instance_exists`, in the rotating check). A born `packgone` marker with no
+member recorded is kept and counted `unlinked=`, never retired on a guess.
+Two research reads stand beside it: `creator <id>`'s `near:` distances, and
+its protected and variable lines read before and after a kill, which show
+whether any creator value moves when the pack dies.
+
+**The birth memory.** A spawner retired by a birth rule (`spawned`,
+`timergone`, `stateborn`, `kindborn`, `packgone`, or born at listing in
+`birth` mode) is remembered for the whole game session, by its id and by
+the room key, kind and position rounded to whole pixels. An unknown room
+key records and matches nothing by position. It is recorded under every
+policy and applied only under `kind`: a later listing of a remembered
+spawner gets no marker and counts `remembered=`. Both keys, because whether
+a revisit keeps spawner ids is not known; `sameid=` counts listed spawners
+whose id was listed on an earlier visit to the same room, which answers it.
+A `packgone` spawner enters the memory only once its pack is gone, so a
+living pack's marker comes back with the zone. `timer` and `state` are
+unchanged.
+
+**Where the results go.** The session that measures this is Live procedure
+4 of the hub workorder `forgepact-181-map-reveal-icons` (capture
+`forgepact-181-map-reveal-icons-live-4.md`): the getter control, a zone with
+ancient, miniboss and colossal chest spawners under `retire kind`, a
+miniboss read at arrival and then killed for the pack-gone signal, an
+ancient birth forced by a warp, a normal birth as the positive control, a
+colossal chest opened, a revisit, and champion and legion only if a zone
+of the session has them.
+Its record round writes the results under `### Live 4 results`.
+
+### Live 4 results
+
+Run 2026-10-06 on the second research build (ForgePact `7685404`, installed
+DLL SHA-256 `1b7ab053…a991`, matched by the lease), character slot 14, saves
+backed up and restored clean afterwards, `forgepact.json` left as it was. One
+zone, Steam Train (zone level 293), under `retire kind` throughout: 62
+normal, 9 ambush, 10 ancient, 6 colossal chest and 4 miniboss spawners, no
+champion and no legion. The player was warped beside a miniboss spawner
+(and the character's own damage killed the pack about 16 s later), then an
+ancient spawner, then a normal spawner as the control, then a colossal chest
+group, which the owner opened; then the owner left by waypoint and came
+back. 24 checks: 21 passed, 1 failed (`miniboss-held`), 2 were not observed
+(champion, legion). The capture is the hub's
+`.claude/workorders/forgepact-181-map-reveal-icons-live-4.md`.
+
+- **The build and the instruments answered (pass, measured).** The DLL hash
+  matched, `ping` answered, `packmarks stat` read `hook=native`, ` unread=0`
+  and `retire=kind`, and the getter control read the boss probe's slot as
+  the same non-zero value through both named getters (`-> proven`) at every
+  census. ` unread=` stayed 0 for the whole session.
+- **The protected pack state at arrival (measured).** Before any warp the
+  census tallied `spawnPack` as: normal 1 on 50 spawners and 3 on the 12
+  already born (as many as had an array as `enemyArray`, 12), ambush 0 on all
+  9, ancient 1 on all 10, colossal chest 0 on all 6, miniboss 2 on all 4.
+  So the four miniboss spawners already read born at arrival, as the static
+  reading predicted, and here, unlike Live 3, their creates were attributed
+  at arrival too (`Hellspawn_Guardsman_obj`, one per spawner, each recorded
+  as a member).
+- **A normal birth moves the state 1 → 3 (control, pass, measured).** At the
+  control spawner the state went 1 → 3 as its `enemyArray` became an array
+  and its `enemyCreatorTimer` went away; normal `kindborn` rose 25 → 30 and
+  the census's array count with it; the owner saw monsters there. Across the
+  session every born normal spawner read 3 and every unborn one 1.
+- **An ancient birth moves the state 1 → 3 and retires its marker (pass,
+  measured).** At the ancient warp the chosen spawner went 1 → 3 and five
+  ancient spawners near the warp read born; ancient `kindborn` rose 1 → 6
+  and the ancient markers fell 9 → 4; the owner saw the pack and the icons
+  go ("worked as intended"). The intermediate state 2 was never read (the
+  static reading has it last one frame). One more ancient spawner had
+  already read born, with no ancient warp, during the miniboss fight; where
+  the character stood at its birth was not read. The chosen spawner's
+  attributed creates went 0 → 1, and no ancient spawner read unborn with a
+  create attributed to it (`attributedUnborn=0`), so the attributed create
+  agreed with the state at every ancient birth seen.
+- **A colossal chest wave moves the state 0 → 2 and retires its markers
+  (pass, measured).** All six colossal chest spawners read 0 before the
+  chest was opened and 2 afterwards, with one `Abomination_obj` attributed
+  to each; colossal `kindborn` rose 0 → 6, the colossal markers fell 6 → 0,
+  and the owner saw the monsters spawn and the icons clear. The
+  intermediate state 1 was not read.
+- **The miniboss marker held per the owner's observation; the plugin's read
+  disagreed at 5 s (`miniboss-held` failed; route `packgone-signal:
+  measured` on the owner's observation, by the owner's decision).** The
+  owner saw the miniboss icons stay until the minibosses were killed, and
+  the other spawners' icons go as soon as their packs appeared. But 5 s
+  after the warp the member read of spawner 262691 (and of 262694) already
+  said `alive=0/1`, `packgone` was 2 and two miniboss markers had been
+  retired, while a screenshot showed two Hellspawn Guardsmen alive and the
+  nearest `Hellspawn_Guardsman_obj` was 158 px (172 px) from the spawner.
+  After the kill all four read `alive=0/1`, `packgone=4`, no miniboss
+  marker left. The control spawner gave no positive control either: its
+  member read said `alive=0/8` 5 s after its birth, while monsters were on
+  screen and the nearest `Skeletal_Trooper_obj` was 1089 px away. The
+  member read did return members (`members=1/1` on all four miniboss
+  spawners at arrival, and on 262691 before the warp), but no alive read
+  agreed with a member visibly alive at the same time, so it may have
+  retired miniboss markers early, and the owner's view did not settle it.
+  That is the gap Live procedure 2 must close. **Open caveat**, not a finding about the game:
+  Live procedure 2 (the player build) settles it with a slow, deliberate
+  miniboss fight. Measured beside it: the miniboss spawners still exist
+  after the kill, and on the two read in full (262691 before the warp, 5 s
+  after and after the kill; 262694 5 s after and after the kill) every
+  protected value and instance variable they carry reads the same at each
+  read (`spawnPack` 2, its zone state 1, its self-destroy value 0), apart from
+  the image index, which advanced throughout; alarms and other built-in
+  variables were not read. So none of the values read marks the pack's
+  death (not observed, not ruled out).
+- **A revisit holds (route `revisit: holds`, measured).** After leaving by
+  waypoint and coming back, no marker returned for any spawner retired
+  before leaving: `remembered=` covered at least as many as had been born
+  per kind (normal 74 for 37, ancient 14 for 7, colossal chest 12 for 6,
+  miniboss 8 for 4), and the 37 markers drawn were exactly the unborn
+  normal (25), ambush (9) and ancient (3) ones; none at the miniboss,
+  ancient, control or colossal spots. The owner saw no cleared icon come
+  back. The owner first saw no icons at all and then the uncleared ones
+  appear, while the first poll after arrival already listed the 37; the
+  delay the owner saw was not read.
+- **A revisit does not keep spawner ids (route `revisit-ids: changed`,
+  measured).** Every spawner came back as a new instance (ids 262xxx →
+  321xxx) and `sameid=0` for every kind, so only the position key of the
+  birth memory matched. The protected state survived the revisit for every
+  kind (normal 1:25 and 3:37, ancient 1:3 and 3:7, colossal chest 2 on all
+  6, miniboss 2 on all 4), and the plain creators kept their timer split,
+  but no plain creator's `enemyArray` was an array after the revisit.
+- **Champion and legion: not observed.** Steam Train had no champion and no
+  legion creator at arrival, at any census or on the revisit, and the
+  session visited no other zone. Their rule stays the static reading.
+
+**Route: `kinds-signal: measured`, `revisit: holds`, `revisit-ids: changed`,
+`packgone-signal: measured` per the owner's observation.** The operator
+recorded `packgone-signal: wrong` from the `miniboss-held` fail; the owner,
+having watched the session, accepted the miniboss behaviour as intended, and
+the 5 s member read stays the open caveat above until Live procedure 2's
+miniboss fight settles it.

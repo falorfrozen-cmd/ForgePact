@@ -348,5 +348,355 @@ class TestMapRevealContract(unittest.TestCase):
         self.assertIn("do not exist", row)
 
 
+def _function_body(source, signature):
+    """The brace-matched body of the function declared by `signature`."""
+    start = source.index(signature)
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1:index]
+    raise AssertionError(f"unterminated body for {signature}")
+
+
+def _strip_research_blocks(source):
+    """What the player build compiles (FORGEPACT_RELEASE defined); the same
+    nesting-aware evaluator as test_boss_rarity_contract.py's."""
+    kept, stack = [], []
+    for line in source.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#ifdef FORGEPACT_RELEASE"):
+            stack.append([True, True])
+        elif stripped.startswith("#ifndef FORGEPACT_RELEASE"):
+            stack.append([True, False])
+        elif stripped.startswith("#if"):
+            stack.append([False, True])
+        elif stripped.startswith("#else") and stack:
+            if stack[-1][0]:
+                stack[-1][1] = not stack[-1][1]
+        elif stripped.startswith("#endif") and stack:
+            stack.pop()
+        elif all(active for _, active in stack):
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _strip_comments(source):
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"//[^\n]*", "", source)
+
+
+class TestPackMarkerRetirementInstrument(unittest.TestCase):
+    """Issue #181: the research build's `packmarks why|census|retire` and the
+    stat line's `kinds=` field, whose exact text the live procedures match,
+    and the create hook handing the created object to MarkSpawned."""
+
+    @classmethod
+    def setUpClass(cls):
+        plugin = _strip_comments(PLUGIN_SRC.read_text(encoding="utf-8"))
+        cls.plugin = plugin
+        cls.command = _function_body(plugin, "static void PackMarksCommand(const std::string& rest)")
+        cls.player_command = _strip_research_blocks(cls.command)
+        cls.birth = _function_body(plugin, "static void PackMarkerBirth(")
+
+    def _assert_in_order(self, text, fragments):
+        at = 0
+        for fragment in fragments:
+            found = text.find(fragment, at)
+            self.assertGreaterEqual(found, 0, f"{fragment!r} missing or out of order")
+            at = found + len(fragment)
+
+    def test_research_forms_exist_only_in_the_research_build(self):
+        for verb in ('a1 == "why"', 'a1 == "census"', 'a1 == "retire"'):
+            self.assertIn(verb, self.command)
+            self.assertNotIn(verb, self.player_command)
+        for text in ('"packmarks why "', '"packmarks census "', '"packmarks retire -> "', '" retire="', "Census(true)", "SetRetire("):
+            self.assertIn(text, self.command)
+            self.assertNotIn(text, self.player_command)
+
+    def test_why_line_prefixes_are_exact(self):
+        self._assert_in_order(self.command, [
+            '"packmarks why "', '": listed="', '" marked="', '" spawned="', '" destroyed="',
+            '" timergone="', '" givenup="', '" stateborn="', '" attributed="', '" age="',
+            '".."', '" frame="',
+        ])
+        self._assert_in_order(self.command, ['"packmarks why "', '" creates: "', '"none"'])
+
+    def test_why_names_created_objects_by_the_runtimes_object_get_name(self):
+        start = self.command.index('a1 == "why"')
+        why = self.command[start:self.command.index('a1 == "census"', start)]
+        self.assertIn("PackMarksObjectName(", why)
+        self.assertIn('"object_get_name"', _function_body(self.plugin, "static std::string PackMarksObjectName("))
+        self.assertIn("TopCreates(", why)
+
+    def test_census_line_prefixes_are_exact(self):
+        self._assert_in_order(self.command, [
+            '"packmarks census "', '": creators="', '" marked="', '" timer="', '" enemyArray="',
+            '" lost="', '" stale="',
+        ])
+
+    def test_retire_answers_the_policy_and_accepts_both(self):
+        start = self.command.index('a1 == "retire"')
+        retire = self.command[start:start + 900]
+        self.assertIn('"timer"', retire)
+        self.assertIn('"state"', retire)
+        self.assertIn('"packmarks retire -> "', retire)
+
+    def test_stat_carries_kinds_in_both_builds(self):
+        self._assert_in_order(self.player_command, ["KindCounts()", "kKindNames[", '" kinds="'])
+        self.assertIn('":"', self.player_command)
+        self.assertIn('","', self.player_command)
+
+    def test_packmarks_stays_a_standalone_early_return(self):
+        self.assertIn('if (lc == "packmarks") { PackMarksCommand(rest); return; }', self.plugin)
+
+    def test_birth_passes_the_created_object(self):
+        self.assertRegex(self.birth, r"const int created = \(int\)Args\[3\]\.ToDouble\(\);")
+        self.assertRegex(
+            self.birth,
+            r"MarkSpawned\(\s*static_cast<int64_t>\(id\)\s*,\s*created\s*,\s*caller\.ObjectIndex\(\)\s*\)",
+        )
+
+
+class TestPackMarkerSecondInstrument(unittest.TestCase):
+    """Issue #181, the second instrument (Live procedure 4 matches these lines
+    exactly): `packmarks retire kind`, the new `why` fields and its `other
+    creates:` line, the census getter line and fields, `packmarks census
+    <kind>`, `packmarks creator <id>`, the stat line's ` unread=` in both
+    builds; the room key handed to the markers; the members the create hooks
+    record after the original call returns; and the research build's
+    non-enemy creates, which the player build never reports."""
+
+    @classmethod
+    def setUpClass(cls):
+        plugin = _strip_comments(PLUGIN_SRC.read_text(encoding="utf-8"))
+        cls.plugin = plugin
+        # The research helpers sit in one research-only block just above the
+        # command; the region runs from that block's #ifndef to the command's
+        # closing brace, so stripping it evaluates every directive in it.
+        helper = plugin.index("static void PackMarksCreator(")
+        start = plugin.rindex("#ifndef FORGEPACT_RELEASE", 0, helper)
+        command = plugin.index("static void PackMarksCommand(const std::string& rest)")
+        body = _function_body(plugin, "static void PackMarksCommand(const std::string& rest)")
+        cls.region = plugin[start:plugin.index(body, command) + len(body)]
+        cls.player_region = _strip_research_blocks(cls.region)
+        cls.command = body
+        cls.player_command = _strip_research_blocks(body)
+        cls.birth = _function_body(plugin, "static void PackMarkerBirth(")
+        cls.player_birth = _strip_research_blocks(cls.birth)
+        cls.scope = _function_body(plugin, "struct PackMarkerBirthScope")
+        cls.icd = _function_body(plugin, "static void HookICD(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)")
+        cls.icl = _function_body(plugin, "static void HookICL(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)")
+
+    def _assert_in_order(self, text, fragments):
+        at = 0
+        for fragment in fragments:
+            found = text.find(fragment, at)
+            self.assertGreaterEqual(found, 0, f"{fragment!r} missing or out of order")
+            at = found + len(fragment)
+
+    def _section(self, start, end):
+        at = self.region.index(start)
+        return self.region[at:self.region.index(end, at)]
+
+    # ---- research forms, research build only --------------------------------
+    def test_each_research_form_is_in_a_research_only_block(self):
+        for text in (
+            '"packmarks census getter: gDataProtected[177]="', '"packmarks creator "',
+            '" kindborn="', '" packgone="', '" held="', '" unlinked="', '" remembered="',
+            '" sameid="', '" other creates: "', '" born="', '" attributedUnborn="',
+            '" spawnPack="', '" members="', '" members: "', '" near: "', '"packmarks retire -> "',
+            '" protected: "', '" vars: "', '" spawners"',
+        ):
+            self.assertIn(text, self.region, text)
+            self.assertNotIn(text, self.player_region, text)
+        for verb in ('a1 == "creator"', "Census(true)", "CensusList(", "NoteOtherCreate("):
+            self.assertNotIn(verb, self.player_region, verb)
+
+    def test_stat_carries_unread_in_both_builds(self):
+        self._assert_in_order(self.player_command, ['" kinds="', '" unread="', "Unread()"])
+        self.assertNotIn('" retire="', self.player_command)
+        self._assert_in_order(self.command, ['" kinds="', '" unread="', '" retire="'])
+
+    def test_retire_accepts_kind(self):
+        start = self.command.index('a1 == "retire"')
+        retire = self.command[start:start + 1200]
+        for text in ('"timer"', '"state"', '"kind"', "PM::Retire::Kind", '"packmarks retire -> "', "timer|state|kind"):
+            self.assertIn(text, retire)
+
+    def test_why_kind_line_is_exact(self):
+        self._assert_in_order(self.command, [
+            '"packmarks why "', '": listed="', '" marked="', '" spawned="', '" destroyed="',
+            '" timergone="', '" givenup="', '" stateborn="', '" kindborn="', '" packgone="',
+            '" held="', '" unlinked="', '" attributed="', '" remembered="', '" sameid="',
+            '" age="', '".."', '" frame="',
+        ])
+        for text in ("ReasonKindBorn]", "ReasonPackGone]", "HeldNow()", ".remembered", ".sameid", ".unlinked"):
+            self.assertIn(text, self.command)
+
+    def test_why_other_creates_follow_the_creates_line(self):
+        self._assert_in_order(self.command, [
+            '"packmarks why "', '" creates: "', '"packmarks why "', '" other creates: "', '"none"',
+        ])
+        self.assertIn("TopOtherCreates(", self.command)
+
+    def test_census_getter_line_reads_slot_177_through_both_getters_by_name(self):
+        getter = _function_body(self.region, "static void PackMarksCensusGetter(")
+        self._assert_in_order(getter, [
+            '"packmarks census getter: gDataProtected[177]="', '" GPV="', '" wrapper="',
+        ])
+        self.assertIn('" -> proven"', getter)
+        self.assertIn('" -> unproven"', getter)
+        self.assertIn('GlobalArray("gDataProtected"', getter)
+        self.assertIn("gml_Script_GPV", getter)
+        self.assertIn("gml_Script_PC_GetVariableGMLWrapper", getter)
+        # The key guard runs before either getter is called.
+        self.assertLess(getter.index("KeyInRange("), getter.index("gml_Script_GPV"))
+        self.assertLess(getter.index("KeyInRange("), getter.index("gml_Script_PC_GetVariableGMLWrapper"))
+        # Proven only when both answer the same non-zero number.
+        self.assertRegex(getter, r"!= 0\.0")
+        # The getter line comes first in `packmarks census`.
+        census = self._section('a1 == "census"', 'a1 == "retire"')
+        self._assert_in_order(census, ["PackMarksCensusGetter()", "Census(true)"])
+
+    def test_census_kind_lines_append_the_pack_state(self):
+        self._assert_in_order(self.command, [
+            '"packmarks census "', '": creators="', '" marked="', '" timer="', '" enemyArray="',
+            '" lost="', '" stale="', '" born="', '" attributedUnborn="', '" spawnPack="',
+        ])
+        self.assertIn("SpawnPackTally(", self.command)
+
+    def test_census_of_one_kind_lists_each_spawner(self):
+        listing = _function_body(self.region, "static void PackMarksCensusKind(")
+        self._assert_in_order(listing, [
+            '"packmarks census "', '" #"', '": id="', '" x="', '" y="', '" marked="', '" born="',
+            '" spawnPack="', '" enemyArray="', '" attributed="', '" members="', '"/"',
+        ])
+        self._assert_in_order(listing, ['"packmarks census "', '": "', '" spawners"'])
+        for text in ("CensusList(", "PackText(", "kArrayTallyNames["):
+            self.assertIn(text, listing)
+
+    def test_creator_lines_are_exact(self):
+        creator = _function_body(self.region, "static void PackMarksCreator(")
+        self._assert_in_order(creator, [
+            '"packmarks creator "', '": object="', '" kind="', '" x="', '" y="', '" exists="',
+            '" attributed="',
+        ])
+        self._assert_in_order(creator, ['"="', '"->"', '" protected: "'])
+        self._assert_in_order(creator, ['"alive="', '"/"', '" members: "'])
+        self._assert_in_order(creator, ['" protected: "', '" members: "', '" near: "', '" vars: "'])
+        self._assert_in_order(creator, ['"instance_nearest"', '" near: "', '"variable_instance_get_names"', '" vars: "'])
+        for name in ("spawnPack", "zoneState", "destroySelf", "summoningPortal", "isWormhole", "eTyp",
+                     "etherRoll", "enemySpawn", "loadAffixes", "specialType", "packType", "spawnAmount",
+                     "new_enemy"):
+            self.assertIn(f'"{name}"', creator, name)
+        for text in ("PackMarksObjectName(", "ReadProtected(", "Members(", "CreatesOf(", "IsEnemyParentIndex()", '"none"'):
+            self.assertIn(text, creator)
+        # At most eight objects per members/near line, eight variables per vars line, values cut to 40.
+        self.assertIn("8", creator)
+        self.assertIn("40", creator)
+
+    def test_packmarks_stays_a_standalone_early_return(self):
+        self.assertIn('if (lc == "packmarks") { PackMarksCommand(rest); return; }', self.plugin)
+
+    # ---- the room key -------------------------------------------------------
+    def test_frame_callback_passes_the_room_key(self):
+        self.assertRegex(
+            self.plugin,
+            r"marks\.OnFrame\(g_RuntimeFrame, reveal\.ZoneGeneration\(\), \[&reveal\] \{ return reveal\.HasReadableMap\(\); \}, CurrentRoomKey\(\)\)",
+        )
+
+    # ---- the birth hook -----------------------------------------------------
+    def test_player_build_filters_non_enemy_creates_before_anything_else(self):
+        first = self.player_birth.index("if (!IsEnemyObject(created)) return;")
+        for later in ("IsCachedCreatorObject(", "InstanceIdOf(", "MarkSpawned("):
+            self.assertLess(first, self.player_birth.index(later), later)
+        self.assertNotIn("NoteOtherCreate(", self.player_birth)
+
+    def test_research_build_reports_non_enemy_creates_before_the_enemy_filter_returns(self):
+        other = self.birth.index("NoteOtherCreate(")
+        self.assertLess(other, self.birth.index("if (!IsEnemyObject(created)) return;"))
+        self.assertLess(self.birth.index("IsCachedCreatorObject("), other)
+        self.assertNotIn("NoteOtherCreate(", self.player_birth)
+
+    def test_members_are_read_from_the_result_after_the_original_call(self):
+        destructor = self.scope[self.scope.index("~PackMarkerBirthScope()"):]
+        self._assert_in_order(destructor, ["completed", "IsNumericInstanceRead(result)", "result.ToDouble()", "NoteMember("])
+        self.assertIn("std::floor(id) == id", destructor)
+        self.assertIn("PackMarkerBirth(", self.scope[:self.scope.index("~PackMarkerBirthScope()")])
+        for hook, orig in ((self.icd, "g_OrigICD"), (self.icl, "g_OrigICL")):
+            self.assertIn("PackMarkerBirthScope packBirth(Result, S, argc, Args, callerInfo);", hook)
+            self.assertNotIn("    PackMarkerBirth(S, argc, Args, callerInfo);", hook)
+            # Every route that runs the original marks the scope completed,
+            # in both builds.
+            for build in (hook, _strip_research_blocks(hook)):
+                self.assertEqual(build.count("populationBirth.Completed();"), build.count("packBirth.Completed();"))
+                self.assertGreater(build.count("packBirth.Completed();"), 0)
+                self.assertEqual(build.count(f"if ({orig})"), build.count("packBirth.Completed();"))
+
+
+class TestPackMarkerShippedPolicy(unittest.TestCase):
+    """Issue #181, shipped: `kind` is the retirement policy in both builds,
+    each kind on the signal Live 4 measured (champion and legion on the
+    static reading), and `packmarks retire` stays a research-build form."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.header = _strip_comments((FORGEPACT_INCLUDE_DIR / "PackMarkers.hpp").read_text(encoding="utf-8"))
+        plugin = _strip_comments(PLUGIN_SRC.read_text(encoding="utf-8"))
+        cls.command = _function_body(plugin, "static void PackMarksCommand(const std::string& rest)")
+        cls.player_command = _strip_research_blocks(cls.command)
+        cls.plugin = plugin
+        cls.player_plugin = _strip_research_blocks(plugin)
+
+    def test_the_members_rule_is_on_in_the_player_build(self):
+        # Owner, 2026-10-06, "Re-enable the check as is": a miniboss, legion or
+        # champion marker retires once its recorded members are gone in the
+        # player build too, so nothing that build compiles switches it off.
+        self.assertIn("std::atomic<bool> m_PackGoneRetires{ true };", self.header)
+        self.assertNotIn("SetPackGoneRetires(false)", self.player_plugin)
+        self.assertNotIn("g_PackGoneRuleOff", self.player_plugin)
+        # Positive control: the research build's `packmarks gonerule off` does
+        # reach it, so the strip above removed something rather than nothing.
+        self.assertIn("SetPackGoneRetires(false)", self.plugin)
+        # `packmarks gonerule on|off` is a research-build form; `packmarks stat`
+        # still prints `gonerule=` in both builds (Live procedure 2 reads it).
+        self.assertIn('a1 == "gonerule"', self.command)
+        self.assertNotIn('a1 == "gonerule"', self.player_command)
+        self.assertIn('" gonerule=" + (pm.PackGoneRetires()', self.player_command)
+
+    def test_kind_is_the_default_in_both_builds(self):
+        self.assertIn("std::atomic<Retire> m_Retire{ Retire::Kind };", self.header)
+        self.assertNotIn("m_Retire{ Retire::Timer }", self.header)
+        # The header has no build switch, so the player build gets the same default.
+        self.assertNotIn("FORGEPACT_RELEASE", self.header)
+
+    def test_each_kind_keeps_its_measured_rule(self):
+        rows = re.findall(r"\{ Signal::(\w+),\s*([\d.]+), Mode::(\w+) \}", self.header)
+        self.assertEqual(rows, [
+            ("EnemyArray", "0.0", "Birth"),     # normal
+            ("EnemyArray", "0.0", "Birth"),     # ambush
+            ("PackState", "2.0", "Birth"),      # ancient
+            ("PackState", "2.0", "PackGone"),   # champion
+            ("PackState", "2.0", "Birth"),      # colossal_chest
+            ("PackState", "2.0", "PackGone"),   # legion
+            ("PackState", "2.0", "PackGone"),   # miniboss
+        ])
+
+    def test_the_birth_memory_keeps_both_keys(self):
+        # Live 4: a revisit gave every spawner a new id, so the position key stays.
+        remember = _function_body(self.header, "void Remember(const Marker& m)")
+        self.assertIn("m_MemoryIds.insert(", remember)
+        self.assertIn("m_MemoryPositions.insert(", remember)
+
+    def test_the_player_build_cannot_switch_the_policy(self):
+        self.assertIn("SetRetire(", self.command)
+        self.assertNotIn("SetRetire(", self.player_command)
+
+
 if __name__ == "__main__":
     unittest.main()
