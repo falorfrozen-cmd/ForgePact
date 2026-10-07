@@ -72,13 +72,20 @@ re-read.
 **Measured, beside the readings** (2026-09-28 `frameprof` captures, each
 capture's `.txt` summary and JSON):
 
-- **CPU per thread.** The frame thread used 93-99% of one core, and every other
-  game thread together used 4-10% of one core. So the threads above exist, but
-  together they do little of the work in these captures.
-- **No thread names.** `GetThreadDescription` was empty for every game thread
-  (the JSON's `threads.top[].name`). The runner gives Windows no thread names,
-  so the names above are strings in the exe, not descriptions a tool can see on
-  a live thread.
+- **CPU per thread.** In the six 2026-09-28 captures the frame thread used
+  98-99% of one core (93-94% in frame-profiler.md's earlier pair); every other
+  thread in the process together, mod and driver threads included, used at
+  most 4-10% of one core. So the threads above exist, but together they do
+  little of the work in these captures.
+- **Thread names not observed.** `GetThreadDescription` was empty for every
+  game thread among the 24 each capture lists (`threads.top[].name`). The JSON
+  keeps only the 24 busiest threads by CPU, and each list ends among 0%
+  threads. The read works, because the profiler's own named thread reads back
+  in every capture, but threads past the cut were not seen: `HookEvents`
+  appears in only one of the six captures, and the idle GC, job-worker, audio
+  and HTTP threads would sit there too, so they may never have been read.
+  Whether the runner names any thread is not established. The names above are
+  strings in the exe.
 - **The collector still costs the frame.** `docs/RUNTIME_DATA_MODELS.md` § 5.9
   measured `gc_collect`'s walk landing one frame later and taking 12.7-31.7 ms.
   The reading says a GC thread exists; it does not say collections leave the
@@ -343,8 +350,8 @@ The measured split and these readings, without addresses, are folded into
   is a plugin change, and this research changes no plugin code. It goes with
   the first later workorder that changes `frameprof`.
 - **Names beyond the listed functions.** Only the per-frame function, its other
-  branch, the two dispatchers and five runtime-only callees of each are named.
-  Naming more of the runtime goes to whichever candidate's workorder needs it.
+  branch, the two dispatchers, and the step dispatcher's five and the draw
+  dispatcher's four heaviest runtime-only callees are named. Naming more of the runtime goes to whichever candidate's workorder needs it.
 - **Whether `SaveFileGMAsync` reaches `buffer_save_async`.** It needs the
   `HookBuiltin` counter described above, in a live session; no candidate here
   depends on it.
