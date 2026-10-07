@@ -2,8 +2,9 @@
 
 Status (2026-10-07): **research, nothing offloaded.** The runner's own threads
 are a static reading (below); the frame thread's split into the runner's
-phases and the live session's captures are added to this document as they
-are made. Nothing here is a player-visible change.
+phases is measured on the 2026-09-28 captures and on Live 1's three captures
+of 2026-10-07, which also give each candidate's ceiling and the route
+([Decision](#decision)). Nothing here is a player-visible change.
 
 ## Question
 
@@ -333,6 +334,189 @@ from player code):
 
 The measured split and these readings, without addresses, are folded into
 [`docs/RUNTIME_DATA_MODELS.md` § 5.12](../../docs/RUNTIME_DATA_MODELS.md#512-frame-thread-time-by-phase).
+
+## Live 1 results
+
+**Measured, 2026-10-07, 12:43-12:50 UTC** (workorder
+forgepact-183-frame-thread-profile, Live 1), on the player build of ForgePact
+v2.1.0, DLL SHA-256 `afcd1d46...`, the same as the tree's
+`plugin_build\BloodPactPlugin_ship.dll`. Character slot 14 (level 100, Hell).
+ForgePact's own levers for the whole session: `farsleep`, `densityroll` and
+`hiddenloot` off; `reveal 1` and `reveal packs 1`; `density 5` and `reveal
+spawn 0` for T and H1, then `density 2` and `reveal spawn 1` for H2.
+`forgepact.json` was the same at the end as at the start. Each capture was
+re-read offline with `py tools/frameprof_report.py --no-html <capture>.json`,
+and its output matched the session's line for line. Shares are of all
+frame-thread samples (250 a second).
+
+| | T: town | H1: Act_01_01 | H2: a fresh zone |
+|---|---|---|---|
+| Room | `Town_01_rm` (Inoya) | `Act_01_01` (Outskirts of Inoya) | `Act_01_02` (Fields of Battle) |
+| Setup | density 5 already set, fill off | density 5, fill off | density 2, fill on |
+| Capture | 20 s, 4,999 samples | 30 s, 7,499 samples | 30 s, 7,499 samples |
+| fps | 144.0 | 126.8 | 118.5 |
+| Frame ms: median / p95 / worst | 6.9 / 7.0 / 7.1 | 7.6 / 9.8 / 17.0 | 8.1 / 10.7 / 19.9 |
+| Frame thread working / waiting | 46.0% / 54.0% | 100% / 0% | 100% / 0% |
+| Game code | 20.46% | 45.18% | 44.99% |
+| GameMaker runtime | 21.74% | 48.34% | 47.35% |
+| Graphics driver | 2.62% | 3.19% | 3.17% |
+| Waiting for the GPU or display | 0% | 0% | 0% |
+| Mods (plugins) | 1.14% | 3.29% | 4.48% |
+| Limiter spinning | 54.03% | 0% | 0% |
+| Other game threads, together | 3% of one core | 9% of one core | 9% of one core |
+| Instances / monsters (timeline) | 794-805 / 8 | 8,440-8,462 / 469 | 9,676-9,716 / 2,167 |
+| Working set / private bytes | 2.41 / 3.71 GB | 2.71 / 4.73 GB | 3.13 / 5.25 GB |
+| Capture stem | `frameprof-20261007-144413` | `frameprof-20261007-144704` | `frameprof-20261007-144936` |
+
+Memory is `Get-Process`'s `WorkingSet64` and `PrivateMemorySize64` read just
+after each capture, in GB of 10^9 bytes (2.25 / 3.45, 2.53 / 4.40 and
+2.92 / 4.89 GiB). The capture files are in the game's `bin\bp_ipc\perf`
+(`.json`, `.stacks.txt`, `.txt` for each stem). In town this build's limiter
+targets 144 fps, not the about 59 of 2026-09-28, and spins through the whole
+wait. No frame was over 33 ms in any capture.
+
+**Runner phases**, each split as game / runtime / graphics / mods / limiter
+spinning. The dispatchers were the same as on 2026-09-28: step
+`Hero_Siege.exe!0xB56E4B0` and draw `Hero_Siege.exe!0xB60F590`, both called
+from the per-frame function `Hero_Siege.exe!0xB56E300`. Parity agreed on all
+three captures: the buckets the tool derives from the stacks matched the
+plugin's.
+
+| Capture | Step phase | Draw phase | Outside the phases |
+|---|---|---|---|
+| T | 20.6%: 14.8 / 5.8 / 0 / 0 / 0 | 22.1%: 5.7 / 13.8 / 1.7 / 0.9 / 0 | 57.3%: 0 / 2.1 / 0.9 / 0.3 / 54.0 |
+| H1 | 53.1%: 34.2 / 18.9 / 0 / 0.0 / 0 | 40.9%: 10.9 / 26.3 / 2.0 / 1.7 / 0 | 6.0%: 0 / 3.2 / 1.2 / 1.6 / 0 |
+| H2 | 45.7%: 25.3 / 18.7 / 0 / 1.7 / 0 | 48.9%: 19.7 / 25.7 / 2.2 / 1.3 / 0 | 5.4%: 0 / 3.0 / 1.0 / 1.5 / 0 |
+
+The dispatchers' callees, as total / runtime-only share (runtime-only: no
+game, graphics or mod frame anywhere on the stack), named as read in "The
+per-frame functions" above. "Not read" marks a callee this research did not
+name.
+
+| Phase | Callee | T | H1 | H2 |
+|---|---|---|---|---|
+| step | Step-family event pass `0xB6C7350` | 15.7 / 1.4 | 35.6 / 1.8 | 27.9 / 1.5 |
+| step | Alarm pass `0xB6C5BF0` | 2.4 / 2.4 | 6.3 / 6.3 | 5.6 / 5.6 |
+| step | Animation frame advance `0xB56F180` | 0.3 / 0.3 | 2.1 / 2.0 | 2.5 / 2.4 |
+| step | Room element pass `0xB5E0D80` | 0.9 / 0.9 | 1.9 / 1.9 | 1.6 / 1.6 |
+| step | Collision pass `0xB57C200` | 0.5 / 0.0 | 2.9 / 2.5 | 0.9 / 0.4 |
+| step | `0xB5ED4C0` (not read) | 0.3 / 0.3 | 1.7 / 1.7 | 2.0 / 2.0 |
+| step | `0xB4978A0` (not read) | 0.1 / 0.1 | 0.6 / 0.6 | 0.4 / 0.4 |
+| step | `0xB48E7B0` (not read) | not listed | 0.3 / 0.3 | 0.5 / 0.5 |
+| draw | Room draw, per view `0xB60E880` | 8.7 / 6.3 | 16.1 / 11.7 | 25.6 / 11.9 |
+| draw | Layer-by-layer event pass `0xB610330` | 12.0 / 6.2 | 20.0 / 9.9 | 19.4 / 9.9 |
+| draw | The same pass, reporting `0xB610B30` | 1.1 / 1.1 | 4.3 / 4.2 | 3.5 / 3.5 |
+| draw | Main layer pass `0xB60D070` | 0.2 / 0.2 | 0.3 / 0.3 | 0.3 / 0.3 |
+
+All addresses are `Hero_Siege.exe!` offsets of the build above; "not listed"
+means the callee was not among that capture's eight.
+
+**Heaviest events**, by total share:
+
+- T: `Draw_Player_Buff_obj` Step 5.0%, `Player_obj` Step 3.1%,
+  `Controller_obj` Draw GUI 1.4%, `NPC_Name_Parent_obj` Draw GUI 1.2%,
+  `Mercenary_obj` Step 1.0%, `UI_Talent_Button_obj` Draw GUI 0.9%.
+- H1: `Menu_Controller_obj` Step 11.37%, `Controller_obj` Step 8.2%,
+  `Enemy_Health_Bar_Parent_obj` Draw GUI 4.63%, `Player_obj` Step 4.23%,
+  `Draw_Player_Buff_obj` Step 3.92%, `Skill_Ground_Effect_obj` Draw 1.87%.
+- H2: `Controller_obj` Step 9.39%, `Darkness_Overlay_obj` Draw 9.25%,
+  `Player_obj` Step 4.85%, `Enemy_Health_Bar_Parent_obj` Draw GUI 4.75%,
+  `Draw_Player_Buff_obj` Step 4.13%, `Skill_Ground_Effect_obj` Draw 1.77%.
+
+**Heaviest game code**, by total share (own time in brackets where it is
+large):
+
+- H1: `timer_system_update` 11.33% (own 10.52%), under `Menu_Controller_obj`
+  Step; `EnemyStepHandleNew` 7.95%; the enemy create-time closure
+  `anon@923@gml_Object_Enemy_Child_Basic_obj_Create_0` 6.93%;
+  `DrawEnemyHealthBars` 4.63% (own 2.93%).
+- H2: `Darkness_Overlay_obj` Draw 9.25%, and under it the light renderer's
+  `Update@anon@3631@BulbRenderer@BulbRenderer` 9.25%,
+  `AccumulateLights@anon@17414@BulbRenderer@BulbRenderer` 9.12% and
+  `AccumulateHardLights@anon@28380@BulbRenderer@BulbRenderer` 9.11% (own
+  6.91%); `EnemyStepHandleNew` 8.73%; the same enemy closure 7.67%;
+  `DrawEnemyHealthBars` 4.72% (own 3.05%).
+
+What these show, all measured on these three captures:
+
+- **In both heavy rooms the frame thread had no time to spare** (working
+  100%), and the GameMaker runtime with no game code on the stack was the
+  largest bucket, 47-48%, just ahead of game code at 45%.
+- **The draw phase's runtime-only time is the room draw and the layer-by-layer
+  event passes,** 21.6-21.8% of samples together in H1 and H2, as at 140 fps
+  on 2026-09-28. In the step phase the alarm pass is the largest runtime-only
+  callee (5.6-6.3%); the collision pass, 7.4-7.9% on 2026-09-28, was 0.4-2.5%
+  here.
+- **The light renderer is the one new heavy item.** Under
+  `Darkness_Overlay_obj` Draw it took 9.25% in H2, 0.68% in town, and was not
+  among H1's 40 game-code rows (so under 0.45%). Whether it depends on the
+  zone, the monsters or the time of day is not established.
+- **`timer_system_update` took 11.33% in H1** but 0.70% in town and 1.11% in
+  H2. Why it was heavy in H1 is not established.
+- **The box rebuild is small.** `ActivateDeactivateProps` was not among
+  H2's 40 game-code rows, whose 40th, `UpdateDepth`, is 0.64%, so it took at
+  most 0.64% (check `box-rebuild` fails for this reason; the failure is the
+  finding). It was not among H1's rows either (under 0.45%).
+  `DrawMinimapDynamic` was absent from both; `DrawMinimap` was 0.60% in H1.
+- **These heavy-room numbers differ from frame-profiler.md's first Act_01_01
+  capture** (about 51 fps, runtime 57%, game code 26%, graphics 9%, about
+  6,000 instances and 78 monsters). The density, the monster count and the
+  limiter's target all differ between the two sessions; which of them
+  accounts for it is not established.
+- **Not observed:** any frame over 33 ms; any GPU or display wait; a game
+  thread's name (as on 2026-09-28, the only named thread among each capture's
+  24 was the profiler's own). The idle child process of candidate 4 was not
+  measured ("Not done here").
+- **At shutdown** `hs_stop_game` reported exit code `0xC0000409` after
+  `out.txt`'s `==== clean shutdown ====` line, and no crash report appeared.
+  It is recorded as observed and was not investigated here.
+
+## Candidate ceilings
+
+Every share below is of H2's samples (`h2-profile` passed), the fresh zone at
+density 2 with the map filled, where the frame thread worked 100% of the time
+at a mean frame of 8.44 ms. A share times that mean gives the most a
+candidate could take off each frame, in milliseconds. H1's shares are given
+beside each for comparison.
+
+- **Candidate 2 (DXVK): at most 3.17%, about 0.27 ms a frame** (H1: 3.19%):
+  the graphics-driver bucket plus waiting for the GPU or display, which was
+  0%. This is an upper bound: DXVK still runs its D3D11 front end on the game
+  thread, so only part of the driver share could move to its thread.
+- **Candidates 3 and 4 (a GML offload, or child processes): the game-code
+  bucket, 44.99%, about 3.80 ms a frame** (H1: 45.18%), but no single
+  offload wins all of it, because one offloaded computation wins at most its
+  own share:
+  - The largest single computation is the light renderer under
+    `Darkness_Overlay_obj` Draw, 9.25% (about 0.78 ms a frame). It runs inside
+    a Draw event, and whether any of it is a self-contained computation rather
+    than drawing that has to stay on the frame thread is not established.
+  - The heaviest event is `Controller_obj` Step, 9.39% (about 0.79 ms), all of
+    the game code under it together.
+  - `ActivateDeactivateProps`, the 30-frame box rebuild, at most 0.64% (about
+    0.05 ms): below H2's 40th game-code row.
+  - In H1 the largest was `timer_system_update`, 11.33% (10.52% its own time).
+- **Neither: the GameMaker runtime, 47.35%, about 4.00 ms a frame** (H1:
+  48.34%): 18.7% in the step phase, 25.7% in the draw phase and 3.0% outside
+  them, all with no game code on the stack. DXVK touches only driver frames
+  and a GML offload only game code, so neither reaches it.
+- **For candidate 4, memory:** the main game's working set was 3.13 GB and
+  its private bytes 5.25 GB in H2 (2.71 / 4.73 GB in H1, 2.41 / 3.71 GB in
+  town), beside the 2.78-3.15 GB of private bytes `docs/RUNTIME_DATA_MODELS.md`
+  § 5.9 measured at the menu. An idle child's own footprint was not measured.
+
+The three bucket shares that decide the route are runtime 47.35%, game code
+44.99% and render (driver plus GPU wait) 3.17%. Runtime leads game code by
+2.4 points in H2 and 3.2 points in H1, so the two heavy captures agree on the
+order, but the margin is small.
+
+## Decision
+
+`profile-route: runtime`
+
+The route was decided from H2, `frameprof-20261007-144936.json` (Act_01_02 at
+density 2 with the map filled), where the GameMaker runtime's 47.35% was the
+largest of the three bucket shares.
 
 ## Not done here
 
