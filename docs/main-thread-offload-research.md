@@ -1,16 +1,17 @@
 # Main-thread offload - which part of the frame thread's time could move
 
-Status (2026-10-07): **research, nothing offloaded; one lever chosen, its
-live measurement pending.** The runner's own threads are a static reading
+Status (2026-10-07): **research, nothing offloaded; one lever chosen and
+measured: it saves 11.8% of the frame thread's work in a filled zone**
+([The lever, measured](#the-lever-measured)). The runner's own threads are a static reading
 (below); the frame thread's split into the runner's phases is measured on the
 2026-09-28 captures and on Live 1's three captures of 2026-10-07, which also
 give each candidate's ceiling and the route ([Decision](#decision)). For that
 route, the runtime, the static readings of layers, visibility and the light
 renderer rule out the other levers, and [The lever](#the-lever) chooses one:
 "Fill the map as you approach" (`fillroll`), a player switch that is off by
-default and changes one value inside a call the game already makes. Whether
-it saves frame time is measured in its own live session, not yet recorded
-here.
+default and changes one value inside a call the game already makes. Its own
+live session measured the saving, and found that the light renderer's share
+falls with the monsters, so light culling is not the next lever.
 
 ## Question
 
@@ -754,6 +755,134 @@ side is one documented comparison (§ 11.2 of `docs/RUNTIME_DATA_MODELS.md`),
 the only cost constant is a measurement, and the live A/B measures the saving
 directly.
 
+## The lever, measured
+
+Live 1 of workorder forgepact-183-frame-thread-lever, capture
+`forgepact-183-frame-thread-lever-live-1` (2026-10-07; the player DLL built
+from ForgePact 8ae17c2, SHA-256 `b4d15767...ac3e`; slot 14 "Sorak", Hell). No
+person acted: the operator moved between zones by waypoint, recorded as two
+hs-drive gaps, so H1 and H2 were reached by waypoint rather than on foot, and
+H2 began about one minute after H1 rather than three. All switches were
+session-only, and `forgepact.json` was byte-identical after the session.
+
+**Checks.** All 18 pass (`tools/live_checks.py`: pass 18, fail 0,
+not-observed 0).
+
+| Check | Kind | Verdict | What it read |
+|---|---|---|---|
+| `dll-hash` | session | pass | installed DLL = built DLL, `b4d15767...ac3e` |
+| `marker` | session | pass | `fillroll stat` began `fillroll: off` |
+| `control` | session | pass | `pong (YYTK 4.0.1)` |
+| `town-capture` | instrument | pass | T-off: 4,999 samples, 2,880 frames, `Town_01_rm` |
+| `gfx-visible` | instrument | pass | graphics 139 + GPU wait 5 samples; d3d11.dll and the NVIDIA driver among the leaf modules |
+| `h1-idle` | acceptance | pass | Act_01_01, fill off: `fill off`, answered 0, held back 0 |
+| `h2-holds` | acceptance, and the mod's positive control | pass | Act_01_02, 40 s after arrival: `fill on`, answered 78, held back 41,818, 682 monsters |
+| `h2-ahead` | acceptance | pass | answered A0 78, A1 78, A2 248: +170 after the move against +0 standing still |
+| `off-fills` | acceptance | pass | `fillroll 0` at 1,821 monsters; 2,092 at +21 s and at +39 s |
+| `town-ab` | research | pass | work 3.19 ms off, 3.04 ms on; both at the 144 fps limiter |
+| `h1-ab` | research | pass | work 7.34 ms off, 7.36 ms on; 8,745 and 8,735 instances, 478 monsters both |
+| `h1-farsleep` | research | recorded | work 7.34 to 6.33 ms (-13.8%), runtime 48.7% to 40.5%, 3,935 props asleep |
+| `h2-ab` | research | recorded | the saving, 11.8% (below) |
+| `instances-per-monster` | research | recorded | 4,276 / 1,410 = 3.03 |
+| `light-follows` | research | recorded | `Darkness_Overlay_obj` Draw 10.01% full, 5.04% rolling |
+| `mods-cost` | research | recorded | mods bucket 3.63% full, 6.95% rolling |
+| `parity` | research | pass | all seven captures: "buckets agree with the capture" |
+| `memory` | research | pass | seven reads; private bytes 3.76 GB in town, 4.90-4.98 GB in the zones |
+
+**The seven captures**, `bin\bp_ipc\perf\frameprof-20261007-<time>.json`,
+re-run through `tools/frameprof_report.py --no-html` for this record, which
+reproduced the operator's summaries. Work is (1000 / fps) × the working share.
+The bucket shares are of all samples. Instances and monsters are the
+timeline's maxima over the last 10 s. H1 is Act_01_01 at density 5 with the
+fill off; H2 is Act_01_02 ("Fields of Battle", entered fresh) at density 2
+with the fill on, both captures at the arrival point.
+
+| Capture | Time | State | fps | Median / p95 ms | Working | Work ms | Game | Runtime | Mods | Graphics | Instances | Monsters | Darkness Draw |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| T-off | 181435 | town, `fillroll` off | 144.0 | 6.94 / 6.95 | 46.0% | 3.19 | 20.8% | 21.5% | 1.0% | 2.8% | 800 | 8 | 0.84% |
+| T-on | 181753 | town, `fillroll` on | 144.0 | 6.94 / 6.95 | 43.7% | 3.04 | 18.9% | 20.7% | 1.2% | 2.9% | 801 | 8 | 0.66% |
+| H1-off | 181943 | H1, `fillroll` off | 136.1 | 7.04 / 9.25 | 99.9% | 7.34 | 44.7% | 48.7% | 3.0% | 3.6% | 8,745 | 478 | 0 |
+| H1-on | 182028 | H1, `fillroll` on | 135.8 | 7.04 / 9.33 | 99.9% | 7.36 | 43.7% | 49.8% | 3.0% | 3.3% | 8,735 | 478 | 0 |
+| H1-farsleep | 182150 | H1, `farsleep` on | 139.7 | 6.94 / 8.14 | 88.4% | 6.33 | 39.9% | 40.5% | 3.6% | 4.3% | 4,802 | 478 | 0 |
+| H2-rolling | 182336 | H2, `fillroll` on | 143.8 | 6.94 / 6.98 | 78.1% | 5.43 | 31.7% | 36.7% | 7.0% | 2.8% | 5,028 | 682 | 5.04% |
+| H2-full | 182627 | H2, `fillroll` off | 141.3 | 6.94 / 8.27 | 87.0% | 6.16 | 36.7% | 43.9% | 3.6% | 2.8% | 9,304 | 2,092 | 10.01% |
+
+H1-farsleep held the session's only slow frames: 202 ms, mostly in the
+graphics driver, and 131 ms, mostly in the runtime, at 3.3 s and 2.3 s into
+the capture, 30 s after `farsleep 1`. Their cause is not established.
+
+**H2, the saving.** H2-full did 6.157 ms of work a frame and H2-rolling 5.430
+ms: (6.157 - 5.430) / 6.157 = **11.8%, 0.73 ms a frame**, over the 5% the
+rule asks. By bucket, in ms a frame from full to rolling: the runtime 3.10 to
+2.55 (-0.55); game code 2.60 to 2.20 (-0.39, of which
+`Darkness_Overlay_obj`'s Draw is -0.36); graphics 0.20 to 0.19; mods 0.26 to
+0.48 (+0.23). The draw phase fell most, 41.6% to 33.9% of samples (game code
+14.8% to 9.5%, the runtime 24.4% to 22.2%); in the step phase the runtime fell
+17.1% to 12.5%.
+
+Against the prediction in [The lever](#the-lever): 1.1-1.7 ms, 13-20% of the
+profile's 8.44 ms, was expected; 0.73 ms, 11.8% of this session's 6.16 ms,
+was measured. Two of its inputs held. The rolling fill kept 682 of 2,092
+monsters, 33%, inside the assumed 25-50%, and each monster held back was 3.03
+active instances. The third did not: the 4,276 fewer instances took 0.55 ms
+off the runtime, **about 0.13 µs per instance a frame, not 0.34 µs**. Far
+scenery sleep in H1 in this same session gave 0.17 µs (0.68 ms for 3,943
+fewer instances), so the 0.34 µs from far sleep's own earlier session does not
+hold for this build and machine as measured here. Two effects the prediction
+left out roughly cancel each other: the light renderer's -0.36 ms and the
+mods bucket's +0.23 ms. Why H2-full's work this session, 6.16 ms at 2,092
+monsters, is lower than the profile's H2, 8.44 ms at 2,167, is not
+established.
+
+How far it stands above noise: the largest difference between two captures
+expected to match was town's 4.9% (3.19 against 3.04 ms), and H1's was 0.3%.
+The 11.8% is one pair of 30 s captures and was not repeated.
+
+**light-follows.** `Darkness_Overlay_obj`'s Draw fell from 10.01% of samples
+(0.71 ms a frame) under the full fill to 5.04% (0.35 ms) under the rolling
+one, while the monsters fell from 2,092 to 682. So the lights the renderer
+walks grow with the packs born. Whether the monsters themselves register
+them, or something born with them, is still not established. By the rule in
+[Not done here](#not-done-here), the share follows the monsters, so the
+rolling fill takes about half of it already, and **light culling is not worth
+a workorder of its own now**. With `fillroll` on, the most it could still win
+in H2 is about 0.35 ms a frame, against a hook on a closure method whose name
+changes with every game patch, or on lights whose owners are not known.
+
+**mods-cost.** The mods bucket rose from 3.63% (0.26 ms a frame) under the
+full fill to 6.95% (0.48 ms) under the rolling one, mostly in the step phase
+(1.3% to 3.9% of samples). The bucket counts a sample whenever a plugin is on
+the stack, including the game's own work called beneath a hook, so this is
+the plugin's inclusive cost, not decomposed here. While the rolling fill
+holds spawners back, `held back` rose about 970 a second (25,240 between A0
+and A1, 26 s apart): each is a spawner's check that goes through the detour
+on to the game's real answer, where the full fill answers without calling it.
+That the real check is what grew is inferred, not measured. The 11.8% is net
+of it.
+
+**h2-ahead.** The first warp, to the arrival point mirrored through the
+room's centre (2592,5920), replied `after=2592.0,5920.0`, but 3 s later
+`fillroll stat` read the player at the arrival point again and the screenshot
+showed the character back on the waypoint. Why the game moved it back is not
+established; 55 creators were answered meanwhile (78 to 133). The warp to the
+midpoint (7248,4352), about 4,900 px from the arrival point, held, and 20 s
+later A2 read 248. Over both moves the monsters rose from 682 to 1,841, the
+spawners ahead being born as the player came near.
+
+**H1 and town.** With the fill off, `fillroll` stayed idle: `answered 0` and
+`held back 0`, and H1-on matched H1-off within 0.3% of work and 10 instances.
+In town both captures sat at the 144 fps limiter.
+
+**Far scenery sleep in H1** (research). 30 s after `farsleep 1`, 3,935 props
+were asleep and the instances fell from 8,745 to 4,802. Work fell from 7.34 to
+6.33 ms a frame (-13.8%) and the runtime from 3.58 to 2.90 ms (-0.68 ms, the
+0.17 µs per instance above).
+
+The shutdown exit code `0xC0000409` appeared again on a graceful close, as in
+the profile's Live 1; it is outside this workorder.
+
+lever-result: saves
+
 ## Not done here
 
 - **Candidates 2-4 (DXVK, a snapshot-worker-apply GML offload, child
@@ -765,7 +894,10 @@ directly.
   the next lever only if the lever's live session (workorder
   forgepact-183-frame-thread-lever, Live 1) records under `light-follows` that
   the light renderer's share stays in H2 after the rolling fill; if the share
-  follows the monsters, the rolling fill already takes it.
+  follows the monsters, the rolling fill already takes it. That Live 1 found
+  the share following the monsters (10.01% to 5.04%, [The lever,
+  measured](#the-lever-measured)), so light culling is not the next lever; what
+  it could still win in H2 with `fillroll` on is about 0.35 ms a frame.
 - **The working set of an idle child process** (asked for under candidate 4).
   Launching a second game instance risks Steam's single-instance check and the
   real saves, and `docs/RUNTIME_DATA_MODELS.md` § 5.9 already measures the
