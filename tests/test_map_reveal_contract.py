@@ -650,6 +650,24 @@ class TestPackMarkerShippedPolicy(unittest.TestCase):
         plugin = _strip_comments(PLUGIN_SRC.read_text(encoding="utf-8"))
         cls.command = _function_body(plugin, "static void PackMarksCommand(const std::string& rest)")
         cls.player_command = _strip_research_blocks(cls.command)
+        cls.plugin = plugin
+        cls.player_plugin = _strip_research_blocks(plugin)
+
+    def test_the_members_rule_is_on_in_the_player_build(self):
+        # Owner, 2026-10-06, "Re-enable the check as is": a miniboss, legion or
+        # champion marker retires once its recorded members are gone in the
+        # player build too, so nothing that build compiles switches it off.
+        self.assertIn("std::atomic<bool> m_PackGoneRetires{ true };", self.header)
+        self.assertNotIn("SetPackGoneRetires(false)", self.player_plugin)
+        self.assertNotIn("g_PackGoneRuleOff", self.player_plugin)
+        # Positive control: the research build's `packmarks gonerule off` does
+        # reach it, so the strip above removed something rather than nothing.
+        self.assertIn("SetPackGoneRetires(false)", self.plugin)
+        # `packmarks gonerule on|off` is a research-build form; `packmarks stat`
+        # still prints `gonerule=` in both builds (Live procedure 2 reads it).
+        self.assertIn('a1 == "gonerule"', self.command)
+        self.assertNotIn('a1 == "gonerule"', self.player_command)
+        self.assertIn('" gonerule=" + (pm.PackGoneRetires()', self.player_command)
 
     def test_kind_is_the_default_in_both_builds(self):
         self.assertIn("std::atomic<Retire> m_Retire{ Retire::Kind };", self.header)

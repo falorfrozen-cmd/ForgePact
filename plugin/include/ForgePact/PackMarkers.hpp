@@ -73,20 +73,20 @@ namespace ForgePact {
 //   kind retires when its signal reads born, and one listed already born gets
 //   no marker at all. A `packgone`-mode kind (miniboss, legion, champion:
 //   built at zone arrival, owner's decision 2026-10-06) keeps its marker
-//   after the birth. The members rule (retire once every recorded member of
-//   its pack is gone) is not proven: its alive read never read a member
-//   alive in Live 4 (a miniboss pack read gone 5 s after the warp while two
-//   of its monsters were on screen, and the normal control read 0/8 alive
-//   with monsters on screen), so it may be measuring the instrument, not the
-//   pack. Until a positive control backs it (`packmarks creator <id> ids:`
-//   in the research build), the rule retires nothing in the player build:
-//   ModuleMain turns it off at load (SetPackGoneRetires(false)), so there a
-//   `packgone`-mode marker stays until its spawner goes, after the kill too,
-//   and is never written into the birth memory. The read is still made and
-//   counted in both builds (KindStats::goneRead, `packmarks stat`'s ends=),
-//   so a session can see whether it turned gone before or after the kill.
-//   The research build keeps the rule on by default
-//   (`packmarks gonerule on|off`). A read that cannot be made keeps the marker and is counted (`Unread()`),
+//   after the birth, until the members rule retires it (every recorded
+//   member of its pack gone) or its spawner goes. The members rule is on in
+//   both builds (owner, 2026-10-06, "Re-enable the check as is"), and it is
+//   not yet proven: its alive read never read a member alive in Live 4 (a
+//   miniboss pack read gone 5 s after the warp while two of its monsters
+//   were on screen, and the normal control read 0/8 alive with monsters on
+//   screen), so a marker may go while its pack still lives. The owner
+//   accepted that risk; Live procedure 2's slow miniboss fight judges it.
+//   The read is counted in both builds (KindStats::goneRead, `packmarks
+//   stat`'s ends= and gonerule=), so a session can see whether it turned
+//   gone before or after the kill; the research build alone can switch the
+//   rule (`packmarks gonerule on|off`), and with it off a `packgone`-mode
+//   marker stays until its spawner goes and is never written into the birth
+//   memory. A read that cannot be made keeps the marker and is counted (`Unread()`),
 //   so "held because unread" shows beside "unborn". Why each kind's signal
 //   (Live 4, 2026-10-06, docs/map-reveal-research.md "Live 4 results"): a
 //   normal birth moved `enemyArray` to an array and the state 1 -> 3; an
@@ -131,7 +131,7 @@ public:
     // champion and legion by static reading only). The mode:
     // `birth` retires the marker when the signal reads born; `packgone` reads
     // and counts it (`held`) but keeps the marker until the pack is gone (the
-    // members rule, off in the player build) or its spawner is.
+    // members rule, on in both builds) or its spawner is.
     enum class Signal : uint8_t { EnemyArray = 0, PackState };
     enum class Mode : uint8_t { Birth = 0, PackGone };
     struct KindRule { Signal signal; double threshold; Mode mode; };
@@ -374,8 +374,8 @@ public:
     void SetRetire(Retire policy) { m_Retire.store(policy, std::memory_order_relaxed); }
     static const char* RetireName(Retire policy) { return kRetireNames[policy == Retire::Kind ? 2 : policy == Retire::State ? 1 : 0]; }
     // Whether the members rule retires a `packgone`-mode marker (see the
-    // class comment): on here, off in the player build until its alive read
-    // has a positive control. Off, the read is still made and counted.
+    // class comment): on in both builds; only the research build's
+    // `packmarks gonerule` switches it. Off, the read is still made and counted.
     bool PackGoneRetires() const { return m_PackGoneRetires.load(std::memory_order_relaxed); }
     void SetPackGoneRetires(bool on) { m_PackGoneRetires.store(on, std::memory_order_relaxed); }
 
@@ -1063,9 +1063,9 @@ private:
                 Remove(m_Cursor);
                 NoteRetired(gone, reason, frame);
                 // Every birth rule is remembered; a gone spawner or a give-up
-                // says nothing about a birth. A `packgone` retirement only
-                // happens with the members rule on, never in the player build
-                // (see the class comment), so no unproven read is remembered there.
+                // says nothing about a birth. A `packgone` retirement happens
+                // only with the members rule on (both builds, unless the
+                // research build's `packmarks gonerule off`; see the class comment).
                 if (reason != ReasonDestroyed && reason != ReasonGivenUp) Remember(gone);
                 ++m_Removed;
             }
@@ -1104,7 +1104,7 @@ private:
     std::unordered_map<int64_t, size_t> m_Index;
     std::unordered_map<int64_t, bool> m_Spent;   // ids whose pack was born or which were spent; never re-marked this zone
     std::atomic<Retire> m_Retire{ Retire::Kind };
-    std::atomic<bool> m_PackGoneRetires{ true };   // the player build turns it off at load (ModuleMain)
+    std::atomic<bool> m_PackGoneRetires{ true };   // on in both builds; `packmarks gonerule` (research) switches it
     uint64_t m_Frame{ 0 };
     KindStats m_Stats[KindCount];
     std::unordered_map<int64_t, uint8_t> m_KindOf;   // every id listed this zone -> its kind

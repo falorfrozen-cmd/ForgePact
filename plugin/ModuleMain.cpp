@@ -40431,8 +40431,8 @@ static void PackMarksCommand(const std::string& rest)
             Out(std::string("packmarks retire -> ") + PM::RetireName(pm.GetRetire()));
             return;
         }
-        // The members rule for `packgone`-mode markers (on by default here,
-        // off in the player build until its alive read has a control).
+        // The members rule for `packgone`-mode markers (on by default in both
+        // builds; only this research build can switch it).
         if (a1 == "gonerule") {
             const std::string v = Lower(TrimCopy(a2));
             if (v == "on" || v == "1") pm.SetPackGoneRetires(true);
