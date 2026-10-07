@@ -94,6 +94,33 @@ self-contained page with the same numbers, the tables with bars, the slow
 frames, a per-second chart with the monster count, an icicle chart of the
 stacks, and the CPU per thread.
 
+After the summary it prints a `runner phases:` block, and the page has the
+same as its Runner phases section. It answers where the runtime's share goes
+inside a frame, by splitting the frame thread's samples into the runner's
+**step phase** (Begin Step, Step, End Step, alarms, collisions), its **draw
+phase** and what lies outside both (presenting the frame, the frame limiter):
+
+- **How a phase is found.** From the `.stacks.txt` alone, never from an
+  address: a phase's dispatcher is the outermost runtime function under which
+  at least 95% of the object events are that phase's, provided those events are
+  at least 1% of all samples. A stack beneath both dispatchers is counted once.
+- **`step phase:` / `draw phase:`** - the dispatcher, the function it is
+  called from, its share of all samples split by bucket, and its eight
+  heaviest callees, each with its share and its runtime-only share (no game
+  code, graphics driver or mod anywhere on the stack). `not found` when no
+  function qualifies.
+- **`outside the phases:`** - the rest of the samples, split by bucket.
+- **The parity line.** The tool derives each stack's bucket again from its
+  labels, the way the plugin's `Classify` and `IsSpinSample` do, and compares
+  the totals with the capture's `buckets`: "buckets agree with the capture",
+  or the samples by which they differ, bucket by bucket. A stacks file keeps no
+  module paths, so a fixed list of Windows DLLs stands in for the plugin's
+  `\windows\` rule; a difference shows up here rather than silently.
+
+The research this split serves (ForgePact #183, which part of the frame
+thread's time an offload could win) is
+[main-thread-offload-research.md](main-thread-offload-research.md).
+
 How to read the tables:
 
 - **Heaviest events** - each object event with everything it calls. This is
@@ -192,7 +219,9 @@ Read so far:
   `timer_system_update` 3.3%; Controller_obj Draw GUI 3.0%).
 - Below the main loop the runtime-only time splits into two branches, about
   27% (with one function at 13% self time) and about 17% of all samples;
-  naming them is the next research step.
+  naming them is the next research step, which
+  [main-thread-offload-research.md](main-thread-offload-research.md) takes
+  with the report's runner phases (see "The report").
 - The town's two slow frames (158 and 116 ms) were 36 of 39 and 27 of 29
   samples waiting for the GPU or display: a graphics stall, not game code.
 - The frame thread keeps a whole core busy even when idle, because the frame
