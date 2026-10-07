@@ -32,7 +32,8 @@ headless run can go on beside it.
   the hub's `tests/test_ghidra_agent_tools.py` pins those agents' tool lines to it. The
   verifier, the scribe, `live-operator` and the reviewers carry none.
 - **An empty callers or xrefs answer means "not observed"**, the same as a zero from
-  `FindCallers.java` below: the reference table does not see every route a call can take.
+  `FindCallers.java` below: neither sees every route a call can take (see its row in the
+  table).
 
 The headless scripts in this folder are now the fallback, for what the MCP reads cannot
 do:
