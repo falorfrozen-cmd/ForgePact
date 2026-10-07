@@ -75,8 +75,8 @@ capture's `.txt` summary and JSON):
 
 - **CPU per thread.** In the six 2026-09-28 captures the frame thread used
   98-99% of one core (93-94% in frame-profiler.md's earlier pair); every other
-  thread in the process together, mod and driver threads included, used at
-  most 4-10% of one core. So the threads above exist, but together they do
+  thread in the process together used 4-10% of one core (mod and driver
+  threads included). So the threads above exist, but together they do
   little of the work in these captures.
 - **Thread names not observed.** `GetThreadDescription` was empty for every
   game thread among the 24 each capture lists (`threads.top[].name`). The JSON
@@ -388,6 +388,12 @@ plugin's.
 | H1 | 53.1%: 34.2 / 18.9 / 0 / 0.0 / 0 | 40.9%: 10.9 / 26.3 / 2.0 / 1.7 / 0 | 6.0%: 0 / 3.2 / 1.2 / 1.6 / 0 |
 | H2 | 45.7%: 25.3 / 18.7 / 0 / 1.7 / 0 | 48.9%: 19.7 / 25.7 / 2.2 / 1.3 / 0 | 5.4%: 0 / 3.0 / 1.0 / 1.5 / 0 |
 
+Every walk ended at the frame thread's root except 0.02% (T), 0.04% (H1) and
+0.09% (H2) of samples, which ended early. That is well under the 2.4-point
+runtime/game-code margin. H1 and H2 found the same step and draw dispatchers
+as town, and outside the phases is 5.4-6.0%, so the step phase did not break
+up.
+
 The dispatchers' callees, as total / runtime-only share (runtime-only: no
 game, graphics or mod frame anywhere on the stack), named as read in "The
 per-frame functions" above. "Not read" marks a callee this research did not
@@ -458,6 +464,9 @@ What these show, all measured on these three captures:
   most 0.64% (check `box-rebuild` fails for this reason; the failure is the
   finding). It was not among H1's rows either (under 0.45%).
   `DrawMinimapDynamic` was absent from both; `DrawMinimap` was 0.60% in H1.
+  The sampler does name it: it appears on the stacks of all three captures,
+  at 0.08%, 0.08% and 0.48% of samples, so the bound is a measurement, not a
+  blind spot.
 - **These heavy-room numbers differ from frame-profiler.md's first Act_01_01
   capture** (about 51 fps, runtime 57%, game code 26%, graphics 9%, about
   6,000 instances and 78 monsters). The density, the monster count and the
@@ -535,7 +544,8 @@ largest of the three bucket shares.
   the first later workorder that changes `frameprof`.
 - **Names beyond the listed functions.** Only the per-frame function, its other
   branch, the two dispatchers, and the step dispatcher's five and the draw
-  dispatcher's four heaviest runtime-only callees are named. Naming more of the runtime goes to whichever candidate's workorder needs it.
+  dispatcher's four heaviest runtime-only callees are named. Naming more of
+  the runtime goes to whichever candidate's workorder needs it.
 - **Whether `SaveFileGMAsync` reaches `buffer_save_async`.** It needs the
   `HookBuiltin` counter described above, in a live session; no candidate here
   depends on it.
