@@ -81,7 +81,10 @@ class RollingDensityPluginTests(unittest.TestCase):
 
     def test_the_reach_follows_map_fill_and_the_hunt(self):
         refresh = _code(_body(self.plugin, "static void DensityRollRefresh()"))
-        self.assertIn("if (reveal.IsEnabled() && reveal.PacksEnabled()) reach = std::numeric_limits<double>::infinity();",
+        # Under the fill every copy is needed at once, unless `fillroll`
+        # (#183) limits the fill to a reach of the player too.
+        self.assertIn("if (reveal.IsEnabled() && reveal.PacksEnabled() && !reveal.FillRolling()) "
+                      "reach = std::numeric_limits<double>::infinity();",
                       refresh)
         # Any hunt (Beacon or Tyrant's Crown) keeps monsters within the wake
         # radius hunting, so the reach covers it; a whole-map hunt, or
