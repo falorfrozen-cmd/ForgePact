@@ -93,6 +93,11 @@
         <span class="val" id="drlval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Fill the map as you approach<br><span class="feature-description">Changes Map Reveal's Really spawn every pack on arrival: only the packs near you are made when you arrive, and the rest as you come near them, so filled zones run lighter. Does nothing while that option is off. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="fill_rolling"><span class="sl"></span></label>
+        <span class="val" id="frlval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Sleep loot your filter hides<br><span class="feature-description">Items your loot filter hides are put to sleep as they drop, so the game stops spending time on them every frame. Hold Left Alt, or the key you pick below, to see them and pick them up; let go and they hide again. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_hidden_loot"><span class="sl"></span></label>
         <span class="val" id="mhlval">off</span>

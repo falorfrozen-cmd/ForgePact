@@ -117,9 +117,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # Quality of Life's Goburin's Head pity (ForgePact #134): its
         # `#mod_gambapity` switch's handler and its `#gambapity` range's change
         # handler (both in the derived oracle). Plus 1 for Loot announcements'
-        # switch (ForgePact #17; in the derived oracle too).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1)
+        # switch (ForgePact #17; in the derived oracle too). Plus 1 for Fill
+        # the map as you approach's switch (ForgePact #183; in the derived
+        # oracle too).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

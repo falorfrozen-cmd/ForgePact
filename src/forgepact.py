@@ -303,6 +303,13 @@ DEFAULTS = {
     # approaches instead of all at once when a zone loads. Off by default;
     # offline only, like every mod here.
     "density_rolling": False,
+    # Fill the map as you approach (ForgePact #183,
+    # docs/main-thread-offload-research.md): while Map Reveal's "Really spawn
+    # every pack on arrival" is on, only the spawners near the player are
+    # filled at once and the rest as the player comes near, so a filled zone
+    # holds fewer living monsters. Off by default; offline only, like every
+    # mod here.
+    "fill_rolling": False,
     # Sleep loot your filter hides (docs/hidden-loot-research.md): a ground
     # item the player's own loot filter hides is put to sleep at the end of
     # the frame it dropped in. Off by default; offline only, like every mod
@@ -1210,6 +1217,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: `densityroll 1` only sets the reach the
         # plugin's density copy queue takes jobs within.
         out.append("densityroll 1")
+    if cfg.get("fill_rolling", False):
+        # Safe to send at launch: `fillroll 1` only sets the reach the fill's
+        # answer is limited to; the fill itself still waits for its zone.
+        out.append("fillroll 1")
     if cfg.get("mod_hidden_loot", False):
         # Safe to send at launch: `hiddenloot 1` only turns the switch on; the
         # plugin installs its hook on the first enable after setup. The key
@@ -2952,7 +2963,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_follow", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "fill_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_follow", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3098,6 +3109,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"stashmoveall {1 if cfg['mod_stash_move_all'] else 0}"], cfg)
                     elif key == "density_rolling":
                         send_cmds([f"densityroll {1 if cfg['density_rolling'] else 0}"], cfg)
+                    elif key == "fill_rolling":
+                        send_cmds([f"fillroll {1 if cfg['fill_rolling'] else 0}"], cfg)
                     elif key == "mod_hidden_loot":
                         cmds = [f"hiddenloot {1 if cfg['mod_hidden_loot'] else 0}"]
                         # Turning it on restates the key first, as map reveal
