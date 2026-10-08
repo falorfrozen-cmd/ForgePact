@@ -650,9 +650,18 @@ One session for this change and two other ForgePact fixes of 2026-10-08
 workorder `forgepact-moveall-loot-satanic`, its context file's
 `### Live procedure 1` (`.claude/workorders/forgepact-moveall-loot-satanic-context.md`
 in the hub, a local working file). The loot announcement part: at character
-select, `lootann stat` carries ` install=not-armed` (the build's marker);
-`lootann 1` answers `install=waiting-for-character` with both hooks
-`not-installed`, and still does 3 s later (`lootann-armed-at-select`); after
+select, `lootann stat` carries ` install=not-armed` (the build's marker),
+and `hiddenloot stat` records whether hidden loot sleep is on (`on=`, the
+owner's own `forgepact.json` decides it); `lootann 1` answers
+`install=waiting-for-character create-hook=not-installed`, and still does 3 s
+later (`lootann-armed-at-select`, which rests on those two fields: only loot
+announcements' own install sets them). `init-hook=` is not loot
+announcements' own: it reports the `LootGroundInit` detour shared with hidden
+loot sleep, which hidden loot installs at setup with no player check whenever
+its switch is on (the ForgePact guide's Known Limitations item 8). So
+`init-hook=not-installed` is expected only with hidden loot off; with it on,
+`init-hook=` shows hidden loot's route (the same value as `hiddenloot stat`'s
+`route=`), which is that limitation and not a failed arm; after
 the character loads, `install=installed init-hook=both create-hook=both`
 (`lootann-installed-after-load`); a placed Heroic, Satanic and Mythic item
 each raise `announced` by 1 with a red `SERVER:` line and no `held-rarity`
