@@ -12,9 +12,9 @@ namespace ForgePact {
 
 // ---- Loot announcements: the decision core (ForgePact #17) -----------------
 //
-// `lootann 1` announces in the in-game chat an item of Heroic, Angelic or
-// Unholy rarity that the game drops on the ground, the way online play
-// announces it. Offline the game shows no such line
+// `lootann 1` announces in the in-game chat an item of Heroic, Angelic,
+// Unholy, Satanic or Mythic rarity that the game drops on the ground, the way
+// online play announces it. Offline the game shows no such line
 // (docs/loot-announcement-research.md).
 //
 // The rule this header decides, once per ground item the shared
@@ -52,13 +52,17 @@ namespace ForgePact {
 // after its batch, and runs the sink the verdict asks for.
 class LootAnnounceMod {
 public:
-    // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy. Heroic sits above
-    // Satanic (6); Angelic and Unholy are the two uniques tiers the game's own
-    // online rule announces.
+    // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy, 6 Satanic, 5
+    // Mythic. Angelic and Unholy are the two uniques tiers the game's own
+    // online rule announces; Heroic sits above Satanic. Satanic and Mythic were
+    // added on the owner's word (2026-10-08: the drops they expected to see
+    // announced). Common, Superior, Rare and every other code stay held.
     static constexpr int kHeroic = 9;
     static constexpr int kAngelic = 7;
     static constexpr int kUnholy = 10;
-    static constexpr std::array<int, 3> kAnnouncedRarities = { kHeroic, kAngelic, kUnholy };
+    static constexpr int kSatanic = 6;
+    static constexpr int kMythic = 5;
+    static constexpr std::array<int, 5> kAnnouncedRarities = { kHeroic, kAngelic, kUnholy, kSatanic, kMythic };
     // The adapter's value for a rarity it could not read as a number.
     static constexpr int kRarityUnread = -1;
     // Items remembered at most; the oldest is forgotten first.
@@ -136,6 +140,35 @@ public:
         case Verdict::HeldBagDrop: return "held-bag-drop";
         }
         return "unknown";
+    }
+
+    // ---- the install: armed at launch, hooked once a character exists ----
+    // The guide's Known Limitations item 8: a hook installed at character
+    // select stalls the runner. A switch already on as the game starts (the
+    // panel's launch commands carry `lootann 1`, consumed from the first frame
+    // after setup, while character selection still runs) only arms; the
+    // hooks go in on the first frame where setup is done and the local player
+    // resolves (the adapter asks HhResolveLocalPlayer), once per session.
+    // While armed, the adapter's tick looks for the player only on the frames
+    // LooksForPlayer picks, counted from the first armed frame.
+    static constexpr unsigned long long kInstallPollFrames = 60;
+    static constexpr bool LooksForPlayer(unsigned long long armedFrames)
+    {
+        return armedFrames % kInstallPollFrames == 0;
+    }
+    // Whether the adapter installs now: the switch on, setup done, the local
+    // player resolved, and no install tried yet this session.
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool installTried) const
+    {
+        return m_Enabled && setupDone && playerResolved && !installTried;
+    }
+    // The stat line's ` install=` field: installed once the install ran,
+    // waiting-for-character while on without it, not-armed while off and
+    // never installed.
+    const char* InstallState(bool installTried) const
+    {
+        if (installTried) return "installed";
+        return m_Enabled ? "waiting-for-character" : "not-armed";
     }
 
     bool Enabled() const { return m_Enabled; }

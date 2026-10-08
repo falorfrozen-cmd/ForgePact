@@ -11,7 +11,7 @@ pinned by the plugin's own tests. This file pins what the panel owns:
 - the row sits in the Mods tab's Quality of Life card (`qolCard`), after
   Jump through scenery and before Timed skill countdown;
 - its text is short, player-facing and ends `Off by default.`, names the
-  three rarities it announces, and names no game object, counter or
+  five rarities it announces, and names no game object, counter or
   measurement;
 - it is a boolean mod for the "Enabled mods" list.
 
@@ -111,7 +111,8 @@ class LootAnnouncePanelRowTests(unittest.TestCase):
         self.assertLessEqual(len(text), 300, text)
         self.assertTrue(text.endswith("Off by default."), text)
         self.assertIn("chat", text)
-        for rarity in ("Heroic", "Angelic", "Unholy"):
+        # Satanic and Mythic joined on the owner's word, 2026-10-08.
+        for rarity in ("Heroic", "Angelic", "Unholy", "Satanic", "Mythic"):
             self.assertIn(rarity, text)
         # Items the player drops are not announced: the one caveat they act on.
         self.assertIn("drop yourself", text)

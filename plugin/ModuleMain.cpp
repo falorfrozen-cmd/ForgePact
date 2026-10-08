@@ -50950,10 +50950,17 @@ static void JumpSceneryCommand(const std::string& rest)
 // does (docs/loot-announcement-research.md). While the switch is on, each
 // ground item the game initialises is decided once by the core in
 // LootAnnounceMod.hpp, and an item it announces gets one chat line from the
-// shipped sink.
+// shipped sink. The announced rarities are Heroic, Angelic, Unholy, Satanic
+// and Mythic (Satanic and Mythic on the owner's word, 2026-10-08).
 //
-// Two hooks, both by SDK name through HookOneScript, installed on the first
-// switch-on after setup:
+// Two hooks, both by SDK name through HookOneScript, installed once per
+// session when the core's ShouldInstall says so: the switch on, setup done
+// and the local player resolved through HhResolveLocalPlayer (the guide's
+// Known Limitations item 8: a hook installed at character select stalls the
+// runner). A switch already on as the game starts arms only; the tick looks
+// for the player every kInstallPollFrames frames while armed, and ` install=`
+// on `lootann 1` and `lootann stat` says which (not-armed,
+// waiting-for-character, installed):
 //   - LootGroundInit's one detour, shared with hidden loot sleep
 //     (HookHiddenLootInit, installed by HiddenLootInstall): inside the call
 //     LootAnnounceOnInit only reduces argument 0 and `self` to durable
@@ -50986,6 +50993,7 @@ static void JumpSceneryCommand(const std::string& rest)
 // the research build's `lootannprobe try <n>` runs exactly the code the mod
 // would ship; Live procedure 1 picked `server` (the research doc's "Route").
 static bool g_LaInstallTried = false;
+static unsigned long long g_LaArmedFrames = 0;   // ticks while on and not installed: LooksForPlayer's count
 static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route: both, table-only or none
 static long long g_LaUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
 static long long g_LaNoItem = 0;         // a ground item with no item struct to read
@@ -51116,6 +51124,16 @@ static void LootAnnounceInstall()
     if (std::string_view(g_LaCreateRoute) != "both")
         Out(std::string("lootann: CreateItemNew hook ") + g_LaCreateRoute
             + " - the game's own drops may not be seen as new, so nothing would be announced");
+}
+
+// Installs when the core says so: setup done, the local player resolved
+// through HhResolveLocalPlayer, and no install tried yet. Before a character
+// exists it installs nothing, so a switch on at launch stays armed.
+static void LaInstallIfReady()
+{
+    RValue player;
+    const bool havePlayer = g_Setup && !g_LaInstallTried && HhResolveLocalPlayer(player);
+    if (g_LootAnnounce.ShouldInstall(g_Setup, havePlayer, g_LaInstallTried)) LootAnnounceInstall();
 }
 
 // A field of a struct-like value: variable_struct_* for a struct,
@@ -51492,13 +51510,14 @@ static void LaProcess(const LaPending& p)
         g_LootAnnounce.NoteSinkRefused();
 }
 
-// The per-frame tick. Returns at once while the switch is off; installs the
-// hooks on the first frame after setup with the switch on; then decides the
-// calls this frame noted, and ages the creation window once, after the batch.
+// The per-frame tick. Returns at once while the switch is off; while armed
+// and not installed, looks for the local player every kInstallPollFrames
+// frames and installs the hooks once one exists; then decides the calls this
+// frame noted, and ages the creation window once, after the batch.
 static void LootAnnounceTick()
 {
     if (!g_LootAnnounce.Enabled()) return;
-    if (!g_LaInstallTried) LootAnnounceInstall();
+    if (!g_LaInstallTried && ForgePact::LootAnnounceMod::LooksForPlayer(g_LaArmedFrames++)) LaInstallIfReady();
     if (!g_LaPending.empty()) {
         std::vector<LaPending> batch;
         batch.swap(g_LaPending);
@@ -51514,6 +51533,7 @@ static std::string LootAnnounceStatLine()
     return g_LootAnnounce.StatLine()
         + " init-hook=" + LaInitRoute()
         + " create-hook=" + g_LaCreateRoute
+        + " install=" + g_LootAnnounce.InstallState(g_LaInstallTried)
         + " unidentified=" + std::to_string(g_LaUnidentified)
         + " no-item=" + std::to_string(g_LaNoItem)
         + " no-key=" + std::to_string(g_LaNoKey)
@@ -51528,9 +51548,12 @@ static void LootAnnounceCommand(const std::string& rest)
     const std::string arg = Lower(TrimCopy(rest));
     if (arg == "1" || arg == "on") {
         g_LootAnnounce.SetEnabled(true);
-        if (g_Setup && !g_LaInstallTried) LootAnnounceInstall();
+        // In game, with a character loaded: at once. At character select (the
+        // launch commands): armed only, and the tick installs later.
+        if (!g_LaInstallTried) LaInstallIfReady();
         Out(g_LootAnnounce.StatusLine() + " route=" + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
-            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute);
+            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute
+            + " install=" + g_LootAnnounce.InstallState(g_LaInstallTried));
         return;
     }
     if (arg == "0" || arg == "off") {
@@ -53664,7 +53687,7 @@ static void DungeonProbeCommand(const std::string& rest)
 //                   too) with its install route, then the live counts of
 //                   Loot_Ground_obj, Ingame_Chat_obj, Chat_obj and
 //                   Menu_Controller_obj.
-//   place <r>     - heroic|angelic|unholy|satanic|common: one ground item
+//   place <r>     - heroic|angelic|unholy|satanic|mythic|common: one ground item
 //                   beside the player through the game's own
 //                   LootGroundCreateFromItem, built the way `sigdrop` builds
 //                   one (InitItemFromJson, then itemInfoStruct["27"] written).
@@ -53939,11 +53962,11 @@ static void LaProbeStatus()
 static void LaProbePlace(const std::string& which)
 {
     static const struct { const char* name; int code; } kRarities[] = {
-        { "heroic", 9 }, { "angelic", 7 }, { "unholy", 10 }, { "satanic", 6 }, { "common", 1 },
+        { "heroic", 9 }, { "angelic", 7 }, { "unholy", 10 }, { "satanic", 6 }, { "mythic", 5 }, { "common", 1 },
     };
     int code = -1;
     for (const auto& k : kRarities) if (which == k.name) code = k.code;
-    if (code < 0) { Out("lootannprobe place: rarity must be heroic|angelic|unholy|satanic|common; nothing placed"); return; }
+    if (code < 0) { Out("lootannprobe place: rarity must be heroic|angelic|unholy|satanic|mythic|common; nothing placed"); return; }
     std::string failed;
     CInstance* player = LaPlayer(nullptr, failed);
     if (!player) { Out("lootannprobe place " + which + ": refused - " + failed); return; }
@@ -54170,7 +54193,7 @@ static void LootAnnProbeCommand(const std::string& rest)
         LaProbeSay(text);
         return;
     }
-    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|common | methods | try <1-5> | say <text>");
+    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|mythic|common | methods | try <1-5> | say <text>");
 }
 #endif // FORGEPACT_RELEASE (lootannprobe)
 
