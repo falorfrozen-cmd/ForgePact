@@ -344,6 +344,12 @@ experience.
 
 ## Fixed
 
+- **The Move All button lights up where it is drawn (#198).** In 2.1.0 the
+  stash's **Move All** button lit up only with the mouse to its right, over
+  the **Sort** button, although a click on Move All itself still worked. The
+  button now keeps its own place for that highlight, at any resolution or
+  interface scale. This has not been checked in a live game yet.
+
 - **Map Reveal's pack icons no longer turn generic a few seconds after you
   arrive (#181).** With Map Reveal's pack markers on, the special icons
   (ancient, mini boss, colossal chest and the rest) gave way to plain ones
