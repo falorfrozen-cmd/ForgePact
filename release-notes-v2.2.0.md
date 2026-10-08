@@ -263,7 +263,10 @@ experience.
   dropped from the bag, was not announced again; nothing was announced with
   the switch off; and with Magic Find raised, an item dropped by a monster
   was announced (which one was not recorded). Dropping several items at
-  once and co-op were not tried.
+  once and co-op were not tried. Checked in play again on 2026-10-08 with
+  the switch turned on at the character select screen, before any character
+  was loaded: the mod waited, started once the character was loaded, and a
+  placed Heroic item was announced.
 - **Skill sliders: Projectile Speed, Projectile Amount and Area of Effect
   (#160).** Modifiers → Skills. Each slider adds to what the game has already
   worked out for your skill from your gear and buffs, so those still count
@@ -346,8 +349,11 @@ experience.
 - **The Move All button lights up where it is drawn (#198).** In 2.1.0 the
   stash's **Move All** button lit up only with the mouse to its right, over
   the **Sort** button, although a click on Move All itself still worked. The
-  button now keeps its own place for that highlight, at any resolution or
-  interface scale. This has not been checked in a live game yet.
+  button now lights up with the mouse on it, and no longer with the mouse on
+  Sort. Checked in play on 2026-10-08 at 2560x1440 fullscreen and at
+  1920x1080 windowed: Move All lit up with the mouse on it and stayed unlit
+  with the mouse on Sort, and a click on it moved the bag's items. Fullscreen
+  1920x1080 and other resolutions were not tried.
 
 - **Map Reveal's pack icons no longer turn generic a few seconds after you
   arrive (#181).** With Map Reveal's pack markers on, the special icons

@@ -610,9 +610,10 @@ loot's (above). Tests: `tests/loot_announce_harness.cpp`'s
 `tests/test_loot_announce_behavior.py`; the adapter's wiring in
 `tests/test_loot_announce_contract.py`.
 
-Whether this path failed before the change, and whether it works after it,
-is measured by Live procedure 4 (`lootann-armed-at-select`,
-`lootann-installed-after-load`, `lootann-heroic-announced`).
+That it works after the change is measured (Live procedure 4's Results,
+2026-10-08: `lootann-armed-at-select`, `lootann-installed-after-load`,
+`lootann-heroic-announced` all pass). Whether this path failed before the
+change is not established: only the build with the change was run.
 
 ## Satanic and Mythic: added and reverted
 
@@ -684,8 +685,59 @@ the character loads, `install=installed init-hook=both create-hook=both`
 each raise `announced` by 1 with a red `SERVER:` line and no `held-rarity`
 change (`lootann-heroic-announced`, `lootann-satanic-announced`,
 `lootann-mythic-announced`); optionally a minute of kills raises `seen` and
-`created` (`natural-drops-seen`, research). Results are recorded here when
-the session has run.
+`created` (`natural-drops-seen`, research). The session ran on 2026-10-08:
+§ Results, below.
+
+### Results
+
+Session 2026-10-08 09:35-09:46 UTC, research build sha256
+`87d2c4d5f0322ea35a6e0e9c80c03380603051c3282b5aab4496dd649cb31a04` (the
+lease's `dll_sha256`, equal to the built file's, read twice), slot 14 Sorak,
+the Town of Inoya, and the Outskirts for the kills. Capture
+`.claude/workorders/forgepact-moveall-loot-satanic-live-1.md` in the toolkit
+hub, on the owner's machine. The mod was switched by `lootann 1` sent through
+the command channel at character select, the moment the panel's launch
+commands reach the plugin; the panel itself was not used. The saves were
+backed up first and restored afterwards (`hs_saves_inspect` after the
+restore: 0 changed, added or missing). This build still announced Satanic
+and Mythic: the owner reverted that during this session (§ Satanic and
+Mythic: added and reverted), so `lootann-satanic-announced` and
+`lootann-mythic-announced` below are **research results of that build, not
+the shipped behaviour**, which holds both.
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `control` | `ping` at character select | `pong (YYTK 4.0.1)` | pass |
+| `marker` | `lootann stat` at character select, before the switch | `lootann: off route=server seen=0 ... init-hook=not-installed create-hook=not-installed install=not-armed ...` | pass |
+| `dll-hash` | the lease's `dll_sha256` against the build's | equal | pass |
+| `lootann-armed-at-select` | `hiddenloot stat` (`on=0 route=none`), then `lootann 1` at character select, and `lootann stat` 3 s later | `lootann: on route=server init-hook=not-installed create-hook=not-installed install=waiting-for-character`, and the same three fields 3 s later (hidden loot off, so `init-hook=not-installed` was the expected case) | pass |
+| `lootann-installed-after-load` | `hs_select_character` slot 14, `lootann stat` 5 s later | `init-hook=both create-hook=both install=installed`, `created=2268` | pass |
+| `lootann-heroic-announced` | `lootannprobe place heroic` (`"27"`=9, Heavy Belt of Energy, ground id 261987); a second placement after step 7 (`"27"`=9, Heavy Belt of Vial) only to catch the line on a screenshot | `announced` 0 → 1; the first screenshot, about 3 s after the placement, showed no line (the red lines fade within a few seconds); the second placement, `announced` 3 → 4, showed red `[11:37] SERVER: Sorak found Heavy Belt of Vial` on a screenshot taken at once | pass |
+| `lootann-satanic-announced` (research, pre-revert build) | `lootannprobe place satanic` (`"27"`=6, Heavy Belt of Vitality) | red `SERVER: Sorak found Heavy Belt of Vitality`; `announced` 1 → 2, `held-rarity` 0 → 0 | pass |
+| `lootann-mythic-announced` (research, pre-revert build) | `lootannprobe place mythic` (`"27"`=5, Owl Heavy Belt) | red `SERVER: Sorak found Owl Heavy Belt`; `announced` 2 → 3, `held-rarity` 0 → 0 | pass |
+| `natural-drops-seen` (research) | the owner killed monsters in the Outskirts for about a minute | `seen` 4 → 280, `created` 2272 → 2548; `announced` 4 → 20 and `held-rarity` 0 → 260 on the pre-revert set, so how many of the 16 were Heroic, Angelic or Unholy is not known | pass |
+
+What the session established, measured:
+
+- **The switch on before a character exists arms and waits.** `lootann 1`
+  at character select installed nothing (`create-hook=not-installed`,
+  `install=waiting-for-character`) and still had not 3 s later.
+- **The hooks go in once the character is loaded.** Within 5 s of slot 14
+  loading, both `LootGroundInit` and `CreateItemNew` read `both` and
+  `install=installed`; `created` already read 2268, so the game's own item
+  builds were being noted.
+- **A placed Heroic item is announced in that path**: `announced` rose by 1
+  for each placement, with the red line on the screenshot taken at once.
+- **The probe's Mythic code reads back as written.** `place mythic` reported
+  `"27"`=5 on the placed belt, and the pre-revert build counted it as an
+  announced rarity; whether the game's own interface draws it as Mythic was
+  not looked at.
+
+Not established by this session: whether the same path failed before the
+arming change (only the build with it ran), and the switch on through the
+panel's own launch commands rather than `lootann 1` sent at the same moment.
+The game's close by `hs_stop_game` without force ended with exit code
+`0xC0000409`, after play had ended; it was not investigated.
 
 ## Not established
 
@@ -731,10 +783,13 @@ the session has run.
   by design) were not tried.
 - What failed in the owner's session of 2026-10-08 (§ The switch on at
   launch): it was not captured. Whether hooking at character select was the
-  cause, and whether the armed install works with the switch on at launch,
-  are not measured until Live procedure 4 runs. Also not established: that a
-  Mythic code written onto the probe's Heavy Belt base reads back as Mythic
-  (Live procedure 4's `lootann-mythic-announced` measures it).
+  cause is not established (the build before the change was not run). The
+  armed install with the switch on before a character exists is measured
+  (Live procedure 4's Results: armed at character select, installed after
+  the load, a placed Heroic item announced); the switch on through the
+  panel's own launch commands is not observed. The probe's Mythic code read
+  back as 5 (Live procedure 4); a Mythic item held on the shipped set is not
+  observed live (harness only).
 - Why the game exited in Live procedure 2 (exit code 1, no fault record).
   Live procedure 3, with Steam running, did not exit; one session does not
   settle the owner's Steam hypothesis.

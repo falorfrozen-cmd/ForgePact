@@ -869,7 +869,13 @@ itself.
   button, drawn with that button's own sprite and scale and with its **Move All** label centred inside it: the
   mod copies onto it, from the Sort button itself each time, the Sort button's
   sprite and scale and the 13 settings whose copy in a research session drew
-  the label centred like the Sort button's (Live 5). Each is written as the
+  the label centred like the Sort button's (Live 5). Five of those settings
+  hold the Sort button's own place and the box the game lights up under the
+  mouse, so they are moved onto the Move All button's own place and size as
+  they are copied, and the button lights up where it is drawn rather than
+  over Sort (checked in play on 2026-10-08 at 2560x1440 fullscreen and at
+  1920x1080 windowed, `docs/stash-move-research.md` § Live 8 and Live 9
+  results; fullscreen 1920x1080 not tried). Otherwise each is written as the
   Sort button has it - a number, a true/false, a text or an asset - and read
   back; one that reads as anything else is not written and counts as not
   read, and the log names the first setting that did not read back the same.
@@ -1435,6 +1441,11 @@ on the ground is announced in the in-game chat.
   offline, so the mod writes this line itself.
 - **The game's online behaviour is untouched.** Nothing is sent over the
   network on purpose, and the switch changes nothing while it is off.
+- **On when the game starts.** With the switch already on at launch, the mod
+  waits at the character select screen and starts once your character is
+  loaded; until then `lootann stat` reads `install=waiting-for-character`.
+  Checked in play on 2026-10-08: switched on at character select, it waited,
+  started once the character was loaded, and announced a placed Heroic item.
 - **Checked in play** (2026-10-04, on the research build): a placed Heroic
   and a placed Angelic item were each announced once, a placed Satanic item
   was not; the Heroic item, picked up and dropped from the bag, was not

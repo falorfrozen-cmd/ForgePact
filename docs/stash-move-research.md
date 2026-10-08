@@ -751,8 +751,10 @@ tools only). Labels as in § Static reading 3: M measured, R a static reading.
   `CheckSensorInstance` and in the UI step goes through a variable slot this
   build leaves unnamed, so which member the hover highlight takes its box
   from is **not established** by reading.
-- **Inferred, not measured: `navBbox*` is the box the UI layer hovers and
-  highlights.** Support: the name; on the hotbar a `row0` slot's `navBbox*`
+- **Inferred when written, measured since (§ Live 8 results and § Live 9
+  results, `node-hover` behind its `sort-hover-control`): `navBbox*` is the
+  box the UI layer hovers and highlights.** Not separated: `createX` and
+  `navBboxX` moved together. Support for the inference: the name; on the hotbar a `row0` slot's `navBbox*`
   is the rectangle sitting on its button (`docs/RUNTIME_DATA_MODELS.md`
   § 8.3); and the owner's symptom is exactly a highlight box on Sort's place,
   to the right of the drawn button, which is where the copied `navBboxX`/`Y`
@@ -791,13 +793,15 @@ tools only). Labels as in § Static reading 3: M measured, R a static reading.
   give 2098, 1262, `createX` 2098, 192x66, tally 16/16); the outlier
   `target/nav_box_follows_a_tab_of_another_width`; and the negative control
   `target/nav_box_member_that_is_not_a_number_is_not_displaced`.
-- **Not established.** That `navBbox*` is the highlight box (Live
-  procedure 8's `node-hover` and its control); that the game reuses
-  `createX` on a relayout; whether moving `createX`/`navBboxX` moves the
-  label (Live 5 wrote them as Sort's absolute values and the label stayed
-  centred in that one trial, not separated from the other members), so
-  Live procedure 8 runs the label check again; the hover at a second GUI
-  scale.
+- **Not established.** That the game reuses `createX` on a relayout;
+  which of `createX` and `navBboxX` gives the highlight box's left edge
+  (moved together); a target not level with Sort or not Sort's size in play
+  (dy 0 and scale 1 in both sessions). Measured since: the highlight on the
+  node at 2560x1440 fullscreen (§ Live 8 results) and at 1920x1080 windowed,
+  GUI 2560x1368 (§ Live 9 results); the label still centred after the move
+  at 2560x1440 (Live 8 `label-centred`; at 1920x1080 windowed the label
+  tool refused the aspect, not observed). Fullscreen 1920x1080 and other
+  GUI scales: not observed.
 
 ## Instrument
 
@@ -1857,8 +1861,10 @@ when it is hovered: the instrument's positive control), `node-hover` (the
 same member changes the same way on N when N is hovered) and
 `node-not-hovered-over-sort` (it does not change on N with the mouse over
 Sort), all three research checks, the last two `not-observed` unless the
-control passes; and a click on N's centre (`button-press`). Results are
-recorded under § Results when the session has run.
+control passes; and a click on N's centre (`button-press`). Results: § Live
+8 results (2026-10-08, every check passed, at 2560x1440 fullscreen only).
+The same checks ran again at 1920x1080 windowed on the owner's request, as
+the workorder's `### Live procedure 2`: § Live 9 results.
 
 ## Results
 
@@ -2551,6 +2557,157 @@ Screenshots, on the owner's machine under
 `20261002T091849556982Z_fix5-live1-afterclose.png` (the town after the close)
 and `20261002T091920219645Z_fix5-live1-reopen.png` (the reopened node).
 
+### Live 8 results
+
+Live 8 (§ Live procedure 8) ran on 2026-10-08 on the **research build**,
+`plugin_build/BloodPactPlugin_rel.dll` SHA-256
+`87d2c4d5f0322ea35a6e0e9c80c03380603051c3282b5aab4496dd649cb31a04` (the
+lease's hash, equal to the file's), slot 14, in one session with loot
+announcements' at-launch check and the satanic follow removal (capture
+`.claude/workorders/forgepact-moveall-loot-satanic-live-1.md` in the toolkit
+hub, on the owner's machine). An independent copy of the save folder and the
+tool's backup were taken first and restored at the end, inspected clean (105
+files). **Resolution: 2560x1440 fullscreen, GUI 2560x1440** (`menulayout:
+room=Town_01_rm gui=2560x1440 window=2560x1440 fullscreen=1
+view=241.0,243.0,1280.0,720.0`; `hs_input` client 2560x1440; the label
+tool's `scale=1.000,1.000`), so the GUI-to-window scale was 1.0. No other
+resolution was measured in this session. **Every Move All check passed**, the
+three research checks on the highlight included: `tools/live_checks.py`
+reads them from the capture's `## Checks` block. `hs_stash_open` refused
+twice (`warp_not_confirmed`: the player read back away from the stash after
+the warp), so the operator walked up with `hs_input` (W held 700 ms) and
+pressed F; that is a tool observation, not something the mod did.
+
+What it settled. **The node carries its own place** (`nav-box-on-node`):
+with § Static reading 7's fix, `probe dump` of the node read `createX` 2098,
+`navBboxX` 2098, `navBboxY` 1262 and `navBboxWidth`x`navBboxHeight` 192x66,
+exactly its `menulayout` box 2098,1262,2290,1328, where v2.1.0's as-read
+copy gave it Sort's 2290. **The highlight is on the node, measured**
+(`sort-hover-control`, `node-hover`, `node-not-hovered-over-sort`): with the
+mouse moved from a neutral point (the middle of the bag grid) onto Sort's
+centre, five of Sort's members changed, `image_index` 0 to 1, `inFocus`,
+`mouseHover` and `stopAnimation` false to true and `mouseHoverSound` true to
+false, the instrument's positive control; onto the node's centre, the same
+five changed the same way on the node; and with the mouse on Sort the node's
+dump differed from its away dump in nothing (`changed=0`). So with these
+members on the node's own box the game hovers the node where it is drawn,
+and not over Sort; that `navBbox*` is the box it hovers, § Static reading 7's
+inference, is measured here, with one part not separated: `createX` and
+`navBboxX` moved together, so which of them gives the left edge is not
+known, and `navBboxY` and the size equalled their as-read values at this
+layout (the node is level with Sort and its size), so only the x move was
+exercised. **The label stayed centred** (`label-centred`, offset 1.0,-1.0
+against Sort's -0.5,-1.0), so moving `createX`/`navBboxX` did not move the
+label, as Live 5's one trial suggested. **The press still works**
+(`button-press`: 2 of 2 items moved, `in_node` and `taken` 0 to 1). The
+screenshots `sort-hover` and `node-hover` were taken for the owner; the
+verdicts rest on the member dumps.
+
+| Check | Verdict | What it read | Supplied | Result |
+|---|---|---|---|---|
+| dll-hash | pass | the lease's DLL hash against the build | - | lease `dll_sha256` 87d2c4d5...1a04, equal to the file's (`sha256sum`, read twice) |
+| control | pass | the command channel | `ping` | `pong (YYTK 4.0.1)` |
+| nav-box-on-node | pass | the node's place members against its box | `stashmoveall 1`, Shared 1 then Personal, 2.5 s; `menulayout UI_Button_Small_obj`; `stashmoveall probe dump node id:322656` | node 322656 bbox 2098.0,1262.0,2290.0,1328.0 (Sort 322621, 2290.0,1262.0,2482.0,1328.0); `navBboxX=2098`, `navBboxY=1262`, `navBboxWidth=192`, `navBboxHeight=66`, `createX=2098`, all exact |
+| button-look-same | pass | the bare state line | `stashmoveall` | `button_place=on button_box=2098.0,1262.0,2290.0,1328.0 button_look=sort button_size=192.0x66.0 button_ref=tab button_look_same=16/16` |
+| label-centred | pass | the label tool on the node | screenshot `label` (2560x1440); `--gui 2560x1440 --box 2098,1262,2290,1328 --ref 2290,1262,2482,1328` | `box: centred`, 554 label px, offset 1.0,-1.0; `ref: centred`, 548 px, offset -0.5,-1.0; exit 0 |
+| sort-hover-control | pass | Sort's members away and hovered (research) | `hs_input` move to 2000,1000 then to Sort's centre 2386,1295, 0.5 s each; `probe dump sortaway`/`sorthov id:322621`; `probe diff sortaway sorthov` | `changed=5`: `image_index` 0 to 1, `inFocus` false to true, `mouseHover` false to true, `mouseHoverSound` true to false, `stopAnimation` false to true |
+| node-hover | pass | the node's members away and hovered (research) | move to the node's centre 2194,1295, 0.5 s; `probe dump nodehov id:322656`; `probe diff nodeaway nodehov` | `changed=5`, the same five members the same way |
+| node-not-hovered-over-sort | pass | the node's members with the mouse on Sort (research) | `probe dump nodeoversort id:322656` taken with the mouse on Sort; `probe diff nodeaway nodeoversort` | `changed=0 added=0 removed=0` |
+| button-press | pass | a click on the node's centre | a left click at 2194,1295, held 120 ms | `stashmoveall: moved 2 of 2 from bag tab 0 to stash tab 0; skipped 0`; `in_node` 0 to 1, `taken` 0 to 1 |
+
+The same session's loot announcement and satanic zone checks are recorded in
+`loot-announcement-research.md` § Live procedure 4 and the ForgePact guide.
+At the end, `hs_stop_game` without force ended the game with a non-zero
+exit code (quoted in the capture) after play had ended; it was seen only on
+that close, not in play, and was not investigated here.
+
+### Live 9 results
+
+Live 9 ran on 2026-10-08, the same day, at the resolution the owner's report
+came from: the owner said the Move All report was "on different resolution",
+"1920x1080", and asked to "try windowed as well as full screen". The
+procedure is the toolkit hub's workorder `forgepact-moveall-loot-satanic`,
+its context file's `### Live procedure 2` (a local working file): Live 8's
+Move All checks again, per display configuration, with each check named
+`-fs` (1920x1080 fullscreen) or `-win` (1920x1080 windowed), and the node's
+expected place members derived from that configuration's own boxes and
+Sort's own members, never from Live 8's numbers. **Research build**
+`plugin_build/BloodPactPlugin_rel.dll` SHA-256
+`9501763ec27567691de8d0865af8175619a57210ef8a3cdd55edd69bcc18c3e9` (the
+lease's hash, equal to the file's; built after the loot announcement set
+was reverted, with the same Move All code as Live 8's build), slot 14, the
+Town of Inoya stash, the saves backed up first and restored at the end,
+inspected clean (`shop.ini`, which holds the display settings, among the
+files the restore put back). Capture
+`.claude/workorders/forgepact-moveall-loot-satanic-live-2.md` in the toolkit
+hub, on the owner's machine.
+
+**Fullscreen 1920x1080: not observed.** Asked to set it, the owner answered
+"only windowed can control the resolution (leave fullscreen as not observed
+and leave it from tests)"; nothing was sent for that configuration, so every
+`-fs` check is not observed. **Windowed, recorded as 1920x1080.** The owner
+switched the display in the game's Options while it ran, so the mode applied
+at runtime, with no restart. The headers read `menulayout:
+room=Main_Menu_rm gui=2560x1368 window=1920x1090 fullscreen=0` on the main
+menu and `menulayout: room=Town_01_rm gui=2560x1368 window=1920x1090
+fullscreen=0 view=244.0,268.0,1280.0,720.0` in town; `hs_input`'s client was
+1920x1090 (window rect 312,149,2248,1278). The 10-pixel difference is the
+owner's own small manual change to the window's size ("record as 1920x1080.
+i did small manual resolution change"), so `resolution-win`'s fail (window
+height 1090, not 1080) is that, not a defect, and the run stands as the
+1920x1080 windowed case. The in-town GUI is 2560x1368, as on the main menu,
+and the GUI-to-client scale is not uniform: 0.750 across, 0.797 down.
+
+What it settled. **The rule holds where the layout differs from Live 8's.**
+At this GUI the node's box read 2121.1,1198.9,2303.5,1261.6 and Sort's
+2303.5,1198.9,2485.9,1261.6, so the target's offset from Sort was dx -182.4,
+dy 0, and its size over Sort's 1.000 by 1.000. Sort's own members read
+`createX` 2303.5, `navBboxX` 2303.5, `navBboxY` 1198.900024,
+`navBboxWidth` 182.3999023, `navBboxHeight` 62.69995117; displaced and
+scaled, the node's should read 2121.1, 2121.1, 1198.9, 182.4 and 62.7, and
+it read `createX` 2121.100098, `navBboxX` 2121.100098, `navBboxY`
+1198.900024, `navBboxWidth` 182.3999023 and `navBboxHeight` 62.69995117
+(`nav-box-on-node-win`), equal also to its own box's left, top and size.
+**The highlight is on the node here too** (`sort-hover-control-win`,
+`node-hover-win`, `node-not-hovered-over-sort-win`, required checks in this
+session because their control passed): the same five members as Live 8
+changed the same way on Sort over Sort and on the node over the node, and
+none on the node with the mouse over Sort. **The press works**
+(`button-press-win`: 1 of 1 moved). **The label: not observed**
+(`label-centred-win`): the label tool refused the screenshot, `aspect
+mismatch - the image is 1920x1090 and the GUI 2560x1368 (x scale 0.750
+against y scale 0.797)`, exit 2, as its docstring says it does past 1 %;
+that is the tool's refusal, not a label result, and the screenshot
+`label-win` went to the owner.
+
+| Check | Verdict | What it read | Supplied | Result |
+|---|---|---|---|---|
+| dll-hash | pass | the lease's DLL hash against the build | - | lease `dll_sha256` 9501763e...c3e9, equal to `sha256sum` of the file |
+| marker | pass | `lootann stat` at the main menu | `lootann stat` | `lootann: off route=server ... install=not-armed ...` |
+| control | pass | the command channel | `ping` | `pong (YYTK 4.0.1)` |
+| resolution-fs | not observed | the header at 1920x1080 fullscreen | nothing sent: the owner left fullscreen out | - |
+| resolution-win | fail (the owner's window size, not a defect) | the headers after the change and in town | the owner's change in Options at runtime; `menulayout UI_Button_obj`, `menulayout UI_Button_Small_obj` | both `gui=2560x1368 window=1920x1090 fullscreen=0`; client 1920x1090; restart fallback not run |
+| nav-box-on-node-fs | not observed | - | owner: fullscreen left out | - |
+| nav-box-on-node-win | pass | the node's five members against Sort's displaced and scaled | `stashmoveall probe dump sortbox-win id:262177`, `probe dump node-win id:262212` | expected 2121.1, 1198.9, 2121.1, 182.4, 62.7; read `navBboxX=2121.100098 navBboxY=1198.900024 createX=2121.100098 navBboxWidth=182.3999023 navBboxHeight=62.69995117` |
+| button-look-same-fs | not observed | - | owner: fullscreen left out | - |
+| button-look-same-win | pass | the bare state line | `stashmoveall` | `button_box=2121.1,1198.9,2303.5,1261.6 button_size=182.4x62.7 button_ref=tab button_look_same=16/16` |
+| label-centred-fs | not observed | - | owner: fullscreen left out | - |
+| label-centred-win | not observed (the tool's aspect refusal) | the label tool on the node | screenshot `label-win` (1920x1090); `--gui 2560x1368 --box 2121.1,1198.9,2303.5,1261.6 --ref 2303.5,1198.9,2485.9,1261.6` | exit 2, `aspect mismatch ... (x scale 0.750 against y scale 0.797)` |
+| sort-hover-control-fs | not observed | - | owner: fullscreen left out | - |
+| sort-hover-control-win | pass | Sort's members away and hovered | moves to client 1517,747 (GUI 2023.1,936.9) then 1796,980 (Sort's centre), 0.5 s each; `probe diff sortaway-win sorthov-win` | `changed=5`: `image_index`, `inFocus`, `mouseHover`, `mouseHoverSound`, `stopAnimation`, as Live 8 |
+| node-hover-fs | not observed | - | owner: fullscreen left out | - |
+| node-hover-win | pass | the node's members away and hovered | move to client 1659,980 (the node's centre); `probe diff nodeaway-win nodehov-win` | `changed=5`, the same five the same way |
+| node-not-hovered-over-sort-fs | not observed | - | owner: fullscreen left out | - |
+| node-not-hovered-over-sort-win | pass | the node's members with the mouse on Sort | `probe diff nodeaway-win nodeoversort-win` | `changed=0 added=0 removed=0` |
+| button-press-fs | not observed | - | owner: fullscreen left out | - |
+| button-press-win | pass | a click on the node's centre | a left click at client 1659,980, held 120 ms | `stashmoveall: moved 1 of 1 from bag tab 0 to stash tab 0; skipped 0`; `in_node` 0 to 1, `taken` 0 to 1 |
+| restore-clean | pass | the saves after the restore | `hs_saves_restore`, `hs_saves_inspect` | changed, added and missing all empty (before: `herosiege13.hss`, `inventory_order_13.hss`, `shop.ini`, `stash.hss` changed) |
+
+Not observed: 1920x1080 fullscreen, any fullscreen size other than
+2560x1440, a window of exactly 1920x1080, and any other resolution or GUI
+scale. `hs_stop_game` ended the game with the same non-zero exit code at
+the close as in Live 8.
+
 ## Decision
 
 Each line is set from a session's capture: `byname` with the shape that
@@ -2624,7 +2781,7 @@ buttonPlacement: beside Sort, at ButtonOrigin's origin (Live 3 button-placed and
 buttonLook: size and sprite taken, drawn look not Sort's (Live 4 button-placed, button-state and button-look pass on their numbers; the step 3 screenshot fails): with `sprite_index`, `image_xscale` and `image_yscale` copied from the Sort node, the session's first node, made with Sort's own extents at x, y 2090, 1262, read the bbox 2090.0,1262.0,2282.0,1328.0 (192x66) beside Sort's 2290.0,1262.0,2482.0,1328.0 (192x66), right edge exactly 8 left of Sort's, centres both at 1295, with one make; `menulayout` and `probe sort` read the node's sprite as `Inventory_Tab_Button_Solid_spr`, the same as Sort's, and the state line `button_look=sort button_size=192.0x66.0`; the reopen's node, made from the measured extents 0,0,192,66, read the same box. So the copied sprite and scale persisted on the node through two ensure steps, a tab switch and a reopen, and its bbox followed them. That is not the look: those reads are of the member the mod wrote. In the screenshot the node's box is drawn empty, its `Move all` label is not inside it (a clipped end of the text shows at about the box's top-left corner, under the frame above it), and the owner reads the box as dark rather than Sort's red look (the backpack's Sort Tab in the same frame is drawn the same dark way; the red Sort Tab there is the stash's own `StashSort`). Not a pass for what the player sees. Not established: where the game draws a node's `text` (centred on its x, y is the inference, since that point moved from the box's centre to its corner with the sprite), how the Sort node gets its label centred, and what the owner's red look is. The button still works (the click moved 2 of 2). Superseded for the drawn look by `buttonLabel`: with Live 5's 13 label members copied as well, Live 6 read the node's label centred like Sort's on the shipped path
 buttonTarget: tab, with grid as the fallback (the owner, 2026-10-02; M from two recorded sessions at one GUI scale, 2560x1368 - toolkit #147's stash-bag-layout live 2 for the tabs, #68's Live 1f and 1g for Sort - and confirmed in play by Live 7 at 2560x1440, all 12 checks passing: § Live 7 results): the node's left and right edges are those of the bag's page tab directly above the slot left of Sort, its top and bottom InventorySort's, and its width that tab's. The owner saw on Live 6's screenshot that the button did not line up with the Extra tab above it, and asked to "take sort button and copy it to vertical bounds (left and right sides) of the extra button above the space we want to have our button in, and horizontal bounds (top and bottom) of the sort button". The bag's page tabs are five `UI_Button_Inventory_Tab_obj` (SDK object 4988), `uiNodeCallstack` `InventoryTab_1` to `InventoryTab_5`, `tabNumber` 0 to 4, text Main then Extra four times, all visible, listed with the stash open; each bbox 182.4 wide, top 1136.2, bottom 1198.9, lefts 1573.9, 1756.3, 1938.7, 2121.1 and 2303.5 - contiguous, the pitch the width. InventorySort read 2303.5,1198.9,2485.9,1261.6 in Live 1f and 1g: its left and right are `InventoryTab_5`'s, its top the tab row's bottom, its width a tab's. So the slot left of Sort is under `InventoryTab_4`, whose column is 2121.1 to 2303.5: Sort's left minus one Sort width, up to Sort's left. Route `tab`: at each Create and ensure step the adapter reads the first visible `UI_Button_Inventory_Tab_obj` whose `uiNodeCallstack` is `InventoryTab_4`, by name, and its bbox, and the core takes that bbox's left and right with Sort's top and bottom (`button_ref=tab`, `button_tab=` the tab's box). Route `grid`, when no such tab reads (not listed, not visible, or a box with no size): the same column from Sort's box by the grid's fractions, `kGridLeftOfSort` -1, `kGridTopOfSort` 0, `kGridWidthOfSort` 1 and `kGridHeightOfSort` 1, in Sort widths and heights, which follow a GUI-scale change where GUI units would not (`button_ref=grid`, `button_tab=none`, said once a session). The old rule stays the last fallback. Against Live 6's numbers (Sort 2290.0,1262.0,2482.0,1328.0 at 2560x1440) the grid's column is 2098 to 2290, and Live 6's node on the Mercenary box (below) sat 4 GUI units left of it at the same width. Live 7 measured the row at 2560x1440 with this build (lefts 1522, 1714, 1906, 2098, 2290, each 192 wide, top 1196, bottom 1262, with the stash open and with the bag alone; InventorySort 2290,1262,2482,1328, its left and right `InventoryTab_5`'s) and the node on `InventoryTab_4`'s sides (2098.0,1262.0,2290.0,1328.0, `button_ref=tab`, `button_tab=2098.0,1196.0,2290.0,1262.0`, on the first opening and after a reopen); the grid fallback (`button_ref=grid`) was not exercised in play, and a second GUI scale was not measured. Rejected: keeping the Mercenary relation (the owner's complaint is that it is not the grid); picking the tab whose right edge meets Sort's left by geometry (it needs the relation under test to find the tab); a pixel constant or a per-session cache; making the node a page tab (its click is unmeasured)
 The Mercenary target, which this line read as `relation` from Live 5 until the owner's 2026-10-02 change (Live 5 merc-bag-read, sort-same-both and merc-label pass; merc-stash-listed fail, which was the finding): the button the owner pointed at then is the game's own Mercenary button, a `UI_Button_Open_Mercenary_obj` (SDK object 5004) with `uiNodeCallstack` `InventoryMercenary`, `text` `Mercenary` and sprite `Inventory_Tab_Button_Solid_spr` (Sort's), its x, y its top-left. With the bag open on its own (the `C` key) its box read 2094.0,1262.0,2286.0,1328.0 (192x66) beside InventorySort's 2290.0,1262.0,2482.0,1328.0 (192x66); with the stash open `menulayout UI_Button_Open_Mercenary_obj` listed none, and InventorySort's box read 2290.0,1262.0,2482.0,1328.0 again; after the stash's close neither was listed. As fractions of InventorySort's width and height, the Mercenary box's left edge is -196/192 (about -1.0208) of Sort's width from Sort's left edge, its top edge 0 of Sort's height from Sort's top, its width 1 and its height 1 - its right edge 4 GUI units, 1/48 of Sort's width, short of Sort's left edge, where the old rule put the node's 8 short (2090.0,1262.0,2282.0,1328.0). The label check read the Mercenary button's own label centred (offset 0.5, 2.0; Sort's -0.5, -1.0). So the node's target was InventorySort's box moved and sized by those fractions, read by name at each ensure step, never a GUI-unit constant, with the old rule as the fallback only. These Mercenary facts stay true of the game; only the mod's button no longer sits on that box. Not measured: the relation at another GUI scale (the fractions are expected to follow it, as both nodes' sizes followed the 1.0526 scale between Live 1f/1g and Live 3), and whether the game ever lists the Mercenary node with the stash open. Live 6 confirmed it on the shipped path (merc-read, button-placed, button-state and reopen-placed pass): the bag-alone Mercenary box read 2094.0,1262.0,2286.0,1328.0 again beside InventorySort's 2290.0,1262.0,2482.0,1328.0, and the mod's node, worked out by the relation (`button_ref=relation`), read exactly that box on the session's first node and on the node made after a close and reopen
-buttonLabel: members (Live 5 label-trial-changed pass, label-baseline pass, label-trial-missing fail): the node lacks no member InventorySort has (`lookcopy missing` wrote nothing, one excluded). `lookcopy changed` from the stash-open InventorySort (id 262329) wrote its 13 differing writable members onto the node, each read back equal - `dropShadow` false (the node's true), `textFont` `__newfont2` (the node's `__newfont6`), `createX` 2290 (2090), `drawXOffset` 48 (0), `drawYOffset` 9 (-7), `navBboxX` 2290 (1988), `navBboxY` 1262 (1238), `navBboxWidth` 192 (206), `navBboxHeight` 66 (48), and `naviDown`, `naviDownPrev`, `naviRight`, `naviRightPrev` false (true) - and the label check then read the node's label centred like Sort's (532 label pixels against Sort's 548, offset 1.0, -0.5, label box 2136,1286,2238,1303) where it had read it at the box's top-left corner (offset -69, -29), the node's bbox unchanged at 2090.0,1262.0,2282.0,1328.0. The 13 were written together, so the trial does not separate which of them places the label. What the numbers do show: the label is drawn centred in the box on both axes (Live 6: label box 2140,1286,2242,1303 in the node's box 2094,1262,2286,1328; Live 5: 2136,1286,2238,1303 in 2090,1262,2282,1328; Sort's own label left edge 2338). Inferred, and not separated from plain centring: the left edge also sits within 2 of the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338, its label box's left edge; the node after the copy 2090 + 48 = 2138 against 2136 here, and 2094 + 48 = 2142 against 2140 in Live 6), but a label centred in the box fits the same numbers to within 1. Vertically the glyph top (1286) is 15 below the node's y plus `drawYOffset` (Sort 1262 + 9 = 1271); the label tool reads drawn pixels, not the draw origin, so whether `drawYOffset` anchors the text, a font's own top spacing included, is not separated. Which member places the label on either axis is not separated either, since the 13 were written together; `createX` and `navBboxX` were written as Sort's absolute 2290 and the label was still drawn inside the node's box 200 units left of that, so in that one trial neither moved it across (the one trial does not separate them from the other members written with them); whether `navBboxY`/`navBboxHeight` place it vertically is not separated, since after the copy Sort's and the node's are level. The members holding an absolute GUI position are `createX`, `navBboxX` and `navBboxY` (on Sort, its own box's corner; on the node, the corner of its box as first made under its own centred sprite, never updated when it took Sort's sprite). The mod copies all 13 as read, exactly as the trial wrote them, after `sprite_index` (as read) and `image_xscale`/`image_yscale` (scaled to the target, as Live 4 proved): it is the only set with a positive result, `createX` and `navBboxX` written raw left the label centred in that one trial, `navBboxWidth`/`navBboxHeight` raw equal scaled at the Sort-sized target Live 5's relation gives, and a copy equal to Sort's member for member makes Live 6's `look-members` a plain all-equal check. The build before this one copied a subset of 8 with `navBboxX`/`navBboxY` shifted by the node's offset, a guess that no session measured and that a failed `label-centred` could not have separated. Not established: what the four `navi*` flags and the `navBbox*` members do beyond the label (gamepad navigation, for example, which no session read; Live 5's click and close after the same writes behaved as before), and whether the game recomputes any of them in longer play. Live 6 confirmed the set on the shipped path (button-state, label-centred, look-members and reopen-placed pass): with all 16 members copied (`button_look_same=16/16`) the label check read the node's label centred like Sort's (532 label pixels, offset 1.0, -0.5, against Sort's 548 and -0.5, -1.0), on the first node and on the reopened one, and `probe diff` of Sort and the node named none of the 16. `textFont` printed `ref font __newfont2 (asset)` on both, an asset reference rather than a string, and the `navi*` flags read `false` on both some seconds after the copy. `label-trial-control` did not run, since `label-centred` passed, so no cause needed separating. 2026-10-08 (the owner's report that the button lights only with the mouse to its right; § Static reading 7): the three members holding an absolute GUI position, `createX`, `navBboxX` and `navBboxY`, are now written as Sort's value displaced onto the node's place by the target box's offset from Sort's (2098, 2098, 1262 at Live 7's layout), which supersedes "copies all 13 as read" for those three, and `navBboxWidth`/`navBboxHeight` are scaled by the target's size over Sort's, as the sprite's scale is, so the highlight box follows the target; the other 11 are still copied as read. That `navBbox*` is the box the game highlights is a static reading, measured by Live procedure 8's `node-hover` if it passes
+buttonLabel: members (Live 5 label-trial-changed pass, label-baseline pass, label-trial-missing fail): the node lacks no member InventorySort has (`lookcopy missing` wrote nothing, one excluded). `lookcopy changed` from the stash-open InventorySort (id 262329) wrote its 13 differing writable members onto the node, each read back equal - `dropShadow` false (the node's true), `textFont` `__newfont2` (the node's `__newfont6`), `createX` 2290 (2090), `drawXOffset` 48 (0), `drawYOffset` 9 (-7), `navBboxX` 2290 (1988), `navBboxY` 1262 (1238), `navBboxWidth` 192 (206), `navBboxHeight` 66 (48), and `naviDown`, `naviDownPrev`, `naviRight`, `naviRightPrev` false (true) - and the label check then read the node's label centred like Sort's (532 label pixels against Sort's 548, offset 1.0, -0.5, label box 2136,1286,2238,1303) where it had read it at the box's top-left corner (offset -69, -29), the node's bbox unchanged at 2090.0,1262.0,2282.0,1328.0. The 13 were written together, so the trial does not separate which of them places the label. What the numbers do show: the label is drawn centred in the box on both axes (Live 6: label box 2140,1286,2242,1303 in the node's box 2094,1262,2286,1328; Live 5: 2136,1286,2238,1303 in 2090,1262,2282,1328; Sort's own label left edge 2338). Inferred, and not separated from plain centring: the left edge also sits within 2 of the node's x plus `drawXOffset` (Sort 2290 + 48 = 2338, its label box's left edge; the node after the copy 2090 + 48 = 2138 against 2136 here, and 2094 + 48 = 2142 against 2140 in Live 6), but a label centred in the box fits the same numbers to within 1. Vertically the glyph top (1286) is 15 below the node's y plus `drawYOffset` (Sort 1262 + 9 = 1271); the label tool reads drawn pixels, not the draw origin, so whether `drawYOffset` anchors the text, a font's own top spacing included, is not separated. Which member places the label on either axis is not separated either, since the 13 were written together; `createX` and `navBboxX` were written as Sort's absolute 2290 and the label was still drawn inside the node's box 200 units left of that, so in that one trial neither moved it across (the one trial does not separate them from the other members written with them); whether `navBboxY`/`navBboxHeight` place it vertically is not separated, since after the copy Sort's and the node's are level. The members holding an absolute GUI position are `createX`, `navBboxX` and `navBboxY` (on Sort, its own box's corner; on the node, the corner of its box as first made under its own centred sprite, never updated when it took Sort's sprite). The mod copies all 13 as read, exactly as the trial wrote them, after `sprite_index` (as read) and `image_xscale`/`image_yscale` (scaled to the target, as Live 4 proved): it is the only set with a positive result, `createX` and `navBboxX` written raw left the label centred in that one trial, `navBboxWidth`/`navBboxHeight` raw equal scaled at the Sort-sized target Live 5's relation gives, and a copy equal to Sort's member for member makes Live 6's `look-members` a plain all-equal check. The build before this one copied a subset of 8 with `navBboxX`/`navBboxY` shifted by the node's offset, a guess that no session measured and that a failed `label-centred` could not have separated. Not established: what the four `navi*` flags and the `navBbox*` members do beyond the label (gamepad navigation, for example, which no session read; Live 5's click and close after the same writes behaved as before), and whether the game recomputes any of them in longer play. Live 6 confirmed the set on the shipped path (button-state, label-centred, look-members and reopen-placed pass): with all 16 members copied (`button_look_same=16/16`) the label check read the node's label centred like Sort's (532 label pixels, offset 1.0, -0.5, against Sort's 548 and -0.5, -1.0), on the first node and on the reopened one, and `probe diff` of Sort and the node named none of the 16. `textFont` printed `ref font __newfont2 (asset)` on both, an asset reference rather than a string, and the `navi*` flags read `false` on both some seconds after the copy. `label-trial-control` did not run, since `label-centred` passed, so no cause needed separating. 2026-10-08 (the owner's report that the button lights only with the mouse to its right; § Static reading 7): the three members holding an absolute GUI position, `createX`, `navBboxX` and `navBboxY`, are now written as Sort's value displaced onto the node's place by the target box's offset from Sort's (2098, 2098, 1262 at Live 7's layout), which supersedes "copies all 13 as read" for those three, and `navBboxWidth`/`navBboxHeight` are scaled by the target's size over Sort's, as the sprite's scale is, so the highlight box follows the target; the other 11 are still copied as read. That `navBbox*` is the box the game highlights was a static reading, measured since by Live 8's `node-hover` at 2560x1440 fullscreen and Live 9's `node-hover-win` at 1920x1080 windowed, each behind its passing `sort-hover-control` (§ Live 8 results, § Live 9 results; fullscreen 1920x1080 not observed)
 
 ## Ship design
 
