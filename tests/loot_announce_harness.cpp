@@ -21,6 +21,13 @@
 // happened. An identity the adapter could not read is not Identifiable.
 // live2_replay replays Live procedure 2's steps 2-6 (aborted), the session
 // whose bag drop the old LootGroundDrop window announced.
+//
+// The install (Known Limitations item 8: a hook installed at character select
+// stalls the runner): the switch arms at launch, and the hooks go in only once
+// setup is done and the local player resolves, once per session. Baseline:
+// the rule before 2026-10-08, setup alone, written out as its inputs and
+// output. Target: no player, no install and `waiting-for-character`; a player,
+// one install and `installed`; switched on in game, at once; off, never.
 #include <cstdint>
 #include <iostream>
 #include <set>
@@ -116,6 +123,79 @@ int main()
                   && std::string(LootAnnounceMod::SinkName(LootAnnounceMod::Sink::ChatAdd)) == "chatadd"
                   && std::string(LootAnnounceMod::SinkName(LootAnnounceMod::Sink::Server)) == "server",
               LootAnnounceMod::SinkName(LootAnnounceMod::kShippedSink));
+    }
+
+    // ---- the install: armed at launch, hooked once a character exists --------
+    // The adapter feeds the core g_Setup, whether HhResolveLocalPlayer found
+    // the local player, and g_LaInstallTried; the tick looks for the player
+    // only on the frames LooksForPlayer picks while the switch is on.
+    {
+        // Baseline: the rule before 2026-10-08, as the adapter wrote it (the
+        // switch on, setup done, not tried yet). A switch already on as the
+        // game started installed on the first frame after setup, at character
+        // select, with no character loaded: there was no player input at all.
+        const auto oldRule = [](bool on, bool setupDone, bool installTried) { return on && setupDone && !installTried; };
+        check("baseline/setup_alone_installed_before_this_change",
+              oldRule(true, true, false) && !oldRule(false, true, false) && !oldRule(true, false, false)
+                  && !oldRule(true, true, true));
+    }
+    {
+        // Target: `lootann 1` from the launch commands at character select. The
+        // tick looks every kInstallPollFrames frames and installs nothing until
+        // the player resolves; then it installs once.
+        LootAnnounceMod m;
+        bool tried = false;
+        m.SetEnabled(true);
+        const std::string armed = m.InstallState(tried);
+        int looks = 0;
+        bool installed = false;
+        for (unsigned long long frame = 0; frame < 600; ++frame) {
+            if (!LootAnnounceMod::LooksForPlayer(frame)) continue;
+            ++looks;
+            if (m.ShouldInstall(true, false, tried)) installed = true;
+        }
+        const bool beforeSetup = m.ShouldInstall(false, true, tried);
+        const std::string waiting = m.InstallState(tried);
+        const bool now = m.ShouldInstall(true, true, tried);
+        if (now) tried = true;
+        const bool again = m.ShouldInstall(true, true, tried);
+        check("target/waits_for_a_character_before_installing",
+              LootAnnounceMod::kInstallPollFrames == 60 && looks == 10 && !installed && !beforeSetup
+                  && armed == "waiting-for-character" && waiting == "waiting-for-character" && now && !again
+                  && std::string(m.InstallState(tried)) == "installed",
+              "looks=" + std::to_string(looks) + " armed=" + armed + " waiting=" + waiting + " now=" + std::to_string(now)
+                  + " again=" + std::to_string(again));
+    }
+    {
+        // Switched on in game, with the player there: at once, as before.
+        // Off and on again keeps the one install of the session.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        bool tried = false;
+        const bool now = m.ShouldInstall(true, true, tried);
+        if (now) tried = true;
+        m.SetEnabled(false);
+        const std::string offAfter = m.InstallState(tried);
+        m.SetEnabled(true);
+        check("target/a_switch_on_in_game_installs_at_once",
+              now && offAfter == "installed" && !m.ShouldInstall(true, true, tried)
+                  && std::string(m.InstallState(tried)) == "installed",
+              "now=" + std::to_string(now) + " off=" + offAfter);
+    }
+    {
+        // Negative control: off, nothing installs whatever else holds, and the
+        // state says it was never armed.
+        LootAnnounceMod m;
+        bool any = false;
+        for (int bits = 0; bits < 8; ++bits)
+            if (m.ShouldInstall((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0)) any = true;
+        const std::string neverOn = m.InstallState(false);
+        m.SetEnabled(true);
+        m.SetEnabled(false);
+        check("target/switched_off_never_installs",
+              !any && !m.ShouldInstall(true, true, false) && neverOn == "not-armed"
+                  && std::string(m.InstallState(false)) == "not-armed",
+              neverOn);
     }
 
     // ---- baseline: the switch off --------------------------------------------

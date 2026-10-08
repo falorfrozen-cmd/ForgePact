@@ -447,10 +447,6 @@ async function boot(){
     document.getElementById('mod_pet_loot_unstick').checked=mplu;
     document.getElementById('mpluval').textContent=mplu?'on':'off';
     document.getElementById('mpluval').className='val '+(mplu?'':'off');
-    const szf=!!c.satanic_follow;
-    document.getElementById('satanic_follow').checked=szf;
-    document.getElementById('szfval').textContent=szf?'on':'off';
-    document.getElementById('szfval').className='val '+(szf?'':'off');
     const sze=!!c.satanic_everywhere;
     document.getElementById('satanic_everywhere').checked=sze;
     document.getElementById('szeval').textContent=sze?'on':'off';
@@ -790,11 +786,6 @@ function bind(){
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_pet_loot_unstick',value:e.target.checked})});
         const v=document.getElementById('mpluval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Pet moves on from loot '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-    };
-    document.getElementById('satanic_follow').onchange=async(e)=>{
-        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'satanic_follow',value:e.target.checked})});
-        const v=document.getElementById('szfval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast('Keep the zone you are in satanic '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
     document.getElementById('satanic_everywhere').onchange=async(e)=>{
         const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'satanic_everywhere',value:e.target.checked})});

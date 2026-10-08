@@ -5,8 +5,8 @@
 // the list can show, one theme step per THEMES entry, after the one step that
 // opens Setup, where the theme is, then the key supplement's slider (Prime
 // Evil Parts), entered on the Loot tab, then the boolean mods no recording
-// has (NATIVE_BOOLEANS - Mods › Quality of Life, with the two Satanic Zone
-// control switches entering the World tab and back), then the show
+// has (NATIVE_BOOLEANS - Mods › Quality of Life, with the Satanic Zone
+// control switch entering the World tab and back), then the show
 // key's select of Sleep loot your filter hides, then the switched sliders no
 // recording has (NATIVE_SLIDERS), entered on Modifiers, the Loot tab's after
 // them and the skill sliders back on Modifiers, then the panel's own Incident
@@ -41,7 +41,7 @@ const SLIDERS = LEGACY.controls.filter((c) => switchIdOf(c));
 const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 // The native booleans' steps close the file: one tab step each time the tab
 // changes (the first opens Mods) and one sub-tab step each time the sub-tab
-// changes on it (Quality of Life opens with Mods; the World-tab pair makes
+// changes on it (Quality of Life opens with Mods; the World-tab switch makes
 // Jump through scenery re-enter both), then on, off, on and Turn off for each.
 const NATIVE_NAV = (() => {
   let count = 0;
@@ -170,7 +170,7 @@ test('no step carries a recorded value; every expectation is same-earlier or a l
   });
 });
 
-test('the counts: 141 switch clicks, 76 Turn off buttons, one theme step per theme', () => {
+test('the counts: 141 switch clicks, 75 Turn off buttons, one theme step per theme', () => {
   const steps = DERIVED.steps;
   const switches = steps.filter((s) => s.control.startsWith('#sw_'));
   const quick = steps.filter((s) => s.control.startsWith('#enabledMods .quick-disable[data-for='));
@@ -180,12 +180,12 @@ test('the counts: 141 switch clicks, 76 Turn off buttons, one theme step per the
     + NATIVE_SWITCHED_RANGES.length);
   // The dungeon chest and Goburin's Head pity switches' ids have no `sw_`
   // prefix: each adds a Turn off button and no `#sw_` click. Jump through
-  // scenery's native boolean adds one more Turn off button, the two
-  // Satanic Zone control switches two more, and Loot announcements' native
+  // scenery's native boolean adds one more Turn off button, the
+  // Satanic Zone control switch one more, and Loot announcements' native
   // boolean (#17) one more. The three skill sliders (#160) add three switch
   // clicks and one Turn off button each.
   assert.equal(switches.length, 141);
-  assert.equal(quick.length, 76);
+  assert.equal(quick.length, 75);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -274,7 +274,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
     ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
-      'satanic_follow', 'satanic_everywhere', 'mod_jump_scenery', 'mod_loot_announce']);
+      'satanic_everywhere', 'mod_jump_scenery', 'mod_loot_announce']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
@@ -301,7 +301,7 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   assert.deepEqual(steps.slice(at, at + 2).map((s) => [s.control, s.action]), [['tab:mods', 'click'], ['subtab:qol', 'click']]);
   assert.ok(!('expect' in steps[at]) && !('expect' in steps[at + 1]), 'a navigation step carries an expectation');
   // Each entry's four steps follow in list order, after the navigation steps
-  // the loop emits whenever the tab or sub-tab changes: the World-tab pair
+  // the loop emits whenever the tab or sub-tab changes: the World-tab switch
   // moves the loop to World and back (Jump through scenery re-enters Mods >
   // Quality of Life).
   let cursor = at + 2;
@@ -348,7 +348,7 @@ test('the show key\'s select follows the native booleans: its switch on, Ctrl, N
   const [on, off] = [nativeAt, nativeAt + 1];
   assert.equal(steps[on].control, parent);
   // The switch's own steps left it off, and the select is disabled while it
-  // is; the native booleans after it (the Satanic Zone switches, Jump
+  // is; the native booleans after it (the Satanic Zone switch, Jump
   // through scenery and Loot announcements) leave it alone.
   assert.equal(steps[nativeAt + 3].control, quickDisable(HIDDEN_LOOT_KEY_PARENT));
   assert.equal(steps[at - 1].control, quickDisable(NATIVE_BOOLEANS.at(-1).key));

@@ -101,6 +101,12 @@ SPAWNERS = [
 # Keys listed here are removed from saved settings and never emitted.  Empty
 # since Chaos Tower's Season 10 route was decoded (2026-09-03).
 DISABLED_SPAWNER_KEYS = set()
+# Top-level settings a removed feature left in saved files: dropped on load,
+# so they are never sent, never shown and gone from the next save.
+# `satanic_follow` was "Keep the zone you are in satanic", removed before it
+# shipped because "Every zone counts as satanic" covers it (the owner,
+# 2026-10-08).
+RETIRED_KEYS = ("satanic_follow",)
 # Key families.  The third field is the LoadDrops drop type; when it is None
 # that family's gate is already open and only the rate is adjusted.
 KEYS = [
@@ -387,12 +393,11 @@ DEFAULTS = {
         "debuff": {str(i): True for i, *_ in SATANIC_DEBUFF_LIST},
     },
     # Satanic Zone control (ForgePact #157, docs/satanic-zone-mods-research.md
-    # "Live 3"): keep the zone the player is in pinned as the resolved zone
-    # (`satzone follow 1`), or make every zone count as satanic by forcing
-    # LoadSatanicZone's answer (`satzone everywhere 1`). Off by default; the
-    # exact-zone pin (`satzone pin <index>`) is a command, not a setting, and
-    # everything off leaves the game's own rolling untouched.
-    "satanic_follow": False,
+    # "Live 3"): make every zone count as satanic by forcing LoadSatanicZone's
+    # answer (`satzone everywhere 1`). Off by default; the exact-zone pin
+    # (`satzone pin <index>`) is a command, not a setting, and off leaves the
+    # game's own rolling untouched. (The unreleased "keep the zone you are in"
+    # switch is retired: see RETIRED_KEYS.)
     "satanic_everywhere": False,
     # Slider on/off switches, keyed by SLIDER_SWITCH_IDS.  Only switches the
     # player turned off are stored (`False`); a missing id means on, so every
@@ -474,6 +479,8 @@ def load_cfg() -> dict:
             pass
     for key in DISABLED_SPAWNER_KEYS:
         cfg.get("spawners", {}).pop(key, None)
+    for key in RETIRED_KEYS:
+        cfg.pop(key, None)
     # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (an older
     # version's spin count such as 100) loads as the default, so the panel
     # shows and sends that rather than a slider pinned at its end.
@@ -1295,10 +1302,6 @@ def build_cmds(cfg: dict) -> list:
         disabled = [k for k, v in pool.items() if not v]
         if disabled:
             out.append(f"satmods {polarity} {','.join(disabled)}")
-    if cfg.get("satanic_follow", False):
-        # Safe to send at launch: the pin tick only reads once a controller
-        # exists, and follow skips towns and sub-areas.
-        out.append("satzone follow 1")
     if cfg.get("satanic_everywhere", False):
         # Safe to send at launch: only arms the flag; the plugin installs its
         # LoadSatanicZone hook once a player exists (the restartanytime rule).
@@ -2952,7 +2955,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_follow", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3070,8 +3073,6 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"petrelic {1 if cfg['mod_pet_relic_pickup'] else 0}"], cfg)
                     elif key == "mod_pet_loot_unstick":
                         send_cmds([f"petunstick {1 if cfg['mod_pet_loot_unstick'] else 0}"], cfg)
-                    elif key == "satanic_follow":
-                        send_cmds([f"satzone follow {1 if cfg['satanic_follow'] else 0}"], cfg)
                     elif key == "satanic_everywhere":
                         send_cmds([f"satzone everywhere {1 if cfg['satanic_everywhere'] else 0}"], cfg)
                     elif key == "mod_auto_prospect":

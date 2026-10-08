@@ -138,6 +138,35 @@ public:
         return "unknown";
     }
 
+    // ---- the install: armed at launch, hooked once a character exists ----
+    // The guide's Known Limitations item 8: a hook installed at character
+    // select stalls the runner. A switch already on as the game starts (the
+    // panel's launch commands carry `lootann 1`, consumed from the first frame
+    // after setup, while character selection still runs) only arms; the
+    // hooks go in on the first frame where setup is done and the local player
+    // resolves (the adapter asks HhResolveLocalPlayer), once per session.
+    // While armed, the adapter's tick looks for the player only on the frames
+    // LooksForPlayer picks, counted from the first armed frame.
+    static constexpr unsigned long long kInstallPollFrames = 60;
+    static constexpr bool LooksForPlayer(unsigned long long armedFrames)
+    {
+        return armedFrames % kInstallPollFrames == 0;
+    }
+    // Whether the adapter installs now: the switch on, setup done, the local
+    // player resolved, and no install tried yet this session.
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool installTried) const
+    {
+        return m_Enabled && setupDone && playerResolved && !installTried;
+    }
+    // The stat line's ` install=` field: installed once the install ran,
+    // waiting-for-character while on without it, not-armed while off and
+    // never installed.
+    const char* InstallState(bool installTried) const
+    {
+        if (installTried) return "installed";
+        return m_Enabled ? "waiting-for-character" : "not-armed";
+    }
+
     bool Enabled() const { return m_Enabled; }
     // Switching off keeps the memory and the counters, so an item still lying
     // there is not announced again when the switch comes back on; it clears

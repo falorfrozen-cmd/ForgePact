@@ -18,6 +18,10 @@ already announced does not; off clears the creation window; the window and
 the memory are capped; the stat line counts what happened; an identity the
 adapter could not read is not identifiable; and Live procedure 2's steps
 replay with the bag drop held.
+
+The install: the switch arms at launch and the hooks go in once setup is done
+and the local player resolves, once per session (`install=` on the stat
+line). Baseline: the rule before, setup alone. Target: no player, no install.
 """
 import os
 import shutil
@@ -33,8 +37,14 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
     def setUpClass(cls):
         header = (ROOT / "plugin/include/ForgePact/LootAnnounceMod.hpp").read_text(encoding="utf-8")
         core = "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
-        out = ROOT / "build/loot-announce-behavior"
+        # One directory per process: two runs at once (a criteria runner's
+        # parallel checks) otherwise race on one .obj and fail with
+        # "Permission denied". A failure carries the compiler's output in its
+        # message and every scenario assertion quotes the harness's output,
+        # so the directory goes when the class does.
+        out = ROOT / "build/loot-announce-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/loot_announce_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_LOOT_ANNOUNCE_MOD", core)
         cpp = out / "lootannounce.cpp"
@@ -89,9 +99,23 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
         self.assertIn("RESULT OK", self.output, self.output)
         self.assertNotIn("FAIL ", self.output, self.output)
 
-    def test_the_announced_set_is_heroic_angelic_unholy(self):
-        self.assertScenarios("table/announced_rarities_are_heroic_angelic_unholy", "table/is_announced_rarity_exact",
-                             "table/unread_is_not_a_rarity", "table/shipped_sink_and_names")
+    def test_the_announced_set_is_heroic_angelic_unholy_satanic_and_mythic_held(self):
+        # Satanic and Mythic were added and reverted on the owner's word the
+        # same day (2026-10-08); the set is the three it shipped with.
+        self.assertScenarios("table/announced_rarities_are_heroic_angelic_unholy",
+                             "table/is_announced_rarity_exact", "table/unread_is_not_a_rarity",
+                             "table/shipped_sink_and_names")
+
+    # ---- the install: armed at launch, hooked once a character exists -----
+    # (Known Limitations item 8: a hook installed at character select stalls
+    # the runner.)
+
+    def test_baseline_setup_alone_installed_before_it_waits_for_a_character(self):
+        self.assertScenarios("baseline/setup_alone_installed_before_this_change")
+
+    def test_the_install_waits_for_a_character(self):
+        self.assertScenarios("target/waits_for_a_character_before_installing",
+                             "target/a_switch_on_in_game_installs_at_once", "target/switched_off_never_installs")
 
     # ---- baseline: what the game does without the mod ---------------------
 
@@ -106,7 +130,7 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
         self.assertScenarios("target/on_status", "target/heroic_announced", "target/angelic_announced",
                              "target/unholy_announced", "target/three_announced_counted")
 
-    def test_satanic_mythic_and_common_do_not(self):
+    def test_satanic_and_mythic_held_and_common_do_not(self):
         self.assertScenarios("target/satanic_not_announced", "target/mythic_not_announced",
                              "target/common_not_announced", "target/other_codes_not_announced",
                              "target/unread_rarity_not_announced_and_counted",

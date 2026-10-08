@@ -111,15 +111,16 @@ class EnabledModsPanelTests(unittest.TestCase):
         # `#mod_dungeon_chest` switch's handler and its `#dungeon_chest_pct`
         # range's change handler (both in the derived oracle). Plus 1 for its
         # `#dungeon_chest_countdown` child select's handler (the owner's
-        # countdown form choice, 2026-10-04; in the derived oracle too). Plus 2
-        # from the Satanic Zone control card (#157): Keep the zone you are in
-        # satanic, and Every zone counts as satanic. Plus 2 for Mods >
+        # countdown form choice, 2026-10-04; in the derived oracle too). Plus 1
+        # from the Satanic Zone control card (#157): Every zone counts as
+        # satanic (its other switch, Keep the zone you are in satanic, was
+        # removed before it shipped, the owner, 2026-10-08). Plus 2 for Mods >
         # Quality of Life's Goburin's Head pity (ForgePact #134): its
         # `#mod_gambapity` switch's handler and its `#gambapity` range's change
         # handler (both in the derived oracle). Plus 1 for Loot announcements'
         # switch (ForgePact #17; in the derived oracle too).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 2 + 2 + 1)
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

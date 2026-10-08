@@ -63,11 +63,6 @@
   </div>
   <div class="sat-zonecontrol">
     <div class="row" style="border:none">
-      <span class="lbl" style="width:auto;flex:1">Keep the zone you are in satanic<br><span class="feature-description">Wherever you go, the game treats the zone you are in as the Satanic Zone. Towns and sub-areas are left alone. Off by default.</span></span>
-      <label class="switch"><input type="checkbox" id="satanic_follow" aria-label="Keep the zone you are in satanic"><span class="sl"></span></label>
-      <span class="val" id="szfval">off</span>
-    </div>
-    <div class="row" style="border:none">
       <span class="lbl" style="width:auto;flex:1">Every zone counts as satanic<br><span class="feature-description">The game's own "is this a Satanic Zone?" answer becomes yes wherever you are, so satanic modifiers and relic chances apply everywhere. Off by default; not yet confirmed in a live game.</span></span>
       <label class="switch"><input type="checkbox" id="satanic_everywhere" aria-label="Every zone counts as satanic"><span class="sl"></span></label>
       <span class="val" id="szeval">off</span>

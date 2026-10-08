@@ -188,17 +188,15 @@ experience.
   the second run, after a fix to the label's font, the label above the
   character held steady while standing still. A boss
   dungeon has not been checked yet.
-- **Satanic Zone: choose the zone (#157).** Two new switches in
-  World → Satanic Zone, both off by default. **Keep the zone you are in
-  satanic** makes wherever you go count as the Satanic Zone, so its modifiers
-  follow you (drops not yet checked); towns and sub-areas are left alone, and
-  the plugin keeps the game's own value in step about four times a second
-  because the game re-rolls it on its own. **Every zone counts as satanic** makes the
+- **Satanic Zone: choose the zone (#157).** A new switch in
+  World → Satanic Zone, off by default. **Every zone counts as satanic** makes the
   game's own "is this a Satanic Zone?" answer yes wherever you are. The
   `satzone` command pins one exact zone instead (`satzone pin here`,
-  `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
-  off the game rolls its zone exactly as before. While on, each switch shows up
-  in **Enabled mods**, with a Turn off button like any other mod. The zone the
+  `satzone pin <index>`, `satzone off`, `satzone stat`); the plugin keeps a
+  pinned zone in step about four times a second because the game re-rolls it
+  on its own. With the switch off and no zone pinned the game rolls its zone
+  exactly as before. While on, the switch shows up in **Enabled mods**, with a
+  Turn off button like any other mod. The zone the
   game keeps is a protected value: the plugin reads and writes it through the
   game's own `GPV`/`SPV`, never a fixed number. Measured on the research build
   (2026-10-03): the game asks `LoadSatanicZone` about 150 times a second with
@@ -265,7 +263,10 @@ experience.
   dropped from the bag, was not announced again; nothing was announced with
   the switch off; and with Magic Find raised, an item dropped by a monster
   was announced (which one was not recorded). Dropping several items at
-  once and co-op were not tried.
+  once and co-op were not tried. Checked in play again on 2026-10-08 with
+  the switch turned on at the character select screen, before any character
+  was loaded: the mod waited, started once the character was loaded, and a
+  placed Heroic item was announced.
 - **Skill sliders: Projectile Speed, Projectile Amount and Area of Effect
   (#160).** Modifiers → Skills. Each slider adds to what the game has already
   worked out for your skill from your gear and buffs, so those still count
@@ -344,6 +345,15 @@ experience.
   drop the named item.
 
 ## Fixed
+
+- **The Move All button lights up where it is drawn (#198).** In 2.1.0 the
+  stash's **Move All** button lit up only with the mouse to its right, over
+  the **Sort** button, although a click on Move All itself still worked. The
+  button now lights up with the mouse on it, and no longer with the mouse on
+  Sort. Checked in play on 2026-10-08 at 2560x1440 fullscreen and at
+  1920x1080 windowed: Move All lit up with the mouse on it and stayed unlit
+  with the mouse on Sort, and a click on it moved the bag's items. Fullscreen
+  1920x1080 and other resolutions were not tried.
 
 - **Map Reveal's pack icons no longer turn generic a few seconds after you
   arrive (#181).** With Map Reveal's pack markers on, the special icons

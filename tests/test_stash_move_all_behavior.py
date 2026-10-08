@@ -89,8 +89,14 @@ def spliceable(header_text):
 class StashMoveAllBehaviorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        out = ROOT / "build/stash-move-all-behavior"
+        # One directory per process: two runs at once (a criteria runner's
+        # parallel checks) otherwise race on one .obj and fail with
+        # "Permission denied". A failure carries the compiler's output in its
+        # message and every scenario assertion quotes the harness's output,
+        # so the directory goes when the class does.
+        out = ROOT / "build/stash-move-all-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/stash_move_all_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_STASHMOVEALL", spliceable(HEADER.read_text(encoding="utf-8")))
         cpp = out / "stashmoveall.cpp"
@@ -411,8 +417,8 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
     def test_baseline_look_all_numeric_members_copied_and_read_sort(self):
         # The kinds fix2's copy accepted (numbers, bools, asset references):
         # all 16 of Live 5's members written, 16/16 the same, sort, the
-        # scales alone scaled. Negative control: button_look_same=none
-        # before any node.
+        # sprite's scale and the highlight box's size scaled. Negative
+        # control: button_look_same=none before any node.
         self.assertScenario("baseline/look_all_numeric_members_copied_and_read_sort")
 
     def test_target_look_string_member_is_copied_and_compared_as_text(self):
@@ -437,6 +443,32 @@ class StashMoveAllBehaviorTests(unittest.TestCase):
         # Negative control for the wider kinds: a string that reads back
         # different is differs, never sort, and the line names it.
         self.assertScenario("target/look_differing_string_reads_differs")
+
+    # ---- the Move All node's highlight box sits on the node, not on Sort ----
+
+    def test_baseline_as_read_copy_puts_the_nav_box_on_sort(self):
+        # The measured defect, kept true as what AsRead does: written as
+        # read, the node's createX/navBboxX/navBboxY are Sort's corner
+        # (2290, 1262) while it is drawn on 2098..2290, and the tally still
+        # says 16/16.
+        self.assertScenario("baseline/as_read_copy_puts_the_nav_box_on_sort")
+
+    def test_target_nav_box_sits_on_the_node_not_on_sort(self):
+        # Live 7's boxes: navBboxX 2098, navBboxY 1262, createX 2098, size
+        # 192x66 - the highlight box is the drawn box - the label's members
+        # as read, 16/16. Negative control: Sort's place read back differs.
+        self.assertScenario("target/nav_box_sits_on_the_node_not_on_sort")
+
+    def test_target_nav_box_follows_a_tab_of_another_width(self):
+        # Outlier: a 210-wide target scales navBboxWidth to 210 and
+        # displaces X to the target's left; a lower target displaces Y.
+        self.assertScenario("target/nav_box_follows_a_tab_of_another_width")
+
+    def test_target_nav_box_member_that_is_not_a_number_is_not_displaced(self):
+        # Negative control: a place member read as a bool or string is not
+        # written and compares unread, the rest still written; an offset
+        # that could not be had is never 0, so nothing is left on Sort.
+        self.assertScenario("target/nav_box_member_that_is_not_a_number_is_not_displaced")
 
     def test_target_lines_name_what_moved_and_what_stayed(self):
         self.assertScenario("target/lines_name_what_moved_and_what_stayed")

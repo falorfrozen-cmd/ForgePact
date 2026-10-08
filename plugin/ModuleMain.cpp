@@ -24246,11 +24246,11 @@ static void FilterSatanicArray(const RValue& controller, const char* varName,
 // Both are game scripts, called here the same way `pcall` calls them (self =
 // the local player, the shape the live probes used). The game re-rolls the
 // value on its own during play, so a pin is re-asserted by the same 15-frame
-// poll that corrects the mod arrays. `follow` keeps the room the player is in
-// pinned; `everywhere` instead forces LoadSatanicZone's answer true (the
-// answer the game asks for ~150x a second) and never touches the value.
+// poll that corrects the mod arrays. `everywhere` instead forces
+// LoadSatanicZone's answer true (the answer the game asks for ~150x a second)
+// and never touches the value. (A `follow` mode that kept the room the player
+// was in pinned was removed before it shipped: `everywhere` covers it.)
 static std::atomic<int>  g_SatZonePin{ -1 };        // room index kept as the zone, -1 = none
-static std::atomic<bool> g_SatZoneFollow{ false };  // keep the current room pinned
 static std::atomic<bool> g_SatEverywhere{ false };  // force LoadSatanicZone's answer true
 static std::atomic<long> g_SatZoneWrites{ 0 };
 static std::atomic<long> g_SatZoneRefusals{ 0 };
@@ -24403,7 +24403,7 @@ static bool SatZoneWriteValue(const RValue& key, int room)
 }
 
 // Re-assert the pin. Called from SatanicPollTick (same 15-frame cadence as the
-// mod filter); does no game reads while no pin and no follow is active.
+// mod filter); does no game reads while no pin is active.
 static bool SatZonePlayerExists()
 {
     try {
@@ -24416,7 +24416,6 @@ static bool SatZonePlayerExists()
 static void SatZoneTick()
 {
     const int pin = g_SatZonePin.load();
-    const bool follow = g_SatZoneFollow.load();
     // Everywhere mode arms at launch and installs its hook in here: char
     // select must not get hooks (the restartanytime pattern). A failed
     // install is retried every few hundred frames, not every tick.
@@ -24427,7 +24426,7 @@ static void SatZoneTick()
             EnsureSatanicZoneHook();
         }
     }
-    if (pin < 0 && !follow) return;
+    if (pin < 0) return;
 
     RValue controller;
     if (!ResolveControllerObj(controller)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("Controller_obj not found"); return; }
@@ -24435,14 +24434,7 @@ static void SatZoneTick()
     try { key = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue("satanicZone") }); }
     catch (...) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("satanicZone key read threw"); return; }
 
-    int target = pin;
-    if (target < 0) {
-        double idx = -1;
-        std::string name;
-        if (!SatZoneCurrentRoomIndex(idx, name)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("current room unresolved"); return; }
-        if (!SatZoneIsZoneRoomName(name)) return;   // town / sub-area: leave the zone alone
-        target = (int)idx;
-    }
+    const int target = pin;
     double current = -1;
     if (!SatZoneReadValue(key, current)) { g_SatZoneRefusals.fetch_add(1); return; }
     if ((int)current == target) return;
@@ -24471,7 +24463,6 @@ static void SatZoneCmd(const std::string& rest)
         std::string why;
         { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); why = g_SatZoneLastWhy; }
         return std::string("satzone stat: pin=") + pinned
-            + " follow=" + (g_SatZoneFollow.load() ? "on" : "off")
             + " everywhere=" + (g_SatEverywhere.load() ? "on" : "off")
             + " writes=" + std::to_string(g_SatZoneWrites.load())
             + " refused=" + std::to_string(g_SatZoneRefusals.load())
@@ -24481,15 +24472,7 @@ static void SatZoneCmd(const std::string& rest)
     if (sub.empty() || sub == "stat" || sub == "status") { Out(statLine()); return; }
     if (sub == "off" || sub == "0") {
         g_SatZonePin.store(-1);
-        g_SatZoneFollow.store(false);
         Out("satzone -> off (the game rolls the zone itself again) " + statLine());
-        return;
-    }
-    if (sub == "follow") {
-        const bool on = (rest2 == "1" || rest2 == "on" || rest2 == "true");
-        g_SatZoneFollow.store(on);
-        if (on) g_SatZonePin.store(-1);
-        Out(std::string("satzone -> follow ") + (on ? "on (the room you are in stays the zone)" : "off") + " " + statLine());
         return;
     }
     if (sub == "everywhere") {
@@ -24514,7 +24497,6 @@ static void SatZoneCmd(const std::string& rest)
                 return;
             }
             g_SatZonePin.store((int)idx);
-            g_SatZoneFollow.store(false);
             Out("satzone -> pinned " + name + " (" + std::to_string((int)idx) + ") " + statLine());
             return;
         }
@@ -24528,11 +24510,10 @@ static void SatZoneCmd(const std::string& rest)
             Out("satzone: refused - " + name + " is not an act zone; only Act_NN_MM rooms can be the zone"); return;
         }
         g_SatZonePin.store(idx);
-        g_SatZoneFollow.store(false);
         Out("satzone -> pinned " + name + " (" + std::to_string(idx) + ") " + statLine());
         return;
     }
-    Out("satzone: usage -> satzone pin here|<index> | satzone follow 0|1 | satzone everywhere 0|1 | satzone off | satzone stat");
+    Out("satzone: usage -> satzone pin here|<index> | satzone everywhere 0|1 | satzone off | satzone stat");
     (void)pin;
 }
 
@@ -42854,30 +42835,46 @@ static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, doub
 // like Sort's (§ Decision buttonLabel): its font, shadow, label offsets, the
 // box the game keeps beside the sprite and the navigation flags. Read off the
 // Sort node by name each time, so a game patch that restyles Sort restyles
-// the button too.
+// the button too. That box (navBbox*) and createX are Sort's place, not its
+// look, so they are moved onto the node's own place as they are written
+// (kSmaLookWrites says how): copied as read they put the button's highlight
+// on Sort.
 static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", "textFont", "dropShadow",
                                                 "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY",
                                                 "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev",
                                                 "naviRight", "naviRightPrev" };
 
-// How each of those is written, entry for entry: as read, as Live 5 wrote
-// them (navBboxX and createX held Sort's own position there and the label
-// still centred in the node's box), or the sprite's scale by the target's
-// size over Sort's on one axis, as Live 4 measured.
+// How each of those is written, entry for entry. The sprite's scale, by the
+// target's size over Sort's on one axis, as Live 4 measured. createX,
+// navBboxX and navBboxY hold an absolute GUI place, on Sort its own box
+// corner (2290, 1262 at 2560x1440, Live 5): written as read, as v2.1.0 did,
+// they gave the node Sort's box, and the button lit only with the mouse one
+// column right of where it is drawn (the owner, 2026-10-08; that navBbox* is
+// the box the UI layer highlights was measured live on 2026-10-08 (Live 8
+// at 2560x1440 fullscreen, Live 9 at 1920x1080 windowed), with Sort's own
+// hover as the positive control; createX and navBboxX moved together, so
+// which one gives the left edge is not separated, and only the x shift was
+// exercised (dy 0, scale 1)). They
+// are written as Sort's displaced by the target's offset
+// from Sort, keeping Sort's own relation between them and its box, and
+// navBboxWidth/Height scaled like the sprite, so the highlight box is the
+// drawn box. The label's 11 members as read, as Live 5 and 6 proved them.
 using SmaLookWrite = ForgePact::StashMoveLookWrite;
 static constexpr SmaLookWrite kSmaLookWrites[] = { SmaLookWrite::AsRead, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::ShiftX,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::ShiftX,
+                                                   SmaLookWrite::ShiftY, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
                                                    SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
                                                    SmaLookWrite::AsRead };
 static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / sizeof(kSmaLookWrites[0]),
               "every look variable has its write");
 
 // What the writes need: the target's size over Sort's on each axis (the
-// core's ButtonScale).
+// core's ButtonScale) and the target's offset from Sort (ButtonShift),
+// unread (NaN) until worked out, so a place is never written as Sort's.
 struct SmaLookFrame {
     double sx = 1, sy = 1;
+    double dx = std::numeric_limits<double>::quiet_NaN(), dy = std::numeric_limits<double>::quiet_NaN();
 };
 
 // A handle's type words that name an asset (a handle prints "ref <type> <name
@@ -42948,8 +42945,8 @@ static ForgePact::StashMoveLookValue SmaLookValue(const RValue& v)
 // The node's look against Sort's (fix2's round 2: a member's kind never
 // decides whether the copy runs). Every entry of kSmaLookVars is read off the
 // Sort node by name; with `copy`, it is written onto the mod's own node as
-// the core's LookStep says - the value as read whatever its kind, or a scale
-// written scaled - after the label, so a look that does not take still
+// the core's LookStep says - the value as read whatever its kind, a scale
+// written scaled, or a place displaced onto the node's - after the label, so a look that does not take still
 // leaves a working button; then it is read back off the node and the core
 // compares it by kind. A member that cannot be read, written or compared, or
 // that throws, costs its own entry in the tally and the loop goes on to the
@@ -42964,7 +42961,7 @@ static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
             const ForgePact::StashMoveLookStep step = ForgePact::StashMoveAllMod::LookStep(SmaLookValue(v),
-                kSmaLookWrites[i], frame.sx, frame.sy);
+                kSmaLookWrites[i], frame.sx, frame.sy, frame.dx, frame.dy);
             if (copy && step.put != ForgePact::StashMoveLookPut::Nothing)
                 g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
                     step.put == ForgePact::StashMoveLookPut::AsRead ? v : RValue(step.want.number) });
@@ -42977,11 +42974,15 @@ static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy
 }
 
 // The frame for a node made to `target`: the scale the target asks for (1
-// when it has no size to divide).
+// when it has no size to divide) and its offset from Sort, from the same two
+// boxes (unread when either did not read: the place members are then not
+// written and compare unread).
 static SmaLookFrame SmaButtonLookFrame(const ForgePact::StashMoveBox& sortBox, const ForgePact::StashMoveBox& target)
 {
     SmaLookFrame f;
     if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;
+    if (!ForgePact::StashMoveAllMod::ButtonShift(sortBox, target, f.dx, f.dy))
+        f.dx = f.dy = std::numeric_limits<double>::quiet_NaN();
     return f;
 }
 
@@ -50934,10 +50935,16 @@ static void JumpSceneryCommand(const std::string& rest)
 // does (docs/loot-announcement-research.md). While the switch is on, each
 // ground item the game initialises is decided once by the core in
 // LootAnnounceMod.hpp, and an item it announces gets one chat line from the
-// shipped sink.
+// shipped sink. The announced rarities are Heroic, Angelic and Unholy.
 //
-// Two hooks, both by SDK name through HookOneScript, installed on the first
-// switch-on after setup:
+// Two hooks, both by SDK name through HookOneScript, installed once per
+// session when the core's ShouldInstall says so: the switch on, setup done
+// and the local player resolved through HhResolveLocalPlayer (the guide's
+// Known Limitations item 8: a hook installed at character select stalls the
+// runner). A switch already on as the game starts arms only; the tick looks
+// for the player every kInstallPollFrames frames while armed, and ` install=`
+// on `lootann 1` and `lootann stat` says which (not-armed,
+// waiting-for-character, installed):
 //   - LootGroundInit's one detour, shared with hidden loot sleep
 //     (HookHiddenLootInit, installed by HiddenLootInstall): inside the call
 //     LootAnnounceOnInit only reduces argument 0 and `self` to durable
@@ -50970,6 +50977,7 @@ static void JumpSceneryCommand(const std::string& rest)
 // the research build's `lootannprobe try <n>` runs exactly the code the mod
 // would ship; Live procedure 1 picked `server` (the research doc's "Route").
 static bool g_LaInstallTried = false;
+static unsigned long long g_LaArmedFrames = 0;   // ticks while on and not installed: LooksForPlayer's count
 static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route: both, table-only or none
 static long long g_LaUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
 static long long g_LaNoItem = 0;         // a ground item with no item struct to read
@@ -51100,6 +51108,16 @@ static void LootAnnounceInstall()
     if (std::string_view(g_LaCreateRoute) != "both")
         Out(std::string("lootann: CreateItemNew hook ") + g_LaCreateRoute
             + " - the game's own drops may not be seen as new, so nothing would be announced");
+}
+
+// Installs when the core says so: setup done, the local player resolved
+// through HhResolveLocalPlayer, and no install tried yet. Before a character
+// exists it installs nothing, so a switch on at launch stays armed.
+static void LaInstallIfReady()
+{
+    RValue player;
+    const bool havePlayer = g_Setup && !g_LaInstallTried && HhResolveLocalPlayer(player);
+    if (g_LootAnnounce.ShouldInstall(g_Setup, havePlayer, g_LaInstallTried)) LootAnnounceInstall();
 }
 
 // A field of a struct-like value: variable_struct_* for a struct,
@@ -51476,13 +51494,14 @@ static void LaProcess(const LaPending& p)
         g_LootAnnounce.NoteSinkRefused();
 }
 
-// The per-frame tick. Returns at once while the switch is off; installs the
-// hooks on the first frame after setup with the switch on; then decides the
-// calls this frame noted, and ages the creation window once, after the batch.
+// The per-frame tick. Returns at once while the switch is off; while armed
+// and not installed, looks for the local player every kInstallPollFrames
+// frames and installs the hooks once one exists; then decides the calls this
+// frame noted, and ages the creation window once, after the batch.
 static void LootAnnounceTick()
 {
     if (!g_LootAnnounce.Enabled()) return;
-    if (!g_LaInstallTried) LootAnnounceInstall();
+    if (!g_LaInstallTried && ForgePact::LootAnnounceMod::LooksForPlayer(g_LaArmedFrames++)) LaInstallIfReady();
     if (!g_LaPending.empty()) {
         std::vector<LaPending> batch;
         batch.swap(g_LaPending);
@@ -51498,6 +51517,7 @@ static std::string LootAnnounceStatLine()
     return g_LootAnnounce.StatLine()
         + " init-hook=" + LaInitRoute()
         + " create-hook=" + g_LaCreateRoute
+        + " install=" + g_LootAnnounce.InstallState(g_LaInstallTried)
         + " unidentified=" + std::to_string(g_LaUnidentified)
         + " no-item=" + std::to_string(g_LaNoItem)
         + " no-key=" + std::to_string(g_LaNoKey)
@@ -51512,9 +51532,12 @@ static void LootAnnounceCommand(const std::string& rest)
     const std::string arg = Lower(TrimCopy(rest));
     if (arg == "1" || arg == "on") {
         g_LootAnnounce.SetEnabled(true);
-        if (g_Setup && !g_LaInstallTried) LootAnnounceInstall();
+        // In game, with a character loaded: at once. At character select (the
+        // launch commands): armed only, and the tick installs later.
+        if (!g_LaInstallTried) LaInstallIfReady();
         Out(g_LootAnnounce.StatusLine() + " route=" + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
-            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute);
+            + " init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute
+            + " install=" + g_LootAnnounce.InstallState(g_LaInstallTried));
         return;
     }
     if (arg == "0" || arg == "off") {
@@ -53648,7 +53671,7 @@ static void DungeonProbeCommand(const std::string& rest)
 //                   too) with its install route, then the live counts of
 //                   Loot_Ground_obj, Ingame_Chat_obj, Chat_obj and
 //                   Menu_Controller_obj.
-//   place <r>     - heroic|angelic|unholy|satanic|common: one ground item
+//   place <r>     - heroic|angelic|unholy|satanic|mythic|common: one ground item
 //                   beside the player through the game's own
 //                   LootGroundCreateFromItem, built the way `sigdrop` builds
 //                   one (InitItemFromJson, then itemInfoStruct["27"] written).
@@ -53923,11 +53946,11 @@ static void LaProbeStatus()
 static void LaProbePlace(const std::string& which)
 {
     static const struct { const char* name; int code; } kRarities[] = {
-        { "heroic", 9 }, { "angelic", 7 }, { "unholy", 10 }, { "satanic", 6 }, { "common", 1 },
+        { "heroic", 9 }, { "angelic", 7 }, { "unholy", 10 }, { "satanic", 6 }, { "mythic", 5 }, { "common", 1 },
     };
     int code = -1;
     for (const auto& k : kRarities) if (which == k.name) code = k.code;
-    if (code < 0) { Out("lootannprobe place: rarity must be heroic|angelic|unholy|satanic|common; nothing placed"); return; }
+    if (code < 0) { Out("lootannprobe place: rarity must be heroic|angelic|unholy|satanic|mythic|common; nothing placed"); return; }
     std::string failed;
     CInstance* player = LaPlayer(nullptr, failed);
     if (!player) { Out("lootannprobe place " + which + ": refused - " + failed); return; }
@@ -54154,7 +54177,7 @@ static void LootAnnProbeCommand(const std::string& rest)
         LaProbeSay(text);
         return;
     }
-    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|common | methods | try <1-5> | say <text>");
+    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|mythic|common | methods | try <1-5> | say <text>");
 }
 #endif // FORGEPACT_RELEASE (lootannprobe)
 
@@ -55131,8 +55154,7 @@ static void RunCommand(const std::string& line)
         }
         return;
     }
-    // Satanic Zone control (issue #157): pin a zone / follow the current one /
-    // everywhere mode. Both builds; a standalone early return for the same
+    // Satanic Zone control (issue #157): pin a zone / everywhere mode. Both builds; a standalone early return for the same
     // C1061 reason as `restartanytime` above.
     if (lc == "satzone") { SatZoneCmd(rest); return; }
     // Satanic Zone research (issue #155): force LoadSatanicZone's answer so

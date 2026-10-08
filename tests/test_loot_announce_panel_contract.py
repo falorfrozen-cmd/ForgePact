@@ -113,6 +113,10 @@ class LootAnnouncePanelRowTests(unittest.TestCase):
         self.assertIn("chat", text)
         for rarity in ("Heroic", "Angelic", "Unholy"):
             self.assertIn(rarity, text)
+        # Satanic and Mythic are held (added and reverted on the owner's word,
+        # 2026-10-08), so the text does not name them.
+        for rarity in ("Satanic", "Mythic"):
+            self.assertNotIn(rarity, text)
         # Items the player drops are not announced: the one caveat they act on.
         self.assertIn("drop yourself", text)
         # No game object, counter or measurement.

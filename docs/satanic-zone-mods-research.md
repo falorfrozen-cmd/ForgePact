@@ -341,3 +341,21 @@ Same ship as Live 3, on the research build with the control feature:
   why that attempt could not photograph the effect; the strong character's
   session above established it without a screenshot (the buff objects read off
   the game and the player's own report).
+
+## 2026-10-08: the follow mode was removed
+
+`satzone follow` and its panel switch, "Keep the zone you are in satanic"
+(the `satanic_follow` setting), were removed before they shipped in a release.
+The owner reported on 2026-10-08 that the switch did not work in play, and
+that "Every zone counts as satanic" (`satzone everywhere`) already gives what
+it was for: the game's own "is this a Satanic Zone?" answer reads true in
+whatever zone the player is in. So the plugin has no follow mode any more
+(`satzone follow ...` now prints the usage line), the pin tick re-asserts only
+an explicit `satzone pin`, and the panel has the one switch. A saved
+`forgepact.json` that still carries `satanic_follow` loads without it: the
+backend drops the key on load, sends nothing for it, and the next save writes
+the file without it. Why follow did not take in play was not investigated; the
+mentions of `follow` above are the record of what was built and checked then
+(it skipped the town as designed on 2026-10-04, and was not watched in a zone).
+`satzone pin`, `satzone off`, `satzone everywhere` and `satzone stat` are
+unchanged.

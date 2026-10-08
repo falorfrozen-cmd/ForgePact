@@ -2,8 +2,10 @@
 
 tests/test_loot_announce_behavior.py runs the real core against controlled
 drops. This file pins what that harness cannot see: the announced rarity set
-in the header is exactly {9, 7, 10}; the verb is a player command with its own
-early return; LootGroundInit is named in exactly one HookOneScript call in the
+in the header is exactly {9, 7, 10}; the verb is a player command with
+its own early return; the hooks install only when the core's ShouldInstall
+says so, with the local player resolved through HhResolveLocalPlayer (the
+guide's Known Limitations item 8); LootGroundInit is named in exactly one HookOneScript call in the
 player build, inside HiddenLootInstall, and the announcement installs through
 it and is handed the call by the shared detour after the game's original; the
 creation guard notes every CreateItemNew return through the shared hook, its
@@ -101,7 +103,9 @@ class LootAnnounceHeaderTests(unittest.TestCase):
     def setUpClass(cls):
         cls.code = _code(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
 
-    def test_the_announced_rarity_set_is_heroic_angelic_unholy(self):
+    def test_the_announced_rarity_set_is_heroic_angelic_unholy_satanic_and_mythic_held(self):
+        # Satanic (6) and Mythic (5) were added and reverted on the owner's
+        # word the same day (2026-10-08): neither is in the set.
         constants = dict((name, int(value)) for name, value in
                          re.findall(r"static constexpr int (k\w+) = (-?\d+);", self.code))
         members = re.search(r"kAnnouncedRarities\s*=\s*\{([^}]*)\}", self.code)
@@ -110,6 +114,19 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         values = [constants[n] if n in constants else int(n) for n in names]
         self.assertEqual(len(values), 3, values)
         self.assertEqual(set(values), {9, 7, 10})
+        self.assertRegex(self.code, r"std::array<int, 3> kAnnouncedRarities")
+
+    def test_the_install_decision_is_the_core_s(self):
+        # Known Limitations item 8: on, setup done, a player resolved, not
+        # tried yet; the tick looks every 60 frames; the state names are the
+        # ` install=` values the live operator reads.
+        should = _body(self.code, "bool ShouldInstall(bool setupDone, bool playerResolved, bool installTried) const")
+        self.assertIn("return m_Enabled && setupDone && playerResolved && !installTried;", should)
+        self.assertIn("static constexpr unsigned long long kInstallPollFrames = 60;", self.code)
+        looks = _body(self.code, "static constexpr bool LooksForPlayer(unsigned long long armedFrames)")
+        self.assertIn("armedFrames % kInstallPollFrames == 0", looks)
+        state = _body(self.code, "const char* InstallState(bool installTried) const")
+        self.assertEqual(re.findall(r'"([a-z-]+)"', state), ["installed", "waiting-for-character", "not-armed"])
 
     def test_it_starts_off_and_counts_what_it_holds_back(self):
         self.assertIn("bool m_Enabled = false;", self.code)
@@ -444,9 +461,43 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('if (arg.empty() || arg == "stat") { Out(LootAnnounceStatLine()); return; }', command)
         stat = _code(_body(self.plugin, "static std::string LootAnnounceStatLine()"))
         fields = re.findall(r'" ([a-z-]+)="', stat)
-        self.assertEqual(fields, ["init-hook", "create-hook", "unidentified", "no-item", "no-key", "no-identity", "queue-full"])
-        # `lootann 1` names both hooks' routes.
+        self.assertEqual(fields, ["init-hook", "create-hook", "install", "unidentified", "no-item", "no-key", "no-identity",
+                                  "queue-full"])
+        install = '" install=" + g_LootAnnounce.InstallState(g_LaInstallTried)'
+        self.assertIn(install, stat)
+        # `lootann 1` names both hooks' routes, then whether they are in.
         self.assertIn('" init-hook=" + LaInitRoute() + " create-hook=" + g_LaCreateRoute', command)
+        reply = re.search(r'" init-hook=" \+ LaInitRoute\(\) \+ " create-hook=" \+ g_LaCreateRoute\s*\+ (.*?)\);', command,
+                          flags=re.S)
+        self.assertIsNotNone(reply, "the lootann 1 reply does not continue after create-hook=")
+        self.assertEqual(reply.group(1).strip(), install)
+
+    def test_the_hooks_go_in_only_when_the_core_says_a_character_exists(self):
+        # Known Limitations item 8: a hook installed at character select stalls
+        # the runner. The one call to LootAnnounceInstall sits behind the
+        # core's ShouldInstall, fed g_Setup, a player HhResolveLocalPlayer
+        # found, and g_LaInstallTried.
+        definition = "static void LootAnnounceInstall()"
+        code = _code(self.plugin)
+        calls = [m.start() for m in re.finditer(r"\bLootAnnounceInstall\(\)", code)
+                 if not code[max(0, m.start() - len("static void ")):m.start()].endswith("static void ")]
+        self.assertEqual(len(calls), 1, "LootAnnounceInstall() is called somewhere other than LaInstallIfReady")
+        ready = _code(_body(self.plugin, "static void LaInstallIfReady()"))
+        self.assertIn("if (g_LootAnnounce.ShouldInstall(g_Setup, havePlayer, g_LaInstallTried)) LootAnnounceInstall();",
+                      ready)
+        self.assertIn("const bool havePlayer = g_Setup && !g_LaInstallTried && HhResolveLocalPlayer(player);", ready)
+        self.assertLess(ready.index("HhResolveLocalPlayer(player)"), ready.index("ShouldInstall("))
+        self.assertIn(definition, self.plugin)
+        # The command tries at once (in game: installs; at character select:
+        # arms only); the tick looks every kInstallPollFrames frames while
+        # armed, after its off check.
+        command = _code(_body(self.plugin, "static void LootAnnounceCommand(const std::string& rest)"))
+        self.assertIn("if (!g_LaInstallTried) LaInstallIfReady();", command)
+        self.assertNotIn("LootAnnounceInstall(", command)
+        tick = [l.strip() for l in _code(_body(self.plugin, "static void LootAnnounceTick()")).splitlines() if l.strip()]
+        self.assertEqual(tick[1], "if (!g_LaInstallTried && ForgePact::LootAnnounceMod::LooksForPlayer(g_LaArmedFrames++)) "
+                                  "LaInstallIfReady();")
+        self.assertNotIn("LootAnnounceInstall(", "\n".join(tick))
 
 
 if __name__ == "__main__":
