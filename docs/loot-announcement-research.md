@@ -2,7 +2,8 @@
 
 **Question.** Online, Hero Siege announces a rare drop in the in-game chat.
 Offline it shows nothing. Which call, made by name from ForgePact, shows that
-line offline for a Heroic, Angelic or Unholy item the game drops: the game's
+line offline for a Heroic, Angelic, Unholy, Satanic or Mythic item the game
+drops (Satanic and Mythic since 2026-10-08, § Satanic and Mythic): the game's
 own announcement path, or one of the chat routes already proven offline?
 
 **Why it matters.** Issue #17 asks for the same announcement offline as
@@ -18,7 +19,8 @@ in our own words, or our own code. Game objects and scripts are named by their
 offset appears. A reading is labelled as a reading, and it is not a fact until
 a live session records it.
 
-**Out of scope.** Items below Heroic (Satanic, Mythic and lower), gold, gems,
+**Out of scope.** Rarities other than the five announced (Common, Superior,
+Rare and the rest), gold, gems,
 materials and relics; items the player drops from the bag; a clickable item
 link (`UiAChatLobbyShowItemDrop`), sounds or banners; any change to the online
 path, the chat feed, `Chat_obj` or the network. No packet is sent on purpose.
@@ -127,8 +129,11 @@ Two halves: the mod's adapter, which ships, and `lootannprobe`, which does not.
 `plugin/ModuleMain.cpp` (from "Loot announcements (LootAnnounceMod.hpp): the
 adapter" to "end of the loot announcement adapter") reads and speaks.
 
-- **Hooks**, both by SDK name through `HookOneScript`, installed on the first
-  `lootann 1` after setup (or the first frame after setup with the switch on):
+- **Hooks**, both by SDK name through `HookOneScript`, installed once per
+  session when the switch is on, setup is done and the local player resolves
+  through `HhResolveLocalPlayer` (since 2026-10-08, § The switch on at launch;
+  before that, on the first `lootann 1` after setup or the first frame after
+  setup with the switch on):
   `LootGroundInit`'s one detour, shared with hidden loot sleep (installed by
   `HiddenLootInstall`; a second inline detour on the same script would be
   refused), and `CreateItemNew`'s shared `Hook_CreateItemNew` (hook id
@@ -174,7 +179,8 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   decided, so two unread items never share one identity; that case was not
   observed live. The core then
   decides, in this order: off, not recently created (`held-bag-drop`),
-  unread rarity, a rarity not in {9, 7, 10}, an identity already announced
+  unread rarity, a rarity not in {9, 7, 10, 6, 5} ({9, 7, 10} until
+  2026-10-08), an identity already announced
   (`held-duplicate`), or announce. After the batch the creation window ages
   once.
 - **The sink**: `LootAnnounceSink(item, lootInst)` runs the body
@@ -196,13 +202,15 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   failed (`lootann: no line (sink <name>) - <field> ...`, the first 20) and
   counts `sink-refused=`.
 - **Lines**: `lootann 1` answers `lootann: on route=<sink> init-hook=<route>
-  create-hook=<route>` (`both`, `table-only` or `none`), plus one warning
+  create-hook=<route> install=<state>` (`both`, `table-only`, `none` or
+  `not-installed` for a route; `not-armed`, `waiting-for-character` or
+  `installed` for the install, since 2026-10-08), plus one warning
   line for a hook that is not `both` (for `CreateItemNew`: the game's own
   drops may not be seen as new, so nothing would be announced); `lootann 0`
   answers `lootann: off`; `lootann` / `lootann stat` answers
   `lootann: on|off route= seen= announced= held-rarity= held-no-rarity=
   held-duplicate= held-bag-drop= sink-refused= remembered= created=
-  create-overflow= init-hook= create-hook= unidentified= no-item= no-key=
+  create-overflow= init-hook= create-hook= install= unidentified= no-item= no-key=
   no-identity= queue-full=`. The
   modstate JSON carries `lootAnnounce` with `on`, `route`, `seen`,
   `announced`, `heldRarity`, `heldNoRarity`, `heldDuplicate`, `heldBagDrop`
@@ -241,10 +249,10 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   row, zero counts included (`calls=n/a` for a row that cannot see its
   script), then `lootannprobe census Loot_Ground_obj=<n> Ingame_Chat_obj=<n>
   Chat_obj=<n> Menu_Controller_obj=<n>`.
-- **`lootannprobe place heroic|angelic|unholy|satanic|common`** builds one
+- **`lootannprobe place heroic|angelic|unholy|satanic|mythic|common`** builds one
   item the way `sigdrop` does (`json_parse`, then `InitItemFromJson` with the
   global instance as self; a Heavy Belt base, and `angelic` with `sigdrop`'s
-  Headhunter seed), writes `itemInfoStruct["27"]` = 9, 7, 10, 6 or 1 as Custom
+  Headhunter seed), writes `itemInfoStruct["27"]` = 9, 7, 10, 6, 5 or 1 as Custom
   Forge writes it, and places it 48 px right of the player through the game's
   own `LootGroundCreateFromItem(x, y, item)`. It prints `lootannprobe place
   <r>: "27"=<n> "28"=<name> itemType=<n> instance=<kind> id=<id> at <x>,<y>`,
@@ -560,6 +568,99 @@ not part of this change. The header's `kShippedSink` and
 `tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` name the same
 route.
 
+## The switch on at launch
+
+2026-10-08. The owner reported that "loot announcement doesnt work", with no
+more detail. The failing session was not captured: `bp_ipc\out.txt` and
+`out.prev.txt` on the development machine held no `lootann` lines from
+ordinary play (only this research's sessions of 2026-10-04), the installed
+plugin was a build from another, unmerged branch, and the owner's
+`forgepact.json` by then had the switch off. So **the cause of the owner's
+failure is not established**, and nothing below claims to be it.
+
+What was a candidate: every live session above switched the mod on **in
+game**, through the panel, with a character loaded. The way a player
+normally uses it, with the switch already on as the game starts, was never
+measured. Then the panel's launch commands carry `lootann 1`, the plugin
+reads commands from the first frame after its setup (while character
+selection is still running), and until this change `lootann 1` installed
+both hooks at once: `LootGroundInit` and `CreateItemNew` hooked at character
+select. That is the hazard the ForgePact guide's Known Limitations item 8
+names ("Mods that install a hook must be armed, not hooked, at launch":
+hooking `DropRelic` at character select stalled the runner, and the relic
+filter waits for `HhResolveLocalPlayer`). The install was tried once and
+never again, and a route other than `both` was said only in `out.txt`, so a
+failed install would have been silence in play. Hidden loot sleep, which
+shares the `LootGroundInit` detour, has an 18-frame pass over ground items
+that covers a table-only hook; loot announcements has none, and cannot, since
+a pass cannot tell a fresh drop from a bag drop without the creation guard.
+
+What changed: `lootann 1` with no local player turns the switch on and only
+arms it. The hooks go in once per session, on the first frame where setup is
+done and `HhResolveLocalPlayer` resolves the player, looked for at most once
+every 60 frames while armed (`LootAnnounceMod::ShouldInstall`,
+`LooksForPlayer`, `kInstallPollFrames`, harness-tested); with a character
+loaded `lootann 1` still installs at once. `lootann 1` and `lootann stat`
+gain ` install=` after `create-hook=`: `not-armed` (off, never installed),
+`waiting-for-character` (on, no player yet) or `installed` (the install ran).
+Rejected: retrying a failed install every few frames (it hides a real
+refusal, which the route line already reports); a fallback pass like hidden
+loot's (above). Tests: `tests/loot_announce_harness.cpp`'s
+`baseline/setup_alone_installed_before_this_change`,
+`target/waits_for_a_character_before_installing`,
+`target/a_switch_on_in_game_installs_at_once` and the negative control
+`target/switched_off_never_installs`, through
+`tests/test_loot_announce_behavior.py`; the adapter's wiring in
+`tests/test_loot_announce_contract.py`.
+
+Whether this path failed before the change, and whether it works after it,
+is measured by Live procedure 4 (`lootann-armed-at-select`,
+`lootann-installed-after-load`, `lootann-heroic-announced`).
+
+## Satanic and Mythic
+
+2026-10-08. Asked which drop they had expected to see announced in the
+failing session, the owner answered "Expected Satanic or Mythic", and to
+whether this change should add them, "Add Satanic and Mythic". So the
+announced set is now five rarities of `itemInfoStruct["27"]`: Heroic 9,
+Angelic 7, Unholy 10, Satanic 6 and Mythic 5
+(`LootAnnounceMod::kAnnouncedRarities`, with the named constants `kSatanic`
+and `kMythic`; codes from `docs/RUNTIME_DATA_MODELS.md`'s rarity table in
+the toolkit hub). Common, Superior, Rare and every other code stay held
+(`held-rarity`). The game's own online announcement closure also handles
+Satanic (§ Static reading: Satanic, Angelic, Heroic and Unholy); Mythic is
+the owner's choice, not something the game's online rule was read to do.
+Nothing else changes: the sink, the line text, the creation guard and the
+once-per-item memory are as before. Tests: the harness's
+`baseline/satanic_and_mythic_the_rest_stay_held`,
+`baseline/satanic_and_mythic_off_announces_nothing` and
+`target/satanic_and_mythic_announced_once` (a fresh Satanic and a fresh
+Mythic item each announced once, a second sighting `held-duplicate`), and
+the contract test's pin of the five-entry set. `lootannprobe place` gains
+`mythic` (code 5) so a session can place one. Live procedures 1 and 3's
+results above, where a placed Satanic item was held, stay as recorded: they
+measured the set as it was then. Live procedure 4 checks a placed Satanic
+and a placed Mythic item (`lootann-satanic-announced`,
+`lootann-mythic-announced`).
+
+## Live procedure 4
+
+One session for this change and two other ForgePact fixes of 2026-10-08
+(one research build, one launch). The procedure is the toolkit hub's
+workorder `forgepact-moveall-loot-satanic`, its context file's
+`### Live procedure 1` (`.claude/workorders/forgepact-moveall-loot-satanic-context.md`
+in the hub, a local working file). The loot announcement part: at character
+select, `lootann stat` carries ` install=not-armed` (the build's marker);
+`lootann 1` answers `install=waiting-for-character` with both hooks
+`not-installed`, and still does 3 s later (`lootann-armed-at-select`); after
+the character loads, `install=installed init-hook=both create-hook=both`
+(`lootann-installed-after-load`); a placed Heroic, Satanic and Mythic item
+each raise `announced` by 1 with a red `SERVER:` line and no `held-rarity`
+change (`lootann-heroic-announced`, `lootann-satanic-announced`,
+`lootann-mythic-announced`); optionally a minute of kills raises `seen` and
+`created` (`natural-drops-seen`, research). Results are recorded here when
+the session has run.
+
 ## Not established
 
 - Who invokes the announcement closure online, and what binds it on a
@@ -602,6 +703,13 @@ route.
   item. Several items dropped at once, a stack, a drop in the frame of a
   pickup, and a co-op peer's drop (built anew on this client, so announced
   by design) were not tried.
+- What failed in the owner's session of 2026-10-08 (§ The switch on at
+  launch): it was not captured. Whether hooking at character select was the
+  cause, and whether the armed install works with the switch on at launch,
+  are not measured until Live procedure 4 runs. Also not established: that a
+  Mythic code written onto the probe's Heavy Belt base reads back as Mythic
+  (Live procedure 4's `lootann-mythic-announced` measures it), and whether a
+  Satanic or Mythic item from a kill reaches the mod.
 - Why the game exited in Live procedure 2 (exit code 1, no fault record).
   Live procedure 3, with Steam running, did not exit; one session does not
   settle the owner's Steam hypothesis.
