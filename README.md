@@ -1444,8 +1444,10 @@ on the ground is announced in the in-game chat.
 - **On when the game starts.** With the switch already on at launch, the mod
   waits at the character select screen and starts once your character is
   loaded; until then `lootann stat` reads `install=waiting-for-character`.
-  Checked in play on 2026-10-08: switched on at character select, it waited,
-  started once the character was loaded, and announced a placed Heroic item.
+  Checked in play on 2026-10-08: switched on at character select by command
+  (`lootann 1`), it waited, started once the character was loaded, and
+  announced a placed Heroic item. The panel's launch-command route was not
+  observed live, though it sends the same command string.
 - **Checked in play** (2026-10-04, on the research build): a placed Heroic
   and a placed Angelic item were each announced once, a placed Satanic item
   was not; the Heroic item, picked up and dropped from the bag, was not

@@ -42850,7 +42850,8 @@ static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", 
 // corner (2290, 1262 at 2560x1440, Live 5): written as read, as v2.1.0 did,
 // they gave the node Sort's box, and the button lit only with the mouse one
 // column right of where it is drawn (the owner, 2026-10-08; that navBbox* is
-// the box the UI layer highlights is a static reading, not measured). They
+// the box the UI layer highlights was measured live on 2026-10-08, Live 8
+// and Live 9, with Sort's own hover as the positive control). They
 // are written as Sort's displaced by the target's offset
 // from Sort, keeping Sort's own relation between them and its box, and
 // navBboxWidth/Height scaled like the sprite, so the highlight box is the
