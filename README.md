@@ -47,12 +47,12 @@ none of these diagnostic hooks or the recorder. See
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
-| **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Items below Heroic, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
+| **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Mythic, Satanic, Angelic, Heroic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Items below Mythic (Common, Superior and Rare), gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-20>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 20. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
 | **Satanic Zone Mods** | Pick which of the game's 25 positive / 26 negative World Section mods can roll onto a Satanic Zone; everything is on by default |
-| **Satanic Zone: Choose The Zone** | Off by default. **Keep the zone you are in satanic** makes wherever you go count as the Satanic Zone; **Every zone counts as satanic** makes the game's own "is this a Satanic Zone?" answer yes everywhere. The `satzone` command pins one exact zone (`satzone pin here`, `satzone pin <index>`, `satzone off`). With both off the game rolls its own zone exactly as before. Not yet confirmed in a live game |
+| **Satanic Zone: Choose The Zone** | Off by default. **Every zone counts as satanic** makes the game's own "is this a Satanic Zone?" answer yes everywhere. The `satzone` command pins one exact zone (`satzone pin here`, `satzone pin <index>`, `satzone off`). With the switch off and no pin the game rolls its own zone exactly as before. Not yet confirmed in a live game |
 | **Auto-prospect** | Off by default. Every item you drag or click into the Prospect Cube's grid is prospected at once by the game's own Prospect, so the 9×6 grid stops being the limit on a batch. Before each prospect the previous prospect's batch of materials goes to your materials tab (a sub-switch, on by default), so only the newest batch stays in the grid; the item you put in, ore included, is prospected, not moved (one exception: a batch material swapped out and dropped straight back in still goes to the tab); anything left in it when the game saves is lost ([details](#auto-prospect)) |
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
@@ -585,15 +585,10 @@ and live findings are in
 ### Satanic Zone: choose the zone
 
 **World → Satanic Zone** (under the mods card) decides which zone the game treats as
-satanic. Both switches are off by default, and with both off nothing changes: the game
-rolls its own zone exactly as before. While on, each switch is an entry in
-**Enabled mods** with a **Turn off** button, like any other mod.
+satanic. Its one switch is off by default, and with it off and no zone pinned nothing
+changes: the game rolls its own zone exactly as before. While on, the switch is an entry
+in **Enabled mods** with a **Turn off** button, like any other mod.
 
-- **Keep the zone you are in satanic** (`satzone follow 1` / `satzone follow 0`):
-  wherever you go, the game treats the zone you are in as the Satanic Zone, so its
-  modifiers and its drops apply there. Towns and sub-areas are left alone. The game
-  re-rolls its own zone during play, so the plugin re-asserts yours about four times a
-  second.
 - **Every zone counts as satanic** (`satzone everywhere 1` / `satzone everywhere 0`):
   the game's own "is this a Satanic Zone?" answer becomes yes wherever you are, without
   touching which zone is resolved. Not yet confirmed in a live game: in town it changed
@@ -601,9 +596,10 @@ rolls its own zone exactly as before. While on, each switch is an entry in
 - **Pin one exact zone** (command only): `satzone pin here` pins the zone you are
   standing in, `satzone pin <index>` pins a zone by its room index, `satzone off`
   releases it, and `satzone stat` prints what is pinned and how many writes and refusals
-  there have been. The zone the game keeps is a protected value; the plugin reads it
-  with the game's own `GPV` and writes it with the game's own `SPV`, reading the key
-  from the live game, so nothing is hardcoded.
+  there have been. The game re-rolls its own zone during play, so the plugin re-asserts
+  a pin about four times a second. The zone the game keeps is a protected value; the
+  plugin reads it with the game's own `GPV` and writes it with the game's own `SPV`,
+  reading the key from the live game, so nothing is hardcoded.
 
 Measured live 2026-10-04 (research build): the game asks `LoadSatanicZone` about 150
 times a second with the resolved zone's room index, that value can be written and the
@@ -1423,12 +1419,12 @@ Mods → Quality of Life → **Loot announcements** (plugin command `lootann 1|0
 `lootann stat` for its state). Off by default.
 
 Online, the game announces a great drop in the chat; offline it shows nothing.
-With this on, an item of Heroic, Angelic or Unholy rarity that the game drops
-on the ground is announced in the in-game chat.
+With this on, an item of Mythic, Satanic, Angelic, Heroic or Unholy rarity
+that the game drops on the ground is announced in the in-game chat.
 
-- **Which items.** Heroic, Angelic and Unholy only, read from the item's own
-  rarity. Satanic, Mythic and lower, gold, gems, materials and relics are not
-  announced.
+- **Which items.** Mythic, Satanic, Angelic, Heroic and Unholy only, read from
+  the item's own rarity. Rarities below Mythic (Common, Superior and Rare),
+  gold, gems, materials and relics are not announced.
 - **Once per item.** Each item is announced once. An item counts only when
   the game has just made it, so an item you drop from your bag, or drop again
   after picking it up, is not announced. In co-op, an item another player

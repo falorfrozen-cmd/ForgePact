@@ -12,8 +12,8 @@ also off by default, has your pet pick up the relics lying around you. A new
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
 switch, also off by default, counts the slot machine explosions that drop no
 charm, and the one that reaches the number you set drops the charm. A new
-**Loot announcements** switch, also off by default, announces a Heroic,
-Angelic or Unholy drop in the chat.
+**Loot announcements** switch, also off by default, announces a Mythic,
+Satanic, Angelic, Heroic or Unholy drop in the chat.
 Three new sliders in a new **Skills** group on the Modifiers tab,
 **Projectile Speed**, **Projectile Amount** and **Area of Effect**, change
 only your own skills; each has its own switch and is off by default.
@@ -188,17 +188,15 @@ experience.
   the second run, after a fix to the label's font, the label above the
   character held steady while standing still. A boss
   dungeon has not been checked yet.
-- **Satanic Zone: choose the zone (#157).** Two new switches in
-  World → Satanic Zone, both off by default. **Keep the zone you are in
-  satanic** makes wherever you go count as the Satanic Zone, so its modifiers
-  follow you (drops not yet checked); towns and sub-areas are left alone, and
-  the plugin keeps the game's own value in step about four times a second
-  because the game re-rolls it on its own. **Every zone counts as satanic** makes the
+- **Satanic Zone: choose the zone (#157).** A new switch in
+  World → Satanic Zone, off by default. **Every zone counts as satanic** makes the
   game's own "is this a Satanic Zone?" answer yes wherever you are. The
   `satzone` command pins one exact zone instead (`satzone pin here`,
-  `satzone pin <index>`, `satzone off`, `satzone stat`). With both switches
-  off the game rolls its zone exactly as before. While on, each switch shows up
-  in **Enabled mods**, with a Turn off button like any other mod. The zone the
+  `satzone pin <index>`, `satzone off`, `satzone stat`); the plugin keeps a
+  pinned zone in step about four times a second because the game re-rolls it
+  on its own. With the switch off and no zone pinned the game rolls its zone
+  exactly as before. While on, the switch shows up in **Enabled mods**, with a
+  Turn off button like any other mod. The zone the
   game keeps is a protected value: the plugin reads and writes it through the
   game's own `GPV`/`SPV`, never a fixed number. Measured on the research build
   (2026-10-03): the game asks `LoadSatanicZone` about 150 times a second with
@@ -251,12 +249,12 @@ experience.
   a live game yet.
 - **Loot announcements (#17).** A new switch in Mods → Quality of Life, off
   by default. Online, the game announces a great drop in the chat; offline
-  it showed nothing. With this on, a Heroic, Angelic or Unholy item that
-  drops on the ground is announced once in the chat, as a red `SERVER:
-  <your character> found <item name>` line. This is not the game's own
-  online announcement, which does not run offline: ForgePact
-  writes the line itself. Satanic, Mythic and lower items, gold, gems,
-  materials and relics are not announced. An item counts only when the game
+  it showed nothing. With this on, a Mythic, Satanic, Angelic, Heroic or
+  Unholy item that drops on the ground is announced once in the chat, as a
+  red `SERVER: <your character> found <item name>` line. This is not the
+  game's own online announcement, which does not run offline: ForgePact
+  writes the line itself. Items below Mythic (Common, Superior and Rare),
+  gold, gems, materials and relics are not announced. An item counts only when the game
   has just made it, so an item you drop from your bag, or drop again after
   picking it up, is not announced; in co-op, an item another player drops
   is made anew on your side and can be. Nothing is sent over the network.

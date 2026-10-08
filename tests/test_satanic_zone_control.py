@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Satanic Zone control (issue #157): the `satzone` command and the two
-World-tab switches.
+"""Satanic Zone control (issue #157): the `satzone` command and the
+World-tab switch.
 
 The zone is a writable protected value (ForgePact #155/#156; the research
 doc's "Live 3"): `Controller_obj.satanicZone` is the key, `GPV`/`SPV` are the
@@ -9,7 +9,11 @@ re-asserted on the satmods poll. What this pins:
 
 - the command is a player command (in `kPlayerCommands`, reachable after the
   research blocks are stripped), a standalone early return, and off by
-  default (pin -1, follow/everywhere false);
+  default (pin -1, everywhere false);
+- the follow mode ("Keep the zone you are in satanic") is gone everywhere:
+  no atomic, no sub-command, no stat field, no setting, no panel row, and a
+  saved `satanic_follow` is retired on load (removed before it shipped:
+  Every zone counts as satanic covers it, the owner, 2026-10-08);
 - the everywhere force sits in `HookLoadSatanicZone`'s body and reads the
   atomic; its hook install is deferred to the frame tick and gated on a player
   existing (char select must not get hooks - the restartanytime rule);
@@ -17,9 +21,9 @@ re-asserted on the satmods poll. What this pins:
   is read and written through `gml_Script_GPV`/`gml_Script_SPV` only - never a
   `variable_instance_set` on `satanicZone` (that would write the key, not the
   protected value);
-- the panel carries both switches with their ids, their boot state and their
-  handlers, `build_cmds` sends the two commands only while set, and the
-  defaults fixture already carries the keys (test_enabled_mods_panel).
+- the panel carries the everywhere switch with its id, its boot state and its
+  handler, `build_cmds` sends its command only while set, and the defaults
+  fixture already carries the key (test_enabled_mods_panel).
 """
 
 import re
@@ -63,9 +67,31 @@ class SatanicZoneControlPluginTests(unittest.TestCase):
 
     def test_defaults_are_off(self):
         for decl in ("static std::atomic<int>  g_SatZonePin{ -1 };",
-                     "static std::atomic<bool> g_SatZoneFollow{ false };",
                      "static std::atomic<bool> g_SatEverywhere{ false };"):
             self.assertIn(decl, self.plugin)
+
+    def test_follow_mode_is_gone(self):
+        # "Keep the zone you are in satanic" was removed (the owner,
+        # 2026-10-08): no atomic, no sub-command (`satzone follow ...` falls
+        # to the usage line), no `follow=` in the stat line, no follow in the
+        # usage text, and the tick's early return reads only the pin.
+        self.assertNotIn("g_SatZoneFollow", self.plugin)
+        cmd = strip_comments(self.cmd)
+        self.assertNotIn('sub == "follow"', cmd)
+        self.assertNotIn("follow", cmd)
+        tick = strip_comments(self.pin_tick)
+        self.assertNotIn("follow", tick)
+        self.assertIn("if (pin < 0) return;", tick)
+        self.assertIn("satzone pin here|<index> | satzone everywhere 0|1 | satzone off | satzone stat", cmd)
+
+    def test_pin_and_everywhere_are_kept(self):
+        # Negative control for the removal: the pin, `off` and everywhere
+        # sub-commands still exist.
+        cmd = strip_comments(self.cmd)
+        for sub in ('sub == "pin"', 'sub == "off"', 'sub == "everywhere"'):
+            self.assertIn(sub, cmd)
+        self.assertIn("g_SatZonePin.store(-1);", cmd)
+        self.assertIn("SatZoneWriteValue(key, target)", strip_comments(self.pin_tick))
 
     def test_everywhere_force_is_in_the_hook_body(self):
         body = strip_comments(self.hook)
@@ -127,43 +153,117 @@ class SatanicZoneControlPanelTests(unittest.TestCase):
         cls.readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     def test_defaults_are_off(self):
-        for key in ("satanic_follow", "satanic_everywhere"):
-            self.assertIn(f'"{key}": False,', self.forgepact)
+        self.assertIn('"satanic_everywhere": False,', self.forgepact)
+        self.assertNotIn('"satanic_follow": False,', self.forgepact)
 
     def test_build_cmds_send_only_while_set(self):
         cmds = self.forgepact[self.forgepact.index("def build_cmds"):]
         cmds = cmds[:cmds.index("\ndef ", 10)]
-        self.assertIn('if cfg.get("satanic_follow", False):', cmds)
-        self.assertIn('out.append("satzone follow 1")', cmds)
+        self.assertNotIn("satanic_follow", cmds)
+        self.assertNotIn("satzone follow", cmds)
         self.assertIn('if cfg.get("satanic_everywhere", False):', cmds)
         self.assertIn('out.append("satzone everywhere 1")', cmds)
 
     def test_api_set_handlers_post_the_toggled_value(self):
-        for key in ("satanic_follow", "satanic_everywhere"):
-            self.assertIn(f"key:'{key}',value:e.target.checked", self.panel)
-            self.assertIn(f"send_cmds([f\"satzone {'follow' if key == 'satanic_follow' else 'everywhere'} "
-                          f"{{1 if cfg['{key}'] else 0}}\"], cfg)", self.forgepact)
-        self.assertEqual(self.panel.count("getElementById('satanic_follow').onchange"), 1)
+        self.assertIn("key:'satanic_everywhere',value:e.target.checked", self.panel)
+        self.assertIn("send_cmds([f\"satzone everywhere {1 if cfg['satanic_everywhere'] else 0}\"], cfg)",
+                      self.forgepact)
         self.assertEqual(self.panel.count("getElementById('satanic_everywhere').onchange"), 1)
+        # The removed follow switch has no handler, no /api/set boolean entry
+        # and no live send.
+        self.assertNotIn("satanic_follow", self.panel)
+        self.assertNotIn("satzone follow", self.forgepact)
+        api_set = self.forgepact[self.forgepact.index('if u.path == "/api/set":'):]
+        api_set = api_set[:api_set.index('elif u.path == "/api/setexe":')]
+        self.assertNotIn('"satanic_follow"', api_set)
 
-    def test_boot_restores_both_switches(self):
-        for key, val in (("satanic_follow", "szfval"), ("satanic_everywhere", "szeval")):
-            self.assertIn(f"getElementById('{key}').checked", self.panel)
-            self.assertIn(f"getElementById('{val}').textContent", self.panel)
+    def test_boot_restores_the_switch(self):
+        self.assertIn("getElementById('satanic_everywhere').checked", self.panel)
+        self.assertIn("getElementById('szeval').textContent", self.panel)
+        self.assertNotIn("szfval", self.panel)
 
-    def test_world_tab_carries_the_two_rows(self):
-        for ident in ("satanic_follow", "satanic_everywhere", "szfval", "szeval"):
+    def test_world_tab_carries_the_one_row(self):
+        for ident in ("satanic_everywhere", "szeval"):
             self.assertIn(f'id="{ident}"', self.world)
-        self.assertIn("Keep the zone you are in satanic", self.world)
         self.assertIn("Every zone counts as satanic", self.world)
+        for gone in ('id="satanic_follow"', 'id="szfval"', "Keep the zone you are in satanic"):
+            self.assertNotIn(gone, self.world)
 
     def test_switches_are_enabled_mods_entries(self):
-        # Off by default and each sends its line while on, so the Enabled
-        # mods list shows them like any other mod: the pools' exclusion
-        # (all-on by default) does not apply to the switches (#157).
+        # Off by default and sends its line while on, so the Enabled mods
+        # list shows it like any other mod: the pools' exclusion (all-on by
+        # default) does not apply to the switch (#157).
         body = re.search(r"BOOLEAN_MODS\s*=\s*\[(?P<body>.*?)\];", self.mods, re.DOTALL).group("body")
-        for key in ("satanic_follow", "satanic_everywhere"):
-            self.assertIn(f"'{key}'", body)
+        self.assertIn("'satanic_everywhere'", body)
+        self.assertNotIn("'satanic_follow'", body)
 
     def test_readme_documents_the_command(self):
         self.assertIn("satzone", self.readme)
+
+
+class SatanicFollowRetiredTests(unittest.TestCase):
+    """A saved `satanic_follow` (the removed "Keep the zone you are in
+    satanic" switch, never in a release) loads, launches and sends nothing.
+    The owner's own forgepact.json carries the key, so a file that still has
+    it must not bring it back: `load_cfg` drops it, `build_cmds` emits no
+    follow line, `/api/set` with it changes nothing and sends nothing, and the
+    next save writes the file without it. Every zone counts as satanic, in
+    the same file, is kept (the negative control)."""
+
+    def _load_cfg_from(self, saved):
+        from test_satanic_panel import forgepact  # noqa: E402  (imports the backend)
+        import json
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "forgepact.json"
+            config.write_text(json.dumps(saved), encoding="utf-8")
+            with mock.patch.object(forgepact, "CONFIG", config):
+                cfg = forgepact.load_cfg()
+                forgepact.save_cfg(cfg)
+                written = json.loads(config.read_text(encoding="utf-8"))
+            return cfg, written, forgepact
+
+    def test_a_saved_satanic_follow_is_retired_on_load(self):
+        cfg, written, forgepact = self._load_cfg_from({"satanic_follow": True, "satanic_everywhere": True})
+        self.assertNotIn("satanic_follow", cfg)
+        self.assertNotIn("satanic_follow", written)
+        self.assertIs(cfg["satanic_everywhere"], True)
+        cmds = forgepact.build_cmds(cfg)
+        self.assertIn("satzone everywhere 1", cmds)
+        self.assertEqual([c for c in cmds if "follow" in c], [])
+
+    def test_retired_key_is_not_a_default(self):
+        from test_satanic_panel import forgepact  # noqa: E402
+        self.assertNotIn("satanic_follow", forgepact.DEFAULTS)
+        self.assertIs(forgepact.DEFAULTS["satanic_everywhere"], False)
+
+    def test_api_set_with_the_retired_key_changes_and_sends_nothing(self):
+        import json
+        from http.client import HTTPConnection
+        from unittest import mock
+        from test_satanic_panel import PanelSandbox, forgepact  # noqa: E402
+        with PanelSandbox() as sandbox, mock.patch.object(forgepact, "game_running", return_value=True):
+            send = sandbox.mocks[3]
+            connection = HTTPConnection("127.0.0.1", sandbox.port, timeout=5)
+            try:
+                connection.request("POST", "/api/set", json.dumps({"key": "satanic_follow", "value": True}),
+                                   {"Content-Type": "application/json"})
+                response = connection.getresponse()
+                response.read()
+            finally:
+                connection.close()
+            saved = json.loads(sandbox.config.read_text(encoding="utf-8"))
+            self.assertNotIn("satanic_follow", saved)
+            sent = [line for call in send.call_args_list for line in call.args[0]]
+            self.assertEqual([line for line in sent if "follow" in line], [])
+            # Control: the kept switch still posts and sends its line.
+            connection = HTTPConnection("127.0.0.1", sandbox.port, timeout=5)
+            try:
+                connection.request("POST", "/api/set", json.dumps({"key": "satanic_everywhere", "value": True}),
+                                   {"Content-Type": "application/json"})
+                connection.getresponse().read()
+            finally:
+                connection.close()
+            sent = [line for call in send.call_args_list for line in call.args[0]]
+            self.assertIn("satzone everywhere 1", sent)

@@ -24246,11 +24246,11 @@ static void FilterSatanicArray(const RValue& controller, const char* varName,
 // Both are game scripts, called here the same way `pcall` calls them (self =
 // the local player, the shape the live probes used). The game re-rolls the
 // value on its own during play, so a pin is re-asserted by the same 15-frame
-// poll that corrects the mod arrays. `follow` keeps the room the player is in
-// pinned; `everywhere` instead forces LoadSatanicZone's answer true (the
-// answer the game asks for ~150x a second) and never touches the value.
+// poll that corrects the mod arrays. `everywhere` instead forces
+// LoadSatanicZone's answer true (the answer the game asks for ~150x a second)
+// and never touches the value. (A `follow` mode that kept the room the player
+// was in pinned was removed before it shipped: `everywhere` covers it.)
 static std::atomic<int>  g_SatZonePin{ -1 };        // room index kept as the zone, -1 = none
-static std::atomic<bool> g_SatZoneFollow{ false };  // keep the current room pinned
 static std::atomic<bool> g_SatEverywhere{ false };  // force LoadSatanicZone's answer true
 static std::atomic<long> g_SatZoneWrites{ 0 };
 static std::atomic<long> g_SatZoneRefusals{ 0 };
@@ -24403,7 +24403,7 @@ static bool SatZoneWriteValue(const RValue& key, int room)
 }
 
 // Re-assert the pin. Called from SatanicPollTick (same 15-frame cadence as the
-// mod filter); does no game reads while no pin and no follow is active.
+// mod filter); does no game reads while no pin is active.
 static bool SatZonePlayerExists()
 {
     try {
@@ -24416,7 +24416,6 @@ static bool SatZonePlayerExists()
 static void SatZoneTick()
 {
     const int pin = g_SatZonePin.load();
-    const bool follow = g_SatZoneFollow.load();
     // Everywhere mode arms at launch and installs its hook in here: char
     // select must not get hooks (the restartanytime pattern). A failed
     // install is retried every few hundred frames, not every tick.
@@ -24427,7 +24426,7 @@ static void SatZoneTick()
             EnsureSatanicZoneHook();
         }
     }
-    if (pin < 0 && !follow) return;
+    if (pin < 0) return;
 
     RValue controller;
     if (!ResolveControllerObj(controller)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("Controller_obj not found"); return; }
@@ -24435,14 +24434,7 @@ static void SatZoneTick()
     try { key = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue("satanicZone") }); }
     catch (...) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("satanicZone key read threw"); return; }
 
-    int target = pin;
-    if (target < 0) {
-        double idx = -1;
-        std::string name;
-        if (!SatZoneCurrentRoomIndex(idx, name)) { g_SatZoneRefusals.fetch_add(1); SATZONE_WHY("current room unresolved"); return; }
-        if (!SatZoneIsZoneRoomName(name)) return;   // town / sub-area: leave the zone alone
-        target = (int)idx;
-    }
+    const int target = pin;
     double current = -1;
     if (!SatZoneReadValue(key, current)) { g_SatZoneRefusals.fetch_add(1); return; }
     if ((int)current == target) return;
@@ -24471,7 +24463,6 @@ static void SatZoneCmd(const std::string& rest)
         std::string why;
         { std::lock_guard<std::mutex> lk(g_SatZoneWhyMutex); why = g_SatZoneLastWhy; }
         return std::string("satzone stat: pin=") + pinned
-            + " follow=" + (g_SatZoneFollow.load() ? "on" : "off")
             + " everywhere=" + (g_SatEverywhere.load() ? "on" : "off")
             + " writes=" + std::to_string(g_SatZoneWrites.load())
             + " refused=" + std::to_string(g_SatZoneRefusals.load())
@@ -24481,15 +24472,7 @@ static void SatZoneCmd(const std::string& rest)
     if (sub.empty() || sub == "stat" || sub == "status") { Out(statLine()); return; }
     if (sub == "off" || sub == "0") {
         g_SatZonePin.store(-1);
-        g_SatZoneFollow.store(false);
         Out("satzone -> off (the game rolls the zone itself again) " + statLine());
-        return;
-    }
-    if (sub == "follow") {
-        const bool on = (rest2 == "1" || rest2 == "on" || rest2 == "true");
-        g_SatZoneFollow.store(on);
-        if (on) g_SatZonePin.store(-1);
-        Out(std::string("satzone -> follow ") + (on ? "on (the room you are in stays the zone)" : "off") + " " + statLine());
         return;
     }
     if (sub == "everywhere") {
@@ -24514,7 +24497,6 @@ static void SatZoneCmd(const std::string& rest)
                 return;
             }
             g_SatZonePin.store((int)idx);
-            g_SatZoneFollow.store(false);
             Out("satzone -> pinned " + name + " (" + std::to_string((int)idx) + ") " + statLine());
             return;
         }
@@ -24528,11 +24510,10 @@ static void SatZoneCmd(const std::string& rest)
             Out("satzone: refused - " + name + " is not an act zone; only Act_NN_MM rooms can be the zone"); return;
         }
         g_SatZonePin.store(idx);
-        g_SatZoneFollow.store(false);
         Out("satzone -> pinned " + name + " (" + std::to_string(idx) + ") " + statLine());
         return;
     }
-    Out("satzone: usage -> satzone pin here|<index> | satzone follow 0|1 | satzone everywhere 0|1 | satzone off | satzone stat");
+    Out("satzone: usage -> satzone pin here|<index> | satzone everywhere 0|1 | satzone off | satzone stat");
     (void)pin;
 }
 
@@ -55170,8 +55151,7 @@ static void RunCommand(const std::string& line)
         }
         return;
     }
-    // Satanic Zone control (issue #157): pin a zone / follow the current one /
-    // everywhere mode. Both builds; a standalone early return for the same
+    // Satanic Zone control (issue #157): pin a zone / everywhere mode. Both builds; a standalone early return for the same
     // C1061 reason as `restartanytime` above.
     if (lc == "satzone") { SatZoneCmd(rest); return; }
     // Satanic Zone research (issue #155): force LoadSatanicZone's answer so
