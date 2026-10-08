@@ -12,9 +12,9 @@ namespace ForgePact {
 
 // ---- Loot announcements: the decision core (ForgePact #17) -----------------
 //
-// `lootann 1` announces in the in-game chat an item of Heroic, Angelic,
-// Unholy, Satanic or Mythic rarity that the game drops on the ground, the way
-// online play announces it. Offline the game shows no such line
+// `lootann 1` announces in the in-game chat an item of Heroic, Angelic or
+// Unholy rarity that the game drops on the ground, the way online play
+// announces it. Offline the game shows no such line
 // (docs/loot-announcement-research.md).
 //
 // The rule this header decides, once per ground item the shared
@@ -52,17 +52,13 @@ namespace ForgePact {
 // after its batch, and runs the sink the verdict asks for.
 class LootAnnounceMod {
 public:
-    // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy, 6 Satanic, 5
-    // Mythic. Angelic and Unholy are the two uniques tiers the game's own
-    // online rule announces; Heroic sits above Satanic. Satanic and Mythic were
-    // added on the owner's word (2026-10-08: the drops they expected to see
-    // announced). Common, Superior, Rare and every other code stay held.
+    // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy. Heroic sits above
+    // Satanic (6); Angelic and Unholy are the two uniques tiers the game's own
+    // online rule announces.
     static constexpr int kHeroic = 9;
     static constexpr int kAngelic = 7;
     static constexpr int kUnholy = 10;
-    static constexpr int kSatanic = 6;
-    static constexpr int kMythic = 5;
-    static constexpr std::array<int, 5> kAnnouncedRarities = { kHeroic, kAngelic, kUnholy, kSatanic, kMythic };
+    static constexpr std::array<int, 3> kAnnouncedRarities = { kHeroic, kAngelic, kUnholy };
     // The adapter's value for a rarity it could not read as a number.
     static constexpr int kRarityUnread = -1;
     // Items remembered at most; the oldest is forgotten first.

@@ -47,7 +47,7 @@ none of these diagnostic hooks or the recorder. See
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
-| **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Mythic, Satanic, Angelic, Heroic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Items below Mythic (Common, Superior and Rare), gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04, when only Heroic, Angelic and Unholy were announced: a placed Heroic and Angelic item announced, a placed Satanic item held back as that set intended, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced. Satanic and Mythic were added on 2026-10-08 and have not been checked in play yet ([details](#loot-announcements)) |
+| **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-20>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 20. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -1419,12 +1419,12 @@ Mods → Quality of Life → **Loot announcements** (plugin command `lootann 1|0
 `lootann stat` for its state). Off by default.
 
 Online, the game announces a great drop in the chat; offline it shows nothing.
-With this on, an item of Mythic, Satanic, Angelic, Heroic or Unholy rarity
-that the game drops on the ground is announced in the in-game chat.
+With this on, an item of Heroic, Angelic or Unholy rarity that the game drops
+on the ground is announced in the in-game chat.
 
-- **Which items.** Mythic, Satanic, Angelic, Heroic and Unholy only, read from
-  the item's own rarity. Rarities below Mythic (Common, Superior and Rare),
-  gold, gems, materials and relics are not announced.
+- **Which items.** Heroic, Angelic and Unholy only, read from the item's own
+  rarity. Satanic, Mythic and lower, gold, gems, materials and relics are not
+  announced.
 - **Once per item.** Each item is announced once. An item counts only when
   the game has just made it, so an item you drop from your bag, or drop again
   after picking it up, is not announced. In co-op, an item another player
@@ -1435,11 +1435,9 @@ that the game drops on the ground is announced in the in-game chat.
   offline, so the mod writes this line itself.
 - **The game's online behaviour is untouched.** Nothing is sent over the
   network on purpose, and the switch changes nothing while it is off.
-- **Checked in play** (2026-10-04, on the research build, when only Heroic,
-  Angelic and Unholy were announced): a placed Heroic and a placed Angelic
-  item were each announced once, a placed Satanic item was held back as that
-  set intended (Satanic and Mythic were added on 2026-10-08 and have not been
-  checked in play yet); the Heroic item, picked up and dropped from the bag, was not
+- **Checked in play** (2026-10-04, on the research build): a placed Heroic
+  and a placed Angelic item were each announced once, a placed Satanic item
+  was not; the Heroic item, picked up and dropped from the bag, was not
   announced again; with the switch off a placed Heroic item was not
   announced; about five minutes of kills (215 drops, none of them Heroic or
   better) announced nothing, and with Magic Find raised a drop from a kill

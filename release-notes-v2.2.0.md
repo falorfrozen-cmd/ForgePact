@@ -12,8 +12,8 @@ also off by default, has your pet pick up the relics lying around you. A new
 the rocks, fences and carts that stop it. A new **Goburin's Head pity**
 switch, also off by default, counts the slot machine explosions that drop no
 charm, and the one that reaches the number you set drops the charm. A new
-**Loot announcements** switch, also off by default, announces a Mythic,
-Satanic, Angelic, Heroic or Unholy drop in the chat.
+**Loot announcements** switch, also off by default, announces a Heroic,
+Angelic or Unholy drop in the chat.
 Three new sliders in a new **Skills** group on the Modifiers tab,
 **Projectile Speed**, **Projectile Amount** and **Area of Effect**, change
 only your own skills; each has its own switch and is off by default.
@@ -249,18 +249,17 @@ experience.
   a live game yet.
 - **Loot announcements (#17).** A new switch in Mods → Quality of Life, off
   by default. Online, the game announces a great drop in the chat; offline
-  it showed nothing. With this on, a Mythic, Satanic, Angelic, Heroic or
-  Unholy item that drops on the ground is announced once in the chat, as a
-  red `SERVER: <your character> found <item name>` line. This is not the
-  game's own online announcement, which does not run offline: ForgePact
-  writes the line itself. Items below Mythic (Common, Superior and Rare),
-  gold, gems, materials and relics are not announced. An item counts only when the game
+  it showed nothing. With this on, a Heroic, Angelic or Unholy item that
+  drops on the ground is announced once in the chat, as a red `SERVER:
+  <your character> found <item name>` line. This is not the game's own
+  online announcement, which does not run offline: ForgePact
+  writes the line itself. Satanic, Mythic and lower items, gold, gems,
+  materials and relics are not announced. An item counts only when the game
   has just made it, so an item you drop from your bag, or drop again after
   picking it up, is not announced; in co-op, an item another player drops
   is made anew on your side and can be. Nothing is sent over the network.
   Checked in play on 2026-10-04: a placed Heroic and Angelic item were each
-  announced once (Satanic and Mythic were added afterwards, on 2026-10-08,
-  and have not been checked in play yet); the Heroic item, picked up and
+  announced once and a Satanic one was not; the Heroic item, picked up and
   dropped from the bag, was not announced again; nothing was announced with
   the switch off; and with Magic Find raised, an item dropped by a monster
   was announced (which one was not recorded). Dropping several items at

@@ -11,9 +11,9 @@
 //
 // Baseline: with the switch off, a Heroic item (and every other rarity) is
 // not announced, nothing is counted, remembered or noted as created. Target:
-// with it on, a Heroic, Angelic, Unholy, Satanic or Mythic item the game has
-// just built announces once; Common, Superior, Rare and the rest do not, nor
-// does an unreadable rarity; an item whose struct was not built in this frame or the
+// with it on, a Heroic, Angelic or Unholy item the game has just built
+// announces once; Satanic, Mythic, Common and the rest do not, nor does an
+// unreadable rarity; an item whose struct was not built in this frame or the
 // last (a bag drop, a re-drop after a pickup) does not; an item whose
 // identity (itemType and a real itemTimeStamp, else the ground id) was
 // already announced does not; switching off clears the creation window; the
@@ -105,13 +105,12 @@ int main()
     // ---- the table: what is announced, named --------------------------------
     {
         const std::set<int> set(LootAnnounceMod::kAnnouncedRarities.begin(), LootAnnounceMod::kAnnouncedRarities.end());
-        check("table/announced_rarities_are_heroic_angelic_unholy_satanic_mythic",
-              set == std::set<int>{ 9, 7, 10, 6, 5 } && LootAnnounceMod::kAnnouncedRarities.size() == 5
-                  && LootAnnounceMod::kHeroic == 9 && LootAnnounceMod::kAngelic == 7 && LootAnnounceMod::kUnholy == 10
-                  && LootAnnounceMod::kSatanic == 6 && LootAnnounceMod::kMythic == 5);
+        check("table/announced_rarities_are_heroic_angelic_unholy",
+              set == std::set<int>{ 9, 7, 10 } && LootAnnounceMod::kAnnouncedRarities.size() == 3
+                  && LootAnnounceMod::kHeroic == 9 && LootAnnounceMod::kAngelic == 7 && LootAnnounceMod::kUnholy == 10);
         bool exact = true;
         for (int code = -2; code <= 12; ++code) {
-            const bool want = code == 9 || code == 7 || code == 10 || code == 6 || code == 5;
+            const bool want = code == 9 || code == 7 || code == 10;
             if (LootAnnounceMod::IsAnnouncedRarity(code) != want) exact = false;
         }
         check("table/is_announced_rarity_exact", exact);
@@ -248,11 +247,15 @@ int main()
               counts(m));
     }
 
-    // ---- target: every rarity outside the set, and an unread one, stays quiet --
+    // ---- target: everything below Heroic, and an unread rarity, stays quiet --
     {
         LootAnnounceMod m;
         m.SetEnabled(true);
+        const Verdict s = fresh(m, { Satanic, 2001, "t2001" });
+        const Verdict y = fresh(m, { Mythic, 2002, "t2002" });
         const Verdict c = fresh(m, { Common, 2003, "t2003" });
+        check("target/satanic_not_announced", s == Verdict::HeldRarity, LootAnnounceMod::VerdictName(s));
+        check("target/mythic_not_announced", y == Verdict::HeldRarity, LootAnnounceMod::VerdictName(y));
         check("target/common_not_announced", c == Verdict::HeldRarity, LootAnnounceMod::VerdictName(c));
         bool rest = true;
         for (int code : std::vector<int>{ Superior, Rare, Code4, Code8, 0, 11, 16 })
@@ -262,50 +265,8 @@ int main()
         check("target/unread_rarity_not_announced_and_counted",
               n == Verdict::HeldNoRarity && m.Stats().heldNoRarity == 1, counts(m));
         check("target/held_counted_never_announced_never_remembered",
-              m.Stats().announced == 0 && m.Stats().heldRarity == 8 && m.Remembered() == 0 && m.Stats().seen == 9,
+              m.Stats().announced == 0 && m.Stats().heldRarity == 10 && m.Remembered() == 0 && m.Stats().seen == 11,
               counts(m));
-    }
-
-    // ---- Satanic and Mythic (the owner, 2026-10-08) ----------------------------
-    // Baseline: the rarities that stay held are still held, and with the switch
-    // off a Satanic or Mythic item is not announced either.
-    {
-        LootAnnounceMod m;
-        m.SetEnabled(true);
-        bool held = true;
-        for (int code : std::vector<int>{ Common, Superior, Rare, Code4 })
-            if (fresh(m, { code, 2200 + code, "h" + std::to_string(code) }) != Verdict::HeldRarity) held = false;
-        const Verdict n = fresh(m, { LootAnnounceMod::kRarityUnread, 2210, "h-unread" });
-        check("baseline/satanic_and_mythic_the_rest_stay_held",
-              held && n == Verdict::HeldNoRarity && m.Stats().announced == 0 && m.Stats().heldRarity == 4
-                  && m.Stats().heldNoRarity == 1 && m.Remembered() == 0,
-              counts(m));
-    }
-    {
-        LootAnnounceMod m;
-        const Verdict s = fresh(m, { Satanic, 2301, "t2301" });
-        const Verdict y = fresh(m, { Mythic, 2302, "t2302" });
-        check("baseline/satanic_and_mythic_off_announces_nothing",
-              s == Verdict::Off && y == Verdict::Off && m.Stats().seen == 0 && m.Stats().announced == 0 && m.Remembered() == 0,
-              counts(m));
-    }
-    // Target: a fresh Satanic and a fresh Mythic item each announce once; a
-    // second sighting of either is a duplicate.
-    {
-        LootAnnounceMod m;
-        m.SetEnabled(true);
-        const Drop satanic{ Satanic, 2401, "1759600002401", "4", 0xD001 };
-        const Drop mythic{ Mythic, 2402, "1759600002402", "4", 0xD002 };
-        const Verdict s = fresh(m, satanic);
-        const Verdict y = fresh(m, mythic);
-        const Verdict s2 = fresh(m, satanic);
-        const Verdict y2 = see(m, mythic);
-        check("target/satanic_and_mythic_announced_once",
-              s == Verdict::Announce && y == Verdict::Announce && s2 == Verdict::HeldDuplicate && y2 == Verdict::HeldDuplicate
-                  && m.Stats().announced == 2 && m.Stats().heldDuplicate == 2 && m.Stats().heldRarity == 0
-                  && m.Remembered() == 2,
-              std::string(LootAnnounceMod::VerdictName(s)) + "/" + LootAnnounceMod::VerdictName(y) + "/"
-                  + LootAnnounceMod::VerdictName(s2) + "/" + LootAnnounceMod::VerdictName(y2) + " " + counts(m));
     }
 
     // ---- target: a second sight of the same item -----------------------------
@@ -466,16 +427,14 @@ int main()
         // Live procedure 2 (2026-10-04), steps 2-6: three placements, each
         // built and placed in one call; the Heroic picked up and dropped from
         // the bag (the old window announced it); then off and a fourth
-        // placement. The session's third placement was Satanic, held then;
-        // Satanic announces since 2026-10-08, so the replay places a Common
-        // there to keep the held step it stood for.
+        // placement.
         LootAnnounceMod m;
         m.SetEnabled(true);
         const Verdict h = fresh(m, { Heroic, 262176, "1759590000001", "4", 0xC001 });
         tick(m);
         const Verdict a = fresh(m, { Angelic, 262177, "1759590000002", "4", 0xC002 });
         tick(m);
-        const Verdict s = fresh(m, { Common, 262178, "1759590000003", "4", 0xC003 });
+        const Verdict s = fresh(m, { Satanic, 262178, "1759590000003", "4", 0xC003 });
         tick(m, 3);
         const Verdict b = see(m, { Heroic, 262179, "1759590000001", "4", 0xC001 });
         tick(m);
@@ -521,7 +480,7 @@ int main()
         m.SetEnabled(true);
         fresh(m, { Heroic, 1, "a" });
         fresh(m, { Heroic, 1, "a" });
-        fresh(m, { Rare, 2, "b" });
+        fresh(m, { Satanic, 2, "b" });
         fresh(m, { LootAnnounceMod::kRarityUnread, 3, "c" });
         see(m, { Angelic, 4, "d" });
         m.NoteSinkRefused();

@@ -109,7 +109,7 @@
         <span class="val" id="mjsval">off</span>
     </div>
     <div class="row" style="border:none">
-        <span class="lbl" style="width:auto;flex:1">Loot announcements<br><span class="feature-description">Announces in chat when a Heroic, Angelic, Unholy, Satanic or Mythic item drops, the way online play announces rare finds. Items you drop yourself are not announced. Off by default.</span></span>
+        <span class="lbl" style="width:auto;flex:1">Loot announcements<br><span class="feature-description">Announces in chat when a Heroic, Angelic or Unholy item drops, like online play does. Items you drop yourself are not announced. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_loot_announce"><span class="sl"></span></label>
         <span class="val" id="mlaval">off</span>
     </div>

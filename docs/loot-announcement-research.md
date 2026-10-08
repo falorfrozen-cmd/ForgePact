@@ -2,8 +2,7 @@
 
 **Question.** Online, Hero Siege announces a rare drop in the in-game chat.
 Offline it shows nothing. Which call, made by name from ForgePact, shows that
-line offline for a Heroic, Angelic, Unholy, Satanic or Mythic item the game
-drops (Satanic and Mythic since 2026-10-08, § Satanic and Mythic): the game's
+line offline for a Heroic, Angelic or Unholy item the game drops: the game's
 own announcement path, or one of the chat routes already proven offline?
 
 **Why it matters.** Issue #17 asks for the same announcement offline as
@@ -19,8 +18,7 @@ in our own words, or our own code. Game objects and scripts are named by their
 offset appears. A reading is labelled as a reading, and it is not a fact until
 a live session records it.
 
-**Out of scope.** Rarities other than the five announced (Common, Superior,
-Rare and the rest), gold, gems,
+**Out of scope.** Items below Heroic (Satanic, Mythic and lower), gold, gems,
 materials and relics; items the player drops from the bag; a clickable item
 link (`UiAChatLobbyShowItemDrop`), sounds or banners; any change to the online
 path, the chat feed, `Chat_obj` or the network. No packet is sent on purpose.
@@ -179,8 +177,7 @@ adapter" to "end of the loot announcement adapter") reads and speaks.
   decided, so two unread items never share one identity; that case was not
   observed live. The core then
   decides, in this order: off, not recently created (`held-bag-drop`),
-  unread rarity, a rarity not in {9, 7, 10, 6, 5} ({9, 7, 10} until
-  2026-10-08), an identity already announced
+  unread rarity, a rarity not in {9, 7, 10}, an identity already announced
   (`held-duplicate`), or announce. After the batch the creation window ages
   once.
 - **The sink**: `LootAnnounceSink(item, lootInst)` runs the body
@@ -617,7 +614,7 @@ Whether this path failed before the change, and whether it works after it,
 is measured by Live procedure 4 (`lootann-armed-at-select`,
 `lootann-installed-after-load`, `lootann-heroic-announced`).
 
-## Satanic and Mythic
+## Satanic and Mythic: added and reverted
 
 2026-10-08. Asked which drop they had expected to see announced in the
 failing session, the owner answered "Expected Satanic or Mythic", and to
@@ -643,10 +640,30 @@ measured the set as it was then. Live procedure 4 checks a placed Satanic
 and a placed Mythic item (`lootann-satanic-announced`,
 `lootann-mythic-announced`).
 
+Reverted the same day, 2026-10-08. During Live procedure 4, back in town
+after the placements, the owner reversed the decision: "mythics and satanics
+shouldnt show. my mistake". The announced set is three rarities again,
+Heroic 9, Angelic 7 and Unholy 10, as it shipped before this change:
+`kAnnouncedRarities` is `{ kHeroic, kAngelic, kUnholy }`, `kSatanic` and
+`kMythic` are gone from the header, and a Satanic or Mythic item is
+`held-rarity` again. The harness's `target/satanic_not_announced` and
+`target/mythic_not_announced` are back, the three scenarios above are
+removed, and the contract test pins the three-entry set (the tests whose
+names carry `satanic_and_mythic_held`). Live procedure 4's
+`lootann-satanic-announced` and `lootann-mythic-announced` measured the
+five-rarity build before this revert, so they are research results of that
+build and say nothing about the shipped set. `lootannprobe place mythic`
+stays in the research build, so a later session can place a Mythic item and
+see it held. The paragraph above stays as the record of the widening, so it
+is not proposed again without the owner.
+
 ## Live procedure 4
 
 One session for this change and two other ForgePact fixes of 2026-10-08
-(one research build, one launch). The procedure is the toolkit hub's
+(one research build, one launch). Its `lootann-satanic-announced` and
+`lootann-mythic-announced` checks are research results of that build, which
+announced Satanic and Mythic; the shipped set holds both (§ Satanic and
+Mythic: added and reverted). The procedure is the toolkit hub's
 workorder `forgepact-moveall-loot-satanic`, its context file's
 `### Live procedure 1` (`.claude/workorders/forgepact-moveall-loot-satanic-context.md`
 in the hub, a local working file). The loot announcement part: at character
@@ -717,8 +734,7 @@ the session has run.
   cause, and whether the armed install works with the switch on at launch,
   are not measured until Live procedure 4 runs. Also not established: that a
   Mythic code written onto the probe's Heavy Belt base reads back as Mythic
-  (Live procedure 4's `lootann-mythic-announced` measures it), and whether a
-  Satanic or Mythic item from a kill reaches the mod.
+  (Live procedure 4's `lootann-mythic-announced` measures it).
 - Why the game exited in Live procedure 2 (exit code 1, no fault record).
   Live procedure 3, with Steam running, did not exit; one session does not
   settle the owner's Steam hypothesis.

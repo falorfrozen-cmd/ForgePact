@@ -324,10 +324,10 @@ DEFAULTS = {
     # ground inside the room; zone gates and locks still block. Off by
     # default; offline only, like every mod here.
     "mod_jump_scenery": False,
-    # Loot announcements (#17): a Mythic, Satanic, Angelic, Heroic or Unholy
-    # item the game drops on the ground is announced in the in-game chat, as
-    # online play does; rarities below Mythic are not, and neither are items
-    # the player drops. Off by default; offline only, like every mod here.
+    # Loot announcements (#17): a Heroic, Angelic or Unholy item the game
+    # drops on the ground is announced in the in-game chat, as online play
+    # does. Items the player drops are not. Off by default; offline only,
+    # like every mod here.
     "mod_loot_announce": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every

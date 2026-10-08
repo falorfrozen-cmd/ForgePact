@@ -50931,8 +50931,7 @@ static void JumpSceneryCommand(const std::string& rest)
 // does (docs/loot-announcement-research.md). While the switch is on, each
 // ground item the game initialises is decided once by the core in
 // LootAnnounceMod.hpp, and an item it announces gets one chat line from the
-// shipped sink. The announced rarities are Heroic, Angelic, Unholy, Satanic
-// and Mythic (Satanic and Mythic on the owner's word, 2026-10-08).
+// shipped sink. The announced rarities are Heroic, Angelic and Unholy.
 //
 // Two hooks, both by SDK name through HookOneScript, installed once per
 // session when the core's ShouldInstall says so: the switch on, setup done

@@ -2,7 +2,7 @@
 
 tests/test_loot_announce_behavior.py runs the real core against controlled
 drops. This file pins what that harness cannot see: the announced rarity set
-in the header is exactly {9, 7, 10, 6, 5}; the verb is a player command with
+in the header is exactly {9, 7, 10}; the verb is a player command with
 its own early return; the hooks install only when the core's ShouldInstall
 says so, with the local player resolved through HhResolveLocalPlayer (the
 guide's Known Limitations item 8); LootGroundInit is named in exactly one HookOneScript call in the
@@ -103,17 +103,18 @@ class LootAnnounceHeaderTests(unittest.TestCase):
     def setUpClass(cls):
         cls.code = _code(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
 
-    def test_the_announced_rarity_set_is_heroic_angelic_unholy_satanic_mythic(self):
-        # Satanic (6) and Mythic (5) joined on the owner's word, 2026-10-08.
+    def test_the_announced_rarity_set_is_heroic_angelic_unholy_satanic_and_mythic_held(self):
+        # Satanic (6) and Mythic (5) were added and reverted on the owner's
+        # word the same day (2026-10-08): neither is in the set.
         constants = dict((name, int(value)) for name, value in
                          re.findall(r"static constexpr int (k\w+) = (-?\d+);", self.code))
         members = re.search(r"kAnnouncedRarities\s*=\s*\{([^}]*)\}", self.code)
         self.assertIsNotNone(members, "kAnnouncedRarities is not an enumerable list in the header")
         names = [m.strip() for m in members.group(1).split(",") if m.strip()]
         values = [constants[n] if n in constants else int(n) for n in names]
-        self.assertEqual(len(values), 5, values)
-        self.assertEqual(set(values), {9, 7, 10, 6, 5})
-        self.assertRegex(self.code, r"std::array<int, 5> kAnnouncedRarities")
+        self.assertEqual(len(values), 3, values)
+        self.assertEqual(set(values), {9, 7, 10})
+        self.assertRegex(self.code, r"std::array<int, 3> kAnnouncedRarities")
 
     def test_the_install_decision_is_the_core_s(self):
         # Known Limitations item 8: on, setup done, a player resolved, not
