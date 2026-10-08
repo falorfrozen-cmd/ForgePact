@@ -2415,9 +2415,12 @@ struct LookMember {
 
 // The adapter's 16 members (kSmaLookVars/kSmaLookWrites) with what Live 5
 // read off InventorySort (docs/stash-move-research.md § Decision
-// buttonLabel): the 13 as read, the two scales scaled. The sprite's index is
-// a fixture (Live 4 read the name, not the index); `textFont` is handed in,
-// since whether it reads as a string or a font reference is not established.
+// buttonLabel): the sprite's scale and the highlight box's size scaled, the
+// highlight box's corner and createX displaced by the target's offset from
+// Sort (Sort's absolute GUI place, 2290, 1262), the other 11 as read. The
+// sprite's index is a fixture (Live 4 read the name, not the index);
+// `textFont` is handed in, since whether it reads as a string or a font
+// reference is not established.
 static std::vector<LookMember> Live5Look(const StashMoveLookValue& textFont)
 {
     const StashMoveLookWrite as = StashMoveLookWrite::AsRead;
@@ -2427,13 +2430,13 @@ static std::vector<LookMember> Live5Look(const StashMoveLookValue& textFont)
         {"image_yscale", StashMoveLookWrite::ScaleY, LookNumber(1.0)},
         {"textFont", as, textFont},
         {"dropShadow", as, LookBool(false)},
-        {"createX", as, LookNumber(2290)},
+        {"createX", StashMoveLookWrite::ShiftX, LookNumber(2290)},
         {"drawXOffset", as, LookNumber(48)},
         {"drawYOffset", as, LookNumber(9)},
-        {"navBboxX", as, LookNumber(2290)},
-        {"navBboxY", as, LookNumber(1262)},
-        {"navBboxWidth", as, LookNumber(192)},
-        {"navBboxHeight", as, LookNumber(66)},
+        {"navBboxX", StashMoveLookWrite::ShiftX, LookNumber(2290)},
+        {"navBboxY", StashMoveLookWrite::ShiftY, LookNumber(1262)},
+        {"navBboxWidth", StashMoveLookWrite::ScaleX, LookNumber(192)},
+        {"navBboxHeight", StashMoveLookWrite::ScaleY, LookNumber(66)},
         {"naviDown", as, LookBool(false)},
         {"naviDownPrev", as, LookBool(false)},
         {"naviRight", as, LookBool(false)},
@@ -2455,13 +2458,16 @@ struct FakeLookNode {
 // member is read off Sort, the core's LookStep says what to write, the write
 // is made, the member is read back (or as `back` says, the game putting its
 // own back, say) and the core's LookCompare goes into the tally. The verdict
-// is the tally's, after the whole list.
+// is the tally's, after the whole list. `dx`, `dy` are the target's offset
+// from Sort; 0 by default, a target on Sort's own corner, for the scenarios
+// about kinds (CopyLookTo works the frame out from two boxes).
 static StashMoveLookTally CopyLook(const std::vector<LookMember>& list, FakeLookNode& node, double sx, double sy,
-                                   const std::map<std::string, StashMoveLookValue>& back = {})
+                                   const std::map<std::string, StashMoveLookValue>& back = {}, double dx = 0,
+                                   double dy = 0)
 {
     StashMoveLookTally t;
     for (const LookMember& m : list) {
-        const StashMoveLookStep step = StashMoveAllMod::LookStep(m.sort, m.how, sx, sy);
+        const StashMoveLookStep step = StashMoveAllMod::LookStep(m.sort, m.how, sx, sy, dx, dy);
         if (step.put == StashMoveLookPut::AsRead) node.members[m.name] = m.sort;
         else if (step.put == StashMoveLookPut::Number) node.members[m.name] = LookNumber(step.want.number);
         if (step.put != StashMoveLookPut::Nothing) node.written.push_back(m.name);
@@ -2528,12 +2534,13 @@ static void BaselineLookAllNumericMembersCopiedAndReadSort()
         && t.Verdict() == StashMoveButtonLook::Sort
         && node.members["drawXOffset"].number == 48 && node.members["navBboxX"].number == 2290
         && node.members["createX"].number == 2290 && node.members["dropShadow"].number == 0;
-    // The scales alone are scaled: to a target 1.5 wide, image_xscale is
-    // written 1.5; everything else as read, navBboxWidth included.
+    // The scaled members are scaled: to a target 1.5 wide, image_xscale is
+    // written 1.5 and navBboxWidth 288; the label's members as read.
     FakeLookNode wide = Live5Node();
     const StashMoveLookTally w = CopyLook(Live5Look(LookAsset(7, "ref font __newfont2")), wide, 1.5, 1.0);
     ok = ok && w.Verdict() == StashMoveButtonLook::Sort && Near(wide.members["image_xscale"].number, 1.5, 1e-12)
-        && Near(wide.members["image_yscale"].number, 1.0, 1e-12) && wide.members["navBboxWidth"].number == 192;
+        && Near(wide.members["image_yscale"].number, 1.0, 1e-12) && Near(wide.members["navBboxWidth"].number, 288, 1e-9)
+        && wide.members["navBboxHeight"].number == 66 && wide.members["drawXOffset"].number == 48;
     // The state line says it, and no look line is said.
     StashMoveAllMod mod;
     const std::string line = SettleWithLook(mod, t);
@@ -2555,7 +2562,7 @@ static void TargetLookStringMemberIsCopiedAndComparedAsText()
     bool ok = Written(node) == kAllSixteen && node.members["textFont"].kind == StashMoveLookKind::String
         && node.members["textFont"].text == "__newfont2" && node.members["drawYOffset"].number == 9
         && node.members["naviRightPrev"].number == 0 && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort;
-    const StashMoveLookStep step = StashMoveAllMod::LookStep(LookString("__newfont2"), StashMoveLookWrite::AsRead, 1, 1);
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(LookString("__newfont2"), StashMoveLookWrite::AsRead, 1, 1, 0, 0);
     ok = ok && step.put == StashMoveLookPut::AsRead
         && StashMoveAllMod::LookCompare(step.want, LookString("__newfont2")) == StashMoveLookSame::Same;
     // A scaled member that reads as anything but a number is not written
@@ -2564,7 +2571,7 @@ static void TargetLookStringMemberIsCopiedAndComparedAsText()
     list[1].sort = LookString("1");
     FakeLookNode odd = Live5Node();
     const StashMoveLookTally o = CopyLook(list, odd, 1.0, 1.0);
-    ok = ok && StashMoveAllMod::LookStep(LookString("1"), StashMoveLookWrite::ScaleX, 1, 1).put == StashMoveLookPut::Nothing
+    ok = ok && StashMoveAllMod::LookStep(LookString("1"), StashMoveLookWrite::ScaleX, 1, 1, 0, 0).put == StashMoveLookPut::Nothing
         && Written(odd) == "sprite_index,image_yscale,textFont,dropShadow,createX,drawXOffset,drawYOffset,navBboxX,"
                            "navBboxY,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
         && o.equal == 15 && o.first == "image_xscale" && o.Verdict() == StashMoveButtonLook::Unread;
@@ -2577,7 +2584,7 @@ static void TargetLookAssetMemberComparesByItsIndex()
     // reference, or as a plain number of that index, it is the same; the
     // name it prints plays no part.
     const StashMoveLookValue sprite = LookAsset(1502, "ref sprite Inventory_Tab_Button_Solid_spr");
-    const StashMoveLookStep step = StashMoveAllMod::LookStep(sprite, StashMoveLookWrite::AsRead, 1, 1);
+    const StashMoveLookStep step = StashMoveAllMod::LookStep(sprite, StashMoveLookWrite::AsRead, 1, 1, 0, 0);
     bool ok = step.put == StashMoveLookPut::AsRead
         && StashMoveAllMod::LookCompare(step.want, sprite) == StashMoveLookSame::Same
         && StashMoveAllMod::LookCompare(step.want, LookNumber(1502)) == StashMoveLookSame::Same
@@ -2655,6 +2662,155 @@ static void TargetLookDifferingStringReadsDiffers()
     Check("target/look_differing_string_reads_differs", ok, line);
 }
 
+// ---- The Move All node's highlight box sits on the node, not on Sort -------
+
+// The table v2.1.0 shipped: the members that hold a GUI place or size
+// (createX, navBboxX, navBboxY, navBboxWidth, navBboxHeight) written as read,
+// the sprite's scale alone scaled.
+static std::vector<LookMember> AsReadPlaces(std::vector<LookMember> list)
+{
+    for (LookMember& m : list)
+        if (m.name == "createX" || m.name == "navBboxX" || m.name == "navBboxY" || m.name == "navBboxWidth"
+            || m.name == "navBboxHeight")
+            m.how = StashMoveLookWrite::AsRead;
+    return list;
+}
+
+// The copy for a node made to `target`, with the frame worked out from
+// Sort's box and the target's the way SmaButtonLookFrame works it out in
+// ModuleMain.cpp: the core's ButtonScale (1 when a box has no size to
+// divide) and ButtonShift (unread, NaN, when a box did not read).
+static StashMoveLookTally CopyLookTo(const std::vector<LookMember>& list, FakeLookNode& node, const StashMoveBox& sort,
+                                     const StashMoveBox& target,
+                                     const std::map<std::string, StashMoveLookValue>& back = {})
+{
+    double sx = 1, sy = 1, dx = std::nan(""), dy = std::nan("");
+    if (!StashMoveAllMod::ButtonScale(sort, target, sx, sy)) sx = sy = 1;
+    if (!StashMoveAllMod::ButtonShift(sort, target, dx, dy)) dx = dy = std::nan("");
+    return CopyLook(list, node, sx, sy, back, dx, dy);
+}
+
+// The highlight box the node carries, from its navBbox* members.
+static StashMoveBox NavBox(FakeLookNode& n)
+{
+    const double x = n.members["navBboxX"].number, y = n.members["navBboxY"].number;
+    return Box(x, y, x + n.members["navBboxWidth"].number, y + n.members["navBboxHeight"].number);
+}
+
+static void BaselineAsReadCopyPutsTheNavBoxOnSort()
+{
+    // The measured defect (docs/stash-move-research.md § Decision
+    // buttonLabel, Live 5 to 7): written as read, createX, navBboxX and
+    // navBboxY are Sort's own box corner (2290, 1262), so the node drawn on
+    // the Extra tab's column (2098..2290) carries a highlight box on Sort's
+    // place, right of the button - and the tally still says 16/16, since
+    // every member read back as written. Kept true as what AsRead does.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLookTo(AsReadPlaces(Live5Look(LookString("__newfont2"))), node, kLive5Sort,
+                                            kLive6Column);
+    const StashMoveBox nav = NavBox(node);
+    bool ok = Written(node) == kAllSixteen && t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort
+        && node.members["navBboxX"].number == kLive5Sort.left && node.members["createX"].number == kLive5Sort.left
+        && node.members["navBboxY"].number == kLive5Sort.top && SameSides(nav, kLive5Sort, 1e-9)
+        && !SameSides(nav, kLive6Column, 1.0) && nav.left >= kLive6Column.right;
+    Check("baseline/as_read_copy_puts_the_nav_box_on_sort", ok,
+          std::to_string(nav.left) + "," + std::to_string(nav.top) + " | " + Written(node));
+}
+
+static void TargetNavBoxSitsOnTheNodeNotOnSort()
+{
+    // The shipped table on Live 7's boxes (Sort 2290,1262..2482,1328; the
+    // target, the Extra tab's column, 2098,1262..2290,1328): createX,
+    // navBboxX and navBboxY are Sort's displaced by the target's offset from
+    // Sort, the size Sort's scaled to the target's, so the highlight box is
+    // the drawn box; every other member as read, and 16/16 the same.
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLookTo(Live5Look(LookString("__newfont2")), node, kLive5Sort, kLive6Column);
+    bool ok = Written(node) == kAllSixteen && t.listed == 16 && t.equal == 16 && t.first.empty()
+        && t.Verdict() == StashMoveButtonLook::Sort
+        && Near(node.members["navBboxX"].number, 2098, 1e-9) && Near(node.members["navBboxY"].number, 1262, 1e-9)
+        && Near(node.members["createX"].number, 2098, 1e-9) && Near(node.members["navBboxWidth"].number, 192, 1e-9)
+        && Near(node.members["navBboxHeight"].number, 66, 1e-9) && SameSides(NavBox(node), kLive6Column, 1e-9);
+    // The label's members as read (Live 6 proved the centring with them).
+    ok = ok && node.members["drawXOffset"].number == 48 && node.members["drawYOffset"].number == 9
+        && node.members["textFont"].text == "__newfont2" && node.members["dropShadow"].number == 0
+        && node.members["image_xscale"].number == 1 && node.members["naviRightPrev"].number == 0;
+    // The core's displacement: the target's corner less Sort's.
+    double dx = 0, dy = 0;
+    ok = ok && StashMoveAllMod::ButtonShift(kLive5Sort, kLive6Column, dx, dy) && Near(dx, -192, 1e-9) && Near(dy, 0, 1e-9);
+    // The state line counts all 16.
+    StashMoveAllMod mod;
+    const std::string line = SettleWithLook(mod, t);
+    ok = ok && Has(mod.StateLine(), " button_look=sort") && Has(mod.StateLine(), " button_look_same=16/16")
+        && !Has(line, "look");
+    // Negative control: the game putting Sort's place back on the node
+    // differs, never the same.
+    FakeLookNode back = Live5Node();
+    const StashMoveLookTally b = CopyLookTo(Live5Look(LookString("__newfont2")), back, kLive5Sort, kLive6Column,
+                                            {{"navBboxX", LookNumber(2290)}});
+    ok = ok && b.equal == 15 && b.first == "navBboxX" && b.firstWas == StashMoveLookSame::Differs
+        && b.Verdict() == StashMoveButtonLook::Differs;
+    Check("target/nav_box_sits_on_the_node_not_on_sort", ok, Written(node) + " | " + mod.StateLine());
+}
+
+static void TargetNavBoxFollowsATabOfAnotherWidth()
+{
+    // Outlier: a target 210 wide (2080..2290), not Sort's 192. The highlight
+    // box's width is scaled to 210 by the same factor as image_xscale, and
+    // its X displaced to the target's left; the height and Y as at Live 7.
+    const StashMoveBox wide = Box(2080.0, 1262.0, 2290.0, 1328.0);
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLookTo(Live5Look(LookString("__newfont2")), node, kLive5Sort, wide);
+    bool ok = t.equal == 16 && t.Verdict() == StashMoveButtonLook::Sort
+        && Near(node.members["navBboxWidth"].number, 210, 1e-9) && Near(node.members["navBboxX"].number, 2080, 1e-9)
+        && Near(node.members["createX"].number, 2080, 1e-9) && Near(node.members["navBboxY"].number, 1262, 1e-9)
+        && Near(node.members["navBboxHeight"].number, 66, 1e-9)
+        && Near(node.members["image_xscale"].number, 210.0 / 192.0, 1e-12) && SameSides(NavBox(node), wide, 1e-9);
+    // A target a row lower displaces Y too.
+    const StashMoveBox lower = Box(2098.0, 1300.0, 2290.0, 1366.0);
+    FakeLookNode low = Live5Node();
+    const StashMoveLookTally l = CopyLookTo(Live5Look(LookString("__newfont2")), low, kLive5Sort, lower);
+    ok = ok && l.equal == 16 && SameSides(NavBox(low), lower, 1e-9);
+    Check("target/nav_box_follows_a_tab_of_another_width", ok,
+          std::to_string(node.members["navBboxX"].number) + "," + std::to_string(node.members["navBboxWidth"].number));
+}
+
+static void TargetNavBoxMemberThatIsNotANumberIsNotDisplaced()
+{
+    // Negative control: a displaced member that reads as a bool or a string
+    // is not written - the node keeps its own - and compares unread; the
+    // members after it are still written (a kind never stops the copy).
+    std::vector<LookMember> list = Live5Look(LookString("__newfont2"));
+    for (LookMember& m : list) {
+        if (m.name == "navBboxX") m.sort = LookBool(true);
+        if (m.name == "navBboxY") m.sort = LookString("1262");
+    }
+    FakeLookNode node = Live5Node();
+    const StashMoveLookTally t = CopyLookTo(list, node, kLive5Sort, kLive6Column);
+    bool ok = Written(node) == "sprite_index,image_xscale,image_yscale,textFont,dropShadow,createX,drawXOffset,"
+                               "drawYOffset,navBboxWidth,navBboxHeight,naviDown,naviDownPrev,naviRight,naviRightPrev"
+        && node.members["navBboxX"].number == 1988 && node.members["navBboxY"].number == 1238
+        && t.equal == 14 && t.first == "navBboxX" && t.firstWas == StashMoveLookSame::Unread
+        && t.Verdict() == StashMoveButtonLook::Unread;
+    ok = ok && StashMoveAllMod::LookStep(LookBool(true), StashMoveLookWrite::ShiftX, 1, 1, -192, 0).put
+                   == StashMoveLookPut::Nothing
+        && StashMoveAllMod::LookStep(LookString("1262"), StashMoveLookWrite::ShiftY, 1, 1, -192, 0).put
+                   == StashMoveLookPut::Nothing;
+    // An offset that could not be had (the target box did not read) is never
+    // a displacement of 0: the place members are not written, never left
+    // on Sort's, and compare unread.
+    FakeLookNode unread = Live5Node();
+    const StashMoveLookTally u = CopyLookTo(Live5Look(LookString("__newfont2")), unread, kLive5Sort, StashMoveBox());
+    double dx = 0, dy = 0;
+    ok = ok && !StashMoveAllMod::ButtonShift(kLive5Sort, StashMoveBox(), dx, dy)
+        && !StashMoveAllMod::ButtonShift(StashMoveBox(), kLive6Column, dx, dy)
+        && StashMoveAllMod::LookStep(LookNumber(2290), StashMoveLookWrite::ShiftX, 1, 1, std::nan(""), 0).put
+               == StashMoveLookPut::Nothing
+        && unread.members["navBboxX"].number == 1988 && unread.members["createX"].number == 2090
+        && u.equal == 13 && u.first == "createX" && u.Verdict() == StashMoveButtonLook::Unread;
+    Check("target/nav_box_member_that_is_not_a_number_is_not_displaced", ok, Written(node));
+}
+
 int main()
 {
     BaselineOffByDefault();
@@ -2706,6 +2862,10 @@ int main()
     TargetLookAssetMemberComparesByItsIndex();
     TargetLookUnreadMemberIsNamedAfterTheWholeCopy();
     TargetLookDifferingStringReadsDiffers();
+    BaselineAsReadCopyPutsTheNavBoxOnSort();
+    TargetNavBoxSitsOnTheNodeNotOnSort();
+    TargetNavBoxFollowsATabOfAnotherWidth();
+    TargetNavBoxMemberThatIsNotANumberIsNotDisplaced();
     TargetShownTabRoom();
     TargetLines();
     TargetSecondItemMergesAtUseOnMaterials();

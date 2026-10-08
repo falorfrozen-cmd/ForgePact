@@ -174,9 +174,12 @@ struct StashMoveLookValue {
     std::string       text;
 };
 
-// How a look member is written onto the node: as read, or scaled on one
-// axis by the target's size over Sort's (the sprite's scale, Live 4).
-enum class StashMoveLookWrite : int { AsRead = 0, ScaleX, ScaleY };
+// How a look member is written onto the node: as read; scaled on one axis
+// by the target's size over Sort's (the sprite's scale, Live 4, and the
+// highlight box's size); or displaced on one axis by the target's offset
+// from Sort (a member holding an absolute GUI place, which on Sort is Sort's
+// own: createX and the highlight box's corner, navBboxX/Y).
+enum class StashMoveLookWrite : int { AsRead = 0, ScaleX, ScaleY, ShiftX, ShiftY };
 
 // What the adapter writes for one member (LookStep): nothing, the value as
 // it read it off Sort, or a number.
@@ -611,6 +614,18 @@ public:
         return true;
     }
 
+    // The target's offset from Sort, for the look members that hold an
+    // absolute GUI place (ShiftX/ShiftY): the target box's left and top less
+    // Sort's. Sort's own relation between those members and its box is kept
+    // by displacing Sort's values, never assumed. False when either box did
+    // not read.
+    static bool ButtonShift(const StashMoveBox& sort, const StashMoveBox& target, double& dx, double& dy) {
+        if (!BoxReads(sort) || !BoxReads(target)) return false;
+        dx = target.left - sort.left;
+        dy = target.top - sort.top;
+        return true;
+    }
+
     // The origin to give UiCreateNode: the node's bbox right edge on the
     // target's, and its vertical centre the target's. False when the target
     // or the extents did not read.
@@ -830,10 +845,14 @@ public:
     // The look step for one member read off Sort (fix2's round 2: a
     // member's kind never decides whether the copy runs): one of the
     // writable kinds is written as read, whatever that kind; a scaled
-    // member is written scaled by `sx` or `sy` only when it read as a
-    // number, and is otherwise not written, so it compares unread. What the
-    // node should read back as is the value written.
-    static StashMoveLookStep LookStep(const StashMoveLookValue& read, StashMoveLookWrite how, double sx, double sy) {
+    // member is written scaled by `sx` or `sy`, and a displaced one moved by
+    // `dx` or `dy` (ButtonShift), only when it read as a number, and is
+    // otherwise not written, so it compares unread - as it does when the
+    // scale or offset did not read (NaN), so a place is never left on
+    // Sort's for want of one. What the node should read back as is the
+    // value written.
+    static StashMoveLookStep LookStep(const StashMoveLookValue& read, StashMoveLookWrite how, double sx, double sy,
+                                      double dx, double dy) {
         StashMoveLookStep step;
         if (!LookWritable(read.kind)) return step;
         if (how == StashMoveLookWrite::AsRead) {
@@ -842,7 +861,14 @@ public:
             return step;
         }
         if (read.kind != StashMoveLookKind::Number) return step;
-        const double v = read.number * (how == StashMoveLookWrite::ScaleX ? sx : sy);
+        double v = read.number;
+        switch (how) {
+        case StashMoveLookWrite::ScaleX: v *= sx; break;
+        case StashMoveLookWrite::ScaleY: v *= sy; break;
+        case StashMoveLookWrite::ShiftX: v += dx; break;
+        case StashMoveLookWrite::ShiftY: v += dy; break;
+        default: return step;
+        }
         if (!std::isfinite(v)) return step;
         step.put = StashMoveLookPut::Number;
         step.want.kind = StashMoveLookKind::Number;

@@ -621,8 +621,10 @@ class StashMoveAllContractTests(unittest.TestCase):
         # written onto the mod's own node as read, as Live 5 wrote them (fix3:
         # the shift fix2 added was a guess, and the reason Live procedure 3's
         # look-members would fail a correct build), each read back, and the
-        # look verdict covers every one. Only the sprite's scale is scaled to
-        # the target, as Live 4 proved.
+        # look verdict covers every one. The sprite's scale is scaled to the
+        # target, as Live 4 proved; the members that hold Sort's place and
+        # its highlight box's size are moved and sized onto the target from
+        # the two boxes (below), never by a typed offset.
         block = self.button_block()
         m = re.search(r"static constexpr const char\* kSmaLookVars\[\] = \{([^}]*)\};", block)
         self.assertIsNotNone(m)
@@ -641,20 +643,34 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / "
                       "sizeof(kSmaLookWrites[0]),", block)
         by = dict(zip(names, writes))
-        self.assertEqual({n for n, k in by.items() if k != "AsRead"}, {"image_xscale", "image_yscale"})
-        self.assertEqual(by["image_xscale"], "ScaleX")
-        self.assertEqual(by["image_yscale"], "ScaleY")
-        # Nothing is shifted any longer: the write kinds are the core's, and
-        # the frame carries the scale alone.
+        # Member for member (the owner, 2026-10-08: the button lit only to
+        # the right of where it is drawn). createX, navBboxX and navBboxY hold
+        # an absolute GUI place, on Sort its own box corner: written as read
+        # (v2.1.0) they put the node's highlight box on Sort, so they are
+        # Sort's displaced by the target's offset from Sort; the highlight
+        # box's size is scaled like the sprite; the label's 11 as read.
+        self.assertEqual(by, {
+            "sprite_index": "AsRead", "image_xscale": "ScaleX", "image_yscale": "ScaleY", "textFont": "AsRead",
+            "dropShadow": "AsRead", "createX": "ShiftX", "drawXOffset": "AsRead", "drawYOffset": "AsRead",
+            "navBboxX": "ShiftX", "navBboxY": "ShiftY", "navBboxWidth": "ScaleX", "navBboxHeight": "ScaleY",
+            "naviDown": "AsRead", "naviDownPrev": "AsRead", "naviRight": "AsRead", "naviRightPrev": "AsRead"})
+        # The write kinds are the core's; the frame carries the scale and
+        # the displacement, both worked out from Sort's box and the target's.
         self.assertIn("using SmaLookWrite = ForgePact::StashMoveLookWrite;", block)
-        self.assertIn("enum class StashMoveLookWrite : int { AsRead = 0, ScaleX, ScaleY };", self.header)
+        self.assertIn("enum class StashMoveLookWrite : int { AsRead = 0, ScaleX, ScaleY, ShiftX, ShiftY };",
+                      self.header)
+        shift = strip_comments(function_body(self.header, "static bool ButtonShift("))
+        self.assertIn("if (!BoxReads(sort) || !BoxReads(target)) return false;", shift)
+        self.assertIn("dx = target.left - sort.left;", shift)
+        self.assertIn("dy = target.top - sort.top;", shift)
         look = self.body("static ForgePact::StashMoveLookTally SmaButtonLook(")
         # Every entry, read off Sort by name, then (on a copy) written onto the
         # mod's own node as the core's LookStep says, then read back off it and
         # compared by the core's LookCompare.
         self.assertIn("for (size_t i = 0; i < sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]); ++i) {", look)
         order = [look.index(t) for t in ('"variable_instance_get", { sort, RValue(var) }',
-                                         "LookStep(SmaLookValue(v),\n                kSmaLookWrites[i], frame.sx, frame.sy);",
+                                         "LookStep(SmaLookValue(v),\n                kSmaLookWrites[i], frame.sx, frame.sy, "
+                                         "frame.dx, frame.dy);",
                                          '"variable_instance_set", { g_SmaButton, RValue(var),',
                                          '"variable_instance_get", { g_SmaButton, RValue(var) }',
                                          "tally.Note(var, same);")]
@@ -675,14 +691,21 @@ class StashMoveAllContractTests(unittest.TestCase):
         self.assertIn("case SmaProbeKind::String: out.kind = Kind::String; out.text = v.ToString(); break;", value)
         self.assertIn("if (!ApNumber(v, out.number))", value)
         # The scale: the core's ButtonScale, 1 when it has no size to divide;
-        # no position read, nothing written.
+        # the displacement: the core's ButtonShift from the same two boxes,
+        # unread (NaN, never 0, which would leave the place on Sort's) when
+        # either did not read; no position read, nothing written.
         frame = self.body("static SmaLookFrame SmaButtonLookFrame(")
         self.assertIn("if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;", frame)
+        self.assertIn("if (!ForgePact::StashMoveAllMod::ButtonShift(sortBox, target, f.dx, f.dy))\n"
+                      "        f.dx = f.dy = std::numeric_limits<double>::quiet_NaN();", frame)
         self.assertNotIn("MenuLayoutRead", frame)
         self.assertNotIn("variable_instance_set", frame)
         fields = re.search(r"struct SmaLookFrame \{([^}]*)\};", block)
         self.assertIsNotNone(fields)
-        self.assertEqual(fields.group(1).split(), ["double", "sx", "=", "1,", "sy", "=", "1;"])
+        self.assertEqual(fields.group(1).split(), [
+            "double", "sx", "=", "1,", "sy", "=", "1;",
+            "double", "dx", "=", "std::numeric_limits<double>::quiet_NaN(),", "dy", "=",
+            "std::numeric_limits<double>::quiet_NaN();"])
         # The decision line names every member past the first three.
         decision = [l for l in DOC.read_text(encoding="utf-8").splitlines() if l.startswith("buttonLabel: ")]
         self.assertEqual(len(decision), 1)

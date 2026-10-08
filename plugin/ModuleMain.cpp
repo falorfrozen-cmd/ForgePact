@@ -42854,30 +42854,42 @@ static bool SmaButtonMake(CInstance* stash, const RValue& window, double x, doub
 // like Sort's (§ Decision buttonLabel): its font, shadow, label offsets, the
 // box the game keeps beside the sprite and the navigation flags. Read off the
 // Sort node by name each time, so a game patch that restyles Sort restyles
-// the button too.
+// the button too. That box (navBbox*) and createX are Sort's place, not its
+// look, so they are moved onto the node's own place as they are written
+// (kSmaLookWrites says how): copied as read they put the button's highlight
+// on Sort.
 static constexpr const char* kSmaLookVars[] = { "sprite_index", "image_xscale", "image_yscale", "textFont", "dropShadow",
                                                 "createX", "drawXOffset", "drawYOffset", "navBboxX", "navBboxY",
                                                 "navBboxWidth", "navBboxHeight", "naviDown", "naviDownPrev",
                                                 "naviRight", "naviRightPrev" };
 
-// How each of those is written, entry for entry: as read, as Live 5 wrote
-// them (navBboxX and createX held Sort's own position there and the label
-// still centred in the node's box), or the sprite's scale by the target's
-// size over Sort's on one axis, as Live 4 measured.
+// How each of those is written, entry for entry. The sprite's scale, by the
+// target's size over Sort's on one axis, as Live 4 measured. createX,
+// navBboxX and navBboxY hold an absolute GUI place, on Sort its own box
+// corner (2290, 1262 at 2560x1440, Live 5): written as read, as v2.1.0 did,
+// they gave the node Sort's box, and the button lit only with the mouse one
+// column right of where it is drawn (the owner, 2026-10-08; that navBbox* is
+// the box the UI layer highlights is a static reading, not measured). They
+// are written as Sort's displaced by the target's offset
+// from Sort, keeping Sort's own relation between them and its box, and
+// navBboxWidth/Height scaled like the sprite, so the highlight box is the
+// drawn box. The label's 11 members as read, as Live 5 and 6 proved them.
 using SmaLookWrite = ForgePact::StashMoveLookWrite;
 static constexpr SmaLookWrite kSmaLookWrites[] = { SmaLookWrite::AsRead, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
-                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::ShiftX,
+                                                   SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::ShiftX,
+                                                   SmaLookWrite::ShiftY, SmaLookWrite::ScaleX, SmaLookWrite::ScaleY,
                                                    SmaLookWrite::AsRead, SmaLookWrite::AsRead, SmaLookWrite::AsRead,
                                                    SmaLookWrite::AsRead };
 static_assert(sizeof(kSmaLookVars) / sizeof(kSmaLookVars[0]) == sizeof(kSmaLookWrites) / sizeof(kSmaLookWrites[0]),
               "every look variable has its write");
 
 // What the writes need: the target's size over Sort's on each axis (the
-// core's ButtonScale).
+// core's ButtonScale) and the target's offset from Sort (ButtonShift),
+// unread (NaN) until worked out, so a place is never written as Sort's.
 struct SmaLookFrame {
     double sx = 1, sy = 1;
+    double dx = std::numeric_limits<double>::quiet_NaN(), dy = std::numeric_limits<double>::quiet_NaN();
 };
 
 // A handle's type words that name an asset (a handle prints "ref <type> <name
@@ -42948,8 +42960,8 @@ static ForgePact::StashMoveLookValue SmaLookValue(const RValue& v)
 // The node's look against Sort's (fix2's round 2: a member's kind never
 // decides whether the copy runs). Every entry of kSmaLookVars is read off the
 // Sort node by name; with `copy`, it is written onto the mod's own node as
-// the core's LookStep says - the value as read whatever its kind, or a scale
-// written scaled - after the label, so a look that does not take still
+// the core's LookStep says - the value as read whatever its kind, a scale
+// written scaled, or a place displaced onto the node's - after the label, so a look that does not take still
 // leaves a working button; then it is read back off the node and the core
 // compares it by kind. A member that cannot be read, written or compared, or
 // that throws, costs its own entry in the tally and the loop goes on to the
@@ -42964,7 +42976,7 @@ static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy
         try {
             const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { sort, RValue(var) });
             const ForgePact::StashMoveLookStep step = ForgePact::StashMoveAllMod::LookStep(SmaLookValue(v),
-                kSmaLookWrites[i], frame.sx, frame.sy);
+                kSmaLookWrites[i], frame.sx, frame.sy, frame.dx, frame.dy);
             if (copy && step.put != ForgePact::StashMoveLookPut::Nothing)
                 g_Yytk->CallBuiltin("variable_instance_set", { g_SmaButton, RValue(var),
                     step.put == ForgePact::StashMoveLookPut::AsRead ? v : RValue(step.want.number) });
@@ -42977,11 +42989,15 @@ static ForgePact::StashMoveLookTally SmaButtonLook(const RValue& sort, bool copy
 }
 
 // The frame for a node made to `target`: the scale the target asks for (1
-// when it has no size to divide).
+// when it has no size to divide) and its offset from Sort, from the same two
+// boxes (unread when either did not read: the place members are then not
+// written and compare unread).
 static SmaLookFrame SmaButtonLookFrame(const ForgePact::StashMoveBox& sortBox, const ForgePact::StashMoveBox& target)
 {
     SmaLookFrame f;
     if (!ForgePact::StashMoveAllMod::ButtonScale(sortBox, target, f.sx, f.sy)) f.sx = f.sy = 1;
+    if (!ForgePact::StashMoveAllMod::ButtonShift(sortBox, target, f.dx, f.dy))
+        f.dx = f.dy = std::numeric_limits<double>::quiet_NaN();
     return f;
 }
 
