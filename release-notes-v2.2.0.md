@@ -259,7 +259,8 @@ experience.
   picking it up, is not announced; in co-op, an item another player drops
   is made anew on your side and can be. Nothing is sent over the network.
   Checked in play on 2026-10-04: a placed Heroic and Angelic item were each
-  announced once and a Satanic one was not; the Heroic item, picked up and
+  announced once (Satanic and Mythic were added afterwards, on 2026-10-08,
+  and have not been checked in play yet); the Heroic item, picked up and
   dropped from the bag, was not announced again; nothing was announced with
   the switch off; and with Magic Find raised, an item dropped by a monster
   was announced (which one was not recorded). Dropping several items at
