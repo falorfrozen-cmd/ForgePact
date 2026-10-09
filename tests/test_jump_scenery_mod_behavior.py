@@ -17,6 +17,12 @@ landing, a landing (or only the far end of its band) outside the room, a jump
 with no learned reach, and one with no walk direction; the reach is learned
 from a clear jump of at least 32 px only, reset on a new player and kept
 across off/on; landed-inside=, before-open= and excluded= count what they say.
+
+The install: with a character loaded, `jumpscenery 1` installs at once
+(baseline). At character select, as the panel's launch commands send it, it
+only arms; the tick looks for the player every 60 frames, installs once it
+resolves and tries once per session; a refusal turns the switch off (target,
+`install=` on the stat line).
 """
 import os
 import shutil
@@ -32,8 +38,14 @@ class JumpSceneryModBehaviorTests(unittest.TestCase):
     def setUpClass(cls):
         header = (ROOT / "plugin/include/ForgePact/JumpScenery.hpp").read_text(encoding="utf-8")
         core = "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
-        out = ROOT / "build/jump-scenery-mod-behavior"
+        # One directory per process: two runs at once (a criteria runner's
+        # parallel checks) otherwise race on one .obj and fail with
+        # "Permission denied". A failure carries the compiler's output in its
+        # message and every scenario assertion quotes the harness's output,
+        # so the directory goes when the class does.
+        out = ROOT / "build/jump-scenery-mod-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/jump_scenery_mod_harness.cpp").read_text(encoding="utf-8")
         code = code.replace("// PRODUCTION_JUMPSCENERY_MOD", core)
         cpp = out / "jumpscenerymod.cpp"
@@ -141,6 +153,18 @@ class JumpSceneryModBehaviorTests(unittest.TestCase):
     def test_gates_and_locks_keep_blocking(self):
         self.assertScenarios("excluded/blocked_by_gate_or_lock", "excluded/query_naming_gate_or_lock",
                              "excluded/asked_only_for_blocked_queries_in_a_granted_window")
+
+    # ---- the install: armed at launch, hooked once a character exists ------
+    # (Known Limitations item 8: a hook installed at character select stalls
+    # the runner, and the panel's launch commands carry `jumpscenery 1` there.)
+
+    def test_baseline_install_is_immediate_with_a_character(self):
+        self.assertScenario("baseline/install_is_immediate_with_a_character")
+
+    def test_the_install_waits_for_a_character(self):
+        self.assertScenarios("target/waits_for_a_character_before_installing",
+                             "target/a_refusal_turns_the_switch_off_and_the_tick_tries_once",
+                             "target/switched_off_never_installs_the_hooks")
 
     def test_the_stat_line(self):
         self.assertScenarios("stat/on_off_lines", "stat/line_names_every_counter", "stat/room_unknown")

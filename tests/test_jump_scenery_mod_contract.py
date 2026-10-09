@@ -4,7 +4,10 @@ tests/test_jump_scenery_mod_behavior.py runs the decision core
 (plugin/include/ForgePact/JumpScenery.hpp) against a controlled world. This
 file reads ModuleMain.cpp as text, comments stripped, and pins the adapter
 around it: the verb is a player command with its own early return, its six
-hooks go in only on `jumpscenery 1` and each is resolved by name (skillsLeap
+hooks go in only through the core's install decision (ShouldInstall), from
+`jumpscenery 1` or the tick, once the local player resolves through
+HhResolveLocalPlayer, so a switch on at character select only arms, and each
+is resolved by name (skillsLeap
 through its SDK constant and HookOneScript, the five builtins through
 HookBuiltin), the gates and locks are named through the SDK, every detour and
 the frame tick return the game's own answer at once while the mod is off, the
@@ -45,6 +48,9 @@ SIGNATURES = {
     "family_at": "static bool JsFamilyAt(",
     "room": "static bool JsRoomSize(",
     "player": "static void JsRefreshPlayer()",
+    "resolves": "static bool JsPlayerResolves()",
+    "install_if_ready": "static void JsInstallIfReady(bool fromTick)",
+    "install_field": "static std::string JsInstallField()",
     "answer": "static RValue JsAnswerValue(",
     "holders": "static std::string JumpSceneryResearchHolders()",
     "held": "static std::string JumpSceneryHeldHooks()",
@@ -96,9 +102,17 @@ class JumpSceneryModContract(unittest.TestCase):
         command = self.body("command")
         self.assertIn('if (arg == "1" || arg == "on")', command)
         self.assertIn('if (arg == "0" || arg == "off")', command)
-        self.assertIn('if (arg.empty() || arg == "stat") { Out(g_JumpScenery.StatLine()); return; }', command)
-        self.assertIn('Out("jumpscenery: refused - " + why);', command)
+        self.assertIn('if (arg.empty() || arg == "stat") { Out(g_JumpScenery.StatLine() + JsInstallField()); return; }',
+                      command)
+        on = command[command.index('if (arg == "1" || arg == "on")'):command.index('if (arg == "0" || arg == "off")')]
+        self.assertIn("Out(g_JumpScenery.StatusLine() + JsInstallField());", on)
         self.assertIn('Out("jumpscenery: usage jumpscenery 1 | 0 | stat");', command)
+        # The refusal line, printed once by the one install path, command or tick.
+        self.assertEqual(self.shipped.count('"jumpscenery: refused - "'), 1)
+        self.assertIn('Out("jumpscenery: refused - " + why);', self.body("install_if_ready"))
+        # ` install=` comes after the core's own fields, from the core's state.
+        self.assertIn('" install=" + std::string(g_JumpScenery.InstallStateName())', self.body("install_field"))
+        self.assertNotIn("install=", function_body(self.header, "std::string StatLine() const"))
         self.assertIn('return enabled_ ? "jumpscenery: on" : "jumpscenery: off";', self.header)
         stat = function_body(self.header, "std::string StatLine() const")
         positions = [stat.index('" ' + field) for field in STAT_FIELDS]
@@ -111,17 +125,40 @@ class JumpSceneryModContract(unittest.TestCase):
 
     # ---- the hooks ---------------------------------------------------------------
 
-    def test_the_hooks_go_in_only_on_jumpscenery_1(self):
+    def test_the_hooks_go_in_only_through_the_cores_decision_from_the_command_or_the_tick(self):
+        # Known Limitations item 8: a hook installed at character select stalls
+        # the runner, and the panel's launch commands send `jumpscenery 1` there.
         self.assertEqual(self.shipped.count("JumpSceneryInstall()"), 2, "the definition and one call")
+        ready = self.body("install_if_ready")
+        self.assertIn("const std::string why = JumpSceneryInstall();", ready)
+        self.assertLess(ready.index("JsPlayerResolves()"), ready.index("JumpSceneryInstall();"))
+        self.assertIn("if (!g_JumpScenery.ShouldInstall(g_Setup, havePlayer, fromTick)) return;", ready)
+        self.assertLess(ready.index("g_JumpScenery.ShouldInstall(g_Setup, havePlayer, fromTick)"),
+                        ready.index("JumpSceneryInstall();"))
+        self.assertLess(ready.index("JumpSceneryInstall();"), ready.index("g_JumpScenery.NoteInstall(why.empty(), fromTick);"))
+        # The player resolves through the VALUE_REF-safe resolver.
+        resolves = self.body("resolves")
+        self.assertIn("HhResolveLocalPlayer(p)", resolves)
+        self.assertIn("HhResolveInstance(p)", resolves)
+        # The install path is reached from the command and the tick, and nowhere else.
+        self.assertEqual(self.shipped.count("JsInstallIfReady("), 3, "the definition, the command and the tick")
         command = self.body("command")
         on = command[command.index('if (arg == "1" || arg == "on")'):command.index('if (arg == "0" || arg == "off")')]
-        self.assertIn("const std::string why = JumpSceneryInstall();", on)
-        self.assertLess(on.index("JumpSceneryInstall();"), on.index("g_JumpScenery.SetEnabled(true);"))
+        self.assertIn("JsInstallIfReady(false);", on)
+        self.assertLess(on.index("g_JumpScenery.SetEnabled(true);"), on.index("JsInstallIfReady(false);"))
+        self.assertNotIn("JumpSceneryInstall", command)
+        tick = self.body("tick")
+        self.assertIn("if (JsNs::Mod::LooksForPlayer(g_JsArmedFrames++)) JsInstallIfReady(true);", tick)
+        self.assertLess(tick.index("if (!g_JumpScenery.Installed())"), tick.index("JsRefreshPlayer();"))
+        self.assertNotIn("JumpSceneryInstall", tick)
         install = self.body("install")
         for call in ("HookBuiltin(", "HookOneScript("):
             self.assertEqual(self.code.count(call), install.count(call), call + " outside JumpSceneryInstall")
-        self.assertNotIn("JumpSceneryInstall", self.body("tick"))
         self.assertNotIn("JumpSceneryInstall", strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)")))
+        # The core decides; the header carries the rule and the 60-frame poll.
+        self.assertIn("return enabled_ && !installed_ && !(fromTick && tickTried_) && setupDone && playerResolved;",
+                      self.header)
+        self.assertIn("static constexpr unsigned long long kInstallPollFrames = 60;", self.header)
 
     def test_skills_leap_through_its_sdk_constant_and_hook_one_script(self):
         install = self.body("install")

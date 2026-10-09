@@ -16,7 +16,10 @@
 // jump answers each of the five builtins with its measured value and is
 // decided once; the landing guard's refusals; the reach learned only from a
 // clear jump of at least 32 px; landed-inside=, before-open=, walk-before-open=,
-// walk-in-window= and excluded=.
+// walk-in-window= and excluded=. The install: with a character loaded,
+// `jumpscenery 1` installs at once (baseline); at character select it only
+// arms, the tick installs once the player resolves and tries once per session,
+// and a refusal turns the switch off (target).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -748,6 +751,97 @@ int main()
         ask(m, Builtin::PlaceMeeting, 200, true, Fence, true);                // blocked: asked once
         check("excluded/asked_only_for_blocked_queries_in_a_granted_window",
             beforeGranted == start && g_ExcludedAsks == start + 1 && m.Stats().granted == 1, counts(m.Stats()));
+    }
+
+    // ---- the install: armed at launch, hooked once a character exists --------
+    // The adapter feeds the core g_Setup, whether HhResolveLocalPlayer found
+    // the local player, and whether the try comes from the tick; it reports
+    // what JumpSceneryInstall returned with NoteInstall. The tick looks for the
+    // player only on the frames LooksForPlayer picks while the switch is on.
+    {
+        // Baseline: `jumpscenery 1` in game, with the player there, installs at
+        // once, as before. Off and on again keeps the one install.
+        World w;
+        Mod m = make(w);
+        const std::string never = std::string(m.InstallStateName());
+        m.SetEnabled(true);
+        const bool now = m.ShouldInstall(true, true, false);
+        m.NoteInstall(true, false);
+        const bool on = m.Enabled() && m.Installed();
+        m.SetEnabled(false);
+        const std::string offAfter = std::string(m.InstallStateName());
+        m.SetEnabled(true);
+        check("baseline/install_is_immediate_with_a_character",
+              never == "not-armed" && now && on && offAfter == "installed" && !m.ShouldInstall(true, true, false)
+                  && !m.ShouldInstall(true, true, true) && std::string(m.InstallStateName()) == "installed",
+              "never=" + never + " now=" + std::to_string(now) + " off=" + offAfter);
+    }
+    {
+        // Target: `jumpscenery 1` from the launch commands at character select.
+        // The switch is on, nothing installs; the tick looks every
+        // kInstallPollFrames frames and installs nothing until the player
+        // resolves, then installs once.
+        World w;
+        Mod m = make(w);
+        m.SetEnabled(true);
+        const bool atSelect = m.ShouldInstall(true, false, false);
+        const std::string armed = std::string(m.InstallStateName());
+        int looks = 0;
+        bool installed = false;
+        for (unsigned long long frame = 0; frame < 600; ++frame) {
+            if (!Mod::LooksForPlayer(frame)) continue;
+            ++looks;
+            if (m.ShouldInstall(true, false, true)) installed = true;
+        }
+        const bool beforeSetup = m.ShouldInstall(false, true, true);
+        const std::string waiting = std::string(m.InstallStateName());
+        const bool now = m.ShouldInstall(true, true, true);
+        if (now) m.NoteInstall(true, true);
+        check("target/waits_for_a_character_before_installing",
+              Mod::kInstallPollFrames == 60 && looks == 10 && !atSelect && !installed && !beforeSetup
+                  && m.Enabled() && armed == "waiting-for-character" && waiting == "waiting-for-character" && now
+                  && m.Installed() && !m.ShouldInstall(true, true, true) && !m.ShouldInstall(true, true, false)
+                  && std::string(m.InstallStateName()) == "installed",
+              "looks=" + std::to_string(looks) + " armed=" + armed + " waiting=" + waiting + " now=" + std::to_string(now));
+    }
+    {
+        // A refusal, from the tick or the command, turns the switch off and
+        // says so. The tick tries once per session; `jumpscenery 1` in game may
+        // try again, and a success then clears the refusal.
+        World w;
+        Mod m = make(w);
+        m.SetEnabled(true);
+        m.NoteInstall(false, true);
+        const bool offAfterTick = !m.Enabled() && !m.Installed();
+        const std::string refused = std::string(m.InstallStateName());
+        const bool offAsks = m.ShouldInstall(true, true, false);
+        m.SetEnabled(true);
+        const bool tickAgain = m.ShouldInstall(true, true, true);
+        const bool commandAgain = m.ShouldInstall(true, true, false);
+        m.NoteInstall(false, false);
+        const bool offAfterCommand = !m.Enabled() && std::string(m.InstallStateName()) == "refused";
+        m.SetEnabled(true);
+        m.NoteInstall(true, false);
+        check("target/a_refusal_turns_the_switch_off_and_the_tick_tries_once",
+              offAfterTick && refused == "refused" && !offAsks && !tickAgain && commandAgain && offAfterCommand
+                  && m.Enabled() && m.Installed() && std::string(m.InstallStateName()) == "installed",
+              "refused=" + refused + " tickAgain=" + std::to_string(tickAgain)
+                  + " commandAgain=" + std::to_string(commandAgain));
+    }
+    {
+        // Negative control: off, nothing installs whatever else holds, and the
+        // state says it was never armed.
+        World w;
+        Mod m = make(w);
+        bool any = false;
+        for (int bits = 0; bits < 8; ++bits)
+            if (m.ShouldInstall((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0)) any = true;
+        m.SetEnabled(true);
+        m.SetEnabled(false);
+        check("target/switched_off_never_installs_the_hooks",
+              !any && !m.ShouldInstall(true, true, false) && !m.Installed()
+                  && std::string(m.InstallStateName()) == "not-armed",
+              std::string(m.InstallStateName()));
     }
 
     // ---- the stat line ------------------------------------------------------

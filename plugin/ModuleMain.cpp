@@ -50559,7 +50559,10 @@ static void HiddenLootCommand(const std::string& rest)
 // a jump in Live 1's J3 to the core in JumpScenery.hpp, which says whether to
 // keep the game's answer or write the measured "no collision" instead.
 //
-// Six hooks, all by name and all installed on the first `jumpscenery 1`:
+// Six hooks, all by name and all installed together once the switch is on and
+// a character exists (`jumpscenery 1` at character select, as the panel's
+// launch commands send it, only arms; JsInstallIfReady, from the command or
+// the tick, installs when JumpScenery.hpp's ShouldInstall says so):
 // skillsLeap through HookOneScript and its SDK constant (its entry opens the
 // window, before the original runs, so a walk nested in that first call is
 // inside it), and the five builtins through HookBuiltin. While the mod is off
@@ -50826,7 +50829,8 @@ static std::string JumpSceneryHeldHooks()
 }
 #endif
 
-// The one install path, from `jumpscenery 1`: "" when every hook is in and
+// The one install path, through JsInstallIfReady (from `jumpscenery 1` with a
+// character loaded, or the tick once one is): "" when every hook is in and
 // the core is configured, otherwise why the mod stays off. Hooks that went
 // in stay in, and their detours return the original while the mod is off.
 static std::string JumpSceneryInstall()
@@ -50893,15 +50897,59 @@ static std::string JumpSceneryInstall()
     return "";
 }
 
-// The per-frame tick: housekeeping only (JumpScenery.hpp's Tick). Returns at
-// once while the mod is off.
+// Does the local player resolve, by the VALUE_REF-safe resolver? At character
+// select it does not, and the hooks wait.
+static bool JsPlayerResolves()
+{
+    bool ok = false;
+    const bool busy = g_JsBusy;
+    g_JsBusy = true;
+    try {
+        RValue p;
+        ok = HhResolveLocalPlayer(p) && HhResolveInstance(p) != nullptr;
+    } catch (...) { ok = false; }
+    g_JsBusy = busy;
+    return ok;
+}
+
+// Installs when the core says so (JumpScenery.hpp's ShouldInstall): the switch
+// on, the hooks not in, setup done, the local player resolved and, from the
+// tick, no try of its own yet. Before a character exists it installs nothing,
+// so a switch on at launch stays armed. A refusal prints its one line and the
+// core turns the switch off.
+static void JsInstallIfReady(bool fromTick)
+{
+    const bool havePlayer = g_JumpScenery.ShouldInstall(g_Setup, true, fromTick) && JsPlayerResolves();
+    if (!g_JumpScenery.ShouldInstall(g_Setup, havePlayer, fromTick)) return;
+    const std::string why = JumpSceneryInstall();
+    g_JumpScenery.NoteInstall(why.empty(), fromTick);
+    if (!why.empty()) { Out("jumpscenery: refused - " + why); return; }
+    JsRefreshPlayer();
+}
+
+static unsigned long long g_JsArmedFrames = 0;   // frames the tick ran while armed and not installed
+
+// The per-frame tick. Returns at once while the mod is off; while armed and not
+// installed, looks for the local player every kInstallPollFrames frames and
+// installs the hooks once one exists; then housekeeping only (JumpScenery.hpp's
+// Tick).
 static void JumpSceneryTick()
 {
     if (!g_JumpScenery.Enabled()) return;
+    if (!g_JumpScenery.Installed()) {
+        if (JsNs::Mod::LooksForPlayer(g_JsArmedFrames++)) JsInstallIfReady(true);
+        return;
+    }
     JsRefreshPlayer();
     g_JsBusy = true;
     try { g_JumpScenery.Tick((int64_t)g_RuntimeFrame); } catch (...) {}
     g_JsBusy = false;
+}
+
+// The ` install=` field `jumpscenery 1` and `stat` end with.
+static std::string JsInstallField()
+{
+    return " install=" + std::string(g_JumpScenery.InstallStateName());
 }
 
 // `jumpscenery 1|0` (the panel's switch); bare `jumpscenery` or `stat` prints
@@ -50910,13 +50958,16 @@ static void JumpSceneryCommand(const std::string& rest)
 {
     const std::string arg = Lower(TrimCopy(rest));
     if (arg == "1" || arg == "on") {
-        if (!g_JumpScenery.Enabled()) {
-            const std::string why = JumpSceneryInstall();
-            if (!why.empty()) { Out("jumpscenery: refused - " + why); return; }
+        g_JumpScenery.SetEnabled(true);
+        // In game, with a character loaded: at once. At character select (the
+        // launch commands): armed only, and the tick installs later.
+        if (!g_JumpScenery.Installed()) {
+            JsInstallIfReady(false);
+            if (!g_JumpScenery.Enabled()) return;   // refused: its line is out and the switch is off
+        } else {
             JsRefreshPlayer();
-            g_JumpScenery.SetEnabled(true);
         }
-        Out(g_JumpScenery.StatusLine());
+        Out(g_JumpScenery.StatusLine() + JsInstallField());
         return;
     }
     if (arg == "0" || arg == "off") {
@@ -50924,7 +50975,7 @@ static void JumpSceneryCommand(const std::string& rest)
         Out(g_JumpScenery.StatusLine());
         return;
     }
-    if (arg.empty() || arg == "stat") { Out(g_JumpScenery.StatLine()); return; }
+    if (arg.empty() || arg == "stat") { Out(g_JumpScenery.StatLine() + JsInstallField()); return; }
     Out("jumpscenery: usage jumpscenery 1 | 0 | stat");
 }
 // ---- end of the jump through scenery adapter

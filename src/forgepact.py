@@ -1224,8 +1224,10 @@ def build_cmds(cfg: dict) -> list:
         out.append(hidden_loot_key_cmd(cfg))
         out.append("hiddenloot 1")
     if cfg.get("mod_jump_scenery", False):
-        # Safe to send at launch: `jumpscenery 1` only turns the switch on;
-        # the plugin decides nothing until the player's own jump starts.
+        # Safe to send at launch: `jumpscenery 1` at character select arms the
+        # switch, and the plugin installs its hooks once a character is loaded
+        # (never at character select; Known Limitations item 8). It decides
+        # nothing until the player's own jump starts.
         out.append("jumpscenery 1")
     if cfg.get("mod_loot_announce", False):
         # Safe to send at launch: `lootann 1` only turns the switch on; the

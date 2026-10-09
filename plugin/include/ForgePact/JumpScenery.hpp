@@ -187,6 +187,52 @@ public:
     }
     bool Enabled() const { return enabled_; }
 
+    // ---- the install: armed at launch, hooked once a character exists ----
+    // The guide's Known Limitations item 8: a hook installed at character
+    // select stalls the runner. A switch already on as the game starts (the
+    // panel's launch commands carry `jumpscenery 1`, consumed while character
+    // selection still runs) only arms; the six hooks go in once setup is done
+    // and the local player resolves (the adapter asks HhResolveLocalPlayer).
+    // While armed, the adapter's tick looks for the player only on the frames
+    // LooksForPlayer picks, counted from the first armed frame, and tries once
+    // per session; `jumpscenery 1` with a character loaded tries at once, again
+    // after a refusal. A refused install turns the switch off.
+    static constexpr unsigned long long kInstallPollFrames = 60;
+    static constexpr bool LooksForPlayer(unsigned long long armedFrames)
+    {
+        return armedFrames % kInstallPollFrames == 0;
+    }
+    // Whether the adapter installs now: the switch on, the hooks not in yet,
+    // setup done, the local player resolved, and, for the tick, no try of its
+    // own yet this session.
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool fromTick) const
+    {
+        return enabled_ && !installed_ && !(fromTick && tickTried_) && setupDone && playerResolved;
+    }
+    // What the adapter's install returned: every hook in, or refused (the
+    // adapter prints why, once).
+    void NoteInstall(bool ok, bool fromTick)
+    {
+        if (fromTick) tickTried_ = true;
+        if (ok) {
+            installed_ = true;
+            refused_ = false;
+            return;
+        }
+        refused_ = true;
+        SetEnabled(false);
+    }
+    bool Installed() const { return installed_; }
+    // The ` install=` field the adapter appends to `jumpscenery 1` and `stat`:
+    // installed once the hooks are in, refused after a refused install,
+    // waiting-for-character while on without them, not-armed otherwise.
+    std::string_view InstallStateName() const
+    {
+        if (installed_) return "installed";
+        if (refused_) return "refused";
+        return enabled_ ? "waiting-for-character" : "not-armed";
+    }
+
     // The local player's identity, whenever the adapter resolves it. A
     // different player (another character loaded) has another Jump Power, so
     // the reach is forgotten.
@@ -467,6 +513,9 @@ private:
     std::vector<int> excluded_;
     std::unordered_map<int, uint8_t> familyTable_;
     bool enabled_ = false;
+    bool installed_ = false;
+    bool tickTried_ = false;
+    bool refused_ = false;
     bool havePlayer_ = false;
     int64_t player_ = 0;
     bool haveReach_ = false;
