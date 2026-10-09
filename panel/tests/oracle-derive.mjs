@@ -223,7 +223,7 @@ export const NATIVE_SWITCHED_RANGES = [
   { key: 'mod_dungeon_chest', range: 'dungeon_chest_pct', tab: 'tab:mods', sub: 'subtab:gameplay', verb: 'dungeonchest',
     rest: 75, min: 50, max: 95, typed: 80, restate: 'dungeonchest countdown head' },
   { key: 'mod_gambapity', range: 'gambapity', tab: 'tab:mods', sub: 'subtab:qol', verb: 'gambapity',
-    rest: 10, min: 1, max: 20, typed: 5 },
+    rest: 10, min: 1, max: 200, typed: 5 },
 ];
 // Child selects of a switch-plus-range pair (see the header): the config key
 // (the control's id), the pair's switch, the values posted in order (the

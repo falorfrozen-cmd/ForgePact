@@ -50,8 +50,8 @@ plugin/ModuleMain.cpp on comment-stripped source:
   `g_GambaPityError` (the last load/save refusal), and every action line is
   fixed text from the core;
 - the plugin-side explosion-count range equals `src/forgepact.py`'s
-  `GAMBA_PITY_RANGE = (1, 20)` and `Mods.svelte`'s `min`/`max`, and a saved
-  count outside it (an older spin count) loads as the default, 10;
+  `GAMBA_PITY_RANGE = (1, 200)` and `Mods.svelte`'s `min`/`max`, and a saved
+  count outside it (one above 200) loads as the default, 10;
 - `GambaPityFallbackDrop` is gone;
 - no hex or RVA literal reaches a call;
 - in the research build, `gambaprobe hook` refuses while `gambapity` holds one
@@ -602,15 +602,15 @@ class GambaPityContract(unittest.TestCase):
 
     def test_the_plugin_range_matches_python_and_the_panel(self):
         self.assertIn("static constexpr int kGambaPityMin = 1;", self.code)
-        self.assertIn("static constexpr int kGambaPityMax = 20;", self.code)
+        self.assertIn("static constexpr int kGambaPityMax = 200;", self.code)
         command = self.body("static void GambaPityCommand(")
         self.assertIn("count < kGambaPityMin || count > kGambaPityMax", command)
         python = FORGEPACT_PY.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
-        self.assertIn("GAMBA_PITY_RANGE = (1, 20)", python)
+        self.assertIn("GAMBA_PITY_RANGE = (1, 200)", python)
         self.assertIn("GAMBA_PITY_DEFAULT = 10", python)
         self.assertIn('"mod_gambapity": False,\n    "gambapity": 10,', python)
         svelte = MODS_SVELTE.read_text(encoding="utf-8").replace("\r\n", "\n")
-        self.assertIn('id="gambapity" min="1" max="20" step="1" value="10"', svelte)
+        self.assertIn('id="gambapity" min="1" max="200" step="1" value="10"', svelte)
 
     def test_the_slider_toast_names_the_ordinal_explosion_without_a_head(self):
         from test_release_hook_contract import function_body as body
@@ -662,7 +662,7 @@ class GambaPityContract(unittest.TestCase):
         self.assertRegex(readme, r"(?m)^## Goburin's Head pity$")
         section = readme.split("\n## Goburin's Head pity\n", 1)[1].split("\n## ", 1)[0]
         low = " ".join(section.split()).lower()
-        for phrase in ("off by default", "from 1 to 20", "one head per explosion", "the count starts over",
+        for phrase in ("off by default", "from 1 to 200", "one head per explosion", "the count starts over",
                        "forgepact_gamba_pity.json", "`gambapity status`", "`gambapity off`",
                        "have not been observed"):
             self.assertIn(phrase, low)
@@ -684,16 +684,16 @@ class GambaPityContract(unittest.TestCase):
                 return forgepact.load_cfg(), forgepact
 
     def test_a_saved_count_outside_the_range_loads_as_the_default(self):
-        # An older version's spin count (100) is no explosion count: it loads
-        # as the default, so the panel shows and sends 10.
-        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 100})
+        # A count above the range (1000, the top of the unshipped spin count's
+        # range) loads as the default, so the panel shows and sends 10.
+        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 1000})
         self.assertEqual(cfg["gambapity"], 10)
         self.assertEqual(forgepact.gambapity_cmd(cfg), "gambapity 10")
         self.assertTrue(cfg["mod_gambapity"])
-        # Control: a count in range is kept.
-        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 7})
-        self.assertEqual(cfg["gambapity"], 7)
-        self.assertEqual(forgepact.gambapity_cmd(cfg), "gambapity 7")
+        # Control: the top of the range itself is kept.
+        cfg, forgepact = self._load_cfg_from({"mod_gambapity": True, "gambapity": 200})
+        self.assertEqual(cfg["gambapity"], 200)
+        self.assertEqual(forgepact.gambapity_cmd(cfg), "gambapity 200")
 
     def test_the_fallback_drop_is_gone(self):
         self.assertNotIn("GambaPityFallbackDrop", self.code)

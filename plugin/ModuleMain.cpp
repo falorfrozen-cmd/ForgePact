@@ -54247,7 +54247,7 @@ static constexpr int kGambaPityCharmBase = 98;
 // src/forgepact.py's GAMBA_PITY_RANGE and Mods.svelte's min/max, pinned
 // against each other in tests/test_gamba_pity_contract.py.
 static constexpr int kGambaPityMin = 1;
-static constexpr int kGambaPityMax = 20;
+static constexpr int kGambaPityMax = 200;
 
 // The kAngelicBases row the charm is (by key, not index) - the same lookup
 // gambaprobe's `drop` uses.

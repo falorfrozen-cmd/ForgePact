@@ -481,8 +481,8 @@ def load_cfg() -> dict:
         cfg.get("spawners", {}).pop(key, None)
     for key in RETIRED_KEYS:
         cfg.pop(key, None)
-    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (an older
-    # version's spin count such as 100) loads as the default, so the panel
+    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (0, or one
+    # above 200 such as 1000) loads as the default, so the panel
     # shows and sends that rather than a slider pinned at its end.
     if gambapity_value(cfg.get("gambapity")) is None:
         cfg["gambapity"] = GAMBA_PITY_DEFAULT
@@ -956,7 +956,7 @@ def dungeon_chest_countdown_cmd(cfg: dict):
 
 # Goburin's Head pity (issue #134): the allowed range of machine explosions
 # without a head before the forced one, and its default; the slider steps by 1.
-GAMBA_PITY_RANGE = (1, 20)
+GAMBA_PITY_RANGE = (1, 200)
 GAMBA_PITY_DEFAULT = 10
 
 

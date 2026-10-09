@@ -81,7 +81,8 @@ instrumented). Reading or changing the player's gold balance from the plugin.
 - **Phase 6 (2026-10-06):** the owner switched the count from spins to
   explosions ("yes, switch to explosions"): `gambapity` now counts each
   machine explosion without a head when it is seen, and the explosion that
-  brings the count to the number set (1 to 20, default 10) drops the head.
+  brings the count to the number set (then 1 to 20, default 10; 1 to 200
+  since ForgePact 2.2.1, #207) drops the head.
   The `PickUpGoldCheck` spin hook is retired, `status` drops `gold=`, and the
   counter file gains a format version (`{"version":2,"count":<n>}`; phase
   5's unversioned spin count loads as 0, said once). The trigger, the settle
