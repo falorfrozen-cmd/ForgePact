@@ -11,6 +11,8 @@ is resolved by name (skillsLeap
 through its SDK constant and HookOneScript, the five builtins through
 HookBuiltin), the gates and locks are named through the SDK, every detour and
 the frame tick return the game's own answer at once while the mod is off, the
+cursor the landing is checked at is read by name (mouse_x / mouse_y, then
+device_mouse_x / device_mouse_y) and handed to the core, the
 research build's citrace and jumpprobe and this mod refuse each other's
 builtins (both ways), the mod state carries the switch, `stat` names every counter, and no
 address is computed anywhere in it.
@@ -34,9 +36,11 @@ BLOCK_END = "// ---- end of the jump through scenery adapter"
 # The five builtins whose answers crossed a jump in Live 1's J3.
 BUILTINS = {"position_meeting", "place_meeting", "instance_position", "collision_line", "collision_circle"}
 
-# ctx "### Player surface": the stat line's fields, in order.
+# ctx "### Player surface": the stat line's fields, in order. v2.2.1 added the
+# cap, the cursor read now, and where the last decided jump was checked.
 STAT_FIELDS = ("reach=", "jumps=", "granted=", "answered=", "refused-landing=", "refused-room=", "refused-no-reach=",
-               "no-direction=", "landed-inside=", "before-open=", "excluded=", "room=")
+               "no-direction=", "landed-inside=", "before-open=", "excluded=", "cap=", "cursor=", "last-target=",
+               "last-check=", "room=")
 
 SIGNATURES = {
     "command": "static void JumpSceneryCommand(const std::string& rest)",
@@ -47,6 +51,7 @@ SIGNATURES = {
     "excluded": "static bool JsExcludedBlocks(",
     "family_at": "static bool JsFamilyAt(",
     "room": "static bool JsRoomSize(",
+    "cursor": "static bool JsCursor(",
     "player": "static void JsRefreshPlayer()",
     "resolves": "static bool JsPlayerResolves()",
     "install_if_ready": "static void JsInstallIfReady(bool fromTick)",
@@ -216,6 +221,34 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertIn('g_Yytk->GetBuiltin("room_width", nullptr, NULL_INDEX, rw)', room)
         self.assertIn('g_Yytk->GetBuiltin("room_height", nullptr, NULL_INDEX, rh)', room)
         self.assertNotIn("variable_global_get", self.code)
+
+    def test_the_cursor_is_read_by_name_and_handed_to_the_core(self):
+        # v2.2.1: the landing is checked at the cursor's distance. The adapter
+        # reads the mouse in room coordinates by name, mouse_x / mouse_y as
+        # builtin variables first, then device_mouse_x(0) / device_mouse_y(0),
+        # and sets it where the other providers are set, in both builds.
+        install = self.body("install")
+        wiring = "g_JumpScenery.SetCursor(&JsCursor);"
+        self.assertIn(wiring, install)
+        self.assertLess(install.index("g_JumpScenery.SetPlayerPosition(&JsPlayerPosition);"), install.index(wiring))
+        self.assertLess(install.index(wiring), install.index("g_JsConfigured = true;"))
+        self.assertEqual(self.code.count("g_JumpScenery.SetCursor("), 1)
+        self.assertIn(wiring, self.shipped_block)
+        cursor = self.body("cursor")
+        self.assertIn('g_Yytk->GetBuiltin("mouse_x", nullptr, NULL_INDEX, mx)', cursor)
+        self.assertIn('g_Yytk->GetBuiltin("mouse_y", nullptr, NULL_INDEX, my)', cursor)
+        self.assertIn('g_Yytk->CallBuiltin("device_mouse_x", { RValue(0.0) })', cursor)
+        self.assertIn('g_Yytk->CallBuiltin("device_mouse_y", { RValue(0.0) })', cursor)
+        self.assertLess(cursor.index('GetBuiltin("mouse_x"'), cursor.index('CallBuiltin("device_mouse_x"'))
+        self.assertIn('route = "mouse_x";', cursor)
+        self.assertIn('route = "device_mouse_x";', cursor)
+        self.assertIn("std::isfinite(x) && std::isfinite(y)", cursor)
+        # Room coordinates by name only: no GUI conversion, no instance or struct read.
+        for forbidden in ("_to_gui", "variable_instance_get", "g_JsPlayer"):
+            self.assertNotIn(forbidden, cursor)
+        # The core reads it with the take-off position and for the stat line.
+        self.assertIn("using CursorFn = std::function<bool(double& x, double& y, std::string& route)>;", self.header)
+        self.assertIn("jump_.haveCursor = ReadCursor(jump_.cursorX, jump_.cursorY, route);", self.header)
 
     # ---- off costs nothing --------------------------------------------------------
 

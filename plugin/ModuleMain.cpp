@@ -50657,8 +50657,8 @@ static int JsObjectIndexOf(const RValue& v)
 }
 
 // The local player, by the VALUE_REF-safe resolver every player feature uses.
-// A different player (another character loaded) makes the core forget the
-// reach it learned.
+// A new instance id (every room change gives the player one) drops a jump in
+// progress; the core keeps the reach and the cap it learned.
 static void JsRefreshPlayer()
 {
     CInstance* inst = nullptr;
@@ -50709,6 +50709,45 @@ static bool JsRoomSize(double& w, double& h)
         return std::isfinite(w) && std::isfinite(h) && w > 0.0 && h > 0.0;
     } catch (...) {}
     return false;
+}
+
+// The mouse in room coordinates, where a jump goes (the core checks the
+// landing at its distance). Two routes, by name, the first that gives two
+// finite numbers wins: the built-in variables mouse_x / mouse_y through
+// GetBuiltin, as JsRoomSize reads room_width; then device_mouse_x(0) /
+// device_mouse_y(0). Which answers on this runner, and that it gives room
+// rather than GUI coordinates, is not established yet (the v2.2.1 hotfix's
+// Live procedure 2 measures it as cursor-read); `jumpscenery stat` prints the
+// reading and the route. Unreadable, the core falls back to the reach.
+static bool JsCursor(double& x, double& y, std::string& route)
+{
+    const bool busy = g_JsBusy;
+    g_JsBusy = true;
+    bool ok = false;
+    try {
+        RValue mx, my;
+        if (AurieSuccess(g_Yytk->GetBuiltin("mouse_x", nullptr, NULL_INDEX, mx))
+            && AurieSuccess(g_Yytk->GetBuiltin("mouse_y", nullptr, NULL_INDEX, my)) && JsNumber(mx) && JsNumber(my)) {
+            x = mx.ToDouble();
+            y = my.ToDouble();
+            ok = std::isfinite(x) && std::isfinite(y);
+            if (ok) route = "mouse_x";
+        }
+    } catch (...) { ok = false; }
+    if (!ok) {
+        try {
+            const RValue dx = g_Yytk->CallBuiltin("device_mouse_x", { RValue(0.0) });
+            const RValue dy = g_Yytk->CallBuiltin("device_mouse_y", { RValue(0.0) });
+            if (JsNumber(dx) && JsNumber(dy)) {
+                x = dx.ToDouble();
+                y = dy.ToDouble();
+                ok = std::isfinite(x) && std::isfinite(y);
+                if (ok) route = "device_mouse_x";
+            }
+        } catch (...) { ok = false; }
+    }
+    g_JsBusy = busy;
+    return ok;
 }
 
 // The landing check: the original place_meeting(x, y, Collision_Parent_obj)
@@ -50863,6 +50902,7 @@ static std::string JumpSceneryInstall()
         g_JumpScenery.SetPlaceMeeting(&JsFamilyAt);
         g_JumpScenery.SetRoomSize(&JsRoomSize);
         g_JumpScenery.SetPlayerPosition(&JsPlayerPosition);
+        g_JumpScenery.SetCursor(&JsCursor);
         g_JsConfigured = true;
     }
     if (!g_JsOrigLeap) {
