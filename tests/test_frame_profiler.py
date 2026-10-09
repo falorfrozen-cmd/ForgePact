@@ -170,10 +170,16 @@ class FrameProfilerBehaviorTests(unittest.TestCase):
     def test_slow_frames_are_pinned_on_what_ran_during_them(self):
         r = self.reports["hitches"]
         self.assertGreaterEqual(r["frames"]["over100ms"], 1)
-        worst = r["hitches"][0]
-        self.assertGreaterEqual(worst["ms"], 100.0)
-        self.assertEqual(worst["gmlTotal"][0]["name"], "FakeSlowWork")
-        self.assertEqual(worst["room"], "Harness_rm")
+        # A frame's wall-clock is at the mercy of the OS scheduler: CI runs
+        # several harnesses at once, so a regular 16 ms chain frame can be
+        # preempted past 100 ms and outrank the deliberate 150 ms FakeSlowWork
+        # frame. The property under test is that the frame which ran
+        # FakeSlowWork is pinned on FakeSlowWork, not that the scheduler named
+        # it the single slowest frame.
+        slow = [h for h in r["hitches"] if h.get("gmlTotal") and h["gmlTotal"][0]["name"] == "FakeSlowWork"]
+        self.assertTrue(slow, r["hitches"])
+        self.assertGreaterEqual(slow[0]["ms"], 100.0)
+        self.assertEqual(slow[0]["room"], "Harness_rm")
 
     def test_stop_and_a_vanished_thread_end_a_capture_early(self):
         self.assertLess(self.reports["stopped"]["capture"]["seconds"], 5.0)
