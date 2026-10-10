@@ -49,7 +49,8 @@ own loop.
   arithmetic (§ Not established), so this phase has no jump-arc model or spec.
 - **Later phases:** § Phase 2: the mod (2.2.0) and § Phase 3: the v2.2.1
   hotfix, which measured that a jump goes to the mouse cursor and moved the
-  mod's landing check there.
+  mod's landing check there, verified live on 2026-10-10 (§ Hotfix live 2
+  results).
 
 ## Static search
 
@@ -1054,8 +1055,9 @@ applied at changes, and what survives a new player instance.
   `device_mouse_y(0)`; the first that gives two finite numbers wins. The core
   reads it once when a jump starts, with the take-off position. Which route
   answers on this runner, and that it gives room rather than GUI coordinates,
-  is **not established**: `jumpscenery stat` prints the reading and the
-  route (`cursor=<x>,<y>@<route>|unreadable`).
+  was not established when the fix was written: `jumpscenery stat` prints
+  the reading and the route (`cursor=<x>,<y>@<route>|unreadable`), and
+  Hotfix live 2 measured `mouse_x`, in room coordinates.
 - **The landing distance**, in order: the take-off cursor's straight distance,
   no more than the cap when one is known (`last-target=cursor`, or `cap` when
   the cap cut it); with no cursor, the learned reach (`reach`); with no cursor
@@ -1088,6 +1090,87 @@ one horse carriage, not established in general); taking the length from the
 take-off walk's circles (the decision is made at the first blocked query,
 part-way through the walk, before its end is seen).
 
+### Hotfix live 2 results
+
+Run on 2026-10-10 (08:04-08:11 UTC) by the workorder's live operator on the
+**2.2.1 player build**: `build.bat release` at ForgePact `71e5f12`,
+`BloodPactPlugin_ship.dll`, SHA-256
+`9088231d53bdc462916ffb19f1d4ac668ca0b03bc6e302d782580fa5fd3c7cf4`, which the
+lease read back from the installed DLL. The capture is the toolkit
+workorder's `forgepact-v2.2.1-hotfix-live-2.md`, a local working note; what
+it measured is restated here. Character: save slot 14, "Sorak". Every aim was
+a point in room px, converted to the screen as (room − view origin) × 2 and
+moved there with an injected mouse move; `jumpscenery stat` recorded the
+cursor the mod read before each Space press. No step needed the owner: the
+operator changed zone through the town waypoint (the `F` key, then a click
+on "Outskirts of Inoya" on its map) and chose the outdoor prop from a
+screenshot. 18 checks, 18 passed.
+
+| Check | Observed | Verdict |
+| --- | --- | --- |
+| `control`, `dll-hash`, `marker` | `pong (YYTK 4.0.1)` on both launches; the hash above; at the character screen `jumpscenery: off reach=175 (start) jumps=0 ... install=not-armed` | pass |
+| `armed-at-select` | `jumpscenery 1` at the character screen replied `jumpscenery: on install=waiting-for-character`; no `HOOK INSTALLED` line followed | pass |
+| `installed-after-load` | the first stat after the character loaded (15.4 s for the whole select) ended `install=installed`, and the log had the six `HOOK INSTALLED` lines (`skillsLeap` and the five builtins) | pass |
+| `cursor-read` | at the town prop (1074.2, 1383.7), aimed at room (1074.2, 1523.7): `cursor=1073,1523@mouse_x`, `reach=175 (start)`, `cap=none` | pass |
+| `first-jump-cross` | the first jump after loading: 133.2 px south to (1073.0, 1516.9), `granted` +1, `last-target=cursor`, `last-check=139` | pass |
+| `off-blocked` | mod off, same place and aim: 0 px | pass |
+| `town-cross` | mod on again, same place and aim: 133.2 px south, `granted` +1 | pass |
+| `lands-at-cursor` | open ground (912.0, 822.0), cursor at room (912, 922), 100 px: ended at (911.0, 910.8), 88.8 px, 11.2 px from the cursor; `reach=89`, `cap=none` | pass |
+| `cap-measure` | the same start, cursor at room (912, 1122), 300 px: ended at (911.2, 1068.3), 246.3 px, 53.7 px short; `cap=246` | pass |
+| `reach-kept-after-zone` | in `Act_01_01` after the waypoint: `reach=246 cap=246`; `Player_obj` id 306593 (261723 in town); `room=15296x12960` | pass |
+| `outdoor-off-blocked` | mod off, beside a large red-leaved tree east of the Outskirts waypoint, at (10640, 6965), cursor at `10839,6964`, 199.0 px east past it: 0 px | pass |
+| `outdoor-cross` | mod on, same place and cursor: 197.7 px east to (10837.6, 6958.0), `granted` +1, `answered` +1133, `refused-landing` +0, `last-check=199` | pass |
+| `gambapity-200`, `gambapity-201-refused` | `gambapity: on count=7 threshold=200 ...` (after the hook lines its first use prints); `gambapity 201` gave the usage line, `count 1..200 (unchanged: 200)` | pass |
+| `gambapity-persist` | count 7 before the game was closed, the file then exactly `{"version":2,"count":7}`; relaunched, `gambapity 200` at the character screen replied `gambapity: on count=7 threshold=200 ...` and `ping` answered | pass |
+| `restore-clean` | `jumpscenery 0`, the game closed, the save backup restored (inspect after: nothing changed, added or missing), the counter file put back, lease released | pass |
+
+**The arming works as designed.** **Measured**: sent at the character
+screen, the line the panel's launch commands carry armed the mod and
+installed nothing; the six hooks went in once the character loaded. The
+operator sent the line itself; the panel's own launch was not part of this
+session, though it sends the same string (`build_cmds`).
+
+**The cursor reads in room coordinates through `mouse_x`.** **Measured** on
+four aims (town, two open-ground, outdoor): the reading named the `mouse_x`
+route each time and fell within 1 px of the room point aimed at on each
+axis, so the built-in `mouse_x` / `mouse_y` answer on this runner and give
+room, not GUI, coordinates. `device_mouse_x` was not needed and was not
+measured.
+
+**The crossings.** **Measured** through the 2.2.1 mod: the first jump after
+loading crossed the town prop with no practice jump (checked at the
+cursor's 139 px; it moved 133.2 px), the same jump with the mod off moved 0
+px, and the large tree outdoors, which stopped the jump with the mod off,
+was crossed with it on (checked at 199 px, moved 197.7 px). So that tree
+blocks a jump through the five hooked builtins: answering them is enough
+(the workorder's `outdoor-uncovered` reads `not-observed`). In the tree
+jump `no-direction=` rose by one as well: one blocked query arrived before
+the take-off walk had given two circles and was left undecided, and a later
+one decided the jump. The player ended on open ground each time.
+
+**A jump lands near its cursor, up to a maximum.** **Measured**: with the
+cursor 100 px away on open ground the jump moved 88.8 px and ended at the
+same point as in Hotfix live 1 (911.0, 910.8), 11.2 px from the cursor; the
+two crossings, with the cursor 139 px and 199 px away, each ended about 7 px
+from it. With the cursor
+300 px away the jump moved 246.3 px and ended 53.7 px short, and the mod set
+`cap=246` from it. So Sorak's maximum is about **246 px**, from one jump; it
+depends on the character (Jump Power was not read). No jump in the session
+was decided at the cap (`last-target=cap`), so that rule stays
+harness-verified.
+
+**Zones.** **Measured** again: `Player_obj` got a new instance id in the new
+room (261723 to 306593), and the mod kept `reach=` and `cap=` across it.
+`Act_01_01` measured 15296 × 12960 this time against 18272 × 8704 in Hotfix
+live 1, so its room size changes between visits.
+
+**Goburin's Head pity's count survives a relaunch.** **Measured**: a count of
+7 was written to the file before the launch, read back by the first
+`gambapity` of the launch, still 7 after the game was closed, and read again
+as 7 by the launch-time `gambapity 200` after a relaunch. That
+launch-time command installed the pity hooks at the character screen with no
+stall (Known Limitations item 8's hazard, recorded, not changed).
+
 ### Status and what is not established
 
 - **Harness-verified**: `tests/test_jump_scenery_mod_behavior.py` (the town
@@ -1097,14 +1180,22 @@ part-way through the walk, before its end is seen).
   `tests/test_jump_scenery_mod_contract.py` (the cursor read by name, the
   install only through the core's decision) and
   `tests/test_jump_scenery_panel_contract.py`.
-- **Not yet observed live**: 2.2.1's arming and its landing at the cursor.
-  The workorder's second live procedure, on the 2.2.1 build, measures which
-  cursor route answers in room coordinates, that a jump lands at its cursor,
-  the cap, and the crossings in town and at the outdoor tree; its results
-  will be recorded here as `### Hotfix live 2 results`. Until then the
-  release notes call the fix "not yet confirmed in a live game".
-- **Not established**: the jump's maximum length (at least about 190 px for
-  Sorak); where the game takes the jump's target from; and everything Phase 2
-  left open apart from the shorter crossing jump (which of the five builtins
-  decides the crossing, what refuses curated J7, J8 and J14, a landing inside
-  a prop, the walkable map's edge, a Leap skill, co-op).
+- **Verified live** (§ Hotfix live 2 results, 2026-10-10, curated J22 to
+  J27): the arming at the character screen and the install once the
+  character loads, the cursor read through `mouse_x` in room coordinates,
+  the first jump after loading crossing the town prop, the town crossing
+  with its mod-off control, the outdoor tree crossed with its mod-off
+  control, a jump ending near its cursor, the cap learned (246 px for
+  Sorak) and the reach and cap kept across a zone change.
+- **Not observed live**: a jump decided at the cap (`last-target=cap`), a
+  jump decided at the learned or starting reach because the cursor did not
+  read (the cursor read every time), the landing guard refusing a landing
+  and the room guard (as in Phase 2), and the panel itself sending the
+  launch line (the operator sent the same string).
+- **Not established**: where the game takes the jump's target from (the mod
+  reads `mouse_x`, and the jump ends within about 11 px of it, but the game's
+  own source is unread); how the maximum depends on Jump Power; and
+  everything Phase 2 left open apart from the shorter crossing jump (which
+  of the five builtins decides the crossing, what refuses curated J7, J8 and
+  J14, a landing inside a prop, the walkable map's edge, a Leap skill,
+  co-op).

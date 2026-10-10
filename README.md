@@ -1434,8 +1434,19 @@ jump behaves as without the mod.
   of your last jump in the open rather than where the jump was aimed. In a
   test session on 2026-10-09 every jump at scenery was refused that way, in
   town and outside it, and the first jump after loading and the first after a zone change had
-  no length to check at all. **2.2.1's arming and its landing at the cursor
-  are tested outside the game and not yet confirmed in a live game.**
+  no length to check at all.
+- **2.2.1 checked in play** on 2026-10-10 (slot 14, the 2.2.1 plugin):
+  `jumpscenery 1` sent at the character screen, the line the panel's launch
+  commands carry, armed it and hooked nothing until the character loaded.
+  The first jump after loading crossed the town prop with no practice jump
+  (133 px, the cursor 139 px away), and with the mod off the same jump did
+  not move. A jump in the open with the cursor 300 px away went 246 px,
+  which became the maximum (`cap=246`). After a waypoint into the Outskirts
+  of Inoya the mod still had its reach and maximum, and a large tree that
+  stopped the jump with the mod off was crossed with it on (198 px, the
+  cursor 199 px away). The cursor read in room coordinates through
+  `mouse_x`. Not seen in play: a jump checked at the maximum because the
+  cursor lay beyond it, and a jump checked without a readable cursor.
 
 `jumpscenery stat` prints the reach and the counters: jumps, `granted=`,
 `answered=`, the refusals by reason, `landed-inside=`, `excluded=`, the
@@ -1509,7 +1520,10 @@ explosions you choose.
 - **The count carries over** between machines and between sessions. It is
   kept in `forgepact_gamba_pity.json`, next to the panel's settings in
   `%LOCALAPPDATA%\Hero_Siege`. Spins and the machine's payouts don't change
-  it; only explosions do.
+  it; only explosions do. Checked in play on 2026-10-10
+  (`forgepact-v2.2.1-hotfix-live-2`): a count of 7 was still 7 after the
+  game was quit and relaunched, read back by the launch's own `gambapity`
+  command.
 - **What is not seen.** A charm the game drops later than about a second
   after the explosion, or farther from the machine, would not be seen, and
   that explosion could then give two. With **Sleep loot your filter hides**

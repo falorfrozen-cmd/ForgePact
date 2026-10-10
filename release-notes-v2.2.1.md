@@ -31,11 +31,15 @@ scenery is reworked so that it can do what it says.
   longer has to be a practice jump in the open, and walking into another zone
   no longer makes ForgePact forget what it learned about your jump.
 
-  **Not yet confirmed in a live game.** These changes pass ForgePact's own
-  tests, but the version of the mod in this release has not yet been tried in
-  a game session. Locked doors and zone gates still block the jump, and a jump
-  the game itself refuses (one aimed to land inside a carriage or a building,
-  for example) stays refused.
+  **Checked in a game session** with this release's plugin: switched on at
+  the character screen, it waited and hooked in once the character loaded;
+  the first jump after loading carried the player over a prop in town with
+  no practice jump; a large tree outside town that stopped the jump with the
+  switch off was jumped over with it on; and taking a waypoint to another
+  zone kept what it had learned. Checking at the farthest spot your jump can reach,
+  for a cursor beyond it, is tested outside the game only. Locked doors and
+  zone gates still block the jump, and a jump the game itself refuses (one
+  aimed to land inside a carriage or a building, for example) stays refused.
 
 ## How to update
 
