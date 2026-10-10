@@ -124,12 +124,12 @@
         </select>
     </div>
     <!-- Goburin's Head pity (issue #134): a switch and a slider, the dungeon chest's shape. The slider counts gamba
-         machine explosions without a head, 1 to 20; the plugin drops the head at the explosion that reaches it.
+         machine explosions without a head, 1 to 200; the plugin drops the head at the explosion that reaches it.
          The value beside the slider is typable and reads "off" while the switch is off. -->
     <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Goburin's Head pity<br><span class="feature-description">Each slot machine explosion without a head counts one. The explosion that reaches this number drops Goburin's Head, and the count starts over. The count carries over between sessions and machines, and if the game drops the charm itself, it starts over. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_gambapity" aria-label="Goburin's Head pity"><span class="sl"></span></label>
-        <input type="range" id="gambapity" min="1" max="20" step="1" value="10" aria-label="Machine explosions without a head before the guaranteed charm">
+        <input type="range" id="gambapity" min="1" max="200" step="1" value="10" aria-label="Machine explosions without a head before the guaranteed charm">
         <span class="val off" id="gppval" style="width:64px">off</span>
     </div>
 </div>

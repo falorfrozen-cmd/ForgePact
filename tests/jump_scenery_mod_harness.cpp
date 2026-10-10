@@ -5,8 +5,9 @@
 // No game is touched: the controlled world is an object table with parents
 // (object_is_ancestor answers from it the way the runtime does - an object is
 // not its own ancestor), a list of solid boxes that the original
-// place_meeting(x, y, Collision_Parent_obj) answers from, a room size and a
-// player position. Frames are plain numbers.
+// place_meeting(x, y, Collision_Parent_obj) answers from, a room size, a
+// player position and, for a Mod made with makeCursor, a mouse position in room
+// coordinates. Frames are plain numbers.
 //
 // Baseline: with the mod off, every query gets its real answer; with it on, a
 // query outside the window, from a self that is not the player, against
@@ -16,7 +17,14 @@
 // jump answers each of the five builtins with its measured value and is
 // decided once; the landing guard's refusals; the reach learned only from a
 // clear jump of at least 32 px; landed-inside=, before-open=, walk-before-open=,
-// walk-in-window= and excluded=.
+// walk-in-window= and excluded=. The landing distance (v2.2.1), on Live 1's two
+// measured prop jumps: with no cursor the learned reach decides and refuses
+// both (baseline); with a cursor the landing is checked at its distance, up to
+// the cap, and with neither at the 175 px starting reach; the reach and the cap
+// survive a new player instance (target). The install: with a character loaded,
+// `jumpscenery 1` installs at once (baseline); at character select it only
+// arms, the tick installs once the player resolves and tries once per session,
+// and a refusal turns the switch off (target).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -55,12 +63,20 @@ static bool objectIsAncestor(int object, int ancestor)
 
 struct Box { double x0, y0, x1, y1; };
 
+// A solid laid along a line: every point within `half` px of the line from
+// (ax, ay) along the unit (ux, uy), between `from` and `to` px out.
+struct Strip { double ax, ay, ux, uy, from, to, half; };
+
 struct World {
     double px = 1000.0, py = 1000.0;
     bool posReadable = true;
     double roomW = 2000.0, roomH = 2000.0;
     bool roomReadable = true;
+    // The mouse in room coordinates, for a Mod made with makeCursor.
+    double cx = 1000.0, cy = 1000.0;
+    bool cursorReadable = true;
     std::vector<Box> solids;
+    std::vector<Strip> strips;
     std::vector<std::pair<double, double>> placeAsked;
     long posReads = 0;
     long roomReads = 0;
@@ -69,9 +85,42 @@ struct World {
     {
         for (const Box& b : solids)
             if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return true;
+        for (const Strip& s : strips) {
+            const double dx = x - s.ax, dy = y - s.ay;
+            const double along = dx * s.ux + dy * s.uy;
+            const double across = std::fabs(dx * s.uy - dy * s.ux);
+            if (along >= s.from && along <= s.to && across <= s.half) return true;
+        }
         return false;
     }
 };
+
+// ---- Live 1's two prop jumps (the shipped v2.2.0 plugin, slot 14) -----------
+// Town (Town_01_rm, 2800x2400): the prop south of the take-off (1074.2, 1383.7)
+// blocks the walk 22-40 px out and is free at 125 px. The reach Live 1 learned
+// came from a clean jump from (912, 822) to (911.0, 910.8), its cursor at
+// (912, 922): 88.8 px, 11 px short of a 100 px cursor, so no cap.
+static constexpr double kTownX = 1074.2, kTownY = 1383.7;
+static void townWorld(World& w)
+{
+    w.roomW = 2800.0;
+    w.roomH = 2400.0;
+    w.solids = { Box{ 1040.0, 1395.0, 1110.0, 1495.0 } };
+}
+// Outskirts (Act_01_01, 18272x8704): from (2031.8, 3966.0) toward a cursor at
+// (1901.5, 3867.5), 163.3 px away, a large tree blocks every point within 20 px
+// of that line from 10 to 135 px out. The reach came from a clean jump from the
+// same take-off to (2129.8, 3909.7), its cursor at (2131.5, 3916.0): 113.0 px.
+static constexpr double kOutX = 2031.8, kOutY = 3966.0, kOutCursorX = 1901.5, kOutCursorY = 3867.5;
+static double outUx() { return (kOutCursorX - kOutX) / std::hypot(kOutCursorX - kOutX, kOutCursorY - kOutY); }
+static double outUy() { return (kOutCursorY - kOutY) / std::hypot(kOutCursorX - kOutX, kOutCursorY - kOutY); }
+static void outdoorWorld(World& w)
+{
+    w.roomW = 18272.0;
+    w.roomH = 8704.0;
+    w.solids.clear();
+    w.strips = { Strip{ kOutX, kOutY, outUx(), outUy(), 10.0, 135.0, 20.0 } };
+}
 
 static Box around(double x, double y, double half) { return Box{ x - half, y - half, x + half, y + half }; }
 
@@ -103,6 +152,20 @@ static Mod make(World& w)
         return true;
     });
     m.NotePlayer(1);
+    return m;
+}
+
+// make() with a cursor provider: the world's (cx, cy), through route "test".
+static Mod makeCursor(World& w)
+{
+    Mod m = make(w);
+    m.SetCursor([&w](double& x, double& y, std::string& route) {
+        if (!w.cursorReadable) return false;
+        x = w.cx;
+        y = w.cy;
+        route = "test";
+        return true;
+    });
     return m;
 }
 
@@ -154,6 +217,32 @@ static void land(Mod& m, World& w, int64_t last, double x, double y)
     w.px = 1000.0;
     w.py = 1000.0;
 }
+
+// A clean jump from (x0, y0) to (x1, y1): nothing blocked, nothing answered.
+// The cursor is whatever the world holds when it starts.
+static void cleanJump(Mod& m, World& w, int64_t f, double x0, double y0, double x1, double y1)
+{
+    w.px = x0;
+    w.py = y0;
+    takeoff(m, w, f);
+    for (int k = 1; k <= 10; ++k) m.OnLeapEntry(f + k, true);
+    w.px = x1;
+    w.py = y1;
+    m.Tick(f + 12);
+}
+
+// A jump from (x0, y0) along (ux, uy) whose walk meets scenery at once: the
+// first blocked family query decides it. Returns that query's answer; the
+// jump stays open.
+static Answer propJump(Mod& m, World& w, int64_t f, double x0, double y0, double ux, double uy)
+{
+    w.px = x0;
+    w.py = y0;
+    takeoff(m, w, f, ux, uy);
+    return ask(m, Builtin::PlaceMeeting, f, true, Fence, true);
+}
+
+static bool has(const std::string& line, const std::string& part) { return line.find(part) != std::string::npos; }
 
 static std::string counts(const Counters& c)
 {
@@ -448,16 +537,20 @@ int main()
             counts(m.Stats()));
     }
     {
+        // No reach learned and no cursor: the starting reach is checked, so a
+        // solid there refuses the landing; refused-no-reach no longer occurs.
         World w;
         Mod m = make(w);
         m.SetEnabled(true);
+        w.solids.push_back(around(1000.0, 1000.0 + kStartReachPx, 4.0));
         takeoff(m, w, 100);
         bool real = true;
         for (Builtin b : kRows) real = real && ask(m, b, 100, true, CollisionParent, true) == Answer::Real;
         m.OnLeapEntry(101, true);
         real = real && ask(m, Builtin::PlaceMeeting, 101, true, Fence, true) == Answer::Real;
-        check("target/refused_no_reach", real && !m.HasReach() && m.Stats().refusedNoReach == 1 && m.Stats().granted == 0
-            && w.placeAsked.empty() && m.JumpDecision() == Decision::RefusedNoReach, counts(m.Stats()));
+        check("target/no_reach_refused_at_the_starting_reach", real && !m.HasReach() && m.Stats().refusedNoReach == 0
+            && m.Stats().refusedLanding == 1 && m.Stats().granted == 0 && asked(w, 1000.0, 1000.0 + kStartReachPx)
+            && m.JumpDecision() == Decision::RefusedLanding, counts(m.Stats()));
     }
     {
         World w;
@@ -496,6 +589,203 @@ int main()
         const Answer a = ask(m, Builtin::PlaceMeeting, 100, true, CollisionParent, true);
         check("target/unreadable_takeoff_refused", a == Answer::Real && m.Stats().granted == 0
             && m.Stats().refusedLanding == 1, counts(m.Stats()));
+    }
+
+    // ---- baseline: Live 1's prop jumps with no cursor ------------------------
+    // No cursor provider: the learned reach decides, as in v2.2.0, and puts the
+    // checked band inside the prop (town, reach 89) and the tree (outskirts,
+    // reach 113). Both refused, which is what Live 1 measured.
+    {
+        World w;
+        Mod m = make(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        cleanJump(m, w, 10, 912.0, 822.0, 911.0, 910.8);
+        const bool learned = m.HasReach() && std::llround(m.Reach()) == 89;
+        const Answer a = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        check("baseline/no_cursor_learned_reach_decides_town", learned && a == Answer::Real
+            && m.JumpDecision() == Decision::RefusedLanding && m.Stats().refusedLanding == 1 && m.Stats().granted == 0
+            && asked(w, kTownX, kTownY + m.Reach() - kLandingBandPx), m.StatLine());
+    }
+    {
+        World w;
+        Mod m = make(w);
+        outdoorWorld(w);
+        m.SetEnabled(true);
+        cleanJump(m, w, 10, kOutX, kOutY, 2129.8, 3909.7);
+        const bool learned = m.HasReach() && std::llround(m.Reach()) == 113;
+        const Answer a = propJump(m, w, 100, kOutX, kOutY, outUx(), outUy());
+        check("baseline/no_cursor_learned_reach_decides_outdoor", learned && a == Answer::Real
+            && m.JumpDecision() == Decision::RefusedLanding && m.Stats().refusedLanding == 1 && m.Stats().granted == 0,
+            m.StatLine());
+    }
+
+    // ---- target: the landing checked where the jump goes ----------------------
+    // Live 1: a jump ends near its cursor (88.8 px for a cursor 100 px away,
+    // 113.0 for 111.5), so the landing is checked at the cursor's distance, no
+    // further than the cap. The learned reach decides only without a cursor.
+    {
+        World w;
+        Mod m = makeCursor(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        w.cx = 912.0;
+        w.cy = 922.0;
+        cleanJump(m, w, 10, 912.0, 822.0, 911.0, 910.8);
+        w.cx = kTownX;
+        w.cy = kTownY + 140.0;
+        const Answer a = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s = m.StatLine();
+        check("target/cursor_town_live1", a == Answer::False && m.JumpDecision() == Decision::Granted
+            && m.Stats().granted == 1 && m.Stats().refusedLanding == 0 && !m.HasCap() && has(s, " reach=89 jumps=")
+            && has(s, " cap=none cursor=1074,1524@test last-target=cursor last-check=140 ")
+            && asked(w, kTownX, kTownY + 140.0), s);
+    }
+    {
+        World w;
+        Mod m = makeCursor(w);
+        outdoorWorld(w);
+        m.SetEnabled(true);
+        w.cx = 2131.5;
+        w.cy = 3916.0;
+        cleanJump(m, w, 10, kOutX, kOutY, 2129.8, 3909.7);
+        w.cx = kOutCursorX;
+        w.cy = kOutCursorY;
+        const Answer a = propJump(m, w, 100, kOutX, kOutY, outUx(), outUy());
+        const std::string s = m.StatLine();
+        check("target/cursor_outdoor_live1", a == Answer::False && m.JumpDecision() == Decision::Granted
+            && m.Stats().granted == 1 && !m.HasCap() && has(s, " reach=113 jumps=")
+            && has(s, " last-target=cursor last-check=163 "), s);
+    }
+    {
+        // Live 1's own town aim: the cursor 100 px south, inside the prop. A
+        // jump there ends inside it, so it is refused under any rule.
+        World w;
+        Mod m = makeCursor(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        w.cx = 912.0;
+        w.cy = 922.0;
+        cleanJump(m, w, 10, 912.0, 822.0, 911.0, 910.8);
+        w.cx = kTownX;
+        w.cy = kTownY + 100.0;
+        const Answer a = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s = m.StatLine();
+        check("target/cursor_inside_the_prop_refused", a == Answer::Real
+            && m.JumpDecision() == Decision::RefusedLanding && m.Stats().refusedLanding == 1 && m.Stats().granted == 0
+            && has(s, " last-target=cursor last-check=100 "), s);
+    }
+    {
+        // A clean jump of 175 px toward a cursor 300 px away sets the cap: a
+        // cursor further out is checked at 175, a nearer one at its own distance.
+        World w;
+        Mod m = makeCursor(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        w.cx = 912.0;
+        w.cy = 822.0 + 300.0;
+        cleanJump(m, w, 10, 912.0, 822.0, 912.0, 822.0 + 175.0);
+        const bool capped = m.HasCap() && near(m.Cap(), 175.0) && near(m.Reach(), 175.0);
+        w.cx = kTownX;
+        w.cy = kTownY + 300.0;
+        const Answer far = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s1 = m.StatLine();
+        const bool atCap = far == Answer::False && m.JumpDecision() == Decision::Granted
+            && has(s1, " cap=175 ") && has(s1, " last-target=cap last-check=175 ") && asked(w, kTownX, kTownY + 175.0);
+        land(m, w, 100, kTownX, kTownY + 175.0);
+        w.cx = kTownX;
+        w.cy = kTownY + 140.0;
+        const Answer nearer = propJump(m, w, 200, kTownX, kTownY, 0.0, 1.0);
+        const std::string s2 = m.StatLine();
+        check("target/cursor_up_to_the_cap", capped && atCap && nearer == Answer::False && m.Stats().granted == 2
+            && has(s2, " cap=175 ") && has(s2, " last-target=cursor last-check=140 "), s1 + " | " + s2);
+    }
+
+    // ---- the cap: learned only from a clean jump well short of its cursor -----
+    {
+        World w;
+        Mod m = makeCursor(w);
+        m.SetEnabled(true);
+        w.cx = 1000.0;
+        w.cy = 1120.0;                       // lands 20 px short of its cursor
+        clearJump(m, w, 10, 100.0);
+        const bool within = !m.HasCap() && near(m.Reach(), 100.0);
+        w.cy = 1124.0;                       // 24 px short: still within the slack
+        clearJump(m, w, 30, 100.0);
+        const bool at24 = !m.HasCap();
+        w.cy = 1125.0;                       // 25 px short: the cap
+        clearJump(m, w, 50, 100.0);
+        const bool set = m.HasCap() && near(m.Cap(), 100.0);
+        // An answered jump teaches nothing: granted at the cap, answered, and
+        // ending 250 px short of its cursor.
+        w.cy = 1300.0;
+        takeoff(m, w, 100);
+        const Answer a = ask(m, Builtin::PlaceMeeting, 100, true, Fence, true);
+        land(m, w, 100, 1000.0, 1050.0);
+        const bool answeredNothing = a == Answer::False && m.HasCap() && near(m.Cap(), 100.0) && near(m.Reach(), 100.0);
+        // A clean jump longer than the cap clears it; it ends 10 px short of
+        // its own cursor, so it sets none.
+        w.cy = 1150.0;
+        clearJump(m, w, 200, 140.0);
+        check("cap/learned_only_short_of_its_cursor", within && at24 && set && answeredNothing && !m.HasCap()
+            && near(m.Reach(), 140.0) && kCursorSlackPx == 24.0, m.StatLine());
+    }
+
+    // ---- the first jump after loading a character ------------------------------
+    {
+        // With a cursor, the first jump needs nothing learned.
+        World w;
+        Mod m = makeCursor(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        m.NotePlayer(261723);
+        w.cx = kTownX;
+        w.cy = kTownY + 140.0;
+        const Answer a = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s = m.StatLine();
+        check("first/lands_at_the_cursor_with_no_learned_reach", a == Answer::False
+            && m.JumpDecision() == Decision::Granted && !m.HasReach() && m.Stats().refusedNoReach == 0
+            && has(s, " reach=175 (start) jumps=") && has(s, " last-target=cursor last-check=140 "), s);
+    }
+    {
+        // No cursor and nothing learned: the starting reach (175 px, slot 14's
+        // open-ground jump) until a clean jump replaces it.
+        World w;
+        Mod m = make(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        const std::string fresh = m.StatLine();
+        const Answer a = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s = m.StatLine();
+        const bool start = a == Answer::False && m.JumpDecision() == Decision::Granted
+            && m.Stats().refusedNoReach == 0 && asked(w, kTownX, kTownY + kStartReachPx)
+            && has(fresh, " reach=175 (start) jumps=") && has(s, " cursor=unreadable last-target=start last-check=175 ");
+        land(m, w, 100, kTownX, kTownY + kStartReachPx);
+        const bool stillStart = !m.HasReach();
+        cleanJump(m, w, 200, 912.0, 822.0, 911.0, 910.8);
+        const std::string taught = m.StatLine();
+        check("first/no_cursor_uses_the_starting_reach", start && stillStart && m.HasReach() && kStartReachPx == 175.0
+            && has(taught, " reach=89 jumps="), s + " | " + taught);
+    }
+    {
+        // A cursor provider that cannot read, or reads a non-number, is no
+        // cursor: the starting reach decides.
+        World w;
+        Mod m = makeCursor(w);
+        townWorld(w);
+        m.SetEnabled(true);
+        w.cursorReadable = false;
+        const Answer unread = propJump(m, w, 100, kTownX, kTownY, 0.0, 1.0);
+        const std::string s1 = m.StatLine();
+        land(m, w, 100, kTownX, kTownY + kStartReachPx);
+        w.cursorReadable = true;
+        w.cx = std::nan("");
+        w.cy = kTownY + 140.0;
+        const Answer nan = propJump(m, w, 200, kTownX, kTownY, 0.0, 1.0);
+        const std::string s2 = m.StatLine();
+        check("first/unreadable_cursor_uses_the_starting_reach", unread == Answer::False && nan == Answer::False
+            && m.Stats().granted == 2 && has(s1, " cursor=unreadable last-target=start last-check=175 ")
+            && has(s2, " cursor=unreadable last-target=start last-check=175 "), s1 + " | " + s2);
     }
 
     // ---- the reach ---------------------------------------------------------
@@ -539,22 +829,24 @@ int main()
     }
     {
         // No reach yet: a take-off whose own frame saw a blocked family query
-        // (refused-no-reach) is not learned from, however far it went. With a
-        // reach: a refused take-off with a blocked query does not replace it.
+        // (refused at the starting reach) is not learned from, however far it
+        // went. With a reach: a refused take-off with a blocked query does not
+        // replace it.
         World w;
         Mod m = make(w);
         m.SetEnabled(true);
+        w.solids.push_back(around(1000.0, 1000.0 + kStartReachPx, 4.0));
         takeoff(m, w, 100);
         ask(m, Builtin::PlaceMeeting, 100, true, Fence, true);
         for (int64_t f = 101; f <= 105; ++f) m.OnLeapEntry(f, true);
         land(m, w, 105, 1000.0, 1120.0);
-        const bool none = !m.HasReach() && m.Stats().refusedNoReach == 1;
+        const bool none = !m.HasReach() && m.Stats().refusedLanding == 1 && m.Stats().answered == 0;
         clearJump(m, w, 200, 100.0);
         w.solids.push_back(around(1000.0, 1100.0, 4.0));
         takeoff(m, w, 300);
         ask(m, Builtin::PlaceMeeting, 300, true, Fence, true);
         land(m, w, 300, 1000.0, 1150.0);
-        check("reach/not_from_blocked_takeoff", none && near(m.Reach(), 100.0) && m.Stats().refusedLanding == 1,
+        check("reach/not_from_blocked_takeoff", none && near(m.Reach(), 100.0) && m.Stats().refusedLanding == 2,
             counts(m.Stats()));
     }
     {
@@ -575,7 +867,27 @@ int main()
         m.NotePlayer(1);
         const bool kept = m.HasReach();
         m.NotePlayer(2);
-        check("reach/reset_on_new_player", kept && !m.HasReach());
+        check("reach/kept_on_new_player", kept && m.HasReach() && near(m.Reach(), 100.0));
+    }
+    {
+        // Live 1: Player_obj's instance id changes with the room (261723 in
+        // Town_01_rm, 297089 in Act_01_01). The reach and the cap stay; only the
+        // jump in progress is dropped.
+        World w;
+        Mod m = makeCursor(w);
+        m.SetEnabled(true);
+        m.NotePlayer(261723);
+        w.cx = 1000.0;
+        w.cy = 1300.0;
+        clearJump(m, w, 10, 100.0);          // 200 px short of its cursor: cap 100
+        const bool learned = m.HasReach() && m.HasCap();
+        takeoff(m, w, 100);
+        const bool active = m.JumpActive();
+        m.NotePlayer(297089);
+        const std::string s = m.StatLine();
+        check("reach/survives_a_new_player_instance", learned && active && !m.JumpActive() && m.HasReach()
+            && near(m.Reach(), 100.0) && m.HasCap() && near(m.Cap(), 100.0) && has(s, " reach=100 jumps=")
+            && has(s, " cap=100 "), s);
     }
     {
         World w;
@@ -731,7 +1043,8 @@ int main()
         Mod m = make(w);
         m.SetEnabled(true);
         const long start = g_ExcludedAsks;
-        takeoff(m, w, 50);                                                    // no reach yet: refused
+        w.solids.push_back(around(1000.0, 1000.0 + kStartReachPx, 4.0));
+        takeoff(m, w, 50);                                                    // no reach yet: refused at the starting reach
         ask(m, Builtin::PlaceMeeting, 50, true, Fence, true);
         ask(m, Builtin::PlaceMeeting, 50, true, Fence, true);
         land(m, w, 50, 1000.0, 1000.0);
@@ -750,6 +1063,97 @@ int main()
             beforeGranted == start && g_ExcludedAsks == start + 1 && m.Stats().granted == 1, counts(m.Stats()));
     }
 
+    // ---- the install: armed at launch, hooked once a character exists --------
+    // The adapter feeds the core g_Setup, whether HhResolveLocalPlayer found
+    // the local player, and whether the try comes from the tick; it reports
+    // what JumpSceneryInstall returned with NoteInstall. The tick looks for the
+    // player only on the frames LooksForPlayer picks while the switch is on.
+    {
+        // Baseline: `jumpscenery 1` in game, with the player there, installs at
+        // once, as before. Off and on again keeps the one install.
+        World w;
+        Mod m = make(w);
+        const std::string never = std::string(m.InstallStateName());
+        m.SetEnabled(true);
+        const bool now = m.ShouldInstall(true, true, false);
+        m.NoteInstall(true, false);
+        const bool on = m.Enabled() && m.Installed();
+        m.SetEnabled(false);
+        const std::string offAfter = std::string(m.InstallStateName());
+        m.SetEnabled(true);
+        check("baseline/install_is_immediate_with_a_character",
+              never == "not-armed" && now && on && offAfter == "installed" && !m.ShouldInstall(true, true, false)
+                  && !m.ShouldInstall(true, true, true) && std::string(m.InstallStateName()) == "installed",
+              "never=" + never + " now=" + std::to_string(now) + " off=" + offAfter);
+    }
+    {
+        // Target: `jumpscenery 1` from the launch commands at character select.
+        // The switch is on, nothing installs; the tick looks every
+        // kInstallPollFrames frames and installs nothing until the player
+        // resolves, then installs once.
+        World w;
+        Mod m = make(w);
+        m.SetEnabled(true);
+        const bool atSelect = m.ShouldInstall(true, false, false);
+        const std::string armed = std::string(m.InstallStateName());
+        int looks = 0;
+        bool installed = false;
+        for (unsigned long long frame = 0; frame < 600; ++frame) {
+            if (!Mod::LooksForPlayer(frame)) continue;
+            ++looks;
+            if (m.ShouldInstall(true, false, true)) installed = true;
+        }
+        const bool beforeSetup = m.ShouldInstall(false, true, true);
+        const std::string waiting = std::string(m.InstallStateName());
+        const bool now = m.ShouldInstall(true, true, true);
+        if (now) m.NoteInstall(true, true);
+        check("target/waits_for_a_character_before_installing",
+              Mod::kInstallPollFrames == 60 && looks == 10 && !atSelect && !installed && !beforeSetup
+                  && m.Enabled() && armed == "waiting-for-character" && waiting == "waiting-for-character" && now
+                  && m.Installed() && !m.ShouldInstall(true, true, true) && !m.ShouldInstall(true, true, false)
+                  && std::string(m.InstallStateName()) == "installed",
+              "looks=" + std::to_string(looks) + " armed=" + armed + " waiting=" + waiting + " now=" + std::to_string(now));
+    }
+    {
+        // A refusal, from the tick or the command, turns the switch off and
+        // says so. The tick tries once per session; `jumpscenery 1` in game may
+        // try again, and a success then clears the refusal.
+        World w;
+        Mod m = make(w);
+        m.SetEnabled(true);
+        m.NoteInstall(false, true);
+        const bool offAfterTick = !m.Enabled() && !m.Installed();
+        const std::string refused = std::string(m.InstallStateName());
+        const bool offAsks = m.ShouldInstall(true, true, false);
+        m.SetEnabled(true);
+        const bool tickAgain = m.ShouldInstall(true, true, true);
+        const bool commandAgain = m.ShouldInstall(true, true, false);
+        m.NoteInstall(false, false);
+        const bool offAfterCommand = !m.Enabled() && std::string(m.InstallStateName()) == "refused";
+        m.SetEnabled(true);
+        m.NoteInstall(true, false);
+        check("target/a_refusal_turns_the_switch_off_and_the_tick_tries_once",
+              offAfterTick && refused == "refused" && !offAsks && !tickAgain && commandAgain && offAfterCommand
+                  && m.Enabled() && m.Installed() && std::string(m.InstallStateName()) == "installed",
+              "refused=" + refused + " tickAgain=" + std::to_string(tickAgain)
+                  + " commandAgain=" + std::to_string(commandAgain));
+    }
+    {
+        // Negative control: off, nothing installs whatever else holds, and the
+        // state says it was never armed.
+        World w;
+        Mod m = make(w);
+        bool any = false;
+        for (int bits = 0; bits < 8; ++bits)
+            if (m.ShouldInstall((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0)) any = true;
+        m.SetEnabled(true);
+        m.SetEnabled(false);
+        check("target/switched_off_never_installs_the_hooks",
+              !any && !m.ShouldInstall(true, true, false) && !m.Installed()
+                  && std::string(m.InstallStateName()) == "not-armed",
+              std::string(m.InstallStateName()));
+    }
+
     // ---- the stat line ------------------------------------------------------
     {
         World w;
@@ -765,18 +1169,40 @@ int main()
         ask(m, Builtin::InstancePosition, 100, true, Fence, true);
         const std::string after = m.StatLine();
         check("stat/line_names_every_counter",
-            fresh == "jumpscenery: on reach=none jumps=0 granted=0 answered=0 refused-landing=0 refused-room=0 "
+            fresh == "jumpscenery: on reach=175 (start) jumps=0 granted=0 answered=0 refused-landing=0 refused-room=0 "
                      "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 walk-before-open=0 "
-                     "walk-in-window=0 excluded=0 room=2000x2000"
+                     "walk-in-window=0 excluded=0 cap=none cursor=unreadable last-target=none last-check=none "
+                     "room=2000x2000"
                 && after == "jumpscenery: on reach=100 jumps=2 granted=1 answered=2 refused-landing=0 refused-room=0 "
                             "refused-no-reach=0 no-direction=0 landed-inside=0 before-open=0 walk-before-open=0 "
-                            "walk-in-window=1 excluded=0 room=2000x2000",
+                            "walk-in-window=1 excluded=0 cap=none cursor=unreadable last-target=reach last-check=100 "
+                            "room=2000x2000",
             fresh + " | " + after);
         w.roomReadable = false;
         m.SetEnabled(false);
         const std::string unknown = m.StatLine();
         check("stat/room_unknown", unknown.rfind("jumpscenery: off reach=100 ", 0) == 0
             && unknown.size() > 13 && unknown.substr(unknown.size() - 13) == " room=unknown", unknown);
+    }
+    {
+        // cap=, cursor= (read when the line is built, with the route that
+        // answered), last-target= and last-check=.
+        World w;
+        Mod m = makeCursor(w);
+        m.SetEnabled(true);
+        w.cx = 1000.0;
+        w.cy = 1300.0;
+        clearJump(m, w, 10, 100.0);          // cap 100
+        takeoff(m, w, 100);
+        ask(m, Builtin::PlaceMeeting, 100, true, Fence, true);
+        w.cx = 1234.4;
+        w.cy = 987.6;
+        const std::string s = m.StatLine();
+        w.cursorReadable = false;
+        const std::string u = m.StatLine();
+        check("stat/cursor_cap_and_last_check_fields",
+            has(s, " excluded=0 cap=100 cursor=1234,988@test last-target=cap last-check=100 room=2000x2000")
+                && has(u, " cap=100 cursor=unreadable last-target=cap "), s + " | " + u);
     }
 
     // ---- an unresolved family or exclusion answers for nothing ---------------

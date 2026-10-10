@@ -481,8 +481,8 @@ def load_cfg() -> dict:
         cfg.get("spawners", {}).pop(key, None)
     for key in RETIRED_KEYS:
         cfg.pop(key, None)
-    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (an older
-    # version's spin count such as 100) loads as the default, so the panel
+    # A saved Goburin's Head pity number outside GAMBA_PITY_RANGE (0, or one
+    # above 200 such as 1000) loads as the default, so the panel
     # shows and sends that rather than a slider pinned at its end.
     if gambapity_value(cfg.get("gambapity")) is None:
         cfg["gambapity"] = GAMBA_PITY_DEFAULT
@@ -956,7 +956,7 @@ def dungeon_chest_countdown_cmd(cfg: dict):
 
 # Goburin's Head pity (issue #134): the allowed range of machine explosions
 # without a head before the forced one, and its default; the slider steps by 1.
-GAMBA_PITY_RANGE = (1, 20)
+GAMBA_PITY_RANGE = (1, 200)
 GAMBA_PITY_DEFAULT = 10
 
 
@@ -1224,8 +1224,10 @@ def build_cmds(cfg: dict) -> list:
         out.append(hidden_loot_key_cmd(cfg))
         out.append("hiddenloot 1")
     if cfg.get("mod_jump_scenery", False):
-        # Safe to send at launch: `jumpscenery 1` only turns the switch on;
-        # the plugin decides nothing until the player's own jump starts.
+        # Safe to send at launch: `jumpscenery 1` at character select arms the
+        # switch, and the plugin installs its hooks once a character is loaded
+        # (never at character select; Known Limitations item 8). It decides
+        # nothing until the player's own jump starts.
         out.append("jumpscenery 1")
     if cfg.get("mod_loot_announce", False):
         # Safe to send at launch: `lootann 1` only turns the switch on; the

@@ -392,12 +392,18 @@ class DungeonChestDocsTests(unittest.TestCase):
         self.assertNotIn("still alive", low)
 
     def test_release_notes_name_the_mod_under_new(self):
+        # Published notes leave main through forgepact-notes-cleanup.yml.
+        if not RELEASE_NOTES.is_file():
+            self.skipTest("release-notes-v2.2.0.md is published and gone from main")
         notes = RELEASE_NOTES.read_text(encoding="utf-8")
         new = re.search(r"^## New\s*\n(.*?)(?=^## |\Z)", notes, re.S | re.M)
         self.assertIsNotNone(new)
         self.assertIn(f"**{ROW_LABEL}", new.group(1))
 
     def test_release_notes_name_the_planned_total(self):
+        # Published notes leave main through forgepact-notes-cleanup.yml.
+        if not RELEASE_NOTES.is_file():
+            self.skipTest("release-notes-v2.2.0.md is published and gone from main")
         notes = RELEASE_NOTES.read_text(encoding="utf-8")
         bullet = notes.split(f"**{ROW_LABEL}", 1)[1].split("\n- ", 1)[0]
         low = re.sub(r"\s+", " ", bullet.lower())

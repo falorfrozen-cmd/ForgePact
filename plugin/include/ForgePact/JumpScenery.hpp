@@ -35,10 +35,20 @@ namespace ForgePact::JumpSceneryMod {
 //     frames or more starts a new jump.
 //   - the original runs first. A free answer is returned as it is.
 //   - each jump is decided once, at its first really-blocked family query:
-//     direction from the walk's first two circle centres, reach from a recent
-//     clear jump, landing = take-off + reach x direction. The landing and the
-//     points kLandingBandPx before and after it must be inside the room and
-//     free of the family (the original place_meeting). Granted, or refused.
+//     direction from the walk's first two circle centres, landing = take-off
+//     + distance x direction. The landing and the points kLandingBandPx
+//     before and after it must be inside the room and free of the family (the
+//     original place_meeting). Granted, or refused.
+//   - the distance (v2.2.1): a jump ends near its cursor, not at a fixed
+//     length (Live 1 of the v2.2.1 hotfix measured 88.8 px for a cursor
+//     100 px away and 113.0 px for one 111.5 px away), up to a maximum, the
+//     cap. So with the cursor read at take-off, the distance is the cursor's,
+//     no more than the cap when one is known; without a cursor, the reach of
+//     the last clean jump; with neither, kStartReachPx. The cap is the length
+//     of the latest clean jump that ended more than kCursorSlackPx short of
+//     its cursor; a clean jump longer than the cap clears it.
+//   - the reach and the cap survive a new player instance id: the game gives
+//     the player a new one on every room change.
 //   - a granted jump answers each really-blocked family query of its window
 //     with the builtin's measured "no collision", except where a gate or a
 //     lock (the excluded objects) is what blocks it, or is what it names.
@@ -50,8 +60,8 @@ namespace ForgePact::JumpSceneryMod {
 // player, the object argument, the original's own answer, whether an excluded
 // object blocks the same query (the same original, same arguments and self,
 // against each excluded object), the original place_meeting at a point, the
-// room size and the player position; it resolves every object, script and
-// builtin by name.
+// room size, the player position and the mouse in room coordinates; it
+// resolves every object, script and builtin by name.
 
 // What a hooked call gets back. Real keeps the game's own answer; the other
 // two are written into the result instead (measured in Live 1's J3).
@@ -100,6 +110,13 @@ inline constexpr double kMinReachPx = 32.0;
 inline constexpr double kLandingBandPx = 16.0;
 // A query is inside the window while frame - last entry < this.
 inline constexpr int64_t kWindowFrames = 2;
+// A clean jump that ends more than this short of its cursor was stopped by the
+// jump's maximum length, so its length is the cap. Twice the larger miss Live 1
+// measured on open ground (11 px).
+inline constexpr double kCursorSlackPx = 24.0;
+// The distance checked when there is no cursor and no clean jump to learn the
+// reach from yet: the open-ground jump measured for save slot 14 (curated J11).
+inline constexpr double kStartReachPx = 175.0;
 // Two walk circles closer than this give no direction.
 inline constexpr double kMinDirectionPx = 0.001;
 // The family table forgets everything once it holds this many objects, so an
@@ -107,7 +124,25 @@ inline constexpr double kMinDirectionPx = 0.001;
 // without bound.
 inline constexpr size_t kFamilyTableMax = 65536;
 
+// RefusedNoReach no longer occurs (v2.2.1: a jump with nothing learned is
+// checked at the cursor or at kStartReachPx); it stays so the stat line keeps
+// its field.
 enum class Decision : int { Undecided, Granted, RefusedLanding, RefusedRoom, RefusedNoReach };
+
+// Where the last decided jump's landing distance came from (` last-target=`).
+enum class Target : int { None, Cursor, Cap, Reach, Start };
+
+inline constexpr std::string_view TargetName(Target t)
+{
+    switch (t) {
+    case Target::None:   return "none";
+    case Target::Cursor: return "cursor";
+    case Target::Cap:    return "cap";
+    case Target::Reach:  return "reach";
+    case Target::Start:  return "start";
+    }
+    return "?";
+}
 
 // What `jumpscenery stat` prints. Kept across off/on.
 struct Counters {
@@ -116,7 +151,7 @@ struct Counters {
     uint64_t answered = 0;        // queries answered "no collision"
     uint64_t refusedLanding = 0;  // landing (or its band) blocked, or the take-off unreadable
     uint64_t refusedRoom = 0;     // landing (or its band) outside the room, or the room unreadable
-    uint64_t refusedNoReach = 0;  // no clear jump to learn the reach from yet
+    uint64_t refusedNoReach = 0;  // always 0 since v2.2.1 (the starting reach stands in)
     uint64_t noDirection = 0;     // a blocked query before the walk gave two circles (left undecided)
     uint64_t landedInside = 0;    // a granted jump that ended inside the family
     uint64_t beforeOpen = 0;      // blocked family queries in a take-off frame before its window opened
@@ -153,6 +188,10 @@ public:
     using RoomSizeFn = std::function<bool(double& width, double& height)>;
     // The local player's x / y; false when it cannot be read.
     using PositionFn = std::function<bool(double& x, double& y)>;
+    // The mouse in room coordinates, and the name of the route that answered
+    // (the stat line prints it); false when it cannot be read. A non-finite
+    // value counts as unreadable.
+    using CursorFn = std::function<bool(double& x, double& y, std::string& route)>;
 
     void SetIsAncestor(IsAncestorFn fn) { isAncestor_ = std::move(fn); familyTable_.clear(); }
 
@@ -169,6 +208,9 @@ public:
     void SetPlaceMeeting(PlaceMeetingFn fn) { placeMeeting_ = std::move(fn); }
     void SetRoomSize(RoomSizeFn fn) { roomSize_ = std::move(fn); }
     void SetPlayerPosition(PositionFn fn) { playerPosition_ = std::move(fn); }
+    // Read once when a jump starts (with the take-off position) and when the
+    // stat line is built.
+    void SetCursor(CursorFn fn) { cursor_ = std::move(fn); }
 
     bool Configured() const
     {
@@ -187,16 +229,65 @@ public:
     }
     bool Enabled() const { return enabled_; }
 
-    // The local player's identity, whenever the adapter resolves it. A
-    // different player (another character loaded) has another Jump Power, so
-    // the reach is forgotten.
+    // ---- the install: armed at launch, hooked once a character exists ----
+    // The guide's Known Limitations item 8: a hook installed at character
+    // select stalls the runner. A switch already on as the game starts (the
+    // panel's launch commands carry `jumpscenery 1`, consumed while character
+    // selection still runs) only arms; the six hooks go in once setup is done
+    // and the local player resolves (the adapter asks HhResolveLocalPlayer).
+    // While armed, the adapter's tick looks for the player only on the frames
+    // LooksForPlayer picks, counted from the first armed frame, and tries once
+    // per session; `jumpscenery 1` with a character loaded tries at once, again
+    // after a refusal. A refused install turns the switch off.
+    static constexpr unsigned long long kInstallPollFrames = 60;
+    static constexpr bool LooksForPlayer(unsigned long long armedFrames)
+    {
+        return armedFrames % kInstallPollFrames == 0;
+    }
+    // Whether the adapter installs now: the switch on, the hooks not in yet,
+    // setup done, the local player resolved, and, for the tick, no try of its
+    // own yet this session.
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool fromTick) const
+    {
+        return enabled_ && !installed_ && !(fromTick && tickTried_) && setupDone && playerResolved;
+    }
+    // What the adapter's install returned: every hook in, or refused (the
+    // adapter prints why, once).
+    void NoteInstall(bool ok, bool fromTick)
+    {
+        if (fromTick) tickTried_ = true;
+        if (ok) {
+            installed_ = true;
+            refused_ = false;
+            return;
+        }
+        refused_ = true;
+        SetEnabled(false);
+    }
+    bool Installed() const { return installed_; }
+    // The ` install=` field the adapter appends to `jumpscenery 1` and `stat`:
+    // installed once the hooks are in, refused after a refused install,
+    // waiting-for-character while on without them, not-armed otherwise.
+    std::string_view InstallStateName() const
+    {
+        if (installed_) return "installed";
+        if (refused_) return "refused";
+        return enabled_ ? "waiting-for-character" : "not-armed";
+    }
+
+    // The local player's identity, whenever the adapter resolves it. The game
+    // gives the player a new instance id on every room change (Live 1: 261723
+    // in Town_01_rm, 297089 in Act_01_01), so a new id keeps the reach and the
+    // cap; only a jump in progress is dropped. Another character loaded keeps
+    // them as well: the guide's Known Limitations item 47 already accepts a
+    // jump decided at old values after a Jump Power change, and a cap too long
+    // for the new character checks a point past where it lands, which
+    // landed-inside= counts.
     void NotePlayer(int64_t id)
     {
         if (havePlayer_ && id == player_) return;
         havePlayer_ = true;
         player_ = id;
-        haveReach_ = false;
-        reach_ = 0.0;
         DropJump();
     }
 
@@ -269,8 +360,11 @@ public:
         if (jump_.active && !WindowOpen(frame)) CloseJump();
     }
 
+    // A reach learned from a clean jump; without one, kStartReachPx stands in.
     bool HasReach() const { return haveReach_; }
     double Reach() const { return reach_; }
+    bool HasCap() const { return haveCap_; }
+    double Cap() const { return cap_; }
     const Counters& Stats() const { return counters_; }
     Decision JumpDecision() const { return jump_.decision; }
     bool JumpActive() const { return jump_.active; }
@@ -283,7 +377,8 @@ public:
     {
         const Counters& c = counters_;
         std::string s = StatusLine();
-        s += " reach=" + (haveReach_ ? std::to_string(std::llround(reach_)) : std::string("none"));
+        s += " reach=" + (haveReach_ ? std::to_string(std::llround(reach_))
+                                     : std::to_string(std::llround(kStartReachPx)) + " (start)");
         s += " jumps=" + std::to_string(c.jumps);
         s += " granted=" + std::to_string(c.granted);
         s += " answered=" + std::to_string(c.answered);
@@ -296,6 +391,15 @@ public:
         s += " walk-before-open=" + std::to_string(c.walkBeforeOpen);
         s += " walk-in-window=" + std::to_string(c.walkInWindow);
         s += " excluded=" + std::to_string(c.excluded);
+        s += " cap=" + (haveCap_ ? std::to_string(std::llround(cap_)) : std::string("none"));
+        double cx = 0.0, cy = 0.0;
+        std::string route;
+        if (ReadCursor(cx, cy, route))
+            s += " cursor=" + std::to_string(std::llround(cx)) + "," + std::to_string(std::llround(cy)) + "@" + route;
+        else
+            s += " cursor=unreadable";
+        s += " last-target=" + std::string(TargetName(lastTarget_));
+        s += " last-check=" + (haveLastCheck_ ? std::to_string(std::llround(lastCheck_)) : std::string("none"));
         double w = 0.0, h = 0.0;
         if (ReadRoom(w, h))
             s += " room=" + std::to_string(std::llround(w)) + "x" + std::to_string(std::llround(h));
@@ -313,6 +417,8 @@ private:
         int64_t lastEntry = 0;
         bool haveTakeoff = false;
         double takeoffX = 0.0, takeoffY = 0.0;
+        bool haveCursor = false;       // the cursor, read with the take-off position
+        double cursorX = 0.0, cursorY = 0.0;
         int circles = 0;
         double circleX[2] = { 0.0, 0.0 };
         double circleY[2] = { 0.0, 0.0 };
@@ -358,6 +464,14 @@ private:
         try { return playerPosition_(x, y); } catch (...) { return false; }
     }
 
+    bool ReadCursor(double& x, double& y, std::string& route) const
+    {
+        if (!cursor_) return false;
+        bool ok = false;
+        try { ok = cursor_(x, y, route); } catch (...) { return false; }
+        return ok && std::isfinite(x) && std::isfinite(y);
+    }
+
     // Unreadable counts as blocked: the landing is then refused.
     bool FamilyAt(double x, double y) const
     {
@@ -395,6 +509,8 @@ private:
         jump_.takeoffFrame = frame;
         jump_.lastEntry = frame;
         jump_.haveTakeoff = ReadPosition(jump_.takeoffX, jump_.takeoffY);
+        std::string route;
+        jump_.haveCursor = ReadCursor(jump_.cursorX, jump_.cursorY, route);
         ++counters_.jumps;
         if (pendingValid_ && pendingFrame_ == frame) {
             counters_.walkBeforeOpen += pendingCircles_;
@@ -417,6 +533,19 @@ private:
             if (moved >= kMinReachPx) {
                 haveReach_ = true;
                 reach_ = moved;
+                // Longer than the cap: the cap was out of date. Well short of
+                // its own cursor: the jump's maximum stopped it, so it is the cap.
+                if (haveCap_ && moved > cap_) {
+                    haveCap_ = false;
+                    cap_ = 0.0;
+                }
+                if (jump_.haveCursor) {
+                    const double aimed = std::hypot(jump_.cursorX - jump_.takeoffX, jump_.cursorY - jump_.takeoffY);
+                    if (aimed - moved > kCursorSlackPx) {
+                        haveCap_ = true;
+                        cap_ = moved;
+                    }
+                }
             }
         }
         if (landed && jump_.decision == Decision::Granted && FamilyAt(x, y)) ++counters_.landedInside;
@@ -432,10 +561,33 @@ private:
         const double len = std::hypot(dx, dy);
         if (!(len > kMinDirectionPx)) { ++counters_.noDirection; return; }
         const double ux = dx / len, uy = dy / len;
-        if (!haveReach_) { Refuse(Decision::RefusedNoReach); return; }
-        if (!jump_.haveTakeoff) { Refuse(Decision::RefusedLanding); return; }
-        const double lx = jump_.takeoffX + reach_ * ux;
-        const double ly = jump_.takeoffY + reach_ * uy;
+        if (!jump_.haveTakeoff) {
+            lastTarget_ = Target::None;
+            haveLastCheck_ = false;
+            Refuse(Decision::RefusedLanding);
+            return;
+        }
+        // The distance: the take-off cursor's, no more than the cap; without a
+        // cursor the learned reach; with neither, the starting reach.
+        double dist = 0.0;
+        if (jump_.haveCursor) {
+            dist = std::hypot(jump_.cursorX - jump_.takeoffX, jump_.cursorY - jump_.takeoffY);
+            lastTarget_ = Target::Cursor;
+            if (haveCap_ && dist > cap_) {
+                dist = cap_;
+                lastTarget_ = Target::Cap;
+            }
+        } else if (haveReach_) {
+            dist = reach_;
+            lastTarget_ = Target::Reach;
+        } else {
+            dist = kStartReachPx;
+            lastTarget_ = Target::Start;
+        }
+        haveLastCheck_ = true;
+        lastCheck_ = dist;
+        const double lx = jump_.takeoffX + dist * ux;
+        const double ly = jump_.takeoffY + dist * uy;
         const double px[3] = { lx - kLandingBandPx * ux, lx, lx + kLandingBandPx * ux };
         const double py[3] = { ly - kLandingBandPx * uy, ly, ly + kLandingBandPx * uy };
         double w = 0.0, h = 0.0;
@@ -463,14 +615,23 @@ private:
     PlaceMeetingFn placeMeeting_;
     RoomSizeFn roomSize_;
     PositionFn playerPosition_;
+    CursorFn cursor_;
     int family_ = -1;
     std::vector<int> excluded_;
     std::unordered_map<int, uint8_t> familyTable_;
     bool enabled_ = false;
+    bool installed_ = false;
+    bool tickTried_ = false;
+    bool refused_ = false;
     bool havePlayer_ = false;
     int64_t player_ = 0;
     bool haveReach_ = false;
     double reach_ = 0.0;
+    bool haveCap_ = false;
+    double cap_ = 0.0;
+    Target lastTarget_ = Target::None;
+    bool haveLastCheck_ = false;
+    double lastCheck_ = 0.0;
     Jump jump_;
     bool pendingValid_ = false;
     int64_t pendingFrame_ = 0;

@@ -6757,14 +6757,14 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 20
+        "value": 200
        }
       }
      ]
     },
     "cmds": {
      "is": [
-      "gambapity 20"
+      "gambapity 200"
      ]
     }
    }
@@ -6850,7 +6850,7 @@
        "url": "/api/set",
        "body": {
         "key": "gambapity",
-        "value": 20
+        "value": 200
        }
       }
      ]
@@ -6878,7 +6878,7 @@
     },
     "cmds": {
      "is": [
-      "gambapity 20"
+      "gambapity 200"
      ]
     }
    }
