@@ -15,9 +15,7 @@ scenery is reworked so that it can do what it says.
 
 - **Jump through scenery (#206).** With the switch on before the game started,
   jumps were still stopped by rocks, fences, trees and carts, in town and
-  outside it. Two things stood in the way, and both are changed:
-  - The switch now waits for your character to be loaded before it starts
-    working, instead of hooking into the game at the character screen.
+  outside it. ForgePact itself refused those jumps, and that is what changed:
   - ForgePact checked for a landing spot at the length of your last jump, but
     a jump goes to where your mouse cursor is. So a jump over scenery was
     almost always checked at the wrong spot, inside the scenery, and refused.
@@ -27,9 +25,11 @@ scenery is reworked so that it can do what it says.
     carries you over it; aim into the scenery itself and it stays blocked, as
     in the game.
 
-  Also, the first jump after loading a character no longer has to be a
-  practice jump in the open, and walking into another zone no longer makes
-  ForgePact forget what it learned about your jump.
+  Also, with the switch on before the game starts, ForgePact now waits for
+  your character to be loaded before it hooks into the game, instead of doing
+  it at the character screen; the first jump after loading a character no
+  longer has to be a practice jump in the open, and walking into another zone
+  no longer makes ForgePact forget what it learned about your jump.
 
   **Not yet confirmed in a live game.** These changes pass ForgePact's own
   tests, but the version of the mod in this release has not yet been tried in
