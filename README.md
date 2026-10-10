@@ -46,7 +46,7 @@ none of these diagnostic hooks or the recorder. See
 | **Stop Double Cast Re-casting A Toggle Skill** | A double cast proc can cast one of that same fixed set of toggle skills a second time on its own, flipping its toggle straight back; with this on, that extra cast is skipped and the toggle stays the way your press left it. It only steps in when you actually have the skill's toggle sub-talent, or the skill is a toggle on its own; your own presses and other skills' double casts are untouched (off by default) |
 | **Restart Zone At Any Time** | The pause menu's Restart works straight away, in combat too, instead of waiting until you have been out of combat for a few seconds. Use the mouse: Restart lights up once the cursor is on it (off by default) |
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
-| **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, but only when it would land on open ground inside the room; otherwise the jump stays blocked as in the game. Locked doors and zone gates still block it. The jump distance is learned from a jump in the open, so the first jump after loading a character must be one in the open. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
+| **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
@@ -1388,36 +1388,63 @@ game's collision family, so the jump crosses, but only when the jump would land
 on open ground inside the room. Otherwise the game's own answers stand and the
 jump behaves as without the mod.
 
-- **Where it lands.** Each jump is decided once, at its first blocked query:
-  the landing is the take-off point plus the jump's reach in the jump's
-  direction. That point, and the points 16 px before and after it, must be
-  inside the room and free of the collision family; if not, the jump is
-  refused and stays blocked.
-- **The reach is learned, not guessed.** It comes from a recent jump of at
-  least 32 px that crossed nothing. Until the player has made one after
-  loading a character, every jump into scenery stays blocked.
+- **On at launch, hooked once a character is loaded.** With the switch on as
+  the game starts, the panel's launch command only arms it; its hooks go in
+  once a character is loaded, never at the character screen, where installing
+  a hook stalls the game. `jumpscenery stat` ends with `install=`
+  (`waiting-for-character`, then `installed`).
+- **Aim past the scenery.** A jump goes to the mouse cursor, up to a maximum
+  length. Each jump is decided once, at its first blocked query, and its
+  landing is checked where it is aimed: the take-off point plus the distance
+  to the cursor in the jump's direction (the cursor is read when the jump
+  starts). With the cursor on open ground past a rock, the jump carries you
+  over it; with the cursor inside the rock, the landing is inside it and the
+  jump stays blocked. That point, and the points 16 px before and after it,
+  must be inside the room and free of the collision family; if not, the jump
+  is refused and stays blocked.
+- **The longest jump.** When a jump in the open ends well short of its cursor
+  (more than 24 px), that jump's length is your maximum (`cap=`), and a cursor
+  farther away than that is checked at the maximum instead. A later jump in
+  the open that goes farther replaces it.
+- **No practice jump, and zones keep it.** The first jump after loading a
+  character is checked at its cursor like any other. If the cursor cannot be
+  read, the landing is checked at the length of your last jump in the open,
+  and before you have made one, at 175 px (an open-ground jump measured on a
+  level 100 character). Changing zone keeps the maximum and the last jump's
+  length: the game gives the player a new identity in every zone, and the mod
+  no longer forgets what it learned when that happens.
 - **Still blocked.** Locked doors (`Lock_obj`) and zone gates
   (`Gate_Parent_obj`) keep the game's answer. A jump the game refuses by a
   route these queries do not cover (one aimed to land inside a carriage, for
   example) stays refused.
 - **Only the local player's universal jump.** Not walking, not leap, dash or
   charge skills, and other players in co-op get the game's own answers.
-- **Cost.** Five collision builtins and the jump script are hooked on the first
-  `jumpscenery 1`, by name; while the mod is off each hook returns the game's
-  own answer at once.
-- **Checked in play** on 2026-10-03 (slot 14, Town of Inoya): with the mod
-  off, a jump at a prop did not move the player; with it on, the same jump
-  crossed the prop (125 px) and the player never ended inside scenery. The
-  learned reach (178 px) matched an open-ground jump of about 175 px. A jump
-  aimed to land inside a horse carriage did not move the player even with the
-  mod on, and no room edge could be reached, so neither the landing check nor
-  the room check has been seen working in play; both are tested outside the
-  game only.
+- **Cost.** Five collision builtins and the jump script are hooked once, by
+  name, when the switch is on and a character is loaded; while the mod is off
+  each hook returns the game's own answer at once.
+- **Checked in play** on 2026-10-03 (slot 14, Town of Inoya, switched on in
+  game): with the mod off, a jump at a prop did not move the player; with it
+  on, the same jump crossed the prop (125 px) and the player never ended
+  inside scenery. A jump aimed to land inside a horse carriage did not move
+  the player even with the mod on, and no room edge could be reached, so
+  neither the landing check nor the room check has been seen working in play;
+  both are tested outside the game only.
+- **Why 2.2.1 changed it** (#206). Switched on before the game started, 2.2.0
+  hooked in at the character screen, and its landing check used the length
+  of your last jump in the open rather than where the jump was aimed. In a
+  test session on 2026-10-09 every jump at scenery was refused that way, in
+  town and outside it, and the first jump after loading and the first after a zone change had
+  no length to check at all. **2.2.1's arming and its landing at the cursor
+  are tested outside the game and not yet confirmed in a live game.**
 
 `jumpscenery stat` prints the reach and the counters: jumps, `granted=`,
-`answered=`, the refusals by reason, `landed-inside=`, `excluded=` and the room
-size the guard uses. Measurements, the mechanism and what is not known yet:
-[`docs/jump-scenery-research.md`](docs/jump-scenery-research.md) § Phase 2.
+`answered=`, the refusals by reason, `landed-inside=`, `excluded=`, the
+maximum (`cap=`), the cursor it reads now (`cursor=`), where the last decided
+jump's distance came from (`last-target=`: `cursor`, `cap`, `reach`, `start`)
+and the distance it was checked at (`last-check=`), the room size the guard
+uses and `install=`. Measurements, the mechanism and what is not known yet:
+[`docs/jump-scenery-research.md`](docs/jump-scenery-research.md) § Phase 2
+and § Phase 3.
 
 ## Loot announcements
 

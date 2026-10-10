@@ -47,6 +47,9 @@ own loop.
   unnamed; Live 1 measured what the jump does from the outside.
 - **Arc:** `arc: not-established`. The reading did not establish the jump's
   arithmetic (§ Not established), so this phase has no jump-arc model or spec.
+- **Later phases:** § Phase 2: the mod (2.2.0) and § Phase 3: the v2.2.1
+  hotfix, which measured that a jump goes to the mouse cursor and moved the
+  mod's landing check there.
 
 ## Static search
 
@@ -835,7 +838,8 @@ has a `NATIVE_BOOLEANS` entry in the derived behaviour oracle.
 - **Not established**: which of the five builtins decides the crossing; what
   refuses J4 and J5 (the mod cannot override it); whether the game ejects a
   landing inside a prop; what happens at a room edge; why a crossing jump
-  ends shorter than the learned reach; whether a Leap skill also runs
+  ends shorter than the learned reach (§ Phase 3: a jump goes to its cursor);
+  whether a Leap skill also runs
   `skillsLeap` (**not observed**: Sorak has none); co-op.
 
 ### Mod live 1 results
@@ -918,3 +922,189 @@ room guard are **not observed**; the guard stays as written
 **Teardown.** `jumpscenery 0`, the game closed gracefully, and the session's
 save backup was restored (104 files; inspect after: nothing changed, added or
 missing).
+
+## Phase 3: the v2.2.1 hotfix
+
+**The report** (#206, the owner, 2026-10-09, the day 2.2.0 shipped): with the
+switch on, jumps are still stopped by scenery. The owner's decision: fix it,
+together with Goburin's Head pity's wider range (#207), as ForgePact 2.2.1, a
+hotfix outside the weekly schedule. Workorder `forgepact-v2.2.1-hotfix`. Each
+claim below is labelled **measured**, **static reading** or **not
+established**, as in Phase 2; the mod's own rules are design, pinned by the
+tests listed at the end.
+
+### The static findings
+
+- **Static reading** (our own code): the adapter, `HookBuiltin`'s detour and
+  `HookOneScript` were the same at the shipped 2.2.0 commit as at the build
+  Mod live 1 verified (`b273907`), apart from `HookBuiltin`'s install timing.
+  So the difference had to be in how the mod was used, which no session had
+  measured. Five candidates: (1) the hooks going in at the character screen,
+  because the panel's launch commands carry `jumpscenery 1` and the first
+  `jumpscenery 1` installed all six hooks (the guide's Known Limitations
+  item 8 hazard; `build_cmds`' comment said it "only turns the switch on",
+  which was false); (2) no reach on the first jump after loading; (3) the
+  reach forgotten on a zone change, if `Player_obj` changes its instance id;
+  (4) the reach never learned outdoors, if walking checks land in a take-off
+  frame; (5) outdoor scenery blocking by a route the five builtins do not
+  answer. `jumpscenery stat` on the shipped plugin tells the five apart, so
+  the diagnosis ran live, on the installed 2.2.0 plugin, with no build.
+- **Not established** statically: where the jump's length comes from. In the
+  local Ghidra project `skillsLeap` resolves by name but its body does not
+  decompile (the unanalysed import gives it, `playerJumpGravity` and
+  `CA_playerJump` a 1-byte body), and `StatJumpPower` was not read. Live 1
+  answered the question from the outside instead.
+
+### Hotfix live 1 results
+
+Run on 2026-10-09 (18:36-18:42 UTC) by the workorder's live operator on the
+**shipped 2.2.0 player plugin**, unchanged (the installed DLL's SHA-256
+`3a1414d35c059e268f632fa0636948537d2059fcc625766ec5976f610d268bcb` equals
+the plugin inside the `ForgePact-2.2.0.zip` release asset). The capture is
+the toolkit workorder's `forgepact-v2.2.1-hotfix-live-1.md`, a local working
+note; what it measured is restated here. Character: save slot 14, "Sorak".
+`jumpscenery 1` was sent at the character screen, as the panel's launch
+commands do; the jumps were aimed with injected mouse moves and Space
+presses, except where the owner placed the player and cursor (outdoors).
+Positions are `menulayout Player_obj`'s `gui=` reads, which are room
+coordinates; a screen point converts as room = view origin + screen ÷ 2 (the
+GUI is 2560 × 1440 over a 1280 × 720 view).
+
+| Check | Observed | Verdict |
+| --- | --- | --- |
+| `dll-hash`, `control`, `marker` | the hash above; `pong (YYTK 4.0.1)`; `jumpscenery: off reach=none jumps=0 ...` at the character screen | pass |
+| `armed-at-select` | `jumpscenery 1` at the character screen printed all six `HOOK INSTALLED` lines (`skillsLeap` and the five builtins), then `jumpscenery: on` | pass (the hooks did go in there) |
+| `no-stall` | `pong` at once after the character loaded | pass |
+| `first-jump-prop` | at Live 1's prop (1074.2, 1383.7), aimed south, `reach=none`: 0 px, `refused-no-reach` +1 | fail |
+| `calibrate` | open ground at (912.0, 822.0), cursor at room (912, 922), 100 px south: ended at (911.0, 910.8), 88.8 px; `reach=89` | pass |
+| `town-cross` | the prop again, same aim: 0 px, `refused-landing` +1 | fail |
+| `reach-after-zone` | after the owner walked into the Outskirts of Inoya (`Act_01_01`): `reach=none` | fail |
+| `outdoor-off-blocked` | mod off: beside a rock, 189.8 px past it (does not block); beside a large tree, 0 px (blocks) | pass (the tree) |
+| `outdoor-calibrate` | open ground from (2031.8, 3966.0), cursor at room (2131.5, 3916.0), 111.5 px: ended at (2129.8, 3909.7), 113.0 px; `reach=113` | pass |
+| `outdoor-cross` | the tree, cursor at room (1901.5, 3867.5), 163.3 px beyond it: 0 px, `refused-landing` +1, `granted=0`, `before-open=0`, `walk-before-open=0`, `walk-in-window` +1 | fail |
+| `restore-clean` | `jumpscenery 0`, the game closed, the save backup restored (inspect after: nothing changed, added or missing), lease released | pass |
+
+**The jump goes to the cursor.** **Measured** on two open-ground jumps: 88.8
+px for a cursor 100 px away (about 11 px short of it) and 113.0 px for one
+111.5 px away (about 6.5 px from it). Beside the rock, with the mod off, a jump moved
+189.8 px toward a cursor the operator could read only from a screenshot. So a
+jump's length follows the cursor distance, up to a maximum that is at least
+about 190 px for this character and was not measured. Phase 2's "a crossing
+jump ends shorter than the learned reach" (125 against about 175 px in Mod
+live 1) fits the same rule with the cursor placed at different distances, but
+that session did not record its cursor positions, so for that session it is a
+reading, not a measurement. Whether the game takes the target from `mouse_x`
+/ `mouse_y` or from an aim value of its own is **not established**.
+
+**Why every prop jump was refused.** The 2.2.0 landing guard put the landing
+at take-off + learned reach × direction, and the learned reach is the length
+of the last clean jump, which is that jump's own cursor distance, not the
+length of the jump being decided. In town the reach was 89, so the guard
+checked 73, 89 and 105 px south of the take-off: inside the prop, which
+blocks the take-off walk 22-40 px out, while Mod live 1's crossing ended free
+at 125 px. Outdoors the reach was 113 against a cursor 163 px away beyond the
+tree, and the checked band lay in the tree. The guard checked a point the
+jump would not land on. `granted` never rose, so the game's answer to a
+granted jump outdoors (candidate 5) was not reached.
+
+**The town aim was inside the prop.** The procedure said "about 200 px"; the
+operator applied it in screen pixels, which is 100 room px, so the cursor sat
+at (1074.2, 1483.7). By the prop's extent as the sessions bound it (blocked
+from 22 px, free at 125 px), a jump to that point ends inside the prop, so a
+refusal there is the right answer under any rule; the prop's far edge was not
+measured. The next procedure gives every aim in room px.
+
+**The reach is lost on a zone change** because `Player_obj` gets a new
+instance id in a new room: **measured** 261723 in `Town_01_rm` and 297089 in
+`Act_01_01`, and 2.2.0's `NotePlayer` forgot the reach on a new id.
+
+**The first jump with no reach was refused** (`refused-no-reach` +1, 0 px).
+The workorder's `no-reach` token reads `not-observed` only because its rule
+also needed `town-cross` to pass; the fix treats it as real.
+
+**Also measured.** `Act_01_01` is 18272 × 8704 (`room=`); a large tree there
+stops a vanilla jump (0 px) and a rock does not (189.8 px). The hooks went in
+at the character screen and the character still loaded with no stall, so the
+hazard of Known Limitations item 8 was **not observed** for this mod; the
+arming change below follows the rule anyway.
+
+### The arming change
+
+`jumpscenery 1` with no local player resolved (`HhResolveLocalPlayer`) now
+turns the switch on and installs nothing; with a character loaded it installs
+at once, as before. While armed, the per-frame tick looks for the player every
+60 frames and installs the six hooks once one resolves, trying once per
+session from the tick (an explicit `jumpscenery 1` in game may try again). A
+refusal prints the existing `jumpscenery: refused - <why>` line once and turns
+the switch off. The `jumpscenery 1` reply and `jumpscenery stat` end with
+`install=` and one of `not-armed`, `waiting-for-character`, `installed` or
+`refused`. This mirrors
+Loot announcements' arming of 2026-10-08 (`LootAnnounceMod.hpp`'s
+`ShouldInstall` / `LooksForPlayer`).
+
+### The landing fix
+
+The direction (the walk's first two circles), the 16 px band, the room check
+and the `place_meeting` check are unchanged; only the distance they are
+applied at changes, and what survives a new player instance.
+
+- **The cursor.** The adapter reads the mouse in room coordinates by name,
+  first the built-in variables `mouse_x` / `mouse_y` through `GetBuiltin`
+  (the route `room_width` is read by), then `device_mouse_x(0)` /
+  `device_mouse_y(0)`; the first that gives two finite numbers wins. The core
+  reads it once when a jump starts, with the take-off position. Which route
+  answers on this runner, and that it gives room rather than GUI coordinates,
+  is **not established**: `jumpscenery stat` prints the reading and the
+  route (`cursor=<x>,<y>@<route>|unreadable`).
+- **The landing distance**, in order: the take-off cursor's straight distance,
+  no more than the cap when one is known (`last-target=cursor`, or `cap` when
+  the cap cut it); with no cursor, the learned reach (`reach`); with no cursor
+  and nothing learned, 175 px (`start`), the open-ground jump measured for
+  slot 14 (curated J11). `refused-no-reach=` can no longer occur and stays on
+  the stat line at 0.
+- **The cap.** A clean jump (the same teaching rule as before: the mod
+  answered nothing, its take-off was not blocked, it moved 32 px or more)
+  whose take-off cursor was read and which ended more than 24 px short of its
+  cursor distance sets the cap to its length; the latest such jump wins, and a
+  clean jump longer than the cap clears it. 24 px is twice the larger cursor
+  miss Live 1 measured (11 px).
+- **Kept across a new player instance id**: the reach and the cap. A jump in
+  progress is still dropped.
+- **The stat line** gains `cap=<n>|none`, `cursor=...`,
+  `last-target=cursor|cap|reach|start|none` and `last-check=<n>|none` (the
+  distance the last decided jump was checked at) after `excluded=`, and `reach=` reads
+  `175 (start)` until a clean jump teaches it.
+- **Fails safe and visibly.** No cursor gives 2.2.0's rule plus the starting
+  reach. A cursor that reads but is wrong shows in play as a `last-check=`
+  far from the distance moved.
+
+**Rejected alternatives** (not to be re-proposed without new evidence):
+a larger fixed or seeded reach as the landing distance (with the cursor at
+100 px it checks 175 and can grant a jump that ends inside the prop);
+checking every point between the learned reach and the cursor (the town prop
+covers the low end of that range, so the reported jump stays refused);
+dropping the landing guard and relying on the game's own refusal (seen only at
+one horse carriage, not established in general); taking the length from the
+take-off walk's circles (the decision is made at the first blocked query,
+part-way through the walk, before its end is seen).
+
+### Status and what is not established
+
+- **Harness-verified**: `tests/test_jump_scenery_mod_behavior.py` (the town
+  and outdoor geometry of Live 1: the landing at the cursor, a cursor inside
+  the prop refused, the cap, the first jump with and without a cursor, the
+  reach across a new instance, the install waiting for a character),
+  `tests/test_jump_scenery_mod_contract.py` (the cursor read by name, the
+  install only through the core's decision) and
+  `tests/test_jump_scenery_panel_contract.py`.
+- **Not yet observed live**: 2.2.1's arming and its landing at the cursor.
+  The workorder's second live procedure, on the 2.2.1 build, measures which
+  cursor route answers in room coordinates, that a jump lands at its cursor,
+  the cap, and the crossings in town and at the outdoor tree; its results
+  will be recorded here as `### Hotfix live 2 results`. Until then the
+  release notes call the fix "not yet confirmed in a live game".
+- **Not established**: the jump's maximum length (at least about 190 px for
+  Sorak); where the game takes the jump's target from; and everything Phase 2
+  left open apart from the shorter crossing jump (which of the five builtins
+  decides the crossing, what refuses curated J7, J8 and J14, a landing inside
+  a prop, the walkable map's edge, a Leap skill, co-op).
