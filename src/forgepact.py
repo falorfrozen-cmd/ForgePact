@@ -329,6 +329,11 @@ DEFAULTS = {
     # does. Items the player drops are not. Off by default; offline only,
     # like every mod here.
     "mod_loot_announce": False,
+    # Always show Chaos Pillar mods (#7): every Chaos Pillar on screen shows
+    # its box of mods without being hovered; a pillar the player has
+    # activated shows it on hover again, as before. Off by default; offline
+    # only, like every mod here.
+    "mod_pillar_tips": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -1233,6 +1238,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: `lootann 1` only turns the switch on; the
         # plugin announces nothing until the game drops an item.
         out.append("lootann 1")
+    if cfg.get("mod_pillar_tips", False):
+        # Safe to send at launch: `pillartips 1` only turns the switch on;
+        # the plugin shows nothing until a Chaos Pillar is on screen.
+        out.append("pillartips 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -2957,7 +2966,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_pillar_tips", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3117,6 +3126,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"jumpscenery {1 if cfg['mod_jump_scenery'] else 0}"], cfg)
                     elif key == "mod_loot_announce":
                         send_cmds([f"lootann {1 if cfg['mod_loot_announce'] else 0}"], cfg)
+                    elif key == "mod_pillar_tips":
+                        send_cmds([f"pillartips {1 if cfg['mod_pillar_tips'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

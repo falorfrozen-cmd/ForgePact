@@ -90,6 +90,8 @@ QOL_CONTROL_IDS = [
     "mod_jump_scenery",
     # Loot announcements (forgepact-issue-17-loot-announcements).
     "mod_loot_announce",
+    # Always show Chaos Pillar mods (forgepact-7-chaos-pillar-mods).
+    "mod_pillar_tips",
     "mod_skill_timer_style",
     # Goburin's Head pity (forgepact-134-goburins-head-pity-mod): the switch and
     # its range.
