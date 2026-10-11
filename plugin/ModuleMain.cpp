@@ -7841,12 +7841,18 @@ static void DungeonChestDraw()
 // variable_instance_get / variable_instance_set. Instances are kept between
 // frames only as their numeric `id`s, never as a pointer, and each write is
 // preceded by instance_exists on the tooltip it is about to write (the point
-// of use); a write it cannot make is counted (NoteWriteRefused), not retried.
+// of use); a write it cannot make is counted (NoteWriteRefused), not retried,
+// and a census it cannot take is counted too (NoteCensusFailed).
+//
+// A pillar's `activated` holds a key into the game's protected-value store,
+// not the state (RUNTIME_DATA_MODELS.md sections 5.8 and 14.4): Live 1 read
+// it as true on every untouched pillar. So the census reads the record behind
+// the key (PtReadRecord), and the core decides the activation from the store's
+// answer.
 
 // More pillars than any zone was seen to hold (111 with `specialrate
 // chaospillars`, the S10 notes); the census reads no more than this.
 static constexpr long kPtCensusCap = 512;
-static long g_PtCensusFailed = 0;   // censuses asked for and not taken (an object name did not resolve)
 
 static double PtObjectIndex(std::string_view name)
 {
@@ -7860,18 +7866,55 @@ static bool PtNumber(const RValue& v, double& out)
     try { out = v.ToDouble(); return true; } catch (...) { return false; }
 }
 
-// A pillar's `activated`: a bool, or a number the GML way (above 0.5 is true).
-// Anything else, undefined included, is Unreadable, which the core never shows.
-static ForgePact::ChaosPillarTips::Activation PtActivation(const RValue& pillar)
+// A value the runtime answered, as the core classifies it: its kind and, for a
+// number or a bool, its value (a bool as 0 or 1). A number the runtime cannot
+// convert is Other, so it is never taken for a key.
+static ForgePact::ChaosPillarTips::StoreValue PtStoreValue(const RValue& v)
 {
-    using ForgePact::ChaosPillarTips::Activation;
+    using ForgePact::ChaosPillarTips::ValueKind;
+    ForgePact::ChaosPillarTips::StoreValue s;
+    const uint32_t kind = static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu;
     try {
-        RValue v = g_Yytk->CallBuiltin("variable_instance_get", { pillar, RValue("activated") });
-        if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? Activation::Activated : Activation::Inactive;
-        double d = 0.0;
-        if (PtNumber(v, d)) return d > 0.5 ? Activation::Activated : Activation::Inactive;
-    } catch (...) {}
-    return Activation::Unreadable;
+        if (kind == static_cast<uint32_t>(VALUE_REAL)) { s.kind = ValueKind::Real; s.number = v.ToDouble(); }
+        else if (kind == static_cast<uint32_t>(VALUE_INT32)) { s.kind = ValueKind::Int32; s.number = v.ToDouble(); }
+        else if (kind == static_cast<uint32_t>(VALUE_INT64)) { s.kind = ValueKind::Int64; s.number = v.ToDouble(); }
+        else if (kind == static_cast<uint32_t>(VALUE_BOOL)) { s.kind = ValueKind::Bool; s.number = v.ToBoolean() ? 1.0 : 0.0; }
+        else if (kind == static_cast<uint32_t>(VALUE_UNDEFINED)) s.kind = ValueKind::Undefined;
+        else if (kind == static_cast<uint32_t>(VALUE_STRING)) s.kind = ValueKind::String;
+        else s.kind = ValueKind::Other;
+    } catch (...) { s = ForgePact::ChaosPillarTips::StoreValue{}; s.kind = ValueKind::Other; }
+    return s;
+}
+
+// One protected-store record of a pillar (`activated`, and for the probe
+// `rarity` and `activateTimer`), read the way PackMarkers::ReadStore reads a
+// creator's `spawnPack`: the variable by name, which holds the key; the core's
+// key test (IsStoreKey); and only for an accepted key the game's
+// PC_GetVariableGMLWrapper script, called by its SDK name. A refused key never
+// reaches the call: a -1 key faulted the game, and catch (...) does not catch
+// that fault under /EHsc. The core maps the answer (ActivationFromAnswer); the
+// raw value is never itself taken for the state.
+struct PtRecord {
+    RValue raw;            // the variable as read: the key
+    bool keyed = false;    // the key test accepted it, so the getter was called
+    bool threw = false;    // the getter threw
+    RValue answer;         // the getter's answer, when keyed and it did not throw
+    ForgePact::ChaosPillarTips::Activation activation = ForgePact::ChaosPillarTips::Activation::Unreadable;
+};
+
+static PtRecord PtReadRecord(const RValue& pillar, const char* name)
+{
+    PtRecord r;
+    try { r.raw = g_Yytk->CallBuiltin("variable_instance_get", { pillar, RValue(name) }); } catch (...) { return r; }
+    if (!ForgePact::ChaosPillarTips::IsStoreKey(PtStoreValue(r.raw))) return r;
+    r.keyed = true;
+    std::optional<ForgePact::ChaosPillarTips::StoreValue> answer;
+    try {
+        r.answer = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data(), { r.raw });
+        answer = PtStoreValue(r.answer);
+    } catch (...) { r.threw = true; }
+    r.activation = ForgePact::ChaosPillarTips::ActivationFromAnswer(answer);
+    return r;
 }
 
 // A pillar's `chaosPillarTooltip`, accepted only as what it is: an instance
@@ -7895,15 +7938,16 @@ static std::optional<std::int64_t> PtTooltipOf(const RValue& pillar, double tool
 }
 
 // Every Chaos_Pillar_obj of the room, up to kPtCensusCap. False, and nothing
-// taken, when either object's name does not resolve: the core then keeps
+// taken, when either object's name does not resolve or the count cannot be
+// read: the tick counts it through the core (NoteCensusFailed), which keeps
 // deciding from the latest census it was given and asks again next frame.
 static bool PtTakeCensus(std::vector<ForgePact::ChaosPillarTips::Pillar>& out)
 {
     const double pillarIdx = PtObjectIndex(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Chaos_Pillar_obj));
     const double tooltipIdx = PtObjectIndex(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Chaos_Pillar_Tooltip_obj));
-    if (pillarIdx < 0 || tooltipIdx < 0) { ++g_PtCensusFailed; return false; }
+    if (pillarIdx < 0 || tooltipIdx < 0) return false;
     long n = 0;
-    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(pillarIdx) }).ToDouble(); } catch (...) { ++g_PtCensusFailed; return false; }
+    try { n = (long)g_Yytk->CallBuiltin("instance_number", { RValue(pillarIdx) }).ToDouble(); } catch (...) { return false; }
     if (n > kPtCensusCap) n = kPtCensusCap;
     for (long i = 0; i < n; ++i) {
         try {
@@ -7915,7 +7959,7 @@ static bool PtTakeCensus(std::vector<ForgePact::ChaosPillarTips::Pillar>& out)
             p.id = static_cast<std::int64_t>(id);
             if (!PtNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("x") }), p.x)) continue;
             if (!PtNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("y") }), p.y)) continue;
-            p.activation = PtActivation(inst);
+            p.activation = PtReadRecord(inst, "activated").activation;
             p.tooltip = PtTooltipOf(inst, tooltipIdx);
             out.push_back(p);
         } catch (...) {}
@@ -7963,6 +8007,7 @@ static void PillarTipsTick()
         if (g_PillarTips.BeginFrame(room)) {
             std::vector<ForgePact::ChaosPillarTips::Pillar> census;
             if (PtTakeCensus(census)) g_PillarTips.TakeCensus(std::move(census));
+            else g_PillarTips.NoteCensusFailed();
         }
         PtApply(g_PillarTips.Decide(PtReadView()));
     } catch (...) {}
@@ -7985,26 +8030,89 @@ static void PillarTipsCommand(const std::string& rest)
 // ---- pillarprobe: the Chaos Pillar tooltip research instrument (ForgePact #7)
 //
 // Research build only, never in kPlayerCommands, dispatched from RunCommand
-// as a standalone early return. Live procedure 1 reads it:
+// as a standalone early return. The live procedures read it:
 //   list           - the room, the pillar count, view camera 0, the window
 //                    size and Controller_obj's depth, then one row per pillar
 //                    (0-based, instance_find order): its id and x/y, the
 //                    client pixel of its bbox centre (hx/hy, what hs_input's
 //                    `move` takes), whether the shipped on-screen test passes,
-//                    `activated`, `device`, its tooltip and that tooltip's
-//                    `visible`, depth and layer name.
+//                    the `activated`, `rarity` and `activateTimer` records
+//                    (each key as read, the store's answer through the
+//                    shipped PtReadRecord, and for `activated` the activation
+//                    the core decides from them), the ordinary variables Live
+//                    procedure 2 records as candidates, `device`, its tooltip
+//                    and that tooltip's `visible`, depth and layer name.
+//   getter         - the store getter's control, the same as `packmarks
+//                    census getter`: gDataProtected[177] holds a key, and the
+//                    getter is `proven` only when GPV and
+//                    PC_GetVariableGMLWrapper, both called by name, answer the
+//                    same non-zero number for it. The key test runs first.
 //   device <k> <0|1> - writes pillar k's `device` (the gamepad branch of the
-//                    pillar's Step), for the gamepad-covered step.
-// The tail of the first line also carries the adapter's refused writes and
-// failed censuses, which the shipped stat line does not.
+//                    pillar's Step). Launch 1's; unused since the owner ruled
+//                    gamepad play unsupported.
+// The probe never writes a store record: no SetVariable, no SPV, and no call
+// of the pillar's activation.
 
-// A flag as 0/1 when the runtime answered a bool or a number, else its kind.
-static std::string PtProbeFlag(const RValue& v)
+// A number in full: a whole number with no decimals, otherwise every digit.
+static std::string PtProbeNumberText(double d)
 {
-    if (v.m_Kind == VALUE_BOOL) { try { return v.ToBoolean() ? "1" : "0"; } catch (...) {} }
+    if (std::isnan(d)) return "nan";
+    if (!std::isfinite(d)) return d > 0 ? "inf" : "-inf";
+    if (d == std::floor(d) && std::fabs(d) < 9.0e15) return std::to_string((long long)d);
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.17g", d);
+    return buf;
+}
+
+// The kind of a value that is no number, by name.
+static std::string PtProbeKind(const RValue& v)
+{
+    const uint32_t kind = static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu;
+    if (kind == static_cast<uint32_t>(VALUE_BOOL)) return "bool";
+    if (kind == static_cast<uint32_t>(VALUE_UNDEFINED)) return "undefined";
+    if (kind == static_cast<uint32_t>(VALUE_STRING)) return "string";
+    if (kind == static_cast<uint32_t>(VALUE_ARRAY)) return "array";
+    if (kind == static_cast<uint32_t>(VALUE_OBJECT)) return "object";
+    if (kind == static_cast<uint32_t>(VALUE_REF)) return "ref";
+    if (kind == static_cast<uint32_t>(VALUE_PTR)) return "ptr";
+    if (kind == static_cast<uint32_t>(VALUE_NULL)) return "null";
+    return "kind" + std::to_string(kind);
+}
+
+// A key as read (`<raw>`): a number in full, or its kind.
+static std::string PtProbeRaw(const RValue& v)
+{
     double d = 0.0;
-    if (PtNumber(v, d)) return d > 0.5 ? "1" : "0";
-    return Describe(v);
+    if (PtNumber(v, d)) return PtProbeNumberText(d);
+    return PtProbeKind(v);
+}
+
+// A plain read or a store answer (`<v>`, `<ans>`): a number in full,
+// true/false for a bool, or its kind.
+static std::string PtProbeValue(const RValue& v)
+{
+    if ((static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu) == static_cast<uint32_t>(VALUE_BOOL)) {
+        try { return v.ToBoolean() ? "true" : "false"; } catch (...) { return "bool"; }
+    }
+    return PtProbeRaw(v);
+}
+
+// The store's answer for a record: `refused` when the key test refused the
+// key (no call was made), `threw` when the call threw.
+static std::string PtProbeAnswer(const PtRecord& r)
+{
+    if (!r.keyed) return "refused";
+    if (r.threw) return "threw";
+    return PtProbeValue(r.answer);
+}
+
+static const char* PtProbeActivation(ForgePact::ChaosPillarTips::Activation a)
+{
+    switch (a) {
+    case ForgePact::ChaosPillarTips::Activation::Inactive: return "inactive";
+    case ForgePact::ChaosPillarTips::Activation::Activated: return "activated";
+    default: return "unreadable";
+    }
 }
 
 static std::string PtProbeNum(double d)
@@ -8048,9 +8156,7 @@ static void PillarProbeList()
     Out("pillarprobe: room=" + CurrentRoomName() + " pillars=" + std::to_string(n)
         + " view=" + PtProbeNum(view.x) + "," + PtProbeNum(view.y) + "," + PtProbeNum(view.w) + "," + PtProbeNum(view.h)
         + " window=" + std::to_string((long)ww) + "x" + std::to_string((long)wh)
-        + " controllerDepth=" + controllerDepth
-        + " writesRefused=" + std::to_string(g_PillarTips.Stats().writesRefused)
-        + " censusFailed=" + std::to_string(g_PtCensusFailed));
+        + " controllerDepth=" + controllerDepth);
     if (n > kPtCensusCap) n = kPtCensusCap;
     for (long k = 0; k < n; ++k) {
         try {
@@ -8069,9 +8175,22 @@ static void PillarProbeList()
             std::string line = "pillarprobe #" + std::to_string(k)
                 + " id=" + std::to_string((long long)InstanceIdOf(inst))
                 + " x=" + PtProbeNum(x) + " y=" + PtProbeNum(y) + " hx=" + hx + " hy=" + hy
-                + " onscreen=" + (ForgePact::ChaosPillarTips::OnScreen(view, x, y) ? "1" : "0")
-                + " activated=" + PtProbeFlag(PtProbeGet(inst, "activated"))
-                + " device=" + PtProbeFlag(PtProbeGet(inst, "device"));
+                + " onscreen=" + (ForgePact::ChaosPillarTips::OnScreen(view, x, y) ? "1" : "0");
+            const PtRecord activated = PtReadRecord(inst, "activated");
+            const PtRecord rarity = PtReadRecord(inst, "rarity");
+            const PtRecord timer = PtReadRecord(inst, "activateTimer");
+            line += " activatedKey=" + PtProbeRaw(activated.raw) + " activatedValue=" + PtProbeAnswer(activated)
+                + " activation=" + PtProbeActivation(activated.activation)
+                + " rarityKey=" + PtProbeRaw(rarity.raw) + " rarityValue=" + PtProbeAnswer(rarity)
+                + " activateTimerKey=" + PtProbeRaw(timer.raw) + " activateTimerValue=" + PtProbeAnswer(timer)
+                + " trembleTimer=" + PtProbeValue(PtProbeGet(inst, "trembleTimer"))
+                + " flameImage=" + PtProbeValue(PtProbeGet(inst, "flameImage"))
+                + " isDiscovered=" + PtProbeValue(PtProbeGet(inst, "isDiscovered"))
+                + " speakCooldown=" + PtProbeValue(PtProbeGet(inst, "speakCooldown"))
+                + " questState=" + PtProbeValue(PtProbeGet(inst, "questState"))
+                + " image_index=" + PtProbeValue(PtProbeGet(inst, "image_index"))
+                + " sprite_index=" + PtProbeValue(PtProbeGet(inst, "sprite_index"))
+                + " device=" + PtProbeValue(PtProbeGet(inst, "device"));
             RValue tv = PtProbeGet(inst, "chaosPillarTooltip");
             double tid = -1.0;
             if (IsNumericInstanceRead(tv)) { try { tid = tv.ToDouble(); } catch (...) { tid = -1.0; } }
@@ -8087,7 +8206,7 @@ static void PillarProbeList()
                     RValue dv = PtProbeGet(tip, "depth");
                     std::string layer = "?";
                     try { layer = g_Yytk->CallBuiltin("layer_get_name", { PtProbeGet(tip, "layer") }).ToString(); } catch (...) {}
-                    line += " visible=" + PtProbeFlag(PtProbeGet(tip, "visible"))
+                    line += " visible=" + PtProbeValue(PtProbeGet(tip, "visible"))
                         + " tipDepth=" + (PtNumber(dv, d) ? PtProbeNum(d) : Describe(dv)) + " tipLayer=" + layer;
                 } else {
                     line += " visible=? tipDepth=? tipLayer=?";
@@ -8110,11 +8229,49 @@ static void PillarProbeDevice(const std::string& args)
         if (k >= n) { Out("pillarprobe device: no pillar #" + std::to_string(k) + " (pillars=" + std::to_string(n) + "); nothing written"); return; }
         RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(pillarIdx), RValue((double)k) });
         if (!HeroSiege::Player::IsInstanceHandle(inst)) { Out("pillarprobe device: #" + std::to_string(k) + " is not an instance: " + Describe(inst)); return; }
-        const std::string before = PtProbeFlag(PtProbeGet(inst, "device"));
+        const std::string before = PtProbeValue(PtProbeGet(inst, "device"));
         g_Yytk->CallBuiltin("variable_instance_set", { inst, RValue("device"), RValue(value == 1) });
-        const std::string after = PtProbeFlag(PtProbeGet(inst, "device"));
+        const std::string after = PtProbeValue(PtProbeGet(inst, "device"));
         Out("pillarprobe: device #" + std::to_string(k) + " before=" + before + " after=" + after);
     } catch (...) { Out("pillarprobe device: write threw"); }
+}
+
+// `pillarprobe getter`: the store getter's control, as `packmarks census
+// getter` (PackMarksCensusGetter) takes it, with the core's key test. The key
+// test runs before either call (a -1 key faulted the game, RUNTIME_DATA_MODELS
+// 5.8).
+static void PillarProbeGetter()
+{
+    std::string slot = "unreadable", gpvText = "unread", wrapText = "unread";
+    bool proven = false;
+    try {
+        int len = -1;
+        RValue arr = GlobalArray("gDataProtected", len);
+        if (len <= 177) slot = "missing";
+        else {
+            const RValue key = g_Yytk->CallBuiltin("array_get", { arr, RValue(177.0) });
+            slot = PtProbeValue(key);
+            if (!ForgePact::ChaosPillarTips::IsStoreKey(PtStoreValue(key))) {
+                gpvText = wrapText = "refused";
+            } else {
+                RValue gpv, wrap;
+                bool gpvOk = false, wrapOk = false;
+                try {
+                    gpv = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GPV.data(), { key });
+                    gpvText = PtProbeValue(gpv);
+                    gpvOk = gpv.m_Kind == VALUE_REAL || gpv.m_Kind == VALUE_INT32 || gpv.m_Kind == VALUE_INT64;
+                } catch (...) { gpvText = "threw"; }
+                try {
+                    wrap = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data(), { key });
+                    wrapText = PtProbeValue(wrap);
+                    wrapOk = wrap.m_Kind == VALUE_REAL || wrap.m_Kind == VALUE_INT32 || wrap.m_Kind == VALUE_INT64;
+                } catch (...) { wrapText = "threw"; }
+                proven = gpvOk && wrapOk && gpv.ToDouble() == wrap.ToDouble() && gpv.ToDouble() != 0.0;
+            }
+        }
+    } catch (...) {}
+    Out("pillarprobe getter: gDataProtected[177]=" + slot + " GPV=" + gpvText + " wrapper=" + wrapText
+        + (proven ? " -> proven" : " -> unproven"));
 }
 
 static void PillarProbeCommand(const std::string& rest)
@@ -8122,8 +8279,9 @@ static void PillarProbeCommand(const std::string& rest)
     std::string args;
     const std::string sub = Lower(FirstToken(rest, args));
     if (sub == "list" || sub.empty()) { PillarProbeList(); return; }
+    if (sub == "getter") { PillarProbeGetter(); return; }
     if (sub == "device") { PillarProbeDevice(args); return; }
-    Out("pillarprobe: usage pillarprobe list | device <k> <0|1>");
+    Out("pillarprobe: usage pillarprobe list | getter | device <k> <0|1>");
 }
 #endif // FORGEPACT_RELEASE (pillarprobe)
 

@@ -19,7 +19,15 @@ file pins what that harness cannot see, on comment-stripped ModuleMain.cpp
 - the stat line's fields come in the order the workorder fixed, and the
   modstate object carries `enabled` and `shown`;
 - off with nothing shown, the tick returns before any builtin call (the all-off
-  baseline).
+  baseline);
+- replan 1: a pillar's `activated` holds a protected-store key, so the census
+  reads the record behind it through the game's PC_GetVariableGMLWrapper,
+  reached only by its SDK name and only after the core's key test in the same
+  function; the raw read is never itself turned into an activation; a census
+  not taken is counted through the core; `pillarprobe getter` (the getter's
+  control) and the widened `pillarprobe list` row sit in the research half
+  only; and nothing in the adapter or the probe writes a store record or
+  activates a pillar (no SetVariable, SPV or m_Activate).
 """
 import re
 import sys
@@ -52,22 +60,63 @@ ADAPTER_BUILTINS = {
     "variable_instance_get", "variable_instance_set",
     "view_get_camera", "camera_get_view_x", "camera_get_view_y", "camera_get_view_width", "camera_get_view_height",
 }
-# The research probe adds the window size and the tooltip's layer name.
-PROBE_BUILTINS = ADAPTER_BUILTINS | {"window_get_width", "window_get_height", "layer_get_name"}
+# The research probe adds the window size, the tooltip's layer name, and the
+# getter control's read of gDataProtected[177].
+PROBE_BUILTINS = ADAPTER_BUILTINS | {"window_get_width", "window_get_height", "layer_get_name", "array_get"}
+
+# The game scripts each half may call, by SDK name: the adapter only the store
+# getter; the probe also GPV, for the getter's control.
+WRAPPER_CALL = "HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data()"
+GPV_CALL = "HeroSiege::Scripts::gml_Script_GPV.data()"
+KEY_TEST = "ForgePact::ChaosPillarTips::IsStoreKey("
+
+# Names that write a store record or activate a pillar; none may reach the game
+# from the adapter or the probe.
+STATE_WRITERS = ("SetVariable", "SPV", "m_Activate", "InitNewVariableFast", "FreeVariable")
+
+# `pillarprobe list`'s first line and per-pillar row, in order (ctx "### Names,
+# commands and strings", replan 1).
+PROBE_HEAD_FIELDS = ["room", "pillars", "view", "window", "controllerDepth"]
+PROBE_ROW_FIELDS = ["id", "x", "y", "hx", "hy", "onscreen", "activatedKey", "activatedValue", "activation",
+                    "rarityKey", "rarityValue", "activateTimerKey", "activateTimerValue", "trembleTimer",
+                    "flameImage", "isDiscovered", "speakCooldown", "questState", "image_index", "sprite_index",
+                    "device", "tooltip", "tipExists", "visible", "tipDepth", "tipLayer"]
 
 # `pillartips: <on|off>` then these fields, in this order (ctx "### Names,
 # commands and strings").
 STAT_FIELDS = ["pillars", "onscreen", "shown", "activated", "unreadable", "notooltip", "showWrites", "hideWrites",
-               "ticks", "hudCalls"]
+               "writesRefused", "censusFailed", "ticks", "hudCalls"]
 MODSTATE_FIELDS = ["enabled", "shown"]
 
 # Names the research build alone may carry.
-RESEARCH_ONLY_NAMES = ("pillarprobe", "PillarProbeCommand", "PillarProbeList", "PillarProbeDevice", "PtProbeFlag",
-                       "PtProbeNum", "PtProbeGet")
+RESEARCH_ONLY_NAMES = ("pillarprobe", "PillarProbeCommand", "PillarProbeList", "PillarProbeDevice",
+                       "PillarProbeGetter", "PtProbeValue", "PtProbeRaw", "PtProbeAnswer", "PtProbeKind",
+                       "PtProbeNumberText", "PtProbeActivation", "PtProbeNum", "PtProbeGet")
 
 
 def builtins_called(code):
     return set(re.findall(r'CallBuiltin\(\s*"(\w+)"', code))
+
+
+def scripts_called(code):
+    return re.findall(r"CallGameScript\(\s*([^,]+?)\s*,", code)
+
+
+def key_test_guards_every_getter_call(body):
+    """True when the body calls the store getter and the key test comes first."""
+    if WRAPPER_CALL not in body or KEY_TEST not in body:
+        return False
+    return body.index(KEY_TEST) < body.index("CallGameScript(")
+
+
+def literal_fields(code):
+    """The `name=` fields of the string literals in `code`, in order, each once."""
+    text = " ".join(re.findall(r'"((?:[^"\\]|\\.)*)"', code))
+    seen = []
+    for name in re.findall(r"(\w+)=", text):
+        if name not in seen:
+            seen.append(name)
+    return seen
 
 
 class ChaosPillarTipsWiringTests(unittest.TestCase):
@@ -200,6 +249,98 @@ class ChaosPillarTipsWiringTests(unittest.TestCase):
         self.assertNotIn("variable_global_get", self.adapter)
 
     # ---- the lines ----------------------------------------------------------
+
+    def test_pillarprobe_getter_and_the_list_row_are_research_only(self):
+        command = function_body(self.probe, "static void PillarProbeCommand(const std::string& rest)")
+        self.assertIn('if (sub == "getter") { PillarProbeGetter(); return; }', command)
+        self.assertIn('if (sub == "list" || sub.empty()) { PillarProbeList(); return; }', command)
+        getter = function_body(self.probe, "static void PillarProbeGetter()")
+        self.assertIn('"pillarprobe getter: gDataProtected[177]="', getter)
+        self.assertIn('" -> proven"', getter)
+        self.assertIn('" -> unproven"', getter)
+        self.assertIn(GPV_CALL, getter)
+        self.assertIn(WRAPPER_CALL, getter)
+        # The player build carries neither the subcommand nor its line.
+        self.assertNotIn("pillarprobe getter", self.player)
+        self.assertNotIn("PillarProbeGetter", self.player)
+        # Positive control: the research build does.
+        self.assertIn("PillarProbeGetter", self.code)
+
+    def test_the_probe_list_lines_carry_the_replan_1_fields_in_order(self):
+        body = function_body(self.probe, "static void PillarProbeList()")
+        head = body[body.index('Out("pillarprobe: room="'):]
+        head = head[:head.index(");") + 2]
+        self.assertEqual(literal_fields(head), PROBE_HEAD_FIELDS)
+        row = body[body.index('std::string line = "pillarprobe #"'):body.index("Out(line);")]
+        self.assertEqual(literal_fields(row), PROBE_ROW_FIELDS)
+        # The launch-1 `activated=` field, the raw key taken for a flag, is gone.
+        self.assertNotIn('" activated="', body)
+        # The three records go through the shipped reader.
+        for name in ("activated", "rarity", "activateTimer"):
+            self.assertIn(f'PtReadRecord(inst, "{name}")', body)
+        # Negative control: a row in another order would be caught.
+        self.assertEqual(literal_fields('" activation=" + a + " activatedKey="'), ["activation", "activatedKey"])
+
+    # ---- the store record (replan 1) ---------------------------------------
+
+    def test_the_getter_is_reached_by_its_sdk_name_only_after_the_key_test(self):
+        record = function_body(self.adapter, "static PtRecord PtReadRecord(const RValue& pillar, const char* name)")
+        self.assertTrue(key_test_guards_every_getter_call(record), record)
+        self.assertIn(f"if (!{KEY_TEST}PtStoreValue(r.raw))) return r;", record)
+        getter = function_body(self.probe, "static void PillarProbeGetter()")
+        self.assertTrue(key_test_guards_every_getter_call(getter), getter)
+        # Every game script either half calls is named through the SDK, and the
+        # adapter's only one is the getter, called in PtReadRecord alone.
+        self.assertEqual(scripts_called(self.adapter), [WRAPPER_CALL])
+        self.assertEqual(scripts_called(record), [WRAPPER_CALL])
+        self.assertEqual(sorted(scripts_called(self.probe)), sorted([GPV_CALL, WRAPPER_CALL]))
+        self.assertEqual(scripts_called(self.probe), scripts_called(getter))
+        for code in (self.adapter, self.probe):
+            self.assertNotIn('"gml_Script_PC_GetVariableGMLWrapper"', code)
+            self.assertNotIn('"gml_Script_GPV"', code)
+            self.assertNotRegex(code, r'CallBuiltin\(\s*"GetVariable')
+        # The census reads `activated` through it.
+        census = function_body(self.adapter, "static bool PtTakeCensus(")
+        self.assertIn('p.activation = PtReadRecord(inst, "activated").activation;', census)
+        # Negative control: a call made before the key test is caught.
+        bad = f"r.answer = g_Yytk->CallGameScript({WRAPPER_CALL}, {{ r.raw }});\n if (!{KEY_TEST}x)) return r;"
+        self.assertFalse(key_test_guards_every_getter_call(bad))
+
+    def test_the_raw_activated_read_is_never_turned_into_an_activation(self):
+        record = function_body(self.adapter, "static PtRecord PtReadRecord(const RValue& pillar, const char* name)")
+        # The raw value meets the key test and the call, nothing else.
+        self.assertEqual(record.count("PtStoreValue(r.raw)"), 1)
+        self.assertIn(f"{KEY_TEST}PtStoreValue(r.raw))", record)
+        # The core's mapping sees only the getter's answer.
+        self.assertEqual(self.adapter.count("ActivationFromAnswer("), 1)
+        self.assertIn("r.activation = ForgePact::ChaosPillarTips::ActivationFromAnswer(answer);", record)
+        self.assertEqual(re.findall(r"(?<![.\w])answer = ([^;]+);", record), ["PtStoreValue(r.answer)"])
+        self.assertLess(record.index(WRAPPER_CALL), record.index("answer = PtStoreValue(r.answer);"))
+        # The adapter decides no activation of its own (launch 1 mapped the raw
+        # read: a bool, or a number above 0.5), and neither does the probe.
+        for code in (self.adapter, self.probe):
+            self.assertNotIn("Activation::Activated :", code)
+            self.assertNotIn("> 0.5", code)
+        self.assertNotIn("ActivationFromAnswer(", self.probe)
+        # Negative control: the launch-1 reader would be caught.
+        launch1 = "if (PtNumber(v, d)) return d > 0.5 ? Activation::Activated : Activation::Inactive;"
+        self.assertIn("> 0.5", launch1)
+        self.assertIn("Activation::Activated :", launch1)
+
+    def test_a_census_not_taken_is_counted_through_the_core(self):
+        tick = function_body(self.adapter, "static void PillarTipsTick()")
+        self.assertIn("if (PtTakeCensus(census)) g_PillarTips.TakeCensus(std::move(census));", tick)
+        self.assertIn("else g_PillarTips.NoteCensusFailed();", tick)
+        self.assertNotIn("g_PtCensusFailed", self.code)
+        self.assertIn("void NoteCensusFailed() { ++m_Stats.censusFailed; }", self.header)
+
+    def test_nothing_writes_a_store_record_or_activates_a_pillar(self):
+        for code in (self.adapter, self.probe):
+            for name in STATE_WRITERS:
+                self.assertNotRegex(code, rf"(?<![A-Za-z]){name}\b", name)
+        # Negative control: the scan sees a writer where there is one.
+        sample = "g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_SPV.data(), { key, RValue(true) });"
+        self.assertRegex(sample, r"(?<![A-Za-z])SPV\b")
 
     def test_the_stat_line_fields_come_in_order(self):
         stat = function_body(self.header, "std::string StatLine(long long hudCalls) const")
