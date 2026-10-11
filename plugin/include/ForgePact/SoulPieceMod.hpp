@@ -7,7 +7,9 @@ namespace ForgePact::SoulPieces {
 // Boss soul pieces (`soulpiece 1|0|on|off|status|force on|force off`, issue
 // #197): while the mod is on, an ordinary monster dying in a zone of an act
 // can drop a Piece of <boss>'s Soul of that act, and right-clicking a piece in
-// the backpack outside town summons that act's boss near the player.
+// the backpack and confirming opens a portal beside the player to that act's
+// boss room (`Act_0N_Boss`). The boss room's own pentagram brings the boss
+// out; nothing here creates, moves or kills a boss.
 //
 // The drop rolls inside the game's own gem roll (one more consumer of the
 // shared `DropGems` detour): a `DropGems` call means the game already decided
@@ -17,23 +19,23 @@ namespace ForgePact::SoulPieces {
 // of its own. Its chance per call is 1 in D, D = max(1, floor(G x 4 / 5)),
 // where G is the Gem of Incarnation's `droprate.base`, read at run time from
 // its repository entry by name: five quarters of the gem's own chance on the
-// same roll, "a little more common" (the owner, 2026-10-11). G = 10,000 is the
-// expected rate, UNVERIFIED until Live procedure 1 reads it.
+// same roll, "a little more common" (the owner, 2026-10-11). Live procedure 1
+// measured G = 9,000, so D = 7,200.
 //
-// A piece is one of the game's own key definitions (class 12, a base key
-// resolved by repository name, c 0, j 0) whose seed `a` is 777100 + act, so a
-// save holding pieces loads without ForgePact. The game stacks two items when
-// their class, b and c agree and never compares the seed, so while the mod is
-// on VetoStack keeps pieces of different acts, and a piece and an ordinary
-// key, apart (only on `item-route: one-base`).
+// A piece is the game's own Edible PAS Logo (a class-11 consumable whose base
+// is resolved by repository name, c 0, j 0) whose seed `a` is 777100 + act, so
+// a save holding pieces loads without ForgePact. The bag stacks only classes
+// 12 to 15, so a piece takes its own bag cell and never merges with the logo
+// or with another piece.
 //
 // This header holds the decisions and their counters only: no runtime type,
 // builtin or log call. The adapter in ModuleMain.cpp supplies the room's name
-// and act (`RoomActIndex` + 1, asked by name; 0 for a room outside the act
-// table), the dying source's ancestry, G, the roll and the items' seeds.
-// tests/soul_piece_harness.cpp runs all of it against fake gem rolls and
-// uses; the hub's tests/test_soul_piece_model.py pins these constants, the act
-// table and the verdict words to hs-game-sdk/curated/boss_soul_pieces.json.
+// and act (ActOfRoomActIndex of `RoomActIndex`'s answer, asked by name; 0 for
+// a room outside the act table), the dying source's ancestry, G, the roll,
+// the item's fields and the player's place. tests/soul_piece_harness.cpp runs
+// all of it against fake gem rolls and uses; the hub's
+// tests/test_soul_piece_model.py pins these constants, the act table and the
+// verdict words to hs-game-sdk/curated/boss_soul_pieces.json.
 
 inline constexpr int kActCount = 9;
 
@@ -45,44 +47,52 @@ inline constexpr long long kSeedBase = 777100;
 // kRatioDenominator / kRatioNumerator (five quarters) as likely as the gem.
 inline constexpr long long kRatioNumerator = 4;
 inline constexpr long long kRatioDenominator = 5;
-// The Gem of Incarnation's expected `droprate.base` (UNVERIFIED, static
-// reading; the shipped code reads the real one at run time).
-inline constexpr long long kExpectedGemRate = 10000;
+// The Gem of Incarnation's `droprate.base` as Live procedure 1 measured it
+// (2026-10-11); the shipped code reads the real one at run time, so a game
+// patch or a lever that moves the gem moves the piece with it.
+inline constexpr long long kExpectedGemRate = 9000;
 // Where G is read: the repository entry of this name in this category,
 // walked as `droprate` walks a category, never by index.
 inline constexpr int kGemCategory = 15;
 inline constexpr char kGemRepoName[] = "socketable_gem_of_incarnation";
-// Pieces are keys: their base is an entry of this category, found by name.
-inline constexpr int kKeyCategory = 12;
+// A piece's base: the repository entry of this name in this category (Live
+// procedure 1 measured b 12 on the owner's own logo; the name is resolved at
+// run time, never the index), an item of this class.
+inline constexpr int kBaseCategory = 11;
+inline constexpr int kBaseItemType = 11;
+inline constexpr char kBaseRepoName[] = "consumable_edible_pas_logo";
 
-// The summoned boss appears this far to the player's side.
-inline constexpr double kSpawnOffsetPx = 600.0;
+// The portal stands this far to the player's right, mirrored to the left past
+// the room's width (Live procedure 1: 1200 px to the side was off-screen).
+inline constexpr double kPortalOffsetPx = 96.0;
 // The dress's mechanic tag.
 inline constexpr char kMechanicTag[] = "soulpiece";
 
 // ---- the act table ---------------------------------------------------------------
-// One row per act: the boss summoned for it (an SDK object name, resolved by
-// name at run time) and the piece's name. Acts 1 and 2 come from the issue;
-// 3-6, 8 and 9 from their boss rooms' decor (static reading); Act 7 is the
-// owner's (2026-10-11). `named` false would make an act drop nothing and
-// summon nothing (`unnamed`); every shipped row is named.
+// One row per act: the boss its room is expected to bring out (an SDK object
+// name), the piece's name, and the act's boss room (an SDK room name, resolved
+// by name at run time), where the piece's portal leads. Acts 1 and 2 come from
+// the issue; 3-6, 8 and 9 from their boss rooms' decor (static reading); Act 7
+// is the owner's (2026-10-11). `named` false would make an act drop nothing
+// and open no portal (`unnamed`); every shipped row is named.
 struct ActBoss {
     int act;
     const char* bossObject;
     const char* pieceName;
+    const char* bossRoom;
     bool named;
 };
 
 inline constexpr ActBoss kActs[kActCount] = {
-    { 1, "Gurag_obj", "Piece of Gurag's Soul", true },
-    { 2, "Reaper_obj", "Piece of the Grim Reaper's Soul", true },
-    { 3, "Anubis_obj", "Piece of Anubis' Soul", true },
-    { 4, "Damien_obj", "Piece of Damien's Soul", true },
-    { 5, "Karp_King_obj", "Piece of the Karp King's Soul", true },
-    { 6, "Satan_obj", "Piece of Satan's Soul", true },
-    { 7, "Mevius_obj", "Piece of Mevius' Soul", true },
-    { 8, "Odin_Phase_1_obj", "Piece of Odin's Soul", true },
-    { 9, "Cthulhu_obj", "Piece of Cthulhu's Soul", true },
+    { 1, "Gurag_obj", "Piece of Gurag's Soul", "Act_01_Boss", true },
+    { 2, "Reaper_obj", "Piece of the Grim Reaper's Soul", "Act_02_Boss", true },
+    { 3, "Anubis_obj", "Piece of Anubis' Soul", "Act_03_Boss", true },
+    { 4, "Damien_obj", "Piece of Damien's Soul", "Act_04_Boss", true },
+    { 5, "Karp_King_obj", "Piece of the Karp King's Soul", "Act_05_Boss", true },
+    { 6, "Satan_obj", "Piece of Satan's Soul", "Act_06_Boss", true },
+    { 7, "Mevius_obj", "Piece of Mevius' Soul", "Act_07_Boss", true },
+    { 8, "Odin_Phase_1_obj", "Piece of Odin's Soul", "Act_08_Boss", true },
+    { 9, "Cthulhu_obj", "Piece of Cthulhu's Soul", "Act_09_Boss", true },
 };
 
 inline bool IsAct(int act) { return act >= 1 && act <= kActCount; }
@@ -90,6 +100,18 @@ inline bool IsAct(int act) { return act >= 1 && act <= kActCount; }
 inline const ActBoss* BossOfAct(int act)
 {
     return IsAct(act) ? &kActs[act - 1] : nullptr;
+}
+
+// The act a room belongs to, from `RoomActIndex`'s answer: the answer is the
+// act itself (Live procedure 1 read 1.0 in Town_01_rm and Act_01_01 and 2.0 in
+// Act_02_01). `isNumber` is false when the answer was not a number at all (the
+// script leaves it undefined for any room outside its switch). Anything but a
+// whole number from 1 to 9 is no act (0).
+inline int ActOfRoomActIndex(bool isNumber, double answer)
+{
+    if (!isNumber || !(answer >= 1.0 && answer <= static_cast<double>(kActCount))) return 0;
+    if (answer != std::floor(answer)) return 0;
+    return static_cast<int>(answer);
 }
 
 // ---- seeds -------------------------------------------------------------------------
@@ -104,6 +126,16 @@ inline int ActOfSeed(long long seed)
 
 inline bool IsPiece(long long seed) { return ActOfSeed(seed) != 0; }
 
+// The act of an item that is a piece, 0 for anything else: an item of the
+// base's class whose definition is the base (`b` the index the adapter
+// resolved by name, `c` 0, the normal repository) and whose seed marks an act.
+// `baseIndex` below 0 (not resolved yet) recognises nothing.
+inline int PieceActOfItem(int itemType, long long b, long long c, long long seed, long long baseIndex)
+{
+    if (baseIndex < 0 || itemType != kBaseItemType || b != baseIndex || c != 0) return 0;
+    return ActOfSeed(seed);
+}
+
 // ---- verdicts ------------------------------------------------------------------------
 // The drop's verdicts, in the order DecideDrop asks them. `force on` overrides
 // only the last three (no-rate, hit, miss): never the first seven.
@@ -114,9 +146,10 @@ inline constexpr const char* kDropVerdictWords[] = {
 inline constexpr int kDropVerdictCount = static_cast<int>(DropVerdict::Count);
 static_assert(sizeof(kDropVerdictWords) / sizeof(kDropVerdictWords[0]) == kDropVerdictCount);
 
-// The use's verdicts, in the order DecideUse asks them.
-enum class UseVerdict { Off, Town, NotPiece, Unnamed, Summon, Count };
-inline constexpr const char* kUseVerdictWords[] = { "off", "town", "not-piece", "unnamed", "summon" };
+// The use's verdicts, in the order DecideUse asks them; every one but the
+// last is a refusal, and the piece is kept.
+enum class UseVerdict { Off, NotPiece, NoAct, BossRoom, Unnamed, Portal, Count };
+inline constexpr const char* kUseVerdictWords[] = { "off", "not-piece", "no-act", "boss-room", "unnamed", "portal" };
 inline constexpr int kUseVerdictCount = static_cast<int>(UseVerdict::Count);
 static_assert(sizeof(kUseVerdictWords) / sizeof(kUseVerdictWords[0]) == kUseVerdictCount);
 
@@ -133,12 +166,12 @@ inline const char* Word(UseVerdict v)
 }
 
 // ---- rooms -----------------------------------------------------------------------------
-// A town removes a boss spawned in it, and neither drops nor summons.
+// A town drops no piece (a piece's portal may open from one).
 inline bool IsTownRoom(std::string_view room) { return room.starts_with("Town_"); }
 
 // The name rule beside the town: `_Boss` rooms (act boss rooms, boss
 // dungeons, Fields_Boss_rm), and the `Uber_` and `Dev_` rooms the game's act
-// table also lists. All of them answer `boss-room`.
+// table also lists. All of them answer `boss-room`, for the drop and the use.
 inline bool IsBossRoom(std::string_view room)
 {
     return room.find("_Boss") != std::string_view::npos || room.starts_with("Uber_") || room.starts_with("Dev_");
@@ -186,28 +219,39 @@ inline DropVerdict DecideDrop(bool modOn, bool forced, std::string_view room, in
 }
 
 // ---- the use -------------------------------------------------------------------------------
-// A right-click on an item in the backpack. `pieceAct` is ActOfSeed of the
-// item's seed (0: not a piece). A use is allowed in any room but a town.
-inline UseVerdict DecideUse(bool modOn, std::string_view room, int pieceAct)
+// A right-click on an item in the backpack, confirmed. `room` and `roomAct`
+// are the player's room and its act (0: none); `pieceAct` is the item's
+// PieceActOfItem (0: not a piece). Towns are allowed: a portal from town is
+// the natural use. A room with no act (uber realms, Chaos Tower, the act boss
+// rooms, which `RoomActIndex` leaves undefined) and the drop's boss-room name
+// rule refuse it.
+inline UseVerdict DecideUse(bool modOn, std::string_view room, int roomAct, int pieceAct)
 {
     if (!modOn) return UseVerdict::Off;
-    if (IsTownRoom(room)) return UseVerdict::Town;
     if (!IsAct(pieceAct)) return UseVerdict::NotPiece;
+    if (!IsAct(roomAct)) return UseVerdict::NoAct;
+    if (IsBossRoom(room)) return UseVerdict::BossRoom;
     const ActBoss* boss = BossOfAct(pieceAct);
     if (!boss || !boss->named) return UseVerdict::Unnamed;
-    return UseVerdict::Summon;
+    return UseVerdict::Portal;
 }
 
-// ---- the stack veto ------------------------------------------------------------------------
-// Consulted only after the game answered that two items stack. True turns
-// that answer into false: exactly one of them is a piece, or both are pieces
-// of different acts. Off, the game's answer stands.
-inline bool VetoStack(bool modOn, long long seedA, long long seedB)
+// ---- the portal ----------------------------------------------------------------------------
+// Where a piece's portal leads: its act's boss room, by SDK room name
+// (nullptr for no act). The adapter resolves it with `asset_get_index`.
+inline const char* PortalTarget(int pieceAct)
 {
-    if (!modOn) return false;
-    const int a = ActOfSeed(seedA);
-    const int b = ActOfSeed(seedB);
-    return a != b;
+    const ActBoss* boss = BossOfAct(pieceAct);
+    return boss ? boss->bossRoom : nullptr;
+}
+
+// The portal's x: kPortalOffsetPx to the player's right, or to the left when
+// that would pass the room's width. A width of 0 or less (unread) keeps it to
+// the right. Its y is the player's.
+inline double PortalX(double playerX, double roomWidth)
+{
+    const double right = playerX + kPortalOffsetPx;
+    return roomWidth > 0.0 && right > roomWidth ? playerX - kPortalOffsetPx : right;
 }
 
 // ---- the verb ---------------------------------------------------------------------------------
@@ -244,16 +288,16 @@ struct Counters {
     long gemRolls = 0;                         // DropGems calls decided
     long drop[kDropVerdictCount]{};            // by verdict
     long dropsByAct[kActCount + 1]{};          // hits, by act
-    long use[kUseVerdictCount]{};              // by verdict
-    long summonsByAct[kActCount + 1]{};        // bosses that appeared, by act
-    long spawnFailed = 0;                      // `summon` whose spawn returned no instance
+    long use[kUseVerdictCount]{};              // piece uses decided, by verdict
+    long portalsByAct[kActCount + 1]{};        // portals opened, by act
+    long portalFailed = 0;                     // `portal` uses whose portal did not open
 };
 
 struct State {
     bool on = false;
     bool forced = false;
     Counters counters;
-    int lastSummonedAct = 0;                   // 0: none yet
+    int lastPortalAct = 0;                     // 0: none yet
 };
 
 // Applies a verb; false for Invalid (nothing changes). `force` is kept apart
@@ -279,60 +323,34 @@ inline void RecordDrop(State& s, DropVerdict v, int act)
     if (v == DropVerdict::Hit && IsAct(act)) ++s.counters.dropsByAct[act];
 }
 
-// `spawned`: for `summon`, whether the spawn returned an instance (the piece
-// is taken only then).
-inline void RecordUse(State& s, UseVerdict v, int act, bool spawned)
+// One decided use of a piece of `act`. `opened`: for `portal`, whether the
+// portal opened with its target written and read back (the piece is taken
+// only then); a `portal` that did not open counts as `portal-failed`.
+inline void RecordUse(State& s, UseVerdict v, int act, bool opened)
 {
     const int i = static_cast<int>(v);
     if (i < 0 || i >= kUseVerdictCount) return;
-    if (v == UseVerdict::Summon && !spawned) { ++s.counters.spawnFailed; return; }
     ++s.counters.use[i];
-    if (v == UseVerdict::Summon && IsAct(act)) {
-        ++s.counters.summonsByAct[act];
-        s.lastSummonedAct = act;
+    if (v != UseVerdict::Portal) return;
+    if (!opened) { ++s.counters.portalFailed; return; }
+    if (IsAct(act)) {
+        ++s.counters.portalsByAct[act];
+        s.lastPortalAct = act;
     }
-}
-
-// ---- held pieces --------------------------------------------------------------------------------
-// The Key tab's pieces, as the adapter reads them: count and stacks per act.
-struct Held {
-    long count[kActCount + 1]{};
-    long stacks[kActCount + 1]{};
-};
-
-inline void AddHeld(Held& h, long long seed, long stackCount)
-{
-    const int act = ActOfSeed(seed);
-    if (!act) return;
-    h.count[act] += stackCount;
-    ++h.stacks[act];
-}
-
-// `<act>:<count>/<stacks>,...`, or `-` when no piece is held.
-inline std::string HeldText(const Held& h)
-{
-    std::string out;
-    for (int act = 1; act <= kActCount; ++act) {
-        if (!h.stacks[act]) continue;
-        if (!out.empty()) out += ",";
-        out += std::to_string(act) + ":" + std::to_string(h.count[act]) + "/" + std::to_string(h.stacks[act]);
-    }
-    return out.empty() ? "-" : out;
 }
 
 // ---- the status line ------------------------------------------------------------------------------
 // What the adapter knows and the core does not: the room, the gem rate it
-// read (or why it could not), the held pieces and each detour's route.
+// read (or why it could not) and each route.
 struct StatusInputs {
     std::string_view room = "none";
     int act = 0;
     double gemRate = 0.0;
     std::string_view gemRateWhy = "unread";
-    std::string held = "-";
     std::string_view gemRoute = "none";
-    std::string_view useScript = "none";
+    std::string_view useScript = "PotionUse";
     std::string_view useRoute = "none";
-    std::string_view stackRoute = "none";
+    std::string_view portalRoute = "portal-obj";   // `portal-obj` or `goto`
 };
 
 inline std::string NumberText(double v)
@@ -345,11 +363,13 @@ inline std::string NumberText(double v)
 
 // `soulpiece: <on|off> force=<on|off> room=<name> act=<n|none>
 // eligible=<yes|no(<word>)> gemrate=<G|unavailable(<why>)> chance=1/<D|->
-// gemrolls=<n> drops=<n> misses=<n> uses=<n> summoned=<object|->
-// refused=<word>=<n>,... held=<act>:<count>/<stacks>,...
-// hooks=gem:<route> use:<script>:<route> stack:<route|none>`.
+// gemrolls=<n> drops=<n> misses=<n> uses=<n> portals=<n> last=<boss room|->
+// refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>
+// portal:<portal-obj|goto>`.
+// `uses` counts every piece use decided, refused or not; `portals` the
+// portals that opened; `last` the boss room the latest one leads to.
 // `refused` lists the drop refusals by their word, then the use refusals as
-// `use-<word>` and failed spawns as `spawn-failed`, `-` when there is none.
+// `use-<word>` and failed portals as `portal-failed`, `-` when there is none.
 inline std::string StatusLine(const State& s, const StatusInputs& in)
 {
     const Counters& c = s.counters;
@@ -363,9 +383,13 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         refused += word + "=" + std::to_string(n);
     };
     for (int i = 0; i < static_cast<int>(DropVerdict::Hit); ++i) add(kDropVerdictWords[i], c.drop[i]);
-    for (int i = 0; i < static_cast<int>(UseVerdict::Summon); ++i) add(std::string("use-") + kUseVerdictWords[i], c.use[i]);
-    add("spawn-failed", c.spawnFailed);
-    const ActBoss* summoned = BossOfAct(s.lastSummonedAct);
+    for (int i = 0; i < static_cast<int>(UseVerdict::Portal); ++i) add(std::string("use-") + kUseVerdictWords[i], c.use[i]);
+    add("portal-failed", c.portalFailed);
+    long uses = 0;
+    for (int i = 0; i < kUseVerdictCount; ++i) uses += c.use[i];
+    long portals = 0;
+    for (int act = 1; act <= kActCount; ++act) portals += c.portalsByAct[act];
+    const char* last = PortalTarget(s.lastPortalAct);
     return std::string("soulpiece: ") + (s.on ? "on" : "off")
         + " force=" + (s.forced ? "on" : "off")
         + " room=" + std::string(in.room)
@@ -376,13 +400,13 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " gemrolls=" + std::to_string(c.gemRolls)
         + " drops=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Hit)])
         + " misses=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Miss)])
-        + " uses=" + std::to_string(c.use[static_cast<int>(UseVerdict::Summon)])
-        + " summoned=" + (summoned ? summoned->bossObject : "-")
+        + " uses=" + std::to_string(uses)
+        + " portals=" + std::to_string(portals)
+        + " last=" + (last ? last : "-")
         + " refused=" + (refused.empty() ? std::string("-") : refused)
-        + " held=" + in.held
         + " hooks=gem:" + std::string(in.gemRoute)
         + " use:" + std::string(in.useScript) + ":" + std::string(in.useRoute)
-        + " stack:" + std::string(in.stackRoute);
+        + " portal:" + std::string(in.portalRoute);
 }
 
 } // namespace ForgePact::SoulPieces
