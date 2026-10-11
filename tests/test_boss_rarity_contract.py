@@ -140,8 +140,10 @@ class TestBossRarityContract(unittest.TestCase):
     # ---- research probes stay out of the player build --------------------
 
     def test_probe_commands_stay_out_of_the_release_build(self):
+        # The probe's own quoted route to the getter; the player build reaches the
+        # same getter through the SDK constant for pillartips (#7).
         for name in ('lc == "bossprobe"', 'lc == "droptrace"', "BossProbeCommand", "DropTraceCommand",
-                     "DropTraceNote", "g_DropTraceLeft", "PC_GetVariableGMLWrapper"):
+                     "DropTraceNote", "g_DropTraceLeft", '"gml_Script_PC_GetVariableGMLWrapper"'):
             self.assertIn(name, self.plugin, f"{name} is missing from the research build")
             self.assertNotIn(name, self.player_build, f"{name} reaches the player build")
         # The same technique as g_RarSkippedBoss: every mention of the two

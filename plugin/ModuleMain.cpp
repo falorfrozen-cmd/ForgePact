@@ -7862,7 +7862,9 @@ static double PtObjectIndex(std::string_view name)
 // A number the runtime answered, for `x`, `y` and the view.
 static bool PtNumber(const RValue& v, double& out)
 {
-    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    const uint32_t k = static_cast<uint32_t>(v.m_Kind) & 0x0FFFFFFFu;
+    if (k != static_cast<uint32_t>(VALUE_REAL) && k != static_cast<uint32_t>(VALUE_INT32)
+        && k != static_cast<uint32_t>(VALUE_INT64)) return false;
     try { out = v.ToDouble(); return true; } catch (...) { return false; }
 }
 
