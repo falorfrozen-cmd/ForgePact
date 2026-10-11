@@ -51974,27 +51974,35 @@ static void EvCountCommand(const std::string& rest)
 // ===== Boss soul pieces research probe (`soulprobe`, ForgePact #197) =========
 // ForgePact/docs/boss-soul-pieces-research.md, § The instrument. Research build
 // only, never in kPlayerCommands, dispatched from RunCommand's research block.
-// Every reply starts `soulprobe <sub>:`, and Live procedure 1 greps those
+// Every reply starts `soulprobe <sub>:`, and Live procedure 3 greps those
 // lines. Each decision a line prints is the core's (ForgePact::SoulPieces,
-// SoulPieceMod.hpp): the room rule and the act (RoomEligible), the drop verdict
-// and its 1 in D (DecideDrop, PieceDenominator), the use verdict (DecideUse)
-// and the stack veto (VetoStack). The probe only supplies what the game
-// answers: the room and its RoomActIndex, the dying source's ancestry, the Gem
-// of Incarnation's droprate.base, the items' seeds.
+// SoulPieceMod.hpp): the act of a room (ActOfRoomActIndex) and the room rule
+// (RoomEligible), the drop verdict and its 1 in D (DecideDrop,
+// PieceDenominator), the use verdict (DecideUse) and where a piece's portal
+// leads (PortalTarget). The probe only supplies what the game answers: the
+// room and its RoomActIndex, the dying source's ancestry, the Gem of
+// Incarnation's droprate.base, the items' seeds, the portals' records.
 //
 // What it hooks, each through HookOneScript (both routes) by its SDK constant,
 // on the first command that needs it and never at startup:
 //   - nothing of its own for the gem roll: `gemwatch log` is one more consumer
 //     inside the shared DropGems detour (Hook_DropGems, SoulProbeGemRoll),
 //     installed through GemsInstallDropHook() once a player exists;
-//   - ItemsAreStackable, on the first `stackhook log|veto`;
 //   - each use candidate in kSpUseTargets, on the first `usewatch log|use`.
-// craftprobe and prospectprobe list some of the same scripts among their
-// research targets. Arm usewatch and stackhook only in a session where
-// neither of them is armed: a target another hook already holds installs
-// table-only, and its route line says so.
+// Nothing on the add or stack path (ItemsAreStackable and the rest): Live
+// procedure 3's debugger watches those by their first bytes. craftprobe,
+// prospectprobe, the script trace tables and the pet relic trace detour some
+// of the scripts that debugger watches, and craftprobe and prospectprobe list
+// some use candidates too: arm none of them in a session that runs this probe.
+// A target another hook already holds installs table-only, and its route line
+// says so.
 // The dress (`dress on`) is one more consumer on CreateItemNew's return, inside
 // the shared Hook_CreateItemNew (SOUL_PROBE_AFTER_CREATE in ITEM_CREATE_HOOK).
+// A portal is the game's own Portal_obj, made by its SDK name through the
+// game's spawner (sCP) or instance_create_depth, with the boss room written
+// into the record its portalZone key names; the player walks through it, and
+// the game's own collision, alarm and travel scripts do the rest. Nothing here
+// creates a boss: the boss room's pentagram brings it out.
 namespace SpNs = ForgePact::SoulPieces;
 
 // Full names, for CallGameScript and CallGameScriptEx.
@@ -52006,15 +52014,22 @@ static constexpr const char* kSpDungeonKeysFull = HeroSiege::Scripts::gml_Script
 static constexpr const char* kSpKeyDungeonFull = HeroSiege::Scripts::gml_Script_GetKeyDungeon.data();
 static constexpr const char* kSpGetVarFull = HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data();
 static constexpr const char* kSpSetVarFull = HeroSiege::Scripts::gml_Script_PC_SetVariableGMLWrapper.data();
+// `goto`'s travel: the game's own script, which sets the room up before
+// room_goto (static reading 16); never the raw room_goto builtin.
+static constexpr const char* kSpRoomGotoFull = HeroSiege::Scripts::gml_Script_NetworkRoomGoto.data();
 // Short names, for HookOneScript and ApCallScript (asset_get_index + script_execute).
-static constexpr const char* kSpStackName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ItemsAreStackable);
 static constexpr const char* kSpScpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_sCP);
 static constexpr const char* kSpFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
-static constexpr const char* kSpClearName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InvGridClearItemNode);
-// The Gem of Incarnation's sprite. hs-game-sdk's C++ binding has no sprite
-// table; the name is the Python binding's (hs_game_sdk.sprites), and it is
-// resolved with asset_get_index at run time, never by an index.
-static constexpr const char* kSpGemSpriteName = "Gem_Incarnation_spr";
+// The two classes a base may come from: consumables (the piece's, the core's
+// kBaseCategory) and keys (Live procedure 1's design, replayed by Live
+// procedure 3's key merge). A class and its repository category share a number.
+static constexpr int kSpConsumableCategory = (int)HeroSiege::Items::ItemType::Consumable;
+static constexpr int kSpKeyCategory = (int)HeroSiege::Items::ItemType::Key;
+static_assert(kSpConsumableCategory == SpNs::kBaseCategory && kSpConsumableCategory == SpNs::kBaseItemType,
+              "the piece's base is a consumable");
+// The protected records a portal keeps (static reading 15), the ones `portals`
+// prints and `portalset` may write.
+static constexpr const char* kSpPortalVars[] = { "portalZone", "portalActive", "isEligible", "portalUsable", "pSpwd" };
 
 // The use candidates (static reading 9, docs/RUNTIME_DATA_MODELS.md § 21):
 // one both-route detour each, installed by `usewatch log|use`. ConsumeToken's
@@ -52037,52 +52052,45 @@ static constexpr SpUseTarget kSpUseTargets[] = {
 };
 static constexpr int kSpUseCount = (int)(sizeof(kSpUseTargets) / sizeof(kSpUseTargets[0]));
 
-enum class SpStackMode { Off, Log, Veto };
 enum class SpUseMode { Off, Log, Use };
 
 struct SoulProbeState {
-    int baseIndex = -1;              // the base key's repository index (category 12); -1: none chosen
+    int baseCategory = -1;           // 11 (consumable) or 12 (key); -1: no base chosen
+    int baseIndex = -1;              // the base's repository index in that category
     std::string baseName;
-    bool dress = false, sprite = false;
-    SpStackMode stack = SpStackMode::Off;
-    bool stackTried = false;
-    std::string stackRoute = "none";
+    bool dress = false;
     SpUseMode use = SpUseMode::Off;
     bool useTried = false;
     std::string useRoute[kSpUseCount];
     int useScript = -1;              // the candidate `use` acts in; -1: none chosen
     int autoScript = -1;             // the first candidate whose usecall line carried a piece
-    bool useArmed = false;           // `use` treats one piece per arming (`usewatch use` or `take`)
-    long suppressed = 0;             // piece calls in the chosen script after the arming was spent
     long useCallsBy[kSpUseCount] = {};
-    bool takeClear = false;
     bool gemwatch = false, gemPending = false;
-    bool spawnScp = false;
-    double offset = 1200.0;
-    long calls = 0, vetoed = 0, usecalls = 0, uses = 0, gemrolls = 0, spawned = 0;
-    int stackLines = 0, useLines = 0, gemLines = 0;
+    bool portalScp = true;           // `portalroute`: the game's spawner first (ctx "### Opening the portal")
+    double portalOffset = SpNs::kPortalOffsetPx;
+    long usecalls = 0, uses = 0, portals = 0, gemrolls = 0;
+    int useLines = 0, gemLines = 0;
 };
 static SoulProbeState g_Sp;
 static constexpr int kSpLineCap = 200;
 static constexpr int kSpGemLineCap = 300;
-static PFUNC_YYGMLScript g_SpStackOrig = nullptr;
 static PFUNC_YYGMLScript g_SpUseOrig[kSpUseCount] = {};
 // What each candidate answered on its last call that carried an item but no
-// piece: the control's answer (the PAS token's), which `take game` gives back.
+// piece: the control's answer (the plain Edible PAS Logo's), which `use` gives
+// back for a piece whose portal opened.
 static RValue g_SpControlRet[kSpUseCount];
 static bool g_SpHaveControl[kSpUseCount] = {};
-static thread_local int g_SpBusy = 0;   // the probe's own spawn and take: not logged as calls
+static thread_local int g_SpBusy = 0;   // the probe's own calls into the game: not logged as calls
 static thread_local int g_SpUseDepth = 0;   // candidate calls open on this thread: 0 is the outermost
 static int g_SpGemIndex = -1;           // -1: not searched yet; -2: no entry of that name
 static uint64_t g_SpRoll = 11400714819323198485ull;   // the golden-ratio constant; Mix stirs it per roll
 
-struct SpWatch {
+struct SpPortalWatch {
     double id = -1;
-    std::string object;
     ULONGLONG t0 = 0;
     int next = 0;
 };
-static std::vector<SpWatch> g_SpSpawnWatch;
+static std::vector<SpPortalWatch> g_SpPortalWatch;
 static constexpr int kSpWatchSeconds[] = { 1, 5, 10, 30 };
 struct SpKillWatch {
     double id = -1;
@@ -52090,11 +52098,6 @@ struct SpKillWatch {
     ULONGLONG t0 = 0;
 };
 static std::vector<SpKillWatch> g_SpKills;
-struct SpPendingUse {
-    std::string head, fingerprint, tail;
-    ULONGLONG t0 = 0;
-};
-static std::vector<SpPendingUse> g_SpPendingUses;
 
 static std::string SpNum(double v) { return ForgePact::ItemTruth::WholeNumberText(v); }
 
@@ -52144,11 +52147,23 @@ static bool SpReadItem(const RValue& v, SpItem& out)
     } catch (...) { return false; }
 }
 
-// The act a piece marks (the core's ActOfSeed of its seed), 0 for anything
-// that is not a class-12 item at c 0 carrying a piece seed.
+// Whether an item is of the chosen base: its class and its definition's `b`
+// (pieces and the plain base alike). Nothing is, before `base`.
+static bool SpIsBaseItem(const SpItem& it)
+{
+    return g_Sp.baseIndex >= 0 && it.t == g_Sp.baseCategory && it.b == g_Sp.baseIndex;
+}
+
+// The act a piece of the chosen base marks, 0 for anything else: an item of
+// the base's class whose definition is the base (`b`, `c` 0) and whose seed
+// marks an act. For a consumable base that is the core's PieceActOfItem; a key
+// base (Live procedure 1's design, replayed) takes the same rule for class 12.
 static int SpPieceAct(const SpItem& it)
 {
-    return it.t == SpNs::kKeyCategory && it.c == 0 ? SpNs::ActOfSeed((long long)it.a) : 0;
+    if (g_Sp.baseIndex < 0) return 0;
+    if (g_Sp.baseCategory == SpNs::kBaseCategory)
+        return SpNs::PieceActOfItem((int)it.t, (long long)it.b, (long long)it.c, (long long)it.a, g_Sp.baseIndex);
+    return SpIsBaseItem(it) && it.c == 0 ? SpNs::ActOfSeed((long long)it.a) : 0;
 }
 
 static std::string SpItemText(const SpItem& it)
@@ -52172,7 +52187,7 @@ struct SpRoom {
     double index = -1;
     std::string name = "(unreadable)";
     RValue actAnswer;
-    int act = 0;   // RoomActIndex + 1; 0 when it answered anything but 0..8
+    int act = 0;   // the core's ActOfRoomActIndex of the answer; 0: no act
 };
 
 static SpRoom SpReadRoom()
@@ -52185,9 +52200,40 @@ static SpRoom SpReadRoom()
         r.name = g_Yytk->CallBuiltin("room_get_name", { v }).ToString();
         r.actAnswer = g_Yytk->CallGameScript(kSpRoomActFull, { v });
         double n = -1;
-        if (ApNumber(r.actAnswer, n) && n == std::floor(n) && n >= 0 && n < SpNs::kActCount) r.act = (int)n + 1;
+        const bool isNumber = ApNumber(r.actAnswer, n);
+        r.act = SpNs::ActOfRoomActIndex(isNumber, n);
     } catch (...) {}
     return r;
+}
+
+// A room index as `<name>(<index>)`, or `unreadable(<why>)`.
+static std::string SpRoomText(const RValue& room)
+{
+    double n = -1;
+    if (!ApNumber(room, n) || n < 0 || n != std::floor(n)) return "unreadable(" + Describe(room) + ")";
+    try {
+        if (!g_Yytk->CallBuiltin("room_exists", { RValue(n) }).ToBoolean()) return "unreadable(no room " + SpNum(n) + ")";
+        return g_Yytk->CallBuiltin("room_get_name", { RValue(n) }).ToString() + "(" + SpNum(n) + ")";
+    } catch (...) { return "unreadable(threw)"; }
+}
+
+// A piece's boss room, by the core's PortalTarget (an hs-game-sdk room name),
+// resolved with asset_get_index at run time; never an index constant.
+static bool SpBossRoom(int act, std::string& target, double& index, std::string& why)
+{
+    index = -1;
+    const char* name = SpNs::PortalTarget(act);
+    target = name ? name : "-";
+    if (!name) { why = "no act " + std::to_string(act); return false; }
+    try {
+        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }), index) || index < 0
+            || !g_Yytk->CallBuiltin("room_exists", { RValue(index) }).ToBoolean()) {
+            why = "asset_get_index refused " + target;
+            index = -1;
+            return false;
+        }
+    } catch (...) { why = "asset_get_index threw"; index = -1; return false; }
+    return true;
 }
 
 // ---- the gem's rate (G) -------------------------------------------------------------
@@ -52229,9 +52275,9 @@ struct SpKeyRow {
 static std::vector<SpKeyRow> SpReadKeys(std::vector<int>& dungeonList, std::string& listWhy)
 {
     std::vector<SpKeyRow> rows;
-    for (int i = 0; RepoIndexValid(SpNs::kKeyCategory, i); ++i) {
+    for (int i = 0; RepoIndexValid(kSpKeyCategory, i); ++i) {
         RValue st;
-        if (!RepoStruct(SpNs::kKeyCategory, i, st)) continue;
+        if (!RepoStruct(kSpKeyCategory, i, st)) continue;
         SpKeyRow r;
         r.index = i;
         r.name = RepoAd(st);
@@ -52292,34 +52338,40 @@ static void SpKeysCommand()
     Out("soulprobe keys: entries=" + std::to_string(rows.size()));
 }
 
-// `base auto|<keys_name>`: the base key, by its repository name.
+// `base <repository name>|auto`: the base by its repository name, looked up in
+// category 11 (consumables), then 12 (keys), the way `droprate` walks a
+// category; `auto` is the core's kBaseRepoName (consumable_edible_pas_logo).
+// Never an index.
 static void SpBaseCommand(const std::string& arg)
 {
-    std::vector<int> list;
-    std::string listWhy;
-    const std::vector<SpKeyRow> rows = SpReadKeys(list, listWhy);
-    const std::string want = Lower(arg);
-    for (const SpKeyRow& r : rows) {
-        const bool hit = want == "auto" ? SpKeyCandidate(r, list, listWhy) : Lower(r.name) == want;
-        if (!hit) continue;
-        g_Sp.baseIndex = r.index;
-        g_Sp.baseName = r.name;
-        Out("soulprobe base: " + r.name + " index=" + std::to_string(r.index));
-        return;
+    const std::string want = Lower(arg) == "auto" ? std::string(SpNs::kBaseRepoName) : Lower(arg);
+    for (const int category : { kSpConsumableCategory, kSpKeyCategory }) {
+        for (int i = 0; RepoIndexValid(category, i); ++i) {
+            RValue st;
+            if (!RepoStruct(category, i, st)) continue;
+            const std::string name = RepoAd(st);
+            if (Lower(name) != want) continue;
+            g_Sp.baseCategory = category;
+            g_Sp.baseIndex = i;
+            g_Sp.baseName = name;
+            Out("soulprobe base: " + name + " category=" + std::to_string(category) + " index=" + std::to_string(i));
+            return;
+        }
     }
-    Out("soulprobe base: refused(" + (want == "auto" ? std::string("no candidate") : "no category 12 entry named " + arg) + "); base stays "
-        + (g_Sp.baseName.empty() ? std::string("none") : g_Sp.baseName));
+    Out("soulprobe base: refused(no category " + std::to_string(kSpConsumableCategory) + " or " + std::to_string(kSpKeyCategory)
+        + " entry named " + want + "); base stays " + (g_Sp.baseName.empty() ? std::string("none") : g_Sp.baseName));
 }
 
 // ---- the dress -------------------------------------------------------------------------
 // From the shared Hook_CreateItemNew, on CreateItemNew's own return: a piece of
-// the chosen base takes its act's name, and with `sprite on` the gem's sprite.
+// the chosen base takes its act's name. No sprite (Live procedure 1: the gem's
+// itemSprite read undefined, `sprite-route: none`).
 static void SoulProbeAfterCreate(RValue& item)
 {
     if (!g_Sp.dress || g_Sp.baseIndex < 0) return;
     try {
         SpItem it;
-        if (!SpReadItem(item, it) || it.b != g_Sp.baseIndex || it.j != 0) return;
+        if (!SpReadItem(item, it) || it.j != 0) return;
         const SpNs::ActBoss* boss = SpNs::BossOfAct(SpPieceAct(it));
         if (!boss) return;
         if (it.info.m_Kind == VALUE_OBJECT) {
@@ -52328,15 +52380,6 @@ static void SoulProbeAfterCreate(RValue& item)
             RValue map = g_Yytk->CallBuiltin("variable_global_get", { RValue("localization") });
             if (map.m_Kind == VALUE_REAL || map.m_Kind == VALUE_INT32 || map.m_Kind == VALUE_INT64 || map.m_Kind == VALUE_REF)
                 g_Yytk->CallBuiltin("ds_map_replace", { map, RValue(std::string(boss->pieceName)), RValue(std::string(boss->pieceName)) });
-        }
-        if (g_Sp.sprite) {
-            double spr = -1;
-            if (ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(kSpGemSpriteName)) }), spr) && spr >= 0) {
-                std::string where;
-                SpItemSprite(item, where);
-                const RValue holder = where == "info" ? it.info : item;
-                g_Yytk->CallBuiltin("variable_struct_set", { holder, RValue("itemSprite"), RValue(spr) });
-            }
         }
         RefreshItemHash(item);
     } catch (...) {}
@@ -52353,18 +52396,56 @@ static const HeroSiege::Objects::GameObject kSpKeyGridOwners[] = {
     HeroSiege::Objects::GameObject::Player_obj,
 };
 
-struct SpKeyStack {
+struct SpStack {
     std::string fingerprint;
     SpItem item;
     bool read = false;
     int cells = 0;
 };
 
-// The Key tab's stacks, one per fingerprint (a stack spans its cells), each
-// read from its cell, or through GetItemFromFingerprint(<fingerprint>, 0) by
-// name when the cell holds only the fingerprint. False when no owner carries
-// the grid.
-static bool SpReadKeyTab(std::vector<SpKeyStack>& stacks, std::string& owner, int& cells)
+// One grid's items, one per fingerprint (an item spans its cells), each read
+// from its cell, or through GetItemFromFingerprint(<fingerprint>, 0) by name,
+// self `lookup`, when the cell holds only the fingerprint. A grid whose rows
+// hold grids (one per bag tab) is walked one level down.
+static void SpWalkGrid(const RValue& grid, CInstance* lookup, std::vector<SpStack>& stacks, int& cells, int depth = 0)
+{
+    try {
+        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+        for (int r = 0; r < rows && r < 64; ++r) {
+            const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)r) });
+            if (row.m_Kind != VALUE_ARRAY) continue;
+            const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+            for (int c = 0; c < cols && c < 64; ++c) {
+                const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
+                if (cell.m_Kind == VALUE_ARRAY) {
+                    if (depth < 1) SpWalkGrid(row, lookup, stacks, cells, depth + 1);
+                    break;
+                }
+                ++cells;
+                if (ApIsEmptyCell(cell)) continue;
+                RValue fp;
+                std::string text;
+                if (!ApCellFingerprint(cell, fp, text)) continue;
+                SpStack* known = nullptr;
+                for (SpStack& s : stacks) if (s.fingerprint == text) { known = &s; break; }
+                if (known) { ++known->cells; continue; }
+                SpStack s;
+                s.fingerprint = text;
+                s.cells = 1;
+                s.read = SpReadItem(cell, s.item);
+                if (!s.read && lookup) {
+                    struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
+                    RValue item;
+                    if (ApCallScript(kSpFromFpName, lookup, { fp, RValue(0.0) }, item)) s.read = SpReadItem(item, s.item);
+                }
+                stacks.push_back(s);
+            }
+        }
+    } catch (...) {}
+}
+
+// The Key tab's items. False when no owner carries the grid.
+static bool SpReadKeyTab(std::vector<SpStack>& stacks, std::string& owner, int& cells)
 {
     stacks.clear();
     owner = "none";
@@ -52386,46 +52467,18 @@ static bool SpReadKeyTab(std::vector<SpKeyStack>& stacks, std::string& owner, in
     }
     if (!ownerInst) return false;
     CInstance* lookup = CmSaveInstance();
-    if (!lookup) lookup = ownerInst;
-    try {
-        const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
-        for (int r = 0; r < rows && r < 64; ++r) {
-            const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)r) });
-            if (row.m_Kind != VALUE_ARRAY) continue;
-            const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
-            for (int c = 0; c < cols && c < 64; ++c) {
-                ++cells;
-                const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
-                if (ApIsEmptyCell(cell)) continue;
-                RValue fp;
-                std::string text;
-                if (!ApCellFingerprint(cell, fp, text)) continue;
-                SpKeyStack* known = nullptr;
-                for (SpKeyStack& s : stacks) if (s.fingerprint == text) { known = &s; break; }
-                if (known) { ++known->cells; continue; }
-                SpKeyStack s;
-                s.fingerprint = text;
-                s.cells = 1;
-                s.read = SpReadItem(cell, s.item);
-                if (!s.read) {
-                    RValue item;
-                    if (ApCallScript(kSpFromFpName, lookup, { fp, RValue(0.0) }, item)) s.read = SpReadItem(item, s.item);
-                }
-                stacks.push_back(s);
-            }
-        }
-    } catch (...) {}
+    SpWalkGrid(grid, lookup ? lookup : ownerInst, stacks, cells);
     return true;
 }
 
 static void SpKeyTabCommand()
 {
-    std::vector<SpKeyStack> stacks;
+    std::vector<SpStack> stacks;
     std::string owner;
     int cells = 0;
     SpReadKeyTab(stacks, owner, cells);
     Out("soulprobe keytab: owner=" + owner + " cells=" + std::to_string(cells) + " items=" + std::to_string(stacks.size()));
-    for (const SpKeyStack& s : stacks) {
+    for (const SpStack& s : stacks) {
         if (!s.read) { Out("soulprobe keytab: " + s.fingerprint + " unread"); continue; }
         const int act = SpPieceAct(s.item);
         Out("soulprobe keytab: " + s.fingerprint + " b=" + SpNum(s.item.b) + " a=" + SpNum(s.item.a) + " o=" + SpNum(s.item.o)
@@ -52433,57 +52486,94 @@ static void SpKeyTabCommand()
     }
 }
 
-// The count of the Key tab's stack with this fingerprint: its `o`, `gone`, or
-// `unknown` when the tab or the fingerprint cannot be read.
-static std::string SpKeyTabCount(const std::string& fingerprint)
-{
-    if (fingerprint.empty()) return "unknown";
-    std::vector<SpKeyStack> stacks;
-    std::string owner;
-    int cells = 0;
-    if (!SpReadKeyTab(stacks, owner, cells)) return "unknown";
-    for (const SpKeyStack& s : stacks)
-        if (s.fingerprint == fingerprint) return s.read ? SpNum(s.item.o) : std::string("unknown");
-    return "gone";
-}
+// ---- the bag ---------------------------------------------------------------------------------
+// Which variable holds the main bag grid is not established (AddToInventory
+// reads `inventoryTab`, static reading 13; the slot table also names
+// `inventoryData`), so `bag` tries each on the Key tab's owners, then the bag
+// window's grid nodes (UI_Inventory_Grid_obj's nodeGrid, § 9.1, only while the
+// bag is open), and `route=` says which was read and what the others held.
+static constexpr const char* kSpBagVars[] = { "inventoryTab", "inventoryData" };
 
-// The UI grid node (UI_Inventory_Grid_obj) whose nodeGrid holds the cell with
-// this fingerprint, and that cell: what `take clear` hands InvGridClearItemNode.
-static bool SpFindKeyNode(const std::string& fingerprint, CInstance*& nodeInst, RValue& cell)
+static bool SpReadBag(std::vector<SpStack>& stacks, std::string& route, int& cells)
 {
-    nodeInst = nullptr;
-    if (fingerprint.empty()) return false;
+    stacks.clear();
+    cells = 0;
+    std::string tried;
+    CInstance* lookup = CmSaveInstance();
+    for (const HeroSiege::Objects::GameObject obj : kSpKeyGridOwners) {
+        RValue h;
+        CInstance* inst = nullptr;
+        if (!CmInstance(obj, h, inst)) continue;
+        for (const char* var : kSpBagVars) {
+            RValue v;
+            try {
+                if (!g_Yytk->CallBuiltin("variable_instance_exists", { h, RValue(var) }).ToBoolean()) continue;
+                v = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue(var) });
+            } catch (...) { continue; }
+            const std::string where = std::string(HeroSiege::Objects::GetObjectName(obj)) + "." + var;
+            if (v.m_Kind == VALUE_ARRAY) {
+                std::vector<SpStack> found;
+                int n = 0;
+                SpWalkGrid(v, lookup ? lookup : inst, found, n);
+                if (n > 0) {
+                    stacks = found;
+                    cells = n;
+                    route = where + (tried.empty() ? std::string() : ";tried=" + tried);
+                    return true;
+                }
+            }
+            tried += (tried.empty() ? "" : ",") + where + ":" + SpKindName(v);
+        }
+    }
     try {
         double idx = -1;
         const char* name = HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Inventory_Grid_obj).data();
-        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }), idx) || idx < 0) return false;
-        const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
-        for (int n = 0; n < total && n < 256; ++n) {
-            const RValue node = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)n) });
-            if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) continue;
-            const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
-            if (grid.m_Kind != VALUE_ARRAY) continue;
-            const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
-            for (int r = 0; r < rows && r < 64; ++r) {
-                const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)r) });
-                if (row.m_Kind != VALUE_ARRAY) continue;
-                const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
-                for (int c = 0; c < cols && c < 64; ++c) {
-                    const RValue here = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
-                    RValue fp;
-                    std::string text;
-                    if (ApIsEmptyCell(here) || !ApCellFingerprint(here, fp, text) || text != fingerprint) continue;
-                    nodeInst = HhResolveInstance(node);
-                    cell = here;
-                    return nodeInst != nullptr;
-                }
+        if (ApNumber(g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(name)) }), idx) && idx >= 0) {
+            int nodes = 0;
+            const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+            for (int n = 0; n < total && n < 256; ++n) {
+                const RValue node = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)n) });
+                if (!g_Yytk->CallBuiltin("variable_instance_exists", { node, RValue("nodeGrid") }).ToBoolean()) continue;
+                const RValue grid = g_Yytk->CallBuiltin("variable_instance_get", { node, RValue("nodeGrid") });
+                if (grid.m_Kind != VALUE_ARRAY) continue;
+                ++nodes;
+                SpWalkGrid(grid, lookup ? lookup : HhResolveInstance(node), stacks, cells);
+            }
+            if (nodes > 0) {
+                route = std::string(name) + ".nodeGrid(" + std::to_string(nodes) + " nodes)" + (tried.empty() ? std::string() : ";tried=" + tried);
+                return true;
             }
         }
     } catch (...) {}
+    route = "none(" + (tried.empty() ? std::string("no owner carries a bag variable and no grid node is open") : "tried=" + tried) + ")";
     return false;
 }
 
-// ---- spawning and the boss's health ------------------------------------------------------
+// `bag`: every bag item of the base's class and `b`, pieces and the plain base.
+static void SpBagCommand()
+{
+    if (g_Sp.baseIndex < 0) { Out("soulprobe bag: refused(no base: `soulprobe base auto|<name>` first)"); return; }
+    std::vector<SpStack> stacks;
+    std::string route;
+    int cells = 0;
+    SpReadBag(stacks, route, cells);
+    int items = 0, unread = 0;
+    for (const SpStack& s : stacks) {
+        if (!s.read) ++unread;
+        else if (SpIsBaseItem(s.item)) ++items;
+    }
+    Out("soulprobe bag: route=" + route + " cells=" + std::to_string(cells) + " items=" + std::to_string(items)
+        + " unread=" + std::to_string(unread));
+    for (const SpStack& s : stacks) {
+        if (!s.read || !SpIsBaseItem(s.item)) continue;
+        const int act = SpPieceAct(s.item);
+        Out("soulprobe bag: " + s.fingerprint + " t=" + SpNum(s.item.t) + " b=" + SpNum(s.item.b) + " a=" + SpNum(s.item.a)
+            + " o=" + SpNum(s.item.o) + " cells=" + std::to_string(s.cells) + " name=" + s.item.name
+            + " piece=" + (act ? std::to_string(act) : std::string("no")));
+    }
+}
+
+// ---- objects, portals and bosses ---------------------------------------------------------------
 // An hs-game-sdk object name, then its runtime index by asset_get_index.
 static bool SpResolveObject(const std::string& name, double& index, std::string& why)
 {
@@ -52500,84 +52590,252 @@ static bool SpResolveObject(const std::string& name, double& index, std::string&
     return true;
 }
 
-// One boss near the player (ctx "### Spawning the boss"): the player's x plus
-// dx, mirrored to minus when that passes the room's width; never in a town.
-// depth: instance_create_depth(x, y, 0, object); scp: the game's sCP(x, y,
-// object) by name with the player as self. True when an instance came back.
-static bool SpSpawn(const std::string& objectName, double dx, bool scp, RValue& id, double& index, double& x, double& y,
-                    std::string& failed)
+// Every instance of an SDK object or of its descendants in the room
+// (instance_find on a parent walks its children, as GML's does), at most 256.
+static std::vector<RValue> SpInstancesOf(HeroSiege::Objects::GameObject obj, std::string& why)
 {
-    index = -1;
-    x = y = 0;
-    if (!SpResolveObject(objectName, index, failed)) return false;
+    std::vector<RValue> out;
+    double idx = -1;
+    if (!SpResolveObject(std::string(HeroSiege::Objects::GetObjectName(obj)), idx, why)) return out;
+    try {
+        const int total = (int)g_Yytk->CallBuiltin("instance_number", { RValue(idx) }).ToDouble();
+        for (int n = 0; n < total && n < 256; ++n) {
+            const RValue h = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue((double)n) });
+            if (HhResolveInstance(h)) out.push_back(h);
+        }
+    } catch (...) { why = "instance walk threw"; }
+    return out;
+}
+
+static std::string SpObjectName(const RValue& h)
+{
+    try {
+        const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("object_index") });
+        return IsNumericInstanceRead(oi) ? g_Yytk->CallBuiltin("object_get_name", { oi }).ToString() : std::string("?");
+    } catch (...) { return "?"; }
+}
+
+// A protected record behind an instance variable that holds its key (a
+// portal's portalZone and the rest, static reading 15; a boss's enemy_hp,
+// § 13.1): read through PC_GetVariableGMLWrapper by name, and only for a
+// whole-number key inside the store (0..262143; § 11.2: a -1 key faulted the
+// game). False, with `why`, for anything else.
+static bool SpProtectedRead(const RValue& h, const char* var, RValue& key, RValue& value, std::string& why)
+{
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { h, RValue(var) }).ToBoolean()) { why = std::string("no ") + var; return false; }
+        key = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue(var) });
+        if (!BossProbeKeyInRange(key)) { why = "key " + Describe(key); return false; }
+        value = g_Yytk->CallGameScript(kSpGetVarFull, { key });
+        return true;
+    } catch (...) { why = "threw"; return false; }
+}
+
+static std::string SpProtectedText(const RValue& h, const char* var)
+{
+    RValue key, value;
+    std::string why;
+    return SpProtectedRead(h, var, key, value, why) ? Describe(value) : "unreadable(" + why + ")";
+}
+
+// A boss's health: its `enemy_hp` record (§ 13.1).
+static std::string SpHp(const RValue& h)
+{
+    RValue key, value;
+    std::string why;
+    return SpProtectedRead(h, "enemy_hp", key, value, why) ? Describe(value) : "unread(" + why + ")";
+}
+
+// `portals`: every instance descending from Portal_Parent_obj in the room,
+// with its records. Town portals are step 5's reference for `portalset`.
+static void SpPortalsCommand()
+{
+    std::string why;
+    const std::vector<RValue> list = SpInstancesOf(HeroSiege::Objects::GameObject::Portal_Parent_obj, why);
+    for (const RValue& h : list) {
+        std::string line = "soulprobe portals: id=" + SpNum(InstanceIdOf(h)) + " object=" + SpObjectName(h);
+        try {
+            line += " x=" + SpNum(std::round(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("x") }).ToDouble()))
+                  + " y=" + SpNum(std::round(g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("y") }).ToDouble()))
+                  + " visible=" + (g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("visible") }).ToBoolean() ? "1" : "0");
+        } catch (...) { line += " x=? y=? visible=?"; }
+        RValue key, zone;
+        std::string zoneWhy;
+        const bool zoneRead = SpProtectedRead(h, "portalZone", key, zone, zoneWhy);
+        line += " portalZone=" + Describe(key) + " zone=" + (zoneRead ? SpRoomText(zone) : "unreadable(" + zoneWhy + ")");
+        for (const char* var : kSpPortalVars)
+            if (std::string(var) != "portalZone") line += std::string(" ") + var + "=" + SpProtectedText(h, var);
+        Out(line);
+    }
+    Out("soulprobe portals: count=" + std::to_string(list.size()) + (why.empty() ? std::string() : " (" + why + ")"));
+}
+
+// One portal to a piece's boss room (ctx "### Opening the portal"): a
+// Portal_obj, by its SDK name, at the player's x plus the offset (mirrored to
+// minus past the room's width) and the player's y; `scp` through the game's
+// spawner sCP(x, y, object) with the player as self, else instance_create_depth
+// at the player's depth. When sCP's answer is not the instance (Live
+// procedure 1: it reported a failed dispatch while its instance appeared), the
+// new instance is the nearest Portal_obj to (x, y) that was not there before.
+// Then the boss room's index goes into the record the portal's portalZone key
+// names, through PC_SetVariableGMLWrapper, and is read back. A failed
+// creation, a bad key or a read-back that differs is a failed portal.
+struct SpPortalResult {
+    bool ok = false;
+    double id = -1, room = -1, x = 0, y = 0;
+    std::string target = "-", why, key = "-", before = "-", after = "-";
+};
+
+static SpPortalResult SpOpenPortal(int act, bool scp)
+{
+    SpPortalResult r;
+    if (!SpBossRoom(act, r.target, r.room, r.why)) return r;
+    double index = -1;
+    if (!SpResolveObject(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Portal_obj)), index, r.why)) return r;
     double px = 0, py = 0;
     CInstance* self = nullptr;
     RValue player;
-    if (!GpPlayerXY(px, py, &self, &player) || !self) { failed = "no player"; return false; }
-    if (SpNs::IsTownRoom(CurrentRoomName())) { failed = "town"; return false; }
-    double width = 0;
+    if (!GpPlayerXY(px, py, &self, &player) || !self) { r.why = "no player"; return r; }
+    double width = 0, depth = 0;
     try {
         RValue w;
         if (AurieSuccess(g_Yytk->GetBuiltin("room_width", nullptr, NULL_INDEX, w))) ApNumber(w, width);
+        ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("depth") }), depth);
     } catch (...) {}
-    x = px + dx;
-    y = py;
-    if (width > 0 && x > width) x = px - dx;
-    if (x < 0) x = 0;
-    try {
-        if (!scp) {
-            id = g_Yytk->CallBuiltin("instance_create_depth", { RValue(x), RValue(y), RValue(0.0), RValue(index) });
-        } else if (!ApCallScript(kSpScpName, self, { RValue(x), RValue(y), RValue(index) }, id)) {
-            failed = "sCP dispatch failed";
-            return false;
-        }
-    } catch (...) { failed = "spawn threw"; return false; }
-    if (!HhResolveInstance(id)) { failed = "no instance (answered " + Describe(id) + ")"; return false; }
-    ++g_Sp.spawned;
-    SpWatch w;
-    w.id = InstanceIdOf(id);
-    w.object = objectName;
-    w.t0 = GetTickCount64();
-    g_SpSpawnWatch.push_back(w);
-    return true;
-}
-
-// A boss's health: its `enemy_hp` key read through PC_GetVariableGMLWrapper
-// (§ 13.1), only when the key is a whole number inside the store.
-static std::string SpHp(const RValue& h)
-{
-    try {
-        const RValue key = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("enemy_hp") });
-        if (!BossProbeKeyInRange(key)) return "unread(" + Describe(key) + ")";
-        return Describe(g_Yytk->CallGameScript(kSpGetVarFull, { key }));
-    } catch (...) { return "threw"; }
-}
-
-static void SpSpawnCommand(const std::vector<std::string>& tail)
-{
-    if (tail.empty()) { Out("soulprobe spawn: usage -> spawn <act|object> [dx] [depth|scp]; nothing spawned"); return; }
-    std::string object = tail[0];
-    bool digits = !object.empty() && object.size() <= 2;
-    for (char c : object) digits = digits && c >= '0' && c <= '9';
-    if (digits) {
-        const SpNs::ActBoss* boss = SpNs::BossOfAct(std::atoi(object.c_str()));
-        if (!boss) { Out("soulprobe spawn: object=- index=-1 route=- failed(no act " + object + ") at=-"); return; }
-        object = boss->bossObject;
-    }
-    double dx = g_Sp.offset;
-    bool scp = g_Sp.spawnScp;
-    for (size_t i = 1; i < tail.size(); ++i) {
-        const std::string w = Lower(tail[i]);
-        if (w == "depth") scp = false;
-        else if (w == "scp") scp = true;
-        else { try { dx = std::stod(w); } catch (...) { Out("soulprobe spawn: usage -> spawn <act|object> [dx] [depth|scp]; nothing spawned"); return; } }
-    }
+    r.x = px + g_Sp.portalOffset;
+    if (width > 0 && r.x > width) r.x = px - g_Sp.portalOffset;
+    if (r.x < 0) r.x = 0;
+    r.y = py;
+    std::string listWhy;
+    std::vector<double> before;
+    for (const RValue& h : SpInstancesOf(HeroSiege::Objects::GameObject::Portal_obj, listWhy)) before.push_back(InstanceIdOf(h));
     RValue id;
-    double index = -1, x = 0, y = 0;
-    std::string failed;
-    const bool ok = SpSpawn(object, dx, scp, id, index, x, y, failed);
-    Out("soulprobe spawn: object=" + object + " index=" + SpNum(index) + " route=" + (scp ? "scp" : "depth")
-        + (ok ? " id=" + SpNum(InstanceIdOf(id)) : " failed(" + failed + ")") + " at=" + SpNum(std::round(x)) + "," + SpNum(std::round(y)));
+    try {
+        if (scp) ApCallScript(kSpScpName, self, { RValue(r.x), RValue(r.y), RValue(index) }, id);
+        else id = g_Yytk->CallBuiltin("instance_create_depth", { RValue(r.x), RValue(r.y), RValue(depth), RValue(index) });
+    } catch (...) { r.why = "create threw"; return r; }
+    if (!HhResolveInstance(id)) {
+        double best = -1;
+        for (const RValue& h : SpInstancesOf(HeroSiege::Objects::GameObject::Portal_obj, listWhy)) {
+            const double hid = InstanceIdOf(h);
+            if (std::find(before.begin(), before.end(), hid) != before.end()) continue;
+            const double hx = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("x") }).ToDouble();
+            const double hy = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("y") }).ToDouble();
+            const double d = (hx - r.x) * (hx - r.x) + (hy - r.y) * (hy - r.y);
+            if (best < 0 || d < best) { best = d; id = h; }
+        }
+        if (best < 0) { r.why = "no new instance (answered " + Describe(id) + ")"; return r; }
+    }
+    r.id = InstanceIdOf(id);
+    g_SpPortalWatch.push_back(SpPortalWatch{ r.id, GetTickCount64(), 0 });
+    RValue key, was;
+    std::string why;
+    if (!SpProtectedRead(id, "portalZone", key, was, why)) { r.why = "portalZone " + why + "; instance " + SpNum(r.id); return r; }
+    r.key = SpNum(key.ToDouble());
+    r.before = Describe(was);
+    try {
+        g_Yytk->CallGameScript(kSpSetVarFull, { key, RValue(r.room) });
+        const RValue now = g_Yytk->CallGameScript(kSpGetVarFull, { key });
+        r.after = Describe(now);
+        double got = -1;
+        if (!ApNumber(now, got) || got != r.room) { r.why = "read-back differs; instance " + SpNum(r.id); return r; }
+    } catch (...) { r.why = "record write threw; instance " + SpNum(r.id); return r; }
+    r.ok = true;
+    ++g_Sp.portals;
+    return r;
+}
+
+static void SpPortalLine(int act, bool scp, const SpPortalResult& r)
+{
+    Out("soulprobe portal: act=" + std::to_string(act) + " target=" + r.target + " index=" + SpNum(r.room) + " route=" + (scp ? "scp" : "depth")
+        + " id=" + (r.ok ? SpNum(r.id) : "failed(" + r.why + ")") + " at=" + SpNum(std::round(r.x)) + "," + SpNum(std::round(r.y))
+        + " key=" + r.key + " before=" + r.before + " after=" + r.after);
+}
+
+// `portal <act> [scp|depth]`.
+static void SpPortalCommand(const std::vector<std::string>& tail)
+{
+    const int act = tail.empty() ? 0 : std::atoi(tail[0].c_str());
+    if (!SpNs::IsAct(act)) { Out("soulprobe portal: usage -> portal <act 1-9> [scp|depth]; nothing made"); return; }
+    bool scp = g_Sp.portalScp;
+    if (tail.size() > 1) {
+        const std::string w = Lower(tail[1]);
+        if (w != "scp" && w != "depth") { Out("soulprobe portal: usage -> portal <act 1-9> [scp|depth]; nothing made"); return; }
+        scp = w == "scp";
+    }
+    struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
+    SpPortalLine(act, scp, SpOpenPortal(act, scp));
+}
+
+// `portalset <id> <variable> <value>`: one portal record, written through
+// PC_SetVariableGMLWrapper and read back, only on an instance descending from
+// Portal_Parent_obj and only for a whole-number key inside the store. The
+// value is a number, or `true`/`false`.
+static void SpPortalSetCommand(const std::vector<std::string>& tail)
+{
+    static const char* kUsage = "soulprobe portalset: usage -> portalset <id> <portalZone|portalActive|isEligible|portalUsable|pSpwd> <value>; nothing written";
+    if (tail.size() < 3) { Out(kUsage); return; }
+    double id = -1;
+    try { id = std::stod(tail[0]); } catch (...) { Out(kUsage); return; }
+    const char* var = nullptr;
+    for (const char* v : kSpPortalVars) if (tail[1] == v) var = v;
+    if (!var) { Out(kUsage); return; }
+    RValue value;
+    const std::string text = Lower(tail[2]);
+    if (text == "true" || text == "false") value = RValue(text == "true");
+    else { try { value = RValue(std::stod(text)); } catch (...) { Out(kUsage); return; } }
+    const RValue h(id);
+    CInstance* inst = HhResolveInstance(h);
+    const int parent = (int)HeroSiege::Objects::GameObject::Portal_Parent_obj;
+    const int oi = inst ? CallerObjectIndex(inst) : -1;
+    if (!inst || (oi != parent && !HeroSiege::Objects::IsDescendantOf(oi, parent))) {
+        Out("soulprobe portalset: id=" + SpNum(id) + " refused(" + (inst ? "not a portal" : "no instance") + ")");
+        return;
+    }
+    RValue key, was;
+    std::string why;
+    if (!SpProtectedRead(h, var, key, was, why)) { Out("soulprobe portalset: id=" + SpNum(id) + " var=" + var + " refused(" + why + ")"); return; }
+    std::string after;
+    try {
+        g_Yytk->CallGameScript(kSpSetVarFull, { key, value });
+        after = Describe(g_Yytk->CallGameScript(kSpGetVarFull, { key }));
+    } catch (...) { after = "threw"; }
+    Out("soulprobe portalset: id=" + SpNum(id) + " var=" + var + " key=" + SpNum(key.ToDouble()) + " before=" + Describe(was) + " after=" + after);
+}
+
+// `goto <act>`: the game's NetworkRoomGoto(<boss room>) by its SDK constant,
+// the player as self: the travel `portal-route: goto` would ship, measured by
+// Live procedure 3's goto-travel. Never the raw room_goto builtin.
+static void SpGotoCommand(const std::string& arg)
+{
+    const int act = std::atoi(arg.c_str());
+    if (!SpNs::IsAct(act)) { Out("soulprobe goto: usage -> goto <act 1-9>; nothing called"); return; }
+    std::string target, why, called;
+    double room = -1;
+    double px = 0, py = 0;
+    CInstance* self = nullptr;
+    if (!SpBossRoom(act, target, room, why)) called = "no(" + why + ")";
+    else if (!GpPlayerXY(px, py, &self) || !self) called = "no(no player)";
+    else {
+        struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
+        try {
+            RValue res;
+            const AurieStatus st = g_Yytk->CallGameScriptEx(res, kSpRoomGotoFull, self, self, { RValue(room) });
+            called = AurieSuccess(st) ? std::string("yes") : "no(status " + std::to_string((int)st) + ")";
+        } catch (...) { called = "no(threw)"; }
+    }
+    Out("soulprobe goto: act=" + std::to_string(act) + " target=" + target + " called=" + called);
+}
+
+// `bosses`: every instance descending from Enemy_Child_Boss_obj in the room,
+// with its health. Nothing here creates one.
+static void SpBossesCommand()
+{
+    std::string why;
+    const std::vector<RValue> list = SpInstancesOf(HeroSiege::Objects::GameObject::Enemy_Child_Boss_obj, why);
+    for (const RValue& h : list)
+        Out("soulprobe bosses: id=" + SpNum(InstanceIdOf(h)) + " object=" + SpObjectName(h) + " hp=" + SpHp(h));
+    Out("soulprobe bosses: count=" + std::to_string(list.size()) + (why.empty() ? std::string() : " (" + why + ")"));
 }
 
 // `kill <id>`: HP 0 through the boss's own `enemy_hp` key, by name (§ 13.1);
@@ -52602,63 +52860,87 @@ static void SpKillCommand(const std::string& arg)
 }
 
 // ---- placing and picking up -----------------------------------------------------------------
-// `place <act> [count]`: a piece built through the loader (InitItemFromJson)
-// and placed with LootGroundCreateFromItem, the player as self (sigdrop's
-// route), so the definition keeps its seed; never LootGroundCreate, which
-// writes a fresh one (§ 18.4). The ground item's struct is read back.
+// One item of the base, with seed `seed` and count 1, built through the loader
+// (InitItemFromJson) and placed with LootGroundCreateFromItem, the player as
+// self (sigdrop's route), so the definition keeps its seed; never
+// LootGroundCreate, which writes a fresh one (§ 18.4). The ground item's
+// struct is read back into `it`; `ground` is its instance id or why not.
+static bool SpPlaceOne(long long seed, CInstance* self, double px, double py, SpItem& it, std::string& ground)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { ground = "refused(no global instance)"; return false; }
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string key = "0-0-" + std::to_string(ms) + "-" + std::to_string(g_Sp.baseCategory);
+    const std::string json = "{\"a\":" + std::to_string(seed) + ",\"b\":" + std::to_string(g_Sp.baseIndex) + ",\"c\":0,\"j\":0,\"o\":1}";
+    RValue parsed;
+    g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+    if (parsed.m_Kind != VALUE_OBJECT) { ground = "refused(json_parse answered " + Describe(parsed) + ")"; return false; }
+    RValue item;
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, kSpFromJsonFull, g, g, { parsed, RValue(key) });
+    if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) { ground = "refused(InitItemFromJson st=" + std::to_string((int)st) + " " + Describe(item) + ")"; return false; }
+    static int s_Placed = 0;
+    const double x = px + 48.0 + 32.0 * (s_Placed++ % 6), y = py;
+    RValue res;
+    const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, kSpLootFromItemFull, self, self, { RValue(x), RValue(y), item });
+    if (!AurieSuccess(st2)) { ground = "refused(LootGroundCreateFromItem st=" + std::to_string((int)st2) + ")"; return false; }
+    RValue groundItem = item;
+    ground = "none(" + Describe(res) + ")";
+    if (HhResolveInstance(res)) {
+        ground = SpNum(InstanceIdOf(res));
+        const RValue onGround = g_Yytk->CallBuiltin("variable_instance_get", { res, RValue("itemInstance") });
+        if (ApIsPlainStruct(onGround)) groundItem = onGround;
+    }
+    SpReadItem(groundItem, it);
+    return true;
+}
+
+// `place <act> [count]`: `count` pieces of the base's class, each its own
+// item with count 1 (a bag consumable never stacks). `place plain [count]`:
+// the base itself, undressed, each with an ordinary seed of its own (a random
+// whole number outside 777000..777999).
 static void SpPlaceCommand(const std::vector<std::string>& tail)
 {
-    const int act = tail.empty() ? 0 : std::atoi(tail[0].c_str());
+    const bool plain = !tail.empty() && Lower(tail[0]) == "plain";
+    const int act = tail.empty() || plain ? 0 : std::atoi(tail[0].c_str());
     int count = tail.size() > 1 ? std::atoi(tail[1].c_str()) : 1;
     if (count < 1) count = 1;
-    if (count > 99) count = 99;
-    if (!SpNs::IsAct(act)) { Out("soulprobe place: usage -> place <act 1-9> [count]; nothing placed"); return; }
-    if (g_Sp.baseIndex < 0) { Out("soulprobe place: refused(no base: `soulprobe base auto|<keys_name>` first)"); return; }
+    if (count > 20) count = 20;
+    if (!plain && !SpNs::IsAct(act)) { Out("soulprobe place: usage -> place <act 1-9>|plain [count]; nothing placed"); return; }
+    if (g_Sp.baseIndex < 0) { Out("soulprobe place: refused(no base: `soulprobe base auto|<name>` first)"); return; }
     double px = 0, py = 0;
     CInstance* self = nullptr;
     if (!GpPlayerXY(px, py, &self) || !self) { Out("soulprobe place: refused(no player)"); return; }
-    try {
-        CInstance* g = nullptr;
-        g_Yytk->GetGlobalInstance(&g);
-        if (!g) { Out("soulprobe place: refused(no global instance)"); return; }
-        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        const std::string key = "0-0-" + std::to_string(ms) + "-" + std::to_string(SpNs::kKeyCategory);
-        const std::string json = "{\"a\":" + std::to_string(SpNs::SeedOfAct(act)) + ",\"b\":" + std::to_string(g_Sp.baseIndex)
-                               + ",\"c\":0,\"j\":0,\"o\":" + std::to_string(count) + "}";
-        RValue parsed;
-        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
-        if (parsed.m_Kind != VALUE_OBJECT) { Out("soulprobe place: refused(json_parse answered " + Describe(parsed) + ")"); return; }
-        RValue item;
-        const AurieStatus st = g_Yytk->CallGameScriptEx(item, kSpFromJsonFull, g, g, { parsed, RValue(key) });
-        if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) { Out("soulprobe place: refused(InitItemFromJson st=" + std::to_string((int)st) + " " + Describe(item) + ")"); return; }
-        static int s_Placed = 0;
-        const double x = px + 48.0 + 32.0 * (s_Placed++ % 6), y = py;
-        RValue res;
-        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, kSpLootFromItemFull, self, self, { RValue(x), RValue(y), item });
-        if (!AurieSuccess(st2)) { Out("soulprobe place: refused(LootGroundCreateFromItem st=" + std::to_string((int)st2) + ")"); return; }
-        RValue groundItem = item;
-        std::string ground = "none(" + Describe(res) + ")";
-        if (HhResolveInstance(res)) {
-            ground = SpNum(InstanceIdOf(res));
-            const RValue onGround = g_Yytk->CallBuiltin("variable_instance_get", { res, RValue("itemInstance") });
-            if (ApIsPlainStruct(onGround)) groundItem = onGround;
+    for (int k = 0; k < count; ++k) {
+        long long seed = SpNs::SeedOfAct(act);
+        if (plain) {
+            do {
+                g_SpRoll = ForgePact::IncarnationGems::Mix(g_SpRoll);
+                seed = 1 + (long long)((g_SpRoll >> 11) % 2000000000ull);
+            } while (seed >= 777000 && seed <= 777999);
         }
         SpItem it;
-        SpReadItem(groundItem, it);
-        std::string where;
-        const RValue sprite = SpItemSprite(groundItem, where);
-        Out("soulprobe place: act=" + std::to_string(act) + " ground=" + ground + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b)
-            + " c=" + SpNum(it.c) + " j=" + SpNum(it.j) + " a=" + SpNum(it.a) + " o=" + SpNum(it.o) + " name=" + it.name
-            + " itemSprite=" + Describe(sprite) + " (" + where + ")");
-    } catch (...) { Out("soulprobe place: refused(threw)"); }
+        std::string ground;
+        bool placed = false;
+        try { placed = SpPlaceOne(seed, self, px, py, it, ground); } catch (...) { ground = "refused(threw)"; }
+        if (!placed) { Out("soulprobe place: " + (plain ? std::string("plain") : "act=" + std::to_string(act)) + " " + ground); return; }
+        if (plain) {
+            Out("soulprobe place: plain ground=" + ground + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b) + " a=" + SpNum(it.a)
+                + " o=" + SpNum(it.o) + " name=" + it.name);
+        } else {
+            Out("soulprobe place: act=" + std::to_string(act) + " ground=" + ground + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b)
+                + " c=" + SpNum(it.c) + " j=" + SpNum(it.j) + " a=" + SpNum(it.a) + " o=" + SpNum(it.o) + " name=" + it.name);
+        }
+    }
 }
 
-// `pickup`: PickupLoot on each ground piece in the room, in the companion's
-// shape (self the ground item; other here the player, not a pet), and the
-// ground instance destroyed on a true return, as every caller of it does
-// (§ 10.7).
+// `pickup`: PickupLoot on each ground item of the base (pieces and the plain
+// base) in the room, in the companion's shape (self the ground item; other
+// here the player, not a pet), and the ground instance destroyed on a true
+// return, as every caller of it does (§ 10.7).
 static void SpPickupCommand()
 {
+    if (g_Sp.baseIndex < 0) { Out("soulprobe pickup: refused(no base: `soulprobe base auto|<name>` first)"); return; }
     int tried = 0, picked = 0;
     try {
         double px = 0, py = 0;
@@ -52679,7 +52961,7 @@ static void SpPickupCommand()
             if (!gi) continue;
             const RValue itemStruct = g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue("itemInstance") });
             SpItem it;
-            if (!SpReadItem(itemStruct, it) || !SpPieceAct(it)) continue;
+            if (!SpReadItem(itemStruct, it) || !SpIsBaseItem(it)) continue;
             ++tried;
             RValue result;
             const AurieStatus st = g_Yytk->CallGameScriptEx(result, kSpPickupFull, gi, playerInst,
@@ -52754,37 +53036,6 @@ static void SoulProbeGemRoll(CInstance* S)
     } catch (...) {}
 }
 
-// ---- the stack hook -------------------------------------------------------------------------
-// ItemsAreStackable(a, b), after the game answered: logged, and with `veto` a
-// true turned false where the core's VetoStack says so.
-static RValue& Hook_SoulProbeStack(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
-{
-    RValue& res = g_SpStackOrig ? g_SpStackOrig(S, O, R, argc, A) : R;
-    if (g_Sp.stack == SpStackMode::Off || g_SpBusy > 0) return res;
-    try {
-        ++g_Sp.calls;
-        SpItem a, b;
-        const bool haveA = argc >= 1 && A && A[0] && SpReadItem(*A[0], a);
-        const bool haveB = argc >= 2 && A && A[1] && SpReadItem(*A[1], b);
-        const bool game = res.ToBoolean();
-        bool answer = game;
-        if (game && g_Sp.stack == SpStackMode::Veto && haveA && haveB && SpNs::VetoStack(true, (long long)a.a, (long long)b.a)) {
-            answer = false;
-            ++g_Sp.vetoed;
-            res = RValue(false);
-        }
-        if (g_Sp.stackLines < kSpLineCap) {
-            ++g_Sp.stackLines;
-            auto text = [](bool have, const SpItem& it) {
-                return have ? "(" + SpNum(it.t) + "," + SpNum(it.b) + "," + SpNum(it.c) + "," + SpNum(it.a) + ")" : std::string("(unread)");
-            };
-            Out("soulprobe stack: a=" + text(haveA, a) + " b=" + text(haveB, b) + " game=" + (game ? "true" : "false")
-                + " answer=" + (answer ? "true" : "false"));
-        }
-    } catch (...) {}
-    return res;
-}
-
 // ---- the use watch ----------------------------------------------------------------------------
 static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
 template <int N>
@@ -52809,12 +53060,15 @@ static bool SpLooksLikeFingerprint(const std::string& s)
     return true;
 }
 
-// One call of candidate n. Logged (at most kSpLineCap lines per arming), with
-// its nesting depth among the candidates; in `use`, the first piece in the
-// chosen script after each arming is treated with the core's DecideUse: on
-// `summon` the boss is spawned first, and only when it exists is one piece
-// taken, by `take`. Later piece calls before the next arming are counted as
-// suppressed, and they and anything else pass to the game untouched.
+// One call of candidate n. Logged (at most kSpLineCap lines per `usewatch`),
+// with its nesting depth among the candidates. In `use`, a piece in the chosen
+// script is never handed to the game (ctx "### Using a piece"): the core's
+// DecideUse decides, and on `portal` a portal opens as `portal` makes it; the
+// call then answers as the game answered the control (the plain base) on that
+// script, true when no control was seen, so the game clears the piece's cell
+// itself, as it does for the logo. A refusal or a failed portal answers
+// false, and the confirm stops with the piece kept (static reading 9). Every
+// other call, and every call in `log`, passes to the game untouched.
 static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     const PFUNC_YYGMLScript orig = g_SpUseOrig[n];
@@ -52824,7 +53078,6 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
     // grid cell or a fingerprint string (§ 9.1: a cell holds only the
     // fingerprint), resolved through GetItemFromFingerprint(fp, 0) by name.
     SpItem item;
-    RValue held;
     int at = -1;
     bool viaFingerprint = false;
     std::string kinds;
@@ -52832,7 +53085,7 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
         for (int i = 0; i < argc && A; ++i) {
             const RValue arg = A[i] ? *A[i] : RValue();
             std::string kind = SpKindName(arg);
-            if (at < 0 && SpReadItem(arg, item)) { at = i; held = arg; }
+            if (at < 0 && SpReadItem(arg, item)) { at = i; }
             else {
                 RValue fp;
                 std::string text;
@@ -52851,7 +53104,6 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
                     RValue resolved;
                     if (self && ApCallScript(kSpFromFpName, self, { fp, RValue(0.0) }, resolved) && SpReadItem(resolved, item)) {
                         at = i;
-                        held = resolved;
                         viaFingerprint = true;
                         if (item.fingerprint.empty()) item.fingerprint = text;
                     }
@@ -52863,63 +53115,28 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
     const int act = at >= 0 ? SpPieceAct(item) : 0;
 
     RValue* res = &R;
-    bool answered = false;
-    bool acted = false;
-    std::string spawnText, takeText, extra;
-    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript && !g_Sp.useArmed) ++g_Sp.suppressed;
-    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript && g_Sp.useArmed) {
-        acted = true;
-        g_Sp.useArmed = false;
+    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript) {
+        ++g_Sp.uses;
         const SpRoom room = SpReadRoom();
-        const SpNs::UseVerdict v = SpNs::DecideUse(true, room.name, act);
-        bool spawned = false;
-        if (v == SpNs::UseVerdict::Summon) {
+        const SpNs::UseVerdict v = SpNs::DecideUse(true, room.name, room.act, act);
+        std::string portalText, target = SpNs::PortalTarget(act) ? SpNs::PortalTarget(act) : "-";
+        bool opened = false;
+        if (v == SpNs::UseVerdict::Portal) {
             struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
-            const SpNs::ActBoss* boss = SpNs::BossOfAct(act);
-            RValue id;
-            double index = -1, x = 0, y = 0;
-            std::string failed;
-            spawned = boss && SpSpawn(boss->bossObject, g_Sp.offset, g_Sp.spawnScp, id, index, x, y, failed);
-            spawnText = std::string(boss ? boss->bossObject : "-") + (spawned ? " id=" + SpNum(InstanceIdOf(id)) : " refused(spawn-failed: " + failed + ")");
+            const SpPortalResult p = SpOpenPortal(act, g_Sp.portalScp);
+            SpPortalLine(act, g_Sp.portalScp, p);
+            opened = p.ok;
+            portalText = p.ok ? SpNum(p.id) : "failed(" + p.why + ")";
         } else {
-            spawnText = std::string("- refused(") + SpNs::Word(v) + ")";
+            portalText = std::string("refused(") + SpNs::Word(v) + ")";
         }
-        if (spawned && !g_Sp.takeClear) {
-            // take game: answer as the game answered the control, so the game
-            // removes one piece itself, as it removes a PAS token.
-            R = g_SpHaveControl[n] ? g_SpControlRet[n] : RValue(true);
-            extra = " answer=" + Describe(R) + (g_SpHaveControl[n] ? "" : "(no-control)");
-            answered = true;
-            takeText = "game";
-        }
-        if (!answered) res = orig ? &orig(S, O, R, argc, A) : &R;
-        if (spawned && g_Sp.takeClear) {
-            struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
-            takeText = "clear";
-            try {
-                if (item.o > 1) {
-                    g_Yytk->CallBuiltin("variable_struct_set", { item.def, RValue("o"), RValue(item.o - 1) });
-                    RefreshItemHash(held);
-                    extra = " clear=lowered";
-                } else {
-                    CInstance* node = nullptr;
-                    RValue cell, cleared;
-                    if (!SpFindKeyNode(item.fingerprint, node, cell)) extra = " clear=no-key-node";
-                    else extra = ApCallScript(kSpClearName, node, { cell, RValue() }, cleared) ? " clear=cleared" : " clear=failed";
-                }
-            } catch (...) { extra = " clear=threw"; }
-        }
-        if (spawned) ++g_Sp.uses;
-        if (takeText.empty()) takeText = "none";
-        SpPendingUse p;
-        p.head = "soulprobe use: act=" + std::to_string(act) + " o=" + SpNum(item.o) + " script=" + kSpUseTargets[n].name
-               + " spawn=" + spawnText + " take=" + takeText;
-        p.fingerprint = item.fingerprint;
-        p.tail = extra;
-        p.t0 = GetTickCount64();
-        g_SpPendingUses.push_back(p);
+        R = opened ? (g_SpHaveControl[n] ? g_SpControlRet[n] : RValue(true)) : RValue(false);
+        Out("soulprobe use: act=" + std::to_string(act) + " script=" + kSpUseTargets[n].name + " portal=" + portalText
+            + " target=" + target + " answer=" + Describe(R) + " control=" + (g_SpHaveControl[n] ? "seen" : "none")
+            + " room=" + room.name);
+    } else {
+        res = orig ? &orig(S, O, R, argc, A) : &R;
     }
-    if (!acted) res = orig ? &orig(S, O, R, argc, A) : &R;
 
     try {
         ++g_Sp.usecalls;
@@ -52958,19 +53175,9 @@ static void SpInstallUseWatch()
     }
 }
 
-static void SpInstallStackHook()
-{
-    if (g_Sp.stackTried) return;
-    g_Sp.stackTried = true;
-    bool native = false;
-    const bool ok = HookOneScript(kSpStackName, "fp_soulprobe_stack", (PVOID)Hook_SoulProbeStack, &g_SpStackOrig, &native);
-    g_Sp.stackRoute = !ok ? "none" : native ? "both" : "table-only";
-}
-
 // ---- the frame tick ---------------------------------------------------------------------------
 // The gem watch's install once a player exists (a drop hook installed at
-// character select stalls the runner, § 15), the spawn and kill watches, and
-// each `use` line once the game has had its turn at the stack.
+// character select stalls the runner, § 15), and the portal and kill watches.
 static void SoulProbeTick(uint32_t frame)
 {
     if (g_Sp.gemPending && (frame % 60) == 0) {
@@ -52982,29 +53189,21 @@ static void SoulProbeTick(uint32_t frame)
                 + (native ? "native (both routes)" : "NOT native - a missing gemroll line is not-observed, not a negative"));
         }
     }
-    if (g_SpSpawnWatch.empty() && g_SpKills.empty() && g_SpPendingUses.empty()) return;
+    if (g_SpPortalWatch.empty() && g_SpKills.empty()) return;
     const ULONGLONG now = GetTickCount64();
     try {
-        for (size_t i = 0; i < g_SpSpawnWatch.size();) {
-            SpWatch& w = g_SpSpawnWatch[i];
+        for (size_t i = 0; i < g_SpPortalWatch.size();) {
+            SpPortalWatch& w = g_SpPortalWatch[i];
             while (w.next < 4 && now - w.t0 >= (ULONGLONG)kSpWatchSeconds[w.next] * 1000ull) {
                 const RValue h(w.id);
                 const bool exists = HhResolveInstance(h) != nullptr;
-                std::string hp = "-", dist = "-";
-                if (exists) {
-                    hp = SpHp(h);
-                    double px = 0, py = 0;
-                    if (GpPlayerXY(px, py, nullptr)) {
-                        const double bx = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("x") }).ToDouble();
-                        const double by = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("y") }).ToDouble();
-                        dist = SpNum(std::round(std::sqrt((bx - px) * (bx - px) + (by - py) * (by - py))));
-                    }
-                }
-                Out("soulprobe spawnwatch: id=" + SpNum(w.id) + " t=" + std::to_string(kSpWatchSeconds[w.next]) + " exists=" + (exists ? "1" : "0")
-                    + " hp=" + hp + " dist=" + dist + " object=" + w.object);
+                bool visible = false;
+                if (exists) visible = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("visible") }).ToBoolean();
+                Out("soulprobe portalwatch: id=" + SpNum(w.id) + " t=" + std::to_string(kSpWatchSeconds[w.next]) + " exists=" + (exists ? "1" : "0")
+                    + " visible=" + (visible ? "1" : "0"));
                 ++w.next;
             }
-            if (w.next >= 4) g_SpSpawnWatch.erase(g_SpSpawnWatch.begin() + i);
+            if (w.next >= 4) g_SpPortalWatch.erase(g_SpPortalWatch.begin() + i);
             else ++i;
         }
         for (size_t i = 0; i < g_SpKills.size();) {
@@ -53013,21 +53212,12 @@ static void SoulProbeTick(uint32_t frame)
             Out("soulprobe kill: id=" + SpNum(g_SpKills[i].id) + " key=" + g_SpKills[i].key + " exists10s=" + (exists ? "1" : "0"));
             g_SpKills.erase(g_SpKills.begin() + i);
         }
-        for (size_t i = 0; i < g_SpPendingUses.size();) {
-            if (now - g_SpPendingUses[i].t0 < 500ull) { ++i; continue; }
-            // suppressed: piece calls the chosen script took since, while the
-            // arming was spent (a per-frame caller shows here, not as bosses).
-            Out(g_SpPendingUses[i].head + " after=" + SpKeyTabCount(g_SpPendingUses[i].fingerprint) + g_SpPendingUses[i].tail
-                + " suppressed=" + std::to_string(g_Sp.suppressed));
-            g_SpPendingUses.erase(g_SpPendingUses.begin() + i);
-        }
     } catch (...) {}
 }
 
 // ---- the command ------------------------------------------------------------------------------
 static void SpStatus()
 {
-    const char* stack = g_Sp.stack == SpStackMode::Off ? "off" : g_Sp.stack == SpStackMode::Log ? "log" : "veto";
     const char* use = g_Sp.use == SpUseMode::Off ? "off" : g_Sp.use == SpUseMode::Log ? "log" : "use";
     // Per candidate, so a script called every frame shows in the log phase,
     // before `use` is armed on it.
@@ -53035,16 +53225,14 @@ static void SpStatus()
     for (int i = 0; i < kSpUseCount; ++i)
         if (g_Sp.useCallsBy[i]) by += (by.empty() ? "" : ",") + std::string(kSpUseTargets[i].name) + ":" + std::to_string(g_Sp.useCallsBy[i]);
     Out(std::string("soulprobe status: base=") + (g_Sp.baseName.empty() ? "none" : g_Sp.baseName)
-        + " dress=" + (g_Sp.dress ? "on" : "off") + " sprite=" + (g_Sp.sprite ? "on" : "off")
-        + " stackhook=" + stack + " stackroute=" + g_Sp.stackRoute
+        + " category=" + (g_Sp.baseCategory >= 0 ? std::to_string(g_Sp.baseCategory) : std::string("-"))
+        + " dress=" + (g_Sp.dress ? "on" : "off")
         + " usewatch=" + use + " usescript=" + (g_Sp.useScript >= 0 ? kSpUseTargets[g_Sp.useScript].name : "none")
-        + " take=" + (g_Sp.takeClear ? "clear" : "game") + " gemwatch=" + (g_Sp.gemwatch ? "log" : "off")
-        + " spawnroute=" + (g_Sp.spawnScp ? "scp" : "depth") + " offset=" + SpNum(g_Sp.offset)
-        + " calls=" + std::to_string(g_Sp.calls) + " vetoed=" + std::to_string(g_Sp.vetoed)
+        + " gemwatch=" + (g_Sp.gemwatch ? "log" : "off")
+        + " portalroute=" + (g_Sp.portalScp ? "scp" : "depth") + " portaloffset=" + SpNum(g_Sp.portalOffset)
         + " usecalls=" + std::to_string(g_Sp.usecalls) + " usecallsby=" + (by.empty() ? std::string("-") : by)
-        + " uses=" + std::to_string(g_Sp.uses) + " armed=" + (g_Sp.useArmed ? "1" : "0")
-        + " suppressed=" + std::to_string(g_Sp.suppressed)
-        + " gemrolls=" + std::to_string(g_Sp.gemrolls) + " spawned=" + std::to_string(g_Sp.spawned)
+        + " uses=" + std::to_string(g_Sp.uses) + " portals=" + std::to_string(g_Sp.portals)
+        + " gemrolls=" + std::to_string(g_Sp.gemrolls)
         + " gemroute=" + (g_GemDropHookNative ? "native" : g_GemDropHookTried ? "failed" : g_Sp.gemPending ? "pending" : "off"));
 }
 
@@ -53061,10 +53249,10 @@ static void SpActCommand()
 
 static void SoulProbeUsage()
 {
-    Out("soulprobe: status | keys | act | base auto|<keys_name> | dress on|off | sprite on|off | gem | place <act> [count] | pickup"
-        " | keytab | stackhook off|log|veto | usewatch off|log|use [auto|<script>] (use: one piece per arming)"
-        " | take game|clear (re-arms use) | gemwatch off|log"
-        " | spawn <act|object> [dx] [depth|scp] | spawnroute depth|scp | spawnoffset <px> | kill <id>");
+    Out("soulprobe: status | keys | act | base auto|<repository name> | dress on|off | gem | place <act>|plain [count] | pickup"
+        " | keytab | bag | usewatch off|log|use [auto|<script>] | gemwatch off|log"
+        " | portals | portal <act> [scp|depth] | portalroute scp|depth | portaloffset <px>"
+        " | portalset <id> <portalZone|portalActive|isEligible|portalUsable|pSpwd> <value> | goto <act> | bosses | kill <id>");
 }
 
 static void SoulProbeCommand(const std::string& rest)
@@ -53087,29 +53275,38 @@ static void SoulProbeCommand(const std::string& rest)
     if (sub == "keys") { SpKeysCommand(); return; }
     if (sub == "act") { SpActCommand(); return; }
     if (sub == "base") { if (tail.empty()) { SoulProbeUsage(); return; } SpBaseCommand(tail[0]); return; }
-    if (sub == "dress" || sub == "sprite") {
+    if (sub == "dress") {
         if (arg != "on" && arg != "off" && arg != "1" && arg != "0") { SoulProbeUsage(); return; }
-        const bool on = arg == "on" || arg == "1";
-        (sub == "dress" ? g_Sp.dress : g_Sp.sprite) = on;
-        Out("soulprobe " + sub + ": " + (on ? "on" : "off"));
+        g_Sp.dress = arg == "on" || arg == "1";
+        Out(std::string("soulprobe dress: ") + (g_Sp.dress ? "on" : "off"));
         return;
     }
     if (sub == "gem") { SpGemCommand(); return; }
     if (sub == "place") { SpPlaceCommand(tail); return; }
     if (sub == "pickup") { SpPickupCommand(); return; }
     if (sub == "keytab") { SpKeyTabCommand(); return; }
-    if (sub == "stackhook") {
-        if (arg == "off" || arg == "0") { g_Sp.stack = SpStackMode::Off; }
-        else if (arg == "log" || arg == "veto") {
-            SpInstallStackHook();
-            g_Sp.stack = arg == "log" ? SpStackMode::Log : SpStackMode::Veto;
-            g_Sp.stackLines = 0;
-        } else { SoulProbeUsage(); return; }
-        Out("soulprobe stackhook: " + (arg == "0" ? std::string("off") : arg) + " route=" + g_Sp.stackRoute);
+    if (sub == "bag") { SpBagCommand(); return; }
+    if (sub == "portals") { SpPortalsCommand(); return; }
+    if (sub == "portal") { SpPortalCommand(tail); return; }
+    if (sub == "portalset") { SpPortalSetCommand(tail); return; }
+    if (sub == "goto") { SpGotoCommand(arg); return; }
+    if (sub == "bosses") { SpBossesCommand(); return; }
+    if (sub == "portalroute") {
+        if (arg != "depth" && arg != "scp") { SoulProbeUsage(); return; }
+        g_Sp.portalScp = arg == "scp";
+        Out("soulprobe portalroute: " + arg);
+        return;
+    }
+    if (sub == "portaloffset") {
+        double px = -1;
+        try { px = std::stod(arg); } catch (...) { px = -1; }
+        if (!(px > 0)) { SoulProbeUsage(); return; }
+        g_Sp.portalOffset = px;
+        Out("soulprobe portaloffset: " + SpNum(px));
         return;
     }
     if (sub == "usewatch") {
-        if (arg == "off" || arg == "0") { g_Sp.use = SpUseMode::Off; g_Sp.useArmed = false; Out("soulprobe usewatch: off"); return; }
+        if (arg == "off" || arg == "0") { g_Sp.use = SpUseMode::Off; Out("soulprobe usewatch: off"); return; }
         if (arg != "log" && arg != "use") { SoulProbeUsage(); return; }
         if (arg == "use") {
             const std::string which = tail.size() > 1 ? Lower(tail[1]) : std::string("auto");
@@ -53126,20 +53323,7 @@ static void SoulProbeCommand(const std::string& rest)
         SpInstallUseWatch();
         g_Sp.use = arg == "log" ? SpUseMode::Log : SpUseMode::Use;
         g_Sp.useLines = 0;
-        // One treated piece per arming: a script the game calls every frame
-        // with the piece summons once, not once per frame.
-        g_Sp.useArmed = arg == "use";
-        Out("soulprobe usewatch: " + arg + " usescript=" + (g_Sp.useScript >= 0 ? kSpUseTargets[g_Sp.useScript].name : "none")
-            + " take=" + (g_Sp.takeClear ? "clear" : "game") + " armed=" + (g_Sp.useArmed ? "1" : "0"));
-        return;
-    }
-    if (sub == "take") {
-        if (arg != "game" && arg != "clear") { SoulProbeUsage(); return; }
-        g_Sp.takeClear = arg == "clear";
-        // Re-arms `use` for one more piece (Live procedure 1 sends `take clear`
-        // between its two uses).
-        if (g_Sp.use == SpUseMode::Use) g_Sp.useArmed = true;
-        Out("soulprobe take: " + arg + " armed=" + (g_Sp.useArmed ? "1" : "0"));
+        Out("soulprobe usewatch: " + arg + " usescript=" + (g_Sp.useScript >= 0 ? kSpUseTargets[g_Sp.useScript].name : "none"));
         return;
     }
     if (sub == "gemwatch") {
@@ -53150,21 +53334,6 @@ static void SoulProbeCommand(const std::string& rest)
         if (g_GemDropHookNative) Out("soulprobe gemwatch: log (the shared DropGems detour is native)");
         else if (g_GemDropHookTried) Out("soulprobe gemwatch: log - the shared DropGems detour failed this session; no gemroll line can come");
         else { g_Sp.gemPending = true; Out("soulprobe gemwatch: log (the shared DropGems detour installs once a player exists)"); }
-        return;
-    }
-    if (sub == "spawn") { SpSpawnCommand(tail); return; }
-    if (sub == "spawnroute") {
-        if (arg != "depth" && arg != "scp") { SoulProbeUsage(); return; }
-        g_Sp.spawnScp = arg == "scp";
-        Out("soulprobe spawnroute: " + arg);
-        return;
-    }
-    if (sub == "spawnoffset") {
-        double px = -1;
-        try { px = std::stod(arg); } catch (...) { px = -1; }
-        if (!(px > 0)) { SoulProbeUsage(); return; }
-        g_Sp.offset = px;
-        Out("soulprobe spawnoffset: " + SpNum(px));
         return;
     }
     if (sub == "kill") { SpKillCommand(arg); return; }
