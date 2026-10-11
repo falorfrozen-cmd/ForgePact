@@ -4,8 +4,8 @@
 // The Python runner injects the REAL ForgePact::ChaosPillarTips header below.
 // No game is touched: a frame is what the adapter in ModuleMain.cpp hands the
 // core from the HUD draw hook - the room, a census of Chaos_Pillar_obj (each
-// pillar's id, x, y, whether `activated` read true, false or not at all, and
-// its chaosPillarTooltip or none) when the core asks for one, and view camera
+// pillar's id, x, y, its activation - inactive, activated or unreadable, as
+// the core decided it from the store - and its chaosPillarTooltip or none) when the core asks for one, and view camera
 // 0's x, y, width and height - and what comes back is the list of `visible`
 // writes the adapter makes on tooltips.
 //
@@ -26,8 +26,16 @@
 // is taken on the first frame, then at most once every 30 frames, and at once
 // in a new room, which empties the shown set without writing. The counters
 // and the stat line say what happened.
+//
+// Replan 1: a pillar's `activated` holds a key into the game's protected-value
+// store, not the state (Live 1 read it as true on all 17 untouched pillars).
+// The core's key test accepts only a number kind holding a finite whole
+// number in [0, 262144) - the adapter calls the store's getter for nothing
+// else - and the store's answer, not the key, maps to the activation.
 #include <cstdint>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -37,6 +45,8 @@
 namespace Tips = ForgePact::ChaosPillarTips;
 using Tips::Activation;
 using Tips::Pillar;
+using Tips::StoreValue;
+using Tips::ValueKind;
 using Tips::View;
 using Tips::Write;
 
@@ -108,7 +118,7 @@ static Frame frame(Tips::Core& c, const std::vector<Pillar>& pillars, const View
 static bool zero(const Tips::Counters& s)
 {
     return s.pillars == 0 && s.onscreen == 0 && s.activated == 0 && s.unreadable == 0 && s.notooltip == 0
-        && s.showWrites == 0 && s.hideWrites == 0 && s.ticks == 0 && s.writesRefused == 0;
+        && s.showWrites == 0 && s.hideWrites == 0 && s.ticks == 0 && s.writesRefused == 0 && s.censusFailed == 0;
 }
 
 int main()
@@ -122,7 +132,7 @@ int main()
               c.StatLine(0));
         check("baseline/fresh_stat_line",
               c.StatLine(0) == "pillartips: off pillars=0 onscreen=0 shown=0 activated=0 unreadable=0 notooltip=0 "
-                               "showWrites=0 hideWrites=0 ticks=0 hudCalls=0",
+                               "showWrites=0 hideWrites=0 writesRefused=0 censusFailed=0 ticks=0 hudCalls=0",
               c.StatLine(0));
     }
     {
@@ -410,13 +420,104 @@ int main()
         frame(c, mix, View{ 8000, 8000, 1920, 1080 }); // every pillar off screen
         check("target/stat_line",
               c.StatLine(42) == "pillartips: on pillars=5 onscreen=0 shown=0 activated=1 unreadable=1 notooltip=1 "
-                                "showWrites=2 hideWrites=1 ticks=3 hudCalls=42",
+                                "showWrites=2 hideWrites=1 writesRefused=0 censusFailed=0 ticks=3 hudCalls=42",
               c.StatLine(42));
         c.SetEnabled(false);
         check("target/stat_line_after_off",
               c.StatLine(43) == "pillartips: off pillars=5 onscreen=0 shown=0 activated=1 unreadable=1 notooltip=1 "
-                                "showWrites=2 hideWrites=1 ticks=3 hudCalls=43",
+                                "showWrites=2 hideWrites=1 writesRefused=0 censusFailed=0 ticks=3 hudCalls=43",
               c.StatLine(43));
+    }
+
+    // ---- target (replan 1): `activated` is a store key, not the state ---------
+    {
+        // The key test gates the getter: a number kind holding a finite whole
+        // number in [0, 262144). A bool is not a key, whatever it holds.
+        const auto real = [](double d) { return StoreValue{ ValueKind::Real, d }; };
+        const bool accepts = Tips::IsStoreKey(real(0)) && Tips::IsStoreKey(real(1)) && Tips::IsStoreKey(real(176880))
+            && Tips::IsStoreKey(real(262143)) && Tips::IsStoreKey(StoreValue{ ValueKind::Int32, 5 })
+            && Tips::IsStoreKey(StoreValue{ ValueKind::Int64, 176880 });
+        const bool refuses = !Tips::IsStoreKey(real(-1)) && !Tips::IsStoreKey(real(262144)) && !Tips::IsStoreKey(real(1.5))
+            && !Tips::IsStoreKey(real(std::numeric_limits<double>::quiet_NaN()))
+            && !Tips::IsStoreKey(real(std::numeric_limits<double>::infinity()))
+            && !Tips::IsStoreKey(real(-std::numeric_limits<double>::infinity()))
+            && !Tips::IsStoreKey(StoreValue{ ValueKind::Bool, 1 }) && !Tips::IsStoreKey(StoreValue{ ValueKind::String, 7 })
+            && !Tips::IsStoreKey(StoreValue{ ValueKind::Undefined, 0 }) && !Tips::IsStoreKey(StoreValue{ ValueKind::Other, 3 });
+        check("store-key-range", accepts && refuses && Tips::kStoreRecords == 262144,
+              std::string("accepts=") + (accepts ? "1" : "0") + " refuses=" + (refuses ? "1" : "0"));
+    }
+    {
+        // The store's answer for an accepted key is the activation.
+        const auto of = [](ValueKind k, double d) { return Tips::ActivationFromAnswer(StoreValue{ k, d }); };
+        const bool activated = of(ValueKind::Bool, 1) == Activation::Activated && of(ValueKind::Real, 1) == Activation::Activated
+            && of(ValueKind::Real, 0.75) == Activation::Activated && of(ValueKind::Int32, 3) == Activation::Activated
+            && of(ValueKind::Int64, 2) == Activation::Activated;
+        const bool inactive = of(ValueKind::Bool, 0) == Activation::Inactive && of(ValueKind::Real, 0) == Activation::Inactive
+            && of(ValueKind::Real, 0.5) == Activation::Inactive && of(ValueKind::Int32, 0) == Activation::Inactive;
+        const bool unreadable = of(ValueKind::Undefined, 0) == Activation::Unreadable
+            && of(ValueKind::String, 1) == Activation::Unreadable && of(ValueKind::Other, 1) == Activation::Unreadable
+            && of(ValueKind::Real, std::numeric_limits<double>::quiet_NaN()) == Activation::Unreadable
+            && Tips::ActivationFromAnswer(std::nullopt) == Activation::Unreadable; // the read threw
+        check("store-answer-kinds", activated && inactive && unreadable,
+              std::string("activated=") + (activated ? "1" : "0") + " inactive=" + (inactive ? "1" : "0")
+                  + " unreadable=" + (unreadable ? "1" : "0"));
+    }
+    {
+        // A census shaped like Live 1 (Act_01_01): seventeen untouched pillars,
+        // each `activated` a distinct whole-number key above 0.5, every store
+        // answer false. Read through the key test and the store, all seventeen
+        // on screen with a tooltip are shown and none counts as activated. The
+        // negative control feeds the same keys as the state (launch 1's read):
+        // every pillar then reads as activated and none is shown.
+        std::vector<Pillar> viaStore, keyAsState;
+        bool keysAccepted = true;
+        for (std::int64_t k = 0; k < 17; ++k) {
+            const StoreValue key{ ValueKind::Real, static_cast<double>(176880 + 3 * k) };
+            if (!Tips::IsStoreKey(key)) keysAccepted = false;
+            const StoreValue answer{ ValueKind::Bool, 0 }; // the store's record for that key: false
+            const Activation a = Tips::IsStoreKey(key) ? Tips::ActivationFromAnswer(answer) : Activation::Unreadable;
+            viaStore.push_back(pillar(200 + k, 100.0 + 100.0 * static_cast<double>(k), 500, 300 + k, a));
+            keyAsState.push_back(pillar(200 + k, 100.0 + 100.0 * static_cast<double>(k), 500, 300 + k,
+                                        Tips::ActivationFromAnswer(key)));
+        }
+        Tips::Core c;
+        c.SetEnabled(true);
+        const Frame f = frame(c, viaStore);
+        std::set<std::int64_t> shown;
+        for (const Write& w : f.writes)
+            if (w.visible) shown.insert(w.tooltip);
+        Tips::Core old;
+        old.SetEnabled(true);
+        const Frame g = frame(old, keyAsState);
+        const std::string line = c.StatLine(0);
+        check("live1-key-is-not-the-state",
+              keysAccepted && f.writes.size() == 17 && shown.size() == 17 && c.Shown() == 17
+                  && line.find(" activated=0 ") != std::string::npos && c.Stats().activated == 0
+                  && c.Stats().pillars == 17 && c.Stats().onscreen == 17 && g.writes.empty()
+                  && old.Stats().activated == 17,
+              line + " | key-as-state: " + both(old, g.writes));
+    }
+    {
+        // The stat line in replan 1's order: a refused write and a census not
+        // taken each count, so a mod whose writes all fail, or whose object
+        // names stopped resolving, does not print a quiet zone's line.
+        Tips::Core c;
+        c.SetEnabled(true);
+        const std::vector<Pillar> one{ pillar(1, 100, 100, 101) };
+        const bool due = c.BeginFrame(kRoom);
+        c.NoteCensusFailed(); // the adapter could not take it: no census, no write
+        const auto none = c.Decide(kView);
+        const bool stillDue = c.BeginFrame(kRoom);
+        c.TakeCensus(one);
+        const auto shownNow = c.Decide(kView);
+        c.NoteWriteRefused(); // its show could not be made: the tooltip was gone
+        const std::string line = c.StatLine(9);
+        check("stat-line-refusals",
+              due && none.empty() && stillDue && shownNow == std::vector<Write>{ { 101, true } }
+                  && line == "pillartips: on pillars=1 onscreen=1 shown=1 activated=0 unreadable=0 notooltip=0 "
+                             "showWrites=1 hideWrites=0 writesRefused=1 censusFailed=1 ticks=2 hudCalls=9"
+                  && c.Stats().censusFailed == 1 && c.Stats().writesRefused == 1,
+              line);
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";

@@ -21,6 +21,13 @@ tooltip or leaves the census gets one hide. A tooltip the core never showed is
 never written. A view of zero size decides nothing. The census runs on the
 first frame, at most once every 30 frames after, and at once in a new room,
 which empties the shown set without writing. The stat line counts it all.
+
+Replan 1: a pillar's `activated` variable holds a key into the game's
+protected-value store, not the state. The core's key test accepts a finite
+whole number in [0, 262144) of a number kind and nothing else (the adapter
+never calls the getter otherwise), and the store's answer for that key maps to
+the activation: true or above 0.5 is activated, false or at most 0.5 is not,
+anything else, or a read that threw, is unreadable.
 """
 import os
 import shutil
@@ -162,6 +169,22 @@ class ChaosPillarTipsTargetTests(_Scenarios):
 
     def test_refused_writes_and_the_stat_line(self):
         self.assertScenarios("target/refused_write_counted", "target/stat_line", "target/stat_line_after_off")
+
+    # Replan 1: `activated` holds a protected-store key, not the state (Live 1
+    # read it as true on all 17 untouched pillars). The core's key test gates
+    # the getter call, and the store's answer, not the key, is the activation.
+
+    def test_the_store_key_test_accepts_only_a_whole_number_in_range(self):
+        self.assertScenarios("store-key-range")
+
+    def test_the_store_answer_maps_to_an_activation_by_kind(self):
+        self.assertScenarios("store-answer-kinds")
+
+    def test_a_live1_census_with_keys_shows_every_untouched_pillar(self):
+        self.assertScenarios("live1-key-is-not-the-state")
+
+    def test_the_stat_line_counts_refused_writes_and_censuses_not_taken(self):
+        self.assertScenarios("stat-line-refusals")
 
 
 if __name__ == "__main__":

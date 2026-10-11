@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -31,7 +32,7 @@ namespace ForgePact::ChaosPillarTips {
 //     write and leaves the set.
 //   - a tooltip the core never showed is never written: an activated pillar
 //     stays the game's, shown on hover as before.
-//   - the census (each pillar's id, x, y, `activated`, tooltip) is taken at
+//   - the census (each pillar's id, x, y, activation, tooltip) is taken at
 //     most once every kCensusFrames frames, and on the first frame in a new
 //     room; a room change empties the shown set without writing, since those
 //     instances are gone with the room.
@@ -42,9 +43,11 @@ namespace ForgePact::ChaosPillarTips {
 // It is game-independent by contract - instance ids as integers, positions
 // and the view as numbers, never an instance or an RValue - so
 // tests/chaos_pillar_tips_harness.cpp compiles it whole. The adapter in
-// ModuleMain.cpp reads the room, the census and the view by name, checks
-// instance_exists on each tooltip right before it writes `visible`, and
-// reports a write it could not make to NoteWriteRefused.
+// ModuleMain.cpp reads the room, the census and the view by name, decides
+// each pillar's activation through IsStoreKey and ActivationFromAnswer below,
+// checks instance_exists on each tooltip right before it writes `visible`,
+// reports a write it could not make to NoteWriteRefused and a census it could
+// not take to NoteCensusFailed. Both counts are on the stat line.
 
 // Frames between two censuses, at most.
 inline constexpr unsigned long long kCensusFrames = 30;
@@ -78,8 +81,62 @@ inline bool OnScreen(const View& v, double x, double y)
     return x >= v.x - mx && x <= v.x + v.w + mx && y >= v.y - my && y <= v.y + v.h + my;
 }
 
-// A pillar's `activated` as the adapter read it.
+// A pillar's activation, as the core decides it from the protected store.
 enum class Activation : int { Inactive, Activated, Unreadable };
+
+// ---- `activated` is a store key, not the state (replan 1) ------------------
+//
+// The pillar's `activated` variable holds a key into the game's native
+// protected-value store (RUNTIME_DATA_MODELS.md section 5.8): the pillar's
+// Create allocates the record and stores its starting value under that key,
+// and the game reads the state back through the store. Live 1 read the raw
+// variable as true on all 17 untouched pillars of Act_01_01, which fits a key
+// and does not fit "used". So the adapter reads the raw value by name, asks
+// IsStoreKey, and only for an accepted key calls the game's
+// PC_GetVariableGMLWrapper script by name (the route PackMarkers::ReadStore
+// ships); ActivationFromAnswer then maps the store's answer. A key the test
+// refuses is never handed to the store: a -1 key faulted the game, and the
+// plugin's catch (...) does not catch that fault under /EHsc.
+
+// Records the protected store holds; a key is an index below this.
+inline constexpr double kStoreRecords = 262144;
+
+// The kind of a value the runtime answered, as the adapter classifies it.
+enum class ValueKind : int { Real, Int32, Int64, Bool, Undefined, String, Other };
+
+// One value as the adapter read it: its kind and, for a number or a bool,
+// its value as a double (a bool as 0 or 1). Anything else carries no value.
+struct StoreValue {
+    ValueKind kind = ValueKind::Undefined;
+    double number = 0;
+};
+
+inline bool IsNumberKind(ValueKind k)
+{
+    return k == ValueKind::Real || k == ValueKind::Int32 || k == ValueKind::Int64;
+}
+
+// The key test: a real, int32 or int64 holding a finite whole number in
+// [0, kStoreRecords). Any other kind, bool included, is not a key, and the
+// pillar is then unreadable without a call to the store.
+inline bool IsStoreKey(const StoreValue& raw)
+{
+    if (!IsNumberKind(raw.kind)) return false;
+    const double d = raw.number;
+    return std::isfinite(d) && d >= 0.0 && d < kStoreRecords && d == std::floor(d);
+}
+
+// The answer mapping: the store's answer for an accepted key. True, or a
+// number above 0.5 (the GML way), is activated; false, or a number at or
+// below 0.5, is not. Undefined, any other kind, a NaN, or a read that threw
+// (nullopt) is unreadable, which the core never shows.
+inline Activation ActivationFromAnswer(const std::optional<StoreValue>& answer)
+{
+    if (!answer) return Activation::Unreadable;
+    if (answer->kind == ValueKind::Bool) return answer->number != 0 ? Activation::Activated : Activation::Inactive;
+    if (!IsNumberKind(answer->kind) || std::isnan(answer->number)) return Activation::Unreadable;
+    return answer->number > 0.5 ? Activation::Activated : Activation::Inactive;
+}
 
 // One Chaos_Pillar_obj as the census reads it.
 struct Pillar {
@@ -110,6 +167,7 @@ struct Counters {
     long long hideWrites = 0;  // hide writes handed to the adapter
     long long ticks = 0;       // frames the core ran (BeginFrame while active)
     long long writesRefused = 0; // writes the adapter could not make (instance gone); not retried
+    long long censusFailed = 0;  // censuses asked for and not taken (an object name did not resolve)
 };
 
 class Core {
@@ -201,6 +259,11 @@ public:
     // A write the adapter could not make (its tooltip no longer exists).
     void NoteWriteRefused() { ++m_Stats.writesRefused; }
 
+    // A census BeginFrame asked for that the adapter could not take (an
+    // object name did not resolve). It stays due; the latest census taken
+    // keeps deciding.
+    void NoteCensusFailed() { ++m_Stats.censusFailed; }
+
     const Counters& Stats() const { return m_Stats; }
     std::size_t Shown() const { return m_Shown.size(); }
     bool IsShown(std::int64_t tooltip) const { return m_Shown.count(tooltip) != 0; }
@@ -217,6 +280,8 @@ public:
         s += " notooltip=" + std::to_string(m_Stats.notooltip);
         s += " showWrites=" + std::to_string(m_Stats.showWrites);
         s += " hideWrites=" + std::to_string(m_Stats.hideWrites);
+        s += " writesRefused=" + std::to_string(m_Stats.writesRefused);
+        s += " censusFailed=" + std::to_string(m_Stats.censusFailed);
         s += " ticks=" + std::to_string(m_Stats.ticks);
         s += " hudCalls=" + std::to_string(hudCalls);
         return s;
