@@ -52865,13 +52865,20 @@ static void SpKillCommand(const std::string& arg)
 // self (sigdrop's route), so the definition keeps its seed; never
 // LootGroundCreate, which writes a fresh one (§ 18.4). The ground item's
 // struct is read back into `it`; `ground` is its instance id or why not.
-static bool SpPlaceOne(long long seed, CInstance* self, double px, double py, SpItem& it, std::string& ground)
+// The key "0-0-<stamp>-<class>" is the item's fingerprint, so it is one per
+// item: the millisecond clock, stepped past the last stamp this verb used, so
+// items built in one millisecond (or one `place` loop) never share a key, as
+// forcerelic steps its relics. `key` returns it for the `place` line.
+static bool SpPlaceOne(long long seed, CInstance* self, double px, double py, SpItem& it, std::string& ground, std::string& key)
 {
     CInstance* g = nullptr;
     g_Yytk->GetGlobalInstance(&g);
     if (!g) { ground = "refused(no global instance)"; return false; }
+    static long long s_LastStamp = 0;
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    const std::string key = "0-0-" + std::to_string(ms) + "-" + std::to_string(g_Sp.baseCategory);
+    const long long stamp = ms > s_LastStamp ? ms : s_LastStamp + 1;
+    s_LastStamp = stamp;
+    key = "0-0-" + std::to_string(stamp) + "-" + std::to_string(g_Sp.baseCategory);
     const std::string json = "{\"a\":" + std::to_string(seed) + ",\"b\":" + std::to_string(g_Sp.baseIndex) + ",\"c\":0,\"j\":0,\"o\":1}";
     RValue parsed;
     g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
@@ -52920,15 +52927,15 @@ static void SpPlaceCommand(const std::vector<std::string>& tail)
             } while (seed >= 777000 && seed <= 777999);
         }
         SpItem it;
-        std::string ground;
+        std::string ground, key;
         bool placed = false;
-        try { placed = SpPlaceOne(seed, self, px, py, it, ground); } catch (...) { ground = "refused(threw)"; }
+        try { placed = SpPlaceOne(seed, self, px, py, it, ground, key); } catch (...) { ground = "refused(threw)"; }
         if (!placed) { Out("soulprobe place: " + (plain ? std::string("plain") : "act=" + std::to_string(act)) + " " + ground); return; }
         if (plain) {
-            Out("soulprobe place: plain ground=" + ground + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b) + " a=" + SpNum(it.a)
+            Out("soulprobe place: plain ground=" + ground + " key=" + key + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b) + " a=" + SpNum(it.a)
                 + " o=" + SpNum(it.o) + " name=" + it.name);
         } else {
-            Out("soulprobe place: act=" + std::to_string(act) + " ground=" + ground + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b)
+            Out("soulprobe place: act=" + std::to_string(act) + " ground=" + ground + " key=" + key + " itemType=" + SpNum(it.t) + " b=" + SpNum(it.b)
                 + " c=" + SpNum(it.c) + " j=" + SpNum(it.j) + " a=" + SpNum(it.a) + " o=" + SpNum(it.o) + " name=" + it.name);
         }
     }
