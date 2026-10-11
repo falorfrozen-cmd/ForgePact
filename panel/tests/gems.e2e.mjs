@@ -5,7 +5,8 @@
 // origin/main's legacy page when the controls sat on Mods › Quality of Life,
 // and replayed through tests/lib/oracle-relocate.mjs's navigation relocation
 // by `npm run oracle:replay`); this suite checks where the controls sit (their
-// own #gemsCard, the Loot tab's last card), how they start, how the Enabled
+// own #gemsCard, after #angelicCard and followed only by #soulPiecesCard, the
+// Loot tab's last card), how they start, how the Enabled
 // mods list treats them, what the mod filter's list draws with the Satanic
 // pool's classes, what its search and All mods / Enabled / Disabled filter
 // show and never change, what Save refuses and sends, the unsaved-changes cue,
@@ -130,10 +131,12 @@ async function switches(ctx) {
     const parts = [document.getElementById('mod_gem_mythic').closest('.row'), document.getElementById('mod_gem_maxroll_row'),
       document.getElementById('gemfilter_row'), document.getElementById('gemfilter_panel')];
     const lootCards = [...document.querySelectorAll('.tab-card[data-tab="loot"]')];
+    const afterAngelicIds = lootCards.slice(lootCards.indexOf(angelic) + 1).map((c) => c.id);
     return {
       isLootCard: !!card?.matches('.card.tab-card[data-tab="loot"]'),
       afterAngelic: !!card && !!(angelic.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING),
-      last: lootCards.at(-1) === card,
+      afterAngelicIds,
+      last: afterAngelicIds.join(',') === 'gemsCard,soulPiecesCard',
       visible: !!card?.checkVisibility(),
       heading: card?.querySelector('h2')?.textContent.trim(),
       inCard: !!card && parts.every((p) => card.contains(p)),
@@ -142,7 +145,7 @@ async function switches(ctx) {
     };
   });
   assert(group.isLootCard && group.afterAngelic && group.last && group.visible,
-    `#gemsCard is not the Loot tab's last card, after #angelicCard and visible on Loot: ${JSON.stringify(group)}`);
+    `the Loot tab's cards after #angelicCard are not #gemsCard then #soulPiecesCard last, or #gemsCard is not visible on Loot: ${JSON.stringify(group)}`);
   assert(group.heading === 'Gems of Incarnation', `the card's heading reads ${group.heading}`);
   assert(group.inCard && group.ordered, `the card does not hold Mythic, Max-roll, the filter row and its list in order: ${JSON.stringify(group)}`);
   assert(group.rows.every(Boolean), `a gem row lacks feature-row: ${JSON.stringify(group.rows)}`);
