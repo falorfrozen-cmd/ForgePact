@@ -1516,17 +1516,22 @@ strongbox in Path of Exile.
   of the screen, that you have not activated. A pillar that goes off screen
   hides its box again, so pillars far away cost nothing.
 - **Activated pillars.** A pillar you have activated goes back to showing its
-  mods only on hover, as before.
+  mods only on hover, as before. Its box can stay up for about half a second
+  after you activate it; then it is hidden once, even with the cursor on it,
+  and comes back the next time you hover the pillar.
 - **Switching off** returns every pillar to hover-only at once. While off,
   the mod reads and changes nothing.
 - **Mouse play only.** Gamepad play is not supported and was not tested.
 - **Several boxes** can overlap when pillars stand close together, and a box
   can sit over an open window: they are drawn as the game draws them.
-- **Not yet checked in a game session.** The switch is tested outside the
-  game only.
+- **Not yet checked in a game session.** A first test session confirmed that
+  the game shows and hides a pillar's box on hover the way the mod relies on,
+  but the version it tested took every pillar for an activated one and showed
+  nothing. The version described here is tested outside the game only.
 
 `pillartips stat` prints whether the switch is on and its counters (pillars
-seen, on screen and shown).
+seen, on screen, shown, activated and unreadable, and any writes or pillar
+counts it could not make).
 
 ## Goburin's Head pity
 

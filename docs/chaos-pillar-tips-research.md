@@ -31,11 +31,19 @@ gamepad").
   Mods → Quality of Life → **Always show Chaos Pillar mods**, plugin command
   `pillartips 1|0|stat`, both builds.
 - **Static reading:** done 2026-10-11 on game build `pe-6aaa6779-0cad4fc8`
-  (below; the shared copy is `docs/RUNTIME_DATA_MODELS.md` § 14.4 in the hub).
+  (below; the shared copy is `docs/RUNTIME_DATA_MODELS.md` § 14.4 in the hub),
+  and corrected the same day after Live 1: the pillar's `activated` holds a
+  protected-store key, not the state.
 - **Harness and contract tests:** pass (`tests/test_chaos_pillar_tips_behavior.py`,
   `tests/test_chaos_pillar_tips_contract.py`,
-  `tests/test_chaos_pillar_tips_panel_contract.py`).
-- **Live procedure 1:** not run yet.
+  `tests/test_chaos_pillar_tips_panel_contract.py`; 50 tests at `82c36ad`).
+- **Live procedure 1:** ran 2026-10-11 on the first build (`f7d913be`). The
+  hover gate and the depths are measured; the mod showed nothing, because that
+  build took the raw `activated` key for the state and read all 17 untouched
+  pillars as activated (`on-shown` and `on-leave` failed; "Live 1 results").
+  The mod now reads the record behind the key ("The mod").
+- **Live procedure 2:** not run yet. It runs the corrected build and
+  activates a pillar through the game's own dialog.
 - **Gamepad:** not supported, and not tested (owner, 2026-10-11).
 
 ## Static search
@@ -65,7 +73,8 @@ not "has none". The decompiles stay on the researcher's machine (indexed with
 ## Static reading
 
 A reading of build `pe-6aaa6779-0cad4fc8`, 2026-10-11, in our own words. Only
-the one-to-one count is measured.
+the one-to-one count is measured here; Live 1 later measured the hover gate
+and the raw `activated` value ("Live 1 results").
 
 - **One tooltip per pillar.** A session counted 18 `Chaos_Pillar_obj` and 18
   `Chaos_Pillar_Tooltip_obj` in one map (**measured** 2026-08-26 on an older
@@ -85,10 +94,27 @@ the one-to-one count is measured.
   `chaosPillarTooltip` holds a tooltip. The tooltip's own code never writes it;
   its starting value is an object property, inferred to be false because the
   box shows only on hover.
-- **Step.** An `activated` pillar takes its own branch and leaves the tooltip
+- **Step.** When the pillar's protected `activated` record reads true, the
+  Step takes its own branch (the pillar trembles) and leaves the tooltip
   alone. Otherwise, only while `device` is true, it rewrites the tooltip's
   `visible` every step: true while the local player is within 180 px, false
   otherwise. With mouse input the Step never touches it.
+- **`activated` holds a key, not the state** (read after Live 1 showed every
+  untouched pillar's raw value as true). The pillar's Create asks the game's
+  anti-cheat extension for a new record in the native protected-value store
+  (hub `docs/RUNTIME_DATA_MODELS.md` § 5.8), keeps the key it gets in
+  `activated` and stores the starting value under it, inferred false from the
+  constant passed; CleanUp frees the key. `rarity`, `affix`,
+  `activateTimer`, `magicFind01`..`06`, `lootAmount01`..`06`, `xZe` and
+  `zrmb` hold keys the same way. The game reads the
+  state back through the store: the pillar's interact closure does nothing
+  once the record is true, so a used pillar cannot be talked to again, and the
+  Step's true branch is the tremble. `DialogChaosPillar` reads the `rarity`
+  record; at the lower rarities it calls the pillar's activation closure at
+  once, at the higher ones it first takes an item from the inventory (which
+  item was not established). The activation closure sends a client effect
+  carrying the pillar's position; the handler that presumably sets the record
+  true and starts the fight was not read.
 - **The tooltip's Draw GUI** does nothing unless its `visible` is true; then
   it maps its room position through view camera 0 into GUI space and draws the
   box there, so the box follows its pillar wherever the camera is.
@@ -136,13 +162,33 @@ scope.
 - *A tooltip the mod did not show is never written.* An activated pillar stays
   the game's: its box shows on hover, as before (the owner's default,
   2026-10-11).
+- *Activation is the pillar's protected record.* The adapter's `PtReadRecord`
+  reads `activated` by name (the key), hands it to the core's key test
+  (`IsStoreKey`: a real, int32 or int64 holding a finite whole number in
+  [0, 262144); any other kind, bool included, is no key), and only for an
+  accepted key calls the game's `PC_GetVariableGMLWrapper` script by its SDK
+  name, the route `PackMarkers::ReadStore` ships for a creator's `spawnPack`
+  (hub `docs/RUNTIME_DATA_MODELS.md` §§ 5.8, 11.2). A refused key never
+  reaches the call: a -1 key faulted the game, and `catch (...)` does not
+  catch that under /EHsc. The core's `ActivationFromAnswer` maps the answer:
+  true, or a number above 0.5, is activated; false, or a number at or below
+  0.5, is not; a refused key, a read that threw, undefined or any other kind
+  is unreadable, which the core never shows. The raw key is never itself taken
+  for the state. The mod reads records and writes none.
 - *On screen* is view camera 0 grown by a quarter of its width and height on
   every side (`kViewMargin` 0.25), edges included. A view of zero or unread
   size decides nothing that frame.
-- *The census* (each pillar's id, x, y, `activated`, tooltip) is taken at most
+- *The census* (each pillar's id, x, y, activation, tooltip) is taken at most
   once every 30 frames (`kCensusFrames`) and on the first frame in a new room;
   a room change empties the shown set without writing, since those instances
-  went with the room. It reads at most 512 pillars.
+  went with the room. That assumes the room is not persistent, as the zones
+  measured were not; in a persistent room a tooltip the mod showed would keep
+  `visible` true until the game's own mouse leave (not observed). It reads at
+  most 512 pillars. A census whose object names do not resolve is not taken
+  and is counted (`censusFailed`); the previous one keeps deciding. So a pillar
+  activated between two censuses keeps its box for up to 30 frames, about half
+  a second, then gets one hide, even under the cursor; the next hover shows it
+  again, the game's own way.
 - *By name only.* The two objects through `asset_get_index` on the SDK's
   `GetObjectName`, variables through `variable_instance_get` /
   `variable_instance_set`, the view through `view_get_camera(0)` and
@@ -153,21 +199,26 @@ scope.
   `VALUE_REF`).
 - *Point of use.* Right before each write the adapter checks
   `instance_exists` on that tooltip; a write it cannot make is counted, not
-  retried (`writesRefused`, shown on `pillarprobe list`).
+  retried (`writesRefused`).
 - *No arming.* There is no hook to install, so `pillartips 1` sent at launch
   only sets the switch; the tick finds no pillar until a zone has one.
 
 **Stat line.** Every form prints
-`pillartips: <on|off> pillars= onscreen= shown= activated= unreadable= notooltip= showWrites= hideWrites= ticks= hudCalls=`;
-`hudCalls` is the HUD hook's own call count, the proof the write point runs.
+`pillartips: <on|off> pillars= onscreen= shown= activated= unreadable= notooltip= showWrites= hideWrites= writesRefused= censusFailed= ticks= hudCalls=`;
+`activated` counts pillars whose record answered true, `unreadable` those whose
+key was refused or whose read failed, `writesRefused` and `censusFailed` the
+adapter's refusals, and `hudCalls` is the HUD hook's own call count, the proof
+the write point runs.
 The modstate JSON carries `"pillarTips":{"enabled":<bool>,"shown":<n>}`.
 
 **Why that write point.** Controller_obj's Draw GUI runs after every Step-phase
 writer of `false` (mouse leave, and the gamepad branch of the pillar's Step;
 `docs/RUNTIME_DATA_MODELS.md` § 5.6), so a show written there is not undone
 before the draw for mouse play. Whether it also runs before the tooltips' own
-Draw GUI in the same frame is a layer-depth question; Live procedure 1 records
-both depths.
+Draw GUI in the same frame is a layer-depth question. Live 1 measured
+Controller_obj at depth -12998 and every tooltip at -13001 on
+`Layer_UI_Parent_1`; that the tooltips therefore draw after the hook, so a
+show written there is drawn the same frame, is an inference from those depths.
 
 **Rejected alternatives** (do not re-propose without new evidence):
 1. *Drawing the mods ourselves.* It re-implements the game's seventeen-line
@@ -185,22 +236,54 @@ both depths.
    chaospillars` can put over a hundred pillars in a zone.
 5. *Writing `device` or `isHovered` on the pillar.* `device` changes how the
    pillar is interacted with; `isHovered` is read nowhere the scan sees.
+6. *The raw `activated` value as the state* (the first build). Live 1 read it
+   as true on every untouched pillar: it is the record's key.
+7. *`trembleTimer`, `flameImage`, `isDiscovered` or `speakCooldown` as the
+   signal.* They are ordinary variables, but `trembleTimer` counts down, so a
+   pillar used earlier would read as unused once it stops, and the reading
+   does not tie the other three (animation, discovery, talk cooldown) to
+   activation. Live procedure 2 records them only as candidates, in case the
+   record does not flip.
+8. *Calling the extension's `GetVariable` by name.* It does not resolve from
+   the plugin (measured on the gamba machine, hub
+   `docs/RUNTIME_DATA_MODELS.md` § 20.5).
+9. *Making an activation from the plugin* (writing the record, or calling the
+   pillar's activation closure). The mod writes no game state but `visible`,
+   and nobody has read how the activation's client effect behaves offline; a
+   player's own activation is the case under test, so Live procedure 2 drives
+   it through the game's own dialog.
 
 ## Instrument
 
 - **`pillarprobe list`** (research build only, never in `kPlayerCommands`):
   one header line,
   `pillarprobe: room=<name> pillars=<n> view=<x>,<y>,<w>,<h> window=<w>x<h> controllerDepth=<d>`
-  followed by `writesRefused=` and `censusFailed=` (the adapter's refusals,
-  which the shipped stat line does not carry), then one row per pillar in
-  `instance_find` order,
-  `pillarprobe #<k> id= x= y= hx= hy= onscreen=<0|1> activated= device= tooltip=<id|none> tipExists=<0|1> visible= tipDepth= tipLayer=`.
+  (the refusal counts Live 1 read here, `writesRefused=` and `censusFailed=`,
+  are now on `pillartips stat`), then one row per pillar in `instance_find`
+  order,
+  `pillarprobe #<k> id= x= y= hx= hy= onscreen=<0|1> activatedKey=<raw> activatedValue=<ans> activation=<inactive|activated|unreadable> rarityKey=<raw> rarityValue=<ans> activateTimerKey=<raw> activateTimerValue=<ans> trembleTimer= flameImage= isDiscovered= speakCooldown= questState= image_index= sprite_index= device= tooltip=<id|none> tipExists=<0|1> visible= tipDepth= tipLayer=`.
   `hx`/`hy` is the client pixel of the pillar's bounding-box centre, what
-  `hs_input`'s `move` takes; `onscreen` is the shipped on-screen test.
+  `hs_input`'s `move` takes; `onscreen` is the shipped on-screen test. Each
+  of the three records is read through the shipped `PtReadRecord`: `<raw>` is
+  the variable as read (the key: a number in full, or its kind), `<ans>` the
+  store's answer (a number in full, `true`/`false`, a kind, `refused` when the
+  key test refused the key and no call was made, or `threw`), and
+  `activation` is what the core decides from them. The plain fields and
+  `visible` print a number in full, `true`/`false` for a bool, or a kind (Live
+  1's build printed flags as `0`/`1`). The probe writes no record and
+  activates nothing.
+- **`pillarprobe getter`**: the store getter's positive control, the same as
+  `packmarks census getter` (verified live 2026-10-06): it reads the key in
+  `gDataProtected[177]`, runs the key test, then calls `GPV` and
+  `PC_GetVariableGMLWrapper` by name and prints
+  `pillarprobe getter: gDataProtected[177]=<value> GPV=<value> wrapper=<value> -> proven`
+  when both answer the same non-zero number, else `-> unproven`. A record
+  read on a pillar means something only in a session where this says
+  `proven`.
 - **`pillarprobe device <k> <0|1>`** writes pillar k's `device` and prints
   `pillarprobe: device #<k> before= after=`. It was built for a gamepad
-  measurement the owner then dropped (gamepad is not supported); Live
-  procedure 1 does not use it.
+  measurement the owner then dropped (gamepad is not supported); neither live
+  procedure uses it.
 - **`evcount gml_Object_Chaos_Pillar_Tooltip_obj_Draw_64`** counts the
   tooltip's Draw GUI calls through its compiled-code row (the research build's
   `evcount`, verified live on Clean Up rows in the far-sleep research). Since
@@ -210,12 +293,15 @@ both depths.
   to `visible=1` and the `evcount` count rising, and leaving it must turn them
   back (Live procedure 1, step 2). A `visible=0` or a flat count elsewhere is
   read only after that control has moved both. `pillartips stat`'s
-  `hudCalls=` growing between two reads is the control for the write point.
+  `hudCalls=` growing between two reads is the control for the write point,
+  and `pillarprobe getter` reading `proven` is the control for the store
+  reads.
 
 ## Live procedure 1
 
-Not run yet. The research build (`plugin_build\build.bat dev`, the owner
-asked before it is installed), save slot 14 "Sorak". Mouse play only.
+Ran 2026-10-11 on the first build; the results are under "Live 1 results".
+The research build (`plugin_build\build.bat dev`, the owner asked before it is
+installed), save slot 14 "Sorak". Mouse play only.
 
 - **Control:** `ping` answers `pong (YYTK 4.0.1)`; `pillartips stat` prints
   one line starting `pillartips: off` whose `hudCalls=` grows between two
@@ -253,26 +339,173 @@ asked before it is installed), save slot 14 "Sorak". Mouse play only.
 - **Teardown:** `pillartips 0`, every mod back to its noted state, stop the
   game, restore the session's save backup.
 
+## Live procedure 2
+
+Not run yet. The corrected research build (`plugin_build\build.bat dev` after
+the record read; a new hash, and the owner is asked before it is installed;
+the installed DLL's hash is noted first so it can be put back), save slot 14
+"Sorak". Mouse play only: no gamepad step of any kind.
+
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`; `pillartips stat` prints
+  one line starting `pillartips: off` that carries `writesRefused=` and
+  `censusFailed=`, and whose `hudCalls=` grows between two reads 1 s apart;
+  the installed DLL's SHA-256 equals the built one (`dll-hash`); this
+  launch's plugin-loaded line (`marker`); and `pillarprobe getter` reads
+  `-> proven` (`getter-control`, the store reads' positive control).
+- **Setup:** as Live procedure 1, by back end with no owner step: note every
+  mod's state, `pillartips 0`, the four `estforce` lines and `specialrate
+  chaospillars 10` in town, the town waypoint to the Outskirts of Inoya;
+  `pillarprobe list` shows a pillar with `tipExists=1` (`pillars-present`);
+  `playerwarp` 200 px below pillar #0, park the cursor at least 300 px from
+  every `hx`/`hy`, start `evcount gml_Object_Chaos_Pillar_Tooltip_obj_Draw_64`.
+- **Steps** ("rising" and "flat" as in Live procedure 1; `visible` true is
+  printed `1` or `true`, false `0` or `false`, as the runtime answers):
+  0. `activated-key` (research), from the first `pillarprobe list` in the new
+     zone, before any interaction: on every row `activatedKey=` is a whole
+     number in [0, 262144), `activatedValue=false` or `0`,
+     `activation=inactive`, and the keys differ from row to row. The rows are
+     recorded as printed.
+  1. `off-hidden`: switch off, cursor parked: #0 `visible` false, flat, no box
+     in the screenshot.
+  2. `hover-control` (and `draw-count-control`, its rise and fall): the cursor
+     on #0's `hx`,`hy` for 0.5 s: `visible` true, rising, the box in a
+     screenshot; back to the parked point: `visible` false, flat.
+  3. `on-shown`: `pillartips 1` answers `pillartips: on`; cursor parked, 1 s:
+     #0 `visible` true, rising, the box without hover; on the stat line
+     `onscreen=` and `shown=` at least 1, `activated=0`, `unreadable=0`,
+     `writesRefused=0`, `censusFailed=0` and `showWrites=` growing.
+  4. `on-leave`: hover #0, then park: still `visible` true, rising.
+  5. `on-offscreen`: `playerwarp` at least 3000 px from every pillar: every
+     row with `onscreen=0` reads `visible` false, the stat line `shown=0` and
+     `hideWrites=` at least 1 (the mod hiding what it had shown), flat.
+  6. `cost` (research), back 200 px below #0: `pillartips 0`, `perf reset`,
+     10 s, `perf`; then `pillartips 1`, the same. The `DrawHudBuffs hook`
+     `avg=` both ways, this time with show writes running; expected: on adds
+     under 100 us.
+  7. `off-restores`: `pillartips 0`: #0 `visible` false with the cursor
+     parked; hover: true; park: false. The game's own behaviour is back.
+  8. `activation-made` (research), last, because the fight it starts would
+     disturb every step above. Pillar #k, not #0, preferably the nearest with
+     the lowest `rarityValue=` (the dialog charges an item at the higher
+     rarities). `pillartips 1`, `playerwarp` 60 px below #k, park the cursor,
+     `pillarprobe list` (#k's "before" row, expected `visible` true). The
+     operator clicks #k through `hs_input`, screenshots the dialog, clicks
+     its activation option read from the screenshot, and screenshots again.
+     If the dialog asks for an item the character lacks, the next nearest
+     pillar is tried once. If no click route works, the owner is asked for
+     one manual step (activate any pillar near the character by clicking it
+     and choosing its activation option, no fight needed, and say which),
+     recorded in the capture's manual steps; the plugin never writes pillar
+     state, and no back-end tool drives a game dialog except by click.
+     `pass` when the game's own dialog activated a pillar, `not-observed`
+     when neither route did.
+  9. `activate-flips` (research): within 2 s of the activation, cursor
+     parked, `pillarprobe list`: #k's `activatedKey=` unchanged,
+     `activatedValue=true` or `1`, `activation=activated`; every other row
+     still `inactive`.
+  10. `on-activated` (research): cursor parked, #k `visible` false, the mod
+      having hidden it once (stat `activated=1`, `hideWrites=` up by at least
+      1), the other on-screen pillars still shown; hover #k: true, the game's
+      own hover; park: false. #k's `tipExists` says whether the tooltip
+      survived activation.
+  11. `activation-candidates` (research, `pass` when recorded): #k's before
+      and after values of `rarityValue`, `activateTimerValue`, `trembleTimer`,
+      `flameImage`, `isDiscovered`, `speakCooldown`, `questState`,
+      `image_index`, `sprite_index` and `tipExists`, side by side.
+- **Route:** `activated-route: proven` when `activation-made`,
+  `activate-flips` and `on-activated` all pass; `not-observed` when no
+  activation was made; `contradicted` when one was made and `activate-flips`
+  or `on-activated` fails, which sends the rule back to research with the
+  candidates.
+- **Cases.** The ordinary case is an untouched, hovered pillar on screen
+  (#0); the outliers are the off-screen pillar (step 5) and the activated
+  pillar (steps 8-10), the only one that takes the activated branch of the
+  rule. Gamepad: not measured and not supported.
+- **Teardown:** `pillartips 0`, `estfree all`, `specialrate chaospillars 1`,
+  every mod back to its noted state, `evcount reset`; stop the game, even
+  mid-fight, and restore the session's save backup. The owner decides
+  whether the previously installed DLL goes back.
+- **Must pass:** `dll-hash`, `marker`, `control`, `getter-control`,
+  `pillars-present`, `draw-count-control`, `off-hidden`, `hover-control`,
+  `on-shown`, `on-leave`, `on-offscreen` and `off-restores`. The research
+  checks' verdicts are findings, carried by the route.
+
 ## Results
 
-Not run yet.
+### Live 1 results
+
+2026-10-11, mouse play, save slot 14 "Sorak", in `Act_01_01` (the Outskirts
+of Inoya) with `specialrate chaospillars 10`: 17 pillars, each with its
+tooltip. The installed and the built DLL were the same, SHA-256
+`f7d913beea8edd155b368371f6d9ec9ecae41f7ae9dfc6e4947b7918c8a4713e`, the first
+build (plugin v2.2.1 line), which still took the raw `activated` value for
+the state.
+
+| Check | Verdict | What was seen |
+|---|---|---|
+| `dll-hash` | pass | installed and built DLL equal (`f7d913be…`) |
+| `marker` | pass | this launch's `==== BloodPact plugin loaded ==== v2.2.1` |
+| `control` | pass | `pong (YYTK 4.0.1)`; `pillartips: off …` with `hudCalls=` 1048, then 1498 |
+| `pillars-present` | pass | `pillars=17`, every row `tipExists=1` |
+| `draw-count-control` | pass | the tooltip Draw GUI count 106 → 706 hovered, 1311 → 1311 parked |
+| `off-hidden` | pass | switch off, parked: #0 `visible=0`, count flat at 0, no box |
+| `hover-control` | pass | hovered: `visible=1`, count rising, the box in the screenshot ("Experience Gain increased by 5%", "Monster pack drops 1x Relic"); parked: `visible=0`, flat |
+| `on-shown` | **fail** | switch on, parked: #0 `visible=0`, flat, no box; the stat line `onscreen=1 shown=0 activated=17 showWrites=0` |
+| `on-leave` | **fail** | after hover and park: `visible=0`, flat; still `shown=0 activated=17` |
+| `on-offscreen` | pass | warped over 4100 px from the nearest pillar: all 17 rows `onscreen=0 visible=0`, `shown=0`, flat; but the mod had shown nothing to hide |
+| `depth-order` (research) | recorded | `controllerDepth=-12998`; every tooltip `tipDepth=-13001` on `Layer_UI_Parent_1` |
+| `cost` (research) | pass | `DrawHudBuffs hook` `avg=` 35.4 us off, 52.9 us on (+17.5 us), with no show writes running |
+| `off-restores` | pass | switch off: parked `visible=0`; hover `visible=1`; parked again `visible=0` |
+
+- **Why `on-shown` and `on-leave` failed.** The probe read `activated` as
+  true (`activated=1`) on all 17 pillars before anyone touched them, and the
+  mod counted `activated=17`, so it skipped every pillar and wrote nothing
+  (`showWrites=0`). The value is a protected-store key, not the state ("Static
+  reading"): a non-zero key is truthy. The probe printed only the truthiness,
+  so the key itself was not recorded. The mod now reads the record behind the
+  key ("The mod"), and the harness replays this census with keys and shows
+  every untouched pillar. Live procedure 2 checks it in the game.
+- **Measured.** The hover gate: hovering sets the tooltip's `visible` and its
+  Draw GUI runs (the count rises, the box is drawn); leaving clears it and the
+  count stops; with the cursor parked the box is not drawn. The depths above.
+  That the tooltips draw after the HUD hook, so a show written there is drawn
+  the same frame, is an inference from the depths, not a measurement.
+- **Cost.** +17.5 us on the hook's average with the mod on, but measured while
+  it found every pillar activated and made no show write; Live procedure 2
+  measures it with show writes running.
+- **Not exercised:** an activated pillar (the probe's `activated=1` was the
+  key, not a used pillar); gamepad (not supported).
 
 ## Route
 
-Not run yet. No route is measured: the mod's write point is fixed (above), and
-gamepad: not supported (owner, 2026-10-11).
+Live 2 not run yet. No write-point route is measured: the mod's write point
+is fixed (above), and gamepad: not supported (owner, 2026-10-11). Live
+procedure 2 sets the `activated-route` token (`proven`, `not-observed` or
+`contradicted`).
 
 ## Not established
 
-- Whether Controller_obj's Draw GUI runs before or after the tooltips' Draw
-  GUI in a frame (Live procedure 1 records both depths). For mouse play it
-  does not matter: mouse leave is the only writer of `false`, once.
+- That the game's own activation sets the pillar's `activated` record true:
+  the writer sits behind the activation closure's client effect, whose handler
+  was not read. Live procedure 2, step 9.
+- Whether a pillar's tooltip survives its activation, and what the record
+  holds after the fight. Live procedure 2, step 10, measures the first.
+- The mod's frame cost with show writes running (Live 1 measured it with
+  none). Live procedure 2, step 6.
+- The draw order of Controller_obj's Draw GUI and the tooltips' within a
+  frame: Live 1 measured the depths (-12998 and -13001), and the order is
+  inferred from them. For mouse play it does not matter: mouse leave is the
+  only writer of `false`, once.
+- Persistent rooms: the rule empties the shown set on a room change without
+  writing, which assumes the zone's instances went with it. The zones
+  measured were not persistent.
 - Gamepad play: with a controller the pillar's Step rewrites `visible` every
   step from the player's distance, which may hide the box again before it is
   drawn. Not supported, and not tested (owner, 2026-10-11).
-- The tooltip's starting `visible` (an object property, inferred false).
+- The tooltip's starting `visible` (an object property, inferred false; Live
+  1 read it false on every untouched pillar with the cursor away).
+- Which item the activation dialog charges at the higher rarities.
 - Which global flag Alarm 0 reads as local co-op; co-op as a whole.
-- An activated pillar live (harness only).
 - How the boxes look when several overlap, or over an open window: shipped as
   the game draws them.
 - Whether anything outside the pillar's own events reaches its tooltip by a
