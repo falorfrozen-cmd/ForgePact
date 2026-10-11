@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The panel half of "Boss soul pieces" (`soulpiece`, ForgePact #197).
 
-The plugin half (the drop roll, the act table and the portal) is pinned by
+The plugin half (the drop roll, the act table and the transfer) is pinned by
 the plugin's own tests. This file pins what the panel owns:
 
 - the switch is off by default, so a fresh install sends no `soulpiece` line;
@@ -138,10 +138,12 @@ class SoulPiecePanelRowTests(unittest.TestCase):
         self.assertTrue(text.endswith("Off by default."), text)
         # What it does, and the one action the player takes.
         self.assertIn("Right-click a piece in your bag", text)
-        self.assertIn("portal", text)
         self.assertIn("boss's lair", text)
-        # Pieces are bag consumables that open a portal (Replan 1): the old
-        # text's Key tab and summon near the player are gone.
+        self.assertIn("fresh fight", text)
+        # Pieces are bag consumables that move the player straight into the
+        # boss room (Amendment 2): the old text's Key tab, summon near the
+        # player and portal (Replan 1) are gone.
+        self.assertNotIn("portal", text.lower(), text)
         for word in ("Key tab", "stack", "summon", "outside town"):
             self.assertNotIn(word, text, word)
         # No game object, counter or measurement.

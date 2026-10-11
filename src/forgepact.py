@@ -345,8 +345,9 @@ DEFAULTS = {
     # Boss soul pieces (docs/boss-soul-pieces-research.md, #197): monsters in
     # an act's zones sometimes drop a piece of that act's boss's soul, a
     # little more often than a Gem of Incarnation (rolled where the game rolls
-    # that gem); right-clicking a piece in the bag opens a portal to that
-    # boss's lair. Off by default, like every mod here; offline only.
+    # that gem); right-clicking a piece in the bag goes straight to that
+    # boss's lair for a fresh fight, even if the boss was beaten before.
+    # Off by default, like every mod here; offline only.
     "mod_boss_soul_pieces": False,
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
     # over each timed skill's hotbar slot. Covers the explicit rows of the
