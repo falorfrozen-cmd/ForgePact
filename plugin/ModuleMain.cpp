@@ -8256,15 +8256,21 @@ static void PillarProbeGetter()
             } else {
                 RValue gpv, wrap;
                 bool gpvOk = false, wrapOk = false;
+                // Kinds masked to their low 28 bits, as PtStoreValue/PtProbeKind
+                // read them: a flagged REAL answer must still count as a number.
                 try {
                     gpv = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GPV.data(), { key });
                     gpvText = PtProbeValue(gpv);
-                    gpvOk = gpv.m_Kind == VALUE_REAL || gpv.m_Kind == VALUE_INT32 || gpv.m_Kind == VALUE_INT64;
+                    const uint32_t gpvKind = static_cast<uint32_t>(gpv.m_Kind) & 0x0FFFFFFFu;
+                    gpvOk = gpvKind == static_cast<uint32_t>(VALUE_REAL) || gpvKind == static_cast<uint32_t>(VALUE_INT32)
+                        || gpvKind == static_cast<uint32_t>(VALUE_INT64);
                 } catch (...) { gpvText = "threw"; }
                 try {
                     wrap = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_PC_GetVariableGMLWrapper.data(), { key });
                     wrapText = PtProbeValue(wrap);
-                    wrapOk = wrap.m_Kind == VALUE_REAL || wrap.m_Kind == VALUE_INT32 || wrap.m_Kind == VALUE_INT64;
+                    const uint32_t wrapKind = static_cast<uint32_t>(wrap.m_Kind) & 0x0FFFFFFFu;
+                    wrapOk = wrapKind == static_cast<uint32_t>(VALUE_REAL) || wrapKind == static_cast<uint32_t>(VALUE_INT32)
+                        || wrapKind == static_cast<uint32_t>(VALUE_INT64);
                 } catch (...) { wrapText = "threw"; }
                 proven = gpvOk && wrapOk && gpv.ToDouble() == wrap.ToDouble() && gpv.ToDouble() != 0.0;
             }

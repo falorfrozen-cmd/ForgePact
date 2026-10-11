@@ -365,6 +365,13 @@ the installed DLL's hash is noted first so it can be put back), save slot 14
      number in [0, 262144), `activatedValue=false` or `0`,
      `activation=inactive`, and the keys differ from row to row. The rows are
      recorded as printed.
+     `record-control` (must pass): the store read's positive control on the
+     pillar itself. An untouched pillar's `activatedValue=false` or `0` is
+     also what a read that returns zero for every key would print, so in
+     those same rows at least one `rarityValue=` (or `activateTimerValue=`)
+     must be a number, not `refused`, `threw` or a kind name, and the rows'
+     `rarityValue=` values must not all be the same (each is compared with
+     the rarity the game's own box shows).
   1. `off-hidden`: switch off, cursor parked: #0 `visible` false, flat, no box
      in the screenshot.
   2. `hover-control` (and `draw-count-control`, its rise and fall): the cursor
@@ -388,7 +395,11 @@ the installed DLL's hash is noted first so it can be put back), save slot 14
      disturb every step above. Pillar #k, not #0, preferably the nearest with
      the lowest `rarityValue=` (the dialog charges an item at the higher
      rarities). `pillartips 1`, `playerwarp` 60 px below #k, park the cursor,
-     `pillarprobe list` (#k's "before" row, expected `visible` true). The
+     `pillarprobe list` (#k's "before" row, expected `visible` true). #k's
+     `id=` is noted from that row: steps 9-11 pick #k's row by that `id=`,
+     never by its place in `instance_find` order, and if no row carries that
+     `id=` afterwards, that is recorded as its own observation (the pillar
+     removed on activation), not as `activate-flips` failing. The
      operator clicks #k through `hs_input`, screenshots the dialog, clicks
      its activation option read from the screenshot, and screenshots again.
      If the dialog asks for an item the character lacks, the next nearest
@@ -416,7 +427,9 @@ the installed DLL's hash is noted first so it can be put back), save slot 14
   `activate-flips` and `on-activated` all pass; `not-observed` when no
   activation was made; `contradicted` when one was made and `activate-flips`
   or `on-activated` fails, which sends the rule back to research with the
-  candidates.
+  candidates. `contradicted` is read only when `record-control` passed:
+  without it, a failing `activate-flips` measured the store read, not the
+  rule, and the route is `not-observed`.
 - **Cases.** The ordinary case is an untouched, hovered pillar on screen
   (#0); the outliers are the off-screen pillar (step 5) and the activated
   pillar (steps 8-10), the only one that takes the activated branch of the
@@ -481,7 +494,9 @@ the state.
 Live 2 not run yet. No write-point route is measured: the mod's write point
 is fixed (above), and gamepad: not supported (owner, 2026-10-11). Live
 procedure 2 sets the `activated-route` token (`proven`, `not-observed` or
-`contradicted`).
+`contradicted`). `contradicted` needs `record-control` to have passed: a
+failing `activate-flips` without that control measured the store read, not
+the rule, and reads as `not-observed`.
 
 ## Not established
 
