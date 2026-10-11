@@ -48,6 +48,7 @@ none of these diagnostic hooks or the recorder. See
 | **Far Scenery Sleep** | Mods → Quality of Life, off by default. A zone's far trees, bushes, hay, rocks and fences are put to sleep, so the game stops walking them every frame, and wake again before they come into view. In Act_01_01 about 4,200 of 6,200 instances sleep and the game's own work per frame falls by about a sixth. Shrines, chests, piles, traps, walls and monsters are never touched; towns, menus and persistent rooms are left alone ([details](#far-scenery-sleep-lighter-frames-in-busy-zones)) |
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
+| **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -1496,6 +1497,45 @@ on the ground is announced in the in-game chat.
   were not tried.
 
 `lootann stat` prints whether the switch is on and its counters.
+
+## Always show Chaos Pillar mods
+
+Mods → Quality of Life → **Always show Chaos Pillar mods** (plugin command
+`pillartips 1|0`, `pillartips stat` for its state). Off by default.
+
+A Chaos Pillar shows its box of mods (pack size, magic find, experience,
+extra loot and the rest) only while your mouse cursor is on it. With this on,
+every Chaos Pillar on screen shows its box without being hovered, like a
+strongbox in Path of Exile.
+
+- **It is the game's own box.** Each pillar already has its box of mods; the
+  game shows it when the cursor reaches the pillar and hides it when the
+  cursor leaves. The mod shows it the same way, so the text, translations and
+  colours are the game's own.
+- **Which pillars.** Every pillar on screen, and a little way past the edge
+  of the screen, that you have not activated. A pillar that goes off screen
+  hides its box again, so pillars far away cost nothing.
+- **Activated pillars.** A pillar you have activated stops showing its box.
+  The box can stay up for about half a second after you activate it; then it
+  is hidden, and the game usually replaces the pillar with its fight soon
+  after.
+- **Switching off** returns every pillar to hover-only at once. While off,
+  the mod reads and changes nothing.
+- **Mouse play only.** Gamepad play is not supported and was not tested.
+- **Several boxes** can overlap when pillars stand close together, and a box
+  can sit over an open window: they are drawn as the game draws them.
+- **Checked in a game session** on 2026-10-11, with mouse play, in the
+  Outskirts of Inoya with 35 pillars: with the switch on, a pillar's box
+  showed with the cursor away from it and stayed after the cursor passed over
+  it; moving away from the pillars hid it; switching off brought back the
+  game's hover-only box. A pillar activated through its own dialog read as
+  activated within two seconds and its box was hidden, and the game then
+  replaced the pillar with its fight, so showing its box on hover again was
+  not seen. The mod added about 0.02 ms to a frame.
+
+`pillartips stat` prints whether the switch is on and its counters (pillars
+seen, on screen, shown, activated and unreadable, and any writes or pillar
+counts it could not make).
 
 ## Goburin's Head pity
 

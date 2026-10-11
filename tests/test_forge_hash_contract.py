@@ -125,6 +125,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Loot announcements, Mods > Quality of Life (ForgePact #17;
     # test_loot_announce_contract.py).
     "lootann",
+    # Always show Chaos Pillar mods, Mods > Quality of Life (ForgePact #7;
+    # test_chaos_pillar_tips_contract.py).
+    "pillartips",
 }
 
 
