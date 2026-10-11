@@ -29,6 +29,7 @@
  "mod_gem_mythic": false,
  "mod_gem_maxroll": false,
  "gem_filter": "all",
+ "mod_boss_soul_pieces": false,
  "mod_skill_timer_style": "off",
  "rarity_rare": 0,
  "rarity_ancient": 0,

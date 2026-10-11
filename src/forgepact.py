@@ -337,6 +337,12 @@ DEFAULTS = {
     "mod_gem_maxroll": False,
     # Which mods a Mythic gem carries: "all", or the ticked mods (GEM_AFFIXES).
     "gem_filter": "all",
+    # Boss soul pieces (docs/boss-soul-pieces-research.md, #197): monsters in
+    # an act's zones sometimes drop a piece of that act's boss's soul, a
+    # little more often than a Gem of Incarnation (rolled where the game rolls
+    # that gem); right-clicking a piece in the bag outside town summons the boss.
+    # Off by default, like every mod here; offline only.
+    "mod_boss_soul_pieces": False,
     # Timed-skill countdown (issue #55): one of off/arc/bar/number/fade drawn
     # over each timed skill's hotbar slot. Covers the explicit rows of the
     # plugin's kSkillTimerRows, each measured in-game - a toggled-on skill
@@ -1243,6 +1249,10 @@ def build_cmds(cfg: dict) -> list:
     if cfg.get("mod_gem_maxroll", False):
         # Safe to send at launch: no hook of its own, CreateItemNew is hooked at init.
         out.append("gemmaxroll 1")
+    if cfg.get("mod_boss_soul_pieces", False):
+        # Safe to send at launch: `soulpiece 1` only turns the switch on; the
+        # plugin rolls nothing until the game rolls a gem in an act zone.
+        out.append("soulpiece 1")
     skill_timer_style = str(cfg.get("mod_skill_timer_style", "off")).strip().lower()
     if skill_timer_style_valid(skill_timer_style) and skill_timer_style != "off":
         # Safe to send at launch, like toggleborder: the draw call already
@@ -2957,7 +2967,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3126,6 +3136,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([gem_filter_command(cfg)], cfg)
                     elif key == "mod_gem_maxroll":
                         send_cmds([f"gemmaxroll {1 if cfg['mod_gem_maxroll'] else 0}"], cfg)
+                    elif key == "mod_boss_soul_pieces":
+                        send_cmds([f"soulpiece {1 if cfg['mod_boss_soul_pieces'] else 0}"], cfg)
                     elif key == "mod_skill_timer_style":
                         # Always explicit, including off: a style change (or
                         # turning it off) needs the plugin told either way.
