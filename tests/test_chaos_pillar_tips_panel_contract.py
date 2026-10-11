@@ -37,7 +37,7 @@ from test_panel_performance import run_node  # noqa: E402
 
 LABEL = "Always show Chaos Pillar mods"
 DESCRIPTION = ("Shows each Chaos Pillar's mods while the pillar is on screen, without hovering "
-               "over it. A pillar you have activated shows them on hover, as before. Off by default.")
+               "over it. A pillar you have activated stops showing them. Off by default.")
 
 
 def pillartips_lines(cmds):
@@ -112,7 +112,7 @@ class ChaosPillarTipsPanelRowTests(unittest.TestCase):
 
     def test_the_row_is_a_switch_with_its_value(self):
         row = qol_row("mod_pillar_tips")
-        self.assertIn('<label class="switch"><input type="checkbox" id="mod_pillar_tips"><span class="sl"></span></label>', row)
+        self.assertIn('<label class="switch"><input type="checkbox" id="mod_pillar_tips" aria-label="Always show Chaos Pillar mods"><span class="sl"></span></label>', row)
         self.assertIn('<span class="val" id="mptval">off</span>', row)
 
     def test_the_label_and_text_are_the_player_facing_ones(self):
