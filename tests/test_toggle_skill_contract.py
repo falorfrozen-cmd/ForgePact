@@ -868,6 +868,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Loot announcements (ForgePact #17;
             # test_loot_announce_contract.py).
             "lootann",
+            # Always show Chaos Pillar mods (ForgePact #7;
+            # test_chaos_pillar_tips_contract.py).
+            "pillartips",
         }
         self.assertEqual(entries, expected)
 
@@ -2538,6 +2541,10 @@ MINER_HELMET_DRAW_CALL_LINE = "    ForgePact::MinerHelmet::Draw();"
 # Dungeon chest opens early (ForgePact #31) draws its countdown from the same
 # callback, on the line straight after the helmet's; removed the same way.
 DUNGEON_CHEST_DRAW_CALL_LINE = "    DungeonChestDraw();"
+# Always show Chaos Pillar mods (ForgePact #7) runs its tick from the same
+# callback, on the line straight after the dungeon chest's; removed the same
+# way (test_chaos_pillar_tips_contract.py pins the rest of it).
+PILLAR_TIPS_TICK_CALL_LINE = "    PillarTipsTick();"
 INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
 # ForgePact #76, amendment 5: the call into the game's original runs inside the
 # incident monitor's guard, so `hudlabels` counts only our own code.
@@ -2561,7 +2568,11 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
 
     NARROWED again for ForgePact #31: the dungeon chest's countdown draw is
     one more call, on its own line directly after the Miner's Helmet's, and is
-    removed with the other two."""
+    removed with the other two.
+
+    NARROWED again for ForgePact #7: Always show Chaos Pillar mods' tick is one
+    more call, on its own line directly after the dungeon chest's, and is
+    removed with the other three."""
     lines = new_body.split("\n")
     testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
     lines.remove(INCIDENT_HUD_SCOPE_LINE)
@@ -2574,7 +2585,9 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
     testcase.assertEqual(lines[call_at + 1], MINER_HELMET_DRAW_CALL_LINE, new_body)
     testcase.assertEqual(lines.count(DUNGEON_CHEST_DRAW_CALL_LINE), 1, new_body)
     testcase.assertEqual(lines[call_at + 2], DUNGEON_CHEST_DRAW_CALL_LINE, new_body)
-    del lines[call_at:call_at + 3]
+    testcase.assertEqual(lines.count(PILLAR_TIPS_TICK_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[call_at + 3], PILLAR_TIPS_TICK_CALL_LINE, new_body)
+    del lines[call_at:call_at + 4]
     testcase.assertEqual("\n".join(lines), old_body)
 
 # The research block phase S must not touch at all: the sprite look probe the
@@ -3070,8 +3083,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # control (ForgePact #157, test_satanic_zone_control.py),
         # `skillslider` is the skill sliders (ForgePact #160,
         # test_skill_sliders_contract.py), `gambapity` is Goburin's Head pity
-        # (ForgePact #134, test_gamba_pity_contract.py), and `lootann` is Loot
-        # announcements (ForgePact #17, test_loot_announce_contract.py).
+        # (ForgePact #134, test_gamba_pity_contract.py), `lootann` is Loot
+        # announcements (ForgePact #17, test_loot_announce_contract.py), and
+        # `pillartips` is Always show Chaos Pillar mods (ForgePact #7,
+        # test_chaos_pillar_tips_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3079,7 +3094,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem",
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-                                        "jumpscenery", "satzone", "skillslider", "gambapity", "lootann"})
+                                        "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
+                                        "pillartips"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

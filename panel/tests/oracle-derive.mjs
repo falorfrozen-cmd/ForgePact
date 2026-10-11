@@ -39,9 +39,9 @@
 // the stash, Extra packs as you approach, Pet collects relics (#124), Sleep
 // loot your filter hides - whose show-key select is derived after them, so it
 // stays last - the Satanic Zone control switch (#157, on the World
-// tab), Boss soul pieces (#197, on the Loot tab), Jump through scenery and
-// Loot announcements (#17)): the same on, off,
-// on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
+// tab), Boss soul pieces (#197, on the Loot tab), Jump through scenery,
+// Loot announcements (#17) and Always show Chaos Pillar mods (#7)): the same
+// on, off, on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
 // but nothing recorded
 // stands for them, so their contract is written out here as literals - on
 // posts the mod's key with true and sends its plugin verb with 1, off posts
@@ -163,6 +163,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_boss_soul_pieces', tab: 'tab:loot', verb: 'soulpiece' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
   { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
+  { key: 'mod_pillar_tips', tab: 'tab:mods', sub: 'subtab:qol', verb: 'pillartips' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
 // child row), derived as #mod_skill_timer_style is but with literals, since no

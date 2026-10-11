@@ -114,6 +114,11 @@
         <span class="val" id="mlaval">off</span>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Always show Chaos Pillar mods<br><span class="feature-description">Shows each Chaos Pillar's mods while the pillar is on screen, without hovering over it. A pillar you have activated stops showing them. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_pillar_tips" aria-label="Always show Chaos Pillar mods"><span class="sl"></span></label>
+        <span class="val" id="mptval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Timed skill countdown<br><span class="feature-description">Shows how much time a timed skill has left, over that skill's slot on the skill bar, in the look you pick below. Works for most timed skills; toggles and companions (turrets, totems) don't get one. Off by default.</span></span>
         <select class="style-select" id="mod_skill_timer_style" aria-label="Timed skill countdown">
             <option value="off">Off</option>
