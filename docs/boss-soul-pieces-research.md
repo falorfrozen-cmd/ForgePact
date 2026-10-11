@@ -96,10 +96,13 @@ of the runtime reference holds the same facts in the shared form.
   1 in its rate, or picks by weight, is not established.
 - **Already in the shared reference.** `LootGroundCreate` writes a fresh seed
   (§ 18.4); `InitItemFromJson` then `LootGroundCreateFromItem` keeps the
-  definition, seed included (`sigdrop`, #74; relics, #124); a boss created with
-  `instance_create_depth` in a zone lives, fights and dies through HP 0 with
-  loot, and one created in a town removes itself (§ 13.1); `sCP` is the game's
-  own spawner (§ 20.5).
+  definition, seed included (`sigdrop`, #74; relics, #124); Karp King and four
+  uber bosses spawned in Act_01_01 were killed there through HP 0 with their
+  drops, Uber Endrixia, Uber Anubis and Uber Luna do not die that way, and a
+  boss spawned in a town removes itself (§ 13.1, measured; the spawn route is
+  not named there); `sCP` is the game's own spawner (§ 20.5). Whether the nine
+  act bosses live, fight and die when created outside their pentagram is not
+  established (§ 21.2).
 
 ## Rejected routes, and why
 
@@ -202,6 +205,8 @@ installs table-only, and its route line says so. Its structure is pinned by
 - Whether a boss created by `instance_create_depth` or `sCP` in an Act 1 or Act
   2 zone stays, fights and dies like a room-placed one (`spawn-gurag`,
   `spawn-reaper`, `spawn-scp`, `gurag-killable`), and what killing a summoned
-  boss does to quests or act completion (recorded, never changed).
+  boss does to quests or act completion (recorded, never changed). The bosses
+  of acts 3 to 9 are not measured by either live procedure, and acts 4 and 5's
+  bosses are an inference from the Key of Terror's parts (§ 21.2).
 - Whether the game, with ForgePact gone, merges one-base pieces of different
   acts into the first stack's act, as the stacking reading predicts.
