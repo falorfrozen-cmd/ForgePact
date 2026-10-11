@@ -52052,6 +52052,9 @@ struct SoulProbeState {
     std::string useRoute[kSpUseCount];
     int useScript = -1;              // the candidate `use` acts in; -1: none chosen
     int autoScript = -1;             // the first candidate whose usecall line carried a piece
+    bool useArmed = false;           // `use` treats one piece per arming (`usewatch use` or `take`)
+    long suppressed = 0;             // piece calls in the chosen script after the arming was spent
+    long useCallsBy[kSpUseCount] = {};
     bool takeClear = false;
     bool gemwatch = false, gemPending = false;
     bool spawnScp = false;
@@ -52069,6 +52072,7 @@ static PFUNC_YYGMLScript g_SpUseOrig[kSpUseCount] = {};
 static RValue g_SpControlRet[kSpUseCount];
 static bool g_SpHaveControl[kSpUseCount] = {};
 static thread_local int g_SpBusy = 0;   // the probe's own spawn and take: not logged as calls
+static thread_local int g_SpUseDepth = 0;   // candidate calls open on this thread: 0 is the outermost
 static int g_SpGemIndex = -1;           // -1: not searched yet; -2: no entry of that name
 static uint64_t g_SpRoll = 11400714819323198485ull;   // the golden-ratio constant; Mix stirs it per roll
 
@@ -52795,33 +52799,77 @@ static const SpHookFn kSpUseHooks[] = {
 };
 static_assert(sizeof(kSpUseHooks) / sizeof(kSpUseHooks[0]) == kSpUseCount, "one detour per use candidate");
 
-// One call of candidate n. Logged (at most kSpLineCap lines per arming); in
-// `use`, a piece in the chosen script is treated with the core's DecideUse:
-// on `summon` the boss is spawned first, and only when it exists is one piece
-// taken, by `take`. Anything else passes the call to the game untouched.
+// A string shaped like a save key (`0-0-<stamp>-<class>`, § 6.1): digits and
+// dashes only, with at least one dash. Only these are handed to the game's
+// fingerprint lookup; any other string is printed, not looked up.
+static bool SpLooksLikeFingerprint(const std::string& s)
+{
+    if (s.empty() || s.size() > 64 || s.find('-') == std::string::npos) return false;
+    for (const char ch : s) if (ch != '-' && (ch < '0' || ch > '9')) return false;
+    return true;
+}
+
+// One call of candidate n. Logged (at most kSpLineCap lines per arming), with
+// its nesting depth among the candidates; in `use`, the first piece in the
+// chosen script after each arming is treated with the core's DecideUse: on
+// `summon` the boss is spawned first, and only when it exists is one piece
+// taken, by `take`. Later piece calls before the next arming are counted as
+// suppressed, and they and anything else pass to the game untouched.
 static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     const PFUNC_YYGMLScript orig = g_SpUseOrig[n];
     if (g_Sp.use == SpUseMode::Off || g_SpBusy > 0) return orig ? orig(S, O, R, argc, A) : R;
+    struct Depth { int d; Depth() : d(g_SpUseDepth++) {} ~Depth() { --g_SpUseDepth; } } depth;
+    // The item: an argument that is an item struct, else one handed over as a
+    // grid cell or a fingerprint string (§ 9.1: a cell holds only the
+    // fingerprint), resolved through GetItemFromFingerprint(fp, 0) by name.
     SpItem item;
+    RValue held;
     int at = -1;
+    bool viaFingerprint = false;
     std::string kinds;
     try {
         for (int i = 0; i < argc && A; ++i) {
             const RValue arg = A[i] ? *A[i] : RValue();
-            if (at < 0 && SpReadItem(arg, item)) at = i;
-            kinds += (i ? "," : "") + SpKindName(arg);
+            std::string kind = SpKindName(arg);
+            if (at < 0 && SpReadItem(arg, item)) { at = i; held = arg; }
+            else {
+                RValue fp;
+                std::string text;
+                bool lookup = false;
+                if (ApCellFingerprint(arg, fp, text)) { kind += "(fp=" + text + ")"; lookup = true; }
+                else if (arg.m_Kind == VALUE_STRING) {
+                    text = arg.ToString();
+                    kind += "(" + (text.size() > 48 ? text.substr(0, 48) + "..." : text) + ")";
+                    fp = arg;
+                    lookup = SpLooksLikeFingerprint(text);
+                }
+                if (at < 0 && lookup) {
+                    struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
+                    CInstance* self = CmSaveInstance();
+                    if (!self) self = S;
+                    RValue resolved;
+                    if (self && ApCallScript(kSpFromFpName, self, { fp, RValue(0.0) }, resolved) && SpReadItem(resolved, item)) {
+                        at = i;
+                        held = resolved;
+                        viaFingerprint = true;
+                        if (item.fingerprint.empty()) item.fingerprint = text;
+                    }
+                }
+            }
+            kinds += (i ? "," : "") + kind;
         }
     } catch (...) { at = -1; }
     const int act = at >= 0 ? SpPieceAct(item) : 0;
-    if (act && g_Sp.autoScript < 0) g_Sp.autoScript = n;
 
     RValue* res = &R;
     bool answered = false;
     bool acted = false;
     std::string spawnText, takeText, extra;
-    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript) {
+    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript && !g_Sp.useArmed) ++g_Sp.suppressed;
+    if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript && g_Sp.useArmed) {
         acted = true;
+        g_Sp.useArmed = false;
         const SpRoom room = SpReadRoom();
         const SpNs::UseVerdict v = SpNs::DecideUse(true, room.name, act);
         bool spawned = false;
@@ -52851,7 +52899,7 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
             try {
                 if (item.o > 1) {
                     g_Yytk->CallBuiltin("variable_struct_set", { item.def, RValue("o"), RValue(item.o - 1) });
-                    RefreshItemHash(*A[at]);
+                    RefreshItemHash(held);
                     extra = " clear=lowered";
                 } else {
                     CInstance* node = nullptr;
@@ -52875,14 +52923,21 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
 
     try {
         ++g_Sp.usecalls;
+        ++g_Sp.useCallsBy[n];
         if (at >= 0 && !act) { g_SpControlRet[n] = *res; g_SpHaveControl[n] = true; }
+        // Set here, after the call returned, so `auto` is the script of the
+        // first usecall line printed with a piece: the innermost of nested
+        // candidates (PotionUse inside the confirm), not the outermost.
+        if (act && g_Sp.autoScript < 0) g_Sp.autoScript = n;
         if (g_Sp.useLines < kSpLineCap) {
             ++g_Sp.useLines;
             std::string self = "-";
             if (S) self = TyInstName(S->ToRValue());
             Out(std::string("soulprobe usecall: script=") + kSpUseTargets[n].name + " self=" + self + " args=" + std::to_string(argc)
-                + (at >= 0 ? " item=" + SpItemText(item) : " item=none argkinds=" + (kinds.empty() ? std::string("-") : kinds))
-                + " piece=" + (act ? std::to_string(act) : std::string("no")) + " ret=" + Describe(*res));
+                + (at >= 0 ? " item=" + SpItemText(item) + (viaFingerprint ? " via=fingerprint(" + item.fingerprint + ")" : std::string())
+                           : " item=none argkinds=" + (kinds.empty() ? std::string("-") : kinds))
+                + " piece=" + (act ? std::to_string(act) : std::string("no")) + " ret=" + Describe(*res)
+                + " depth=" + std::to_string(depth.d));
         }
     } catch (...) {}
     return *res;
@@ -52960,7 +53015,10 @@ static void SoulProbeTick(uint32_t frame)
         }
         for (size_t i = 0; i < g_SpPendingUses.size();) {
             if (now - g_SpPendingUses[i].t0 < 500ull) { ++i; continue; }
-            Out(g_SpPendingUses[i].head + " after=" + SpKeyTabCount(g_SpPendingUses[i].fingerprint) + g_SpPendingUses[i].tail);
+            // suppressed: piece calls the chosen script took since, while the
+            // arming was spent (a per-frame caller shows here, not as bosses).
+            Out(g_SpPendingUses[i].head + " after=" + SpKeyTabCount(g_SpPendingUses[i].fingerprint) + g_SpPendingUses[i].tail
+                + " suppressed=" + std::to_string(g_Sp.suppressed));
             g_SpPendingUses.erase(g_SpPendingUses.begin() + i);
         }
     } catch (...) {}
@@ -52971,6 +53029,11 @@ static void SpStatus()
 {
     const char* stack = g_Sp.stack == SpStackMode::Off ? "off" : g_Sp.stack == SpStackMode::Log ? "log" : "veto";
     const char* use = g_Sp.use == SpUseMode::Off ? "off" : g_Sp.use == SpUseMode::Log ? "log" : "use";
+    // Per candidate, so a script called every frame shows in the log phase,
+    // before `use` is armed on it.
+    std::string by;
+    for (int i = 0; i < kSpUseCount; ++i)
+        if (g_Sp.useCallsBy[i]) by += (by.empty() ? "" : ",") + std::string(kSpUseTargets[i].name) + ":" + std::to_string(g_Sp.useCallsBy[i]);
     Out(std::string("soulprobe status: base=") + (g_Sp.baseName.empty() ? "none" : g_Sp.baseName)
         + " dress=" + (g_Sp.dress ? "on" : "off") + " sprite=" + (g_Sp.sprite ? "on" : "off")
         + " stackhook=" + stack + " stackroute=" + g_Sp.stackRoute
@@ -52978,7 +53041,9 @@ static void SpStatus()
         + " take=" + (g_Sp.takeClear ? "clear" : "game") + " gemwatch=" + (g_Sp.gemwatch ? "log" : "off")
         + " spawnroute=" + (g_Sp.spawnScp ? "scp" : "depth") + " offset=" + SpNum(g_Sp.offset)
         + " calls=" + std::to_string(g_Sp.calls) + " vetoed=" + std::to_string(g_Sp.vetoed)
-        + " usecalls=" + std::to_string(g_Sp.usecalls) + " uses=" + std::to_string(g_Sp.uses)
+        + " usecalls=" + std::to_string(g_Sp.usecalls) + " usecallsby=" + (by.empty() ? std::string("-") : by)
+        + " uses=" + std::to_string(g_Sp.uses) + " armed=" + (g_Sp.useArmed ? "1" : "0")
+        + " suppressed=" + std::to_string(g_Sp.suppressed)
         + " gemrolls=" + std::to_string(g_Sp.gemrolls) + " spawned=" + std::to_string(g_Sp.spawned)
         + " gemroute=" + (g_GemDropHookNative ? "native" : g_GemDropHookTried ? "failed" : g_Sp.gemPending ? "pending" : "off"));
 }
@@ -52997,7 +53062,8 @@ static void SpActCommand()
 static void SoulProbeUsage()
 {
     Out("soulprobe: status | keys | act | base auto|<keys_name> | dress on|off | sprite on|off | gem | place <act> [count] | pickup"
-        " | keytab | stackhook off|log|veto | usewatch off|log|use [auto|<script>] | take game|clear | gemwatch off|log"
+        " | keytab | stackhook off|log|veto | usewatch off|log|use [auto|<script>] (use: one piece per arming)"
+        " | take game|clear (re-arms use) | gemwatch off|log"
         " | spawn <act|object> [dx] [depth|scp] | spawnroute depth|scp | spawnoffset <px> | kill <id>");
 }
 
@@ -53043,7 +53109,7 @@ static void SoulProbeCommand(const std::string& rest)
         return;
     }
     if (sub == "usewatch") {
-        if (arg == "off" || arg == "0") { g_Sp.use = SpUseMode::Off; Out("soulprobe usewatch: off"); return; }
+        if (arg == "off" || arg == "0") { g_Sp.use = SpUseMode::Off; g_Sp.useArmed = false; Out("soulprobe usewatch: off"); return; }
         if (arg != "log" && arg != "use") { SoulProbeUsage(); return; }
         if (arg == "use") {
             const std::string which = tail.size() > 1 ? Lower(tail[1]) : std::string("auto");
@@ -53060,14 +53126,20 @@ static void SoulProbeCommand(const std::string& rest)
         SpInstallUseWatch();
         g_Sp.use = arg == "log" ? SpUseMode::Log : SpUseMode::Use;
         g_Sp.useLines = 0;
+        // One treated piece per arming: a script the game calls every frame
+        // with the piece summons once, not once per frame.
+        g_Sp.useArmed = arg == "use";
         Out("soulprobe usewatch: " + arg + " usescript=" + (g_Sp.useScript >= 0 ? kSpUseTargets[g_Sp.useScript].name : "none")
-            + " take=" + (g_Sp.takeClear ? "clear" : "game"));
+            + " take=" + (g_Sp.takeClear ? "clear" : "game") + " armed=" + (g_Sp.useArmed ? "1" : "0"));
         return;
     }
     if (sub == "take") {
         if (arg != "game" && arg != "clear") { SoulProbeUsage(); return; }
         g_Sp.takeClear = arg == "clear";
-        Out("soulprobe take: " + arg);
+        // Re-arms `use` for one more piece (Live procedure 1 sends `take clear`
+        // between its two uses).
+        if (g_Sp.use == SpUseMode::Use) g_Sp.useArmed = true;
+        Out("soulprobe take: " + arg + " armed=" + (g_Sp.useArmed ? "1" : "0"));
         return;
     }
     if (sub == "gemwatch") {
