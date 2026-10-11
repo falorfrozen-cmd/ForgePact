@@ -16,7 +16,9 @@ Chaos Pillar's mods while the pillar is on screen, without hovering over it.
   text and colours; a pillar that goes off screen hides it again. A pillar you
   have activated goes back to showing its mods on hover, as before. Switching
   it off returns every pillar to hover-only at once. It works with mouse play;
-  gamepad is not supported.
+  gamepad is not supported. Checked in a game session with mouse play: boxes
+  showed without hovering, hid when the pillars went off screen and when one
+  was activated, and switching off brought back the hover-only boxes.
 
 ## How to update
 

@@ -42,8 +42,12 @@ gamepad").
   build took the raw `activated` key for the state and read all 17 untouched
   pillars as activated (`on-shown` and `on-leave` failed; "Live 1 results").
   The mod now reads the record behind the key ("The mod").
-- **Live procedure 2:** not run yet. It runs the corrected build and
-  activates a pillar through the game's own dialog.
+- **Live procedure 2:** ran 2026-10-11 on the corrected build (`4d49c91a`,
+  ForgePact `172b183`), mouse play: 19 of 19 checks pass. Every untouched
+  pillar's record read false, the mod showed the box of each on-screen pillar
+  without hover and hid it off screen, and a pillar activated through the
+  game's own dialog read activated within 2 s and had its box hidden; the game
+  then removed that pillar ("Live 2 results"). `activated-route: proven`.
 - **Gamepad:** not supported, and not tested (owner, 2026-10-11).
 
 ## Static search
@@ -341,7 +345,7 @@ installed), save slot 14 "Sorak". Mouse play only.
 
 ## Live procedure 2
 
-Not run yet. The corrected research build (`plugin_build\build.bat dev` after
+Ran 2026-10-11 ("Live 2 results"). The corrected research build (`plugin_build\build.bat dev` after
 the record read; a new hash, and the owner is asked before it is installed;
 the installed DLL's hash is noted first so it can be put back), save slot 14
 "Sorak". Mouse play only: no gamepad step of any kind.
@@ -489,24 +493,129 @@ the state.
 - **Not exercised:** an activated pillar (the probe's `activated=1` was the
   key, not a used pillar); gamepad (not supported).
 
+### Live 2 results
+
+2026-10-11, mouse play, save slot 14 "Sorak", in `Act_01_01` (the Outskirts
+of Inoya) with `specialrate chaospillars 10`: 35 pillars, each with its
+tooltip. The installed and the built DLL were the same, SHA-256
+`4d49c91ac47ff9264e6c33ab6cbbe4dade46ef33e6d4deeda92ea353d74010c7`, the
+research build at ForgePact `172b183` (after `live2-controls`; plugin v2.2.1
+line), which reads the record behind `activated`. The capture is the toolkit
+workorder's `forgepact-7-chaos-pillar-mods-live-2`.
+
+| Check | Verdict | What was seen |
+|---|---|---|
+| `dll-hash` | pass | installed and built DLL equal (`4d49c91a…`) |
+| `marker` | pass | this launch's `==== BloodPact plugin loaded ==== v2.2.1` |
+| `control` | pass | `pong (YYTK 4.0.1)`; `pillartips: off … writesRefused=0 censusFailed=0` with `hudCalls=` 2141, then 2291 |
+| `getter-control` | pass | `pillarprobe getter: gDataProtected[177]=177 GPV=28 wrapper=28 -> proven` |
+| `pillars-present` | pass | `pillars=35`, every row `tipExists=1` |
+| `activated-key` (research) | pass | every row: `activatedKey=` a whole number (174773 … 175959, all distinct), `activatedValue=0`, `activation=inactive` |
+| `record-control` | pass | `rarityValue=` a number on every row, values 1, 2, 3, 5 and 6; #0 read 3 and the game's own box named it a "Rare Chaos Pillar" with three mods; `activateTimerValue=216` on every row |
+| `off-hidden` | pass | switch off, parked: #0 `visible=0`, the Draw GUI count flat at 0, no box |
+| `hover-control` | pass | hovered: `visible=1`, count 97 → 787, the box in the screenshot; parked: `visible=0`, 1648 → 1648 |
+| `draw-count-control` | pass | step 2's rise and fall, above |
+| `on-shown` | pass | switch on, parked: #0 `visible=1`, count 2158 → 3418, the box without hover; `onscreen=1 shown=1 activated=0 unreadable=0 writesRefused=0 censusFailed=0`, `showWrites=` 510 → 1770 |
+| `on-leave` | pass | hover then park: still `visible=1`, count 4558 → 5578 |
+| `on-offscreen` | pass | warped 1475 px from the nearest pillar (see the deviation below): all 35 rows `onscreen=0 visible=0`; `shown=0`, `hideWrites=32`; count flat at 15171 |
+| `cost` (research) | pass | `DrawHudBuffs hook` `avg=` 29.9 us off, 50.9 us on (+21.0 us), with show writes running (`showWrites=` 14179 → 16219 in the window) |
+| `off-restores` | pass | switch off: parked `visible=0`; hover `visible=1`; parked again `visible=0`; the mod's `ticks=` stopped |
+| `activation-made` (research) | pass | the operator clicked pillar id 297083 (rarity 1) and chose "Yes please!" in the game's own dialog |
+| `activate-flips` (research) | pass | within 2 s: the same `activatedKey=175925`, `activatedValue=1`, `activation=activated`; the other 34 rows `inactive` |
+| `on-activated` (research) | pass | parked: the activated pillar `visible=0`, `tipExists=1`, stat `activated=1`, `hideWrites=` 36 → 37; the other on-screen pillar stayed `visible=1`. The hover and park sub-step was not observed: the game removed the pillar first |
+| `activation-candidates` (research) | pass | the table below |
+
+- **Getter control.** `pillarprobe getter` read `gDataProtected[177]=177
+  GPV=28 wrapper=28 -> proven`: the game's `PC_GetVariableGMLWrapper`, called
+  by name, answered the same non-zero number as `GPV` for the same key, so the
+  record reads below come from an instrument that can return non-zero.
+- **`activatedKey` and `activatedValue`.** In the first `pillarprobe list` in
+  the zone, before any interaction, all 35 rows carried a distinct key between
+  174773 and 175959, with `activatedValue=0` and `activation=inactive`. The
+  same rows' `rarityKey=` and `activateTimerKey=` sat two below and one above
+  each `activatedKey`. So the raw variable Live 1 took for the state is a key,
+  and the record behind it reads false on an untouched pillar. That a read of
+  zero is not just the getter answering zero for every key is what
+  `record-control` shows: the `rarity` records of the same rows read 1 to 6,
+  and #0's 3 matched the "Rare" the game's own box printed.
+- **Screenshots, described.** Switch off with the cursor parked: the pillar's
+  name, "Rare Chaos Pillar", and no box. Hovered: the box under the name,
+  "Experience Gain increased by 15%", "+1 Monster Affixes", "Monster pack
+  drops 1x Relic". Switch on with the cursor parked in the bottom-right
+  corner: the same box, without hover. After the dialog's click: the pillar's
+  column gone and a pentagram with monsters spawning in its place, and a
+  "[Basic Key] Picked up" line. The dialog itself read "Chaos Pillar /
+  Activate the pillar? / Yes please! / Goodbye!", and asked for no item at
+  rarity 1.
+- **Cost.** +21.0 us on the hook's average with the mod on and writing a show
+  every frame, against Live 1's +17.5 us with no writes. Under the
+  procedure's 100 us bound.
+- **The activation.** Made by `live-operator`, with no owner step: `pillartips
+  1`, `playerwarp` to 60 px below the pillar (id 297083, the nearest to #0 and
+  of the lowest rarity), a left click on the pillar with `hs_input`, which
+  opened the game's dialog, and a second click on "Yes please!", read from a
+  screenshot. The pillar was then replaced by its fight. In the list taken
+  within 2 s it read activated and the mod had hidden its box; in the next
+  list, a few seconds later, the room had 34 pillars and no row carried its
+  id. The candidate fields, before and after:
+
+  | Field | Before | After |
+  |---|---|---|
+  | `rarityValue` | 1 | 1 |
+  | `activateTimerValue` | 216 | 122.002… |
+  | `trembleTimer` | 14.4 | 7.2 |
+  | `flameImage` | 4427.10… | 4820.85… |
+  | `isDiscovered` | true | true |
+  | `speakCooldown` | 0 | -0.290… |
+  | `questState` | 10 | 10 |
+  | `image_index` | 0 | 0 |
+  | `sprite_index` | ref | ref |
+  | `tipExists` | 1 | 1, then the pillar was removed (35 → 34 pillars) |
+  | `activatedValue` / `activation` | 0 / `inactive` | 1 / `activated` |
+
+  `activateTimer`'s record counting down from 216 and `trembleTimer` halving
+  fit the Step's activated branch. `flameImage` only advances with time.
+- **Manual steps.** None. Every step, the activation included, ran through
+  `hs-drive` (`hs_command`, `hs_input` clicks, `hs_screenshot`).
+- **Deviations.** `on-offscreen` asked for a warp at least 3000 px from every
+  pillar; with 35 pillars no walkable point in the zone is that far (at most
+  1913 px from the nearest inside their bounding box), and the game put the
+  character back from two farther tries. It ran at 1475 px from the nearest
+  pillar, where every row read `onscreen=0`, which is what the check needs.
+  `on-activated`'s hover and park on the activated pillar could not run,
+  because the game removed it.
+- **Also seen.** After `estfree all`, `eSt[10]` read 85, which appeared after
+  the activation (the game's own value; nothing was forced). The game exited
+  with code `0xC0000409` on `hs_stop_game` while ForgePact's log ended with its
+  clean-shutdown line. Neither is attributed to the mod.
+- **Measured now.** That the raw `activated` is a store key whose record reads
+  false on an untouched pillar; that the game's own activation turns it true
+  within 2 s, keeping the same key; that the mod shows the box of every
+  on-screen, untouched pillar without hover, keeps it through a hover and
+  park, hides it off screen and when the pillar is activated, and gives the
+  game its own hover back when switched off; the cost with writes running.
+  The tooltip still existed 2 s after activation, and the game then removed
+  the pillar.
+
 ## Route
 
-Live 2 not run yet. No write-point route is measured: the mod's write point
-is fixed (above), and gamepad: not supported (owner, 2026-10-11). Live
-procedure 2 sets the `activated-route` token (`proven`, `not-observed` or
-`contradicted`). `contradicted` needs `record-control` to have passed: a
-failing `activate-flips` without that control measured the store read, not
-the rule, and reads as `not-observed`.
+`activated-route: proven` (Live 2, 2026-10-11: `activation-made`,
+`activate-flips` and `on-activated` pass). The mod's write point is fixed
+(above), and gamepad: not supported (owner, 2026-10-11). No other write-point
+route is measured.
 
 ## Not established
 
-- That the game's own activation sets the pillar's `activated` record true:
-  the writer sits behind the activation closure's client effect, whose handler
-  was not read. Live procedure 2, step 9.
-- Whether a pillar's tooltip survives its activation, and what the record
-  holds after the fight. Live procedure 2, step 10, measures the first.
-- The mod's frame cost with show writes running (Live 1 measured it with
-  none). Live procedure 2, step 6.
+- Which code sets the pillar's `activated` record true. Live 2 measured that
+  the game's own activation does it within 2 s; the writer sits behind the
+  activation closure's client effect, whose handler was not read.
+- What the record holds after the fight, and what happens to a pillar's box
+  in the seconds between activation and the game removing the pillar beyond
+  the one read Live 2 made (`tipExists=1`, `visible=0`). Whether the game
+  always removes an activated pillar, or did so here because its fight began,
+  is not established: one activation, at rarity 1, was observed.
+- The game's hover on an activated pillar with the switch on: not observed,
+  since the pillar was gone before it could be hovered.
 - The draw order of Controller_obj's Draw GUI and the tooltips' within a
   frame: Live 1 measured the depths (-12998 and -13001), and the order is
   inferred from them. For mouse play it does not matter: mouse leave is the
@@ -518,7 +627,7 @@ the rule, and reads as `not-observed`.
   step from the player's distance, which may hide the box again before it is
   drawn. Not supported, and not tested (owner, 2026-10-11).
 - The tooltip's starting `visible` (an object property, inferred false; Live
-  1 read it false on every untouched pillar with the cursor away).
+  1 and Live 2 read it false on every untouched pillar with the cursor away).
 - Which item the activation dialog charges at the higher rarities.
 - Which global flag Alarm 0 reads as local co-op; co-op as a whole.
 - How the boxes look when several overlap, or over an open window: shipped as
