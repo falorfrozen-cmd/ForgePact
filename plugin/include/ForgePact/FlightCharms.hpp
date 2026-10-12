@@ -310,6 +310,14 @@ inline constexpr std::string_view StateName(State s)
 // UpdateDepth: every call handed to the core counts once in `depthCalls`, then
 //   depthCalls = depthOther + depthSeen
 //   depthSeen  = depthIdle + noFront + depth
+//
+// The adapter hands every hooked call to the core (OnQuery, NoteCall,
+// OnUpdateDepth, NoteDepthOther) except at three returns, which count nothing:
+//   - no self: there is nothing to compare;
+//   - flight's own re-entry (g_FlightBusy): it is flight re-running the
+//     original, and counting it would break the sums above;
+//   - flight not installed: the stat line's `install=` already says so.
+// FlightOnBuiltin also returns, uncounted, for a row outside the five.
 struct FlightCounters {
     uint64_t answered = 0;      // queries answered "nothing there"
     uint64_t excluded = 0;      // kept because a wall or a lock blocked, or was named
@@ -857,10 +865,18 @@ inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 // `Pending` is whatever the adapter needs to place the item again (its grid,
 // item, cell and flags); the guard only keeps and hands it back. When it has
 // `x` and `y` members, they are the saved cell (negative for unknown), and the
-// flush keeps charms off each other's cells: a charm whose full footprint would
-// cover another held-back charm's own cell goes straight to 1x1 (`Yielded`),
-// so the order of two charms in the save never decides which one is lost. A
-// charm with the same cell as another is not shrunk for it: both cannot fit.
+// flush keeps charms off each other's cells. Vanilla items always go in first;
+// between two charms, the yield rule decides: a charm whose full footprint
+// would cover another held-back charm's own cell goes straight to 1x1
+// (`Yielded`), so every full placement leaves every other held charm's cell
+// free and no save order of two charms loses one. The footprint is tested both
+// ways round, w by h and h by w, because which argument the game reads as the
+// column and which as the row is a static reading only (the comment on the
+// adapter's FlightGuardPending); a charm may therefore load 1x1 for a session
+// when only its transposed box touches another charm, a shrink and never a
+// loss. When this charm's cell or another held charm's is unknown, it yields
+// too; a charm alone in its load never yields. A charm with the same cell as
+// another is not shrunk for it: both cannot fit.
 //
 // The counters say how far a load got, so a quiet line can be told apart from
 // a guard that never saw anything: `opens` loads, `seen` placements inside one
@@ -875,7 +891,7 @@ struct GuardCounters {
     uint64_t deferred = 0;   // placements held back to the end of their load
     uint64_t full = 0;       // placed at the full footprint when the load ended
     uint64_t kept = 0;       // placed at 1x1: refused at full size, or yielded
-    uint64_t yielded = 0;    // of kept, the ones whose full size would cover another charm's cell
+    uint64_t yielded = 0;    // of kept, the ones that yielded to another held charm (CoversAnotherCell)
     uint64_t failed = 0;     // refused at 1x1 too
 };
 
@@ -977,18 +993,24 @@ private:
         int h = 1;
     };
 
-    // Would list[i] at its full footprint cover the saved cell of another
-    // charm held back in the same load? Only cells both known, and not a cell
-    // they share.
+    // Should list[i] go straight to 1x1? Yes when its full footprint, read
+    // either way round (w by h, or h by w, from its own cell), would cover the
+    // saved cell of another charm held back in the same load, and yes when
+    // its own cell or another held charm's is unknown, since the guard cannot
+    // tell. A charm alone in its load never yields, and nor does a charm for
+    // another on the very same cell: both cannot fit.
     static bool CoversAnotherCell(const std::vector<Held>& list, size_t i)
     {
         const Held& a = list[i];
-        if (a.x < 0 || a.y < 0) return false;
         for (size_t j = 0; j < list.size(); ++j) {
+            if (j == i) continue;
             const Held& b = list[j];
-            if (j == i || b.x < 0 || b.y < 0) continue;
+            if (a.x < 0 || a.y < 0 || b.x < 0 || b.y < 0) return true;
             if (b.x == a.x && b.y == a.y) continue;
-            if (b.x >= a.x && b.x < a.x + a.w && b.y >= a.y && b.y < a.y + a.h) return true;
+            const auto covers = [&a, &b](int w, int h) {
+                return b.x >= a.x && b.x < a.x + w && b.y >= a.y && b.y < a.y + h;
+            };
+            if (covers(a.w, a.h) || covers(a.h, a.w)) return true;
         }
         return false;
     }

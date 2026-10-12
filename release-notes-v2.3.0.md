@@ -45,7 +45,10 @@ join the game's own drops behind its own switch, off by default.
   works whether its switch is on or off.
   If a charm's full size no longer fits where it was saved, it loads at one
   cell in its own place instead of disappearing, and is full size again the
-  next time it fits. Offline play only. Not yet checked in a game session.
+  next time it fits. It also loads at one cell when its full size would cover
+  the place of another flight charm in the same bag, instead of pushing that
+  charm out.
+  Offline play only. Not yet checked in a game session.
 
 ## How to update
 

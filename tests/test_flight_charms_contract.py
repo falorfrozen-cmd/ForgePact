@@ -297,6 +297,27 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertIn("FcNs::GuardLine(", close)
         self.assertIn("g_Orig_FlightGridAddItemPos(p.self, p.other, res, (int)ptrs.size(), ptrs.data())", close)
 
+    def test_the_guard_line_says_how_far_a_load_got(self):
+        # `flightcharm stat` prints the guard's own line after the stat line,
+        # whose fresh-session text stays as it is.
+        command = self.body("command")
+        guard_line = "Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));"
+        self.assertIn(guard_line, command)
+        self.assertLess(command.index("Out(FcNs::StatLine(FlightCharmStatFields()));"), command.index(guard_line))
+        # Every placement inside a load is counted before it can be deferred,
+        # so `seen=` and `charms=` say whether the argument layout held.
+        add = self.body("add_hook")
+        self.assertIn("g_FlightGuard.Saw(charm);", add)
+        self.assertLess(add.index("g_FlightGuard.Saw("), add.index("g_FlightGuard.Defer("))
+        # The route names the install's result: on, table-only or refused.
+        install = self.body("guard_install")
+        route = re.search(r"g_FlightGuardRoute = ([^;]*);", install)
+        self.assertIsNotNone(route, install)
+        for value in ('"on"', '"table-only"', '"refused"'):
+            with self.subTest(route=value):
+                self.assertIn(value, route.group(1))
+        self.assertIn('static const char* g_FlightGuardRoute = "not-installed";', self.code)
+
     def test_the_research_instruments_refuse_the_guards_scripts(self):
         holds = self.body("holds")
         self.assertIn("HeroSiege::Scripts::gml_Script_ParseItemToGrid", holds)
@@ -482,6 +503,32 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);", body)
         # The rows are jumpscenery's five, in its order.
         self.assertIn("static_assert(FlightRowsMatchJumpScenery()", self.code)
+
+    def test_every_early_return_reaches_a_counter(self):
+        # Before the call reaches the core, every return either counts the
+        # call (NoteCall, NoteDepthOther) or is one of the guards
+        # FlightCounters names as uncounted: no self, flight's own re-entry,
+        # flight not installed, and FlightOnBuiltin's row bound.
+        uncounted = {
+            "on_builtin": {"if (!S || g_FlightBusy || !g_Flight.Installed()) return;",
+                           "if (row < 0 || row >= JsNs::kBuiltinCount) return;"},
+            "tallest": {"if (!S || g_FlightBusy || !g_Flight.Installed()) return r;"},
+            "depth": {"if (!S || g_FlightBusy || !g_Flight.Installed()) return r;"},
+        }
+        for which, allowed in uncounted.items():
+            with self.subTest(function=which):
+                lines = self.lines(which)
+                core = next(i for i, line in enumerate(lines)
+                            if "g_Flight.OnQuery(" in line or "g_Flight.OnUpdateDepth(" in line)
+                early = [line for line in lines[:core] if re.search(r"\breturn\b", line)]
+                counted = [line for line in early if line not in allowed]
+                self.assertTrue(allowed <= set(early), early)
+                self.assertTrue(counted, early)
+                for line in counted:
+                    self.assertRegex(line, r"g_Flight\.(?:NoteCall|NoteDepthOther)\(", line)
+        shipped = strip_comments(self.plugin)
+        self.assertGreaterEqual(len(re.findall(r"g_Flight\.NoteCall\(", shipped)), 1)
+        self.assertGreaterEqual(len(re.findall(r"g_Flight\.NoteDepthOther\(", shipped)), 1)
 
     def test_the_points_and_the_room_are_read_for_the_core(self):
         body = self.body("on_builtin")

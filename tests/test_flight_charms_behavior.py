@@ -13,9 +13,13 @@ Test names carry the substrings the workorder's criteria select with `-k`:
 worn: every query real, the baseline; worn: a blocked family query answered,
 walls, locks, monsters, the room's edge and other selves kept, the target),
 `residual`, `size_guard` (outside a load scope nothing changes, the baseline;
-inside it a dressed charm waits for the vanilla items, the target),
-`front_layer`, `stand_in` (the even-count rule and the coin) and `stat_line`
-(the fresh session's line, byte for byte).
+inside it a dressed charm waits for the vanilla items, the target;
+`size_guard_two_charms`: two charms in one load both stay on the grid, in
+either save order, read either way round and with a cell unknown;
+`size_guard_counters`: the guard's own line), `trace_sums` (the trace
+line's counters add up as FlightCounters says), `front_layer`, `stand_in`
+(the even-count rule and the coin) and `stat_line` (the fresh session's line,
+byte for byte).
 """
 import os
 import shutil
@@ -162,6 +166,26 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_size_guard_target_nested_scopes(self):
         self.assertScenarios("size_guard/target_nested_scopes_flush_their_own_lists")
+
+    def test_size_guard_two_charms_in_one_load_both_stay_on_the_grid(self):
+        # The single-charm baselines first: a full footprint that fits goes in
+        # whole, one that does not becomes 1x1 at its own cell.
+        self.assertScenarios("size_guard/target_a_full_footprint_that_fits_is_placed_whole",
+                             "size_guard/target_a_refused_full_footprint_becomes_1x1_at_its_own_cell",
+                             "size_guard/baseline_two_charms_unguarded_the_first_covers_the_second",
+                             "size_guard/target_two_charms_whose_footprint_covers_the_others_cell_keep_both",
+                             "size_guard/target_a_transposed_footprint_still_yields",
+                             "size_guard/target_an_unknown_cell_yields_when_another_charm_is_held",
+                             "size_guard/target_one_charm_with_an_unknown_cell_is_not_shrunk")
+
+    def test_size_guard_counters_say_how_far_a_load_got(self):
+        self.assertScenarios("size_guard/saw_counts_only_inside_a_load_and_outside_a_flush",
+                             "size_guard/the_guard_stat_line")
+
+    # ---- the trace line -----------------------------------------------------
+
+    def test_trace_sums_as_flight_counters_documents(self):
+        self.assertScenarios("trace/the_counters_sum_as_documented")
 
     # ---- drawing in front ---------------------------------------------------
 

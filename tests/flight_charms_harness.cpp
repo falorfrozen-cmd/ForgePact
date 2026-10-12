@@ -195,35 +195,55 @@ struct Grid {
 // placed at its saved cell and a refusal is ignored. Guarded, the adapter's
 // two hooks run around it: the scope opens, a charm's placement asks the
 // guard first, and the scope closes once the last entry is placed.
+//
+// `transposed` models a game that reads the axes the other way round from the
+// guard's reading of the arguments: every item then covers h columns by w
+// rows. `unknownCell` names the entries whose cell the adapter could not read:
+// the guard is told -1,-1, while the game still places them at their own cell.
 struct Load {
     Grid grid;
     SizeGuard<Pending> guard;
     std::map<int, Saved> saved;
     std::vector<std::pair<Pending, GuardOutcome>> outcomes;
+    bool transposed = false;
+    std::set<int> unknownCell;
 
+    bool put(int id, int w, int h)
+    {
+        const Saved& e = saved.at(id);
+        return transposed ? grid.place(id, e.x, e.y, h, w) : grid.place(id, e.x, e.y, w, h);
+    }
     void run(const std::vector<Saved>& entries, bool guarded)
     {
         for (const Saved& e : entries) saved[e.id] = e;
         if (guarded) guard.Open();
         for (const Saved& e : entries) {
-            if (guarded && guard.Defer(Pending{ e.id, e.x, e.y }, e.charm, e.w, e.h)) continue;
-            grid.place(e.id, e.x, e.y, e.w, e.h);
+            const bool known = unknownCell.count(e.id) == 0;
+            if (guarded && guard.Defer(Pending{ e.id, known ? e.x : -1, known ? e.y : -1 }, e.charm, e.w, e.h)) continue;
+            put(e.id, e.w, e.h);
         }
         if (guarded) close();
     }
     void close()
     {
         guard.Close(
-            [this](const Pending& p) { const Saved& e = saved.at(p.id); return grid.place(p.id, p.x, p.y, e.w, e.h); },
-            [this](const Pending& p) { return grid.place(p.id, p.x, p.y, 1, 1); },
+            [this](const Pending& p) { const Saved& e = saved.at(p.id); return put(p.id, e.w, e.h); },
+            [this](const Pending& p) { return put(p.id, 1, 1); },
             [this](const Pending& p, GuardOutcome o) { outcomes.emplace_back(p, o); });
+    }
+    int outcome(int id, GuardOutcome o) const
+    {
+        int n = 0;
+        for (const auto& r : outcomes) n += (r.first.id == id && r.second == o) ? 1 : 0;
+        return n;
     }
 };
 
 static std::string guardText(const GuardCounters& c)
 {
     return "deferred=" + std::to_string(c.deferred) + " full=" + std::to_string(c.full)
-        + " kept=" + std::to_string(c.kept) + " failed=" + std::to_string(c.failed);
+        + " kept=" + std::to_string(c.kept) + " yielded=" + std::to_string(c.yielded)
+        + " failed=" + std::to_string(c.failed);
 }
 
 int main()
@@ -699,9 +719,52 @@ int main()
         check("front_layer/equal_or_unreadable_ends_write_nothing", ok, "layer-reads=" + std::to_string(w.layerReads));
     }
 
+    // ======================= trace =========================================
+    {
+        // Every bucket the trace line prints, each driven at least once, and
+        // the sums FlightCounters documents.
+        FlightWorld w;
+        w.layers[7] = { LayerEnd{ 101, 100.0 }, LayerEnd{ 109, -100.0 } };
+        Flight f = makeFlight(w);
+        // The adapter's own early returns: another self, a free answer.
+        f.NoteCall(false);
+        f.NoteCall(false);
+        f.NoteCall(true);
+        f.NoteDepthOther();
+        // Off: the core still counts the player's blocked query and depth call.
+        ask(f, Hooked::PlaceMeeting, 1, true, Fence, true);
+        ask(f, Hooked::PlaceMeeting, 1, false, Fence, true);
+        ask(f, Hooked::PlaceMeeting, 1, true, Fence, false);
+        f.OnUpdateDepth(1, true, 7);
+        f.OnUpdateDepth(1, false, 7);
+        // On.
+        w.equipped = CharmBit(Charm::Wings);
+        ask(f, Hooked::PlaceMeeting, 2, true, Fence, true);                              // answered
+        ask(f, Hooked::PlaceMeeting, 2, true, WallParent, true);                         // excluded
+        ask(f, Hooked::PlaceMeeting, 2, true, Fence, true, true);                        // excluded by the re-run
+        ask(f, Hooked::PlaceMeeting, 2, true, Skeleton, true);                           // other
+        ask(f, Hooked::PlaceMeeting, 2, true, -1, true);                                 // unreadable
+        ask(f, Hooked::PlaceMeeting, 2, true, Fence, true, false, -1.0, 0.0);            // outside the room
+        f.SetFamily(-1, { WallParent, LockObj });
+        ask(f, Hooked::PlaceMeeting, 2, true, Fence, true);                              // unconfigured
+        f.SetFamily(CollisionParent, { WallParent, LockObj });
+        f.OnUpdateDepth(2, true, 7);                                                     // depth
+        f.OnUpdateDepth(2, true, -1);                                                    // no front: room unreadable
+        const FlightCounters& c = f.Stats();
+        const bool every = c.notPlayer == 3 && c.unblocked == 2 && c.seen == 8 && c.idle == 1 && c.unconfigured == 1
+            && c.unreadable == 1 && c.other == 1 && c.excluded == 2 && c.outsideRoom == 1 && c.answered == 1
+            && c.depthOther == 2 && c.depthIdle == 1 && c.noFront == 1 && c.depth == 1;
+        const bool sums = c.calls == c.notPlayer + c.unblocked + c.seen
+            && c.seen == c.idle + c.unconfigured + c.unreadable + c.other + c.excluded + c.outsideRoom + c.answered
+            && c.depthCalls == c.depthOther + c.depthSeen && c.depthSeen == c.depthIdle + c.noFront + c.depth;
+        check("trace/the_counters_sum_as_documented", every && sums && c.calls == 13 && c.depthCalls == 5,
+            TraceLine("match", c) + " | " + counts(c));
+    }
+
     // ======================= size_guard ====================================
     // Grid 6x4. Ids: 1 a vanilla item, 2 Gabriel Wings (2x2), 3 Witch's
-    // Broomstick (1x5), 4 Pocket Elf (1x1), 5 another vanilla item.
+    // Broomstick (1x5), 4 Pocket Elf (1x1), 5 another vanilla item, 6 a second
+    // Gabriel Wings (2x2).
     {
         // Baseline: unguarded, the entry order decides (Live 1's
         // `dress-added: item-missing`, read through § 22.6). The guard does
@@ -809,6 +872,111 @@ int main()
                 && failed == "flightcharm: guard failed Witch's Broomstick in cell 0,1 (no room even at 1x1)"
                 && GuardLine("Pocket Elf", 0, 0, GuardOutcome::Full).empty(),
             kept + " | " + failed);
+    }
+
+    // ---- two charms in one load ----
+    {
+        // Baseline: unguarded, the Wings saved first covers the cell of the
+        // charm saved after it, which the game then refuses and drops.
+        Load l;
+        l.run({ Saved{ 2, 0, 0, 2, 2, true }, Saved{ 6, 1, 0, 2, 2, true } }, false);
+        check("size_guard/baseline_two_charms_unguarded_the_first_covers_the_second",
+            l.grid.covered(2) == 4 && l.grid.at(1, 0) == 2 && l.grid.covered(6) == 0);
+    }
+    {
+        // Guarded, in either save order: the Wings whose full size would cover
+        // the other's cell yields to 1x1, the other goes in whole.
+        const auto both = [](const Load& l) {
+            const GuardCounters& c = l.guard.Stats();
+            return l.grid.at(0, 0) == 2 && l.grid.covered(2) == 1 && l.grid.at(1, 0) == 6 && l.grid.covered(6) == 4
+                && c.deferred == 2 && c.full == 1 && c.kept == 1 && c.yielded == 1 && c.failed == 0
+                && l.outcome(2, GuardOutcome::Yielded) == 1 && l.outcome(6, GuardOutcome::Full) == 1;
+        };
+        Load first;
+        first.run({ Saved{ 2, 0, 0, 2, 2, true }, Saved{ 6, 1, 0, 2, 2, true } }, true);
+        Load second;
+        second.run({ Saved{ 6, 1, 0, 2, 2, true }, Saved{ 2, 0, 0, 2, 2, true } }, true);
+        check("size_guard/target_two_charms_whose_footprint_covers_the_others_cell_keep_both",
+            both(first) && both(second), guardText(first.guard.Stats()) + " | " + guardText(second.guard.Stats()));
+    }
+    {
+        // The game reads the axes the other way round: the 1x5 Broomstick then
+        // runs five columns along row 0, over the Wings' cell at (2,0). Its
+        // transposed box is tested too, so it yields in either save order.
+        const auto both = [](const Load& l) {
+            const GuardCounters& c = l.guard.Stats();
+            return l.grid.at(0, 0) == 3 && l.grid.covered(3) == 1 && l.grid.at(2, 0) == 6 && l.grid.covered(6) == 4
+                && c.yielded == 1 && c.full == 1 && c.failed == 0;
+        };
+        Load first;
+        first.transposed = true;
+        first.run({ Saved{ 3, 0, 0, 1, 5, true }, Saved{ 6, 2, 0, 2, 2, true } }, true);
+        Load second;
+        second.transposed = true;
+        second.run({ Saved{ 6, 2, 0, 2, 2, true }, Saved{ 3, 0, 0, 1, 5, true } }, true);
+        check("size_guard/target_a_transposed_footprint_still_yields",
+            both(first) && both(second), guardText(first.guard.Stats()) + " | " + guardText(second.guard.Stats()));
+    }
+    {
+        // The adapter could not read the first Wings' cell, so the guard
+        // cannot tell whether either covers the other: both go in at 1x1.
+        Load l;
+        l.unknownCell = { 2 };
+        l.run({ Saved{ 2, 0, 0, 2, 2, true }, Saved{ 6, 1, 1, 2, 2, true } }, true);
+        const GuardCounters& c = l.guard.Stats();
+        check("size_guard/target_an_unknown_cell_yields_when_another_charm_is_held",
+            l.grid.at(0, 0) == 2 && l.grid.covered(2) == 1 && l.grid.at(1, 1) == 6 && l.grid.covered(6) == 1
+                && c.yielded == 2 && c.kept == 2 && c.full == 0 && c.failed == 0,
+            guardText(c));
+    }
+    {
+        // Alone in its load, a charm with an unknown cell is not shrunk.
+        Load l;
+        l.unknownCell = { 2 };
+        l.run({ Saved{ 2, 0, 0, 2, 2, true }, Saved{ 1, 3, 3, 1, 1, false } }, true);
+        const GuardCounters& c = l.guard.Stats();
+        check("size_guard/target_one_charm_with_an_unknown_cell_is_not_shrunk",
+            l.grid.covered(2) == 4 && l.grid.at(3, 3) == 1 && c.full == 1 && c.yielded == 0 && c.kept == 0,
+            guardText(c));
+    }
+
+    // ---- how far a load got ----
+    {
+        SizeGuard<Pending> g;
+        g.Saw(true);                         // outside a load: nothing
+        const bool outside = g.Stats().seen == 0 && g.Stats().charms == 0 && g.Stats().opens == 0;
+        g.Open();
+        g.Saw(false);
+        g.Saw(true);
+        g.Defer(Pending{ 2, 0, 0 }, true, 2, 2);
+        const bool inside = g.Stats().opens == 1 && g.Stats().seen == 2 && g.Stats().charms == 1;
+        g.Close([&g](const Pending&) { g.Saw(true); return true; }, [&g](const Pending&) { g.Saw(true); return true; });
+        const bool flush = g.Stats().seen == 2 && g.Stats().charms == 1;
+        g.Open();
+        g.Close([](const Pending&) { return true; }, [](const Pending&) { return true; });
+        g.Saw(true);                         // closed again: nothing
+        const GuardCounters& c = g.Stats();
+        check("size_guard/saw_counts_only_inside_a_load_and_outside_a_flush",
+            outside && inside && flush && c.opens == 2 && c.seen == 2 && c.charms == 1 && c.deferred == 1 && c.full == 1,
+            "opens=" + std::to_string(c.opens) + " seen=" + std::to_string(c.seen) + " charms=" + std::to_string(c.charms));
+    }
+    {
+        GuardCounters c;
+        c.opens = 1;
+        c.seen = 2;
+        c.charms = 3;
+        c.deferred = 4;
+        c.full = 5;
+        c.kept = 6;
+        c.yielded = 7;
+        c.failed = 8;
+        const std::string line = GuardStatLine("on", c);
+        const std::string fresh = GuardStatLine("not-installed", GuardCounters{});
+        check("size_guard/the_guard_stat_line",
+            line == "flightcharm guard: route=on opens=1 seen=2 charms=3 deferred=4 full=5 kept=6 yielded=7 failed=8"
+                && fresh == "flightcharm guard: route=not-installed opens=0 seen=0 charms=0 deferred=0 full=0 kept=0 "
+                            "yielded=0 failed=0",
+            line + " | " + fresh);
     }
 
     // ======================= stand_in ======================================

@@ -1120,8 +1120,8 @@ the room's front game layer: the end of the room's `global.gameLayer` list
 whose layer depth is lower, read by name once per room. `yDepthSet` is left as
 the game set it. Which end is in front is chosen at runtime because the static
 reading did not settle it; Mod live procedure 1's `flight-depth` records it.
-For any other `self` the detour costs one compare, and it is installed only
-once flight is armed.
+For any other `self` the detour costs one compare and one count (the trace
+line's `depth-other=`), and it is installed only once flight is armed.
 
 ### The size guard
 
@@ -1133,12 +1133,33 @@ the answer, RDM § 22.6). When the load returns, every vanilla item of that grid
 is in place; each held charm is then placed at its full footprint, or, when
 that is refused, written 1x1 under `"2"` and `"3"`, its hash refreshed, tagged
 `fp_flight_guarded`, and placed at its own saved cell (`kept=`, or `failed=`
-when even that is refused). So no vanilla item can be displaced and the order
-of the saved entries never matters. Outside a load nothing changes: a drag
-onto a cell where the charm does not fit stays refused, as in the game. A
-guarded charm stays 1x1 for the rest of the session. Whether grids other than
-the bag place through this route is not established; `stash-size` and
-`charm-grid-size` look.
+when even that is refused). Vanilla items always go in first, so no vanilla
+item can be displaced by a charm. Between two charms, the yield rule decides:
+a held charm whose full footprint would cover another held charm's saved cell
+goes straight to 1x1 at its own cell (`yielded=`, counted in `kept=` too), so
+every full placement leaves every other held charm's cell free, and no save
+order of two charms leaves one off the grid. The footprint is tested both ways
+round, `"2"` columns by `"3"` rows and the transpose, because which of
+`InventoryGridAddItemPos`'s arguments is the column and which the row is a
+static reading only (RDM § 22.6 does not record it). When one of the held
+charms' cells is unknown, every held charm in that load yields, since the
+guard cannot tell what covers what; a charm alone in its load is never shrunk
+for that. The price is a charm loading 1x1 for a session when only its
+transposed box touches another charm: a shrink, never a loss. Outside a load
+nothing changes: a drag onto a cell where the charm does not fit stays
+refused, as in the game. A guarded charm stays 1x1 for the rest of the
+session. Whether grids other than the bag place through this route is not
+established; `stash-size` and `charm-grid-size` look.
+
+`flightcharm stat` prints the guard's own line after the stat and trace lines:
+`flightcharm guard: route= opens= seen= charms= deferred= full= kept= yielded=
+failed=`. Read after a load, in order, it says where a quiet guard stopped: a
+`route` other than `on` means the guard was refused at startup; `opens` not
+risen, that no load reached the hook; `seen` not risen, that no placement
+inside a load reached it; `charms` not risen, that `A[1]` is not the item or
+the item was not recognised; `deferred` not risen, that the footprint read 1x1
+when the item was added. Otherwise `full`, `kept`, `yielded` and `failed` say
+what the flush did.
 
 ### The ground icon
 
@@ -1260,14 +1281,20 @@ and drops at the natural chance (every drop here uses a research lever).
   reads `state=on equipped=elf`.
 - S9 `flight-depth`: `flightprobe depth` reads `depth=` equal to `front=` with
   `state=on`, and a screenshot shows Sorak in front of the prop. Which end
-  (`front=` against `back=`) was chosen is recorded.
+  (`front=` against `back=`) was chosen is recorded, with the
+  `flightcharm trace:` line before and after, so that a fail names its cause
+  (`depth-calls`, `depth-other`, `depth-idle` or `no-front`, read as the
+  `TraceLine` comment in `FlightCharms.hpp` says).
 - S10, choosing the spot: at the ravine edge and at the church wall,
   `flightprobe free` toward the edge, once for the family and once for
   `Wall_Parent_obj`. The prop spot is the first whose family read is `yes` and
   whose wall read is `no`; a spot whose wall read is `yes` is the excluded
   spot.
 - S11 `flight-prop`: at the prop spot, a 3 s walk across it moves the player
-  100 px or more past the start, and `answered=` rises.
+  100 px or more past the start, and `answered=` rises. The
+  `flightcharm trace:` line is recorded before and after, so that a fail
+  names where flight stopped (`calls`, `not-player`, `free`, or the bucket of
+  `seen` that rose).
 - S12 `flight-excluded`: at the excluded spot, a 3 s walk passes when the
   player moved under 20 px and `excluded=` rose, fails at 100 px or more, and
   is not-observed when no spot read `yes` for the wall.
@@ -1285,12 +1312,26 @@ and drops at the natural chance (every drop here uses a research lever).
   screenshot of 1x5 cells passes, 1x1 fails. It goes back to the charm grid.
 - S16, the guard's setup: `flightprobe dress off`, a Wings spawned at 3 and 4,
   dropped by the person on a bag cell whose right and lower neighbours are
-  occupied (it is 1x1 now; screenshot), then `flightprobe dress on`.
+  occupied (it is 1x1 now; screenshot), then `flightprobe dress on`. Two more
+  Wings are spawned and dropped by the person at full size on free bag cells,
+  away from the 3/4 Wings and its right, lower and lower-right neighbours
+  (screenshot); the person checks that the worn Wings and Broomstick in the
+  charm grid do not cover each other's top-left cell either way round, and
+  moves the Broomstick if they do. The `flightcharm guard:` line is then
+  recorded as the before value. The bag alone gives `guard-control` 3
+  deferred and 2 full; whether the charm grid also loads through the guard is
+  not established, and the session's validity does not rest on it.
 - S17, the reload: save and quit to character select, and slot 14 again.
   `guard-kept`: the 3/4 Wings is at its cell at 1x1, both neighbours are
-  intact, and the stat reads `kept=1 failed=0`. `guard-control`: the worn
-  Wings is 2x2 and the Broomstick 1x5. `reload-identity`: the same names,
-  rarities and `itemstats=` as S14.
+  intact, the stat reads `kept=1 failed=0`, and the guard line reads
+  `route=on` with `kept=` risen by 1 since S16, `yielded=0` and `failed=0`;
+  a fail records the guard line and names the cause, read in the order
+  § "The size guard" gives. `guard-control`: the guard line reads `route=on`
+  with `deferred=` and `full=` each risen by at least 2 since S16, and the
+  worn Wings is 2x2 and the Broomstick 1x5 (a `deferred=` rise of 5 or more
+  suggests the charm grid loads through the guard too, a note for
+  `charm-grid-size`). `reload-identity`: the same names, rarities and
+  `itemstats=` as S14.
 - The debugger is detached, its reply and the outside thread check quoted.
   `dbg-step-depth` passes when either `UpdateDepth` call logged during S7 to
   S9 while the control logged; `dbg-parse-place` passes when the placement
