@@ -252,40 +252,148 @@ measured).
 ## Instrument
 
 Both instruments are research build only (`#ifndef FORGEPACT_RELEASE`), are
-not player commands, and reach the game by name only. This section states
-what each is for; the forms and their output are in the module guide's
-Command Reference.
+not player commands, and reach the game by name only: every script and object
+through its `hs-game-sdk` constant, every builtin by its name, no address. The
+module guide's Command Reference carries each form's exact output; this
+section says, per form, what it reads or answers, by which route, and what
+its positive control is. Neither instrument moves the player: `playerwarp`
+is the operator's recovery tool, not a probe behaviour.
 
-**The walk lever, in `jumpprobe`.** The jump research's lever answers the
-local player's own collision queries "nothing there" under a rule. This
-phase adds a third rule, `any`, which answers the player's query whatever
-object it names, the two object-less rows included, beside the existing
-`props` and `all`. It adds an object tally: per builtin row, the player's own
-calls are counted by the object they name whenever the probe is hooked, so a
-walk names the object it is blocked by, family or outside. And it adds
-`jumpprobe free`, which asks the original `place_meeting` and
-`instance_position` builtins, never the lever, whether the player stands
-inside the collision family, and by which object. Its positive controls are
-the jump research's: `CheckTalentUse` counts once per frame and
-`position_meeting` counts on a walk.
+### The walk lever, in `jumpprobe`
 
-**The charm probe, `charmprobe`.** It reads the equipped charms from
-`localCharmItemArray` (reading the variables, not calling
-`GetPlayerCharmData`), with each item's definition, rarity, name and footprint
-(from `GetItemSize`, called by name), and identifies the two size keys of
-`itemInfoStruct` from samples of known size. It reads the unique
-repository's rarity and hidden flag for one entry. It spawns a normal charm
-on the ground through the route the signature items already use, with an
-optional footprint and optional stats written into the built struct. It can
-dress a spawned charm's footprint at the Custom Forge's final pass, so a size
-can appear or go away across a save. It calls `DropItemHeroic` by name and
-reads back the rarity of each ground item it placed. And its sprite form
-loads one placeholder icon we drew by the pack markers' route, identifies the
-item's display-sprite key from samples, and spawns a charm carrying our icon,
-to see which surfaces draw it and whether a save keeps it. Its positive
-controls are the S10 read of a charm the character already wears, the S12
-read of Goburin's Head (known Unholy, 10) and S19's same charm with its own
-sprite.
+The jump research built `jumpprobe` (`jump-scenery-research.md` § Instrument):
+twenty script rows detoured at their own address and ten collision builtins
+hooked by name, a per-row call count, and the `pass` lever, which answers the
+local player's own collision queries "nothing there" without running them.
+This phase adds three things to it, in `JumpSceneryProbe.hpp` and the
+`jumpprobe` adapter. The shipped `jumpscenery` mod is not touched.
+
+- **`pass 1 [frames] any [scripts] [hold]`, a third rule.** `props` answers
+  a query naming a prop, `all` one naming anything in the collision family
+  (`Collision_Parent_obj` or a descendant, decided through
+  `object_is_ancestor` by name). `any` answers every query the local player
+  makes on a hooked builtin row, whatever object it names: an object outside
+  the family, an argument that names no object, and the two object-less rows
+  (`place_free`, `tilemap_get_at_pixel`). It reads no object argument at all.
+  `scripts` and `hold` work as before, and `pass stat` names the rule in
+  force. Route: the same builtin detours; a call by any other `self` runs the
+  original. Positive control: `passed=` on `pass stat` climbs while the
+  player walks into the prop under `hold`; if it never climbs, the lever did
+  not engage (`walk-lever: lever-not-engaged`) and a blocked walk says
+  nothing about the rule.
+- **The object tally, `jumpprobe objects` / `objects reset`.** From `hook`
+  on, lever on or off, each builtin row counts the local player's own calls
+  by the object index its object argument names (one bucket, `-1`, for the
+  object-less rows and for an argument that is no object), up to 64 distinct
+  objects a row and the rest under `other=`. `objects` prints each row with
+  calls, its objects most-called first, each labelled `family` or `outside`
+  by the same ancestry test, then a summary of rows, distinct objects and how
+  many lie outside the family. The tally reads the object argument only for
+  the player's own calls, and only `objects reset` clears it, so one walk
+  counted with the lever off can be set beside the same walk under it. It
+  answers which object a blocked walk asked about, which is what the jump's
+  rules could not name. Positive control: on a walk the `position_meeting`
+  row shows calls (S4 already shows that row counts walking).
+- **`jumpprobe free`.** Asks whether the player's own spot is inside the
+  collision family, of the saved originals of `place_meeting` (with the
+  player's mask at its own `x`, `y`: `blocked=`) and `instance_position` (the
+  instance at that point: `by=`), with the player as `self` and the family
+  root as the object. It calls the originals directly, never through the
+  lever, and is not counted by the tally. It refuses before `hook`, since
+  without a saved original the call would go through whatever detour holds
+  the builtin, and refuses when the family root or the local player does not
+  resolve. Positive control: S9 asks it while the player overlaps the prop a
+  lever let it walk into, where it must read `blocked=yes`.
+
+The jump research's two controls still open the walk checks: `CheckTalentUse`
+counts once a frame and `position_meeting` climbs while the player walks.
+
+### The charm probe, `charmprobe`
+
+`FlightCharmProbe.hpp` holds the decisions, game-independent (numbers and
+strings, never an `RValue`): identifying the size and sprite keys from
+samples, parsing every form's arguments with a named reason for each refusal,
+the dress rules, and the Heroic summary. The `charmprobe` adapter reads and
+calls. A bare `charmprobe` prints the build marker (`fcp1`), the size keys
+once known and the number of dress rules, then the usage.
+
+- **`charms`.** Reads the equipped charms offline, as variables: the
+  `Controller_obj` instance found by name, its `inventoryData` entry for the
+  local player by the relic tab's key rule, and that entry's
+  `localCharmItemArray`. It never calls `GetPlayerCharmData`, and it refuses
+  online, where the charms live on `Client_obj`. Per item (at most 64) it
+  prints the item type, the definition, the footprint from `GetItemSize`
+  called by name with the item, the rarity and name (`itemInfoStruct` keys
+  27 and 28), and every `itemInfoStruct` key whose value is a number or a
+  short string. Each sized item is a sample for the size keys: a key holds
+  the width (or height) when its value equals that sample's width (height) on
+  every sample, and the pair is identified when exactly one key holds each,
+  across at least two distinct sizes; otherwise `sizekeys` says why not.
+  Positive control: S10, the read of a charm the character already wears and
+  of three normal charms of known sizes (Small, Large, Grand) dragged into
+  the grid.
+- **`repo <t> <sub> <b>`.** Calls `GetUniqueRepoStruct` by name and reads
+  the returned definition's `itemBaseInfoStruct`: rarity (27), name (28), the
+  hidden flag (40) and, once the size keys are known, the footprint, then
+  dumps that struct's keys. Positive control: S12's read of Goburin's Head
+  (10 / 0 / 98), known Unholy (10).
+- **`spawn <b> [size <w> <h>] [stat <id>=<v>]... [sprite]`.** Builds a
+  normal charm (`b` 0 to 59) by the route the signature items and
+  `gambapity`'s forced drop already use: `json_parse` of a compact
+  definition with a research seed (from 779001 up, one per spawn, never
+  reused), `InitItemFromJson` by name with a research key, then
+  `LootGroundCreateFromItem` by name with the local player as `self`, at the
+  player. Before placing it, it dumps the item's `itemInfoStruct` as the game
+  built it (a sample for the sprite key), then writes the requested
+  footprint into the two size keys (refused until they are identified), the
+  stats into `itemStatStruct` by stat id, and with `sprite` the loaded icon
+  into the sprite key (refused until the icon is loaded and the key known).
+  Nothing else is written. Positive control: S10's three spawns, read back by
+  `charms` once dragged into the grid; for `stat`, S13's walk measured before
+  the charm is worn.
+- **`dress <a> <w> <h>` / `dress off`.** Up to eight rules, one per item
+  seed `a`. At `CreateItemNew`'s outermost return, the Custom Forge's
+  research hook writes a ruled item's two size keys and touches nothing else,
+  so a footprint can be made to appear on a charm the save holds as 1x1. The
+  research build already detours `CreateItemNew` at setup; `dress` installs
+  the same detour only when nothing did, and refuses while the size keys are
+  unknown. It prints the rules and how many items it has dressed. The Custom
+  Forge's player-build pass is unchanged. Positive control: a bare
+  `charmprobe dress` after S17's reload shows `dressed=` above 0, so the
+  rule reached the item the game rebuilt; at 0 the reload measured the
+  undressed charm, not the footprint.
+- **`heroic <n>`** (1 to 20). Calls `DropItemHeroic` by name with the local
+  player as `self` and its position, `n` times. After each call it finds the
+  newest `Loot_Ground_obj` (instance ids only grow, so a call that placed an
+  item leaves a higher one), reads its `itemInstance` (item type, definition
+  `b` and `c`, rarity, name), and ends with a count of calls, items placed,
+  a histogram by rarity code and how many were charms. Positive control:
+  `placed=` equals the calls; a call that placed nothing says so.
+- **`sprite` / `sprite load` / `sprite key <name>`.** `sprite load` takes
+  the pack markers' route without changing it: it writes the embedded
+  placeholder PNG (a 32x32 teal diamond we drew from code,
+  `assets/flight-charms/charmprobe.png`, embedded by
+  `make_charmprobe_icon.py` in `FlightCharmProbeIcon.hpp`) under
+  `bp_ipc\charmprobe\` only when no file of that name is there, then
+  `sprite_add` with the path relative to the game's working directory first
+  and the absolute path second. A reference or a real is accepted as the
+  index, and it is re-centred with `sprite_set_offset` when it is not the
+  embedded size. A bare `sprite` reports the index, the kind `sprite_add`
+  returned, which path worked, and the sprite key. That key is identified
+  like the size keys: a candidate is an `itemInfoStruct` key whose value is
+  a number `sprite_exists` (called by name) accepts, over the samples `charms`
+  and each spawn feed it, and it is identified when exactly one key is a
+  candidate on every sample and took at least two values. `sprite key
+  <name>` sets it by hand from an `info=` dump when the rule cannot decide.
+  Once known, `charms` adds each item's sprite value and name. Positive
+  control: S19's same charm spawned without `sprite`, which must draw its
+  base icon on the ground, in the grid and in the tooltip.
+
+`tests/test_flight_charm_probe_contract.py` pins the adapter on
+comment-stripped source (research build only, by name, the variable read, the
+dress write's scope, `sprite_add` only inside the research block), and
+`tests/test_flight_charm_probe_behavior.py` runs the core through
+`flight_charm_probe_harness.cpp`.
 
 ## Live procedure 1
 
