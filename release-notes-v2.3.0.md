@@ -34,14 +34,16 @@ fresh fight.
   fight, even if you beat the boss before; no portal opens. It works from a
   town or any zone of an act, and is refused (you keep the piece) inside a
   boss lair or an uber realm. Each piece takes its own bag cell; pieces do not
-  stack. Anything left on the lair's floor is gone when you use a piece for
-  it. A piece is an Edible PAS Logo underneath, so your save loads without
-  ForgePact, where a piece shows and works as an Edible PAS Logo. Checked in
-  a research session: pieces stay apart in the bag, a right-click uses one up,
-  the game's own travel reaches the Act 1 and Act 2 lairs, and Gurag and the
-  Grim Reaper come out there and die without a crash. The use from a piece to
-  the lair, and the boss returning after you beat it, are not yet checked in
-  play with this release's plugin.
+  stack. Using a piece makes the game forget what it kept of that lair, which
+  may include loot left on its floor (not tested). A piece is an Edible PAS
+  Logo underneath, so your save needs nothing from ForgePact to load, and
+  without ForgePact a piece shows and works as an Edible PAS Logo. Checked in
+  play with this release's plugin, in Acts 1 and 2: monsters dropped named
+  pieces, one bag cell each, and none with the switch off; a piece used in a
+  zone or in town took the character straight to the Act 1 or Act 2 lair and
+  was used up; Gurag came out, was beaten and came out again on the next
+  piece; and the Grim Reaper came out in his lair. The lairs of Acts 3 to 9
+  were not visited.
 
 ## How to update
 
