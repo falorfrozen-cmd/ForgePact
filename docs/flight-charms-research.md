@@ -345,11 +345,12 @@ once known and the number of dress rules, then the usage.
   prints the item type, the definition (`a`, `b`, `c`, `j`), the footprint
   from `GetItemSize` called by name with the item, the rarity and name
   (`itemInfoStruct` keys 27 and 28), then `itemstats=`, every
-  `itemStatStruct` key (a stat id) whose value is a number or a string of at
-  most 40 characters (`none` for an empty struct, `missing(no
-  itemStatStruct)` for an item without one; a stat whose value is an array
-  is not listed), and last `info=`, every `itemInfoStruct` key under the
-  same rule. It writes nothing to a worn charm. Each sized item is a sample
+  `itemStatStruct` key (a stat id) whose value is a number, a reference
+  (shown with its kind, since this runner hands asset values back as
+  references) or a string of at most 40 characters (`none` for an empty
+  struct, `missing(no itemStatStruct)` for an item without one; a stat whose
+  value is an array is not listed), and last `info=`, every `itemInfoStruct`
+  key under the same rule. It writes nothing to a worn charm. Each sized item is a sample
   for the size keys: a key holds the width (or height) when its value equals
   that sample's width (height) on every sample, and the pair is identified
   when exactly one key holds each, across at least two distinct sizes;
@@ -396,8 +397,10 @@ once known and the number of dress rules, then the usage.
   player. Before placing it, it dumps the item's `itemInfoStruct` as the game
   built it (a sample for the sprite key), then writes the requested
   footprint into the two size keys, the stats into `itemStatStruct` by stat
-  id, and with `sprite` the loaded icon into the sprite key (refused until
-  the icon is loaded and the key known). Nothing else is written. A `size`
+  id, and with `sprite` the loaded icon, in the kind `sprite_add` answered,
+  into the sprite key (refused, before anything is built, until the icon is
+  loaded, the key known and the key verified by `sprite verify`). Nothing
+  else is written. A `size`
   is refused, before anything is built, with `size keys unknown` until a
   pair is identified and with `size keys unverified` until it read back.
   The spawn line counts the item as placed only when a `Loot_Ground_obj`
@@ -452,15 +455,41 @@ once known and the number of dress rules, then the usage.
   and the absolute path second. A reference or a real is accepted as the
   index, and it is re-centred with `sprite_set_offset` when it is not the
   embedded size. A bare `sprite` reports the index, the kind `sprite_add`
-  returned, which path worked, and the sprite key. That key is identified
-  like the size keys: a candidate is an `itemInfoStruct` key whose value is
-  a number `sprite_exists` (called by name) accepts, over the samples `charms`
-  and each spawn feed it, and it is identified when exactly one key is a
-  candidate on every sample and took at least two values. `sprite key
-  <name>` sets it by hand from an `info=` dump when the rule cannot decide.
-  Once known, `charms` adds each item's sprite value and name. Positive
-  control: S19's same charm spawned without `sprite`, which must draw its
-  base icon on the ground, in the grid and in the tooltip.
+  returned, which path worked, the sprite key and `check=`, its control's
+  state (`verified`, or `no` with the step that is missing). That key is
+  identified like the size keys: a candidate is an `itemInfoStruct` key whose
+  value `sprite_exists` (called by name) accepts, a whole number or a
+  reference handed to it as it is, over the samples `charms` and each spawn
+  feed it, and it is identified when exactly one key is a candidate on every
+  sample and took at least two values. Only a sample `GetItemSize` sized is
+  fed, and a footprint key is never a candidate: the size keys in force are
+  left out, and so is every number equal to that sample's width or height,
+  because `sprite_exists` accepts a 1, 2 or 3 as readily as a sprite's index,
+  and the height key holds 1, 2 and 3 across S10's Small, Large and Grand
+  charms. `sprite key <name>` sets it by hand from an `info=` dump when the
+  rule cannot decide, and refuses a size key in force. Once known, `charms`
+  adds each item's sprite value and name.
+- **`sprite verify [<donor b>]` / `sprite verify drew` / `sprite verify
+  base`.** The sprite key's positive control, run before anything writes our
+  icon under it: an identified or hand-set key is only a candidate, since the
+  sample rule says only that its values pass `sprite_exists`. It builds a
+  donor charm (`b` 40, a Grand charm, unless another `b` is named; seed
+  779000, never placed) and a `b` 3 charm from the spawn range, writes the
+  donor's own value under the key, as the game built it, onto the `b` 3
+  charm, and places that one. It prints the key, the `b` 3 charm's seed, its
+  own value and the donor's, each with its sprite name, the ground answer,
+  and what the placed item now holds under the key (`reverted` when the
+  placement put the charm's own value back). It refuses while the key is
+  unknown, when either value is not a sprite, and when the two charms hold
+  one sprite under the key (another donor is then named). If the surfaces
+  draw from this key, the `b` 3 charm shows the donor's icon; if not, its
+  own. That is the person's to see, so `sprite verify drew` (the donor's
+  icon) or `sprite verify base` (its own) records the answer, and `spawn ...
+  sprite` is refused with `sprite key ... unverified` until the answer is
+  `drew` for the key in force; a key that changes after it needs the control
+  again. Positive control for the draw itself: S19's same charm spawned
+  without `sprite`, which must draw its base icon on the ground, in the grid
+  and in the tooltip.
 
 `tests/test_flight_charm_probe_contract.py` pins the adapter on
 comment-stripped source (research build only, by name, the variable read,
@@ -517,22 +546,34 @@ been measured live yet, so hits are counted from the log lines; if the
 return location comes out unevaluated, the check's note says so and the
 counts stand alone.
 
-**What a logpoint sees.** The breakpoint sees the calls that reach the
-script's own entry, the direct ones, and fires under `scripts hold` too,
-where the lever answers the call without running it. A call routed through
-the script table reaches `jumpprobe`'s hook body instead and is not logged,
-so the logpoints name direct callers only; the row's own `calls=` counts both
-routes, and the gap between the two counts is the table's share.
+**What a logpoint sees.** `jumpprobe hook` does not swap the script table.
+It detours each script at the script's own address, the same function the
+table entry points to, so a direct call from compiled code and a call routed
+through the table (or a method value) both run that entry. The entry
+breakpoint therefore sees every call that reaches the detoured function, by
+either route, and it fires under `scripts hold` too, where the lever answers
+the call without running it. What tells the routes apart is the return
+location: a direct call logs the compiled script that made it, while a
+table-routed call logs the runner's own script dispatcher. The record step
+writes a return location that maps into the runner's dispatcher, rather
+than into a compiled script, as `via-dispatcher` (the table or method
+route), never as a caller. The row's own `calls=` counts the calls that
+reached the same detour, so the two counts are two instruments on the same
+calls: a gap between them is not any route's share, and a logpoint with no
+hits while its row's `calls=` rose has failed as an instrument
+(`logpoint-failed`), which says nothing about how the game routes the call.
 
 **The four checks.** `dbg-control` passes when the control logged hits
 during S5's walk. Each of `dbg-instance-place-tallest`, `dbg-can-move` and
-`dbg-tile-place-meeting` passes when its logpoint logged; it is
-`not-observed` when the logpoint logged nothing while the control logged in
-the same window and its first bytes showed the detour like the control's
-(the note says `table-only` when its `jumpprobe` row's `calls=` rose in that
-window), and `not-run` when its bytes did not. The operator detaches after
-S8 (and its outlier repeats), before S9, and in any case before any
-`hs_stop_game`.
+`dbg-tile-place-meeting` passes when its logpoint logged. A window with no
+hits is `not-observed` only when the control logged in the same window, the
+candidate's first bytes showed the detour like the control's, and its
+`jumpprobe` row's `calls=` did not rise in that window either, so both
+instruments agree the function was not called. No hits while the row's
+`calls=` rose is `not-run (instrument: logpoint-failed)`, and bytes that did
+not show the detour are `not-run (instrument: bytes)`; in both, the zero is
+no evidence. The operator detaches after S8 (and its outlier repeats),
+before S9, and in any case before any `hs_stop_game`.
 
 ## Live procedure 1
 
@@ -567,7 +608,8 @@ session's local notes.
   and a building wall if one is in reach (the outlier). For sizes, one normal
   charm of each size. For the repository, the Heroic 1x1 candidate and the
   two size outliers (a 2x2 Angelic, the 1x5 Unholy). For the sprite, one
-  normal 1x1 charm (`b` 3) with and without our icon; the 2x2 and 1x5
+  normal 1x1 charm (`b` 3) with and without our icon, and for the key's
+control the same charm wearing a Grand charm's (`b` 40) own sprite; the 2x2 and 1x5
   outliers are not drawn in this phase.
 
 **Checks.** `dll-hash`, `marker`, `control`, `walk-control` and
@@ -588,7 +630,7 @@ check's positive control passed in the same session.
 | S6 `walk-objects` | `jumpprobe objects` | at least one row; every object named is recorded, and the outside object `place_meeting`'s row names most often (a named one, not the `-1` bucket) is recorded for S9 |
 | S7 `walk-all-scripts` | `jumpprobe pass 1 90 all scripts hold`, the counters noted, walk into the prop 3 s, the counters noted again, `jumpprobe state`, `jumpprobe pass stat` | `passed=` climbs; crossed or held is recorded, and the check passes if the walk crossed |
 | S8 `walk-any` | `jumpprobe pass 0`, `jumpprobe pass 1 90 any scripts hold`, the same walk, counters and reads; if it crossed, S8b: `pass 0`, `pass 1 90 any hold`, the same again | passes if S8 crossed; S8b goes in the note. With a building wall in reach, S7 and S8 are repeated there (the outlier), with the counters noted around each walk |
-| `dbg-instance-place-tallest` | after S8 and its repeats: for each walk (S5, S7, S8, S8b and the wall repeats), the `InstancePlaceTallest` logpoint's hits in that walk's window and its return locations, grouped, each with its count and its module offset, into the capture | passes when the logpoint logged; `not-observed` when it logged nothing while `dbg-control`'s control logged in the same window and its first bytes showed the detour like the control's (the note says `table-only` when its `jumpprobe` row's `calls=` rose); `not-run` when its bytes did not |
+| `dbg-instance-place-tallest` | after S8 and its repeats: for each walk (S5, S7, S8, S8b and the wall repeats), the `InstancePlaceTallest` logpoint's hits in that walk's window and its return locations, grouped, each with its count and its module offset, into the capture | passes when the logpoint logged; `not-observed` when it logged nothing while `dbg-control`'s control logged in the same window, its first bytes showed the detour like the control's and its `jumpprobe` row's `calls=` did not rise either; `not-run (instrument: logpoint-failed)` when it logged nothing while that row's `calls=` rose; `not-run (instrument: bytes)` when its bytes did not show the detour |
 | `dbg-can-move` | the same, for the `CanMove` logpoint | as for `dbg-instance-place-tallest` |
 | `dbg-tile-place-meeting` | the same, for the `TilePlaceMeeting` logpoint; then the operator detaches, before S9, quoting the debugger's reply and the outside thread check | as for `dbg-instance-place-tallest` |
 | S9 `stuck-inside` | only if S7 or S8 crossed: with that lever, stop while overlapping the prop (screenshot); `jumpprobe free` (the family), `jumpprobe free all` and `jumpprobe free <the S6 object>`, each with `asked=` recorded; `jumpprobe pass 0`; walk 1 s in each of the four directions with `jumpprobe state` after each | passes when some object asked reads `blocked=yes` (the player is shown inside it) and the walk-out outcome is recorded: the game ejected the player, the player walked out, or the player stayed stuck. A `blocked=no` counts only for an object that read `blocked=yes` in S5b. `not-observed` when `free-control` did not pass, when neither S7 nor S8 crossed, or when no object asked read yes (the note names them); a family-only `no` after an S8-only crossing is never a negative. Recovery is the operator's `playerwarp` to the S5 position |
@@ -597,8 +639,8 @@ check's positive control passed in the same session.
 | S12 `repo-rarity` | `charmprobe repo 10 0 76`, then 52, 47, 91 and 98 | each prints a rarity; the control is that 98 (Goburin's Head) reads 10. Aimbot.exe's (76) code is recorded |
 | S13 `forged-stat-applies` | on open ground, walk right for exactly 2 s with `jumpprobe state` before and after (distance d0), screenshot of the sheet's movement speed; `charmprobe spawn 1 stat 25=100`, the person drags it into the charm grid; `charmprobe charms`; the walk again (d1) and the screenshot | the read-back: the `charms` line whose `a=` is S13's seed, in `localCharmItemArray`, with `itemstats=` holding `25=100`. Passes if d1/d0 is at least 1.3 or the sheet's value rose. A `no` is recorded only when the read-back passed; the charm missing from the list, or listed without `25=100` in `itemstats=`, is `stat-not-on-item`; a read-back that could not be made is `not-observed` |
 | S14 `heroic-route` | control first: S10's three `ground=new id=` spawn lines (the same by-name call with the local player as `self`, and the same before-and-after scan of ground ids), whose charms reached the grid; then `charmprobe heroic 10`, with every per-call line recorded | each call line reads `threw` or `st=` (not dispatched), `nothing placed (returned ...)` (dispatched, nothing placed) or `placed ...`; the summary, ending `self=player`, with its `placed=` and rarity histogram is recorded. Passes if items were placed and no placed rarity is 7 or 10. A control that did not place, or heroic calls that threw, answered `st=` or read `nothing placed`, is `call-not-engaged`, never a negative about the roll |
-| S18 `sprite-load` | `charmprobe sprite load`, then `charmprobe sprite` | `loaded=` an index, with `kind=` and `path=`, and a `key=` other than `unknown` (the S10 and S11 reads are its samples). If the key stays `unknown`, the operator picks it from the `info=` dump with `charmprobe sprite key` and records that in the note. Passes if loaded and a key is set |
-| S19 `sprite-draw` | on open ground, `charmprobe spawn 3` (the control: the same charm with its own sprite) and `charmprobe spawn 3 sprite`; screenshots on the ground; the person picks both into the bag (screenshot) and hovers each (screenshot of each tooltip); `charmprobe charms` | both answer `ground=new id=<n> placed`. The control must draw the base icon everywhere, or the session measured nothing. Per surface (ground, grid, tooltip), whether our icon drew is recorded; passes if all three drew it, with `partial` or `none` in the note otherwise. Both charms stay in the bag |
+| S18 `sprite-load` | `charmprobe sprite load`, then `charmprobe sprite`. If the key stays `unknown`, the operator picks it from the `info=` dump with `charmprobe sprite key` (never a size key) and records that in the note. Then the key's control, on open ground: `charmprobe sprite verify`; screenshot on the ground; the person picks the charm into the bag (screenshot) and hovers it (screenshot of the tooltip); `charmprobe sprite verify drew` if it showed the donor's (the Grand charm's) icon, `charmprobe sprite verify base` if it showed its own; `charmprobe sprite`. After a `base`, another candidate from the dump may be set with `sprite key` and verified the same way, at most three keys in all, every key tried going in the note | `loaded=` an index, with `kind=` and `path=`; the `verify` line answers `ground=new id=<n> placed`, with its `key-on-ground=` recorded; the last `charmprobe sprite` reads `check=verified`. Passes if loaded and verified. A key that never drew the donor's icon fails the check, and S19 is then not run |
+| S19 `sprite-draw` | only if S18 passed: on open ground, `charmprobe spawn 3` (the control: the same charm with its own sprite) and `charmprobe spawn 3 sprite`; screenshots on the ground; the person picks both into the bag (screenshot) and hovers each (screenshot of each tooltip); `charmprobe charms` | both answer `ground=new id=<n> placed`. The control must draw the base icon everywhere, or the session measured nothing. Per surface (ground, grid, tooltip), whether our icon drew is recorded; passes if all three drew it, with `partial` or `none` in the note otherwise. Both charms stay in the bag |
 | S15 `size-override` | not run when S11 found no verified pair: `charmprobe spawn 2 size 2 2`, its line's `getitemsize=` and seed recorded; the person drops it on a free 2x2 area of the bag (screenshot) | passes when the line reads `getitemsize=2x2` from a new ground item (`ground=new id=<n> placed`) with no `keys-unverified`, and the charm covers 2x2 cells in the bag. `not-observed` for `keys-unverified`, `(of the built struct)` or `ground=none`: the write never reached a placed item |
 | S16 `dress-removed` | not run when S11 found no verified pair: with that charm in the bag, save and quit to the menu, load slot 14 again (screenshot of the bag) | the game loads, the charm is 1x1, and no item is lost, duplicated or overlapped |
 | S20 `sprite-save` | after S16, before S17: note what S16's reload showed for S19's two charms; `charmprobe charms` (the custom charm's `sprite=` index i); save and quit; stop the game and launch the same DLL without ever sending `charmprobe sprite load`; `jumpscenery 0`; load slot 14; screenshot the bag and both tooltips; `charmprobe charms`. No `charmprobe spawn` is sent after the relaunch: the seed counter starts again at 779001 in a new process | `safe` if the game loaded, the charm draws its base icon and its `sprite=` equals the control's (not i); `persisted` if it still holds i; `crash` if the game crashed (it is restarted the same way before S17). S1 to S3 run again afterwards |
@@ -622,7 +664,7 @@ character is not in the shared references); `sprite_add` from `bp_ipc\` with a
 relative then an absolute path, a `VALUE_REF` index and `sprite_set_offset`
 (the module guide's pack marker icons, verified on the 2026-09-22 build only);
 the item's display-sprite key (not in the shared references; S18 identifies
-it); and a save keeping only the compact definition (RDM § 16.1, measured).
+it and checks it with `sprite verify` before S19 writes under it); and a save keeping only the compact definition (RDM § 16.1, measured).
 
 The size checks rely on the read-back: a pair counts only when the game's own
 `GetItemSize` answers, on a scratch charm, the sizes written under it
@@ -679,10 +721,13 @@ these values:
 
 - one line naming, per walk (S5's vanilla walk, S7, S8 and S8b), the
   callers each candidate logpoint saw, by name with their hit counts, for
-  `InstancePlaceTallest`, `CanMove` and `TilePlaceMeeting`. A logpoint with
-  no hits while its row's `calls=` rose is written as `table-only` for that
-  walk; one whose check was `not-run` (its bytes did not show the detour) is
-  written so. The record step names each caller from the return locations
+  `InstancePlaceTallest`, `CanMove` and `TilePlaceMeeting`. Return
+  locations in the runner's script dispatcher rather than in a compiled
+  script are written `via-dispatcher` with their count (the table or method
+  route; the logpoint sees both routes). A logpoint with no hits while its
+  row's `calls=` rose is written as `logpoint-failed` for that walk, an
+  instrument fault and not a fact about routing; one whose bytes did not show
+  the detour is written as `not-run (bytes)`. The record step names each caller from the return locations
   the capture holds; when they came out unevaluated, the line gives the
   counts and says the callers were not read.
 - `control-failed`: the `CheckTalentUse` control (`dbg-control`) logged
@@ -764,8 +809,10 @@ aimbot-rarity: pending
 sprite-draw: pending
 
 `sprite-draw:` (S19): `all` (the grid, the tooltip and the ground all drew our
-icon), `partial` (some did; the note names which), `none`, or `not-run` (S18
-or the key failed).
+icon), `partial` (some did; the note names which), `none`, or `not-run` (the
+icon did not load, or no key passed S18's `sprite verify`, so nothing was
+written under a key shown to be the drawn one). A `none` is a finding about
+the game only beside a verified key.
 
 sprite-save: pending
 

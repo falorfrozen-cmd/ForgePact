@@ -47988,7 +47988,9 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 //   - `sprite` loads one PNG of our own by the pack markers' route
 //     (written under bp_ipc\ only when absent, then sprite_add relative
 //     first, absolute second) and identifies the key holding an item's
-//     sprite from samples, or takes it by hand.
+//     sprite from samples (never a footprint key), or takes it by hand;
+//     `sprite verify` is that key's positive control, and `spawn ... sprite`
+//     writes nothing until it passed.
 //
 // Every name is an hs-game-sdk constant, every call is by name, and every
 // refusal names its reason. Nothing here runs on the frame path; the one
@@ -48010,7 +48012,11 @@ static FcpNs::SpriteKey g_FcpSpriteKey;
 static FcpNs::DressRules g_FcpDress;
 static long g_FcpSpawns = 0;                        // research seeds used (kSeedBase + n)
 static double g_FcpSprite = -1;                     // our sprite's index once sprite_add gave one
+static RValue g_FcpSpriteValue;                     // that answer as it came (a reference or a real), what `spawn ... sprite` writes
 static int g_FcpSpriteKind = -1;                    // RValue kind of sprite_add's last answer; -1 never tried
+static std::string g_FcpSpriteCheckKey;             // the key the last `sprite verify` wrote a donor's sprite under
+static long long g_FcpSpriteCheckSeed = -1;         // that verify's charm, when it was placed; -1 none
+static int g_FcpSpriteDrew = -1;                    // the person's answer for it: 1 the donor's icon, 0 its own, -1 none yet
 static const char* g_FcpSpritePath = "none";        // which path gave the index
 static bool g_FcpSizeHand = false;                  // `dress keys <w> <h>` set the size keys, after a read-back
 static std::string g_FcpSizeReadW, g_FcpSizeReadH;  // the pair the last read-back asked about
@@ -48066,11 +48072,15 @@ static std::string FcpMemberText(const RValue& s, const char* name)
     return FcpMember(s, name, v) ? FcpValueText(v) : std::string("missing");
 }
 
-// One struct's keys: the numbers by key, and the `info=` entries (every
-// number, and every string of at most kInfoTextMax characters).
+// One struct's keys: the numbers by key, the references by key, and the
+// `info=` entries (every number, every reference as Describe gives it, and
+// every string of at most kInfoTextMax characters). An asset value comes back
+// from this runner as a VALUE_REF, so a key holding one is shown and kept
+// rather than dropped as "not a number".
 struct FcpInfo {
     bool ok = false;
     FcpNs::NumberInfo numbers;
+    std::map<std::string, RValue> refs;
     std::vector<std::pair<std::string, std::string>> shown;
 };
 static FcpInfo FcpReadStruct(const RValue& s)
@@ -48089,41 +48099,100 @@ static FcpInfo FcpReadStruct(const RValue& s)
             const RValue v = g_Yytk->CallBuiltin("variable_struct_get", { s, name });
             double d = 0;
             if (FcpNumber(v, d)) { r.numbers[key] = d; r.shown.push_back({ key, FcpNs::NumberText(d) }); }
+            else if (v.m_Kind == VALUE_REF) { r.refs[key] = v; r.shown.push_back({ key, Describe(v) }); }
             else if (v.m_Kind == VALUE_STRING && FcpNs::InfoTextFits(v.ToString())) r.shown.push_back({ key, v.ToString() });
         }
     } catch (...) {}
     return r;
 }
 
-// The numbers among an item's info keys that sprite_exists, called by name,
-// calls a sprite: the sprite key's candidates for one sample.
-static FcpNs::NumberInfo FcpSpriteValues(const FcpNs::NumberInfo& numbers)
+// Whether sprite_exists, called by name, calls this value a sprite: a whole
+// number in range, or a reference handed over as it is.
+static bool FcpIsSprite(const RValue& v)
 {
+    double d = -1;
+    if (v.m_Kind == VALUE_REF) { if (!ApNumber(v, d) || d < 0) return false; }
+    else if (!FcpWhole(v, d) || d < 0 || d > kFcpMaxSpriteIndex) return false;
+    try { return g_Yytk->CallBuiltin("sprite_exists", { v }).ToBoolean(); } catch (...) { return false; }
+}
+
+// `<value>(<sprite_get_name>)`, the value as the `info=` dump shows it.
+// sprite_get_name is asked only of a value FcpIsSprite accepts.
+static std::string FcpSpriteValueText(const RValue& v)
+{
+    double d = 0;
+    const std::string shown = FcpNumber(v, d) ? FcpNs::NumberText(d) : Describe(v);
+    std::string name = "not-a-sprite";
+    try {
+        if (FcpIsSprite(v)) {
+            const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { v });
+            name = n.m_Kind == VALUE_STRING ? n.ToString() : Describe(n);
+        }
+    } catch (...) { name = "?"; }
+    return shown + "(" + name + ")";
+}
+
+// The sprite key's candidates for one sample: the info keys whose value
+// FcpIsSprite accepts, a plain number or a reference (kept by its index). A
+// footprint key is never one. The size keys in force are left out, and so is
+// every number equal to a side GetItemSize answered for this sample (w, h),
+// since sprite_exists accepts a 1, 2 or 3 as readily as a sprite's index;
+// callers feed only a sample GetItemSize sized, so both sides are known.
+static FcpNs::NumberInfo FcpSpriteValues(const FcpInfo& info, int w, int h)
+{
+    const auto sizeKey = [](const std::string& key) {
+        return g_FcpSize.Known() && (key == g_FcpSize.W() || key == g_FcpSize.H());
+    };
     FcpNs::NumberInfo out;
-    for (const auto& [key, v] : numbers) {
-        if (v < 0 || v != std::floor(v) || v > kFcpMaxSpriteIndex) continue;
-        try { if (g_Yytk->CallBuiltin("sprite_exists", { RValue(v) }).ToBoolean()) out[key] = v; } catch (...) {}
+    for (const auto& [key, v] : info.numbers) {
+        if (sizeKey(key) || v == (double)w || v == (double)h) continue;
+        if (FcpIsSprite(RValue(v))) out[key] = v;
+    }
+    for (const auto& [key, ref] : info.refs) {
+        double idx = -1;
+        if (!sizeKey(key) && ApNumber(ref, idx) && FcpIsSprite(ref)) out[key] = idx;
     }
     return out;
 }
 
-// `<value>(<sprite_get_name>)` of the sprite key on these numbers; `?` while
-// the key is unknown. sprite_get_name is asked only of a value sprite_exists
-// accepts.
-static std::string FcpSpriteText(const FcpNs::NumberInfo& numbers)
+// FcpSpriteValueText of the sprite key on this struct; `?` while the key is
+// unknown.
+static std::string FcpSpriteText(const FcpInfo& info)
 {
     if (!g_FcpSpriteKey.Known()) return "?";
-    const auto it = numbers.find(g_FcpSpriteKey.Key());
-    if (it == numbers.end()) return "missing";
-    std::string name = "not-a-sprite";
-    try {
-        if (it->second >= 0 && it->second == std::floor(it->second)
-            && g_Yytk->CallBuiltin("sprite_exists", { RValue(it->second) }).ToBoolean()) {
-            const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { RValue(it->second) });
-            name = n.m_Kind == VALUE_STRING ? n.ToString() : Describe(n);
-        }
-    } catch (...) { name = "?"; }
-    return FcpNs::NumberText(it->second) + "(" + name + ")";
+    const std::string key = g_FcpSpriteKey.Key();
+    if (const auto it = info.numbers.find(key); it != info.numbers.end()) return FcpSpriteValueText(RValue(it->second));
+    if (const auto it = info.refs.find(key); it != info.refs.end()) return FcpSpriteValueText(it->second);
+    return "missing";
+}
+
+// Whether the sprite key in force passed its positive control (`sprite
+// verify`, FcpSpriteVerify): a charm with another charm's own sprite value
+// written under this key was placed, and the person saw it draw that other
+// charm's icon. Inferred or set by hand, a key is only a candidate until then;
+// `why` says which step is missing. Cached only, it calls nothing.
+static bool FcpSpriteVerified(std::string& why)
+{
+    if (!g_FcpSpriteKey.Known()) { why = "sprite key unknown (" + g_FcpSpriteKey.Why() + ")"; return false; }
+    const std::string key = g_FcpSpriteKey.Key();
+    if (g_FcpSpriteCheckSeed < 0 || g_FcpSpriteCheckKey != key) {
+        why = "sprite key " + key + " unverified (no `charmprobe sprite verify` has placed a donor charm under it)";
+        return false;
+    }
+    const std::string charm = " (the donor charm a=" + std::to_string(g_FcpSpriteCheckSeed);
+    if (g_FcpSpriteDrew < 0) {
+        why = "sprite key " + key + " unverified" + charm + " was placed: `charmprobe sprite verify drew` or `verify base` once it is looked at)";
+        return false;
+    }
+    if (g_FcpSpriteDrew == 0) { why = "sprite key " + key + " is not the drawn sprite's" + charm + " drew its own icon)"; return false; }
+    return true;
+}
+
+// The `check=` value of `charmprobe sprite:`.
+static std::string FcpSpriteCheckText()
+{
+    std::string why;
+    return FcpSpriteVerified(why) ? std::string("verified") : "no (" + why + ")";
 }
 
 // ` a= b= c= j=` of the item's definition; `a` also as a number (NaN unread).
@@ -48344,13 +48413,13 @@ static void FcpCharms()
         const bool sized = FcpItemSize(item, w, h, sizeWhy);
         RValue infoStruct;
         const FcpInfo info = FcpMember(item, "itemInfoStruct", infoStruct) ? FcpReadStruct(infoStruct) : FcpInfo();
-        if (info.ok) g_FcpSpriteKey.Add(FcpSpriteValues(info.numbers));
+        if (info.ok && sized) g_FcpSpriteKey.Add(FcpSpriteValues(info, w, h));
         RValue statStruct;
         const FcpInfo stats = FcpMember(item, "itemStatStruct", statStruct) ? FcpReadStruct(statStruct) : FcpInfo();
         Out("charmprobe charm #" + std::to_string(i) + " t=" + FcpMemberText(item, "itemType") + definition
             + " size=" + (sized ? FcpNs::SizeText({ w, h }) : "?(" + sizeWhy + ")")
             + " rarity=" + FcpMemberText(infoStruct, "27") + " name=" + FcpMemberText(infoStruct, "28")
-            + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info.numbers) : std::string())
+            + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info) : std::string())
             + " itemstats=" + (stats.ok ? FcpNs::InfoDump(stats.shown) : std::string("missing(no itemStatStruct)"))
             + " info=" + (info.ok ? FcpNs::InfoDump(info.shown) : std::string("missing(no itemInfoStruct)")));
         // Keys set by hand were measured; a later sample is not allowed to drop them.
@@ -48438,6 +48507,9 @@ static void FcpSpawn(const std::vector<std::string>& tail)
     if (r.hasSize && !g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
     if (r.sprite && g_FcpSprite < 0) { Out(tag + "refused sprite not loaded (`charmprobe sprite load` first)"); return; }
     if (r.sprite && !g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    // A key not shown to be the drawn one would take our index wherever it
+    // is: in a footprint key, a 1xN charm.
+    if (r.sprite && !FcpSpriteVerified(why)) { Out(tag + "refused " + why); return; }
     if (r.hasSize && !FcpSizeCheck(why)) { Out(tag + "refused " + why); return; }
     RValue player;
     CInstance* self = nullptr;
@@ -48475,12 +48547,18 @@ static void FcpSpawn(const std::vector<std::string>& tail)
         RValue info;
         if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused the built item has no itemInfoStruct"); return; }
         const FcpInfo built = FcpReadStruct(info);
-        if (built.ok) g_FcpSpriteKey.Add(FcpSpriteValues(built.numbers));   // the item as the game built it, before any write
+        int bw = 0, bh = 0;
+        std::string builtWhy;
+        // The item as the game built it, before any write, and only with its
+        // footprint, which FcpSpriteValues leaves out.
+        if (built.ok && FcpItemSize(item, bw, bh, builtWhy)) g_FcpSpriteKey.Add(FcpSpriteValues(built, bw, bh));
         Out("charmprobe spawn info: " + what + " info=" + (built.ok ? FcpNs::InfoDump(built.shown) : std::string("unreadable")));
         if (r.sprite) {
-            const auto own = built.numbers.find(g_FcpSpriteKey.Key());
-            if (own == built.numbers.end()) {
-                Out(tag + what + " refused the built item's " + g_FcpSpriteKey.Key() + " is not a number; nothing was placed");
+            // This item was a sample too, and may have dropped the key.
+            if (!FcpSpriteVerified(why)) { Out(tag + what + " refused " + why + "; nothing was placed"); return; }
+            const std::string spriteKey = g_FcpSpriteKey.Key();
+            if (!built.numbers.count(spriteKey) && !built.refs.count(spriteKey)) {
+                Out(tag + what + " refused the built item's " + spriteKey + " is neither a number nor a reference; nothing was placed");
                 return;
             }
         }
@@ -48495,7 +48573,7 @@ static void FcpSpawn(const std::vector<std::string>& tail)
         }
         for (const auto& [id, value] : r.stats)
             g_Yytk->CallBuiltin("variable_struct_set", { stats, RValue(std::to_string(id)), RValue(value) });
-        if (r.sprite) g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSpriteKey.Key()), RValue(g_FcpSprite) });
+        if (r.sprite) g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSpriteKey.Key()), g_FcpSpriteValue });
 
         const double groundBefore = FcpNewestGround(ground, nullptr);
         RValue res;
@@ -48523,7 +48601,7 @@ static void FcpSpawn(const std::vector<std::string>& tail)
         if (r.hasSize && !(sizeRead && gw == r.size.w && gh == r.size.h)) itemSize += " keys-unverified";
         const FcpInfo placed = FcpReadStruct(info);
         Out(tag + what + " size=" + (r.hasSize ? FcpNs::SizeText(r.size) : std::string("base")) + itemSize + " stats="
-            + FcpNs::StatsText(r.stats) + " sprite=" + (g_FcpSpriteKey.Known() ? FcpSpriteText(placed.numbers) : std::string("?"))
+            + FcpNs::StatsText(r.stats) + " sprite=" + (g_FcpSpriteKey.Known() ? FcpSpriteText(placed) : std::string("?"))
             + (appeared ? " ground=new id=" + FcpNs::NumberText(groundAfter) + " placed"
                         : std::string(" ground=none (no new Loot_Ground_obj appeared)"))
             + " (LootGroundCreateFromItem returned " + Describe(res) + ")");
@@ -48622,7 +48700,7 @@ static void FcpSpriteShow()
 {
     Out("charmprobe sprite: loaded=" + (g_FcpSprite >= 0 ? FcpNs::NumberText(g_FcpSprite) : std::string("no")) + " kind="
         + (g_FcpSpriteKind < 0 ? std::string("-") : std::to_string(g_FcpSpriteKind)) + " path=" + g_FcpSpritePath
-        + " key=" + g_FcpSpriteKey.Text());
+        + " key=" + g_FcpSpriteKey.Text() + " check=" + (g_FcpSpriteKey.Known() ? FcpSpriteCheckText() : std::string("-")));
 }
 
 // The pack markers' route (PackMarkerIconPath, PackMarkers::LoadIcons),
@@ -48656,6 +48734,7 @@ static void FcpSpriteLoad()
             double idx = -1;
             if (!ApNumber(r, idx) || idx < 0) continue;
             g_FcpSprite = idx;
+            g_FcpSpriteValue = r;
             g_FcpSpritePath = path == &relative ? "relative" : "absolute";
             const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
             const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
@@ -48672,12 +48751,145 @@ static void FcpSpriteLoad()
     FcpSpriteShow();
 }
 
+static constexpr int kFcpSpriteCheckB = 3;          // the charm `sprite verify` places: S19's
+static constexpr int kFcpSpriteDonorB = 40;         // its default donor, a Grand charm: another icon
+
+// A charm built the way `spawn` builds one (json -> InitItemFromJson), not
+// placed, with its itemInfoStruct.
+static bool FcpBuildCharm(long long seed, int b, RValue& item, RValue& info, std::string& why)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { why = "no global instance"; return false; }
+    RValue parsed;
+    g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(seed, b)) });
+    if (parsed.m_Kind != VALUE_OBJECT) { why = "json_parse gave " + Describe(parsed); return false; }
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                    { parsed, RValue(FcpNs::SpawnKey(ms)) });
+    if (!AurieSuccess(st) || !ApIsPlainStruct(item)) { why = "InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item); return false; }
+    if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { why = "the built item has no itemInfoStruct"; return false; }
+    return true;
+}
+
+// `sprite verify [<donor b>]`: the sprite key's positive control, before
+// anything writes our icon under it. Inferred from samples or set by hand, a
+// key is only a candidate: sprite_exists accepts any small whole number, so a
+// key holding one passes the sample rule without being a sprite at all. This
+// builds a donor charm (b 40 unless named; never placed) and a b 3 charm from
+// the spawn range, writes the donor's own value, as the game built it, under
+// the key on the b 3 charm, and places that. If the grid, the ground item and
+// the tooltip draw from this key, the b 3 charm shows the donor's icon;
+// otherwise it shows its own. The draw is the person's to see: `verify drew`
+// or `verify base` records the answer, and `spawn ... sprite` is refused
+// until it is `drew`. The placed item's key is read back as well, and a value
+// the placement rebuilt is printed as `reverted`.
+static void FcpSpriteVerify(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe sprite verify: ";
+    if (tail.size() == 1 && (Lower(tail[0]) == "drew" || Lower(tail[0]) == "base")) {
+        if (g_FcpSpriteCheckSeed < 0 || !g_FcpSpriteKey.Known() || g_FcpSpriteCheckKey != g_FcpSpriteKey.Key()) {
+            Out(tag + "refused no donor charm was placed under the key in force (`charmprobe sprite verify` first)");
+            return;
+        }
+        g_FcpSpriteDrew = Lower(tail[0]) == "drew" ? 1 : 0;
+        Out(tag + "key=" + g_FcpSpriteCheckKey + " a=" + std::to_string(g_FcpSpriteCheckSeed)
+            + (g_FcpSpriteDrew ? " drew the donor's icon: verified"
+                               : " drew its own icon: not the drawn sprite's key, so `spawn ... sprite` refuses it"));
+        return;
+    }
+    long long donor = kFcpSpriteDonorB;
+    if (tail.size() > 1 || (tail.size() == 1 && !FcpNs::ParseWhole(tail[0], 0, FcpNs::kNormalCharmMaxB, donor))) {
+        Out(tag + "refused usage: sprite verify [<donor b 0-" + std::to_string(FcpNs::kNormalCharmMaxB)
+            + ">] | sprite verify drew | sprite verify base");
+        return;
+    }
+    if (donor == kFcpSpriteCheckB) { Out(tag + "refused the donor must be another charm than b " + std::to_string(kFcpSpriteCheckB)); return; }
+    if (!g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    const std::string key = g_FcpSpriteKey.Key();
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    double ground = -1;
+    if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+            RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), ground)
+        || ground < 0) {
+        Out(tag + "refused Loot_Ground_obj not resolved; nothing was built");
+        return;
+    }
+    try {
+        RValue donorItem, donorInfo, donorValue;
+        if (!FcpBuildCharm(kFcpScratchSeed, (int)donor, donorItem, donorInfo, why)) { Out(tag + "refused the donor: " + why); return; }
+        const bool donorHas = FcpMember(donorInfo, key.c_str(), donorValue);
+        if (!donorHas || !FcpIsSprite(donorValue)) {
+            Out(tag + "refused the donor b=" + std::to_string(donor) + "'s " + key + " is not a sprite ("
+                + (donorHas ? Describe(donorValue) : std::string("missing")) + "); nothing was placed");
+            return;
+        }
+        const long long seed = FcpNs::SpawnSeed(g_FcpSpawns++);   // a seed is never handed out twice
+        const std::string what = "key=" + key + " b=" + std::to_string(kFcpSpriteCheckB) + " a=" + std::to_string(seed);
+        RValue item, info, own;
+        if (!FcpBuildCharm(seed, kFcpSpriteCheckB, item, info, why)) { Out(tag + what + " refused " + why); return; }
+        if (!FcpMember(info, key.c_str(), own) || !FcpIsSprite(own)) {
+            Out(tag + what + " refused its own " + key + " is not a sprite; nothing was placed");
+            return;
+        }
+        double ownIdx = -1, donorIdx = -1;
+        if (ApNumber(own, ownIdx) && ApNumber(donorValue, donorIdx) && ownIdx == donorIdx) {
+            Out(tag + what + " refused it and the donor b=" + std::to_string(donor) + " hold one sprite under " + key
+                + " (" + FcpSpriteValueText(own) + "); name another donor b");
+            return;
+        }
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(key), donorValue });
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                        { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st)); return; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        const bool appeared = after > before;
+        // What the placed item holds under the key now: the donor's value, or
+        // the item's own again when the placement rebuilt it.
+        std::string onGround = "unread";
+        if (appeared) {
+            RValue groundItem, groundInfo, now;
+            try { groundItem = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+            catch (...) {}
+            if (FcpMember(groundItem, "itemInfoStruct", groundInfo) && FcpMember(groundInfo, key.c_str(), now)) {
+                double nowIdx = -1;
+                const bool read = ApNumber(now, nowIdx);
+                onGround = FcpSpriteValueText(now) + (read && nowIdx == donorIdx ? "" : read && nowIdx == ownIdx ? " reverted" : " changed");
+            }
+        }
+        g_FcpSpriteCheckKey = key;
+        g_FcpSpriteCheckSeed = appeared ? seed : -1;
+        g_FcpSpriteDrew = -1;
+        Out(tag + what + " own=" + FcpSpriteValueText(own) + " donor b=" + std::to_string(donor) + " value=" + FcpSpriteValueText(donorValue)
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(after) + " placed key-on-ground=" + onGround
+                        : std::string(" ground=none (no new Loot_Ground_obj appeared)"))
+            + " (LootGroundCreateFromItem returned " + Describe(res) + ")"
+            + (appeared ? "; look at it on the ground, in the bag and in its tooltip, then `charmprobe sprite verify drew`"
+                          " (the donor's icon) or `charmprobe sprite verify base` (its own)"
+                        : std::string("; nothing to look at, the key stays unverified")));
+    } catch (...) { Out(tag + "refused an exception while building or placing the charm"); }
+}
+
 static void FcpSprite(const std::vector<std::string>& tail)
 {
+    // `sprite verify ...` is the key's control; it sits under `sprite` the
+    // way `dress keys` sits under `dress`.
+    if (!tail.empty() && Lower(tail[0]) == "verify") { FcpSpriteVerify(std::vector<std::string>(tail.begin() + 1, tail.end())); return; }
     FcpNs::SpriteRequest r;
     std::string why;
     if (!FcpNs::ParseSprite(tail, r, why)) { Out("charmprobe sprite: refused " + why); return; }
     if (r.form == FcpNs::SpriteForm::Load) { FcpSpriteLoad(); return; }
+    if (r.form == FcpNs::SpriteForm::Key && g_FcpSize.Known() && (r.key == g_FcpSize.W() || r.key == g_FcpSize.H())) {
+        Out("charmprobe sprite: refused key " + r.key + " is a size key in force (" + g_FcpSize.Line() + ")");
+        return;
+    }
     if (r.form == FcpNs::SpriteForm::Key && !g_FcpSpriteKey.SetByHand(r.key)) { Out("charmprobe sprite: refused key " + r.key); return; }
     FcpSpriteShow();
 }
@@ -48686,7 +48898,8 @@ static void FcpUsage()
 {
     Out(FcpNs::MarkerLine(g_FcpSize, g_FcpDress));
     Out("  charms | repo <t> <sub> <b> | spawn <b 0-59> [size <w> <h>] [stat <id>=<v>]... [sprite] | dress <a> <w> <h> | dress off"
-        " | dress keys [<w key> <h key>] | heroic <n 1-20> | sprite [load | key <name>]   research instrument for"
+        " | dress keys [<w key> <h key>] | heroic <n 1-20> | sprite [load | key <name> | verify [<donor b>] | verify drew|base]"
+        "   research instrument for"
         " docs/flight-charms-research.md (research build only)");
 }
 
