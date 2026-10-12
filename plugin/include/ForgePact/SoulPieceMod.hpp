@@ -37,6 +37,13 @@ namespace ForgePact::SoulPieces {
 // classes 12 to 15, so each takes its own cell. The display sprite is the Gem
 // of Incarnation's, which the dress writes under item info key "11".
 //
+// After Live procedure 1 the owner kept pieces as class-11 bag consumables
+// (2026-10-12: the Key tab's right-click never reached the use), so the key
+// piece above stays as research and pieces of one act stack in the bag
+// through one merge decision (DecideMerge, below): a piece joins the first
+// piece of its own act in the bag with room under the game's cap of 999, and
+// never a real item.
+//
 // This header holds the decisions and their counters only: no runtime type,
 // builtin or log call. The adapter in ModuleMain.cpp supplies the room's name
 // and act (ActOfRoomActIndex of `RoomActIndex`'s answer, asked by name; 0 for
@@ -328,6 +335,86 @@ inline StackTake TakeOne(UseVerdict v, long long count)
     if (v != UseVerdict::Transfer) return { false, count };
     if (count > 1) return { false, count - 1 };
     return { true, count };
+}
+
+// ---- the bag merge ---------------------------------------------------------------------------
+// The game's stack code accepts only classes 12 to 15, so a class-11 piece
+// never stacks by itself (static reading). The `InventoryGridAddToStack`
+// detour runs the game's own call first and, when it failed for a soul piece,
+// asks DecideMerge whether a piece of the same act already in the bag can take
+// it; on `merge` the adapter raises that item's count, refreshes its hash and
+// marks the game's own result successful at its cell. Only legacy bag pieces
+// take part (the class-11 rule above): a real item is never merged and never
+// a target, and a key-shape piece is not a bag piece.
+//
+// The game's own stack cap: a merge goes ahead only while the summed count
+// stays at most this (static reading of `InventoryGridAddToStack`).
+inline constexpr long long kBagStackCap = 999;
+
+// One item as the detour reads it: its class, its definition's `b` and `c`,
+// its seed `a` and its count `o` (0 when the item carries none).
+struct BagItem {
+    int itemType = 0;
+    double b = 0.0;
+    double c = 0.0;
+    long long seed = 0;
+    long long count = 0;
+};
+
+// How many pieces an item's count stands for: a missing or non-positive `o`
+// is one, as the game's own save treats it.
+inline long long StackCount(long long count) { return count < 1 ? 1 : count; }
+
+// The act of an item that is a legacy bag piece (whole `b` and `c`, the
+// class-11 rule of PieceActOfItem), 0 for anything else, a key-shape piece
+// included.
+inline int BagPieceActOfItem(const BagItem& item, long long baseIndex)
+{
+    if (!std::isfinite(item.b) || !std::isfinite(item.c) || std::fabs(item.b) > 9.0e15 || std::fabs(item.c) > 9.0e15) return 0;
+    if (item.b != std::floor(item.b) || item.c != std::floor(item.c)) return 0;
+    return PieceActOfItem(item.itemType, static_cast<long long>(item.b), static_cast<long long>(item.c), item.seed, baseIndex);
+}
+
+// The merge's verdicts, in the order DecideMerge asks them; every one but the
+// last leaves the game's result as it was.
+enum class MergeVerdict { Off, NotPiece, NoTarget, Cap, Merge, Count };
+inline constexpr const char* kMergeVerdictWords[] = { "off", "not-piece", "no-target", "cap", "merge" };
+inline constexpr int kMergeVerdictCount = static_cast<int>(MergeVerdict::Count);
+static_assert(sizeof(kMergeVerdictWords) / sizeof(kMergeVerdictWords[0]) == kMergeVerdictCount);
+
+inline const char* Word(MergeVerdict v)
+{
+    const int i = static_cast<int>(v);
+    return i >= 0 && i < kMergeVerdictCount ? kMergeVerdictWords[i] : "?";
+}
+
+struct MergeDecision {
+    MergeVerdict verdict;
+    int act;            // the incoming piece's act, 0 when off or not a piece
+    long long target;   // the target's position in the bag's walk order, -1 for none
+    long long count;    // the target's count after the merge, 0 for none
+};
+
+// One `InventoryGridAddToStack` call the game refused. `incoming` is the item
+// being picked up, `baseIndex` the legacy base's index the adapter resolved by
+// name, `bag` the bag's items in walk order. The target is the first legacy
+// piece of the incoming piece's act whose count plus the incoming count stays
+// within kBagStackCap. `no-target` when the bag holds no piece of that act,
+// `cap` when every one of them is too full.
+inline MergeDecision DecideMerge(bool modOn, const BagItem& incoming, long long baseIndex, const std::vector<BagItem>& bag)
+{
+    if (!modOn) return { MergeVerdict::Off, 0, -1, 0 };
+    const int act = BagPieceActOfItem(incoming, baseIndex);
+    if (!IsAct(act)) return { MergeVerdict::NotPiece, 0, -1, 0 };
+    const long long adding = StackCount(incoming.count);
+    bool full = false;
+    for (size_t i = 0; i < bag.size(); ++i) {
+        if (BagPieceActOfItem(bag[i], baseIndex) != act) continue;
+        const long long have = StackCount(bag[i].count);
+        if (adding > kBagStackCap || have > kBagStackCap - adding) { full = true; continue; }
+        return { MergeVerdict::Merge, act, static_cast<long long>(i), have + adding };
+    }
+    return { full ? MergeVerdict::Cap : MergeVerdict::NoTarget, act, -1, 0 };
 }
 
 // ---- the transfer --------------------------------------------------------------------------

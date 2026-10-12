@@ -25,10 +25,14 @@ boss rooms, the use's transfer from towns and zones and its refusals, the
 transfer's target and its counts, all nine acts named (Act 7 Mevius), the seed
 round trip, the key piece's `b`, its identity with every signal, its survival
 through a save's two-decimal round trip, the legacy bag piece beside it, the
-take-one by stack count, and the display sprite's name.
+take-one by stack count, and the display sprite's name. The bag merge (the
+owner, after Live procedure 1: pieces of one act stack in the bag) is pinned as
+the `InventoryGridAddToStack` detour asks it: off it never merges; on, a piece
+joins only the first piece of its own act in the bag whose count stays within
+the game's cap of 999, never a real item and never a key-shape piece.
 
-The header is compiled six times. Once as written, where every scenario must
-pass. Then five negative controls, each a one-line change to the header that
+The header is compiled seven times. Once as written, where every scenario must
+pass. Then six negative controls, each a one-line change to the header that
 must turn exactly its own scenarios red while the rest stay green:
 the mod-off gates removed (the baselines that pin off fail), the act read as
 `RoomActIndex`'s answer plus one (the first plan's mistake, which Live
@@ -37,7 +41,10 @@ the gem's own (the chance target fails), the use's boss-room refusal removed
 (the use-refusal target fails while the transfer target still passes), and the
 key piece built with a whole `b` (the `plain` shape, which merges into the
 real key: the three key-piece targets fail while the legacy piece, the
-take-one and the sprite still pass).
+take-one and the sprite still pass), and the merge's same-act rule dropped (any
+bag piece takes the incoming one: the same-act merge target fails while the
+cap, the real-item and the off scenarios, which hold pieces of one act only,
+still pass).
 """
 import os
 import shutil
@@ -56,10 +63,11 @@ COMPILE_TIMEOUT_SECONDS = 600
 # second; this bound only catches a hang.
 RUN_TIMEOUT_SECONDS = 30
 
-# The two mod-off gates; the first negative control removes both.
+# The three mod-off gates; the first negative control removes all of them.
 OFF_GATES = (
     "if (!modOn) return DropVerdict::Off;",
     "if (!modOn) return UseVerdict::Off;",
+    "if (!modOn) return { MergeVerdict::Off, 0, -1, 0 };",
 )
 # The act from `RoomActIndex`'s answer; the second negative control adds one.
 ACT_LINE = "return static_cast<int>(answer);"
@@ -72,10 +80,14 @@ USE_BOSS_ROOM_GATE = "if (IsBossRoom(room)) return UseVerdict::BossRoom;"
 # The key piece's `b`; the fifth negative control builds it whole (the `plain` shape).
 KEY_B_LINE = "return static_cast<double>(baseIndex) + static_cast<double>(act) / kActFractionDivisor;"
 KEY_B_WHOLE = "return static_cast<double>(baseIndex);"
+# The merge's same-act rule; the sixth negative control lets any bag piece be the target.
+MERGE_ACT_LINE = "if (BagPieceActOfItem(bag[i], baseIndex) != act) continue;"
+MERGE_ANY_ACT = "if (BagPieceActOfItem(bag[i], baseIndex) == 0) continue;"
 
 OFF_BASELINES = ("baseline/off-never-drops", "baseline/off-never-transfers")
+MERGE_OFF = "baseline/off-never-merges"
 ACT_BASELINE = "baseline/room-act-index-is-the-act"
-BASELINES = OFF_BASELINES + (ACT_BASELINE, "baseline/default-off")
+BASELINES = OFF_BASELINES + (ACT_BASELINE, "baseline/default-off", MERGE_OFF)
 CHANCE = "target/chance-five-quarters"
 USE_TRANSFER = "target/use-transfers-from-towns-and-zones"
 USE_REFUSED = "target/use-refused-when-off-outside-acts-and-in-boss-rooms"
@@ -86,6 +98,9 @@ KEY_PIECE = (KEY_B, KEY_IDENTITY, KEY_ROUND_TRIP)
 LEGACY = "target/legacy-bag-piece-still-recognised"
 TAKE_ONE = "target/stack-use-takes-one-and-answers-by-count"
 SPRITE = "target/piece-sprite-is-the-gem-sprite-name"
+MERGE_SAME_ACT = "target/merge-joins-only-a-piece-of-the-same-act"
+MERGE_REAL = "target/merge-never-takes-a-real-item"
+MERGE_CAP = "target/merge-respects-the-stack-cap"
 TARGETS = (
     CHANCE,
     "target/forced-ignores-chance-not-eligibility",
@@ -98,13 +113,14 @@ TARGETS = (
     "target/every-act-has-a-boss",
     "target/seed-round-trip",
     LEGACY,
-) + KEY_PIECE + (TAKE_ONE, SPRITE)
+) + KEY_PIECE + (TAKE_ONE, SPRITE, MERGE_SAME_ACT, MERGE_REAL, MERGE_CAP)
 COMMANDS = ("command/status-line", "command/words-parsed")
 ALL = BASELINES + TARGETS + COMMANDS
-# The scenarios that also ask with the mod off (the forced drop's off case and
-# the use refusals' off cases) fail in the build without the off gates; every
-# other scenario asks with the mod on alone and must still pass there.
-ASKS_OFF = OFF_BASELINES + ("target/forced-ignores-chance-not-eligibility", USE_REFUSED)
+# The scenarios that also ask with the mod off (the forced drop's off case,
+# the use refusals' off cases and the merge's off baseline) fail in the build
+# without the off gates; every other scenario asks with the mod on alone and
+# must still pass there.
+ASKS_OFF = OFF_BASELINES + ("target/forced-ignores-chance-not-eligibility", USE_REFUSED, MERGE_OFF)
 
 
 def _compile_and_run(name, header_text):
@@ -169,7 +185,7 @@ _RUNS = {}
 
 
 def _runs():
-    """The six builds, compiled once for both classes."""
+    """The seven builds, compiled once for both classes."""
     if not _RUNS:
         header = HEADER.read_text(encoding="utf-8")
         _RUNS["real"] = _compile_and_run("soulpiece", header)
@@ -185,6 +201,8 @@ def _runs():
             "soulpiece-use-in-boss-rooms", _replace_once(header, USE_BOSS_ROOM_GATE, "", "the use's boss-room refusal"))
         _RUNS["whole_key_b"] = _compile_and_run(
             "soulpiece-whole-key-b", _replace_once(header, KEY_B_LINE, KEY_B_WHOLE, "the key piece's b"))
+        _RUNS["any_act_merge"] = _compile_and_run(
+            "soulpiece-any-act-merge", _replace_once(header, MERGE_ACT_LINE, MERGE_ANY_ACT, "the merge's same-act rule"))
     return _RUNS
 
 
@@ -198,6 +216,7 @@ class _Scenarios(unittest.TestCase):
         cls.gem_chance = runs["gem_chance"]
         cls.boss_room_use = runs["boss_room_use"]
         cls.whole_key_b = runs["whole_key_b"]
+        cls.any_act_merge = runs["any_act_merge"]
 
     def assertScenario(self, label, output=None):
         line = _line(self.output if output is None else output, label)
@@ -241,6 +260,11 @@ class SoulPieceBaselineTests(_Scenarios):
 
     def test_negative_control_act_baseline_fails_at_the_answer_plus_one(self):
         self.assertOnlyThese(self.act_plus_one, (ACT_BASELINE,), "a core reading the act as the answer plus one")
+
+    def test_merge_only_while_the_mod_is_on(self):
+        """Off: `off` and no target for a piece of every act, an absent count, a real item and a key-shape piece,
+        into an empty bag, a bag with a same-act piece and one with full stacks; the same piece on merges."""
+        self.assertScenario(MERGE_OFF)
 
 
 class SoulPieceTargetTests(_Scenarios):
@@ -326,6 +350,27 @@ class SoulPieceTargetTests(_Scenarios):
     def test_piece_sprite_is_the_gem_sprite_name(self):
         """`Gem_Incarnation_spr` under item info key "11", its ground companion `Pickup_Gem_Incarnation_spr`."""
         self.assertScenario(SPRITE)
+
+    def test_merge_joins_only_a_piece_of_the_same_act(self):
+        """The first piece of the incoming piece's own act in walk order is the target, past a real item, another
+        act's piece and a same-act key-shape piece; no piece of the act is `no-target`, for every act; an absent
+        count is one; a key-shape piece coming in is `not-piece`, and an unresolved base recognises nothing."""
+        self.assertScenario(MERGE_SAME_ACT)
+
+    def test_merge_never_takes_a_real_item(self):
+        """The plain logo, a signature seed, another consumable, a key or a gem carrying a piece's seed, the unique
+        repository and a fractional logo are `not-piece` coming in and never a target in the bag; the same bag with
+        one piece of the act added merges into it."""
+        self.assertScenario(MERGE_REAL)
+
+    def test_merge_respects_the_stack_cap(self):
+        """The game's cap, 999: 998 + 1 and 990 + 9 merge, 999 + 1 and 990 + 10 are `cap`; a full stack is passed
+        over for the next one of the act with room; an incoming count over the cap and the largest count never
+        merge; an empty bag is `no-target`, not `cap`."""
+        self.assertScenario(MERGE_CAP)
+
+    def test_negative_control_merge_fails_without_the_act_rule(self):
+        self.assertOnlyThese(self.any_act_merge, (MERGE_SAME_ACT,), "a core merging into a piece of any act")
 
     def test_status_line_and_command_words(self):
         for label in COMMANDS:

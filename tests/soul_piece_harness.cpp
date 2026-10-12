@@ -25,6 +25,13 @@
 // take-one by stack count and the display sprite's name. The game's stack
 // compare is modelled here as GameMaker's default epsilon (0.00001; whether
 // the game changes it is not established).
+//
+// The bag merge (the owner, after Live procedure 1: pieces of one act stack in
+// the bag) is pinned as the `InventoryGridAddToStack` detour asks it: the
+// incoming item and the bag's items in walk order. Off it never merges; on, a
+// piece joins only the first piece of its own act with room under the game's
+// cap of 999, never a real item, and each refusal sits beside an input that
+// does merge.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -101,6 +108,20 @@ static double SaveRoundTrip(double v) {
 static const long long kKeyBase = 2;
 // The legacy base's index as Live procedure 1 measured the logo.
 static const long long kLegacyBase = 12;
+
+// Items as the merge detour reads them from the bag: a legacy bag piece of an
+// act with a count (`o`; 0 when the item carries none), a key-shape piece of an
+// act (class 12, `b` 2.1 .. 2.9), and any other item.
+static SP::BagItem LegacyPiece(int act, long long count) {
+    return { 11, static_cast<double>(kLegacyBase), 0.0, SP::SeedOfAct(act), count };
+}
+static SP::BagItem KeyShapePiece(int act) {
+    return { 12, static_cast<double>(kKeyBase) + act / 10.0, 0.0, SP::SeedOfAct(act), 1 };
+}
+static SP::BagItem RealItem(int itemType, double b, long long seed, long long count) {
+    return { itemType, b, 0.0, seed, count };
+}
+static std::string W(SP::MergeVerdict v) { return SP::Word(v); }
 
 int main() {
     // ---- baseline: the mod off is the vanilla game ----------------------------
@@ -578,6 +599,135 @@ int main() {
             && std::string_view(SP::kIconInfoKey) == "11"
             && SP::GroundSpriteName() == "Pickup_Gem_Incarnation_spr";
         check("target/piece-sprite-is-the-gem-sprite-name", ok, SP::GroundSpriteName());
+    }
+    {
+        // The bag merge with the mod off: whatever comes in and whatever the bag
+        // holds, `off` and no target. The control: the same piece into the same
+        // bag with the mod on merges.
+        const std::vector<std::vector<SP::BagItem>> bags = {
+            {}, { LegacyPiece(1, 1) }, { RealItem(11, 12.0, 4242, 1), LegacyPiece(1, 3) },
+            { LegacyPiece(9, 998) }, { LegacyPiece(1, 999) },
+        };
+        long cases = 0, bad = 0;
+        std::string first;
+        for (const auto& bag : bags) {
+            for (int act = 1; act <= SP::kActCount; ++act)
+                for (const SP::BagItem& in : { LegacyPiece(act, 1), LegacyPiece(act, 0), RealItem(11, 12.0, 4242, 1), KeyShapePiece(act) }) {
+                    ++cases;
+                    const SP::MergeDecision d = SP::DecideMerge(false, in, kLegacyBase, bag);
+                    if (d.verdict != SP::MergeVerdict::Off || d.target != -1) {
+                        if (!bad++) first = "act" + std::to_string(act) + "->" + W(d.verdict);
+                    }
+                }
+        }
+        const SP::MergeDecision control = SP::DecideMerge(true, LegacyPiece(1, 1), kLegacyBase, { LegacyPiece(1, 1) });
+        const bool controlOk = control.verdict == SP::MergeVerdict::Merge && control.target == 0;
+        check("baseline/off-never-merges", bad == 0 && cases > 0 && controlOk,
+            "cases=" + std::to_string(cases) + " notOff=" + std::to_string(bad) + " control=" + W(control.verdict)
+                + (first.empty() ? "" : " first=" + first));
+    }
+    {
+        // A piece joins the first piece of its own act in walk order, never a
+        // piece of another act and never a key-shape piece of the same act; with
+        // no piece of its act in the bag it answers `no-target`. A count left
+        // absent (0) counts as one piece, on either side.
+        bool ok = true;
+        std::string detail;
+        auto expect = [&](const char* what, const SP::MergeDecision& d, SP::MergeVerdict v, int act, long long target, long long count) {
+            if (d.verdict != v || d.act != act || d.target != target || d.count != count) {
+                ok = false;
+                detail += std::string(" ") + what + "=" + W(d.verdict) + ":" + std::to_string(d.act) + ":"
+                    + std::to_string(d.target) + ":" + std::to_string(d.count);
+            }
+        };
+        // Another act's piece and a same-act key-shape piece come first: both are passed over.
+        const std::vector<SP::BagItem> bag = {
+            RealItem(11, 12.0, 4242, 1), LegacyPiece(2, 5), KeyShapePiece(1), LegacyPiece(1, 3), LegacyPiece(1, 1),
+        };
+        expect("act1", SP::DecideMerge(true, LegacyPiece(1, 1), kLegacyBase, bag), SP::MergeVerdict::Merge, 1, 3, 4);
+        expect("act2", SP::DecideMerge(true, LegacyPiece(2, 2), kLegacyBase, bag), SP::MergeVerdict::Merge, 2, 1, 7);
+        expect("act3", SP::DecideMerge(true, LegacyPiece(3, 1), kLegacyBase, bag), SP::MergeVerdict::NoTarget, 3, -1, 0);
+        // Every act: a bag of every other act's pieces is no target; its own piece appended is the target.
+        for (int act = 1; act <= SP::kActCount; ++act) {
+            std::vector<SP::BagItem> others;
+            for (int other = 1; other <= SP::kActCount; ++other)
+                if (other != act) others.push_back(LegacyPiece(other, 1));
+            const SP::MergeDecision none = SP::DecideMerge(true, LegacyPiece(act, 1), kLegacyBase, others);
+            others.push_back(LegacyPiece(act, 2));
+            const SP::MergeDecision own = SP::DecideMerge(true, LegacyPiece(act, 1), kLegacyBase, others);
+            if (none.verdict != SP::MergeVerdict::NoTarget || none.act != act
+                || own.verdict != SP::MergeVerdict::Merge || own.target != static_cast<long long>(others.size() - 1) || own.count != 3) {
+                ok = false; detail += " every" + std::to_string(act) + "=" + W(none.verdict) + "/" + W(own.verdict);
+            }
+        }
+        // An absent count is one: 1 + 1 = 2.
+        expect("absent", SP::DecideMerge(true, LegacyPiece(4, 0), kLegacyBase, { LegacyPiece(4, 0) }), SP::MergeVerdict::Merge, 4, 0, 2);
+        // A key-shape piece is not a bag piece, coming in or sitting in the bag.
+        expect("key-in", SP::DecideMerge(true, KeyShapePiece(1), kLegacyBase, bag), SP::MergeVerdict::NotPiece, 0, -1, 0);
+        expect("key-only", SP::DecideMerge(true, LegacyPiece(1, 1), kLegacyBase, { KeyShapePiece(1) }), SP::MergeVerdict::NoTarget, 1, -1, 0);
+        // An unresolved base recognises nothing.
+        expect("unresolved", SP::DecideMerge(true, LegacyPiece(1, 1), -1, bag), SP::MergeVerdict::NotPiece, 0, -1, 0);
+        check("target/merge-joins-only-a-piece-of-the-same-act", ok, detail);
+    }
+    {
+        // A real item (no reserved seed) is never merged and never a target: the
+        // plain logo, another consumable carrying a piece's seed, a key carrying
+        // one, a gem, the logo from the unique repository. Beside them, the same
+        // bag with one piece of the act added merges into that piece.
+        bool ok = true;
+        std::string detail;
+        const std::vector<SP::BagItem> reals = {
+            RealItem(11, 12.0, 4242, 1),                           // the plain logo
+            RealItem(11, 12.0, 777001, 1),                         // a signature seed on the logo
+            RealItem(11, 13.0, SP::SeedOfAct(1), 1),               // another consumable with a piece's seed
+            RealItem(12, 12.0, SP::SeedOfAct(1), 1),               // a key with a piece's seed
+            RealItem(15, 12.0, SP::SeedOfAct(1), 1),               // a gem with a piece's seed
+            { 11, 12.0, 1.0, SP::SeedOfAct(1), 1 },                // the unique repository
+            { 11, 12.5, 0.0, SP::SeedOfAct(1), 1 },                // a fractional logo
+        };
+        const std::vector<SP::BagItem> pieces = { LegacyPiece(1, 1), LegacyPiece(1, 7) };
+        for (size_t i = 0; i < reals.size(); ++i) {
+            const SP::MergeDecision in = SP::DecideMerge(true, reals[i], kLegacyBase, pieces);
+            if (in.verdict != SP::MergeVerdict::NotPiece || in.target != -1) { ok = false; detail += " in" + std::to_string(i) + "=" + W(in.verdict); }
+        }
+        const SP::MergeDecision none = SP::DecideMerge(true, LegacyPiece(1, 1), kLegacyBase, reals);
+        ok = ok && none.verdict == SP::MergeVerdict::NoTarget && none.target == -1;
+        std::vector<SP::BagItem> withPiece = reals;
+        withPiece.push_back(LegacyPiece(1, 4));
+        const SP::MergeDecision control = SP::DecideMerge(true, LegacyPiece(1, 1), kLegacyBase, withPiece);
+        const bool controlOk = control.verdict == SP::MergeVerdict::Merge && control.target == static_cast<long long>(reals.size())
+            && control.count == 5;
+        check("target/merge-never-takes-a-real-item", ok && controlOk,
+            "none=" + W(none.verdict) + " control=" + W(control.verdict) + ":" + std::to_string(control.target) + detail);
+    }
+    {
+        // The game's cap: a merge goes ahead only while the summed count stays
+        // at most 999. A full stack is passed over for the next one of the act
+        // with room; no stack with room answers `cap`, and an empty bag
+        // `no-target`.
+        bool ok = SP::kBagStackCap == 999;
+        std::string detail;
+        struct Case { const char* what; std::vector<long long> counts; long long incoming; SP::MergeVerdict v; long long target; long long count; };
+        const Case cases[] = {
+            { "998+1", { 998 }, 1, SP::MergeVerdict::Merge, 0, 999 },
+            { "999+1", { 999 }, 1, SP::MergeVerdict::Cap, -1, 0 },
+            { "990+9", { 990 }, 9, SP::MergeVerdict::Merge, 0, 999 },
+            { "990+10", { 990 }, 10, SP::MergeVerdict::Cap, -1, 0 },
+            { "full-then-room", { 999, 5 }, 1, SP::MergeVerdict::Merge, 1, 6 },
+            { "two-full", { 999, 999 }, 1, SP::MergeVerdict::Cap, -1, 0 },
+            { "over-cap", { 1 }, 1000, SP::MergeVerdict::Cap, -1, 0 },
+            { "huge", { std::numeric_limits<long long>::max() }, 1, SP::MergeVerdict::Cap, -1, 0 },
+            { "empty", {}, 1, SP::MergeVerdict::NoTarget, -1, 0 },
+        };
+        for (const Case& c : cases) {
+            std::vector<SP::BagItem> bag;
+            for (long long n : c.counts) bag.push_back(LegacyPiece(5, n));
+            const SP::MergeDecision d = SP::DecideMerge(true, LegacyPiece(5, c.incoming), kLegacyBase, bag);
+            if (d.verdict != c.v || d.target != c.target || d.count != c.count || d.act != 5) {
+                ok = false; detail += std::string(" ") + c.what + "=" + W(d.verdict) + ":" + std::to_string(d.target) + ":" + std::to_string(d.count);
+            }
+        }
+        check("target/merge-respects-the-stack-cap", ok, detail);
     }
     {
         // The counters by verdict and act, and the status line built from them.
