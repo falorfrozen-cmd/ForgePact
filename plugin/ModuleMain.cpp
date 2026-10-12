@@ -48132,6 +48132,13 @@ static std::string FcpSpriteValueText(const RValue& v)
     return shown + "(" + name + ")";
 }
 
+// Whether a key is one of the size keys in force: never a sprite key, which
+// every path that takes, writes or arms one checks.
+static bool FcpIsSizeKey(const std::string& key)
+{
+    return g_FcpSize.Known() && (key == g_FcpSize.W() || key == g_FcpSize.H());
+}
+
 // The sprite key's candidates for one sample: the info keys whose value
 // FcpIsSprite accepts, a plain number or a reference (kept by its index). A
 // footprint key is never one. The size keys in force are left out, and so is
@@ -48140,17 +48147,14 @@ static std::string FcpSpriteValueText(const RValue& v)
 // callers feed only a sample GetItemSize sized, so both sides are known.
 static FcpNs::NumberInfo FcpSpriteValues(const FcpInfo& info, int w, int h)
 {
-    const auto sizeKey = [](const std::string& key) {
-        return g_FcpSize.Known() && (key == g_FcpSize.W() || key == g_FcpSize.H());
-    };
     FcpNs::NumberInfo out;
     for (const auto& [key, v] : info.numbers) {
-        if (sizeKey(key) || v == (double)w || v == (double)h) continue;
+        if (FcpIsSizeKey(key) || v == (double)w || v == (double)h) continue;
         if (FcpIsSprite(RValue(v))) out[key] = v;
     }
     for (const auto& [key, ref] : info.refs) {
         double idx = -1;
-        if (!sizeKey(key) && ApNumber(ref, idx) && FcpIsSprite(ref)) out[key] = idx;
+        if (!FcpIsSizeKey(key) && ApNumber(ref, idx) && FcpIsSprite(ref)) out[key] = idx;
     }
     return out;
 }
@@ -48175,6 +48179,9 @@ static bool FcpSpriteVerified(std::string& why)
 {
     if (!g_FcpSpriteKey.Known()) { why = "sprite key unknown (" + g_FcpSpriteKey.Why() + ")"; return false; }
     const std::string key = g_FcpSpriteKey.Key();
+    // A key that became a size key after it was taken holds the footprint,
+    // whatever its control said: our index there makes a 1xN charm.
+    if (FcpIsSizeKey(key)) { why = "sprite key " + key + " is a size key in force (" + g_FcpSize.Line() + ")"; return false; }
     if (g_FcpSpriteCheckSeed < 0 || g_FcpSpriteCheckKey != key) {
         why = "sprite key " + key + " unverified (no `charmprobe sprite verify` has placed a donor charm under it)";
         return false;
@@ -48807,6 +48814,7 @@ static void FcpSpriteVerify(const std::vector<std::string>& tail)
     if (donor == kFcpSpriteCheckB) { Out(tag + "refused the donor must be another charm than b " + std::to_string(kFcpSpriteCheckB)); return; }
     if (!g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
     const std::string key = g_FcpSpriteKey.Key();
+    if (FcpIsSizeKey(key)) { Out(tag + "refused key " + key + " is a size key in force (" + g_FcpSize.Line() + "); nothing was built"); return; }
     std::string why;
     RValue player;
     CInstance* self = nullptr;
@@ -48886,7 +48894,7 @@ static void FcpSprite(const std::vector<std::string>& tail)
     std::string why;
     if (!FcpNs::ParseSprite(tail, r, why)) { Out("charmprobe sprite: refused " + why); return; }
     if (r.form == FcpNs::SpriteForm::Load) { FcpSpriteLoad(); return; }
-    if (r.form == FcpNs::SpriteForm::Key && g_FcpSize.Known() && (r.key == g_FcpSize.W() || r.key == g_FcpSize.H())) {
+    if (r.form == FcpNs::SpriteForm::Key && FcpIsSizeKey(r.key)) {
         Out("charmprobe sprite: refused key " + r.key + " is a size key in force (" + g_FcpSize.Line() + ")");
         return;
     }

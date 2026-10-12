@@ -480,14 +480,16 @@ once known and the number of dress rules, then the usage.
   own value and the donor's, each with its sprite name, the ground answer,
   and what the placed item now holds under the key (`reverted` when the
   placement put the charm's own value back). It refuses while the key is
-  unknown, when either value is not a sprite, and when the two charms hold
-  one sprite under the key (another donor is then named). If the surfaces
+  unknown or is a size key in force, when either value is not a sprite, and
+  when the two charms hold one sprite under the key (another donor is then
+  named). If the surfaces
   draw from this key, the `b` 3 charm shows the donor's icon; if not, its
   own. That is the person's to see, so `sprite verify drew` (the donor's
   icon) or `sprite verify base` (its own) records the answer, and `spawn ...
   sprite` is refused with `sprite key ... unverified` until the answer is
   `drew` for the key in force; a key that changes after it needs the control
-  again. Positive control for the draw itself: S19's same charm spawned
+  again, and a key that later turns out to be a size key in force is refused
+  whatever its control said. Positive control for the draw itself: S19's same charm spawned
   without `sprite`, which must draw its base icon on the ground, in the grid
   and in the tooltip.
 
