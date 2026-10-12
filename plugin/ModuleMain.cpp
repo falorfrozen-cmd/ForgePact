@@ -4737,9 +4737,20 @@ static void ForgeHashStats()
 // HhResolveLocalPlayer's `how = nullptr` default is declared there now, not
 // here - a default argument may only be specified once per translation unit.
 
+#ifndef FORGEPACT_RELEASE
+// `charmprobe dress` (ForgePact #158, research build only): writes the size
+// keys of a built item whose definition `a` has a rule, at CreateItemNew's
+// outermost return. Defined with charmprobe, below; returns at once while no
+// rule is set.
+static void FcpDressBuilt(RValue& item);
+#endif
+
 static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool finalPass)
 {
     PERF_SCOPE(g_PerfForge);
+#ifndef FORGEPACT_RELEASE
+    if (finalPass) FcpDressBuilt(result);
+#endif
     if (TryApplyCustomForge(&result, finalPass)) return;
     // Some constructors mutate an argument and return undefined. Scan only a
     // small, bounded prefix; TryApply requires all three canonical item fields.
@@ -47868,6 +47879,593 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 }
 
 #ifndef FORGEPACT_RELEASE
+// ---- charmprobe: the flight-charms phase 1 instrument (ForgePact #158) ----
+// docs/flight-charms-research.md holds the static readings, the live
+// procedure and the decision this instrument serves. Research build only,
+// never in kPlayerCommands, dispatched from HandleCharmProbeCommand, which
+// sits inside this guard with its RunCommand line, so neither the verb nor
+// the handler's name reaches a player build.
+//
+// It asks what the Flight charms need settled before they are built, and
+// changes nothing until a form that spawns, dresses or drops is sent:
+//
+//   - `charms` reads the equipped charms offline from
+//     Controller_obj.inventoryData[key - 1].localCharmItemArray, the key
+//     being the relic tab's (hub RDM § 2: 1 online, global.mplr offline),
+//     reading the variables rather than calling GetPlayerCharmData (RDM
+//     § 9.4's advice for profile getters). Each charm's size comes from
+//     GetItemSize, called by name with the item, and feeds the core, which
+//     names the two itemInfoStruct keys that hold it once two sizes agree on
+//     exactly one key each (plugin/include/ForgePact/FlightCharmProbe.hpp,
+//     compiled whole by tests/flight_charm_probe_harness.cpp);
+//   - `repo` reads one unique definition through GetUniqueRepoStruct;
+//   - `spawn` builds a normal charm the way SpawnSignatureItem does (json ->
+//     InitItemFromJson -> LootGroundCreateFromItem at the player), from a
+//     research seed range of its own, optionally with the size keys, stats
+//     and our sprite written onto the built struct first;
+//   - `dress` writes the size keys at the Custom Forge's final pass
+//     (CreateItemNew's outermost return, FcpDressBuilt) onto every built item
+//     whose definition `a` has a rule - the save-safety question, since a
+//     save keeps only the compact definition;
+//   - `heroic` calls DropItemHeroic by name and reads what it placed;
+//   - `sprite` loads one PNG of our own by the pack markers' route
+//     (written under bp_ipc\ only when absent, then sprite_add relative
+//     first, absolute second) and identifies the key holding an item's
+//     sprite from samples, or takes it by hand.
+//
+// Every name is an hs-game-sdk constant, every call is by name, and every
+// refusal names its reason. Nothing here runs on the frame path; the one
+// piece the game reaches by itself, FcpDressBuilt, returns at once while no
+// rule is set.
+#include <ForgePact/FlightCharmProbe.hpp>
+#include <ForgePact/FlightCharmProbeIcon.hpp>
+
+namespace FcpNs = ForgePact::FlightCharms;
+
+static constexpr int kFcpMaxCharms = 64;            // localCharmItemArray entries one read walks
+static constexpr int kFcpMaxInfoKeys = 400;         // struct keys one dump walks
+static constexpr int kFcpMaxGroundScan = 4000;      // Loot_Ground_obj instances one heroic scan walks
+static constexpr double kFcpMaxSpriteIndex = 1e6;   // a number above this is never asked about as a sprite
+
+// Game thread only, like every command.
+static FcpNs::SizeKeys g_FcpSize;
+static FcpNs::SpriteKey g_FcpSpriteKey;
+static FcpNs::DressRules g_FcpDress;
+static long g_FcpSpawns = 0;                        // research seeds used (kSeedBase + n)
+static double g_FcpSprite = -1;                     // our sprite's index once sprite_add gave one
+static int g_FcpSpriteKind = -1;                    // RValue kind of sprite_add's last answer; -1 never tried
+static const char* g_FcpSpritePath = "none";        // which path gave the index
+
+// A real or integer number, finite. A bool or a reference is not one.
+static bool FcpNumber(const RValue& v, double& out)
+{
+    out = 0;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d)) return false;
+    out = d;
+    return true;
+}
+
+static bool FcpWhole(const RValue& v, double& out)
+{
+    return FcpNumber(v, out) && out == std::floor(out);
+}
+
+// s.name, only when s is a struct that has it.
+static bool FcpMember(const RValue& s, const char* name, RValue& out)
+{
+    if (s.m_Kind != VALUE_OBJECT) return false;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return false;
+        out = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        return true;
+    } catch (...) { return false; }
+}
+
+static std::string FcpValueText(const RValue& v)
+{
+    double d = 0;
+    if (FcpNumber(v, d)) return FcpNs::NumberText(d);
+    if (v.m_Kind == VALUE_STRING) return v.ToString();
+    if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
+    return Describe(v);
+}
+
+static std::string FcpMemberText(const RValue& s, const char* name)
+{
+    RValue v;
+    return FcpMember(s, name, v) ? FcpValueText(v) : std::string("missing");
+}
+
+// One struct's keys: the numbers by key, and the `info=` entries (every
+// number, and every string of at most kInfoTextMax characters).
+struct FcpInfo {
+    bool ok = false;
+    FcpNs::NumberInfo numbers;
+    std::vector<std::pair<std::string, std::string>> shown;
+};
+static FcpInfo FcpReadStruct(const RValue& s)
+{
+    FcpInfo r;
+    if (s.m_Kind != VALUE_OBJECT) return r;
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+        if (names.m_Kind != VALUE_ARRAY) return r;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        r.ok = true;
+        for (int i = 0; i < n && i < kFcpMaxInfoKeys; ++i) {
+            const RValue name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            if (name.m_Kind != VALUE_STRING) continue;
+            const std::string key = name.ToString();
+            const RValue v = g_Yytk->CallBuiltin("variable_struct_get", { s, name });
+            double d = 0;
+            if (FcpNumber(v, d)) { r.numbers[key] = d; r.shown.push_back({ key, FcpNs::NumberText(d) }); }
+            else if (v.m_Kind == VALUE_STRING && FcpNs::InfoTextFits(v.ToString())) r.shown.push_back({ key, v.ToString() });
+        }
+    } catch (...) {}
+    return r;
+}
+
+// The numbers among an item's info keys that sprite_exists, called by name,
+// calls a sprite: the sprite key's candidates for one sample.
+static FcpNs::NumberInfo FcpSpriteValues(const FcpNs::NumberInfo& numbers)
+{
+    FcpNs::NumberInfo out;
+    for (const auto& [key, v] : numbers) {
+        if (v < 0 || v != std::floor(v) || v > kFcpMaxSpriteIndex) continue;
+        try { if (g_Yytk->CallBuiltin("sprite_exists", { RValue(v) }).ToBoolean()) out[key] = v; } catch (...) {}
+    }
+    return out;
+}
+
+// `<value>(<sprite_get_name>)` of the sprite key on these numbers; `?` while
+// the key is unknown. sprite_get_name is asked only of a value sprite_exists
+// accepts.
+static std::string FcpSpriteText(const FcpNs::NumberInfo& numbers)
+{
+    if (!g_FcpSpriteKey.Known()) return "?";
+    const auto it = numbers.find(g_FcpSpriteKey.Key());
+    if (it == numbers.end()) return "missing";
+    std::string name = "not-a-sprite";
+    try {
+        if (it->second >= 0 && it->second == std::floor(it->second)
+            && g_Yytk->CallBuiltin("sprite_exists", { RValue(it->second) }).ToBoolean()) {
+            const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { RValue(it->second) });
+            name = n.m_Kind == VALUE_STRING ? n.ToString() : Describe(n);
+        }
+    } catch (...) { name = "?"; }
+    return FcpNs::NumberText(it->second) + "(" + name + ")";
+}
+
+// ` a= b= c= j=` of the item's definition; `a` also as a number (NaN unread).
+static std::string FcpDefinitionText(const RValue& item, double& a)
+{
+    a = std::nan("");
+    RValue def;
+    const bool ok = FcpMember(item, "itemDefinitionStruct", def) && def.m_Kind == VALUE_OBJECT;
+    std::string out;
+    for (const char* field : { "a", "b", "c", "j" }) {
+        RValue v;
+        double d = 0;
+        const bool read = ok && FcpMember(def, field, v) && FcpNumber(v, d);
+        if (read && field[0] == 'a') a = d;
+        out += std::string(" ") + field + "=" + (read ? FcpNs::NumberText(d) : std::string("?"));
+    }
+    return out;
+}
+
+// GetItemSize(item) by name, with the global instance as self: the pair it
+// answers, as whole numbers.
+static bool FcpItemSize(const RValue& item, int& w, int& h, std::string& why)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { why = "no global instance"; return false; }
+    RValue res;
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GetItemSize, g, g, { item }); }
+    catch (...) { why = "GetItemSize threw"; return false; }
+    if (!AurieSuccess(st)) { why = "GetItemSize st=" + std::to_string((int)st); return false; }
+    RValue first, second;
+    if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, res, 0, first) || !HeroSiege::Player::Detail::ArrayAt(g_Yytk, res, 1, second)) {
+        why = "GetItemSize gave " + Describe(res);
+        return false;
+    }
+    double dw = 0, dh = 0;
+    if (!FcpWhole(first, dw) || !FcpWhole(second, dh) || !FcpNs::ValidSize((int)dw, (int)dh) || dw > 99 || dh > 99) {
+        why = "GetItemSize gave [" + Describe(first) + ", " + Describe(second) + "]";
+        return false;
+    }
+    w = (int)dw;
+    h = (int)dh;
+    return true;
+}
+
+// The equipped charms, offline: Controller_obj.inventoryData[key - 1]
+// .localCharmItemArray, the relic tab's key rule (HeroSiege::Player's
+// ScanRelicTab reads the same entry). Variables only.
+static bool FcpCharmArray(RValue& array, std::string& why)
+{
+    const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
+    double row = -1;
+    if (!FcpWhole(mplr, row) || row < 0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) { why = "mplr " + Describe(mplr); return false; }
+    const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
+    double online = 0;
+    if ((FcpNumber(onl, online) && online == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) {
+        why = "online: the charms live on Client_obj there, this read is the offline route";
+        return false;
+    }
+    const int key = (int)row;
+    if (key - 1 < 0) { why = "key " + std::to_string(key) + " (mplr 0)"; return false; }
+    double idx = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
+    if (!ApNumber(index, idx) || idx < 0) { why = "Controller_obj not resolved"; return false; }
+    const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+    if (!HeroSiege::Player::IsInstanceHandle(controller)) { why = "no Controller_obj instance"; return false; }
+    if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) { why = "no inventoryData"; return false; }
+    const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
+    RValue profile;
+    if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, key - 1, profile)) {
+        why = "inventoryData has no index " + std::to_string(key - 1) + " (" + Describe(profiles) + ")";
+        return false;
+    }
+    static constexpr std::string_view kField = "localCharmItemArray";
+    if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
+        array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
+    else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
+        array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
+    else { why = "inventoryData[" + std::to_string(key - 1) + "] has no localCharmItemArray (" + Describe(profile) + ")"; return false; }
+    if (array.m_Kind != VALUE_ARRAY) { why = "localCharmItemArray is " + Describe(array); return false; }
+    return true;
+}
+
+static void FcpCharms()
+{
+    RValue array;
+    std::string why;
+    if (!FcpCharmArray(array, why)) { Out("charmprobe charms: count=0 source=missing(" + why + ")"); return; }
+    const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
+    Out("charmprobe charms: count=" + std::to_string(count) + " source=localCharmItemArray"
+        + (count > kFcpMaxCharms ? " (the first " + std::to_string(kFcpMaxCharms) + " read)" : std::string()));
+    for (int i = 0; i < count && i < kFcpMaxCharms; ++i) {
+        RValue item;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, array, i, item) || !ApIsPlainStruct(item)) {
+            Out("charmprobe charm #" + std::to_string(i) + " not an item struct: " + Describe(item));
+            continue;
+        }
+        double a = 0;
+        const std::string definition = FcpDefinitionText(item, a);
+        int w = 0, h = 0;
+        std::string sizeWhy;
+        const bool sized = FcpItemSize(item, w, h, sizeWhy);
+        RValue infoStruct;
+        const FcpInfo info = FcpMember(item, "itemInfoStruct", infoStruct) ? FcpReadStruct(infoStruct) : FcpInfo();
+        if (info.ok) g_FcpSpriteKey.Add(FcpSpriteValues(info.numbers));
+        Out("charmprobe charm #" + std::to_string(i) + " t=" + FcpMemberText(item, "itemType") + definition
+            + " size=" + (sized ? FcpNs::SizeText({ w, h }) : "?(" + sizeWhy + ")")
+            + " rarity=" + FcpMemberText(infoStruct, "27") + " name=" + FcpMemberText(infoStruct, "28")
+            + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info.numbers) : std::string())
+            + " info=" + (info.ok ? FcpNs::InfoDump(info.shown) : std::string("missing(no itemInfoStruct)")));
+        if (sized && info.ok) g_FcpSize.Add(w, h, info.numbers);
+        Out("charmprobe sizekeys: " + g_FcpSize.Line());
+    }
+}
+
+static void FcpRepo(const std::vector<std::string>& tail)
+{
+    FcpNs::RepoRequest r;
+    std::string why;
+    if (!FcpNs::ParseRepo(tail, r, why)) { Out("charmprobe repo: refused " + why); return; }
+    const std::string tag = "charmprobe repo " + std::to_string(r.type) + " " + std::to_string(r.sub) + " " + std::to_string(r.b) + ": ";
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "missing (no global instance)"); return; }
+    RValue def;
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try {
+        st = g_Yytk->CallGameScriptEx(def, HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct, g, g,
+                                      { RValue((double)r.type), RValue((double)r.sub), RValue((double)r.b) });
+    } catch (...) { Out(tag + "missing (GetUniqueRepoStruct threw)"); return; }
+    RValue info;
+    if (!AurieSuccess(st) || def.m_Kind != VALUE_OBJECT) {
+        Out(tag + "missing (GetUniqueRepoStruct st=" + std::to_string((int)st) + " gave " + Describe(def) + ")");
+        return;
+    }
+    if (!FcpMember(def, "itemBaseInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { Out(tag + "missing (no itemBaseInfoStruct)"); return; }
+    std::string size = "keys-unknown";
+    if (g_FcpSize.Known())
+        size = FcpMemberText(info, g_FcpSize.W().c_str()) + "x" + FcpMemberText(info, g_FcpSize.H().c_str());
+    Out(tag + "rarity=" + FcpMemberText(info, "27") + " name=" + FcpMemberText(info, "28") + " flag40="
+        + FcpMemberText(info, "40") + " size=" + size);
+    const FcpInfo dump = FcpReadStruct(info);
+    Out("charmprobe repo info: " + (dump.ok ? FcpNs::InfoDump(dump.shown) : std::string("unreadable")));
+}
+
+// The local player as a handle and as the CInstance* a by-name call takes,
+// with its position.
+static bool FcpPlayer(RValue& player, CInstance*& self, double& x, double& y, std::string& why)
+{
+    if (!HhResolveLocalPlayer(player)) { why = "no local player"; return false; }
+    self = HhResolveInstance(player);
+    if (!self) { why = "the local player did not resolve to an instance"; return false; }
+    try {
+        if (!FcpNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }), x)
+            || !FcpNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }), y)) {
+            why = "the local player's x, y are not numbers";
+            return false;
+        }
+    } catch (...) { why = "the local player's x, y threw"; return false; }
+    return true;
+}
+
+static void FcpSpawn(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe spawn: ";
+    FcpNs::SpawnRequest r;
+    std::string why;
+    if (!FcpNs::ParseSpawn(tail, r, why)) { Out(tag + "refused " + why); return; }
+    if (r.hasSize && !g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
+    if (r.sprite && g_FcpSprite < 0) { Out(tag + "refused sprite not loaded (`charmprobe sprite load` first)"); return; }
+    if (r.sprite && !g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "refused no global instance"); return; }
+
+    const long long seed = FcpNs::SpawnSeed(g_FcpSpawns++);   // a seed is never handed out twice
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string key = FcpNs::SpawnKey(ms);
+    const std::string json = FcpNs::SpawnJson(seed, r.b);
+    const std::string what = "b=" + std::to_string(r.b) + " a=" + std::to_string(seed);
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (parsed.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused json_parse gave " + Describe(parsed)); return; }
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g, { parsed, RValue(key) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            Out(tag + what + " refused InitItemFromJson (key " + key + ") st=" + std::to_string((int)st) + " gave " + Describe(item));
+            return;
+        }
+        RValue info;
+        if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused the built item has no itemInfoStruct"); return; }
+        const FcpInfo built = FcpReadStruct(info);
+        if (built.ok) g_FcpSpriteKey.Add(FcpSpriteValues(built.numbers));   // the item as the game built it, before any write
+        Out("charmprobe spawn info: " + what + " info=" + (built.ok ? FcpNs::InfoDump(built.shown) : std::string("unreadable")));
+        if (r.sprite) {
+            const auto own = built.numbers.find(g_FcpSpriteKey.Key());
+            if (own == built.numbers.end()) {
+                Out(tag + what + " refused the built item's " + g_FcpSpriteKey.Key() + " is not a number; nothing was placed");
+                return;
+            }
+        }
+        RValue stats;
+        if (!r.stats.empty() && (!FcpMember(item, "itemStatStruct", stats) || stats.m_Kind != VALUE_OBJECT)) {
+            Out(tag + what + " refused the built item has no itemStatStruct; nothing was placed");
+            return;
+        }
+        if (r.hasSize) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.W()), RValue((double)r.size.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.H()), RValue((double)r.size.h) });
+        }
+        for (const auto& [id, value] : r.stats)
+            g_Yytk->CallBuiltin("variable_struct_set", { stats, RValue(std::to_string(id)), RValue(value) });
+        if (r.sprite) g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSpriteKey.Key()), RValue(g_FcpSprite) });
+
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        const FcpInfo placed = FcpReadStruct(info);
+        Out(tag + what + " size=" + (r.hasSize ? FcpNs::SizeText(r.size) : std::string("base")) + " stats="
+            + FcpNs::StatsText(r.stats) + " sprite=" + (g_FcpSpriteKey.Known() ? FcpSpriteText(placed.numbers) : std::string("?"))
+            + " placed (LootGroundCreateFromItem returned " + Describe(res) + ")");
+    } catch (...) { Out(tag + what + " refused an exception while building or placing it"); }
+}
+
+// CustomForgePostProcess's research hook (declared above it): at
+// CreateItemNew's outermost return, an item whose definition `a` has a rule
+// gets the two size keys written into its itemInfoStruct, and nothing else.
+static void FcpDressBuilt(RValue& item)
+{
+    if (g_FcpDress.Empty() || g_TruthDepth != 0 || !g_FcpSize.Known()) return;
+    try {
+        RValue def, a, info;
+        double seed = 0;
+        if (!FcpMember(item, "itemDefinitionStruct", def) || !FcpMember(def, "a", a) || !FcpNumber(a, seed)) return;
+        const FcpNs::DressRule* rule = g_FcpDress.Find(seed);
+        if (!rule || !FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) return;
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.W()), RValue((double)rule->size.w) });
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.H()), RValue((double)rule->size.h) });
+        g_FcpDress.NoteDressed();
+    } catch (...) {}
+}
+
+static void FcpDress(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe dress: ";
+    FcpNs::DressRequest r;
+    std::string why;
+    if (!FcpNs::ParseDress(tail, r, why)) { Out(tag + "refused " + why); return; }
+    if (r.form == FcpNs::DressForm::Off) g_FcpDress.Clear();
+    if (r.form == FcpNs::DressForm::Add) {
+        if (!g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
+        // The research build installs CreateItemNew at setup (InstallItemInspectHooks); hook it
+        // here only when nothing did, with the same Hook_CreateItemNew.
+        if (!g_Orig_CreateItemNew)
+            HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_charmprobe_new",
+                          (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew);
+        if (!g_Orig_CreateItemNew) { Out(tag + "refused CreateItemNew could not be hooked"); return; }
+        if (!g_FcpDress.Add(r.rule, why)) { Out(tag + "refused " + why); return; }
+    }
+    Out(tag + g_FcpDress.Line() + " keys=" + g_FcpSize.Pair());
+}
+
+// The Loot_Ground_obj instance with the highest id, and that id (-1 when
+// there is none): instance ids only grow, so a call that placed an item
+// leaves a higher one.
+static double FcpNewestGround(double objectIndex, RValue* newest)
+{
+    double best = -1;
+    try {
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue(objectIndex) }).ToDouble();
+        for (int i = 0; i < n && i < kFcpMaxGroundScan; ++i) {
+            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objectIndex), RValue((double)i) });
+            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
+            double id = -1;
+            if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }), id) || id <= best) continue;
+            best = id;
+            if (newest) *newest = inst;
+        }
+    } catch (...) {}
+    return best;
+}
+
+static void FcpHeroic(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe heroic: ";
+    int n = 0;
+    std::string why;
+    if (!FcpNs::ParseHeroic(tail, n, why)) { Out(tag + "refused " + why); return; }
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    double ground = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) });
+    if (!ApNumber(index, ground) || ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    FcpNs::HeroicTally tally;
+    for (int i = 1; i <= n; ++i) {
+        const std::string line = "charmprobe heroic #" + std::to_string(i) + ": ";
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { tally.Add(false, false, 0, false); Out(line + "DropItemHeroic threw"); continue; }
+        if (!AurieSuccess(st)) { tally.Add(false, false, 0, false); Out(line + "DropItemHeroic st=" + std::to_string((int)st)); continue; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        if (after <= before) { tally.Add(false, false, 0, false); Out(line + "nothing placed (returned " + Describe(res) + ")"); continue; }
+        RValue item, info, def;
+        try { item = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+        catch (...) {}
+        FcpMember(item, "itemInfoStruct", info);
+        FcpMember(item, "itemDefinitionStruct", def);
+        RValue rarityValue, typeValue;
+        double rarity = -1, type = -1;
+        const bool rarityRead = FcpMember(info, "27", rarityValue) && FcpWhole(rarityValue, rarity);
+        const bool charm = FcpMember(item, "itemType", typeValue) && FcpWhole(typeValue, type)
+            && type == (double)static_cast<int>(HeroSiege::Items::ItemType::Charm);
+        tally.Add(true, rarityRead, rarityRead ? (int)rarity : 0, charm);
+        Out(line + "placed t=" + FcpMemberText(item, "itemType") + " b=" + FcpMemberText(def, "b") + " c="
+            + FcpMemberText(def, "c") + " rarity=" + FcpMemberText(info, "27") + " name=" + FcpMemberText(info, "28"));
+    }
+    Out(tag + tally.Line());
+}
+
+static void FcpSpriteShow()
+{
+    Out("charmprobe sprite: loaded=" + (g_FcpSprite >= 0 ? FcpNs::NumberText(g_FcpSprite) : std::string("no")) + " kind="
+        + (g_FcpSpriteKind < 0 ? std::string("-") : std::to_string(g_FcpSpriteKind)) + " path=" + g_FcpSpritePath
+        + " key=" + g_FcpSpriteKey.Text());
+}
+
+// The pack markers' route (PackMarkerIconPath, PackMarkers::LoadIcons),
+// mirrored here so neither changes: the embedded PNG is written to
+// bp_ipc\charmprobe\ only when no file of that name is there, then
+// sprite_add with the path relative to the game's working directory first
+// and the absolute path second, a reference or a real accepted as the index,
+// re-centred when the PNG is not the embedded size.
+static void FcpSpriteLoad()
+{
+    if (g_FcpSprite >= 0) { FcpSpriteShow(); return; }
+    namespace Icon = ForgePact::FlightCharmProbeIcon;
+    const std::string dir = IPC_DIR + "\\charmprobe";
+    const std::string file = dir + "\\" + Icon::kName + ".png";
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (f) f.write(reinterpret_cast<const char*>(Icon::kPng), static_cast<std::streamsize>(Icon::kPngSize));
+            if (!f) { Out("charmprobe sprite: refused write failed (" + file + ")"); return; }
+        }
+    } catch (...) { Out("charmprobe sprite: refused write failed (" + file + " threw)"); return; }
+    const std::string relative = std::string("bp_ipc\\charmprobe\\") + Icon::kName + ".png";
+    const double centre = Icon::kSize / 2;
+    for (const std::string* path : { &relative, &file }) {
+        try {
+            const RValue r = g_Yytk->CallBuiltin("sprite_add", { RValue(path->c_str()), RValue(1.0), RValue(0.0), RValue(0.0),
+                                                                 RValue(centre), RValue(centre) });
+            g_FcpSpriteKind = static_cast<int>(r.m_Kind);
+            double idx = -1;
+            if (!ApNumber(r, idx) || idx < 0) continue;
+            g_FcpSprite = idx;
+            g_FcpSpritePath = path == &relative ? "relative" : "absolute";
+            const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
+            const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
+            if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && (w != Icon::kSize || h != Icon::kSize))
+                g_Yytk->CallBuiltin("sprite_set_offset", { RValue(idx), RValue(std::floor(w / 2)), RValue(std::floor(h / 2)) });
+            break;
+        } catch (...) {}
+    }
+    if (g_FcpSprite < 0) {
+        Out("charmprobe sprite: refused both sprite_add paths answered no index (last kind="
+            + (g_FcpSpriteKind < 0 ? std::string("-") : std::to_string(g_FcpSpriteKind)) + ")");
+        return;
+    }
+    FcpSpriteShow();
+}
+
+static void FcpSprite(const std::vector<std::string>& tail)
+{
+    FcpNs::SpriteRequest r;
+    std::string why;
+    if (!FcpNs::ParseSprite(tail, r, why)) { Out("charmprobe sprite: refused " + why); return; }
+    if (r.form == FcpNs::SpriteForm::Load) { FcpSpriteLoad(); return; }
+    if (r.form == FcpNs::SpriteForm::Key && !g_FcpSpriteKey.SetByHand(r.key)) { Out("charmprobe sprite: refused key " + r.key); return; }
+    FcpSpriteShow();
+}
+
+static void FcpUsage()
+{
+    Out(FcpNs::MarkerLine(g_FcpSize, g_FcpDress));
+    Out("  charms | repo <t> <sub> <b> | spawn <b 0-59> [size <w> <h>] [stat <id>=<v>]... [sprite] | dress <a> <w> <h> | dress off"
+        " | heroic <n 1-20> | sprite [load | key <name>]   research instrument for docs/flight-charms-research.md (research build only)");
+}
+
+static void FcpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { FcpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "charms") { FcpCharms(); return; }
+    if (sub == "repo") { FcpRepo(tail); return; }
+    if (sub == "spawn") { FcpSpawn(tail); return; }
+    if (sub == "dress") { FcpDress(tail); return; }
+    if (sub == "heroic") { FcpHeroic(tail); return; }
+    if (sub == "sprite") { FcpSprite(tail); return; }
+    FcpUsage();
+}
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand. Research build only, like everything above.
+static bool HandleCharmProbeCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "charmprobe") { FcpCommand(rest); return true; }
+    return false;
+}
+#endif // FORGEPACT_RELEASE (charmprobe)
+
+#ifndef FORGEPACT_RELEASE
 // The scripts the `gambapity` mod holds, as "A, B"; gambaprobe's `hook`
 // refuses while it is non-empty. Research build only: nothing in the player
 // build asks. Defined with the gambapity adapter, below.
@@ -55700,6 +56298,9 @@ static void RunCommand(const std::string& line)
     if (HandleJumpProbeCommand(lc, rest)) return;
 #ifndef FORGEPACT_RELEASE
     if (HandleGambaProbeCommand(lc, rest)) return;
+#endif
+#ifndef FORGEPACT_RELEASE
+    if (HandleCharmProbeCommand(lc, rest)) return;
 #endif
     if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
