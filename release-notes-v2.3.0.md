@@ -4,6 +4,9 @@ Release date: 2026-10-16
 
 A new **Always show Chaos Pillar mods** switch, off by default, shows each
 Chaos Pillar's mods while the pillar is on screen, without hovering over it.
+Three new charms, **Pocket Elf**, **Gabriel Wings** and **Witch's
+Broomstick**, let you walk through scenery while you wear one, and each can
+join the game's own drops behind its own switch, off by default.
 
 ## New
 
@@ -20,13 +23,36 @@ Chaos Pillar's mods while the pillar is on screen, without hovering over it.
   supported. Checked in a game session with mouse play: boxes showed without
   hovering, hid when the pillars went off screen and when one was activated,
   and switching off brought back the hover-only boxes.
+- **Flight charms: Pocket Elf, Gabriel Wings and Witch's Broomstick (#158).**
+  Three charms of ForgePact's own, each with its own icon in the bag and on
+  the ground and a gold **Flight** line in its tooltip. While you wear one in
+  your charm slots, you walk through rocks, fences, carts, trees and other
+  scenery, and your character is drawn in front of it instead of hidden
+  behind it. Walls, zone gates, locked doors, monsters and the edge of the map
+  still stop you. Take the charm off while you stand inside a prop and you can
+  still walk out; nothing moves you on its own.
+  - **Pocket Elf** (Satanic, one cell) can drop among the game's own unique
+    items.
+  - **Gabriel Wings** (Angelic, 2x2 cells) also lowers the physical and the
+    magic damage you take, each by 1 to 12%. It can drop from the game's own
+    Angelic roll.
+  - **Witch's Broomstick** (Unholy, one cell wide and five tall) also adds 10
+    to 100% movement speed. It can drop from the game's own Angelic roll.
+
+  Each charm's drop has its own switch in Mods → Items, all off by default. A
+  switch only lets that charm drop, about as rarely as one particular unique
+  of the game's own does; it changes no drop chance. A charm you already own
+  works whether its switch is on or off.
+  If a charm's full size no longer fits where it was saved, it loads at one
+  cell in its own place instead of disappearing, and is full size again the
+  next time it fits. Offline play only. Not yet checked in a game session.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
-switch) and the panel (its switch on the Mods tab), so updating only one of
-them leaves the other behind. Your existing settings are retained. Start the
+switch and the three flight charms) and the panel (their switches on the Mods
+tab), so updating only one of them leaves the other behind. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 

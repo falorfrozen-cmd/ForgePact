@@ -54,7 +54,8 @@ that suspends the game's own loop.
 - **Decision:** recorded from Live 1 (§ Decision). `dress-added` reads
   `item-missing`, the value added for the outcome S17 measured: the dressed
   charm missing after the reload, with no crash and no overlap.
-- **Later phases:** phase 2, the mod, is planned from this phase's Decision.
+- **Later phases:** phase 2, the mod, is planned from this phase's Decision
+  and built (§ Phase 2: the mod); its Mod live procedure 1 has not run yet.
 
 ## Static search
 
@@ -1050,3 +1051,293 @@ observed".
   in 222 for the measured lengths.
 - `InstancePlaceTallest` gathers the instances at a place and answers the
   tallest, or `noone`, as § 19.6 of RDM already says.
+
+### The items
+
+Three built-in Custom Forge entries, recognised and dressed the way the
+signature items are. Each is saved as a plain normal Small Charm (type 10,
+`b` 0, `c` 0, `j` 0) whose seed `a` falls in its own range, and its rolls are
+decoded from the seed's offset into that range:
+
+| | Pocket Elf | Gabriel Wings | Witch's Broomstick |
+| --- | --- | --- | --- |
+| word (`flightcharm`, panel key) | `elf`, `mod_flight_elf` | `wings`, `mod_flight_wings` | `broom`, `mod_flight_broom` |
+| rarity (`"27"`) | 6, Satanic | 7, Angelic | 10, Unholy |
+| tier (`"32"`) | 5 (SS) | 5 (SS) | 5 (SS) |
+| footprint (`"2"` x `"3"`) | 1x1 | 2x2 | 1x5 |
+| stats | none | 159 and 160, each 1..12 | 25, 10..100 |
+| seeds | 777100 | 777200..777343, one per (physical, magic) pair | 777400..777490, one per value |
+
+Every charm shows one gold affix row reading `Flight`, carries `fp_mechanic`
+`flight`, and has a line of lore. Its native stats are removed. On
+`CreateItemNew`'s outermost return the dressing also writes the footprint
+under `"2"` and `"3"` and our bag icon under `"11"`, before the item's hash is
+refreshed. A sidecar entry for the same item is matched first and still wins.
+
+The seed layout is a save format: a save keeps only the compact definition, so
+changing a range after release re-rolls every copy a player owns. With
+ForgePact removed, a charm loads as a plain 1x1 Small Charm (Live 1's
+`dress-removed: safe`). With ForgePact installed, a charm is dressed whatever
+its switch says. Dressing a charm arms flight; it never installs a hook from
+inside `CreateItemNew`.
+
+### Flight
+
+The lever is the one Live 1 measured crossing (`all scripts`), narrowed to the
+rows that answered there: the five builtins jumpscenery already hooks
+(`position_meeting`, `place_meeting`, `collision_line`, `instance_position`
+and `collision_circle`) and `InstancePlaceTallest`. The five builtin rows that
+answered nothing in Live 1's S7 (`place_free`, `instance_place`,
+`collision_point`, `collision_rectangle` and `tilemap_get_at_pixel`) stay
+unhooked, and so do `CanMove` and `TilePlaceMeeting`, which were never called.
+
+Only the local player's own blocked queries are touched, and only while
+flight is on (a flight charm is in `localCharmItemArray`, read as variables,
+offline only) or residual. The equipped state is refreshed at most once a
+frame, by the first such query of that frame, at the point of use. The
+original always runs first and a free answer stands. A blocked answer becomes
+"nothing there" when the object it names is `Collision_Parent_obj` or a
+descendant, is not `Wall_Parent_obj` or `Lock_obj` or a descendant of either,
+a re-run of the same query against each of those two blocks nothing, and
+every point the query names lies inside the room. Anything else, monsters
+included, keeps its real answer. `InstancePlaceTallest`'s answer is tested
+the same way, by the object of the instance it returned.
+
+Taking the charm off while overlapping the family leaves flight residual: the
+answers go on until the saved original `place_meeting` at the player's own
+position reads free, and then flight is off. The player is never moved.
+
+The five builtin detours are one shared install, used by jumpscenery and by
+flight. Each runs the original once, then lets jumpscenery decide (with its
+switch on), then flight. jumpscenery's behaviour and its stat line are
+unchanged. Online, flight reads nothing and stays off.
+
+### Drawing in front
+
+`UpdateDepth` is hooked by its SDK name. After the game's own call, when
+`self` is the local player and flight is on, the player's `layer` is set to
+the room's front game layer: the end of the room's `global.gameLayer` list
+whose layer depth is lower, read by name once per room. `yDepthSet` is left as
+the game set it. Which end is in front is chosen at runtime because the static
+reading did not settle it; Mod live procedure 1's `flight-depth` records it.
+For any other `self` the detour costs one compare, and it is installed only
+once flight is armed.
+
+### The size guard
+
+`ParseItemToGrid` and `InventoryGridAddItemPos` are hooked by their SDK names,
+installed with the Custom Forge's own hooks, because the dressing they protect
+runs on every load. Each load opens a scope. Inside it, a placement of a
+flight charm larger than 1x1 is held back and answered true (the load ignores
+the answer, RDM § 22.6). When the load returns, every vanilla item of that grid
+is in place; each held charm is then placed at its full footprint, or, when
+that is refused, written 1x1 under `"2"` and `"3"`, its hash refreshed, tagged
+`fp_flight_guarded`, and placed at its own saved cell (`kept=`, or `failed=`
+when even that is refused). So no vanilla item can be displaced and the order
+of the saved entries never matters. Outside a load nothing changes: a drag
+onto a cell where the charm does not fit stays refused, as in the game. A
+guarded charm stays 1x1 for the rest of the session. Whether grids other than
+the bag place through this route is not established; `stash-size` and
+`charm-grid-size` look.
+
+### The ground icon
+
+Six PNGs, the owner's own art, sit in `assets/flight-charms/` with their
+manifest: a bag icon and a ground copy per charm (bag 32x32, 64x64 and 32x160;
+ground 16x16, 24x24 and 34x17). `make_flight_charm_icons.py` embeds them in
+the plugin and checks them. At the first dressing that needs one, each is
+written under `bp_ipc\flightcharms\` only when no file of that name is there
+and loaded with `sprite_add`, once a session. A failed load writes nothing
+and the charm keeps the Small Charm's icon.
+
+The ground draws `Error_spr` for a runtime sprite because the game looks for a
+`Pickup_` companion by name (RDM § 22.7). So flight rides hidden loot's one
+shared `LootGroundInit` detour as its third consumer, after hidden loot and
+loot announcements: after the game's call, when the new ground item holds a
+flight charm wearing our bag icon, its `sprite_index` becomes our ground copy
+(`ground=` on the stat line). It never takes a detour of its own.
+
+### Drops
+
+Each panel switch gates only its own charm's drop, on #74's machinery (the
+typing, hit and rewrite hooks of the Angelic roll, RDM § 13.4):
+
+- **Gabriel Wings and Witch's Broomstick** join the Angelic roll's
+  `lootListUnique[5]` for the length of each roll, through a stand-in of the
+  same shape (Water Melon for the Wings, Soul Collector for the Broomstick). A
+  hit on the stand-in falls to the charm with the added entry's share, and its
+  record is rewritten at `CreateItemNew`'s entry to the charm's definition,
+  with a uniformly drawn roll, so the game builds it.
+- **Pocket Elf** joins the ordinary unique roll. `DropUniqueItems` is hooked
+  by its SDK name, only from `flightcharm elf 1`, and for the length of each
+  call one stand-in entry goes onto each of `lootListUnique[0..4]` and comes
+  off again. Because that roll draws once and cannot say which sub-list it
+  drew from (RDM § 22.8), the coin is exact only when the stand-in occurs
+  equally often in all five. The stand-in is therefore the first of Aimbot.exe,
+  Witches Claw, Traveler's Map Journal, Crow's Feather and Hello its me,
+  Steve! with the same count in every sub-list that also passes the roll's own
+  filter; with none, the switch refuses and says so.
+
+The stand-in keeps its own rate, and ForgePact adds no die. The research
+build's `flightprobe copies <k>` pushes k entries per charm instead of one, so
+a live session sees hits; `sigdrop status` is unchanged and the flight
+counters print on `flightcharm stat`.
+
+### Hooks
+
+Everything is resolved by name, and every script hook goes through
+`HookOneScript` and refuses when only the table swap went in:
+
+- with the Custom Forge's hooks, at startup: `ParseItemToGrid` and
+  `InventoryGridAddItemPos` (the size guard);
+- once flight is armed and a character resolves (looked for every 60 frames
+  through `HhResolveLocalPlayer`): the shared `LootGroundInit` detour,
+  `InstancePlaceTallest`, `UpdateDepth` and the five shared builtins. A
+  refusal prints one `flightcharm: refused - <why>` line and is final for the
+  session;
+- from a drop switch turned on: #74's detection hooks, `DropUniqueItems`
+  (Pocket Elf only) and the shared `LootGroundInit` detour.
+
+In the research build flight refuses while `citrace` or `jumpprobe` holds one
+of its hooks, and those two refuse while flight holds them; the research rows
+that hook `DropUniqueItems` and Pocket Elf's switch refuse each other the same
+way.
+
+### Mod live procedure 1
+
+The session that proves the mod, on the research build (`build.bat dev`) at
+the commit where every code item and the docs are done. The owner installs the
+DLL when asked, and its SHA-256 is recorded. Like phase 1's, this procedure
+leaves the debugger's addresses out on purpose: they never enter a tracked
+file and are kept in the session's local notes.
+
+**Setup.** Save slot 14, "Sorak", in `Town_01_rm`. The saves are backed up
+before the launch and restored at teardown whatever happened. Before the
+launch the operator confirms that the build the debugger addresses were read
+from is the one installed; otherwise the session is aborted. At character
+select, `jumpscenery 0`. None of `jumpprobe hook`, `citrace 1`,
+`angelicprobe on`, `gambaprobe`, `prospectprobe` or `craftprobe` is used,
+because each holds a script or builtin flight needs; `raredrop angelic` and
+`angelicprobe hit chance` are #74's levers and are allowed. Teardown: the
+debugger detached first, then the game stopped, the saves inspected and
+restored, and the lease released.
+
+**Cases.** One family prop, with a wall spot as the outlier; one tall prop for
+the draw order; the bag for the guard, with the charm grid and the stash as
+the other grids; each drop route once; all three icons. Not tried, and so
+"not observed live": monsters, gates, locks, map edges outside town, co-op,
+and drops at the natural chance (every drop here uses a research lever).
+
+**Steps, in order:**
+
+- S0 `dll-hash`: the installed DLL's SHA-256 equals the build's.
+- S1 `marker`: a bare `flightprobe` begins `flightprobe: marker=flp1`;
+  `control`: `ping` answers `pong (YYTK 4.0.1)`.
+- S2 `fresh-off`: `flightcharm stat` is exactly the fresh-session line, every
+  switch off, `install=not-armed state=off equipped=none`, every counter 0,
+  `icons=not-loaded`, `gate=off` and `standin-elf=none`.
+- S3 `ground-control`: `charmprobe spawn 0` answers `ground=new id=<n>
+  placed`, and `flightprobe ground` names a `Pickup_` sprite of the game's
+  Small Charm and reads `game`.
+- S4 `ground-icon`: `flightprobe spawn` for each charm (the elf, the wings at
+  12 and 1, the broom at 100), each followed by `flightprobe ground`; all
+  three read their own name and `ours`, and a screenshot shows our three icons
+  on the ground and no ERROR sprite.
+- S5 `bag-icon`: the person picks all four into the bag and hovers each flight
+  charm. A bag screenshot shows our icons, the Wings on 2x2 cells and the
+  Broomstick on 1x5; each tooltip shows its name, its rarity's colour and a
+  gold `Flight` row.
+- S6 `walk-baseline`: with the charms in the bag, not worn, `flightcharm stat`
+  reads `install=installed state=off`, and a 3 s walk down at phase 1's
+  ravine edge does not move the player.
+- The debugger is attached and four logpoints armed, the control first:
+  `dbg-control` on `CheckTalentUse`, then the player Step event's two calls
+  to `UpdateDepth` and `ParseItemToGrid`'s call to `InventoryGridAddItemPos`.
+- S7 `depth-control`: the person stands Sorak just north of a tall prop that
+  covers him and names it. A screenshot shows him hidden, and `flightprobe
+  depth` reads `state=off` with `depth=` different from `front=`.
+- S8 `equip-detect`: the person drags Pocket Elf into the charm grid; the stat
+  reads `state=on equipped=elf`.
+- S9 `flight-depth`: `flightprobe depth` reads `depth=` equal to `front=` with
+  `state=on`, and a screenshot shows Sorak in front of the prop. Which end
+  (`front=` against `back=`) was chosen is recorded.
+- S10, choosing the spot: at the ravine edge and at the church wall,
+  `flightprobe free` toward the edge, once for the family and once for
+  `Wall_Parent_obj`. The prop spot is the first whose family read is `yes` and
+  whose wall read is `no`; a spot whose wall read is `yes` is the excluded
+  spot.
+- S11 `flight-prop`: at the prop spot, a 3 s walk across it moves the player
+  100 px or more past the start, and `answered=` rises.
+- S12 `flight-excluded`: at the excluded spot, a 3 s walk passes when the
+  player moved under 20 px and `excluded=` rose, fails at 100 px or more, and
+  is not-observed when no spot read `yes` for the wall.
+- S13 `flight-ends-inside`: a short step into the ravine edge leaves the
+  player inside it (`flightprobe free` reads `blocked=yes`); the person moves
+  Pocket Elf to the bag and the stat reads `state=residual`. Walks of 1 s, at
+  most three, end with `blocked=no` and `state=off`, the position changing on
+  the first; a 3 s walk back then stops at the prop's side. No movement while
+  residual fails, and `playerwarp` recovers.
+- S14 `charm-grid-size` and `rolls`: with the Wings and the Broomstick in the
+  charm grid, `charmprobe charms` lists `Gabriel Wings size=2x2 rarity=7`
+  with `itemstats=` exactly `159=12;160=1`, and `Witch's Broomstick size=1x5
+  rarity=10` with exactly `25=100`; a screenshot is taken.
+- S15 `stash-size`: the person drags the Broomstick into an empty stash tab; a
+  screenshot of 1x5 cells passes, 1x1 fails. It goes back to the charm grid.
+- S16, the guard's setup: `flightprobe dress off`, a Wings spawned at 3 and 4,
+  dropped by the person on a bag cell whose right and lower neighbours are
+  occupied (it is 1x1 now; screenshot), then `flightprobe dress on`.
+- S17, the reload: save and quit to character select, and slot 14 again.
+  `guard-kept`: the 3/4 Wings is at its cell at 1x1, both neighbours are
+  intact, and the stat reads `kept=1 failed=0`. `guard-control`: the worn
+  Wings is 2x2 and the Broomstick 1x5. `reload-identity`: the same names,
+  rarities and `itemstats=` as S14.
+- The debugger is detached, its reply and the outside thread check quoted.
+  `dbg-step-depth` passes when either `UpdateDepth` call logged during S7 to
+  S9 while the control logged; `dbg-parse-place` passes when the placement
+  call logged during S17's reload while the control logged.
+- S18 `unique-control`: with every switch off, `flightprobe unique 10` reads
+  `placed=` of 1 or more and `elf=0`.
+- S19 `drop-elf`: `flightcharm elf 1` reads `gate=on` and `standin-elf=`
+  names one of the five candidates; `flightprobe copies 200`, then
+  `flightprobe unique 20`. Passes when `elf=` reads 3 or more, the stat's
+  `elf=<ours>/<built>` has two equal values of 3 or more, `refused=0` and
+  `anomalies=0`, and `flightprobe ground` reads `Pocket Elf ours`.
+- S20 `drop-angelic`: in `Act_01_01`, `raredrop angelic 2`, `angelicprobe hit
+  chance 1000000000`, `flightcharm wings 1` and `flightcharm broom 1`; the
+  person kills in batches of 10, at most four, until both charms have one
+  built. Passes when ours equals built for both, `refused=0` and
+  `anomalies=0`, and a hovered ground drop reads Gabriel Wings or Witch's
+  Broomstick.
+- S21 `drop-off`: all three switches off (`switches` all `off`), then
+  `flightprobe unique 10` and one batch of 10 kills leave `elf=`, `wings=`,
+  `broom=` and `injected=` unchanged.
+
+**Checks**, in the capture's order: `dll-hash`, `marker`, `control`,
+`fresh-off`, `ground-control`, `ground-icon`, `bag-icon`, `walk-baseline`,
+`dbg-control`, `depth-control`, `equip-detect`, `flight-depth`,
+`dbg-step-depth`, `flight-prop`, `flight-excluded`, `flight-ends-inside`,
+`charm-grid-size`, `rolls`, `stash-size`, `guard-kept`, `guard-control`,
+`reload-identity`, `dbg-parse-place`, `unique-control`, `drop-elf`,
+`drop-angelic` and `drop-off`.
+
+- **Validity**, which must pass: `dll-hash`, `marker`, `control`,
+  `ground-control`, `walk-baseline`, `dbg-control`, `depth-control`,
+  `guard-control` and `unique-control`.
+- **Acceptance**: `fresh-off`, `ground-icon`, `bag-icon`, `equip-detect`,
+  `flight-depth`, `flight-prop`, `flight-ends-inside`, `charm-grid-size`,
+  `rolls`, `guard-kept`, `reload-identity`, `drop-elf`, `drop-angelic` and
+  `drop-off`.
+- **Research**, where a fail or a not-observed is itself the finding:
+  `dbg-step-depth`, `flight-excluded`, `stash-size` and `dbg-parse-place`.
+
+**What it relies on.** The ravine edge and the church wall positions from
+phase 1's Live 1 (S5 and the wall repeats); the blockers,
+`Block_Dynamic_Sprite_obj` and `Wall_Parent_obj`'s family (RDM § 19.6,
+measured, and § 19.8, from the data file); `InstancePlaceTallest` (§ 19.6,
+measured); `UpdateDepth` (§ 19.7, static); `ParseItemToGrid` and
+`InventoryGridAddItemPos` (§ 22.6, static); `LootGroundInit` (§ 22.7,
+static); `DropUniqueItems` (§ 22.4 and § 22.8, static: its by-name call shape
+is not proven, which is why `unique-control` is its control); the Angelic
+roll and its hooks (RDM § 13.4 and `angelic-roll-hook-research.md` § Session
+3 to 5, measured); the charm read and the size and sprite keys (RDM § 22.1,
+§ 22.2 and § 22.5, measured).
