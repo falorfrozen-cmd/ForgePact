@@ -51,9 +51,9 @@ that suspends the game's own loop.
   the five validity checks passed; 21 of 26 checks pass, 3 fail and 2 are
   not-observed. The measured facts about the game are also in
   `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 21, relabelled as measured.
-- **Decision:** recorded from Live 1 (§ Decision), except `dress-added`,
-  whose outcome (the dressed charm missing after the reload) is none of the
-  key's listed values and reads `pending` until the key is given one.
+- **Decision:** recorded from Live 1 (§ Decision). `dress-added` reads
+  `item-missing`, the value added for the outcome S17 measured: the dressed
+  charm missing after the reload, with no crash and no overlap.
 - **Later phases:** phase 2, the mod, is planned from this phase's Decision.
 
 ## Static search
@@ -740,7 +740,7 @@ read back clean.
 | `size-override` | pass | A charm whose built struct was written 2x2 before it was placed read `getitemsize=2x2` from a new ground item and covered 2x2 cells in the bag. |
 | `dress-removed` | pass | After a save and quit and a reload of slot 14 in the same process, with no size rule in force, the 2x2 charm came back 1x1 with its normal icon. Nothing was lost, duplicated or overlapped. |
 | `sprite-save` | pass | After a full stop and a relaunch that never loaded our sprite, the game loaded slot 14 and the charm that had carried it drew a normal small-charm icon in the bag. Its stored sprite value could not be read, because `charmprobe charms` lists the charm grid and the charm was in the bag, so the verdict rests on the icon. S16's in-process reload had already shown the base icon. |
-| `dress-added` | fail | A 1x1 charm whose right and lower neighbours were occupied was given a 2x2 rule, saved and reloaded: the rule applied (`dressed=1`) and the game did not crash, and both neighbours were intact and not overlapped, but the dressed charm was no longer at its cell or anywhere on Extra tabs 1 to 3. The Main tab and Extra tab 4 were not checked before the saves were restored, so where it went is not established. The outcome, an item missing after the reload, is none of the check's three values. |
+| `dress-added` | fail | A 1x1 charm whose right and lower neighbours were occupied was given a 2x2 rule, saved and reloaded: the rule applied (`dressed=1`) and the game did not crash, and both neighbours were intact and not overlapped, but the dressed charm was no longer at its cell or anywhere on Extra tabs 1 to 3. The Main tab and Extra tab 4 were not checked before the saves were restored, so where it went is not established. The outcome, an item missing after the reload, is none of the check line's three values, so the check reads `fail`; § Decision records it as `item-missing`. |
 
 Also observed, not a check: arming a hardware logpoint stalled the game's
 frames for up to about 4.7 s while the debugger set it, and both processes'
@@ -793,8 +793,9 @@ run.
 
 Every key below read `pending` until Live 1 ran. Each takes exactly one of
 its listed values, on a line of its own, with the check that decides it on
-the line after. Recorded from Live 1 (2026-10-12, § Results); `dress-added`
-still reads `pending`, because its outcome is none of its listed values.
+the line after. Recorded from Live 1 (2026-10-12, § Results). `dress-added`
+took `item-missing`, a value added after the session for the outcome S17
+measured, which none of its first three values described.
 
 walk-lever: all-scripts
 
@@ -879,11 +880,14 @@ Decided by `dress-removed` (pass): the reload brought the charm back 1x1, nothin
 
 `dress-removed:` (S16): `safe`, `unsafe` or `not-run`.
 
-dress-added: pending
+dress-added: item-missing
 
-Not recorded: `dress-added` failed because its outcome, the dressed charm gone from its cell and from Extra tabs 1 to 3 after the reload with no crash and no overlap, is none of the listed values (§ Results).
+Decided by `dress-added` (fail, outcome `item-missing`): after the reload the rule applied (`dressed=1`), the game did not crash and the neighbours were intact and not overlapped, but the dressed charm was neither at its cell nor on Extra tabs 1 to 3; the Main tab and Extra tab 4 were not checked. The check reads `fail` because the check line knows only `safe`, `overlap` and `crash`; the value is this key's, below.
 
-`dress-added:` (S17): `safe`, `overlap`, `crash`, `not-observed` (a bare
+`dress-added:` (S17): `safe`, `overlap`, `crash`, `item-missing` (a bare
+`charmprobe dress` read `dressed=` above 0 after the reload, the game did not
+crash and nothing overlapped, but the dressed charm was not at its cell or on
+any tab checked; the note names the tabs not checked), `not-observed` (a bare
 `charmprobe dress` read `dressed=0` after the reload, so the reload measured
 the undressed charm) or `not-run`.
 
@@ -964,7 +968,8 @@ that key `11` holds the display sprite. What is still open:
   a charm whose neighbours were occupied, it was neither at its cell nor on
   Extra tabs 1 to 3; the Main tab and Extra tab 4 were not checked, and the
   saves were restored. Whether the game dropped it, moved it, or kept it
-  undrawn is not established, and `dress-added` has no value yet.
+  undrawn is not established; `dress-added: item-missing` records only that
+  it was not found where it was looked for.
 - **Whether every reader of a size goes through `GetItemSize`.** The bag
   honoured the 2x2 footprint; other grids (the charm grid, the stash, the
   crafting grid) were not tried.
