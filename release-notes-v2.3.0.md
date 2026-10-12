@@ -45,7 +45,8 @@ fresh fight.
   include loot left on its floor (not tested). A piece is an Edible PAS Logo
   underneath, so your save needs no new item from ForgePact to load; what a
   piece shows and does with ForgePact removed has not been checked. Checked in
-  play with this release's plugin, in Acts 1 and 2: monsters dropped named
+  play on 2026-10-12 with a player build from before the stacks were added, in
+  Acts 1 and 2: monsters dropped named
   pieces, and none with the switch off (those drops were forced with the
   `soulpiece force on` command, so the 1 in 7,200 chance itself was not seen in
   play); a piece used in a zone or in town took the character straight to the
