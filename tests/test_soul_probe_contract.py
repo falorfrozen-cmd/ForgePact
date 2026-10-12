@@ -530,6 +530,10 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertIn(write, dress)
         self.assertLess(dress.index("if (g_Sp.icon && g_SpIconReady)"), dress.index(write))
         self.assertLess(dress.index(write), dress.index("RefreshItemHash(item);"))
+        # ...and on a key base only: a legacy piece's key "11" is the shipped
+        # dress's alone, so the bag check on one measures the shipped route.
+        self.assertLess(dress.index("if (g_Sp.baseCategory == kSpKeyCategory)"),
+                        dress.index("if (g_Sp.icon && g_SpIconReady)"))
         # `ground` reads Loot_Ground_obj by its SDK name, near the player, and
         # the sprite the ground instance draws, by name.
         ground = self.body("static void SpGroundCommand()")
