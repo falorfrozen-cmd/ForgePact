@@ -54516,6 +54516,471 @@ static void FlightCharmTick()
 }
 // ---- end of the flight charms flight adapter
 
+#ifndef FORGEPACT_RELEASE
+// ---- flightprobe: the flight charms' phase 2 instrument (ForgePact #158) ----
+// Research build only, never in kPlayerCommands; RunCommand's early return for
+// it sits inside the same guard, so neither the verb nor an Flp* name reaches
+// a player build. It serves the flight charms' phase 2 live session
+// (docs/flight-charms-research.md), and changes nothing until a form that
+// spawns, drops or sets a research value is sent:
+//
+//   - `spawn elf|wings|broom [<p> <m> | <s>]` builds a charm with its own seed
+//     (the top roll unless the rolls are named) by charmprobe spawn's loader
+//     route (json -> InitItemFromJson -> LootGroundCreateFromItem at the
+//     player), so the Custom Forge dresses it as it would the game's own drop.
+//     The shared ground-icon hook (hidden loot's one LootGroundInit detour)
+//     goes in first, as a drop switch turned on does;
+//   - `ground` reads the newest Loot_Ground_obj, by charmprobe's
+//     newest-id scan: its item's name, and whether its sprite is one of ours,
+//     the game's own, or the game's fallback Error_spr (RDM § 22.7);
+//   - `free [dx dy] [family|<object name>]` asks the shared collision detours'
+//     saved originals of place_meeting and instance_position, as `jumpprobe
+//     free` asks its own: no detour (jumpscenery's or flight's) answers;
+//   - `depth` reads the player's layer and its depth beside the room's two
+//     layer ends, through the flight adapter's own read, and writes nothing;
+//   - `dress off|on` suspends or restores the footprint write alone, so a
+//     charm can be saved at 1x1 for the size guard's live check;
+//   - `copies <k>` sets how many stand-in copies each switched-on charm pushes
+//     onto each list, on both rolls (the player build's constant 1);
+//   - `unique <n>` calls DropUniqueItems by name with the local player as
+//     self and other, at its position, and reads what each call placed by the
+//     same newest-id scan. The game's own caller is a monster's death, so
+//     this call shape is not the game's, the same caveat as `charmprobe
+//     heroic`;
+//   - `stat` prints `flightcharm stat`'s lines, then this instrument's own.
+//
+// Every game name is an hs-game-sdk constant or read back by name; nothing
+// here computes an address or installs a hook of its own.
+
+static constexpr const char* kFlpMarker = "flp1";
+// The game's fallback ground sprite when an icon has no Pickup_ companion
+// (RDM § 22.7, static reading), compared by the name sprite_get_name reads.
+static constexpr const char* kFlpErrorSprite = "Error_spr";
+static constexpr int kFlpMaxCopies = 400;
+static constexpr int kFlpMaxUnique = 20;
+
+// Game thread only, like every command.
+static long g_FlpSpawned = 0;        // `spawn`s that placed a ground item
+static long g_FlpUniqueCalls = 0;    // DropUniqueItems calls `unique` made
+static long g_FlpUniquePlaced = 0;   // of those, the ones that placed a ground item
+static long g_FlpUniqueElf = 0;      // of those, the ones that placed Pocket Elf
+
+// A field as text: a number, string or bool as it reads, anything else
+// described; `missing` when the owner has no such field.
+static std::string FlpText(const RValue& owner, const char* name)
+{
+    RValue v;
+    return FlightField(owner, name, v) ? FcpValueText(v) : std::string("missing");
+}
+
+// Loot_Ground_obj's index, by its SDK name; -1 when it does not resolve.
+static double FlpGroundObject()
+{
+    double index = -1;
+    try {
+        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), index))
+            return -1;
+    } catch (...) { return -1; }
+    return index;
+}
+
+// The item a ground instance holds; an unset value when it holds none.
+static RValue FlpGroundItem(const RValue& ground)
+{
+    try {
+        return g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) });
+    } catch (...) {}
+    return RValue();
+}
+
+// An item's name, itemInfoStruct "28".
+static std::string FlpItemName(const RValue& item)
+{
+    RValue info;
+    return FlightField(item, "itemInfoStruct", info) ? FlpText(info, "28") : std::string("unreadable");
+}
+
+// An object's name as object_get_name reads it.
+static std::string FlpObjectName(int obj)
+{
+    try {
+        const RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) });
+        if (n.m_Kind == VALUE_STRING) return n.ToString();
+    } catch (...) {}
+    return "object#" + std::to_string(obj);
+}
+
+static void FlpSpawn(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe spawn: ";
+    FcNs::Charm c = FcNs::Charm::Elf;
+    if (tail.empty() || !FcNs::CharmFromKey(Lower(tail[0]), c)) {
+        Out(tag + "refused usage: spawn elf | spawn wings [<p 1-12> <m 1-12>] | spawn broom [<s 10-100>]");
+        return;
+    }
+    const FcNs::CharmRow& row = FcNs::RowOf(c);
+    const int given = (int)tail.size() - 1;
+    if (given != 0 && given != row.statCount) {
+        Out(tag + "refused " + std::string(row.key) + " takes " + std::to_string(row.statCount)
+            + " roll value(s), or none for the top roll; got " + std::to_string(given));
+        return;
+    }
+    int v[FcNs::kMaxCharmStats] = { 0, 0 };
+    for (int k = 0; k < given; ++k) {
+        const FcNs::StatRoll& s = row.stats[k];
+        long long value = 0;
+        if (!FcpNs::ParseWhole(tail[k + 1], s.lo, s.hi, value)) {
+            Out(tag + "refused stat " + std::to_string(s.id) + "'s value must be a whole number " + std::to_string(s.lo) + ".."
+                + std::to_string(s.hi) + ", not " + tail[k + 1]);
+            return;
+        }
+        v[k] = (int)value;
+    }
+    const long long seed = given == 0 ? FcNs::TopSeed(c) : FcNs::SeedFor(c, v[0], v[1]);
+    FcNs::Rolled rolled;
+    if (seed < 0 || !FcNs::DecodeSeed(seed, rolled)) { Out(tag + "refused the rolls give no seed of " + std::string(row.name)); return; }
+    std::string stats;
+    for (const auto& [id, value] : FcNs::StatsFor(rolled))
+        stats += (stats.empty() ? "" : ";") + std::to_string(id) + "=" + std::to_string(value);
+    if (stats.empty()) stats = "none";
+
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "refused no global instance"); return; }
+    const double ground = FlpGroundObject();
+    if (ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved; nothing was built"); return; }
+    // As a drop switch turned on does: the ground icon rides hidden loot's one
+    // LootGroundInit detour, so it is in before this charm reaches the ground.
+    FlightGroundIconInstall();
+
+    const std::string what = std::string(row.name) + " a=" + std::to_string(seed);
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(seed, FcNs::kCharmBaseB)) });
+        if (parsed.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused json_parse gave " + Describe(parsed)); return; }
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                        { parsed, RValue(FcpNs::SpawnKey(ms)) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            Out(tag + what + " refused InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item));
+            return;
+        }
+        // Dressed: the Custom Forge recognised the seed on CreateItemNew's way
+        // out and marked the item as a flight charm.
+        RValue mechanic;
+        const bool dressed = FlightField(item, "fp_mechanic", mechanic) && mechanic.m_Kind == VALUE_STRING
+            && mechanic.ToString() == std::string(FcNs::kMechanic);
+        int w = 0, h = 0;
+        const std::string size = FlightItemFootprint(item, w, h) ? std::to_string(w) + "x" + std::to_string(h) : std::string("unreadable");
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        const bool appeared = after > before;
+        if (appeared) ++g_FlpSpawned;
+        Out(tag + what + " stats=" + stats + " dressed=" + (dressed ? "yes" : "no") + " name=" + FlpItemName(item) + " size=" + size
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(after) + " placed"
+                        : " ground=none (no new Loot_Ground_obj appeared; LootGroundCreateFromItem returned " + Describe(res) + ")"));
+    } catch (...) { Out(tag + what + " refused an exception while building or placing it"); }
+}
+
+static void FlpGround()
+{
+    const std::string tag = "flightprobe ground: ";
+    const double object = FlpGroundObject();
+    if (object < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    RValue newest;
+    const double id = FcpNewestGround(object, &newest);
+    if (id < 0) { Out(tag + "none (no Loot_Ground_obj in the room)"); return; }
+    const RValue item = FlpGroundItem(newest);
+    double sprite = -1;
+    bool read = false;
+    std::string name = "unreadable";
+    try {
+        const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue("sprite_index") });
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF) {
+            sprite = v.ToDouble();
+            read = std::isfinite(sprite) && sprite >= 0;
+            if (read && g_Yytk->CallBuiltin("sprite_exists", { v }).ToBoolean()) {
+                const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { v });
+                if (n.m_Kind == VALUE_STRING) name = n.ToString();
+            }
+        }
+    } catch (...) { read = false; }
+    // Ours: one of the six icons sprite_add gave us (FlightIconsLoad), bag or
+    // ground; error: the game's fallback; game: any other sprite.
+    std::string verdict = read ? "game" : "unread";
+    for (size_t k = 0; read && k < ForgePact::FlightCharmIcons::kIconCount; ++k)
+        if (g_FlightIconOk[k] && g_FlightIconSprite[k].ToDouble() == sprite) verdict = "ours";
+    if (verdict == "game" && name == kFlpErrorSprite) verdict = "error";
+    Out(tag + "id=" + FcpNs::NumberText(id) + " item=" + FlpItemName(item) + " sprite=" + name + " " + verdict
+        + " index=" + (read ? FcpNs::NumberText(sprite) : std::string("?")));
+}
+
+// jumpprobe free's read, through the shared detours' saved originals: no
+// detour runs, so the answer is the game's. Refused before the detours went
+// in, since without a saved original the call would go through whatever
+// holds the builtin.
+static void FlpFree(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe free: ";
+    const TRoutine meeting = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    const TRoutine position = g_JsOrig[(int)JsNs::Builtin::InstancePosition];
+    if (!meeting || !position) {
+        Out(tag + "refused - place_meeting and instance_position have no saved original yet (the shared detours go in"
+            " when flight installs, or with `jumpscenery 1`); nothing asked");
+        return;
+    }
+    double offset[2] = { 0.0, 0.0 };
+    int numbers = 0;
+    std::string asked;
+    for (const std::string& a : tail) {
+        double v = 0.0;
+        bool number = false;
+        try { size_t used = 0; v = std::stod(a, &used); number = used == a.size() && std::isfinite(v); } catch (...) {}
+        if (number) {
+            if (numbers == 2) { Out(tag + "'" + a + "' is a third number; usage -> free [dx dy] [family|<object name>]; nothing asked"); return; }
+            offset[numbers++] = v;
+            continue;
+        }
+        if (!asked.empty()) {
+            Out(tag + "'" + a + "' names a second object after '" + asked + "'; usage -> free [dx dy] [family|<object name>]; nothing asked");
+            return;
+        }
+        asked = a;
+    }
+    if (numbers == 1) { Out(tag + "dx and dy come as a pair; usage -> free [dx dy] [family|<object name>]; nothing asked"); return; }
+    int target = -1;
+    std::string askedText;
+    if (asked.empty() || Lower(asked) == "family") {
+        try {
+            target = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightFamily))) }).ToDouble();
+        } catch (...) { target = -1; }
+        if (target < 0) { Out(tag + "refused - Collision_Parent_obj did not resolve by name; nothing asked"); return; }
+        askedText = "family:" + FlpObjectName(target) + "(" + std::to_string(target) + ")";
+    } else {
+        try {
+            target = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(asked) }).ToDouble();
+            if (target >= 0 && !g_Yytk->CallBuiltin("object_exists", { RValue((double)target) }).ToBoolean()) target = -1;
+            if (target >= 0) {
+                const RValue back = g_Yytk->CallBuiltin("object_get_name", { RValue((double)target) });
+                if (back.m_Kind != VALUE_STRING || back.ToString() != asked) target = -1;
+            }
+        } catch (...) { target = -1; }
+        if (target < 0) {
+            Out(tag + "refused - '" + asked + "' is not an object name (asset_get_index did not give an object whose"
+                " object_get_name reads it back); nothing asked");
+            return;
+        }
+        askedText = asked + "(" + std::to_string(target) + ")";
+    }
+    CInstance* inst = nullptr;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    if (!inst) { Out(tag + "refused - no local player resolved: load a character"); return; }
+    std::string line;
+    try {
+        const RValue self = inst->ToRValue();
+        const RValue x = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("x") });
+        const RValue y = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("y") });
+        if (!JsNumber(x) || !JsNumber(y)) { Out(tag + "refused - the player's x, y are not numbers; nothing asked"); return; }
+        // With no offset the player's own x, y go in unchanged, whatever kind
+        // the runtime gave them.
+        const bool moved = offset[0] != 0.0 || offset[1] != 0.0;
+        const RValue qx = moved ? RValue(x.ToDouble() + offset[0]) : x;
+        const RValue qy = moved ? RValue(y.ToDouble() + offset[1]) : y;
+        RValue meetArgs[3] = { qx, qy, RValue((double)target) };
+        RValue met;
+        meeting(met, inst, inst, 3, meetArgs);
+        RValue posArgs[3] = { qx, qy, RValue((double)target) };
+        RValue at;
+        position(at, inst, inst, 3, posArgs);
+        const int by = JsObjectIndexOf(at);
+        line = std::string("flightprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")
+            + " by=" + (by >= 0 ? FlpObjectName(by) : std::string("none"))
+            + " x=" + FcpNs::NumberText(x.ToDouble()) + " y=" + FcpNs::NumberText(y.ToDouble())
+            + " dx=" + FcpNs::NumberText(offset[0]) + " dy=" + FcpNs::NumberText(offset[1])
+            + " asked=" + askedText;
+    } catch (...) { line = tag + "unreadable (a read or a saved original threw); nothing answered"; }
+    Out(line);
+}
+
+// The player's layer and its depth beside the room's two layer ends, the way
+// the flight adapter reads them (FlightLayerEnds, ChooseFrontLayer). That read
+// caches the ends' values for the adapter's write; they are put back, so this
+// changes nothing.
+static void FlpDepth()
+{
+    const std::string tag = "flightprobe depth: ";
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, true);
+    std::string layerText = "unreadable", depthText = "unreadable";
+    try {
+        const RValue layer = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("layer") });
+        if (JsNumber(layer) || layer.m_Kind == VALUE_REF) {
+            layerText = FcpNs::NumberText(layer.ToDouble());
+            const RValue d = g_Yytk->CallBuiltin("layer_get_depth", { layer });
+            if (JsNumber(d)) depthText = FcpNs::NumberText(d.ToDouble());
+        }
+    } catch (...) {}
+    std::string frontText = "unreadable", backText = "unreadable", end = "unreadable";
+    int64_t room = -1;
+    const RValue kept[2] = { g_FlightLayerValue[0], g_FlightLayerValue[1] };
+    FcNs::LayerEnd first, last;
+    if (FlightRoom(room) && FlightLayerEnds(room, first, last)) {
+        int64_t front = -1;
+        if (FcNs::ChooseFrontLayer(first, last, front)) {
+            const bool firstFront = first.depth < last.depth;
+            frontText = FcpNs::NumberText((firstFront ? first : last).depth);
+            backText = FcpNs::NumberText((firstFront ? last : first).depth);
+            end = firstFront ? "first" : "last";
+        } else {
+            frontText = backText = "none";
+            end = "none(equal depths " + FcpNs::NumberText(first.depth) + ")";
+        }
+    }
+    g_FlightLayerValue[0] = kept[0];
+    g_FlightLayerValue[1] = kept[1];
+    Out(tag + "layer=" + layerText + " depth=" + depthText + " front=" + frontText + " back=" + backText + " y=" + FcpNs::NumberText(y)
+        + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState())) + " front-end=" + end
+        + " room=" + (room >= 0 ? std::to_string(room) : std::string("unreadable")));
+}
+
+// `dress off|on`: the footprint write of the Custom Forge's final pass
+// (FlightCharmDressFinal) alone; the icon and every other field are written
+// as before.
+static void FlpDress(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe dress: ";
+    if (tail.size() > 1 || (tail.size() == 1 && Lower(tail[0]) != "off" && Lower(tail[0]) != "on")) {
+        Out(tag + "refused usage: dress off | dress on");
+        return;
+    }
+    if (tail.size() == 1) {
+        const bool on = Lower(tail[0]) == "on";
+        g_FlightDressFootprint = on;
+    }
+    Out(tag + "footprint write " + (g_FlightDressFootprint ? "on" : "off"));
+}
+
+// `copies <k>`: the stand-in copies each switched-on charm pushes onto each
+// list, read by both rolls' pushes (FlightDropUniquePush, FlightDropAngelicPush)
+// at the next roll.
+static void FlpCopies(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe copies: ";
+    long long k = 0;
+    if (tail.size() != 1 || !FcpNs::ParseWhole(tail[0], 1, kFlpMaxCopies, k)) {
+        Out(tag + "refused usage: copies <k>, k a whole number 1.." + std::to_string(kFlpMaxCopies) + " (now "
+            + std::to_string(g_FlightDropCopies) + ")");
+        return;
+    }
+    const int was = g_FlightDropCopies;
+    g_FlightDropCopies = (int)k;
+    Out(tag + std::to_string(k) + " (was " + std::to_string(was) + ") stand-in copies per switched-on charm on each list,"
+        " on both rolls, from the next roll");
+}
+
+static void FlpUnique(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe unique: ";
+    long long n = 0;
+    if (tail.size() != 1 || !FcpNs::ParseWhole(tail[0], 1, kFlpMaxUnique, n)) {
+        Out(tag + "refused usage: unique <n>, n a whole number 1.." + std::to_string(kFlpMaxUnique));
+        return;
+    }
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    const double ground = FlpGroundObject();
+    if (ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    int placed = 0, elf = 0;
+    for (int i = 1; i <= (int)n; ++i) {
+        const std::string line = "flightprobe unique #" + std::to_string(i) + ": ";
+        ++g_FlpUniqueCalls;
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropUniqueItems, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { Out(line + "threw"); continue; }
+        if (!AurieSuccess(st)) { Out(line + "threw (the call answered st=" + std::to_string((int)st) + ")"); continue; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        if (after <= before) { Out(line + "nothing placed (returned " + Describe(res) + ")"); continue; }
+        ++placed;
+        ++g_FlpUniquePlaced;
+        const RValue item = FlpGroundItem(newest);
+        RValue info;
+        const std::string rarity = FlightField(item, "itemInfoStruct", info) ? FlpText(info, "27") : std::string("unreadable");
+        FcNs::Rolled rolled;
+        if (FlightCharmOf(item, rolled) && rolled.charm == FcNs::Charm::Elf) {
+            ++elf;
+            ++g_FlpUniqueElf;
+        }
+        Out(line + "placed " + FlpItemName(item) + " rarity=" + rarity);
+    }
+    // The game's own caller is a monster's death; this one is the local
+    // player, and the line says so.
+    Out(tag + "calls=" + std::to_string(n) + " placed=" + std::to_string(placed) + " elf=" + std::to_string(elf) + " self=player");
+}
+
+static void FlpStat()
+{
+    FlightCharmCommand("stat");
+    Out(std::string("flightprobe stat: marker=") + kFlpMarker + " copies=" + std::to_string(g_FlightDropCopies)
+        + " dress=" + (g_FlightDressFootprint ? "on" : "off") + " spawned=" + std::to_string(g_FlpSpawned)
+        + " unique-calls=" + std::to_string(g_FlpUniqueCalls) + " unique-placed=" + std::to_string(g_FlpUniquePlaced)
+        + " unique-elf=" + std::to_string(g_FlpUniqueElf)
+        + " ground-hook=" + (g_Orig_LootGroundInit ? "in" : g_HiddenLootInstallTried ? "refused" : "not-tried")
+        + " ground-icons=" + std::to_string(g_FlightGround) + " guard=" + g_FlightGuardRoute);
+}
+
+static void FlpUsage()
+{
+    Out(std::string("flightprobe: marker=") + kFlpMarker);
+    Out("  spawn elf|wings|broom [<p> <m> | <s>] | ground | free [dx dy] [family|<object name>] | depth | dress off|on"
+        " | copies <k 1-" + std::to_string(kFlpMaxCopies) + "> | unique <n 1-" + std::to_string(kFlpMaxUnique) + "> | stat"
+        "   research instrument for the flight charms, docs/flight-charms-research.md (research build only)");
+}
+
+static void FlpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { FlpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "spawn") { FlpSpawn(tail); return; }
+    if (sub == "ground") { FlpGround(); return; }
+    if (sub == "free") { FlpFree(tail); return; }
+    if (sub == "depth") { FlpDepth(); return; }
+    if (sub == "dress") { FlpDress(tail); return; }
+    if (sub == "copies") { FlpCopies(tail); return; }
+    if (sub == "unique") { FlpUnique(tail); return; }
+    if (sub == "stat") { FlpStat(); return; }
+    FlpUsage();
+}
+// ---- end of flightprobe
+#endif // FORGEPACT_RELEASE (flightprobe)
+
 // ---- Loot announcements (LootAnnounceMod.hpp): the adapter -----------------
 // `lootann 1|0|stat` (ForgePact #17, the Mods tab's switch). Offline, the game
 // shows no chat line when a Heroic, Angelic or Unholy item drops; online it
@@ -58675,6 +59140,11 @@ static void RunCommand(const std::string& line)
     if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
     // Flight charms: the Items tab's drop switches and `stat`, the same early return.
     if (lc == "flightcharm") { FlightCharmCommand(rest); return; }
+#ifndef FORGEPACT_RELEASE
+    // Flight charms' research instrument (research build only, not a player
+    // command): the same standalone early return.
+    if (lc == "flightprobe") { FlpCommand(rest); return; }
+#endif
     // Loot announcements: the Mods tab's switch, the same early return.
     if (lc == "lootann") { LootAnnounceCommand(rest); return; }
     // Always show Chaos Pillar mods: the Mods tab's switch, the same early return.

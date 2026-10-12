@@ -975,5 +975,198 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertNotIn("MmCreateHook", self.code)
 
 
+# ---- the probe: the research build's `flightprobe` -------------------------------------------
+
+PROBE_START = "// ---- flightprobe: the flight charms' phase 2 instrument"
+PROBE_END = "// ---- end of flightprobe"
+FLP_SYMBOL = r"\b(?:g_|k)?Flp[A-Z0-9_]\w*"
+
+PROBE = {
+    "command": "static void FlpCommand(const std::string& rest)",
+    "usage": "static void FlpUsage()",
+    "spawn": "static void FlpSpawn(const std::vector<std::string>& tail)",
+    "ground": "static void FlpGround()",
+    "free": "static void FlpFree(const std::vector<std::string>& tail)",
+    "depth": "static void FlpDepth()",
+    "dress": "static void FlpDress(const std::vector<std::string>& tail)",
+    "copies": "static void FlpCopies(const std::vector<std::string>& tail)",
+    "unique": "static void FlpUnique(const std::vector<std::string>& tail)",
+    "stat": "static void FlpStat()",
+}
+
+
+class FlightCharmsProbeContract(unittest.TestCase):
+    """`flightprobe`, the research build's instrument for the flight charms' Live 1.
+
+    It pins that the verb and every Flp* name vanish from the player build, that
+    RunCommand reaches it by a standalone early return inside the research guard,
+    and how each form reads the game: `spawn` by charmprobe spawn's loader route
+    with the shared ground-icon hook installed first, `ground` and `unique` by
+    charmprobe heroic's newest-ground-id scan, `free` through the shared
+    detours' saved originals only, `depth` through the flight adapter's own
+    layer read with nothing written, `dress` by the footprint flag alone and
+    `copies` by the one count both rolls' pushes read.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.block = cls.plugin[cls.plugin.index(PROBE_START):cls.plugin.index(PROBE_END)]
+        cls.code = strip_comments(cls.block)
+        cls.player = strip_research_blocks(cls.plugin)
+        cls.shipped = strip_comments(cls.player)
+
+    def body(self, which):
+        return strip_comments(function_body(self.block, PROBE[which]))
+
+    # ---- research build only -------------------------------------------------------------------
+
+    def test_the_probe_is_research_only(self):
+        for name, signature in PROBE.items():
+            with self.subTest(function=name):
+                self.assertIn(signature, self.block)
+                self.assertNotIn(signature, self.player)
+        self.assertNotIn(PROBE_START, self.player)
+        self.assertNotIn("flightprobe", self.shipped)
+        self.assertIsNone(re.search(FLP_SYMBOL, self.shipped), "an Flp* symbol reaches the player build")
+
+    def test_dispatched_as_a_standalone_early_return_in_the_research_build_only(self):
+        dispatch = 'if (lc == "flightprobe") { FlpCommand(rest); return; }'
+        run = function_body(self.plugin, SIGNATURES["run"])
+        self.assertIn(dispatch, run)
+        self.assertNotIn('else if (lc == "flightprobe")', run)
+        self.assertEqual(self.plugin.count('lc == "flightprobe"'), 1)
+        self.assertNotIn(dispatch, function_body(self.player, SIGNATURES["run"]))
+        allowlist = re.search(r"kPlayerCommands\s*=\s*\{(?P<body>.*?)\};", self.plugin, re.S).group("body")
+        self.assertNotIn('"flightprobe"', allowlist)
+
+    def test_every_form_and_the_bare_marker(self):
+        command = self.body("command")
+        self.assertIn("if (tok.empty()) { FlpUsage(); return; }", command)
+        for form, handler in (("spawn", "FlpSpawn(tail);"), ("ground", "FlpGround();"), ("free", "FlpFree(tail);"),
+                              ("depth", "FlpDepth();"), ("dress", "FlpDress(tail);"), ("copies", "FlpCopies(tail);"),
+                              ("unique", "FlpUnique(tail);"), ("stat", "FlpStat();")):
+            with self.subTest(form=form):
+                self.assertIn('if (sub == "%s") { %s return; }' % (form, handler), command)
+        self.assertIn('static constexpr const char* kFlpMarker = "flp1";', self.code)
+        usage = self.body("usage")
+        self.assertIn('Out(std::string("flightprobe: marker=") + kFlpMarker);', usage)
+        self.assertLess(usage.index("marker="), usage.index("spawn elf|wings|broom"))
+
+    # ---- spawn and ground ----------------------------------------------------------------------
+
+    def test_spawn_uses_charmprobes_loader_route_with_the_charms_own_seed(self):
+        spawn = self.body("spawn")
+        self.assertIn("FcNs::CharmFromKey(", spawn)
+        self.assertIn("FcNs::TopSeed(c)", spawn)
+        self.assertIn("FcNs::SeedFor(c, v[0], v[1])", spawn)
+        self.assertIn("FcpNs::SpawnJson(seed, FcNs::kCharmBaseB)", spawn)
+        self.assertIn('"json_parse"', spawn)
+        self.assertIn("HeroSiege::Scripts::gml_Script_InitItemFromJson", spawn)
+        self.assertIn("HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self", spawn)
+        self.assertIn("FcpNewestGround(ground, &newest)", spawn)
+        self.assertIn("ground=new id=", spawn)
+        self.assertIn("ground=none", spawn)
+        self.assertNotIn("SpawnSeed(", spawn)   # never a phase-1 research seed
+
+    def test_spawn_installs_the_shared_ground_icon_hook_before_it_builds(self):
+        spawn = self.body("spawn")
+        self.assertIn("FlightGroundIconInstall();", spawn)
+        self.assertLess(spawn.index("FlightGroundIconInstall();"), spawn.index('"json_parse"'))
+        self.assertLess(spawn.index("FlightGroundIconInstall();"), spawn.index("gml_Script_InitItemFromJson"))
+        install = strip_comments(function_body(self.plugin, "static void FlightGroundIconInstall()"))
+        self.assertIn("HiddenLootInstall();", install)
+
+    def test_ground_reads_the_newest_ground_item_and_names_ours_game_or_error(self):
+        ground = self.body("ground")
+        self.assertIn("FcpNewestGround(object, &newest)", ground)
+        self.assertIn('"sprite_index"', ground)
+        self.assertIn('"sprite_get_name"', ground)
+        self.assertIn("g_FlightIconSprite[k]", ground)
+        self.assertIn("kFlpErrorSprite", ground)
+        for verdict in ('"ours"', '"game"', '"error"'):
+            self.assertIn(verdict, ground)
+        self.assertIn('static constexpr const char* kFlpErrorSprite = "Error_spr";', self.code)
+        self.assertNotIn("variable_instance_set", ground)
+
+    # ---- free and depth --------------------------------------------------------------------------
+
+    def test_free_asks_only_the_shared_detours_saved_originals(self):
+        free = self.body("free")
+        self.assertIn("g_JsOrig[(int)JsNs::Builtin::PlaceMeeting]", free)
+        self.assertIn("g_JsOrig[(int)JsNs::Builtin::InstancePosition]", free)
+        self.assertLess(free.index("if (!meeting || !position)"), free.index("meeting(met,"))
+        for builtin in ('"place_meeting"', '"instance_position"'):
+            self.assertNotIn(builtin, free)
+        self.assertIn("HeroSiege::Objects::GetObjectName(kFlightFamily)", free)
+        self.assertIn('"object_get_name"', free)
+        self.assertIn('"flightprobe free: blocked="', free)
+
+    def test_depth_reads_the_flight_adapters_layer_ends_and_writes_nothing(self):
+        depth = self.body("depth")
+        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame,", depth)
+        self.assertIn("FlightRoom(room)", depth)
+        self.assertIn("FlightLayerEnds(room, first, last)", depth)
+        self.assertIn("FcNs::ChooseFrontLayer(first, last, front)", depth)
+        self.assertIn('"layer_get_depth"', depth)
+        self.assertIn("FcNs::StateName(g_Flight.CurrentState())", depth)
+        self.assertNotIn("variable_instance_set", depth)
+        # The read keeps the flight adapter's cached layer values as they were.
+        self.assertIn("g_FlightLayerValue[0] = kept[0];", depth)
+        self.assertIn("g_FlightLayerValue[1] = kept[1];", depth)
+
+    # ---- dress, copies, unique, stat -------------------------------------------------------------
+
+    def test_dress_suspends_the_footprint_write_alone(self):
+        dress = self.body("dress")
+        self.assertIn("g_FlightDressFootprint = on;", dress)
+        self.assertNotIn("variable_struct_set", dress)
+        final = strip_comments(function_body(self.plugin, SIGNATURES["final"]))
+        guarded = function_body(final, "if (g_FlightDressFootprint)")
+        self.assertIn('RValue("2")', guarded)
+        self.assertIn('RValue("3")', guarded)
+        self.assertNotIn('RValue("11")', guarded)
+        self.assertIn('RValue("11")', final)
+
+    def test_copies_sets_the_one_count_both_rolls_push(self):
+        copies = self.body("copies")
+        self.assertIn("FcpNs::ParseWhole(tail[0], 1, kFlpMaxCopies, k)", copies)
+        self.assertIn("g_FlightDropCopies = (int)k;", copies)
+        self.assertIn("static constexpr int kFlpMaxCopies = 400;", self.code)
+        angelic = strip_comments(function_body(self.plugin, "static void FlightDropAngelicPush()"))
+        unique = strip_comments(function_body(self.plugin, "static void FlightDropUniquePush()"))
+        self.assertIn("= g_FlightDropCopies", angelic)
+        self.assertIn("= g_FlightDropCopies", unique)
+        self.assertIn("static constexpr int g_FlightDropCopies = 1;", self.shipped)
+
+    def test_unique_calls_the_ordinary_roll_by_name_with_the_player(self):
+        unique = self.body("unique")
+        self.assertIn("FcpNs::ParseWhole(tail[0], 1, kFlpMaxUnique, n)", unique)
+        self.assertIn("FcpPlayer(player, self, x, y, why)", unique)
+        self.assertIn("CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropUniqueItems, self, self, { RValue(x), RValue(y) })",
+                      unique)
+        self.assertLess(unique.index("FcpNewestGround(ground, nullptr)"), unique.index("gml_Script_DropUniqueItems"))
+        self.assertIn("FcpNewestGround(ground, &newest)", unique)
+        self.assertIn("rolled.charm == FcNs::Charm::Elf", unique)
+        for reply in ('"placed "', '"nothing placed', '"threw"', '" self=player"'):
+            self.assertIn(reply, unique)
+        self.assertIn("static constexpr int kFlpMaxUnique = 20;", self.code)
+
+    def test_stat_prints_the_flightcharm_lines_then_its_own(self):
+        stat = self.body("stat")
+        self.assertIn('FlightCharmCommand("stat");', stat)
+        self.assertLess(stat.index('FlightCharmCommand("stat");'), stat.index('"flightprobe stat:'))
+
+    # ---- no address ----------------------------------------------------------------------------
+
+    def test_no_hand_resolved_address(self):
+        self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", self.code))
+        self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*\+", self.code))
+        self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{5,}", self.code))
+        self.assertNotIn("GetModuleHandle", self.code)
+        self.assertNotIn("MmCreateHook", self.code)
+        self.assertNotIn("HookOneScript", self.code)
+
+
 if __name__ == "__main__":
     unittest.main()
