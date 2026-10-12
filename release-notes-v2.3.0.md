@@ -55,7 +55,12 @@ fresh fight.
   icon and the stacks were checked in research sessions with a test build:
   pieces of one boss stacked on pickup, the bag drew the count, each use took
   one piece from the stack, and stacks kept their counts through a save and a
-  restart. The lairs of Acts 3 to 9 were not visited.
+  restart. A player build with the stacks was then checked on 2026-10-12 in
+  Acts 1 and 2: two pieces of each boss made one stack per act with the gem
+  icon and the count 2, using the Gurag stack took the character to the Act 1
+  lair and left one piece, and both stacks were back with their counts after
+  the stash was closed and the game restarted. The lairs of Acts 3 to 9 were
+  not visited.
 
 ## How to update
 

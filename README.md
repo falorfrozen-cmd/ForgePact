@@ -1097,7 +1097,12 @@ lair's look, and the lair itself brings out whatever boss it always does.
   the other act and a real Edible PAS Logo each kept their own cell, the bag
   drew the stack's count, each use from a stack of three used one piece, and
   a stack of three and one of two were back with their counts after the game
-  saved the bag at a stash close and the game was restarted. A save was not
+  saved the bag at a stash close and the game was restarted. A player build
+  with the stacks was then checked on 2026-10-12 in Acts 1 and 2: two pieces
+  of each boss made one stack per act with the gem icon and the count 2, using
+  the Gurag stack took the character to the Act 1 lair and left one piece, and
+  both stacks were back with their counts after the stash was closed and the
+  game restarted. A save was not
   loaded with ForgePact removed. Only the Act 1 and Act 2 lairs were visited;
   how often pieces drop unforced was not counted (the checks forced a drop on
   every gem roll).
