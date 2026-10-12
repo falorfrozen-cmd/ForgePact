@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "created": "2026-10-12",
-  "generation": "built-in imagegen; one separate generation per icon",
+  "created": "2026-10-13",
+  "generation": "built-in imagegen; five accepted masters; fairy ground exported from inventory master",
   "export": "Alpha crop, nearest-neighbor resize, solid pixel alpha, 8-bit RGBA PNG",
   "assets": [
     {
@@ -16,9 +16,9 @@
         "width": 21,
         "height": 30
       },
-      "transparent_pixels": 632,
-      "opaque_pixels": 392,
-      "sha256": "cf6c73dba47a16df70ad64476ae99cdc5dd801ce4986c38034b006fe3342bd4e"
+      "transparent_pixels": 753,
+      "opaque_pixels": 271,
+      "sha256": "f39ba5cc349469518fd0bd24e26e0fe38852411cea875190dec672d85c9e4e6b"
     },
     {
       "file": "gabriel_wings.png",
@@ -28,13 +28,13 @@
       "bit_depth": 8,
       "visible_bounds": {
         "left": 1,
-        "top": 1,
+        "top": 3,
         "width": 62,
-        "height": 62
+        "height": 57
       },
-      "transparent_pixels": 2185,
-      "opaque_pixels": 1911,
-      "sha256": "8166f8830e67d25027c336ca300b0587b0cb589e0039c48a4e7cf8268f57d00a"
+      "transparent_pixels": 2250,
+      "opaque_pixels": 1846,
+      "sha256": "5c54ab944e646ab93824face8648800ae1e82122659064021558cdd74d331420"
     },
     {
       "file": "witch_broomstick.png",
@@ -43,14 +43,14 @@
       "mode": "RGBA",
       "bit_depth": 8,
       "visible_bounds": {
-        "left": 2,
+        "left": 8,
         "top": 1,
-        "width": 28,
+        "width": 16,
         "height": 158
       },
-      "transparent_pixels": 3413,
-      "opaque_pixels": 1707,
-      "sha256": "ac5fd50db3f64bb7d64a5284799120cc22503f9da75af731bb54c5c2f219ac09"
+      "transparent_pixels": 3917,
+      "opaque_pixels": 1203,
+      "sha256": "edfc283d9482751201ee7445a2685dcf1faa77cc69eeacea4a3dd774f83ba2bd"
     },
     {
       "file": "pocket_elf_ground.png",
@@ -59,14 +59,14 @@
       "mode": "RGBA",
       "bit_depth": 8,
       "visible_bounds": {
-        "left": 2,
-        "top": 2,
-        "width": 11,
-        "height": 13
+        "left": 3,
+        "top": 1,
+        "width": 10,
+        "height": 14
       },
-      "transparent_pixels": 161,
-      "opaque_pixels": 95,
-      "sha256": "ffd3905e6f4226e3ef8068a563b91ca6befc2d5ee9f68aa554f42fdf5eacaec1"
+      "transparent_pixels": 198,
+      "opaque_pixels": 58,
+      "sha256": "0513f69ba45f08e1da5acd9345505908dcdaf7834dfc15ce3c91adf1b5a0a7f2"
     },
     {
       "file": "gabriel_wings_ground.png",
@@ -78,11 +78,11 @@
         "left": 1,
         "top": 3,
         "width": 22,
-        "height": 17
+        "height": 19
       },
-      "transparent_pixels": 374,
-      "opaque_pixels": 202,
-      "sha256": "261108b2d633ec2729ccd44fa53199eb06a9148c28dbf0bfdcf5850fd568681a"
+      "transparent_pixels": 352,
+      "opaque_pixels": 224,
+      "sha256": "f128d352379cee16df23b0489a1a16dc67ace4d6786703e5321bd4632729c25e"
     },
     {
       "file": "witch_broomstick_ground.png",
@@ -92,13 +92,13 @@
       "bit_depth": 8,
       "visible_bounds": {
         "left": 1,
-        "top": 2,
-        "width": 32,
-        "height": 13
+        "top": 3,
+        "width": 31,
+        "height": 11
       },
-      "transparent_pixels": 489,
-      "opaque_pixels": 89,
-      "sha256": "956c1a0b1aeae789eb131244bc79266a68457326e9cff2847cc94ff0625e1c9d"
+      "transparent_pixels": 509,
+      "opaque_pixels": 69,
+      "sha256": "dea86c4c340a56bd6994ebb6c10f568fcafd7f43070d03916994207b186f7869"
     }
   ]
 }
