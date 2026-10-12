@@ -47644,13 +47644,24 @@ static void JpObjects(const std::vector<std::string>& tail)
                                     : std::string()));
 }
 
-// `free`: is the local player's own spot inside Collision_Parent_obj's
-// family? Asked of the saved originals of place_meeting (blocked=, the
-// player's mask at its x, y) and instance_position (by=, the instance at the
-// point), called directly with the player as self - never through the lever,
-// and not counted by the tally. Refused before `hook`: without a saved
-// original the call would go through whatever detour holds the builtin.
-static void JpFree()
+// GameMaker's `all` keyword, as an object argument: every instance.
+static constexpr double kJpAllKeyword = -3.0;
+
+// `free [dx dy] [family|all|<object name>]`: is the local player's mask,
+// moved by dx, dy (default 0 0), inside an object? Asked of the saved
+// originals of place_meeting (blocked=, the player's mask at x+dx, y+dy) and
+// instance_position (by=, the instance at that point), called directly with
+// the player as self - never through the lever, and not counted by the tally.
+// The object asked defaults to Collision_Parent_obj's family; `all` asks
+// GameMaker's `all`, and any other word is an object name, resolved by
+// asset_get_index and kept only when object_get_name gives the same name
+// back. The line names the object asked, so a `no` against the family cannot
+// be read as a `no` against whatever held the walk. The offset is what makes
+// a positive control possible: pressed against a prop in vanilla, the player
+// does not overlap it, but its mask moved toward it does. Refused before
+// `hook`: without a saved original the call would go through whatever detour
+// holds the builtin.
+static void JpFree(const std::vector<std::string>& tail)
 {
     JpBuiltinRow& meeting = g_JpBuiltinRows[(int)JpNs::Builtin::PlaceMeeting];
     JpBuiltinRow& position = g_JpBuiltinRows[(int)JpNs::Builtin::InstancePosition];
@@ -47659,10 +47670,62 @@ static void JpFree()
             " no saved original to ask: `jumpprobe hook` first");
         return;
     }
-    JpResolveFamilies();
-    if (g_JpCore.AllFamily() < 0) {
-        Out("jumpprobe free: refused - Collision_Parent_obj did not resolve by name; nothing asked");
+    double offset[2] = { 0.0, 0.0 };
+    int numbers = 0;
+    std::string asked;
+    for (const std::string& a : tail) {
+        double v = 0.0;
+        bool number = false;
+        try { size_t used = 0; v = std::stod(a, &used); number = used == a.size() && std::isfinite(v); } catch (...) {}
+        if (number) {
+            if (numbers == 2) {
+                Out("jumpprobe free: '" + a + "' is a third number; usage -> free [dx dy] [family|all|<object name>];"
+                    " nothing asked");
+                return;
+            }
+            offset[numbers++] = v;
+            continue;
+        }
+        if (!asked.empty()) {
+            Out("jumpprobe free: '" + a + "' names a second object after '" + asked + "'; usage -> free [dx dy]"
+                " [family|all|<object name>]; nothing asked");
+            return;
+        }
+        asked = a;
+    }
+    if (numbers == 1) {
+        Out("jumpprobe free: dx and dy come as a pair; usage -> free [dx dy] [family|all|<object name>]; nothing asked");
         return;
+    }
+    const std::string mode = Lower(asked);
+    double target = 0.0;
+    std::string askedText;
+    if (asked.empty() || mode == "family") {
+        JpResolveFamilies();
+        if (g_JpCore.AllFamily() < 0) {
+            Out("jumpprobe free: refused - Collision_Parent_obj did not resolve by name; nothing asked");
+            return;
+        }
+        const double family = (double)g_JpCore.AllFamily();
+        target = family;
+        askedText = "family:" + JpObjectName(g_JpCore.AllFamily()) + "(" + std::to_string(g_JpCore.AllFamily()) + ")";
+    } else if (mode == "all") {
+        target = kJpAllKeyword;
+        askedText = "all(-3)";
+    } else {
+        int obj = -1;
+        try {
+            obj = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(asked) }).ToDouble();
+            if (obj >= 0 && !g_Yytk->CallBuiltin("object_exists", { RValue((double)obj) }).ToBoolean()) obj = -1;
+            if (obj >= 0 && JpObjectName(obj) != asked) obj = -1;
+        } catch (...) { obj = -1; }
+        if (obj < 0) {
+            Out("jumpprobe free: refused - '" + asked + "' is not an object name (asset_get_index did not give an object"
+                " whose object_get_name reads it back); nothing asked");
+            return;
+        }
+        target = (double)obj;
+        askedText = asked + "(" + std::to_string(obj) + ")";
     }
     JpRefreshPlayer();
     if (!g_JpPlayer) { Out("jumpprobe free: refused - no local player resolved: load a character"); return; }
@@ -47672,17 +47735,28 @@ static void JpFree()
         const RValue self = g_JpPlayer->ToRValue();
         const RValue x = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("x") });
         const RValue y = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("y") });
-        const double family = (double)g_JpCore.AllFamily();
-        RValue meetArgs[3] = { x, y, RValue(family) };
+        // With no offset the player's own x, y go in unchanged, whatever kind
+        // the runtime gave them.
+        const bool moved = offset[0] != 0.0 || offset[1] != 0.0;
+        const RValue qx = moved ? RValue(x.ToDouble() + offset[0]) : x;
+        const RValue qy = moved ? RValue(y.ToDouble() + offset[1]) : y;
+        RValue meetArgs[3] = { qx, qy, RValue(target) };
         RValue met;
         meeting.orig(met, g_JpPlayer, g_JpPlayer, 3, meetArgs);
-        RValue posArgs[3] = { x, y, RValue(family) };
+        RValue posArgs[3] = { qx, qy, RValue(target) };
         RValue at;
         position.orig(at, g_JpPlayer, g_JpPlayer, 3, posArgs);
         const int by = JpObjectIndexOf(at);
+        int own = -1;
+        try { N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("object_index") }), own); } catch (...) {}
         line = std::string("jumpprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")
             + " by=" + (by >= 0 ? JpObjectName(by) : std::string("none"))
-            + " x=" + MenuLayoutValueText(x) + " y=" + MenuLayoutValueText(y);
+            + " x=" + MenuLayoutValueText(x) + " y=" + MenuLayoutValueText(y)
+            + " dx=" + MenuLayoutValueText(RValue(offset[0])) + " dy=" + MenuLayoutValueText(RValue(offset[1]))
+            + " asked=" + askedText
+            // A point query can name the asking instance itself; place_meeting
+            // never does, so blocked= is the answer to read in that case.
+            + (by >= 0 && by == own ? " (by= is the player's own object: the point may have found the player)" : "");
     } catch (...) { line = "jumpprobe free: unreadable (a read or a saved original threw); nothing answered"; }
     g_JpBusy = false;
     Out(line);
@@ -47844,8 +47918,9 @@ static void JpUsage()
         " until pass 0, jump or no jump");
     Out("  objects | objects reset           from `hook` on, the local player's builtin calls per row by the object they"
         " name (family = Collision_Parent_obj or a descendant, else outside), lever on or off; reset clears it");
-    Out("  free                              the saved place_meeting and instance_position against Collision_Parent_obj at"
-        " the player's own x, y, never through the lever: blocked=yes|no by=<object>|none (after `hook` only)");
+    Out("  free [dx dy] [family|all|<object>] the saved place_meeting and instance_position at the player's x+dx, y+dy"
+        " (default 0 0) against Collision_Parent_obj (family, the default), GameMaker's all, or one object by name,"
+        " never through the lever: blocked=yes|no by=<object>|none x= y= dx= dy= asked=<object> (after `hook` only)");
 }
 
 static void JpCommand(const std::string& rest)
@@ -47862,7 +47937,7 @@ static void JpCommand(const std::string& rest)
     if (sub == "trace") { JpTrace(tail); return; }
     if (sub == "pass") { JpPass(tail); return; }
     if (sub == "objects") { JpObjects(tail); return; }
-    if (sub == "free") { JpFree(); return; }
+    if (sub == "free") { JpFree(tail); return; }
     JpUsage();
 }
 #endif // FORGEPACT_RELEASE (jumpprobe)
