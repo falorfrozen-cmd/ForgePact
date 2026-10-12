@@ -465,10 +465,14 @@ class FlightCharmsLeverContract(unittest.TestCase):
 
     def test_flight_answers_only_the_local_players_blocked_query(self):
         lines = self.lines("on_builtin")
-        self.assertEqual(lines[0], "if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return;")
+        self.assertEqual(lines[0], "if (!S || g_FlightBusy || !g_Flight.Installed()) return;")
+        # Any self but the local player is counted (the trace line's not-player=)
+        # and returns before anything is answered.
+        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }", lines)
         body = self.body("on_builtin")
-        # A free answer stands, before anything is read.
-        self.assertIn("if (!FlightBlocked(h.answer, Result)) return;", body)
+        self.assertLess(body.index("if (S != g_FlightPlayer)"), body.index("FlightBlocked(h.answer, Result)"))
+        # A free answer stands, before anything is read, and is counted (free=).
+        self.assertIn("if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }", body)
         self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.Refresh("))
         # The state is refreshed at the point of use, and nothing more is read while off.
         self.assertIn("g_Flight.Refresh(frame);", body)
@@ -530,7 +534,10 @@ class FlightCharmsLeverContract(unittest.TestCase):
         hook = self.body("tallest")
         self.assertIn("RValue& r = g_FlightOrigIpt(S, O, R, argc, A);", hook)
         self.assertLess(hook.index("g_FlightOrigIpt(S, O, R, argc, A)"), hook.index("g_Flight.OnQuery("))
-        self.assertIn("if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;", hook)
+        self.assertIn("if (!S || g_FlightBusy || !g_Flight.Installed()) return r;", hook)
+        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }", hook)
+        self.assertIn("if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }", hook)
+        self.assertLess(hook.index("if (S != g_FlightPlayer)"), hook.index("g_Flight.OnQuery("))
         self.assertIn("FcNs::Hooked::InstancePlaceTallest", hook)
         self.assertIn("FlightInstanceObject(r)", hook)
         # Never re-run: the core's single-argument OnQuery.
@@ -542,7 +549,9 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("RValue& r = g_FlightOrigDepth(S, O, R, argc, A);", hook)
         self.assertLess(hook.index("g_FlightOrigDepth(S, O, R, argc, A)"), hook.index("g_Flight.OnUpdateDepth("))
         lines = self.lines("depth")
-        self.assertEqual(lines[1], "if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;")
+        self.assertEqual(lines[1], "if (!S || g_FlightBusy || !g_Flight.Installed()) return r;")
+        # Any other self is counted (depth-other=) and never written.
+        self.assertEqual(lines[2], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
         self.assertIn('RValue("layer")', hook)
         self.assertIn("if (w.write)", hook)
         # yDepthSet stays as the game set it.
