@@ -28,8 +28,9 @@ fresh fight.
   this switch on (Loot → Boss soul pieces, off by default), monsters in an
   act's zones sometimes drop a Piece of that act's boss's Soul (Gurag's in Act
   1, the Grim Reaper's in Act 2, Mevius' in Act 7, and so on for all nine
-  acts), a little more often than a Gem of Incarnation: 1 in 7,200 whenever
-  the game rolls a gem for a dying monster. Right-click a piece in your bag
+  acts): 1 in 7,200 whenever the game rolls a gem for a dying monster (five
+  quarters of the Gem of Incarnation's listed 1 in 9,000; how often pieces
+  turn up next to the gem in play has not been measured). Right-click a piece in your bag
   and confirm, and you are taken straight to that act's boss lair for a fresh
   fight, even if you beat the boss before; no portal opens. It works from a
   town or any zone of an act, and is refused (you keep the piece) inside a
