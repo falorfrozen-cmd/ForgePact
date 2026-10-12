@@ -558,7 +558,8 @@ inline void RecordZoneCallFailed(State& s) { ++s.counters.zoneCallFailed; }
 // ---- the status line ------------------------------------------------------------------------------
 // What the adapter knows and the core does not: the room, the gem rate it
 // read (or why it could not), each route, the merges the
-// `InventoryGridAddToStack` detour made, and the room the player was in
+// `InventoryGridAddToStack` detour made and the ones it gave up on because a
+// read of the stack or the hash refresh failed, and the room the player was in
 // before this one with what ZoneStateExists answered for it (`-` for both
 // before a room change was seen; `leftSaved` is ZoneAnswerText's word).
 struct StatusInputs {
@@ -572,6 +573,8 @@ struct StatusInputs {
     std::string_view mergeScript = "InventoryGridAddToStack";
     std::string_view mergeRoute = "none";
     long merged = 0;
+    long mergeReadFailed = 0;
+    long mergeHashFailed = 0;
     std::string_view left = "-";
     std::string_view leftSaved = "-";
 };
@@ -586,11 +589,15 @@ inline std::string NumberText(double v)
 
 // `soulpiece: <on|off> force=<on|off> room=<name> act=<n|none>
 // eligible=<yes|no(<word>)> gemrate=<G|unavailable(<why>)> chance=1/<D|->
-// gemrolls=<n> drops=<n> misses=<n> merged=<n> uses=<n> transfers=<n> fresh=<n>
+// gemrolls=<n> drops=<n> misses=<n> merged=<n>
+// mergefail=<read-failed=<n>,hash-failed=<n>|-> uses=<n> transfers=<n> fresh=<n>
 // cleared=<n> last=<boss room|-> left=<room|-> leftsaved=<yes|no|unread(<why>)|->
 // refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>
 // merge:InventoryGridAddToStack:<route|none>`.
 // `merged` counts the pickups the merge joined to a stack in the bag;
+// `mergefail` the pickups it meant to merge but passed to the game because a
+// read of the stack failed or its hash could not be refreshed (`-` when both
+// are 0);
 // `uses` counts every piece use decided, refused or not; `transfers` the moves
 // carried out; `fresh` the transfers whose boss room answered a saved state
 // before the reset, and `cleared` those of them whose state was gone after
@@ -632,6 +639,10 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " drops=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Hit)])
         + " misses=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Miss)])
         + " merged=" + std::to_string(in.merged)
+        + " mergefail=" + (in.mergeReadFailed || in.mergeHashFailed
+                               ? "read-failed=" + std::to_string(in.mergeReadFailed)
+                                     + ",hash-failed=" + std::to_string(in.mergeHashFailed)
+                               : std::string("-"))
         + " uses=" + std::to_string(uses)
         + " transfers=" + std::to_string(transfers)
         + " fresh=" + std::to_string(c.fresh)

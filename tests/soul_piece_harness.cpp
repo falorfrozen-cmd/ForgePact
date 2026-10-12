@@ -749,10 +749,11 @@ int main() {
         in.room = "Act_01_01"; in.act = 1; in.gemRate = kMeasuredRate;
         in.gemRoute = "both"; in.useRoute = "both";
         in.merged = 2; in.mergeRoute = "both";
+        in.mergeReadFailed = 1; in.mergeHashFailed = 3;
         in.left = "Town_01_rm"; in.leftSaved = leftSaved;
         const std::string line = SP::StatusLine(s, in);
         const std::string want = "soulpiece: on force=off room=Act_01_01 act=1 eligible=yes gemrate=9000 chance=1/7200"
-            " gemrolls=4 drops=1 misses=2 merged=2 uses=3 transfers=1 fresh=1 cleared=1 last=Act_02_Boss left=Town_01_rm leftsaved=yes"
+            " gemrolls=4 drops=1 misses=2 merged=2 mergefail=read-failed=1,hash-failed=3 uses=3 transfers=1 fresh=1 cleared=1 last=Act_02_Boss left=Town_01_rm leftsaved=yes"
             " refused=town=1,drop-failed=1,use-boss-room=1,transfer-failed=1,zone-call-failed=1"
             " hooks=gem:both use:PotionUse:both merge:InventoryGridAddToStack:both";
         ok = ok && line == want && s.counters.dropsByAct[1] == 1 && s.counters.transfersByAct[2] == 1
@@ -762,7 +763,7 @@ int main() {
         town.room = "Town_01_rm"; town.act = 1; town.gemRate = 0.0; town.gemRateWhy = "unread";
         const std::string offLine = SP::StatusLine(off, town);
         const std::string wantOff = "soulpiece: off force=off room=Town_01_rm act=1 eligible=no(town) gemrate=unavailable(unread)"
-            " chance=1/- gemrolls=0 drops=0 misses=0 merged=0 uses=0 transfers=0 fresh=0 cleared=0 last=- left=- leftsaved=-"
+            " chance=1/- gemrolls=0 drops=0 misses=0 merged=0 mergefail=- uses=0 transfers=0 fresh=0 cleared=0 last=- left=- leftsaved=-"
             " refused=- hooks=gem:none use:PotionUse:none merge:InventoryGridAddToStack:none";
         ok = ok && offLine == wantOff && offLine.find("portal") == std::string::npos;
         // An unread answer for the room left names why.
@@ -770,6 +771,11 @@ int main() {
         SP::StatusInputs left = town;
         left.left = "Act_01_Boss"; left.leftSaved = unread;
         ok = ok && SP::StatusLine(off, left).find(" left=Act_01_Boss leftsaved=unread(call failed) ") != std::string::npos;
+        // One failure kind alone still names both counts; none at all prints `-`.
+        SP::StatusInputs hashOnly = town;
+        hashOnly.mergeHashFailed = 1;
+        ok = ok && SP::StatusLine(off, hashOnly).find(" merged=0 mergefail=read-failed=0,hash-failed=1 uses=0 ") != std::string::npos
+                && SP::StatusLine(off, town).find(" mergefail=- ") != std::string::npos;
         check("command/status-line", ok, "[" + line + "] [" + offLine + "]");
     }
     {

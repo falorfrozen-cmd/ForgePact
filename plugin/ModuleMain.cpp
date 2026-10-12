@@ -53424,7 +53424,9 @@ static std::string SoulPieceStatus()
     in.mergeScript = kSoulPieceMergeName;
     in.mergeRoute = g_SoulPieceMerge.route;
     in.merged = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::Merged)];
-    in.left = g_SoulPiece.haveLeft ? std::string_view(g_SoulPiece.left.name) : std::string_view("-");
+    in.mergeReadFailed = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::ReadFailed)];
+    in.mergeHashFailed = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::HashFailed)];
+    in.left =g_SoulPiece.haveLeft ? std::string_view(g_SoulPiece.left.name) : std::string_view("-");
     in.leftSaved = leftSaved;
     return SoulCore::StatusLine(g_SoulPiece.core, in);
 }
