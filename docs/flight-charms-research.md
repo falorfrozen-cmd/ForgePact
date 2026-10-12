@@ -723,7 +723,7 @@ read back clean.
 | `dbg-control` | pass | The x64dbg logpoint on `CheckTalentUse` logged in every walk window (652 hits during S5's walk), and the debugger's own control hold proved the attach. |
 | `vanilla-walk-block` | pass | With every lever off, a 3 s walk down at the edge of the ravine south of the town, next to the wooden bridge (the owner's spot), left the position unchanged. The repeat beside the church's stone wall walked 18 px and stopped at the wall. |
 | `free-control` | pass | On open ground the family read `blocked=no`; one step down at the ravine edge the family read `blocked=yes` with no object named, so `free` can tell a blocked spot from a free one. The `all` read names `Camera_obj` everywhere, open ground included, so it says nothing. |
-| `walk-objects` | pass | The tally of the blocked walk counted six distinct objects on three builtin rows. The object outside `Collision_Parent_obj`'s family that `place_meeting` named most was `Enemy_Parent_obj` (3015 queries); `Wall_Parent_obj`, `Enemy_Child_Boss_obj` and `Enemy_Only_Passage_obj` were also queried from outside the family. |
+| `walk-objects` | pass | The tally of the blocked walk counted six distinct objects on three builtin rows. The object outside `Collision_Parent_obj`'s family that `place_meeting` named most was `Enemy_Parent_obj` (3015 queries); `Enemy_Child_Boss_obj` and `Enemy_Only_Passage_obj` were also queried from outside the family. `Wall_Parent_obj` was queried too, and the tally labelled it `family`: it is a child of `Collision_Parent_obj` in the game's data file (RDM § 19.8). This row first counted it outside the family, which was wrong (corrected 2026-10-12). |
 | `walk-all-scripts` | pass | Under `pass 1 90 all scripts hold` the walk crossed: 699 px down past the ravine edge, and 688 px through the church wall in the repeat. The lever answered 234 `InstancePlaceTallest` calls `noone` on the prop walk. |
 | `walk-any` | pass | Under `pass 1 90 any scripts hold` the walk crossed both the ravine edge and the wall. Note: under `pass 1 90 any hold`, the same rule without the scripts (S8b), the walk stayed at the ravine edge, although the lever answered 2340 `position_meeting` and 2410 `place_meeting` queries. |
 | `dbg-instance-place-tallest` | pass | The logpoint on `InstancePlaceTallest` logged in every walk, as many hits as the hooked row's `calls=` each time, with the return location of each call (§ "The walk's callers" below). |
@@ -994,3 +994,59 @@ that key `11` holds the display sprite. What is still open:
   not decompile, and Live 1 found the walk's blocking query in the player
   object's Step event instead, so what `PlayerMovement`'s own meeting
   builtins decide is still not established.
+
+## Phase 2: the mod
+
+Phase 2 builds the three charms against § Decision: built-in Custom Forge
+entries with a guarded size, our own icons in the bag and on the ground, the
+flight lever, drawing the flying player in front of scenery, and drops behind
+panel switches that are off by default. Its plan read five more things about
+the game before any code was written. They are recorded here in short and in
+full, labelled, in the toolkit's `docs/RUNTIME_DATA_MODELS.md`.
+
+### Phase 2 static reading
+
+Read on 2026-10-12 in the build the Ghidra project imported (the executable
+hash in § Live 1 results), through the ghidra MCP and existing local
+decompiles, with direct call sites from a local byte scan for calls to each
+entry. The collision family was read from the game's data file (`data.win`),
+whose object and sprite tables give names, parents and sizes. None of it is
+measured unless it says so, and an empty caller list through the MCP is "not
+observed".
+
+- **Draw order** (RDM § 19.7). `UpdateDepth` records an instance's y and,
+  by default, sets its `layer` to the layer the room's `global.gameLayer`
+  holds at that y (clamped to 0..5500). The player object's Step event calls
+  it from two of its 2746 direct call sites, so the game re-sets the player's
+  draw layer from its y every Step, and an order set before that call does
+  not last (inference). Which end of those layers draws in front is not
+  established.
+- **The collision family** (RDM § 19.8, from the data file). `Wall_Parent_obj`
+  is a child of `Collision_Parent_obj`, and the walls, the eight invisible
+  walls and `Gate_Parent_obj` with the zone gates sit under it. `Lock_obj` is
+  a direct child with no descendants. The ravine edge's blocker in Live 1,
+  `Block_Dynamic_Sprite_obj`, sits under `Block_obj`, so it is in the family
+  but is not a wall. The family holds 1824 objects. This corrects the
+  `walk-objects` row of § Live 1 results, which had counted `Wall_Parent_obj`
+  outside the family; the tally itself had labelled it `family`.
+- **Placing a rebuilt item** (RDM § 22.6). `ParseItemToGrid` rebuilds each
+  saved item and places it at its saved cell through
+  `InventoryGridAddItemPos`, which answers false and writes nothing when any
+  cell of the footprint is taken or off the grid. `ParseItemToGrid` ignores
+  that answer, which is the reading behind S17's `dress-added:
+  item-missing`: the dressed charm did not fit and was left off the grid.
+- **The ground sprite** (RDM § 22.7). `LootGroundInit` gives a new ground
+  item the sprite named `Pickup_` plus the name of the item's display sprite
+  (key `"11"`), and `Error_spr` when no such sprite exists. The game ships a
+  `Pickup_` ground sprite beside each charm icon (13x13, 17x11 and 34x17 for
+  the three read). A sprite added at runtime has a generated name with no
+  such companion, which is the reading behind `sprite-draw: partial`. The
+  player build already detours `LootGroundInit` once, shared by hidden loot
+  and the loot announcement, and a second detour on it is refused.
+- **The ordinary unique roll** (RDM § 22.8). `DropUniqueItems` reads one
+  random entry of its sub-list and drops nothing when that entry fails its
+  tests: no second draw, no die per entry. One added entry is therefore
+  picked on 1 call in the sub-list's length plus one, between 1 in 51 and 1
+  in 222 for the measured lengths.
+- `InstancePlaceTallest` gathers the instances at a place and answers the
+  tallest, or `noone`, as § 19.6 of RDM already says.
