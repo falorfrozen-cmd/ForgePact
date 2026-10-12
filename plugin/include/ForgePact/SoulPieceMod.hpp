@@ -25,11 +25,17 @@ namespace ForgePact::SoulPieces {
 // same roll, "a little more common" (the owner, 2026-10-11). Live procedure 1
 // measured G = 9,000, so D = 7,200.
 //
-// A piece is the game's own Edible PAS Logo (a class-11 consumable whose base
-// is resolved by repository name, c 0, j 0) whose seed `a` is 777100 + act, so
-// a save holding pieces loads without ForgePact. The bag stacks only classes
-// 12 to 15, so a piece takes its own bag cell and never merges with the logo
-// or with another piece.
+// A piece is built on a key (the follow-up, 2026-10-12): the key base's class
+// (12) with `b` = the base's index + act/10 and `c` 0, its seed `a` 777100 +
+// act. The bag files it in the Key tab; the game's own stack check compares
+// `b` within the runtime's epsilon, so pieces of one act stack, other acts
+// (0.1 apart) and the real key (a whole `b`) never join them, with or without
+// ForgePact; the repository lookup truncates `b`, so a save holding pieces
+// loads them as that key without ForgePact. The pieces the first builds made,
+// the game's own Edible PAS Logo (a class-11 consumable, c 0, j 0) with a
+// piece's seed, stay recognised as legacy bag pieces: the bag stacks only
+// classes 12 to 15, so each takes its own cell. The display sprite is the Gem
+// of Incarnation's, which the dress writes under item info key "11".
 //
 // This header holds the decisions and their counters only: no runtime type,
 // builtin or log call. The adapter in ModuleMain.cpp supplies the room's name
@@ -58,12 +64,38 @@ inline constexpr long long kExpectedGemRate = 9000;
 // walked as `droprate` walks a category, never by index.
 inline constexpr int kGemCategory = 15;
 inline constexpr char kGemRepoName[] = "socketable_gem_of_incarnation";
-// A piece's base: the repository entry of this name in this category (Live
-// procedure 1 measured b 12 on the owner's own logo; the name is resolved at
-// run time, never the index), an item of this class.
+// A legacy bag piece's base: the repository entry of this name in this
+// category (Live procedure 1 measured b 12 on the owner's own logo; the name is
+// resolved at run time, never the index), an item of this class.
 inline constexpr int kBaseCategory = 11;
 inline constexpr int kBaseItemType = 11;
 inline constexpr char kBaseRepoName[] = "consumable_edible_pas_logo";
+
+// A key piece's base: the repository entry of this name in this category
+// (#197 Live 3 measured `keys_bifrost_key` at index 2; resolved by name at run
+// time, never the index), an item of this class. Which key is the owner's call
+// (`## Needs human judgement`, default Bifrost): saved pieces keep the base
+// they were made with.
+inline constexpr int kKeyBaseCategory = 12;
+inline constexpr int kKeyBaseItemType = 12;
+inline constexpr char kKeyBaseRepoName[] = "keys_bifrost_key";
+// A key piece's `b` is the base's index + act / kActFractionDivisor: tenths,
+// because the save writes a real with two decimals (static reading), so a
+// tenth survives a reload where a finer step would not.
+inline constexpr double kActFractionDivisor = 10.0;
+// How far a key piece's `b` (and its `c` from 0) may sit from the exact value
+// and still be recognised: wide enough for what a two-decimal save round trip
+// returns (at most 0.005 off), well under half the 0.1 between two acts.
+inline constexpr double kKeyPieceTolerance = 0.01;
+
+// The display sprite the dress writes under item info key "11" on every piece:
+// the Gem of Incarnation's own, resolved by name with `asset_get_index`, never
+// an index. The ground item looks up its pickup sprite as `Pickup_` + this name
+// (#158's static reading); hs-game-sdk's sprite table holds both. Not saved:
+// without ForgePact a piece shows its base's icon.
+inline constexpr char kIconInfoKey[] = "11";
+inline constexpr char kPieceSpriteName[] = "Gem_Incarnation_spr";
+inline constexpr char kGroundSpritePrefix[] = "Pickup_";
 
 // The dress's mechanic tag.
 inline constexpr char kMechanicTag[] = "soulpiece";
@@ -126,15 +158,56 @@ inline int ActOfSeed(long long seed)
 
 inline bool IsPiece(long long seed) { return ActOfSeed(seed) != 0; }
 
-// The act of an item that is a piece, 0 for anything else: an item of the
-// base's class whose definition is the base (`b` the index the adapter
-// resolved by name, `c` 0, the normal repository) and whose seed marks an act.
-// `baseIndex` below 0 (not resolved yet) recognises nothing.
+// The act of an item that is a legacy bag piece, 0 for anything else: an item
+// of the legacy base's class whose definition is the base (`b` the index the
+// adapter resolved by name, `c` 0, the normal repository) and whose seed marks
+// an act. `baseIndex` below 0 (not resolved yet) recognises nothing.
 inline int PieceActOfItem(int itemType, long long b, long long c, long long seed, long long baseIndex)
 {
     if (baseIndex < 0 || itemType != kBaseItemType || b != baseIndex || c != 0) return 0;
     return ActOfSeed(seed);
 }
+
+// A key piece's `b` for an act: the key base's index + act/10 (index 2: 2.1
+// for Act 1 .. 2.9 for Act 9). -1 when the act is none or the base is not
+// resolved, so nothing is built.
+inline double KeyPieceB(long long baseIndex, int act)
+{
+    if (baseIndex < 0 || !IsAct(act)) return -1.0;
+    return static_cast<double>(baseIndex) + static_cast<double>(act) / kActFractionDivisor;
+}
+
+// The act of an item that is a key piece, 0 for anything else. Every signal
+// must hold: the key base's class; `c` 0; a `b` that truncates (as the
+// game's repository lookup does) to the index the adapter resolved by name,
+// that is not whole, and whose tenths are the act its seed marks. The act
+// comes from the seed; the fraction only keeps the stacks apart. Each
+// comparison allows kKeyPieceTolerance, so a piece read back from a save is
+// still a piece. `baseIndex` below 0 (not resolved yet) recognises nothing.
+inline int KeyPieceActOfItem(int itemType, double b, double c, long long seed, long long baseIndex)
+{
+    if (baseIndex < 0 || itemType != kKeyBaseItemType) return 0;
+    if (!std::isfinite(b) || !std::isfinite(c) || std::fabs(c) > kKeyPieceTolerance) return 0;
+    if (std::trunc(b) != static_cast<double>(baseIndex)) return 0;
+    if (b - std::trunc(b) <= kKeyPieceTolerance) return 0;
+    const int act = ActOfSeed(seed);
+    if (!IsAct(act) || std::fabs(b - KeyPieceB(baseIndex, act)) > kKeyPieceTolerance) return 0;
+    return act;
+}
+
+// The act of any piece: a key piece on `keyBaseIndex`, or else a legacy bag
+// piece on `legacyBaseIndex` (whose `b` and `c` are whole); 0 for anything
+// else. Either index below 0 recognises nothing of that shape.
+inline int AnyPieceActOfItem(int itemType, double b, double c, long long seed,
+    long long keyBaseIndex, long long legacyBaseIndex)
+{
+    if (const int act = KeyPieceActOfItem(itemType, b, c, seed, keyBaseIndex)) return act;
+    if (!std::isfinite(b) || !std::isfinite(c) || b != std::floor(b) || c != std::floor(c)) return 0;
+    return PieceActOfItem(itemType, static_cast<long long>(b), static_cast<long long>(c), seed, legacyBaseIndex);
+}
+
+// The pickup sprite the ground item looks up for the piece's display sprite.
+inline std::string GroundSpriteName() { return std::string(kGroundSpritePrefix) + kPieceSpriteName; }
 
 // ---- verdicts ------------------------------------------------------------------------
 // The drop's verdicts, in the order DecideDrop asks them. `force on` overrides
@@ -234,6 +307,27 @@ inline UseVerdict DecideUse(bool modOn, std::string_view room, int roomAct, int 
     const ActBoss* boss = BossOfAct(pieceAct);
     if (!boss || !boss->named) return UseVerdict::Unnamed;
     return UseVerdict::Transfer;
+}
+
+// ---- taking one from a stack ----------------------------------------------------------------
+// What the `PotionUse` detour answers for one decided use of a piece whose
+// stack holds `count` (the item's `o`), for the route where the game's confirm
+// clears the whole stack (Live procedure 1's `stackuse-route: take-one`). A
+// refusal answers false with the count unchanged: the piece is kept. A
+// transfer from a stack of more than one answers false, so the game keeps the
+// cells, with the count one lower (the adapter writes it and refreshes the
+// item's hash). A transfer from the last piece (a count of 1, or no count
+// above 1) answers true and the game clears the cell.
+struct StackTake {
+    bool answer;       // what PotionUse answers: true lets the game clear the cell
+    long long count;   // the stack's count after the use
+};
+
+inline StackTake TakeOne(UseVerdict v, long long count)
+{
+    if (v != UseVerdict::Transfer) return { false, count };
+    if (count > 1) return { false, count - 1 };
+    return { true, count };
 }
 
 // ---- the transfer --------------------------------------------------------------------------

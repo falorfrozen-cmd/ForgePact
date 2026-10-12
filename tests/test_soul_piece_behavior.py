@@ -5,11 +5,15 @@ the mod is on, every time the game rolls a gem drop for a dying ordinary
 monster in a zone of an act, a Piece of <boss>'s Soul of that act rolls too, at
 1 in D with D = floor(G x 4 / 5), G being the Gem of Incarnation's own rate
 (9,000, measured in Live procedure 1, so 1 in 7,200): five quarters of the
-gem's chance on the same roll. A piece is the game's own Edible PAS Logo marked
-by the seed 777100 + act. Right-clicking it in the backpack and confirming
-moves the player straight into that act's boss room (`Act_0N_Boss`), from a
-town or any zone of an act; it is refused off, in a room with no act, and in a
-`_Boss`, `Uber_` or `Dev_` room.
+gem's chance on the same roll. A piece is built on a key (`keys_bifrost_key`,
+resolved by name) with `b` = the key's index + act/10, `c` 0 and the seed
+777100 + act, so it sits in the Key tab, stacks per act and never joins the
+real key; the first builds' pieces (the game's own Edible PAS Logo marked by
+the same seed) stay recognised as legacy bag pieces. Its display sprite is the
+Gem of Incarnation's. Right-clicking it and confirming moves the player
+straight into that act's boss room (`Act_0N_Boss`), from a town or any zone of
+an act, and takes one piece from the stack; it is refused off, in a room with
+no act, and in a `_Boss`, `Uber_` or `Dev_` room.
 
 The baseline class pins the mod off as the vanilla game: no drop and no transfer
 for any input, and a fresh state that is off; and the act that `RoomActIndex`
@@ -18,17 +22,22 @@ Town_01_rm and Act_01_01, 2.0 in Act_02_01). The target class pins the chance at
 the measured rate and every refusal: forced drops that skip the chance but never
 the eligibility, a boss's own death, a source that is not a monster, towns and
 boss rooms, the use's transfer from towns and zones and its refusals, the
-transfer's target and its counts, all nine acts named (Act 7 Mevius), the base,
-and the seed round trip.
+transfer's target and its counts, all nine acts named (Act 7 Mevius), the seed
+round trip, the key piece's `b`, its identity with every signal, its survival
+through a save's two-decimal round trip, the legacy bag piece beside it, the
+take-one by stack count, and the display sprite's name.
 
-The header is compiled five times. Once as written, where every scenario must
-pass. Then four negative controls, each a one-line change to the header that
+The header is compiled six times. Once as written, where every scenario must
+pass. Then five negative controls, each a one-line change to the header that
 must turn exactly its own scenarios red while the rest stay green:
 the mod-off gates removed (the baselines that pin off fail), the act read as
 `RoomActIndex`'s answer plus one (the first plan's mistake, which Live
 procedure 1 measured: the act baseline fails), the piece's chance replaced by
-the gem's own (the chance target fails), and the use's boss-room refusal
-removed (the use-refusal target fails while the transfer target still passes).
+the gem's own (the chance target fails), the use's boss-room refusal removed
+(the use-refusal target fails while the transfer target still passes), and the
+key piece built with a whole `b` (the `plain` shape, which merges into the
+real key: the three key-piece targets fail while the legacy piece, the
+take-one and the sprite still pass).
 """
 import os
 import shutil
@@ -60,6 +69,9 @@ CHANCE_LINE = "return roll < 1.0 / static_cast<double>(d) ? DropVerdict::Hit : D
 GEM_CHANCE = "return roll < 1.0 / gemRate ? DropVerdict::Hit : DropVerdict::Miss;"
 # The use's boss-room refusal; the fourth negative control removes it.
 USE_BOSS_ROOM_GATE = "if (IsBossRoom(room)) return UseVerdict::BossRoom;"
+# The key piece's `b`; the fifth negative control builds it whole (the `plain` shape).
+KEY_B_LINE = "return static_cast<double>(baseIndex) + static_cast<double>(act) / kActFractionDivisor;"
+KEY_B_WHOLE = "return static_cast<double>(baseIndex);"
 
 OFF_BASELINES = ("baseline/off-never-drops", "baseline/off-never-transfers")
 ACT_BASELINE = "baseline/room-act-index-is-the-act"
@@ -67,6 +79,13 @@ BASELINES = OFF_BASELINES + (ACT_BASELINE, "baseline/default-off")
 CHANCE = "target/chance-five-quarters"
 USE_TRANSFER = "target/use-transfers-from-towns-and-zones"
 USE_REFUSED = "target/use-refused-when-off-outside-acts-and-in-boss-rooms"
+KEY_B = "target/key-piece-b-is-the-base-plus-tenths"
+KEY_IDENTITY = "target/key-piece-identity-needs-every-signal"
+KEY_ROUND_TRIP = "target/key-piece-survives-a-two-decimal-round-trip"
+KEY_PIECE = (KEY_B, KEY_IDENTITY, KEY_ROUND_TRIP)
+LEGACY = "target/legacy-bag-piece-still-recognised"
+TAKE_ONE = "target/stack-use-takes-one-and-answers-by-count"
+SPRITE = "target/piece-sprite-is-the-gem-sprite-name"
 TARGETS = (
     CHANCE,
     "target/forced-ignores-chance-not-eligibility",
@@ -78,8 +97,8 @@ TARGETS = (
     "target/transfer-target-is-the-act-boss-room",
     "target/every-act-has-a-boss",
     "target/seed-round-trip",
-    "target/base-is-the-edible-pas-logo",
-)
+    LEGACY,
+) + KEY_PIECE + (TAKE_ONE, SPRITE)
 COMMANDS = ("command/status-line", "command/words-parsed")
 ALL = BASELINES + TARGETS + COMMANDS
 # The scenarios that also ask with the mod off (the forced drop's off case and
@@ -150,7 +169,7 @@ _RUNS = {}
 
 
 def _runs():
-    """The five builds, compiled once for both classes."""
+    """The six builds, compiled once for both classes."""
     if not _RUNS:
         header = HEADER.read_text(encoding="utf-8")
         _RUNS["real"] = _compile_and_run("soulpiece", header)
@@ -164,6 +183,8 @@ def _runs():
             "soulpiece-gem-chance", _replace_once(header, CHANCE_LINE, GEM_CHANCE, "the chance line"))
         _RUNS["boss_room_use"] = _compile_and_run(
             "soulpiece-use-in-boss-rooms", _replace_once(header, USE_BOSS_ROOM_GATE, "", "the use's boss-room refusal"))
+        _RUNS["whole_key_b"] = _compile_and_run(
+            "soulpiece-whole-key-b", _replace_once(header, KEY_B_LINE, KEY_B_WHOLE, "the key piece's b"))
     return _RUNS
 
 
@@ -176,6 +197,7 @@ class _Scenarios(unittest.TestCase):
         cls.act_plus_one = runs["act_plus_one"]
         cls.gem_chance = runs["gem_chance"]
         cls.boss_room_use = runs["boss_room_use"]
+        cls.whole_key_b = runs["whole_key_b"]
 
     def assertScenario(self, label, output=None):
         line = _line(self.output if output is None else output, label)
@@ -272,9 +294,38 @@ class SoulPieceTargetTests(_Scenarios):
         """777101..777109 and back; 777001-777003 (the signature items, Miner's Helmet) are not pieces."""
         self.assertScenario("target/seed-round-trip")
 
-    def test_base_is_the_edible_pas_logo(self):
-        """Category and class 11, `consumable_edible_pas_logo`; a piece is that base, c 0, with a piece's seed."""
-        self.assertScenario("target/base-is-the-edible-pas-logo")
+    def test_legacy_bag_piece_still_recognised(self):
+        """The first builds' pieces: category and class 11, `consumable_edible_pas_logo`, c 0, a piece's seed,
+        recognised on their own and through the question that knows both shapes; the plain logo, a key with a
+        piece's seed, another consumable, the unique repository, a fractional `b` and an unresolved base are not."""
+        self.assertScenario(LEGACY)
+
+    def test_key_piece_b_is_the_base_plus_tenths_of_the_act(self):
+        """Class 12 on `keys_bifrost_key`; `b` = index + act/10 (2.1 .. 2.9 on index 2): never whole, truncating to
+        the base, equal within the game's epsilon for one act and apart from every other act and the real key."""
+        self.assertScenario(KEY_B)
+
+    def test_key_piece_identity_needs_every_signal(self):
+        """Class 12, c 0, `b` truncating to the base, not whole, tenths matching the seed's act: each piece
+        beside an item lacking exactly one signal (the whole-b `plain` control among them)."""
+        self.assertScenario(KEY_IDENTITY)
+
+    def test_key_piece_survives_a_two_decimal_round_trip(self):
+        """`string()` keeps two decimals: a reloaded piece is still its act's piece, still stacks with a fresh
+        one and stays apart from the real key and the other acts; the control shows the round trip rounds."""
+        self.assertScenario(KEY_ROUND_TRIP)
+
+    def test_negative_control_key_piece_fails_with_a_whole_b(self):
+        self.assertOnlyThese(self.whole_key_b, KEY_PIECE, "a core building the key piece with a whole b")
+
+    def test_stack_use_takes_one_and_answers_by_count(self):
+        """A refusal keeps the stack and answers false; a transfer from N > 1 answers false and leaves N - 1;
+        the last piece answers true; a stack of three answers false, false, true."""
+        self.assertScenario(TAKE_ONE)
+
+    def test_piece_sprite_is_the_gem_sprite_name(self):
+        """`Gem_Incarnation_spr` under item info key "11", its ground companion `Pickup_Gem_Incarnation_spr`."""
+        self.assertScenario(SPRITE)
 
     def test_status_line_and_command_words(self):
         for label in COMMANDS:

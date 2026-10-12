@@ -17,8 +17,18 @@
 // own chance on the same roll) and every refusal, each "never" beside an
 // input that does give a piece or a transfer, so a decision that refuses
 // everything fails them instead of passing them.
+//
+// The key piece (the follow-up, 2026-10-12) is pinned the same way: its `b`
+// for each act, its identity with every signal beside an item lacking each
+// one, a save's two-decimal round trip as the game writes reals (each "stays
+// apart" beside a value that does stack), the legacy bag piece beside it, the
+// take-one by stack count and the display sprite's name. The game's stack
+// compare is modelled here as GameMaker's default epsilon (0.00001; whether
+// the game changes it is not established).
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -71,6 +81,26 @@ static long GridHits(double chance, long n) {
     for (long i = 0; i < n; ++i) if (static_cast<double>(i) / static_cast<double>(n) < chance) ++hits;
     return hits;
 }
+
+// The runtime's real compare: equal within the math epsilon (GameMaker's default).
+static const double kGameEpsilon = 0.00001;
+static bool GameEqual(double x, double y) { return std::fabs(x - y) <= kGameEpsilon; }
+
+// What a save does to a real: `string()` writes a whole number whole and any
+// other with two decimals (documented runtime behaviour; Live procedure 1
+// measures it), and the load reads that text back.
+static double SaveRoundTrip(double v) {
+    char text[64];
+    if (v == std::floor(v)) std::snprintf(text, sizeof(text), "%lld", static_cast<long long>(v));
+    else std::snprintf(text, sizeof(text), "%.2f", v);
+    return std::strtod(text, nullptr);
+}
+
+// The key base's index as #197 Live 3 measured `keys_bifrost_key`; the core
+// takes whatever the adapter resolved by name.
+static const long long kKeyBase = 2;
+// The legacy base's index as Live procedure 1 measured the logo.
+static const long long kLegacyBase = 12;
 
 int main() {
     // ---- baseline: the mod off is the vanilla game ----------------------------
@@ -386,20 +416,168 @@ int main() {
         check("target/seed-round-trip", ok);
     }
     {
-        // A piece is the Edible PAS Logo (category and class 11, the entry found by
-        // name) carrying a piece's seed with c 0. The logo itself, a key carrying
-        // a piece's seed, a unique entry and an unresolved base are not pieces.
-        const long long base = 12;  // Live procedure 1 measured b 12 for the logo
+        // A legacy bag piece (the first builds' drops) is the Edible PAS Logo
+        // (category and class 11, the entry found by name) carrying a piece's seed
+        // with c 0, and is still recognised beside the key piece. The logo itself,
+        // a key carrying a piece's seed, a unique entry and an unresolved base are
+        // not pieces; a fractional `b` on the logo is not a legacy piece either.
+        const long long base = kLegacyBase;
         bool ok = SP::kBaseCategory == 11 && SP::kBaseItemType == 11
                && std::string_view(SP::kBaseRepoName) == "consumable_edible_pas_logo";
-        for (int act = 1; act <= SP::kActCount; ++act)
-            ok = ok && SP::PieceActOfItem(11, base, 0, SP::SeedOfAct(act), base) == act;
+        std::string detail;
+        for (int act = 1; act <= SP::kActCount; ++act) {
+            const long long seed = SP::SeedOfAct(act);
+            if (SP::PieceActOfItem(11, base, 0, seed, base) != act
+                || SP::AnyPieceActOfItem(11, static_cast<double>(base), 0.0, seed, kKeyBase, base) != act
+                || SP::KeyPieceActOfItem(11, static_cast<double>(base), 0.0, seed, base) != 0) {
+                ok = false; detail += " act" + std::to_string(act);
+            }
+        }
         ok = ok && SP::PieceActOfItem(11, base, 0, 4242, base) == 0          // the plain logo
                 && SP::PieceActOfItem(12, base, 0, SP::SeedOfAct(1), base) == 0  // a key with a piece's seed
                 && SP::PieceActOfItem(11, 13, 0, SP::SeedOfAct(1), base) == 0    // another consumable
                 && SP::PieceActOfItem(11, base, 1, SP::SeedOfAct(1), base) == 0  // the unique repository
                 && SP::PieceActOfItem(11, base, 0, SP::SeedOfAct(1), -1) == 0;   // base not resolved yet
-        check("target/base-is-the-edible-pas-logo", ok);
+        // Asked through the question that knows both shapes (the key piece's side
+        // is the identity scenario's): the legacy rule's near misses stay refused.
+        ok = ok && SP::AnyPieceActOfItem(11, 12.0, 0.0, 4242, kKeyBase, base) == 0                    // the plain logo
+                && SP::AnyPieceActOfItem(11, 12.5, 0.0, SP::SeedOfAct(1), kKeyBase, base) == 0        // a fractional logo
+                && SP::AnyPieceActOfItem(11, 12.0, 0.0, SP::SeedOfAct(1), kKeyBase, -1) == 0;         // legacy base unresolved
+        check("target/legacy-bag-piece-still-recognised", ok, detail);
+    }
+    {
+        // A key piece's `b` is the key base's index + act/10: 2.1 for Act 1 ..
+        // 2.9 for Act 9 on Bifrost (index 2). It is never whole, it truncates to
+        // the base (so the repository lookup loads the key), pieces of one act
+        // compare equal (stack), and every other act and the real key differ by
+        // more than the game's epsilon (stay apart). No act or no base: -1.
+        bool ok = SP::kKeyBaseCategory == 12 && SP::kKeyBaseItemType == 12
+               && std::string_view(SP::kKeyBaseRepoName) == "keys_bifrost_key"
+               && SP::kActFractionDivisor == 10.0;
+        std::string detail;
+        for (int act = 1; act <= SP::kActCount; ++act) {
+            const double b = SP::KeyPieceB(kKeyBase, act);
+            const double want = 2.0 + act / 10.0;
+            const bool good = std::fabs(b - want) < 1e-9 && b != std::floor(b) && std::trunc(b) == 2.0
+                && GameEqual(b, SP::KeyPieceB(kKeyBase, act)) && !GameEqual(b, static_cast<double>(kKeyBase));
+            if (!good) { ok = false; detail += " act" + std::to_string(act) + "=" + std::to_string(b); }
+            for (int other = 1; other <= SP::kActCount; ++other)
+                if (other != act && GameEqual(b, SP::KeyPieceB(kKeyBase, other))) {
+                    ok = false; detail += " act" + std::to_string(act) + "~act" + std::to_string(other);
+                }
+        }
+        // Another base moves with its index (resolved by name, never pinned).
+        ok = ok && std::fabs(SP::KeyPieceB(7, 3) - 7.3) < 1e-9 && std::trunc(SP::KeyPieceB(7, 9)) == 7.0;
+        ok = ok && SP::KeyPieceB(kKeyBase, 0) == -1.0 && SP::KeyPieceB(kKeyBase, 10) == -1.0
+                && SP::KeyPieceB(-1, 1) == -1.0;
+        check("target/key-piece-b-is-the-base-plus-tenths", ok, detail);
+    }
+    {
+        // A key piece needs every signal: class 12, c 0, `b` truncating to the
+        // base, `b` not whole, and tenths that match the act its seed marks.
+        // Beside each piece, an item lacking exactly one of them.
+        bool ok = true;
+        std::string detail;
+        for (int act = 1; act <= SP::kActCount; ++act) {
+            const long long seed = SP::SeedOfAct(act);
+            const double b = SP::KeyPieceB(kKeyBase, act);
+            if (SP::KeyPieceActOfItem(12, b, 0.0, seed, kKeyBase) != act) { ok = false; detail += " built" + std::to_string(act); }
+            if (SP::KeyPieceActOfItem(12, 2.0 + act / 10.0, 0.0, seed, kKeyBase) != act) { ok = false; detail += " literal" + std::to_string(act); }
+        }
+        struct Case { const char* what; int t; double b; double c; long long seed; long long base; };
+        const Case refused[] = {
+            { "consumable-class", 11, 2.1, 0.0, SP::SeedOfAct(1), kKeyBase },
+            { "whole-b-plain-control", 12, 2.0, 0.0, SP::SeedOfAct(1), kKeyBase },
+            { "other-key", 12, 3.1, 0.0, SP::SeedOfAct(1), kKeyBase },
+            { "below-the-base", 12, 1.9, 0.0, SP::SeedOfAct(9), kKeyBase },
+            { "ordinary-seed", 12, 2.1, 0.0, 4242, kKeyBase },
+            { "signature-seed", 12, 2.1, 0.0, 777001, kKeyBase },
+            { "act-mismatch", 12, 2.1, 0.0, SP::SeedOfAct(2), kKeyBase },
+            { "c-fraction", 12, 2.1, 0.05, SP::SeedOfAct(1), kKeyBase },
+            { "c-unique", 12, 2.1, 1.0, SP::SeedOfAct(1), kKeyBase },
+            { "base-unresolved", 12, 2.1, 0.0, SP::SeedOfAct(1), -1 },
+            { "nan-b", 12, std::nan(""), 0.0, SP::SeedOfAct(1), kKeyBase },
+            { "inf-b", 12, std::numeric_limits<double>::infinity(), 0.0, SP::SeedOfAct(1), kKeyBase },
+            { "nan-c", 12, 2.1, std::nan(""), SP::SeedOfAct(1), kKeyBase },
+        };
+        for (const Case& c : refused)
+            if (SP::KeyPieceActOfItem(c.t, c.b, c.c, c.seed, c.base) != 0) { ok = false; detail += std::string(" ") + c.what; }
+        // Through the question that knows both shapes: a key piece is found, and
+        // the legacy rule is not widened into the key (a whole-b class-12 item
+        // with a piece's seed is neither shape).
+        ok = ok && SP::AnyPieceActOfItem(12, 2.1, 0.0, SP::SeedOfAct(1), kKeyBase, kLegacyBase) == 1
+                && SP::AnyPieceActOfItem(12, 2.0, 0.0, SP::SeedOfAct(1), kKeyBase, kLegacyBase) == 0
+                && SP::AnyPieceActOfItem(12, 2.1, 0.0, SP::SeedOfAct(1), -1, kLegacyBase) == 0;
+        check("target/key-piece-identity-needs-every-signal", ok, detail);
+    }
+    {
+        // Through a save: `string()` keeps two decimals, so every act's `b` comes
+        // back as the same tenths. A reloaded piece is still the piece of its act,
+        // still stacks with a fresh one, and still stays apart from the real key
+        // (a whole number, written whole) and from every other act. The control:
+        // the round trip really rounds, since a finer fraction would not survive.
+        bool ok = true;
+        std::string detail;
+        for (int act = 1; act <= SP::kActCount; ++act) {
+            const double fresh = SP::KeyPieceB(kKeyBase, act);
+            const double saved = SaveRoundTrip(fresh);
+            const bool good = SP::KeyPieceActOfItem(12, saved, SaveRoundTrip(0.0), SP::SeedOfAct(act), kKeyBase) == act
+                && GameEqual(saved, fresh) && std::trunc(saved) == 2.0
+                && !GameEqual(saved, SaveRoundTrip(static_cast<double>(kKeyBase)));
+            if (!good) { ok = false; detail += " act" + std::to_string(act) + "=" + std::to_string(saved); }
+            for (int other = 1; other <= SP::kActCount; ++other)
+                if (other != act && GameEqual(saved, SaveRoundTrip(SP::KeyPieceB(kKeyBase, other)))) {
+                    ok = false; detail += " act" + std::to_string(act) + "~act" + std::to_string(other);
+                }
+        }
+        // Two-decimal values the tolerance must accept, whichever way they round.
+        ok = ok && SP::KeyPieceActOfItem(12, 2.104, 0.0, SP::SeedOfAct(1), kKeyBase) == 1
+                && SP::KeyPieceActOfItem(12, 2.896, 0.0, SP::SeedOfAct(9), kKeyBase) == 9;
+        // The real key round-trips whole and stays the real key.
+        ok = ok && SaveRoundTrip(2.0) == 2.0;
+        const double finer = 2.123;
+        const bool rounds = SaveRoundTrip(finer) == 2.12 && !GameEqual(SaveRoundTrip(finer), finer);
+        check("target/key-piece-survives-a-two-decimal-round-trip", ok && rounds,
+            detail + " control=" + (rounds ? "rounds" : "no"));
+    }
+    {
+        // The take-one, by stack count: a refusal keeps every piece and answers
+        // false; a transfer from a stack of N > 1 answers false (the game keeps
+        // the cells) and leaves N - 1; the last piece answers true (the game
+        // clears the cell).
+        bool ok = true;
+        std::string detail;
+        for (long long n : { 2LL, 3LL, 10LL, 99LL }) {
+            const SP::StackTake t = SP::TakeOne(SP::UseVerdict::Transfer, n);
+            if (t.answer || t.count != n - 1) { ok = false; detail += " n" + std::to_string(n); }
+        }
+        for (long long n : { 1LL, 0LL }) {
+            const SP::StackTake t = SP::TakeOne(SP::UseVerdict::Transfer, n);
+            if (!t.answer || t.count != n) { ok = false; detail += " last" + std::to_string(n); }
+        }
+        for (int v = 0; v < static_cast<int>(SP::UseVerdict::Transfer); ++v)
+            for (long long n : { 0LL, 1LL, 2LL, 5LL }) {
+                const SP::StackTake t = SP::TakeOne(static_cast<SP::UseVerdict>(v), n);
+                if (t.answer || t.count != n) { ok = false; detail += " " + W(static_cast<SP::UseVerdict>(v)) + std::to_string(n); }
+            }
+        // A stack of three used three times: false, false, then true on the last.
+        long long count = 3;
+        std::string answers;
+        for (int i = 0; i < 3; ++i) {
+            const SP::StackTake t = SP::TakeOne(SP::UseVerdict::Transfer, count);
+            answers += t.answer ? "T" : "F";
+            count = t.count;
+        }
+        ok = ok && answers == "FFT" && count == 1;
+        check("target/stack-use-takes-one-and-answers-by-count", ok, "answers=" + answers + detail);
+    }
+    {
+        // The display sprite is the Gem of Incarnation's, named (never an index),
+        // written under item info key "11"; its ground companion is `Pickup_` + it.
+        const bool ok = std::string_view(SP::kPieceSpriteName) == "Gem_Incarnation_spr"
+            && std::string_view(SP::kIconInfoKey) == "11"
+            && SP::GroundSpriteName() == "Pickup_Gem_Incarnation_spr";
+        check("target/piece-sprite-is-the-gem-sprite-name", ok, SP::GroundSpriteName());
     }
     {
         // The counters by verdict and act, and the status line built from them.
