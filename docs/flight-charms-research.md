@@ -1052,6 +1052,38 @@ observed".
 - `InstancePlaceTallest` gathers the instances at a place and answers the
   tallest, or `noone`, as § 19.6 of RDM already says.
 
+### Why the canopy covered the flying player
+
+Mod live 1 (2026-10-12) failed five checks, for three reasons in the game
+that this section records. The replanned work
+read more on 2026-10-13, in the same build, through the ghidra MCP, the
+game's data file and a byte scan of the imported executable. Each fact is in
+RDM in full, labelled static reading, measured or inference; here they are in
+short.
+
+- **The canopy is not on a game layer** (RDM § 19.7). The write landed: the
+  player's layer read depth −5500, the front end of the room's
+  `global.gameLayer` list, and he was visible on open ground. A canopy still
+  covered him at both spots probed. The canopy object's Create moves it onto a
+  room layer of its own, `Tree_Leaves`, which sits at −9700 in town, in front
+  of every game layer, and carries the sway effect. So the front of the game
+  layers is not the front of the room (inference). The same section records
+  the colour-filter layers some rooms keep in front of that, the 101 rooms
+  that have one, and the 8 rooms where a filter lies behind a layer the game
+  draws.
+- **A tooltip for an item with no stats** (RDM § 16.6). The gold rows wait
+  for the first stat call whose stat the item has, and Pocket Elf has none,
+  so its `Flight` row never drew. The tooltip function holds all of this
+  build's direct stat calls in one run, behind one branch that reads the
+  tooltip's surface fields, which suggests a per-item tooltip cache
+  (inference, not measured). Whether the run is made for an item with no
+  stats at all is not established; Mod live 2 measures it.
+- **One flight charm at a time** (RDM § 22.1). The game lists one charm per
+  definition `b` above a rarity line, and all three flight charms carry `b`
+  0, so with the Wings and the Broomstick both worn only the Wings were
+  listed (measured, S14 and S17). The owner confirmed that this is the
+  game's own rule, so it is not fixed; Mod live 2 wears each charm alone.
+
 ### The items
 
 Three built-in Custom Forge entries, recognised and dressed the way the
