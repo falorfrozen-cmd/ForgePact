@@ -345,5 +345,316 @@ class FlightCharmsForgeContract(unittest.TestCase):
             self.assertNotIn(symbol, self.shipped, symbol)
 
 
+# ---- the lever: flight's answers and drawing in front ---------------------------------
+
+FLIGHT_START = "// ---- Flight charms (FlightCharms.hpp): the flight adapter"
+FLIGHT_END = "// ---- end of the flight charms flight adapter"
+JS_START = "// ---- Jump through scenery (JumpScenery.hpp): the adapter"
+JS_END = "// ---- end of the jump through scenery adapter"
+SDK_OBJECTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "objects.hpp"
+
+LEVER = {
+    "array": "static bool FlightCharmArray(RValue& array)",
+    "equipped": "static bool FlightEquipped(unsigned& mask)",
+    "overlap": "static bool FlightOverlap(bool& overlapping)",
+    "layer_ends": "static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)",
+    "excluded": "static bool FlightExcludedBlocks(TRoutine orig, const FcNs::HookedRow& h, CInstance* S, CInstance* O, int argc, RValue* Args)",
+    "on_builtin": "static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
+    "tallest": "static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "depth": "static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "install": "static std::string FlightInstall()",
+    "install_if_ready": "static void FlightInstallIfReady()",
+    "tick": "static void FlightCharmTick()",
+    "player": "static void FlightRefreshPlayer()",
+    "shared_detour": "static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
+    "shared_install": "static std::string CollisionBuiltinsInstall()",
+    "js_builtin": "static void JsOnBuiltin(",
+    "js_install": "static std::string JumpSceneryInstall()",
+    "holders": "static std::string JumpSceneryResearchHolders(bool forFlight)",
+    "held": "static std::string JumpSceneryHeldHooks()",
+    "frame": "void FrameCallback(FWFrame& FrameContext)",
+}
+
+
+def sdk_object_index(name):
+    if not SDK_OBJECTS.exists():
+        raise unittest.SkipTest(f"hs-game-sdk header not found at {SDK_OBJECTS}")
+    match = re.search(r"\b" + name + r" = (\d+),", SDK_OBJECTS.read_text(encoding="utf-8"))
+    assert match, name
+    return match.group(1)
+
+
+class FlightCharmsLeverContract(unittest.TestCase):
+    """The flight adapter: which calls flight answers, and how it gets in.
+
+    Pinned here: the five builtin detours are one shared install, run by
+    jumpscenery and by flight, and each detour runs the original once, then
+    jumpscenery, then flight; flight answers only the local player's blocked
+    query, through the core, with the family and its exclusions named through
+    the SDK; InstancePlaceTallest and UpdateDepth are hooked by their SDK names
+    and a table-only result refuses; the equipped read is the offline charm
+    array, read at the point of use; nothing installs before a charm arms
+    flight, and the install runs from the tick once a character resolves; the
+    research build's instruments and flight refuse each other's hooks.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.block = cls.plugin[cls.plugin.index(FLIGHT_START):cls.plugin.index(FLIGHT_END)]
+        cls.code = strip_comments(cls.block)
+        cls.js = strip_comments(cls.plugin[cls.plugin.index(JS_START):cls.plugin.index(JS_END)])
+        cls.shipped = strip_comments(strip_research_blocks(cls.plugin))
+        cls.shipped_block = strip_comments(strip_research_blocks(cls.block))
+
+    def body(self, which, source=None):
+        return strip_comments(function_body(source if source is not None else self.plugin, LEVER[which]))
+
+    def lines(self, which):
+        return [line.strip() for line in self.body(which).split("\n") if line.strip()]
+
+    # ---- both builds ---------------------------------------------------------------
+
+    def test_the_flight_adapter_ships_in_both_builds(self):
+        player = strip_research_blocks(self.plugin)
+        for name in ("array", "equipped", "overlap", "layer_ends", "excluded", "on_builtin", "tallest", "depth",
+                     "install", "install_if_ready", "tick", "player", "shared_detour", "shared_install"):
+            with self.subTest(function=name):
+                self.assertIn(LEVER[name], player)
+        # The flight adapter comes after jumpscenery's, whose helpers it reuses.
+        self.assertLess(self.plugin.index(JS_END), self.plugin.index(FLIGHT_START))
+
+    # ---- the shared builtin detours ----------------------------------------------------
+
+    def test_the_five_builtins_are_one_shared_install(self):
+        shared = self.body("shared_install")
+        self.assertIn("HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i])", shared)
+        self.assertLess(shared.index("if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p))"),
+                        shared.index("HookBuiltin("))
+        self.assertIn("if (g_JsOrig[i]) continue;", shared)
+        # The one HookBuiltin of these builtins in the whole plugin.
+        self.assertEqual(len(re.findall(r"HookBuiltin\([^;]*kJsBuiltinDetours", strip_comments(self.plugin))), 1)
+        # Both mods install through it, and flight hooks no builtin itself.
+        self.assertIn("CollisionBuiltinsInstall()", self.body("js_install"))
+        self.assertIn("CollisionBuiltinsInstall()", self.body("install"))
+        self.assertNotIn("HookBuiltin(", self.code)
+
+    def test_each_detour_runs_the_original_once_then_jumpscenery_then_flight(self):
+        detour = self.body("shared_detour")
+        self.assertEqual(len(re.findall(r"\borig\(", detour)), 1)
+        call = detour.index("orig(Result, S, O, argc, Args);")
+        self.assertLess(call, detour.index("JsOnBuiltin(row, Result, S, O, argc, Args);"))
+        self.assertLess(detour.index("JsOnBuiltin(row, Result, S, O, argc, Args);"),
+                        detour.index("FlightOnBuiltin(row, Result, S, O, argc, Args);"))
+        # The adapters' own calls inside a detour reach neither mod.
+        self.assertLess(call, detour.index("if (g_JsBusy || g_FlightBusy) return;"))
+        self.assertLess(detour.index("if (g_JsBusy || g_FlightBusy) return;"), detour.index("JsOnBuiltin("))
+        # The builtin detours the macro defines are the shared one.
+        self.assertIn("CollisionBuiltinDetour(I, Result, S, O, argc, Args);", self.js)
+        # Neither mod refuses because of the other: no Enabled() or Installed()
+        # of the other in either install.
+        self.assertNotIn("g_JumpScenery", self.body("install"))
+        self.assertNotIn("g_Flight", self.body("js_install"))
+
+    # ---- what flight answers ------------------------------------------------------------
+
+    def test_flight_answers_only_the_local_players_blocked_query(self):
+        lines = self.lines("on_builtin")
+        self.assertEqual(lines[0], "if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return;")
+        body = self.body("on_builtin")
+        # A free answer stands, before anything is read.
+        self.assertIn("if (!FlightBlocked(h.answer, Result)) return;", body)
+        self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.Refresh("))
+        # The state is refreshed at the point of use, and nothing more is read while off.
+        self.assertIn("g_Flight.Refresh(frame);", body)
+        self.assertIn("if (g_Flight.CurrentState() != FcNs::State::Off)", body)
+        self.assertIn("JsObjectIndexOf(Args[h.objectArg])", body)
+        self.assertIn("g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); })", body)
+        self.assertIn("if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);", body)
+        # The rows are jumpscenery's five, in its order.
+        self.assertIn("static_assert(FlightRowsMatchJumpScenery()", self.code)
+
+    def test_the_points_and_the_room_are_read_for_the_core(self):
+        body = self.body("on_builtin")
+        self.assertIn("FlightPoints(row, argc, Args, q);", body)
+        points = strip_comments(function_body(self.plugin, "static void FlightPoints("))
+        for field in ("q.x0 = ", "q.y0 = ", "q.x1 = ", "q.y1 = "):
+            self.assertIn(field, points)
+        self.assertIn("FcNs::Hooked::CollisionLine", points)
+        install = self.body("install")
+        self.assertIn("g_Flight.SetRoomSize(&JsRoomSize);", install)
+
+    def test_the_family_and_its_exclusions_through_the_sdk(self):
+        self.assertIn("static constexpr HeroSiege::Objects::GameObject kFlightFamily ="
+                      " HeroSiege::Objects::GameObject::Collision_Parent_obj;", self.code)
+        excluded = re.search(r"kFlightExcluded\[\] = \{(.*?)\};", self.code, re.S).group(1)
+        self.assertEqual(re.findall(r"HeroSiege::Objects::GameObject::(\w+)", excluded), ["Wall_Parent_obj", "Lock_obj"])
+        install = self.body("install")
+        self.assertIn('"asset_get_index"', install)
+        self.assertIn("HeroSiege::Objects::GetObjectName(", install)
+        self.assertIn('"object_is_ancestor"', install)
+        self.assertIn("g_Flight.SetFamily(", install)
+        for name in ("Collision_Parent_obj", "Wall_Parent_obj", "Lock_obj", "Gate_Parent_obj", "Controller_obj"):
+            index = sdk_object_index(name)
+            self.assertIsNone(re.search(r"\b" + index + r"\b", self.code), name + "'s index is written as a number")
+
+    def test_the_wall_check_reruns_the_same_original_against_each_excluded_object(self):
+        excluded = self.body("excluded")
+        self.assertIn("for (int e : g_FlightExcludedIdx)", excluded)
+        self.assertIn("copy[h.objectArg] = RValue((double)e);", excluded)
+        self.assertIn("orig(r, S, O, argc, copy.data());", excluded)
+
+    # ---- InstancePlaceTallest and UpdateDepth ----------------------------------------------
+
+    def test_the_two_scripts_by_sdk_name_and_both_routes(self):
+        install = self.body("install")
+        for constant, hook, orig in (("gml_Script_InstancePlaceTallest", "Hook_FlightInstancePlaceTallest", "g_FlightOrigIpt"),
+                                     ("gml_Script_UpdateDepth", "Hook_FlightUpdateDepth", "g_FlightOrigDepth")):
+            with self.subTest(script=constant):
+                self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::" + constant
+                                 + r"\),[^;]*\(PVOID\)" + hook + r", &" + orig + r", &\w+\)")
+        self.assertNotIn("HookOneScriptTable", self.code)
+        self.assertNotIn("MmCreateHook(", self.code)
+        self.assertNotIn('"InstancePlaceTallest"', self.code)
+        self.assertNotIn('"UpdateDepth"', self.code)
+        # A table-only hook would be passed by the game's compiled calls: refuse.
+        self.assertIn("if (!g_FlightIptNative)", install)
+        self.assertIn("if (!g_FlightDepthNative)", install)
+
+    def test_instance_place_tallest_tests_the_instance_it_answered(self):
+        hook = self.body("tallest")
+        self.assertIn("RValue& r = g_FlightOrigIpt(S, O, R, argc, A);", hook)
+        self.assertLess(hook.index("g_FlightOrigIpt(S, O, R, argc, A)"), hook.index("g_Flight.OnQuery("))
+        self.assertIn("if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;", hook)
+        self.assertIn("FcNs::Hooked::InstancePlaceTallest", hook)
+        self.assertIn("FlightInstanceObject(r)", hook)
+        # Never re-run: the core's single-argument OnQuery.
+        self.assertIn("g_Flight.OnQuery(q)", hook)
+        self.assertIn("r = FlightAnswerValue(answer);", hook)
+
+    def test_update_depth_writes_the_front_layer_for_the_player_only(self):
+        hook = self.body("depth")
+        self.assertIn("RValue& r = g_FlightOrigDepth(S, O, R, argc, A);", hook)
+        self.assertLess(hook.index("g_FlightOrigDepth(S, O, R, argc, A)"), hook.index("g_Flight.OnUpdateDepth("))
+        lines = self.lines("depth")
+        self.assertEqual(lines[1], "if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;")
+        self.assertIn('RValue("layer")', hook)
+        self.assertIn("if (w.write)", hook)
+        # yDepthSet stays as the game set it.
+        self.assertNotIn("yDepthSet", self.code)
+        ends = self.body("layer_ends")
+        self.assertIn('"gameLayer"', ends)
+        self.assertIn('"layer_get_depth"', ends)
+        self.assertIn("g_Flight.SetLayerEnds(&FlightLayerEnds);", self.body("install"))
+
+    # ---- residual, and no warp -----------------------------------------------------------
+
+    def test_residual_reads_the_saved_original_place_meeting_on_the_player(self):
+        overlap = self.body("overlap")
+        self.assertIn("g_JsOrig[(int)JsNs::Builtin::PlaceMeeting]", overlap)
+        self.assertIn("RValue((double)g_FlightFamilyIdx)", overlap)
+        self.assertIn("orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);", overlap)
+        self.assertIn("g_Flight.SetOverlap(&FlightOverlap);", self.body("install"))
+
+    def test_the_player_is_never_moved(self):
+        for name in ('"x"', '"y"'):
+            self.assertIsNone(re.search(r'variable_instance_set"\s*,\s*\{[^}]*RValue\(' + name, self.code))
+        self.assertNotIn("playerwarp", self.code)
+
+    # ---- the equipped read ------------------------------------------------------------------
+
+    def test_the_equipped_read_is_the_offline_charm_array(self):
+        array = self.body("array")
+        self.assertIn('GetGlobalVariable(g_Yytk, "mplr")', array)
+        self.assertIn("HeroSiege::Player::kOnlineFlagGlobal", array)
+        self.assertIn("HeroSiege::Objects::GameObject::Controller_obj", array)
+        self.assertIn("HeroSiege::Player::kRelicTabHolderField", array)
+        self.assertIn('"localCharmItemArray"', array)
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(controller)", array)
+        # Online refuses before anything else is read.
+        self.assertLess(array.index("kOnlineFlagGlobal"), array.index('"instance_find"'))
+        equipped = self.body("equipped")
+        self.assertIn("FlightCharmArray(array)", equipped)
+        self.assertIn("FlightCharmOf(item, rolled)", equipped)
+        self.assertIn("FcNs::kMechanic", equipped)
+        self.assertIn("mask |= FcNs::CharmBit(rolled.charm);", equipped)
+        self.assertIn("g_Flight.SetEquipped(&FlightEquipped);", self.body("install"))
+
+    def test_the_state_is_refreshed_at_the_point_of_use_never_at_the_frame(self):
+        # The tick refreshes the player pointer, never flight's state.
+        for refresh in ("g_Flight.Refresh(", "g_Flight.RefreshForStat(", "g_Flight.OnQuery(", "g_Flight.OnUpdateDepth("):
+            self.assertNotIn(refresh, self.body("tick"))
+            self.assertNotIn(refresh, self.body("player"))
+        frame = strip_comments(function_body(self.plugin, LEVER["frame"]))
+        self.assertNotIn("g_Flight", frame)
+
+    # ---- arming and the install ----------------------------------------------------------------
+
+    def test_nothing_installs_before_a_charm_arms_flight(self):
+        tick = self.lines("tick")
+        self.assertEqual(tick[0], "if (!g_Flight.Armed()) return;")
+        body = self.body("tick")
+        self.assertIn("if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();", body)
+        self.assertLess(body.index("if (!g_Flight.Installed())"), body.index("FlightRefreshPlayer();"))
+        for source in (self.plugin, strip_research_blocks(self.plugin)):
+            frame = strip_comments(function_body(source, LEVER["frame"]))
+            self.assertEqual(frame.count("FlightCharmTick();"), 1)
+            self.assertIn("if (g_Setup) FlightCharmTick();", frame)
+        # The install path: from the tick alone, and every hook inside it.
+        self.assertEqual(self.shipped.count("FlightInstall()"), 2, "the definition and one call")
+        self.assertEqual(self.shipped.count("FlightInstallIfReady("), 2, "the definition and the tick")
+        install = self.body("install")
+        for call in ("HookOneScript(", "CollisionBuiltinsInstall("):
+            self.assertEqual(self.code.count(call), install.count(call), call + " outside FlightInstall")
+
+    def test_the_install_waits_for_a_character_and_refuses_once(self):
+        ready = self.body("install_if_ready")
+        self.assertIn("g_Flight.ShouldInstall(g_Setup, ", ready)
+        self.assertIn("FlightPlayerResolves()", ready)
+        self.assertLess(ready.index("FlightPlayerResolves()"), ready.index("FlightInstall();"))
+        self.assertLess(ready.index("FlightInstall();"), ready.index("g_Flight.NoteInstall(why.empty());"))
+        self.assertIn("Out(FcNs::RefusedLine(why));", ready)
+        self.assertEqual(self.shipped.count("FcNs::RefusedLine(why)"), 1)
+        # The ground icon rides hidden loot's one LootGroundInit detour.
+        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ready)
+        resolves = strip_comments(function_body(self.plugin, "static bool FlightPlayerResolves()"))
+        self.assertIn("HhResolveLocalPlayer(p)", resolves)
+        self.assertIn("HhResolveInstance(p)", resolves)
+        player = self.body("player")
+        self.assertIn("HhResolveLocalPlayer(p)", player)
+
+    # ---- the research build, both directions -------------------------------------------------
+
+    def test_flight_refuses_while_a_research_hook_holds_one_of_its_six(self):
+        install = self.body("install")
+        self.assertIn("JumpSceneryResearchHolders(true)", install)
+        self.assertLess(install.index("JumpSceneryResearchHolders(true)"), install.index("HookOneScript("))
+        self.assertNotIn("JumpSceneryResearchHolders", self.shipped)
+        holders = self.body("holders")
+        self.assertIn("g_JpRows[kJpRow_InstancePlaceTallest].installed", holders)
+        self.assertIn("g_JpRows[kJpRow_SkillsLeap].installed", holders)
+        self.assertIn("JumpSceneryResearchHolders(false)", self.body("js_install"))
+
+    def test_the_research_instruments_refuse_while_flight_holds_them(self):
+        held = self.body("held")
+        self.assertIn("FlightHeldScripts()", held)
+        self.assertIn("g_JsOrig[i]", held)
+        scripts = strip_comments(function_body(self.plugin, "static std::string FlightHeldScripts()"))
+        self.assertIn("g_FlightOrigIpt", scripts)
+        self.assertIn("g_FlightOrigDepth", scripts)
+        self.assertNotIn("JumpSceneryHeldHooks", self.shipped)
+        self.assertNotIn("FlightHeldScripts", self.shipped)
+
+    # ---- no address ---------------------------------------------------------------------------
+
+    def test_no_hand_resolved_address(self):
+        self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", self.code))
+        self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*\+", self.code))
+        self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{5,}", self.code))
+        self.assertNotIn("GetModuleHandle", self.code)
+        # Not even a mention of the research probe ships in it.
+        self.assertNotIn("charmprobe", strip_research_blocks(self.block))
+
+
 if __name__ == "__main__":
     unittest.main()

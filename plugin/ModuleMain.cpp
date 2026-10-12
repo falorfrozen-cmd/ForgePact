@@ -561,11 +561,15 @@ static ForgePact::LootAnnounceMod g_LootAnnounce;
 // Flight charms (`flightcharm`, ForgePact #158): the decision core and the
 // owner's six icons. The Custom Forge recognises and dresses the charms (what
 // it reads sits just before TryApplyCustomForge, the rest of the forge part
-// just before InstallCustomForgeItemHooks); dressing arms flight.
+// just before InstallCustomForgeItemHooks); dressing arms flight. The flight
+// adapter, which answers the collision queries and draws the flying player in
+// front, sits after jump through scenery's, whose five builtin detours it
+// shares.
 #include <ForgePact/FlightCharms.hpp>
 #include <ForgePact/FlightCharmIcons.hpp>
 namespace FcNs = ForgePact::FlightCharms;
 static ForgePact::FlightCharms::Flight g_Flight;
+static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
 // Always show Chaos Pillar mods (`pillartips`, ForgePact #7): the decision
 // core. Its adapter sits just before Hook_DrawHudBuffs, which calls its tick;
 // the mod state reads the switch.
@@ -52723,6 +52727,13 @@ static void HiddenLootCommand(const std::string& rest)
 // jumpprobe holds one (JumpSceneryResearchHolders), and `citrace 1`
 // (InstallCiTraceHooks) and `jumpprobe hook` (JpInstall) while jumpscenery
 // holds any of its six (JumpSceneryHeldHooks).
+//
+// The five builtin detours are shared with the flight charms (ForgePact #158,
+// whose adapter follows this one): one install, CollisionBuiltinsInstall,
+// which either mod runs and the second finds done, and one body,
+// CollisionBuiltinDetour, which runs the original once and then hands the
+// result to JsOnBuiltin and to FlightOnBuiltin. jumpscenery's own behaviour is
+// unchanged; neither mod refuses because of the other.
 namespace JsNs = ForgePact::JumpSceneryMod;
 
 static constexpr HeroSiege::Objects::GameObject kJsFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
@@ -52744,10 +52755,14 @@ static std::vector<int> g_JsExcludedIdx;
 static const char* const kJsBuiltinHookIds[JsNs::kBuiltinCount] = {
     "fp_jumpscenery_pmt", "fp_jumpscenery_plm", "fp_jumpscenery_ipo", "fp_jumpscenery_cln", "fp_jumpscenery_ccr",
 };
-static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+// The five detours are shared with the flight charms (ForgePact #158): a
+// builtin detours once, so whichever mod goes in first installs them
+// (CollisionBuiltinsInstall), and each runs the original once and then hands
+// the result to jumpscenery and to flight in turn (CollisionBuiltinDetour).
+static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
 #define JS_BUILTIN_DETOUR(I) \
     static void JsBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
-        JsOnBuiltin(I, Result, S, O, argc, Args); \
+        CollisionBuiltinDetour(I, Result, S, O, argc, Args); \
     }
 JS_BUILTIN_DETOUR(0) JS_BUILTIN_DETOUR(1) JS_BUILTIN_DETOUR(2) JS_BUILTIN_DETOUR(3) JS_BUILTIN_DETOUR(4)
 #undef JS_BUILTIN_DETOUR
@@ -52932,13 +52947,13 @@ static constexpr bool JsFreeAnswerReachesCore(int row)
 static_assert(JsFreeAnswerReachesCore((int)JsNs::Builtin::CollisionCircle),
               "walk-before-open= needs free collision_circle answers outside the window");
 
+// jumpscenery's part of a shared detour, after the original ran (the shared
+// detour runs it first, always: a free answer is returned as it is).
 static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
-    if (!g_JumpScenery.Enabled() || g_JsBusy) { if (g_JsOrig[row]) g_JsOrig[row](Result, S, O, argc, Args); return; }
+    if (!g_JumpScenery.Enabled()) return;
     const TRoutine orig = g_JsOrig[row];
     if (!orig) return;
-    // The original first, always: a free answer is returned as it is.
-    orig(Result, S, O, argc, Args);
     if (!S || S != g_JsPlayer) return;
     const JsNs::BuiltinRow& b = JsNs::kBuiltins[row];
     const int64_t frame = (int64_t)g_RuntimeFrame;
@@ -52967,6 +52982,24 @@ static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int
     if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);
 }
 
+// flight's part, defined with the flight adapter below; it returns at once for
+// any self but the local player, and until flight's own install went in.
+static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+
+// The one detour body of the five builtins: the original once, then
+// jumpscenery (when its switch is on), then flight (when it is on or
+// residual). A call the adapters make themselves inside a detour reaches
+// neither. Neither mod refuses because of the other.
+static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    const TRoutine orig = g_JsOrig[row];
+    if (!orig) return;
+    orig(Result, S, O, argc, Args);
+    if (g_JsBusy || g_FlightBusy) return;
+    JsOnBuiltin(row, Result, S, O, argc, Args);
+    FlightOnBuiltin(row, Result, S, O, argc, Args);
+}
+
 static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);
@@ -52980,8 +53013,10 @@ static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValu
 
 #ifndef FORGEPACT_RELEASE
 // citrace's and jumpprobe's hooks on the builtins (and script) this mod
-// needs, by name; "" when neither holds one.
-static std::string JumpSceneryResearchHolders()
+// needs, by name; "" when neither holds one. forFlight asks for the flight
+// charms' six instead (ForgePact #158): the same five builtins, and
+// InstancePlaceTallest in place of skillsLeap.
+static std::string JumpSceneryResearchHolders(bool forFlight)
 {
     std::string citrace;
     const struct { const char* name; TRoutine* orig; } kCi[] = {
@@ -52995,12 +53030,21 @@ static std::string JumpSceneryResearchHolders()
         for (const JsNs::BuiltinRow& b : JsNs::kBuiltins)
             if (b.name == JpNs::kBuiltins[i].name) jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(b.name);
     }
-    if (g_JpRows[kJpRow_SkillsLeap].installed)
+    if (!forFlight && g_JpRows[kJpRow_SkillsLeap].installed)
         jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    if (forFlight && g_JpRows[kJpRow_InstancePlaceTallest].installed)
+        jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest));
     if (!jumpprobe.empty()) return "jumpprobe holds " + jumpprobe;
     return "";
 }
 
+// The flight charms' two scripts, when their hooks went in; defined with the
+// flight adapter below.
+static std::string FlightHeldScripts();
+
+// What jumpscenery and the flight charms hold, by name: the five shared
+// builtins (whichever of the two installed them), skillsLeap, and flight's
+// InstancePlaceTallest and UpdateDepth. citrace and jumpprobe refuse on any.
 static std::string JumpSceneryHeldHooks()
 {
     std::string held;
@@ -53008,9 +53052,40 @@ static std::string JumpSceneryHeldHooks()
         if (g_JsOrig[i]) held += (held.empty() ? "" : ", ") + std::string(JsNs::kBuiltins[i].name);
     if (g_JsOrigLeap)
         held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    const std::string flight = FlightHeldScripts();
+    if (!flight.empty()) held += (held.empty() ? "" : ", ") + flight + " (with the flight charms, which share these builtins)";
     return held;
 }
 #endif
+
+// The five builtins' one install, shared by jumpscenery and the flight charms
+// (ForgePact #158): each by name, through HookBuiltin, once its routine is
+// confirmed to be game code. A builtin already in is skipped, so the second mod
+// to install finds the first one's detours and adds nothing. Returns the
+// builtins that did not go in, "" when all five are in.
+static std::string CollisionBuiltinsInstall()
+{
+    std::string failed;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i) {
+        if (g_JsOrig[i]) continue;
+        const char* name = JsNs::kBuiltins[i].name.data();
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
+        if (!AurieSuccess(st) || !p) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not found by name)";
+            continue;
+        }
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not game code)";
+            continue;
+        }
+        if (!HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i]) || !g_JsOrig[i]) {
+            g_JsOrig[i] = nullptr;
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (HookBuiltin failed)";
+        }
+    }
+    return failed;
+}
 
 // The one install path, through JsInstallIfReady (from `jumpscenery 1` with a
 // character loaded, or the tick once one is): "" when every hook is in and
@@ -53019,7 +53094,7 @@ static std::string JumpSceneryHeldHooks()
 static std::string JumpSceneryInstall()
 {
 #ifndef FORGEPACT_RELEASE
-    const std::string holders = JumpSceneryResearchHolders();
+    const std::string holders = JumpSceneryResearchHolders(false);
     if (!holders.empty())
         return holders + " (a builtin detours once); the mod stays off. Relaunch without it to use jumpscenery.";
 #endif
@@ -53058,25 +53133,7 @@ static std::string JumpSceneryInstall()
     // Table-only, the game's own direct calls would pass the hook by and the
     // mod would report on while doing nothing.
     if (!g_JsLeapNative) return "skillsLeap is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
-    std::string failed;
-    for (int i = 0; i < JsNs::kBuiltinCount; ++i) {
-        if (g_JsOrig[i]) continue;
-        const char* name = JsNs::kBuiltins[i].name.data();
-        PVOID p = nullptr;
-        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
-        if (!AurieSuccess(st) || !p) {
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not found by name)";
-            continue;
-        }
-        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not game code)";
-            continue;
-        }
-        if (!HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i]) || !g_JsOrig[i]) {
-            g_JsOrig[i] = nullptr;
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (HookBuiltin failed)";
-        }
-    }
+    const std::string failed = CollisionBuiltinsInstall();
     if (!failed.empty()) return failed + " not hooked; the mod stays off";
     return "";
 }
@@ -53163,6 +53220,489 @@ static void JumpSceneryCommand(const std::string& rest)
     Out("jumpscenery: usage jumpscenery 1 | 0 | stat");
 }
 // ---- end of the jump through scenery adapter
+
+// ---- Flight charms (FlightCharms.hpp): the flight adapter -------------------
+// ForgePact #158. While a flight charm is worn, the local player walks through
+// scenery (the Collision_Parent_obj family) but not through walls (zone gates
+// among them, RDM § 19.8), locks, monsters or the room's edge, and is drawn in
+// front of scenery. FlightCharms.hpp's Flight decides every call; this adapter
+// supplies the game reads and writes, all by name.
+//
+// What it answers (docs/flight-charms-research.md, Live 1's S7): the three
+// builtins measured answering a walk into scenery (position_meeting,
+// place_meeting, collision_line), the two jumpscenery hooks beside them
+// (instance_position, collision_circle), and InstancePlaceTallest. The five
+// builtins are jumpscenery's detours, shared: one install
+// (CollisionBuiltinsInstall), one body (CollisionBuiltinDetour) that runs the
+// original once, then jumpscenery, then FlightOnBuiltin. A blocked answer
+// becomes "nothing there" only for the local player's own query, when the
+// object it names is in the family and is not a wall or a lock, a re-run of
+// the same original against Wall_Parent_obj and Lock_obj blocks nothing, and
+// every point lies inside the room. InstancePlaceTallest is hooked by its SDK
+// name through HookOneScript; the instance it answers is tested the same way,
+// never re-run.
+//
+// The state (off / on / residual) is refreshed at most once a frame, at the
+// point of use: the first blocked query of the local player in that frame, or
+// UpdateDepth. The worn charms are read off the offline charm array
+// (inventoryData[mplr - 1].localCharmItemArray, phase 1's route; online it
+// reads nothing, so flight stays off). Taking a charm off inside scenery
+// leaves flight `residual` until the saved original place_meeting at the
+// player's own position reads free; the player is never moved.
+//
+// Drawing in front: UpdateDepth is hooked by its SDK name. After the game's
+// own call, for the local player while flight is on, `layer` is set to the
+// front end of global.gameLayer[room] (the end with the lower layer_get_depth,
+// read once per room; which end is in front is measured live, flight-depth).
+// yDepthSet is left as the game set it.
+//
+// The install: dressing arms flight the first time it recognises a charm.
+// Before that, nothing runs per frame. While armed, FlightCharmTick looks for
+// the local player every 60 frames (HhResolveLocalPlayer, VALUE_REF-safe) and
+// installs once: hidden loot's shared LootGroundInit detour (the ground icon
+// rides it), InstancePlaceTallest, UpdateDepth and the five builtins. A
+// table-only script hook, a builtin that did not go in, or (research build) a
+// citrace or jumpprobe hook on one of the six refuses, with one line.
+// No address, no struct read.
+
+static constexpr HeroSiege::Objects::GameObject kFlightFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
+// The objects flight never passes, with their descendants: walls (gates are
+// walls) and locks. Monsters are never in the family, so they keep blocking
+// without a row here. The owner may ask for walls to open after testing
+// (2026-10-12), so this list is the one edit.
+static constexpr HeroSiege::Objects::GameObject kFlightExcluded[] = {
+    HeroSiege::Objects::GameObject::Wall_Parent_obj,
+    HeroSiege::Objects::GameObject::Lock_obj,
+};
+
+// Flight's first five rows are the shared detours' rows, in the same order.
+static constexpr bool FlightRowsMatchJumpScenery()
+{
+    if (JsNs::kBuiltinCount + 1 != FcNs::kHookedCount) return false;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i)
+        if (FcNs::kHooked[i].name != JsNs::kBuiltins[i].name || FcNs::kHooked[i].objectArg != JsNs::kBuiltins[i].objectArg)
+            return false;
+    return static_cast<int>(FcNs::Hooked::InstancePlaceTallest) == JsNs::kBuiltinCount;
+}
+static_assert(FlightRowsMatchJumpScenery(), "flight's builtin rows are the shared detours' rows, in order");
+
+static PFUNC_YYGMLScript g_FlightOrigIpt = nullptr;     // InstancePlaceTallest
+static PFUNC_YYGMLScript g_FlightOrigDepth = nullptr;   // UpdateDepth
+static bool g_FlightIptNative = false;     // each got its inline detour, not only the table swap
+static bool g_FlightDepthNative = false;
+static bool g_FlightConfigured = false;    // the objects resolved and the core's callbacks set
+static CInstance* g_FlightPlayer = nullptr;   // the local player, refreshed each frame once installed
+static int g_FlightFamilyIdx = -1;
+static std::vector<int> g_FlightExcludedIdx;
+static int g_FlightControllerIdx = -1;     // Controller_obj's index, once resolved
+static RValue g_FlightLayerValue[2];       // the room's two layer ends, as the game holds them
+static unsigned long long g_FlightArmedFrames = 0;   // frames the tick ran while armed and not installed
+static constexpr int kFlightMaxCharms = 64;
+
+static RValue FlightAnswerValue(FcNs::Answer a)
+{
+    return a == FcNs::Answer::Noone ? RValue(FcNs::kNoone) : RValue(false);
+}
+
+// jumpscenery's reading of a result (JsBlocked): a meeting query's true, an
+// instance query's instance. Anything else is `unknown`.
+static bool FlightBlocked(FcNs::Answer form, const RValue& r, bool unknown = false)
+{
+    return JsBlocked(form == FcNs::Answer::False ? JsNs::Answer::False : JsNs::Answer::Noone, r, unknown);
+}
+
+// The worn charms' array, offline: Controller_obj.inventoryData[mplr - 1]
+// .localCharmItemArray (the relic tab's key rule). Variables only. Online the
+// charms live on Client_obj, so nothing is read and flight stays off.
+static bool FlightCharmArray(RValue& array)
+{
+    try {
+        const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
+        if ((JsNumber(onl) && onl.ToDouble() == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) return false;
+        const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
+        if (!JsNumber(mplr)) return false;
+        const double row = mplr.ToDouble();
+        if (!std::isfinite(row) || std::floor(row) != row || row < 1.0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) return false;
+        if (g_FlightControllerIdx < 0) {
+            int idx = -1;
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
+            if (!N1ObjectIndex(index, idx)) return false;
+            g_FlightControllerIdx = idx;
+        }
+        const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_FlightControllerIdx), RValue(0.0) });
+        if (!HeroSiege::Player::IsInstanceHandle(controller)) return false;
+        if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) return false;
+        const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
+        RValue profile;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, (int)row - 1, profile)) return false;
+        static constexpr std::string_view kField = "localCharmItemArray";
+        if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
+            array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
+        else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
+            array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
+        else
+            return false;
+        return array.m_Kind == VALUE_ARRAY;
+    } catch (...) {}
+    return false;
+}
+
+// The core's EquippedFn: the flight charms worn now, as CharmBit()s. A charm is
+// identified by what it is: a flight charm's seed (FlightCharmOf), dressed by
+// us as one (fp_mechanic = flight, which a sidecar entry that claimed the same
+// item would not write).
+static bool FlightEquipped(unsigned& mask)
+{
+    mask = 0;
+    RValue array;
+    if (!FlightCharmArray(array)) return false;
+    try {
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
+        for (int i = 0; i < count && i < kFlightMaxCharms; ++i) {
+            RValue item;
+            if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, array, i, item)) continue;
+            FcNs::Rolled rolled;
+            if (!FlightCharmOf(item, rolled)) continue;
+            RValue mechanic;
+            if (!FlightField(item, "fp_mechanic", mechanic) || mechanic.m_Kind != VALUE_STRING) continue;
+            if (mechanic.ToString() != std::string(FcNs::kMechanic)) continue;
+            mask |= FcNs::CharmBit(rolled.charm);
+        }
+    } catch (...) { return false; }
+    return true;
+}
+
+// The core's OverlapFn: the saved original place_meeting at the player's own
+// x and y against Collision_Parent_obj, with the player as self. Unreadable
+// counts as free (false), so flight goes off and the game's answers stand.
+static bool FlightOverlap(bool& overlapping)
+{
+    const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    if (!orig || !g_FlightPlayer || g_FlightFamilyIdx < 0) return false;
+    try {
+        const RValue p = g_FlightPlayer->ToRValue();
+        const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") });
+        const RValue vy = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("y") });
+        if (!JsNumber(vx) || !JsNumber(vy)) return false;
+        const double x = vx.ToDouble(), y = vy.ToDouble();
+        if (!std::isfinite(x) || !std::isfinite(y)) return false;
+        RValue args[3] = { RValue(x), RValue(y), RValue((double)g_FlightFamilyIdx) };
+        RValue r;
+        orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);
+        if (r.m_Kind != VALUE_BOOL && !JsNumber(r)) return false;
+        overlapping = r.ToBoolean();
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The `room` built-in as a room index (the runner answers with a reference).
+static bool FlightRoom(int64_t& room)
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return false;
+        if (!JsNumber(v) && v.m_Kind != VALUE_REF) return false;
+        const double d = v.ToDouble();
+        if (!std::isfinite(d) || d < 0.0 || std::floor(d) != d) return false;
+        room = (int64_t)d;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The core's LayerEndsFn: global.gameLayer[room]'s first and last entries,
+// each with its layer_get_depth. The entries are kept as the game holds them,
+// so the write puts back the same value.
+static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)
+{
+    if (room < 0 || room > INT32_MAX) return false;
+    try {
+        const RValue layers = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "gameLayer");
+        RValue row;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, (int)room, row)) return false;
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, row);
+        if (count < 1) return false;
+        RValue ends[2];
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, row, 0, ends[0])
+            || !HeroSiege::Player::Detail::ArrayAt(g_Yytk, row, count - 1, ends[1])) return false;
+        FcNs::LayerEnd* out[2] = { &first, &last };
+        for (int k = 0; k < 2; ++k) {
+            if (!JsNumber(ends[k]) && ends[k].m_Kind != VALUE_REF) return false;
+            const double id = ends[k].ToDouble();
+            const RValue depth = g_Yytk->CallBuiltin("layer_get_depth", { ends[k] });
+            if (!std::isfinite(id) || !JsNumber(depth)) return false;
+            out[k]->layer = (int64_t)id;
+            out[k]->depth = depth.ToDouble();
+        }
+        g_FlightLayerValue[0] = ends[0];
+        g_FlightLayerValue[1] = ends[1];
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The layer the core chose, as the game holds it.
+static RValue FlightLayerValue(int64_t layer)
+{
+    for (const RValue& v : g_FlightLayerValue) {
+        try {
+            if ((JsNumber(v) || v.m_Kind == VALUE_REF) && (int64_t)v.ToDouble() == layer) return v;
+        } catch (...) {}
+    }
+    return RValue((double)layer);
+}
+
+// Does a wall or a lock block this query? The same original, same arguments
+// and self, with the object argument swapped for each excluded object.
+static bool FlightExcludedBlocks(TRoutine orig, const FcNs::HookedRow& h, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!orig || !Args || h.objectArg < 0 || h.objectArg >= argc) return true;
+    std::vector<RValue> copy(Args, Args + argc);
+    for (int e : g_FlightExcludedIdx) {
+        copy[h.objectArg] = RValue((double)e);
+        RValue r;
+        orig(r, S, O, argc, copy.data());
+        if (FlightBlocked(h.answer, r, true)) return true;
+    }
+    return false;
+}
+
+// A numeric argument, NaN when it is missing or not a number (the core's room
+// check then keeps the game's answer).
+static double FlightArgNumber(const RValue* v)
+{
+    if (!v || !JsNumber(*v)) return std::numeric_limits<double>::quiet_NaN();
+    return v->ToDouble();
+}
+
+// The points a builtin query names: x, y, or collision_circle's centre, and
+// collision_line's two ends.
+static void FlightPoints(int row, int argc, RValue* Args, FcNs::Query& q)
+{
+    const auto arg = [argc, Args](int i) { return FlightArgNumber(Args && i < argc ? &Args[i] : nullptr); };
+    q.x0 = arg(0);
+    q.y0 = arg(1);
+    if (static_cast<FcNs::Hooked>(row) == FcNs::Hooked::CollisionLine) {
+        q.x1 = arg(2);
+        q.y1 = arg(3);
+    }
+}
+
+// The object of an instance InstancePlaceTallest answered; -1 when unreadable.
+static int FlightInstanceObject(const RValue& v)
+{
+    const int obj = JsObjectIndexOf(v);
+    if (obj >= 0) return obj;
+    try {
+        int n = -1;
+        if (v.m_Kind == VALUE_OBJECT && N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), n))
+            return n;
+    } catch (...) {}
+    return -1;
+}
+
+// flight's part of a shared builtin detour, after the original (and
+// jumpscenery) ran. Any self but the local player costs one compare.
+static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return;
+    if (row < 0 || row >= JsNs::kBuiltinCount) return;
+    const FcNs::HookedRow& h = FcNs::kHooked[row];
+    if (!FlightBlocked(h.answer, Result)) return;   // a free answer stands
+    const TRoutine orig = g_JsOrig[row];
+    FcNs::Answer answer = FcNs::Answer::Real;
+    g_FlightBusy = true;
+    try {
+        const int64_t frame = (int64_t)g_RuntimeFrame;
+        g_Flight.Refresh(frame);
+        if (g_Flight.CurrentState() != FcNs::State::Off) {
+            FcNs::Query q{};
+            q.row = static_cast<FcNs::Hooked>(row);
+            q.frame = frame;
+            q.playerSelf = true;
+            q.object = (Args && h.objectArg < argc) ? JsObjectIndexOf(Args[h.objectArg]) : -1;
+            q.reallyBlocked = true;
+            FlightPoints(row, argc, Args, q);
+            answer = g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); });
+        }
+    } catch (...) { answer = FcNs::Answer::Real; }
+    g_FlightBusy = false;
+    if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);
+}
+
+static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_FlightOrigIpt(S, O, R, argc, A);
+    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (!FlightBlocked(FcNs::Answer::Noone, r)) return r;   // `noone` stands
+    FcNs::Answer answer = FcNs::Answer::Real;
+    g_FlightBusy = true;
+    try {
+        const int64_t frame = (int64_t)g_RuntimeFrame;
+        g_Flight.Refresh(frame);
+        if (g_Flight.CurrentState() != FcNs::State::Off) {
+            FcNs::Query q{};
+            q.row = FcNs::Hooked::InstancePlaceTallest;
+            q.frame = frame;
+            q.playerSelf = true;
+            q.object = FlightInstanceObject(r);
+            q.reallyBlocked = true;
+            q.x0 = FlightArgNumber(argc > 0 && A ? A[0] : nullptr);
+            q.y0 = FlightArgNumber(argc > 1 && A ? A[1] : nullptr);
+            answer = g_Flight.OnQuery(q);
+        }
+    } catch (...) { answer = FcNs::Answer::Real; }
+    g_FlightBusy = false;
+    if (answer != FcNs::Answer::Real) r = FlightAnswerValue(answer);
+    return r;
+}
+
+// After the game's own UpdateDepth: the local player's `layer`, while flight
+// is on, to the room's front game layer. Any other self costs one compare.
+static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_FlightOrigDepth(S, O, R, argc, A);
+    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;
+    g_FlightBusy = true;
+    try {
+        int64_t room = -1;
+        if (FlightRoom(room)) {
+            const FcNs::DepthWrite w = g_Flight.OnUpdateDepth((int64_t)g_RuntimeFrame, true, room);
+            if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerValue(w.layer) });
+        }
+    } catch (...) {}
+    g_FlightBusy = false;
+    return r;
+}
+
+#ifndef FORGEPACT_RELEASE
+static std::string FlightHeldScripts()
+{
+    std::string held;
+    if (g_FlightOrigIpt) held += SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest);
+    if (g_FlightOrigDepth)
+        held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateDepth));
+    return held;
+}
+#endif
+
+// The one install, from FlightInstallIfReady: "" when every hook is in and the
+// core is configured, otherwise why flight stays off. Hooks that went in stay
+// in, and their detours return the game's answer until flight is installed.
+static std::string FlightInstall()
+{
+#ifndef FORGEPACT_RELEASE
+    const std::string holders = JumpSceneryResearchHolders(true);
+    if (!holders.empty())
+        return holders + " (a hook detours once); flight stays off. Relaunch without it to use the flight charms.";
+#endif
+    if (!g_FlightConfigured) {
+        int family = -1;
+        std::vector<int> excluded;
+        std::string missing;
+        try {
+            family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightFamily))) }).ToDouble();
+            if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kFlightFamily));
+            for (const HeroSiege::Objects::GameObject obj : kFlightExcluded) {
+                const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
+                if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
+                excluded.push_back(idx);
+            }
+        } catch (...) { missing = "the objects"; }
+        if (!missing.empty()) return missing + " did not resolve by name; flight stays off";
+        g_FlightFamilyIdx = family;
+        g_FlightExcludedIdx = excluded;
+        g_Flight.SetIsAncestor([](int object, int ancestor) {
+            return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+        });
+        g_Flight.SetFamily(family, excluded);
+        g_Flight.SetEquipped(&FlightEquipped);
+        g_Flight.SetOverlap(&FlightOverlap);
+        g_Flight.SetRoomSize(&JsRoomSize);
+        g_Flight.SetLayerEnds(&FlightLayerEnds);
+        g_FlightConfigured = true;
+    }
+    if (!g_FlightOrigIpt) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest), "fp_flight_ipt",
+                      (PVOID)Hook_FlightInstancePlaceTallest, &g_FlightOrigIpt, &native);
+        g_FlightIptNative = native;
+    }
+    if (!g_FlightOrigIpt) return "InstancePlaceTallest was not found by name; flight stays off";
+    // Table-only, the game's own direct calls would pass the hook by and
+    // flight would report on while doing nothing.
+    if (!g_FlightIptNative) return "InstancePlaceTallest is hooked table-only, so the game's own calls would pass flight by; flight stays off";
+    if (!g_FlightOrigDepth) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateDepth), "fp_flight_depth",
+                      (PVOID)Hook_FlightUpdateDepth, &g_FlightOrigDepth, &native);
+        g_FlightDepthNative = native;
+    }
+    if (!g_FlightOrigDepth) return "UpdateDepth was not found by name; flight stays off";
+    if (!g_FlightDepthNative) return "UpdateDepth is hooked table-only, so the game's own calls would pass flight by; flight stays off";
+    const std::string failed = CollisionBuiltinsInstall();
+    if (!failed.empty()) return failed + " not hooked; flight stays off";
+    return "";
+}
+
+// Does the local player resolve, by the VALUE_REF-safe resolver? At character
+// select it does not, and the install waits.
+static bool FlightPlayerResolves()
+{
+    bool ok = false;
+    g_FlightBusy = true;
+    try {
+        RValue p;
+        ok = HhResolveLocalPlayer(p) && HhResolveInstance(p) != nullptr;
+    } catch (...) { ok = false; }
+    g_FlightBusy = false;
+    return ok;
+}
+
+static void FlightRefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    g_FlightBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    g_FlightBusy = false;
+    g_FlightPlayer = inst;
+}
+
+// Installs when the core says so (Flight::ShouldInstall): armed, not yet
+// installed or refused, setup done and the local player resolved. Hidden
+// loot's LootGroundInit detour goes in first, whatever flight's own install
+// answers, since the ground icon rides it. A refusal prints its one line and
+// is final for the session.
+static void FlightInstallIfReady()
+{
+    const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true) && FlightPlayerResolves();
+    if (!g_Flight.ShouldInstall(g_Setup, havePlayer)) return;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    const std::string why = FlightInstall();
+    g_Flight.NoteInstall(why.empty());
+    if (!why.empty()) { Out(FcNs::RefusedLine(why)); return; }
+    FlightRefreshPlayer();
+}
+
+// The per-frame tick. Returns at once until dressing arms flight; while armed
+// and not installed, looks for the local player every kInstallPollFrames
+// frames; once installed, refreshes the local player only. The decisions
+// happen inside the hooked calls.
+static void FlightCharmTick()
+{
+    if (!g_Flight.Armed()) return;
+    if (!g_Flight.Installed()) {
+        if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();
+        return;
+    }
+    FlightRefreshPlayer();
+}
+// ---- end of the flight charms flight adapter
 
 // ---- Loot announcements (LootAnnounceMod.hpp): the adapter -----------------
 // `lootann 1|0|stat` (ForgePact #17, the Mods tab's switch). Offline, the game
@@ -58825,6 +59365,12 @@ void FrameCallback(FWFrame& FrameContext)
     // (JumpScenery.hpp). The decisions happen inside the hooked calls, at the
     // point of use. Returns at once while it is off.
     if (g_Setup) JumpSceneryTick();
+
+    // Flight charms (ForgePact #158): returns at once until dressing first
+    // recognises a charm; then the install once a character exists, and the
+    // local player refreshed. The decisions happen inside the hooked calls, at
+    // the point of use.
+    if (g_Setup) FlightCharmTick();
 
     // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
     // sprites, once a frame, and each explosion's decision at its deadline
