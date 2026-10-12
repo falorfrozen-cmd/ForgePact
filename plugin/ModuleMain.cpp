@@ -47972,7 +47972,9 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
 //     GetItemSize, called by name with the item, and feeds the core, which
 //     names the two itemInfoStruct keys that hold it once two sizes agree on
 //     exactly one key each (plugin/include/ForgePact/FlightCharmProbe.hpp,
-//     compiled whole by tests/flight_charm_probe_harness.cpp);
+//     compiled whole by tests/flight_charm_probe_harness.cpp). No form writes
+//     a pair a scratch item's GetItemSize has not followed (FcpSizeReadBack),
+//     and `dress keys <w> <h>` names the pair by hand under the same test;
 //   - `repo` reads one unique definition through GetUniqueRepoStruct;
 //   - `spawn` builds a normal charm the way SpawnSignatureItem does (json ->
 //     InitItemFromJson -> LootGroundCreateFromItem at the player), from a
@@ -48010,6 +48012,17 @@ static long g_FcpSpawns = 0;                        // research seeds used (kSee
 static double g_FcpSprite = -1;                     // our sprite's index once sprite_add gave one
 static int g_FcpSpriteKind = -1;                    // RValue kind of sprite_add's last answer; -1 never tried
 static const char* g_FcpSpritePath = "none";        // which path gave the index
+static bool g_FcpSizeHand = false;                  // `dress keys <w> <h>` set the size keys, after a read-back
+static std::string g_FcpSizeReadW, g_FcpSizeReadH;  // the pair the last read-back asked about
+static bool g_FcpSizeReadOk = false;                // whether GetItemSize followed that pair
+static std::string g_FcpSizeReadText;               // what that read-back wrote and read
+
+// A scratch charm's seed: just below the spawn range, so it is never a
+// spawned charm's.
+static constexpr long long kFcpScratchSeed = FcpNs::kSeedBase - 1;
+// The footprints a read-back writes: no normal charm's, and w differs from h
+// in both, so a swapped pair reads back wrong.
+static const FcpNs::Size kFcpReadBackSizes[2] = { { 2, 3 }, { 4, 1 } };
 
 // A real or integer number, finite. A bool or a reference is not one.
 static bool FcpNumber(const RValue& v, double& out)
@@ -48157,6 +48170,114 @@ static bool FcpItemSize(const RValue& item, int& w, int& h, std::string& why)
     return true;
 }
 
+// Measures two size keys rather than inferring them. It builds a scratch
+// charm the way `spawn` does (json -> InitItemFromJson, b 0, a 1x1 Small
+// charm) and never places it: the collector takes a build nothing keeps (hub
+// RDM § 16.2). It then writes each of kFcpReadBackSizes under the two keys
+// and asks GetItemSize, by name, what it answers now. True only when it
+// answered every pair written; `text` names the base size and each pair
+// written and read.
+static bool FcpSizeReadBack(const std::string& wKey, const std::string& hKey, std::string& text)
+{
+    text.clear();
+    if (wKey.empty() || hKey.empty() || wKey == hKey) { text = "w and h need two different keys"; return false; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { text = "no global instance"; return false; }
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(kFcpScratchSeed, 0)) });
+        if (parsed.m_Kind != VALUE_OBJECT) { text = "scratch json_parse gave " + Describe(parsed); return false; }
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                        { parsed, RValue(FcpNs::SpawnKey(ms)) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            text = "scratch InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item);
+            return false;
+        }
+        RValue info;
+        if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { text = "the scratch item has no itemInfoStruct"; return false; }
+        int w = 0, h = 0;
+        std::string why;
+        text = "scratch base=" + (FcpItemSize(item, w, h, why) ? FcpNs::SizeText({ w, h }) : "?(" + why + ")");
+        bool all = true;
+        for (const FcpNs::Size& want : kFcpReadBackSizes) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(wKey), RValue((double)want.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(hKey), RValue((double)want.h) });
+            const bool read = FcpItemSize(item, w, h, why);
+            text += " wrote=" + FcpNs::SizeText(want) + " read=" + (read ? FcpNs::SizeText({ w, h }) : "?(" + why + ")");
+            all = all && read && w == want.w && h == want.h;
+        }
+        return all;
+    } catch (...) { text += " (the scratch read-back threw)"; return false; }
+}
+
+// Whether the size keys in force were measured: a read-back of this very
+// pair answered every size written. Cached only, it calls nothing, so
+// FcpDressBuilt can ask it inside CreateItemNew.
+static bool FcpSizeVerified()
+{
+    return g_FcpSize.Known() && g_FcpSizeReadOk && g_FcpSizeReadW == g_FcpSize.W() && g_FcpSizeReadH == g_FcpSize.H();
+}
+
+// The size keys in force, read back before anything writes them: false with
+// the reason while they are unknown, or while GetItemSize did not follow
+// them. A pair not yet verified is read back again, and the outcome printed.
+static bool FcpSizeCheck(std::string& why)
+{
+    if (!g_FcpSize.Known()) { why = "size keys unknown (" + g_FcpSize.Why() + ")"; return false; }
+    if (!FcpSizeVerified()) {
+        g_FcpSizeReadW = g_FcpSize.W();
+        g_FcpSizeReadH = g_FcpSize.H();
+        g_FcpSizeReadOk = FcpSizeReadBack(g_FcpSizeReadW, g_FcpSizeReadH, g_FcpSizeReadText);
+        Out("charmprobe sizekeys: read back w=" + g_FcpSizeReadW + " h=" + g_FcpSizeReadH + ": " + g_FcpSizeReadText
+            + (g_FcpSizeReadOk ? " verified" : " keys-unverified"));
+    }
+    if (!g_FcpSizeReadOk) {
+        why = "size keys unverified (w=" + g_FcpSizeReadW + " h=" + g_FcpSizeReadH + ": " + g_FcpSizeReadText
+            + "; `charmprobe dress keys <w> <h>` names them by hand)";
+        return false;
+    }
+    return true;
+}
+
+// `dress keys`: the size keys in force, read back. `dress keys <w> <h>`: the
+// hand fallback, for when the samples cannot settle them (several keys hold
+// a side on every sample, or the true key is missing from one). The pair is
+// accepted only when a read-back of it answers every size written; the core
+// is then given the read-back's own answers as its samples, and `charms`
+// stops feeding it, so a later sample cannot drop the pair.
+static void FcpSizeKeys(const std::vector<std::string>& keys)
+{
+    const std::string tag = "charmprobe sizekeys: ";
+    if (keys.empty()) {
+        if (!g_FcpSize.Known()) { Out(tag + g_FcpSize.Line()); return; }
+        std::string why;
+        const bool ok = FcpSizeCheck(why);
+        Out(tag + g_FcpSize.Line() + (g_FcpSizeHand ? " by-hand" : " inferred") + (ok ? " verified" : " " + why));
+        return;
+    }
+    if (keys.size() != 2 || !FcpNs::ValidKeyName(keys[0]) || !FcpNs::ValidKeyName(keys[1])) {
+        Out(tag + "refused dress keys needs two key names (1.." + std::to_string(FcpNs::kKeyNameMax) + " letters, digits or _)");
+        return;
+    }
+    std::string text;
+    if (!FcpSizeReadBack(keys[0], keys[1], text)) {
+        Out(tag + "refused w=" + keys[0] + " h=" + keys[1] + " did not read back: " + text + "; keys in force unchanged");
+        return;
+    }
+    g_FcpSize.Reset();
+    for (const FcpNs::Size& s : kFcpReadBackSizes)
+        g_FcpSize.Add(s.w, s.h, FcpNs::NumberInfo{ { keys[0], (double)s.w }, { keys[1], (double)s.h } });
+    g_FcpSizeHand = true;
+    g_FcpSizeReadW = keys[0];
+    g_FcpSizeReadH = keys[1];
+    g_FcpSizeReadOk = true;
+    g_FcpSizeReadText = text;
+    Out(tag + g_FcpSize.Line() + " by-hand verified: " + text);
+}
+
 // The equipped charms, offline: Controller_obj.inventoryData[key - 1]
 // .localCharmItemArray, the relic tab's key rule (HeroSiege::Player's
 // ScanRelicTab reads the same entry). Variables only.
@@ -48223,9 +48344,13 @@ static void FcpCharms()
             + " rarity=" + FcpMemberText(infoStruct, "27") + " name=" + FcpMemberText(infoStruct, "28")
             + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info.numbers) : std::string())
             + " info=" + (info.ok ? FcpNs::InfoDump(info.shown) : std::string("missing(no itemInfoStruct)")));
-        if (sized && info.ok) g_FcpSize.Add(w, h, info.numbers);
-        Out("charmprobe sizekeys: " + g_FcpSize.Line());
+        // Keys set by hand were measured; a later sample is not allowed to drop them.
+        if (sized && info.ok && !g_FcpSizeHand) g_FcpSize.Add(w, h, info.numbers);
+        Out("charmprobe sizekeys: " + g_FcpSize.Line() + (g_FcpSizeHand ? " (by hand)" : ""));
     }
+    // Inferred keys are only a candidate until a scratch item's GetItemSize
+    // follows them; FcpSizeCheck prints the read-back when it runs one.
+    if (g_FcpSize.Known()) FcpSizeCheck(why);
 }
 
 static void FcpRepo(const std::vector<std::string>& tail)
@@ -48275,6 +48400,26 @@ static bool FcpPlayer(RValue& player, CInstance*& self, double& x, double& y, st
     return true;
 }
 
+// The Loot_Ground_obj instance with the highest id, and that id (-1 when
+// there is none): instance ids only grow, so a call that placed an item
+// leaves a higher one. `spawn` and `heroic` both read their drops this way.
+static double FcpNewestGround(double objectIndex, RValue* newest)
+{
+    double best = -1;
+    try {
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue(objectIndex) }).ToDouble();
+        for (int i = 0; i < n && i < kFcpMaxGroundScan; ++i) {
+            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objectIndex), RValue((double)i) });
+            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
+            double id = -1;
+            if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }), id) || id <= best) continue;
+            best = id;
+            if (newest) *newest = inst;
+        }
+    } catch (...) {}
+    return best;
+}
+
 static void FcpSpawn(const std::vector<std::string>& tail)
 {
     const std::string tag = "charmprobe spawn: ";
@@ -48284,6 +48429,7 @@ static void FcpSpawn(const std::vector<std::string>& tail)
     if (r.hasSize && !g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
     if (r.sprite && g_FcpSprite < 0) { Out(tag + "refused sprite not loaded (`charmprobe sprite load` first)"); return; }
     if (r.sprite && !g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    if (r.hasSize && !FcpSizeCheck(why)) { Out(tag + "refused " + why); return; }
     RValue player;
     CInstance* self = nullptr;
     double x = 0, y = 0;
@@ -48291,6 +48437,16 @@ static void FcpSpawn(const std::vector<std::string>& tail)
     CInstance* g = nullptr;
     g_Yytk->GetGlobalInstance(&g);
     if (!g) { Out(tag + "refused no global instance"); return; }
+    // `placed` is said only when a new Loot_Ground_obj appeared, found by the
+    // same newest-id scan `heroic` reads its drops with, so these spawns are
+    // that scan's positive control in the same session.
+    double ground = -1;
+    if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+            RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), ground)
+        || ground < 0) {
+        Out(tag + "refused Loot_Ground_obj not resolved; nothing was built");
+        return;
+    }
 
     const long long seed = FcpNs::SpawnSeed(g_FcpSpawns++);   // a seed is never handed out twice
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -48332,14 +48488,36 @@ static void FcpSpawn(const std::vector<std::string>& tail)
             g_Yytk->CallBuiltin("variable_struct_set", { stats, RValue(std::to_string(id)), RValue(value) });
         if (r.sprite) g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSpriteKey.Key()), RValue(g_FcpSprite) });
 
+        const double groundBefore = FcpNewestGround(ground, nullptr);
         RValue res;
         const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
                                                          { RValue(x), RValue(y), item });
         if (!AurieSuccess(st2)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        RValue newest;
+        const double groundAfter = FcpNewestGround(ground, &newest);
+        const bool appeared = groundAfter > groundBefore;
+        // The footprint as GetItemSize reads it, of the item the new ground
+        // instance holds, or of the struct handed over when none appeared. A
+        // size that does not read back as requested says so: the keys did
+        // not take, whatever the bag shows.
+        RValue onGround;
+        if (appeared) {
+            try { onGround = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+            catch (...) {}
+        }
+        const bool fromGround = appeared && ApIsPlainStruct(onGround);
+        int gw = 0, gh = 0;
+        std::string sizeWhy;
+        const bool sizeRead = FcpItemSize(fromGround ? onGround : item, gw, gh, sizeWhy);
+        std::string itemSize = " getitemsize=" + (sizeRead ? FcpNs::SizeText({ gw, gh }) : "?(" + sizeWhy + ")")
+            + (fromGround ? "" : "(of the built struct)");
+        if (r.hasSize && !(sizeRead && gw == r.size.w && gh == r.size.h)) itemSize += " keys-unverified";
         const FcpInfo placed = FcpReadStruct(info);
-        Out(tag + what + " size=" + (r.hasSize ? FcpNs::SizeText(r.size) : std::string("base")) + " stats="
+        Out(tag + what + " size=" + (r.hasSize ? FcpNs::SizeText(r.size) : std::string("base")) + itemSize + " stats="
             + FcpNs::StatsText(r.stats) + " sprite=" + (g_FcpSpriteKey.Known() ? FcpSpriteText(placed.numbers) : std::string("?"))
-            + " placed (LootGroundCreateFromItem returned " + Describe(res) + ")");
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(groundAfter) + " placed"
+                        : std::string(" ground=none (no new Loot_Ground_obj appeared)"))
+            + " (LootGroundCreateFromItem returned " + Describe(res) + ")");
     } catch (...) { Out(tag + what + " refused an exception while building or placing it"); }
 }
 
@@ -48349,6 +48527,7 @@ static void FcpSpawn(const std::vector<std::string>& tail)
 static void FcpDressBuilt(RValue& item)
 {
     if (g_FcpDress.Empty() || g_TruthDepth != 0 || !g_FcpSize.Known()) return;
+    if (!FcpSizeVerified()) return;   // a pair a read-back has not followed writes nothing
     try {
         RValue def, a, info;
         double seed = 0;
@@ -48364,12 +48543,16 @@ static void FcpDressBuilt(RValue& item)
 static void FcpDress(const std::vector<std::string>& tail)
 {
     const std::string tag = "charmprobe dress: ";
+    // `dress keys [<w> <h>]` names the keys every size write uses; it sits
+    // under `dress`, the way `sprite key <name>` sits under `sprite`.
+    if (!tail.empty() && Lower(tail[0]) == "keys") { FcpSizeKeys(std::vector<std::string>(tail.begin() + 1, tail.end())); return; }
     FcpNs::DressRequest r;
     std::string why;
     if (!FcpNs::ParseDress(tail, r, why)) { Out(tag + "refused " + why); return; }
     if (r.form == FcpNs::DressForm::Off) g_FcpDress.Clear();
     if (r.form == FcpNs::DressForm::Add) {
         if (!g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
+        if (!FcpSizeCheck(why)) { Out(tag + "refused " + why); return; }
         // The research build installs CreateItemNew at setup (InstallItemInspectHooks); hook it
         // here only when nothing did, with the same Hook_CreateItemNew.
         if (!g_Orig_CreateItemNew)
@@ -48379,26 +48562,6 @@ static void FcpDress(const std::vector<std::string>& tail)
         if (!g_FcpDress.Add(r.rule, why)) { Out(tag + "refused " + why); return; }
     }
     Out(tag + g_FcpDress.Line() + " keys=" + g_FcpSize.Pair());
-}
-
-// The Loot_Ground_obj instance with the highest id, and that id (-1 when
-// there is none): instance ids only grow, so a call that placed an item
-// leaves a higher one.
-static double FcpNewestGround(double objectIndex, RValue* newest)
-{
-    double best = -1;
-    try {
-        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue(objectIndex) }).ToDouble();
-        for (int i = 0; i < n && i < kFcpMaxGroundScan; ++i) {
-            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objectIndex), RValue((double)i) });
-            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
-            double id = -1;
-            if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }), id) || id <= best) continue;
-            best = id;
-            if (newest) *newest = inst;
-        }
-    } catch (...) {}
-    return best;
 }
 
 static void FcpHeroic(const std::vector<std::string>& tail)
@@ -48441,7 +48604,9 @@ static void FcpHeroic(const std::vector<std::string>& tail)
         Out(line + "placed t=" + FcpMemberText(item, "itemType") + " b=" + FcpMemberText(def, "b") + " c="
             + FcpMemberText(def, "c") + " rarity=" + FcpMemberText(info, "27") + " name=" + FcpMemberText(info, "28"));
     }
-    Out(tag + tally.Line());
+    // The game's own callers hand it a vault or an NPC as self; this one is
+    // measured with the local player, and the line says so.
+    Out(tag + tally.Line() + " self=player");
 }
 
 static void FcpSpriteShow()
@@ -48512,7 +48677,8 @@ static void FcpUsage()
 {
     Out(FcpNs::MarkerLine(g_FcpSize, g_FcpDress));
     Out("  charms | repo <t> <sub> <b> | spawn <b 0-59> [size <w> <h>] [stat <id>=<v>]... [sprite] | dress <a> <w> <h> | dress off"
-        " | heroic <n 1-20> | sprite [load | key <name>]   research instrument for docs/flight-charms-research.md (research build only)");
+        " | dress keys [<w key> <h key>] | heroic <n 1-20> | sprite [load | key <name>]   research instrument for"
+        " docs/flight-charms-research.md (research build only)");
 }
 
 static void FcpCommand(const std::string& rest)
