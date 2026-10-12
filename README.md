@@ -1085,9 +1085,9 @@ lair's look, and the lair itself brings out whatever boss it always does.
 - **Switching off** stops the drops and the stacking. A piece you already
   have stays in your bag, and while ForgePact is installed its use is refused
   and the piece kept.
-- **Checked in play** on 2026-10-12 with this release's plugin, in Acts 1 and
-  2: monsters dropped Pieces of Gurag's Soul and of the Grim Reaper's Soul,
-  one bag cell each, and none with the switch off; a right-click and confirm,
+- **Checked in play** on 2026-10-12 with a player build from before the
+  stacks were added, in Acts 1 and 2: monsters dropped Pieces of Gurag's Soul
+  and of the Grim Reaper's Soul, and none with the switch off; a right-click and confirm,
   in a zone or in town, took the character straight into the Act 1 or Act 2
   lair with no portal and used one piece, and was refused with the switch
   off; Gurag came out, was beaten, and came out again on the next piece; the
