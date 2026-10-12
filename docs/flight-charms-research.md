@@ -302,16 +302,28 @@ This phase adds three things to it, in `JumpSceneryProbe.hpp` and the
   answers which object a blocked walk asked about, which is what the jump's
   rules could not name. Positive control: on a walk the `position_meeting`
   row shows calls (S4 already shows that row counts walking).
-- **`jumpprobe free`.** Asks whether the player's own spot is inside the
-  collision family, of the saved originals of `place_meeting` (with the
-  player's mask at its own `x`, `y`: `blocked=`) and `instance_position` (the
-  instance at that point: `by=`), with the player as `self` and the family
-  root as the object. It calls the originals directly, never through the
-  lever, and is not counted by the tally. It refuses before `hook`, since
-  without a saved original the call would go through whatever detour holds
-  the builtin, and refuses when the family root or the local player does not
-  resolve. Positive control: S9 asks it while the player overlaps the prop a
-  lever let it walk into, where it must read `blocked=yes`.
+- **`jumpprobe free [dx dy] [family|all|<object name>]`.** Asks the saved
+  originals of `place_meeting` (the player's mask at its own `x`, `y` moved
+  by `dx`, `dy`: `blocked=`) and `instance_position` (the instance at that
+  point: `by=`), with the player as `self`. It calls the originals directly,
+  never through the lever, and is not counted by the tally. The object asked
+  is the collision family's root, `Collision_Parent_obj`, with no word or
+  with `family`; GameMaker's `all` with `all`; and otherwise the object of
+  that name, resolved by `asset_get_index` and kept only when
+  `object_get_name` reads the same name back. The line gives `blocked=yes`
+  or `no`, `by=` the object found or `none`, the position, the offset and
+  `asked=` (`family:` with the root's name and index, `all(-3)`, or the name
+  with its index), and adds a note when `by=` is the player's own object: a
+  point query can find the asking instance, `place_meeting` cannot, so
+  `blocked=` is then the answer to read. It refuses before `hook` (without a
+  saved original the call would go through whatever detour holds the
+  builtin), for a family root or a name that does not resolve, for one
+  number alone or a third, for a second object word, and with no local
+  player. Positive controls: on open ground (S4) it reads `blocked=no`; and
+  with the player pressed against the prop, lever off (S5b), the mask moved
+  8 px toward the prop, or 16, must read `blocked=yes`. A vanilla player
+  stopped at a prop does not overlap it, so the offset is what makes that
+  yes possible. S9 counts a `no` only for an object that read `yes` at S5b.
 
 The jump research's two controls still open the walk checks: `CheckTalentUse`
 counts once a frame and `position_meeting` climbs while the player walks.
@@ -330,17 +342,46 @@ once known and the number of dress rules, then the usage.
   local player by the relic tab's key rule, and that entry's
   `localCharmItemArray`. It never calls `GetPlayerCharmData`, and it refuses
   online, where the charms live on `Client_obj`. Per item (at most 64) it
-  prints the item type, the definition, the footprint from `GetItemSize`
-  called by name with the item, the rarity and name (`itemInfoStruct` keys
-  27 and 28), and every `itemInfoStruct` key whose value is a number or a
-  short string. Each sized item is a sample for the size keys: a key holds
-  the width (or height) when its value equals that sample's width (height) on
-  every sample, and the pair is identified when exactly one key holds each,
-  across at least two distinct sizes; otherwise `sizekeys` says why not.
-  Positive control: S10, the read of a charm the character already wears and
-  of three normal charms of known sizes (Small, Large, Grand) dragged into
-  the grid. As built it does not print the item's `itemStatStruct`, which
-  S13's read-back of the forged stat needs (§ Not established).
+  prints the item type, the definition (`a`, `b`, `c`, `j`), the footprint
+  from `GetItemSize` called by name with the item, the rarity and name
+  (`itemInfoStruct` keys 27 and 28), then `itemstats=`, every
+  `itemStatStruct` key (a stat id) whose value is a number or a string of at
+  most 40 characters (`none` for an empty struct, `missing(no
+  itemStatStruct)` for an item without one; a stat whose value is an array
+  is not listed), and last `info=`, every `itemInfoStruct` key under the
+  same rule. It writes nothing to a worn charm. Each sized item is a sample
+  for the size keys: a key holds the width (or height) when its value equals
+  that sample's width (height) on every sample, and the pair is identified
+  when exactly one key holds each, across at least two distinct sizes;
+  otherwise `sizekeys` says why not. Normal charms are all one cell wide, so
+  every key reading 1 on every sample holds the width: expect several keys
+  named for `w` unless a worn charm of another width is a sample. An
+  identified pair is only a candidate. Once there is one, `charms` ends with
+  a read-back: it builds a scratch Small charm by the spawn's route (seed
+  779000, just below the spawn range, never placed, so nothing keeps it),
+  writes 2x3 and then 4x1 under the pair, asks `GetItemSize` after each
+  write, and prints `charmprobe sizekeys: read back` with the pair, the
+  scratch item's base size and each size written and read, ending
+  `verified` when both read back as written and `keys-unverified`
+  otherwise. Only a verified pair is ever written to an item. The size keys,
+  the dress rules and the spawn seed counter are process state, lost when
+  the game restarts. Positive control: S10, the read of a charm the
+  character already wears and of three normal charms of known sizes (Small,
+  Large, Grand) dragged into the grid; for the pair, the read-back itself,
+  which the game's own `GetItemSize` answers.
+- **`dress keys` / `dress keys <w key> <h key>`.** The hand fallback, for
+  when the samples cannot settle the keys. Bare, it prints the keys in
+  force, whether they were inferred or set by hand, and whether they are
+  verified (running the read-back first when this pair has not had one), or
+  why they are unknown or unverified. With two key names it runs the
+  read-back on that pair: when both sizes read back, the pair becomes the
+  keys in force, marked by hand (`by-hand verified` and the read-back's
+  text), and `charms` stops feeding samples, so a later sample cannot drop
+  it; otherwise it answers `refused` with the pair, `did not read back` and
+  the read-back's text, and the keys in force are unchanged. A refusal
+  elsewhere for unverified keys (`size keys unverified`) names `charmprobe
+  dress keys <w> <h>` as this fallback; one for unknown keys (`size keys
+  unknown`) does not. Positive control: the read-back, as for `charms`.
 - **`repo <t> <sub> <b>`.** Calls `GetUniqueRepoStruct` by name and reads
   the returned definition's `itemBaseInfoStruct`: rarity (27), name (28), the
   hidden flag (40) and, once the size keys are known, the footprint, then
@@ -354,42 +395,53 @@ once known and the number of dress rules, then the usage.
   `LootGroundCreateFromItem` by name with the local player as `self`, at the
   player. Before placing it, it dumps the item's `itemInfoStruct` as the game
   built it (a sample for the sprite key), then writes the requested
-  footprint into the two size keys (refused until they are identified), the
-  stats into `itemStatStruct` by stat id, and with `sprite` the loaded icon
-  into the sprite key (refused until the icon is loaded and the key known).
-  Nothing else is written. Positive control: S10's three spawns, read back by
-  `charms` once dragged into the grid; for `stat`, S13's walk measured before
-  the charm is worn.
+  footprint into the two size keys, the stats into `itemStatStruct` by stat
+  id, and with `sprite` the loaded icon into the sprite key (refused until
+  the icon is loaded and the key known). Nothing else is written. A `size`
+  is refused, before anything is built, with `size keys unknown` until a
+  pair is identified and with `size keys unverified` until it read back.
+  The spawn line counts the item as placed only when a `Loot_Ground_obj`
+  with a higher id than before the call appeared (`ground=new id=<n>
+  placed`, else `ground=none`), the same scan `heroic` uses. Its
+  `getitemsize=` is `GetItemSize` asked of that new ground item's
+  `itemInstance`, or of the built struct when none appeared (marked `(of the
+  built struct)`), and a size asked for that did not read back as asked is
+  marked `keys-unverified`. Positive control: S10's three spawns, read back
+  by `charms` once dragged into the grid; for `stat`, S13's walk measured
+  before the charm is worn.
 - **`dress <a> <w> <h>` / `dress off`.** Up to eight rules, one per item
   seed `a`. At `CreateItemNew`'s outermost return, the Custom Forge's
   research hook writes a ruled item's two size keys and touches nothing else,
   so a footprint can be made to appear on a charm the save holds as 1x1. The
   research build already detours `CreateItemNew` at setup; `dress` installs
   the same detour only when nothing did, and refuses while the size keys are
-  unknown. It prints the rules and how many items it has dressed. The Custom
+  unknown or unverified; the pass itself writes only while the pair in force
+  is verified. It prints the rules and how many items it has dressed. The Custom
   Forge's player-build pass is unchanged. Positive control: a bare
   `charmprobe dress` after S17's reload shows `dressed=` above 0, so the
   rule reached the item the game rebuilt; at 0 the reload measured the
   undressed charm, not the footprint.
 - **`heroic <n>`** (1 to 20). Calls `DropItemHeroic` by name with the local
-  player as `self` and its position, `n` times. After each call it finds the
-  newest `Loot_Ground_obj` (instance ids only grow, so a call that placed an
-  item leaves a higher one), reads its `itemInstance` (item type, definition
-  `b` and `c`, rarity, name), and ends with a count of calls, items placed,
-  a histogram by rarity code and how many were charms. Each call's own line
-  tells the three outcomes apart: `DropItemHeroic threw` or `st=<n>` (the
-  call did not dispatch), `nothing placed (returned ...)` (it dispatched and
-  returned, and no ground item with a higher id appeared), and `placed ...`.
-  The summary's `calls=` and `placed=` do not split the first two, so the
+  player as `self` and `other` and its position, `n` times. Around each call
+  it takes the highest `Loot_Ground_obj` id before and after (instance ids
+  only grow, so a call that placed an item leaves a higher one), reads the
+  new one's `itemInstance` (item type, definition `b` and `c`, rarity,
+  name), and ends with a count of calls, items placed, a histogram by rarity
+  code, how many were charms, and `self=player`. Each call's own line tells
+  the outcomes apart: `DropItemHeroic threw` or `st=<n>` (the call did not
+  dispatch), `nothing placed (returned ...)` (it dispatched and returned, and
+  no ground item with a higher id appeared), and `placed ...`. The
+  summary's `calls=` and `placed=` do not split the first two, so the
   per-call lines are what S14 records. ForgePact has never called
   `DropItemHeroic` before, and this call shape (the local player as `self`
   and `other`, its position as the two arguments, the third left to its
-  default) is not proven. Positive control: S10's `spawn` calls, which go
-  through the same by-name call with the local player as `self`, to the
-  game's own `LootGroundCreateFromItem`, and must place items the person
-  then drags into the grid. That proves the call machinery, not this call
-  shape, and the newest-id scan has no control of its own in the command
-  (§ Not established).
+  default) is not proven: the game's own callers pass a vault or an NPC as
+  `self`. Positive control: S10's `spawn` calls, which go through the same
+  by-name call with the local player as `self`, to the game's own
+  `LootGroundCreateFromItem`, and answer `ground=new id=<n> placed` from the
+  same before-and-after id scan. That proves the call machinery and the
+  scan, so a `nothing placed` beside placed spawns is the call, not the
+  scan; it does not prove this call shape.
 - **`sprite` / `sprite load` / `sprite key <name>`.** `sprite load` takes
   the pack markers' route without changing it: it writes the embedded
   placeholder PNG (a 32x32 teal diamond we drew from code,
@@ -411,65 +463,106 @@ once known and the number of dress rules, then the usage.
   base icon on the ground, in the grid and in the tooltip.
 
 `tests/test_flight_charm_probe_contract.py` pins the adapter on
-comment-stripped source (research build only, by name, the variable read, the
-dress write's scope, `sprite_add` only inside the research block), and
+comment-stripped source (research build only, by name, the variable read,
+`charms` reading `itemStatStruct` and writing nothing, the dress write's
+scope, `sprite_add` only inside the research block), and
 `tests/test_flight_charm_probe_behavior.py` runs the core through
 `flight_charm_probe_harness.cpp`.
 
 ### The debugger logpoints, during S5 to S8
 
 Not part of the research build and not a rebuild: `jumpprobe`'s rows count
-the calls to `InstancePlaceTallest` and `CanMove`, but not who made them. So
-during the walk checks the live operator attaches the toolkit's x64dbg tool
-(the toolkit's `docs/tools/x64dbg-mcp.md`) to the running game under the
-hs-drive lease, after S4's `jumpprobe hook`, and sets non-breaking hardware
-logging breakpoints. Each function is found by name in the Ghidra project of
-this build and mapped onto the running module the way that guide says; the
-address stays in the session's notes and never enters this doc. At most four
-at once:
+the calls to `InstancePlaceTallest`, `CanMove` and `TilePlaceMeeting`, but
+not who made them. So during the walk checks the live operator attaches the
+toolkit's x64dbg tool (the toolkit's `docs/tools/x64dbg-mcp.md`) to the
+running game under the hs-drive lease, after S4's `jumpprobe hook`, and sets
+non-breaking hardware logging breakpoints. Each function is found by name in
+the Ghidra project of this build and mapped onto the running module the way
+that guide says; the addresses are kept in the session's local notes and
+never enter this doc. Four at once, the hardware's limit, all armed in the
+`dbg-control` row before S5's walk, the control first:
 
-- **The control**, `CheckTalentUse` (once per frame, RDM § 7.2). It must log
-  hits during S5's walk; at zero the debugger measured nothing, and the rows
-  below close nothing.
-- **`InstancePlaceTallest`** (599) and **`CanMove`** (467), each logging the
-  return address at its entry, which names the caller once mapped back
-  through the same Ghidra project. The session records each caller by name
-  with its hit count, never an address.
-- **Optionally `place_meeting`**, only if the Ghidra project names the
-  builtin's own function, with a log condition on its object argument equal
-  to the outside object S6 named most often.
+- **The control**, `CheckTalentUse` (once per frame, RDM § 7.2), checked by
+  `dbg-control`. It must log hits during S5's walk; at zero the debugger
+  measured nothing, and the rows below close nothing.
+- **`InstancePlaceTallest`** (599, `dbg-instance-place-tallest`) and
+  **`CanMove`** (467, `dbg-can-move`), each logging a hit counter and the
+  return location at its entry, which names the caller once mapped back
+  through the same Ghidra project.
+- **`TilePlaceMeeting`** (3866, `dbg-tile-place-meeting`), logging the same.
+  It takes the fourth slot, which the plan had kept for the `place_meeting`
+  builtin's own function if the Ghidra project named one. It does not: a
+  name search for `meeting` there finds only `TilePlaceMeeting`. That leaves
+  the slot to the one candidate script `jumpprobe` levers that neither
+  logpoint above covers.
 
-`jumpprobe hook` detours all three scripts at their own address, so their
-first bytes in the live process are the detour's jump rather than Ghidra's
-bytes: a mismatch on `expect_bytes` is expected there, and the control's hits
-show that an entry breakpoint on a detoured script fires. The breakpoint sees
-the calls that reach the script's own entry, the direct ones, and fires under
-`scripts hold` too, where the lever answers the call without running it. A
-call routed through the script table reaches `jumpprobe`'s hook body instead
-and is not logged, so the logpoints name direct callers only; the row's own
-`calls=` counts both routes, and the gap between the two counts is the
-table's share. The operator detaches after S8 (and its outlier repeats),
-before S9, and in any case before any `hs_stop_game`.
+**Arming.** `jumpprobe hook` detours all four scripts at their own address,
+so their first bytes in the live process are the detour's jump rather than
+the bytes of the Ghidra project's copy. Byte matching at arm time would
+refuse that expected mismatch, so they are armed without it, and the first
+bytes the debugger returns for each are copied into the session's capture
+beside the copy's. A candidate whose live bytes equal the copy's, or do not
+begin like the control's, is not on its detour: its check is `not-run`
+(instrument: bytes) and its zero is no evidence. The control's hits show
+that an entry breakpoint on a detoured script fires.
+
+**Per walk** (S5, S7, S8, S8b and the wall repeats) the operator notes each
+logpoint's counter before and after the walk and writes that window's
+return locations into the session's capture, grouped, each with its count
+and its offset in the game module. The session does not name the callers:
+the record step maps each offset to its caller through the same Ghidra
+project afterwards, and only callers by name, with their counts, reach this
+doc. Neither the debugger's return-location field nor its hit counter has
+been measured live yet, so hits are counted from the log lines; if the
+return location comes out unevaluated, the check's note says so and the
+counts stand alone.
+
+**What a logpoint sees.** The breakpoint sees the calls that reach the
+script's own entry, the direct ones, and fires under `scripts hold` too,
+where the lever answers the call without running it. A call routed through
+the script table reaches `jumpprobe`'s hook body instead and is not logged,
+so the logpoints name direct callers only; the row's own `calls=` counts both
+routes, and the gap between the two counts is the table's share.
+
+**The four checks.** `dbg-control` passes when the control logged hits
+during S5's walk. Each of `dbg-instance-place-tallest`, `dbg-can-move` and
+`dbg-tile-place-meeting` passes when its logpoint logged; it is
+`not-observed` when the logpoint logged nothing while the control logged in
+the same window and its first bytes showed the detour like the control's
+(the note says `table-only` when its `jumpprobe` row's `calls=` rose in that
+window), and `not-run` when its bytes did not. The operator detaches after
+S8 (and its outlier repeats), before S9, and in any case before any
+`hs_stop_game`.
 
 ## Live procedure 1
 
-The full procedure, with every command in order, is in the toolkit workorder
-`forgepact-158-flight-charms`, context file, § "Live procedure 1". That is a
-local working note, so the setup and the checks are repeated here.
+This is the procedure the session runs, complete: the setup, every step with
+its expected result in run order, the cases, what it relies on and the
+teardown. The debugger rows follow § Instrument, "The debugger logpoints,
+during S5 to S8". The one thing this doc leaves out on purpose is the
+debugger's addresses, which never enter a tracked file; they are kept in the
+session's local notes.
 
 **Setup:**
 
-- **Build:** the research build (`build.bat dev`) at the workorder's final
+- **Build:** the research build (`build.bat dev`) at the phase's final
   commit. The owner installs it when asked, and its SHA-256 is recorded in the
   session's log.
 - **Character:** save slot 14, "Sorak", in `Town_01_rm`. The saves are backed
   up first and restored at teardown whatever happened.
 - **Launch:** `jumpscenery` stays off, because its hooks would hold the
-  builtins `jumpprobe` needs: `jumpscenery 0` at character select.
+  builtins `jumpprobe` needs: `jumpscenery 0` at character select, on every
+  launch, S20's relaunch included.
 - **Walking:** holding the move key toward the target for the stated time,
   by hs-drive key input or by the person.
-- **Order:** S0 to S14, then S18, S19, S15, S16, S20 and S17. S17 runs last
-  because it may crash the game.
+- **Debugger:** attached after S4 under the hs-drive lease, the four
+  logpoints armed in the `dbg-control` row, and detached in the
+  `dbg-tile-place-meeting` row, after S8 and its repeats, before S9, and in
+  any case before any `hs_stop_game`.
+- **Order:** the table's: S0 to S4, `dbg-control`, S5, S5b, S6, S7, S8 (with
+  S8b and the wall repeats), the three candidate debugger rows, S9 to S14,
+  then S18, S19, S15, S16, S20 and S17. S17 runs last because it may crash
+  the game.
 - **Cases:** for walking, the jump research's town prop (ordinary scenery)
   and a building wall if one is in reach (the outlier). For sizes, one normal
   charm of each size. For the repository, the Heroic 1x1 candidate and the
@@ -477,9 +570,10 @@ local working note, so the setup and the checks are repeated here.
   normal 1x1 charm (`b` 3) with and without our icon; the 2x2 and 1x5
   outliers are not drawn in this phase.
 
-**Checks.** S0 to S4 establish that the session is valid. For the rest, a
-`fail` or a `not-observed` is itself the finding, as long as the check's
-positive control passed in the same session.
+**Checks.** `dll-hash`, `marker`, `control`, `walk-control` and
+`dbg-control` establish that the session is valid, and must pass. For the
+rest, a `fail` or a `not-observed` is itself the finding, as long as the
+check's positive control passed in the same session.
 
 | Check | Step | Expected |
 | --- | --- | --- |
@@ -487,23 +581,28 @@ positive control passed in the same session.
 | S1 `marker` | bare `jumpprobe`, bare `charmprobe` | `jumpprobe: rows=20 hooked=0 held=0 builtins=0`, and `charmprobe` reports `marker=fcp1` |
 | S2 `control` | `ping` | `pong (YYTK 4.0.1)` |
 | S3 `jumpscenery-off` | `jumpscenery stat` | ends `install=not-armed` |
-| S4 `walk-control` | `jumpprobe hook`, walk 3 s on open ground, `jumpprobe show` | `hook` answers `20 detoured, 0 failed, 0 held, 10 builtins`, and the `calls=` of both `CheckTalentUse` and `position_meeting` rose |
-| S5 `vanilla-walk-block` | the person places Sorak 30-40 px from the jump research's prop (screenshot); debugger: the operator attaches x64dbg under the lease and arms the control, `InstancePlaceTallest` and `CanMove` logpoints (§ Instrument, "The debugger logpoints"); `jumpprobe state`, `jumpprobe objects reset`, walk into the prop 3 s, `jumpprobe state`, then the logpoints' hits read through the debugger's log | the position stopped at the prop and did not cross; debugger: the control logged hits during the walk, and each logpoint's callers are recorded by name with their counts |
-| S6 `walk-objects` | `jumpprobe objects`; debugger: if the Ghidra project names `place_meeting`'s function, a fourth logpoint on it, conditioned on the `outside` object named most often, then S5's walk once more | at least one row; every object named is recorded, `place_meeting`'s `outside` objects especially; debugger: the callers of that conditioned `place_meeting` are recorded, or the note says the logpoint was not set and why |
-| S7 `walk-all-scripts` | `jumpprobe pass 1 90 all scripts hold`, walk into the prop 3 s, `jumpprobe state`, `jumpprobe pass stat`; debugger: the logpoints' hits during this walk | `passed=` climbs; crossed or held is recorded, and the check passes if the walk crossed; debugger: each logpoint's callers during this walk are recorded by name with their counts |
-| S8 `walk-any` | `jumpprobe pass 0`, `jumpprobe pass 1 90 any scripts hold`, the same walk and reads; if it crossed, S8b: `pass 0`, `pass 1 90 any hold`, the same again; debugger: the logpoints' hits during each walk, then the operator detaches before S9 | passes if S8 crossed; S8b goes in the note. With a building wall in reach, S7 and S8 are repeated there (the outlier); debugger: the callers during each walk are recorded as in S7 |
-| S9 `stuck-inside` | only if S7 or S8 crossed: with that lever, stop while overlapping the prop (screenshot), `jumpprobe free`, `jumpprobe pass 0`, walk 1 s in each of the four directions with `jumpprobe state` after each | `free` reads `blocked=yes`; whether the game ejected the player, the player walked out, or the player stayed stuck is recorded. Recovery is the operator's `playerwarp` to the S5 position. If neither S7 nor S8 crossed, `not-observed` |
-| S10 `charm-read` | `charmprobe charms` (count n), `charmprobe spawn 0`, `spawn 20`, `spawn 40`, the person drags the three into the charm grid (screenshot), `charmprobe charms` | each spawn answers `placed`, and the count is n + 3 with the three seeds at `t=10` |
-| S11 `size-keys` | S10's output | `size=1x1`, `1x2` and `1x3`, and `charmprobe sizekeys` names a key for w and for h rather than `unknown` |
+| S4 `walk-control` | `jumpprobe hook`, walk 3 s on open ground, `jumpprobe show`; then, still on that open ground, `jumpprobe free` and `jumpprobe free all` | `hook` answers `20 detoured, 0 failed, 0 held, 10 builtins`, and the `calls=` of both `CheckTalentUse` and `position_meeting` rose. The two `free` lines are recorded for `free-control` and do not decide S4 |
+| `dbg-control` | after S4: the operator attaches x64dbg under the lease and arms the four logpoints, the control first (§ Instrument, "The debugger logpoints, during S5 to S8"), without byte matching, and copies the first bytes each returns into the capture | passes when the control logged hits during S5's walk. A session-validity check: at zero, the candidate rows below close nothing (`walk-callers: control-failed`) |
+| S5 `vanilla-walk-block` | the person places Sorak 30-40 px from the jump research's prop (screenshot); `jumpprobe state`, `jumpprobe objects reset`, each logpoint's counter noted, walk into the prop 3 s, the counters noted again, `jumpprobe state` | the position stopped at the prop and did not cross |
+| S5b `free-control` | right after S5's walk, the player still pressed against the prop, the lever off: `jumpprobe free <d>` and `jumpprobe free <d> all`, where `<d>` is 8 px toward the prop along the walked axis (`8 0`, `-8 0`, `0 8` or `0 -8`), each once more at 16 px if it read `blocked=no`; `asked=` and `by=` recorded | passes when S4's open-ground `jumpprobe free` read `blocked=no` and at least one of the two offset reads gave `blocked=yes`; the objects that read yes are the ones whose `no` S9 may count |
+| S6 `walk-objects` | `jumpprobe objects` | at least one row; every object named is recorded, and the outside object `place_meeting`'s row names most often (a named one, not the `-1` bucket) is recorded for S9 |
+| S7 `walk-all-scripts` | `jumpprobe pass 1 90 all scripts hold`, the counters noted, walk into the prop 3 s, the counters noted again, `jumpprobe state`, `jumpprobe pass stat` | `passed=` climbs; crossed or held is recorded, and the check passes if the walk crossed |
+| S8 `walk-any` | `jumpprobe pass 0`, `jumpprobe pass 1 90 any scripts hold`, the same walk, counters and reads; if it crossed, S8b: `pass 0`, `pass 1 90 any hold`, the same again | passes if S8 crossed; S8b goes in the note. With a building wall in reach, S7 and S8 are repeated there (the outlier), with the counters noted around each walk |
+| `dbg-instance-place-tallest` | after S8 and its repeats: for each walk (S5, S7, S8, S8b and the wall repeats), the `InstancePlaceTallest` logpoint's hits in that walk's window and its return locations, grouped, each with its count and its module offset, into the capture | passes when the logpoint logged; `not-observed` when it logged nothing while `dbg-control`'s control logged in the same window and its first bytes showed the detour like the control's (the note says `table-only` when its `jumpprobe` row's `calls=` rose); `not-run` when its bytes did not |
+| `dbg-can-move` | the same, for the `CanMove` logpoint | as for `dbg-instance-place-tallest` |
+| `dbg-tile-place-meeting` | the same, for the `TilePlaceMeeting` logpoint; then the operator detaches, before S9, quoting the debugger's reply and the outside thread check | as for `dbg-instance-place-tallest` |
+| S9 `stuck-inside` | only if S7 or S8 crossed: with that lever, stop while overlapping the prop (screenshot); `jumpprobe free` (the family), `jumpprobe free all` and `jumpprobe free <the S6 object>`, each with `asked=` recorded; `jumpprobe pass 0`; walk 1 s in each of the four directions with `jumpprobe state` after each | passes when some object asked reads `blocked=yes` (the player is shown inside it) and the walk-out outcome is recorded: the game ejected the player, the player walked out, or the player stayed stuck. A `blocked=no` counts only for an object that read `blocked=yes` in S5b. `not-observed` when `free-control` did not pass, when neither S7 nor S8 crossed, or when no object asked read yes (the note names them); a family-only `no` after an S8-only crossing is never a negative. Recovery is the operator's `playerwarp` to the S5 position |
+| S10 `charm-read` | `charmprobe charms` (count n), `charmprobe spawn 0`, `spawn 20`, `spawn 40`, the person drags the three into the charm grid (screenshot), `charmprobe charms` | each spawn answers `ground=new id=<n> placed`, and the count is n + 3 with the three seeds at `t=10`. These three spawn lines are the ground scan's control for S14 |
+| S11 `size-keys` | S10's output; when it did not end in a verified read-back, the hand fallback in the next column | `size=1x1`, `1x2` and `1x3`. Passes only on a read-back: the `charms` output's `charmprobe sizekeys: read back` line ending `verified`, or a hand-set pair's `by-hand verified`; the note says which. When it reads `unknown` or `keys-unverified`, the operator's step: from S10's `charm #` lines, the width candidates are the `info=` keys whose value equals that line's width on every line, the height candidates those equal to its height on every line; `charmprobe dress keys <w> <h>` for each pair, height candidates in the outer loop, at most 40 pairs, stopping at the first `by-hand verified`; every pair tried goes in the note. No pair reading back is `not-observed`, and S15, S16 and S17 are then not run |
 | S12 `repo-rarity` | `charmprobe repo 10 0 76`, then 52, 47, 91 and 98 | each prints a rarity; the control is that 98 (Goburin's Head) reads 10. Aimbot.exe's (76) code is recorded |
-| S13 `forged-stat-applies` | on open ground, walk right for exactly 2 s with `jumpprobe state` before and after (distance d0), screenshot of the sheet's movement speed; `charmprobe spawn 1 stat 25=100`, the person drags it into the charm grid; `charmprobe charms`; the walk again (d1) and the screenshot | the read-back: `charms` lists the new charm's seed in `localCharmItemArray` with its stat 25 entry reading 100. Passes if d1/d0 is at least 1.3 or the sheet's value rose. A `no` is recorded only when the read-back passed; the charm missing from the list, or listed without 25=100, is `stat-not-on-item`; a read-back that could not be made is `not-observed` |
-| S14 `heroic-route` | control first: S10's three `charmprobe spawn` calls (the same by-name call with the local player as `self`) answered `placed` and reached the grid; then `charmprobe heroic 10`, with every per-call line recorded | each call line reads `threw` or `st=` (not dispatched), `nothing placed (returned ...)` (dispatched, nothing placed) or `placed ...`; the summary's `placed=` and rarity histogram are recorded. Passes if items were placed and no placed rarity is 7 or 10. A control that did not place, or a heroic call that did not dispatch or placed nothing, is `call-not-engaged`, never a negative about the roll |
+| S13 `forged-stat-applies` | on open ground, walk right for exactly 2 s with `jumpprobe state` before and after (distance d0), screenshot of the sheet's movement speed; `charmprobe spawn 1 stat 25=100`, the person drags it into the charm grid; `charmprobe charms`; the walk again (d1) and the screenshot | the read-back: the `charms` line whose `a=` is S13's seed, in `localCharmItemArray`, with `itemstats=` holding `25=100`. Passes if d1/d0 is at least 1.3 or the sheet's value rose. A `no` is recorded only when the read-back passed; the charm missing from the list, or listed without `25=100` in `itemstats=`, is `stat-not-on-item`; a read-back that could not be made is `not-observed` |
+| S14 `heroic-route` | control first: S10's three `ground=new id=` spawn lines (the same by-name call with the local player as `self`, and the same before-and-after scan of ground ids), whose charms reached the grid; then `charmprobe heroic 10`, with every per-call line recorded | each call line reads `threw` or `st=` (not dispatched), `nothing placed (returned ...)` (dispatched, nothing placed) or `placed ...`; the summary, ending `self=player`, with its `placed=` and rarity histogram is recorded. Passes if items were placed and no placed rarity is 7 or 10. A control that did not place, or heroic calls that threw, answered `st=` or read `nothing placed`, is `call-not-engaged`, never a negative about the roll |
 | S18 `sprite-load` | `charmprobe sprite load`, then `charmprobe sprite` | `loaded=` an index, with `kind=` and `path=`, and a `key=` other than `unknown` (the S10 and S11 reads are its samples). If the key stays `unknown`, the operator picks it from the `info=` dump with `charmprobe sprite key` and records that in the note. Passes if loaded and a key is set |
-| S19 `sprite-draw` | on open ground, `charmprobe spawn 3` (the control: the same charm with its own sprite) and `charmprobe spawn 3 sprite`; screenshots on the ground; the person picks both into the bag (screenshot) and hovers each (screenshot of each tooltip); `charmprobe charms` | both answer `placed`. The control must draw the base icon everywhere, or the session measured nothing. Per surface (ground, grid, tooltip), whether our icon drew is recorded; passes if all three drew it, with `partial` or `none` in the note otherwise. Both charms stay in the bag |
-| S15 `size-override` | `charmprobe spawn 2 size 2 2`; the person drops it on a free 2x2 area of the bag (screenshot) | passes if it covers 2x2 cells |
-| S16 `dress-removed` | with that charm in the bag, save and quit to the menu, load slot 14 again (screenshot of the bag) | the game loads, the charm is 1x1, and no item is lost, duplicated or overlapped |
-| S20 `sprite-save` | after S16, before S17: note what S16's reload showed for S19's two charms; `charmprobe charms` (the custom charm's `sprite=` index i); save and quit; stop the game and launch the same DLL without ever sending `charmprobe sprite load`; `jumpscenery 0`; load slot 14; screenshot the bag and both tooltips; `charmprobe charms` | `safe` if the game loaded, the charm draws its base icon and its `sprite=` equals the control's (not i); `persisted` if it still holds i; `crash` if the game crashed (it is restarted the same way before S17). S1 to S3 run again afterwards |
-| S17 `dress-added` | last: the person puts S15's now-1x1 charm where its right and lower neighbours are occupied; `charmprobe dress` with S15's seed and 2 2; save and quit; load slot 14 (screenshot, then `charmprobe charms`) | `safe`, `overlap` or `crash` is recorded |
+| S19 `sprite-draw` | on open ground, `charmprobe spawn 3` (the control: the same charm with its own sprite) and `charmprobe spawn 3 sprite`; screenshots on the ground; the person picks both into the bag (screenshot) and hovers each (screenshot of each tooltip); `charmprobe charms` | both answer `ground=new id=<n> placed`. The control must draw the base icon everywhere, or the session measured nothing. Per surface (ground, grid, tooltip), whether our icon drew is recorded; passes if all three drew it, with `partial` or `none` in the note otherwise. Both charms stay in the bag |
+| S15 `size-override` | not run when S11 found no verified pair: `charmprobe spawn 2 size 2 2`, its line's `getitemsize=` and seed recorded; the person drops it on a free 2x2 area of the bag (screenshot) | passes when the line reads `getitemsize=2x2` from a new ground item (`ground=new id=<n> placed`) with no `keys-unverified`, and the charm covers 2x2 cells in the bag. `not-observed` for `keys-unverified`, `(of the built struct)` or `ground=none`: the write never reached a placed item |
+| S16 `dress-removed` | not run when S11 found no verified pair: with that charm in the bag, save and quit to the menu, load slot 14 again (screenshot of the bag) | the game loads, the charm is 1x1, and no item is lost, duplicated or overlapped |
+| S20 `sprite-save` | after S16, before S17: note what S16's reload showed for S19's two charms; `charmprobe charms` (the custom charm's `sprite=` index i); save and quit; stop the game and launch the same DLL without ever sending `charmprobe sprite load`; `jumpscenery 0`; load slot 14; screenshot the bag and both tooltips; `charmprobe charms`. No `charmprobe spawn` is sent after the relaunch: the seed counter starts again at 779001 in a new process | `safe` if the game loaded, the charm draws its base icon and its `sprite=` equals the control's (not i); `persisted` if it still holds i; `crash` if the game crashed (it is restarted the same way before S17). S1 to S3 run again afterwards |
+| S17 `dress-added` | last, and not run when S11 found no verified pair. First the verified pair is restored in this new process: S20's `charmprobe charms` re-infers and reads back an inferred pair, and a pair S11 set by hand is entered again with `charmprobe dress keys <w> <h>`; a bare `charmprobe dress keys` must read `verified` before going on. Then the person puts S15's now-1x1 charm where its right and lower neighbours are occupied; `charmprobe dress <S15 seed> 2 2`; save and quit; load slot 14 (screenshot, then `charmprobe charms`); a bare `charmprobe dress` | `safe`, `overlap` or `crash` is recorded, when that bare `charmprobe dress` shows `dressed=` above 0. At 0 the reload measured the undressed charm, and the check is `not-observed` |
 
 **What the procedure relies on.** The `Collision_Parent_obj` family and the
 five builtins (RDM § 19.2 and § 19.3, measured); `InstancePlaceTallest`'s
@@ -525,10 +624,20 @@ relative then an absolute path, a `VALUE_REF` index and `sprite_set_offset`
 the item's display-sprite key (not in the shared references; S18 identifies
 it); and a save keeping only the compact definition (RDM § 16.1, measured).
 
+The size checks rely on the read-back: a pair counts only when the game's own
+`GetItemSize` answers, on a scratch charm, the sizes written under it
+(§ Instrument, `charms`), so S15 to S17 never rest on an inferred pair alone.
+The `free` checks rely on the offset read at S5b, since a vanilla player at a
+prop does not overlap it.
+
 The debugger logpoints rely on the toolkit's x64dbg tool and its rules
-(`docs/tools/x64dbg-mcp.md`: hardware breakpoints only, four at most, a
-positive control first, and an address mapped from Ghidra kept as a session
-note) and on `CheckTalentUse` firing once per frame (RDM § 7.2).
+(`docs/tools/x64dbg-mcp.md` § "Breakpoint rules": hardware breakpoints only,
+four at most, a positive control first, a detoured entry's bytes not matching
+the Ghidra copy's, and an address mapped from Ghidra kept as a session note);
+on `CheckTalentUse` firing once per frame (RDM § 7.2), measured there at about
+85 hits a second in town on game 7.0.13.0; and on the Ghidra project being an
+import of the installed game, checked by its hash before the launch, so that
+after a game update the session stops instead of arming stale addresses.
 
 **Teardown:** `jumpprobe pass 0`; the debugger detached if it is still
 attached, before any `hs_stop_game`; the saves restored from the session's
@@ -564,20 +673,30 @@ walk-lever: pending
 
 walk-callers: pending
 
-`walk-callers:` (the debugger fields of S5 to S8) takes one of these values:
+`walk-callers:` (the checks `dbg-instance-place-tallest`, `dbg-can-move` and
+`dbg-tile-place-meeting`, over the walks of S5, S7, S8 and S8b) takes one of
+these values:
 
-- the callers each logpoint saw, by name with their hit counts, per walk
-  (S5's vanilla walk, S7, S8 and S8b), for `InstancePlaceTallest`,
-  `CanMove` and, when it was set, the conditioned `place_meeting`; a
-  logpoint with no hits while its row's `calls=` rose is written as
-  `table-only` for that walk.
-- `control-failed`: the `CheckTalentUse` control logged nothing, so the
-  logpoints measured nothing.
+- one line naming, per walk (S5's vanilla walk, S7, S8 and S8b), the
+  callers each candidate logpoint saw, by name with their hit counts, for
+  `InstancePlaceTallest`, `CanMove` and `TilePlaceMeeting`. A logpoint with
+  no hits while its row's `calls=` rose is written as `table-only` for that
+  walk; one whose check was `not-run` (its bytes did not show the detour) is
+  written so. The record step names each caller from the return locations
+  the capture holds; when they came out unevaluated, the line gives the
+  counts and says the callers were not read.
+- `control-failed`: the `CheckTalentUse` control (`dbg-control`) logged
+  nothing, so the logpoints measured nothing.
 - `not-run`: the debugger was not attached.
 
 stuck-inside: pending
 
-`stuck-inside:` (S9): `game-ejects`, `walks-out`, `stuck` or `not-observed`.
+`stuck-inside:` (S9): `game-ejects`, `walks-out` or `stuck`, when some object
+`jumpprobe free` asked read `blocked=yes` with the player inside the prop;
+otherwise `not-observed`, which it also is when `free-control` did not pass,
+when neither S7 nor S8 crossed, or when no object asked read `blocked=yes`. A
+`blocked=no` counts only for an object that read `blocked=yes` at S5b, and a
+family-only `no` after an S8-only crossing is never a negative.
 
 charm-read: pending
 
@@ -585,11 +704,17 @@ charm-read: pending
 
 size-keys: pending
 
-`size-keys:` (S11): `found` or `not-observed`.
+`size-keys:` (S11): `found` (a pair read back `verified`, inferred or set by
+hand with `dress keys`; the note says which) or `not-observed` (no pair read
+back).
 
 size-override: pending
 
-`size-override:` (S15): `works`, `ignored` or `not-run`.
+`size-override:` (S15): `works` (`getitemsize=2x2` from a new ground item and
+2x2 cells in the bag), `ignored` (the placed item read `getitemsize=2x2` and the
+bag still gave it one cell), `not-observed` (`keys-unverified`, `(of the built struct)` or
+`ground=none`: the write never reached a placed item) or `not-run` (S11
+found no verified pair).
 
 dress-removed: pending
 
@@ -597,7 +722,9 @@ dress-removed: pending
 
 dress-added: pending
 
-`dress-added:` (S17): `safe`, `overlap`, `crash` or `not-run`.
+`dress-added:` (S17): `safe`, `overlap`, `crash`, `not-observed` (a bare
+`charmprobe dress` read `dressed=0` after the reload, so the reload measured
+the undressed charm) or `not-run`.
 
 forged-stat-applies: pending
 
@@ -618,10 +745,15 @@ heroic-route: pending
 
 - `heroic-only`: the control placed, the calls placed items, and the placed
   rarities include Heroic (9) and no Satanic (6); the histogram is the note.
+  It means no Satanic among the n items placed, not that the roll cannot
+  give one: the static reading says it can.
 - `heroic-and-satanic`: as above, with both 9 and 6 among them.
-- `call-not-engaged`: the control did not place, or the heroic calls threw,
-  answered `st=` or placed nothing, so the call shape was not shown to reach
-  the roll and nothing is said about it.
+- `no-heroic`: the control placed and the calls placed items, and none of
+  them is Heroic (9); the histogram is the note.
+- `call-not-engaged`: the control (S10's three `ground=new id=` spawn lines)
+  did not place, or the heroic calls threw, answered `st=` or read `nothing
+  placed`, so the call shape was not shown to reach the roll and nothing is
+  said about it.
 - `not-observed`: the control placed and the calls placed items, but no
   placed item's rarity could be read.
 
@@ -648,7 +780,10 @@ Before Live 1, these are open. Each is a check above.
   script such as `InstancePlaceTallest` (S6, S7, S8, and the logpoints'
   callers); a query whose self is not the player, a builtin the scan did not
   list, and the runtime's own solid-object collision handling are not
-  excluded, and no check of this phase answers those three.
+  excluded, and no check of this phase answers those three. The `any` rule
+  and the object tally cover the ten hooked builtin rows only:
+  `instance_place_list`, `place_empty` and the list builtins are not hooked,
+  so a walk held through them is neither answered by `any` nor counted.
 - **What the game does with a player left inside a prop**, and whether the
   player can walk out once the lever is off (S9).
 - **Map edges, building walls and gates on foot** (S8's outlier case only).
@@ -660,13 +795,13 @@ Before Live 1, these are open. Each is a check above.
 - **Whether a stat written on a built charm counts toward the player's
   stats** (S13).
 - **What `DropItemHeroic` actually places**, and Aimbot.exe's rarity in the
-  game's own repository (S12, S14). The call shape `heroic` uses is not
-  proven, and its newest-id ground scan has no control inside the command:
-  S10's spawns prove the by-name call machinery only.
-- **Whether a forged stat survives pickup and equip.** S13's read-back needs
-  `charmprobe charms` to print the worn charm's `itemStatStruct`, which the
-  instrument as built does not; until it does, S13 can record only
-  `not-observed`.
+  game's own repository (S12, S14). The call shape `heroic` uses (the local
+  player as `self`, where the game's own callers pass a vault or an NPC) is
+  not proven; S10's spawns are the control for the by-name call machinery
+  and for the before-and-after ground scan, not for that shape.
+- **Whether a forged stat survives pickup and equip.** S13 reads it back
+  from the worn charm's `itemstats=` entry in `charmprobe charms`
+  (`stat-not-on-item` when it is gone), and then whether it counts.
 - **Which key, if any, holds an item's display sprite**, which surfaces draw
   it, and whether a save keeps it (S18, S19, S20).
 - **Where the walk's collision test lives inside `PlayerMovement`**: it does

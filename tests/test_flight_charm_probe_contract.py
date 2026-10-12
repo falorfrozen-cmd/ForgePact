@@ -176,6 +176,18 @@ class CharmProbeContract(unittest.TestCase):
         for getter in ("GetPlayerCharmData", "GetProfileInventoryData", "UpdateCharmData"):
             self.assertNotIn(getter, self.code)
 
+    def test_charms_prints_each_items_stat_struct_and_writes_nothing(self):
+        charms = self.body("static void FcpCharms()")
+        # S13's read-back: the worn charm's own itemStatStruct, read like info=.
+        self.assertIn('FcpMember(item, "itemStatStruct", statStruct)', charms)
+        self.assertIn('" itemstats="', charms)
+        self.assertIn('"missing(no itemStatStruct)"', charms)
+        self.assertLess(charms.index('" itemstats="'), charms.index('" info="'))
+        # A read only: the worn charms are never written. Negative control: the
+        # scratch read-back FcpCharms ends with does write, in its own body.
+        self.assertNotIn("variable_struct_set", charms)
+        self.assertIn("variable_struct_set", self.body("static bool FcpSizeReadBack("))
+
     def test_the_heroic_roll_is_called_by_name_with_the_player(self):
         heroic = self.body("static void FcpHeroic(const std::vector<std::string>& tail)")
         self.assertIn("CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) })",

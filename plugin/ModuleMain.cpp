@@ -48317,6 +48317,12 @@ static bool FcpCharmArray(RValue& array, std::string& why)
     return true;
 }
 
+// `charms`: each worn charm read off FcpCharmArray as variables (its
+// definition, itemInfoStruct and itemStatStruct, the info= rule for both),
+// its footprint from GetItemSize by name, and that footprint fed to the size
+// keys. It writes nothing to a worn charm. Once the keys are inferred it ends
+// with FcpSizeCheck, whose read-back builds a scratch charm, never placed,
+// and writes only that.
 static void FcpCharms()
 {
     RValue array;
@@ -48339,10 +48345,13 @@ static void FcpCharms()
         RValue infoStruct;
         const FcpInfo info = FcpMember(item, "itemInfoStruct", infoStruct) ? FcpReadStruct(infoStruct) : FcpInfo();
         if (info.ok) g_FcpSpriteKey.Add(FcpSpriteValues(info.numbers));
+        RValue statStruct;
+        const FcpInfo stats = FcpMember(item, "itemStatStruct", statStruct) ? FcpReadStruct(statStruct) : FcpInfo();
         Out("charmprobe charm #" + std::to_string(i) + " t=" + FcpMemberText(item, "itemType") + definition
             + " size=" + (sized ? FcpNs::SizeText({ w, h }) : "?(" + sizeWhy + ")")
             + " rarity=" + FcpMemberText(infoStruct, "27") + " name=" + FcpMemberText(infoStruct, "28")
             + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info.numbers) : std::string())
+            + " itemstats=" + (stats.ok ? FcpNs::InfoDump(stats.shown) : std::string("missing(no itemStatStruct)"))
             + " info=" + (info.ok ? FcpNs::InfoDump(info.shown) : std::string("missing(no itemInfoStruct)")));
         // Keys set by hand were measured; a later sample is not allowed to drop them.
         if (sized && info.ok && !g_FcpSizeHand) g_FcpSize.Add(w, h, info.numbers);
