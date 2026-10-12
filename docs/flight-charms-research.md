@@ -47,8 +47,13 @@ that suspends the game's own loop.
   scan for the names a function's code references (§ Static reading). The
   readings about the game are also in the toolkit's
   `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 21, labelled as static readings.
-- **Live procedure 1:** not run yet.
-- **Decision:** every key reads `pending` until Live 1 runs (§ Decision).
+- **Live procedure 1:** run on 2026-10-12 (§ Results, "Live 1 results"):
+  the five validity checks passed; 21 of 26 checks pass, 3 fail and 2 are
+  not-observed. The measured facts about the game are also in
+  `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 21, relabelled as measured.
+- **Decision:** recorded from Live 1 (§ Decision), except `dress-added`,
+  whose outcome (the dressed charm missing after the reload) is none of the
+  key's listed values and reads `pending` until the key is given one.
 - **Later phases:** phase 2, the mod, is planned from this phase's Decision.
 
 ## Static search
@@ -83,7 +88,7 @@ movement mechanism.
 | `gml_Script_CanMove` | 467 | a movement check; calls `InstancePlaceTallest` |
 | `gml_Script_InstancePlaceTallest` | 599 | the tallest instance at a place (§ Static reading) |
 | `gml_Script_playerJumpGravity` | 2764 | the jump's per-frame script (RDM § 19.1, measured) |
-| `gml_Script_ClassStepEvent` | 561 | the class step; six sites call `InstancePlaceTallest` |
+| `gml_Script_ClassStepEvent` | 561 | the class step; the static reading put six `InstancePlaceTallest` sites here, and Live 1 found them in the player object's Step event instead (§ Results) |
 | `gml_Script_TilePlaceMeeting` | 3866 | a tile row of `jumpprobe` |
 | `gml_Script_CheckTalentUse` | 539 | `jumpprobe`'s per-frame positive control (RDM § 7.2) |
 
@@ -158,7 +163,10 @@ same readings are in the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.6 and
   `instance_place_list` into a list it reuses, and answers the one with the
   largest `height`, or `noone` when there is none. Its direct callers are
   `CanMove`, `playerJumpGravity` and six sites in `ClassStepEvent`.
-  **Static reading.**
+  **Static reading.** Corrected after Live 1: the six sites are in
+  `gml_Object_Player_obj_Step_0`, the player object's Step event, which
+  follows `ClassStepEvent` in the image and which the symbol dump does not
+  name (§ Results, "The walk's callers").
 - What this means for the lever: the walk's own test is most plausibly the
   three meeting builtins it references, the ones the jump lever already
   answers. `all` did not free the walk. Candidates include a query naming an
@@ -691,15 +699,107 @@ backup whatever happened; the hs-drive lease released.
 
 ### Live 1 results
 
-Not run yet.
+Run on 2026-10-12 by the live operator, on the research DLL built from
+ForgePact `ac41a23` (sha256
+`ef6af41d4bd3ff478f3516a30dc46c4dd699caed8ab383ef5a5aeb7558ac323f`), save
+slot 14 "Sorak", in `Town_01_rm`, on the game build whose executable hashes to
+`498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0` (the copy
+the Ghidra project imported). The record is the session capture
+`forgepact-158-flight-charms-live-1.md`, kept with the hub's workorder files on
+the researcher's machine and not tracked. The toolkit's
+`tools/live_checks.py` reads 26 checks from it: 21 pass, 3 fail, 2
+not-observed, none not-run. The five validity checks (`dll-hash`, `marker`,
+`control`, `walk-control`, `dbg-control`) all passed, so every research check
+below stands on a working instrument. The saves were restored at teardown and
+read back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `marker` | pass | Both research markers answered (`jumpprobe` and `charmprobe marker=fcp1`), also after S20's relaunch. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)` in both processes. |
+| `jumpscenery-off` | pass | The shipped Jump through scenery mod stayed off (`install=not-armed`), so no other lever touched the walk. |
+| `walk-control` | pass | `jumpprobe hook` detoured all 20 script rows and hooked the 10 builtins; during a 3 s walk on open ground the two controls climbed (`CheckTalentUse` 1890 calls, `position_meeting` 6362). |
+| `dbg-control` | pass | The x64dbg logpoint on `CheckTalentUse` logged in every walk window (652 hits during S5's walk), and the debugger's own control hold proved the attach. |
+| `vanilla-walk-block` | pass | With every lever off, a 3 s walk down at the edge of the ravine south of the town, next to the wooden bridge (the owner's spot), left the position unchanged. The repeat beside the church's stone wall walked 18 px and stopped at the wall. |
+| `free-control` | pass | On open ground the family read `blocked=no`; one step down at the ravine edge the family read `blocked=yes` with no object named, so `free` can tell a blocked spot from a free one. The `all` read names `Camera_obj` everywhere, open ground included, so it says nothing. |
+| `walk-objects` | pass | The tally of the blocked walk counted six distinct objects on three builtin rows. The object outside `Collision_Parent_obj`'s family that `place_meeting` named most was `Enemy_Parent_obj` (3015 queries); `Wall_Parent_obj`, `Enemy_Child_Boss_obj` and `Enemy_Only_Passage_obj` were also queried from outside the family. |
+| `walk-all-scripts` | pass | Under `pass 1 90 all scripts hold` the walk crossed: 699 px down past the ravine edge, and 688 px through the church wall in the repeat. The lever answered 234 `InstancePlaceTallest` calls `noone` on the prop walk. |
+| `walk-any` | pass | Under `pass 1 90 any scripts hold` the walk crossed both the ravine edge and the wall. Note: under `pass 1 90 any hold`, the same rule without the scripts (S8b), the walk stayed at the ravine edge, although the lever answered 2340 `position_meeting` and 2410 `place_meeting` queries. |
+| `dbg-instance-place-tallest` | pass | The logpoint on `InstancePlaceTallest` logged in every walk, as many hits as the hooked row's `calls=` each time, with the return location of each call (§ "The walk's callers" below). |
+| `dbg-can-move` | not-observed | `CanMove` logged no hit in any walk window while the control logged, its entry showed the detour, and its hooked row read `calls=0` all session: through neither route was it seen to be called during a walk. |
+| `dbg-tile-place-meeting` | not-observed | The same for `TilePlaceMeeting`: no hit, entry on the detour, `calls=0` all session. The debugger detached cleanly before S9 and every game thread ran again. |
+| `stuck-inside` | pass | A 150 ms walk under S7's lever left the player inside the ravine edge, where the family read `blocked=yes` naming `Block_Dynamic_Sprite_obj`. With the lever off, 1 s walks up, down, left and right left the position unchanged: the game did not push the player out and the player could not walk out. `playerwarp` recovered. |
+| `charm-read` | fail | The read itself worked: `localCharmItemArray` listed the 12 worn charms, and after the three spawned charms were dragged into the charm grid all three were listed at `t=10`. The count was 13, not 15, because the owner moved two worn charms (a Grand and a Large) to the bag to make room, and those two dropped out of the list. The fail is the count rule, not the array. |
+| `size-keys` | pass | The footprint is held by the `itemInfoStruct` keys `"2"` (width) and `"3"` (height), inferred from the 12 worn charms of six sizes and read back on a scratch struct (wrote 2x3, read 2x3; wrote 4x1, read 4x1). The three spawned charms read 1x1, 1x2 and 1x3. No pair was set by hand. |
+| `repo-rarity` | pass | The game's own unique repository gives Aimbot.exe `{10, 0, 76}` rarity 6 (Satanic), Torstein's Anvil 9 (Heroic), the Water Melon 7 (Angelic, 2x2), Soul Collector 10 (Unholy, 1x5) and the control Goburin's Head 10 (Unholy, 2x2, the only one of the five flagged). |
+| `forged-stat-applies` | pass | A charm spawned with stat 25 at 100 kept it after pickup and equip (its `itemstats=` read back `25=100`), and the character sheet's Movement Speed rose from 151% to 251% (the owner's reading; the owner notes a soft cap at 228%). The 2 s walk covered the same distance before and after (607.8 and 607.7 px, with the inventory open both times), so the walk did not show the rise. Note: after S16's save and reload, `25=100` was gone from that charm's `itemstats=`. |
+| `heroic-route` | pass | Ten `DropItemHeroic` calls with the player as `self` placed ten items: seven Heroic (9) and three Satanic (6), none Angelic or Unholy, and no charm among them. S10's spawns, placed through the same by-name call machinery, are the control. |
+| `sprite-load` | pass | `sprite_add` loaded our placeholder PNG as a new sprite. The key that holds the display sprite was not inferred (seven keys hold a sprite on every sample); the operator set key `11`, which holds each charm's own sprite, by hand. Its positive control passed: a charm with a Grand charm's sprite written under `11` drew the Grand icon on the ground and in the bag. Keys tried: 11. |
+| `sprite-draw` | fail | Partial. A charm carrying our sprite under key `11` drew our icon in the bag, and the game's error placeholder on the ground. The tooltip drew no icon, but it draws none for the control charm either, so the tooltip is not an icon surface at all. |
+| `size-override` | pass | A charm whose built struct was written 2x2 before it was placed read `getitemsize=2x2` from a new ground item and covered 2x2 cells in the bag. |
+| `dress-removed` | pass | After a save and quit and a reload of slot 14 in the same process, with no size rule in force, the 2x2 charm came back 1x1 with its normal icon. Nothing was lost, duplicated or overlapped. |
+| `sprite-save` | pass | After a full stop and a relaunch that never loaded our sprite, the game loaded slot 14 and the charm that had carried it drew a normal small-charm icon in the bag. Its stored sprite value could not be read, because `charmprobe charms` lists the charm grid and the charm was in the bag, so the verdict rests on the icon. S16's in-process reload had already shown the base icon. |
+| `dress-added` | fail | A 1x1 charm whose right and lower neighbours were occupied was given a 2x2 rule, saved and reloaded: the rule applied (`dressed=1`) and the game did not crash, and both neighbours were intact and not overlapped, but the dressed charm was no longer at its cell or anywhere on Extra tabs 1 to 3. The Main tab and Extra tab 4 were not checked before the saves were restored, so where it went is not established. The outcome, an item missing after the reload, is none of the check's three values. |
+
+Also observed, not a check: arming a hardware logpoint stalled the game's
+frames for up to about 4.7 s while the debugger set it, and both processes'
+graceful closes (the S20 stop and the teardown) ended with the status
+`C0000409` rather than 0; whether a close without the research build does the
+same was not checked. Eight of the owner's steps had an hs-drive route the
+operator did not try at the time; the capture lists them.
+
+#### The walk's callers
+
+The operator logged each logpoint hit's return location as a module offset.
+The record step matched every logged offset to a direct call site found by
+`FindCallers.java` in the Ghidra project (a site's end, the return a `call`
+leaves): all of them match, and no offset was left unmatched. The
+`InstancePlaceTallest` sites the walks used are six direct sites inside one
+function that the symbol dump does not name. That function's entry is stored
+in the runner's object-event registration table right after the name
+`gml_Object_Player_obj_Step_0`; the same table read names `ClassStepEvent`'s
+own entry correctly, which is the control. So the caller is the player
+object's Step event. The static reading had put these six sites in
+`ClassStepEvent`, the nearest named script, which they follow in the image;
+that attribution was wrong. Neither `CanMove` nor `PlayerMovement` called
+`InstancePlaceTallest` during a walk.
+
+Calls to `InstancePlaceTallest` per walk, all from
+`gml_Object_Player_obj_Step_0` (sites written A to F, in their order in the
+function; their offsets stay in the capture):
+
+| Walk | Lever | Calls | Sites | `CanMove` | `TilePlaceMeeting` | Crossed |
+|---|---|---|---|---|---|---|
+| S5, ravine edge | off | 315 | B, E, F, 105 each | 0 | 0 | no |
+| S7, ravine edge | `all scripts hold` | 234 | B only | 0 | 0 | yes |
+| S8, ravine edge | `any scripts hold` | 227 | B only | 0 | 0 | yes |
+| S8b, ravine edge | `any hold` (no scripts) | 306 | B, E, F, 102 each | 0 | 0 | no |
+| wall, vanilla | off | 303 | A 105, C 99, D 99 | 0 | 0 | no |
+| wall, S7 | `all scripts hold` | 230 | A only | 0 | 0 | yes |
+| wall, S8 | `any scripts hold` | 234 | A only | 0 | 0 | yes |
+
+Read together: on a blocked walk the Step event queries
+`InstancePlaceTallest` from three sites, equally often (a different three for
+the ravine edge and for the wall). When the lever answers those calls `noone`,
+only the first site of the three runs, and the walk crosses. When only the builtins are answered (S8b),
+all three are still made, the scripts' own answer stands, and the walk is held.
+So what holds a walk at a prop or a building wall is the answer of
+`InstancePlaceTallest` to the player object's Step event. Whether answering
+`InstancePlaceTallest` alone, with no builtin rule, frees the walk was not
+run.
 
 ## Decision
 
-Every key below reads `pending` until Live 1 runs. Each then takes exactly
-one of its listed values, on a line of its own, with the check that decides
-it.
+Every key below read `pending` until Live 1 ran. Each takes exactly one of
+its listed values, on a line of its own, with the check that decides it on
+the line after. Recorded from Live 1 (2026-10-12, § Results); `dress-added`
+still reads `pending`, because its outcome is none of its listed values.
 
-walk-lever: pending
+walk-lever: all-scripts
+
+Decided by `walk-all-scripts` (pass): S7 crossed, at the ravine edge and at
+the church wall. S8 crossed too, and S8b did not.
 
 `walk-lever:` (S7, S8, S8b) takes exactly one of these values:
 
@@ -715,7 +815,9 @@ walk-lever: pending
 - `lever-not-engaged`: `passed=` never climbed, so the run says nothing about
   the game.
 
-walk-callers: pending
+walk-callers: S5 (ravine edge, lever off) InstancePlaceTallest 315 from gml_Object_Player_obj_Step_0 (three sites, 105 each), CanMove 0, TilePlaceMeeting 0; S7 InstancePlaceTallest 234 from Player_obj Step_0 (one site), CanMove 0, TilePlaceMeeting 0; S8 InstancePlaceTallest 227 from Player_obj Step_0 (one site), CanMove 0, TilePlaceMeeting 0; S8b InstancePlaceTallest 306 from Player_obj Step_0 (three sites, 102 each), CanMove 0, TilePlaceMeeting 0; wall repeats InstancePlaceTallest 303 vanilla (three other Step_0 sites, 105, 99 and 99), 230 under S7 and 234 under S8 (one site), CanMove 0, TilePlaceMeeting 0
+
+Decided by `dbg-instance-place-tallest` (pass), `dbg-can-move` (not-observed) and `dbg-tile-place-meeting` (not-observed), with `dbg-control` passed in the same session: the callers are named from the return locations as § Results, "The walk's callers", says. A 0 is a logpoint that stayed silent while the control logged and its entry showed the detour, with the hooked row's `calls=` also 0, so neither route saw the call.
 
 `walk-callers:` (the checks `dbg-instance-place-tallest`, `dbg-can-move` and
 `dbg-tile-place-meeting`, over the walks of S5, S7, S8 and S8b) takes one of
@@ -736,7 +838,9 @@ these values:
   nothing, so the logpoints measured nothing.
 - `not-run`: the debugger was not attached.
 
-stuck-inside: pending
+stuck-inside: stuck
+
+Decided by `stuck-inside` (pass): inside the ravine edge the family read `blocked=yes` naming `Block_Dynamic_Sprite_obj`, and with the lever off the player moved in none of the four directions.
 
 `stuck-inside:` (S9): `game-ejects`, `walks-out` or `stuck`, when some object
 `jumpprobe free` asked read `blocked=yes` with the player inside the prop;
@@ -745,17 +849,23 @@ when neither S7 nor S8 crossed, or when no object asked read `blocked=yes`. A
 `blocked=no` counts only for an object that read `blocked=yes` at S5b, and a
 family-only `no` after an S8-only crossing is never a negative.
 
-charm-read: pending
+charm-read: localCharmItemArray
+
+Decided by `charm-read` (fail on its count rule only): the array listed the worn charms and the three spawned charms once they were in the grid; the count was short by the two charms the owner moved to the bag, which left the array with them.
 
 `charm-read:` (S10): `localCharmItemArray` or `not-observed`.
 
-size-keys: pending
+size-keys: found
+
+Decided by `size-keys` (pass): the pair `"2"` (width) and `"3"` (height), inferred and read back `verified`; none set by hand.
 
 `size-keys:` (S11): `found` (a pair read back `verified`, inferred or set by
 hand with `dress keys`; the note says which) or `not-observed` (no pair read
 back).
 
-size-override: pending
+size-override: works
+
+Decided by `size-override` (pass): `getitemsize=2x2` from a new ground item, and 2x2 cells in the bag.
 
 `size-override:` (S15): `works` (`getitemsize=2x2` from a new ground item and
 2x2 cells in the bag), `ignored` (the placed item read `getitemsize=2x2` and the
@@ -763,17 +873,23 @@ bag still gave it one cell), `not-observed` (`keys-unverified`, `(of the built s
 `ground=none`: the write never reached a placed item) or `not-run` (S11
 found no verified pair).
 
-dress-removed: pending
+dress-removed: safe
+
+Decided by `dress-removed` (pass): the reload brought the charm back 1x1, nothing lost, duplicated or overlapped.
 
 `dress-removed:` (S16): `safe`, `unsafe` or `not-run`.
 
 dress-added: pending
 
+Not recorded: `dress-added` failed because its outcome, the dressed charm gone from its cell and from Extra tabs 1 to 3 after the reload with no crash and no overlap, is none of the listed values (§ Results).
+
 `dress-added:` (S17): `safe`, `overlap`, `crash`, `not-observed` (a bare
 `charmprobe dress` read `dressed=0` after the reload, so the reload measured
 the undressed charm) or `not-run`.
 
-forged-stat-applies: pending
+forged-stat-applies: yes
+
+Decided by `forged-stat-applies` (pass): the worn charm read back `25=100` and the sheet's Movement Speed rose from 151% to 251%; the walk's distance did not change, and the stat was gone after a save and reload.
 
 `forged-stat-applies:` (S13) takes one of these values:
 
@@ -786,7 +902,9 @@ forged-stat-applies: pending
   forged stats.
 - `not-observed`: the read-back could not be made.
 
-heroic-route: pending
+heroic-route: heroic-and-satanic
+
+Decided by `heroic-route` (pass): ten calls placed seven Heroic (9) and three Satanic (6) items, no charm among them, with S10's spawns as the control.
 
 `heroic-route:` (S14) takes one of these values:
 
@@ -804,11 +922,15 @@ heroic-route: pending
 - `not-observed`: the control placed and the calls placed items, but no
   placed item's rarity could be read.
 
-aimbot-rarity: pending
+aimbot-rarity: 6
+
+Decided by `repo-rarity` (pass): Satanic, as the Item Editor's catalog lists it; the control Goburin's Head read 10.
 
 `aimbot-rarity:` (S12): the rarity code S12 read, or `not-observed`.
 
-sprite-draw: pending
+sprite-draw: partial
+
+Decided by `sprite-draw` (fail, partial) beside a verified key `11`: the bag drew our icon, the ground drew the game's error placeholder, and the tooltip draws no icon for any charm.
 
 `sprite-draw:` (S19): `all` (the grid, the tooltip and the ground all drew our
 icon), `partial` (some did; the note names which), `none`, or `not-run` (the
@@ -816,43 +938,54 @@ icon did not load, or no key passed S18's `sprite verify`, so nothing was
 written under a key shown to be the drawn one). A `none` is a finding about
 the game only beside a verified key.
 
-sprite-save: pending
+sprite-save: safe
+
+Decided by `sprite-save` (pass): the relaunched game loaded and the charm drew a base small-charm icon; judged by the icon, because its stored sprite value could not be read in the bag.
 
 `sprite-save:` (S20): `safe`, `persisted`, `crash` or `not-run`.
 
 ## Not established
 
-Before Live 1, these are open. Each is a check above.
+Live 1 (2026-10-12) answered most of what was open before it: what holds a
+walk (the answer `InstancePlaceTallest` gives the player object's Step event),
+what happens to a player left inside a prop (stuck), where the worn charms
+are (`localCharmItemArray`), which keys hold the footprint (`"2"` and `"3"`),
+that a 2x2 footprint written on a built charm is honoured, that a reload
+without the size rule restores the base footprint safely, that a forged stat
+counts on the sheet, what `DropItemHeroic` places, Aimbot.exe's rarity, and
+that key `11` holds the display sprite. What is still open:
 
-- **What holds a walk at a prop.** Candidates include the walk's own builtin
-  queries naming an object outside `Collision_Parent_obj`'s family and a
-  script such as `InstancePlaceTallest` (S6, S7, S8, and the logpoints'
-  callers); a query whose self is not the player, a builtin the scan did not
-  list, and the runtime's own solid-object collision handling are not
-  excluded, and no check of this phase answers those three. The `any` rule
-  and the object tally cover the ten hooked builtin rows only:
-  `instance_place_list`, `place_empty` and the list builtins are not hooked,
-  so a walk held through them is neither answered by `any` nor counted.
-- **What the game does with a player left inside a prop**, and whether the
-  player can walk out once the lever is off (S9).
-- **Map edges, building walls and gates on foot** (S8's outlier case only).
-- **Whether `localCharmItemArray` holds the worn charms** as the reading says
-  (S10).
-- **Which two `itemInfoStruct` keys hold an item's footprint**, and whether
-  every reader of a size goes through `GetItemSize` (S11, S15).
-- **What a save does when a footprint appears or goes away** (S16, S17).
-- **Whether a stat written on a built charm counts toward the player's
-  stats** (S13).
-- **What `DropItemHeroic` actually places**, and Aimbot.exe's rarity in the
-  game's own repository (S12, S14). The call shape `heroic` uses (the local
-  player as `self`, where the game's own callers pass a vault or an NPC) is
-  not proven; S10's spawns are the control for the by-name call machinery
-  and for the before-and-after ground scan, not for that shape.
-- **Whether a forged stat survives pickup and equip.** S13 reads it back
-  from the worn charm's `itemstats=` entry in `charmprobe charms`
-  (`stat-not-on-item` when it is gone), and then whether it counts.
-- **Which key, if any, holds an item's display sprite**, which surfaces draw
-  it, and whether a save keeps it (S18, S19, S20).
+- **Whether answering `InstancePlaceTallest` alone frees a walk.** Every lever
+  that crossed answered the builtins too (`all` or `any` with `scripts`); a
+  lever answering only the scripts was not run. Only one prop (the ravine
+  edge south of the town) and one building wall were walked, both in
+  `Town_01_rm`; map edges, gates, water and other rooms were not.
+- **Where the dressed charm went in S17.** After a reload with a 2x2 rule on
+  a charm whose neighbours were occupied, it was neither at its cell nor on
+  Extra tabs 1 to 3; the Main tab and Extra tab 4 were not checked, and the
+  saves were restored. Whether the game dropped it, moved it, or kept it
+  undrawn is not established, and `dress-added` has no value yet.
+- **Whether every reader of a size goes through `GetItemSize`.** The bag
+  honoured the 2x2 footprint; other grids (the charm grid, the stash, the
+  crafting grid) were not tried.
+- **Why the walk did not get faster** although the sheet's Movement Speed
+  rose by 100 points (the inventory was open during both timed walks, and the
+  owner notes a soft cap at 228%), and whether a forged stat can be kept
+  across a save: after S16's reload it was gone from the charm.
+- **Whether a ground item can draw our sprite.** The ground drew the game's
+  error placeholder for it, while the bag drew it; the tooltip draws no icon
+  for any charm. Whether the ground reads the sprite another way was not
+  investigated.
+- **What `DropItemHeroic` does with the game's own callers' `self`** (a vault
+  or an NPC rather than the player), and whether it ever gives a charm: ten
+  calls gave none.
+- **Whether the bag holds the stored sprite index after a relaunch.**
+  `charmprobe charms` lists the charm grid only, so `sprite-save` was judged
+  by the icon.
+- **What `CanMove` and `TilePlaceMeeting` are for.** Neither was seen to be
+  called during a walk (not observed through either route, with the control
+  logging); that is not evidence they are never called.
 - **Where the walk's collision test lives inside `PlayerMovement`**: it does
-  not decompile, so the reading is the list of names its code references,
-  not its order or its branches.
+  not decompile, and Live 1 found the walk's blocking query in the player
+  object's Step event instead, so what `PlayerMovement`'s own meeting
+  builtins decide is still not established.
