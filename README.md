@@ -58,6 +58,7 @@ none of these diagnostic hooks or the recorder. See
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
+| **Boss soul pieces** | Loot → Boss soul pieces, off by default (plugin command `soulpiece 1` / `soulpiece 0`, `soulpiece status`). Monsters in an act's zones sometimes drop a Piece of that act's boss's Soul (Gurag's in Act 1, the Grim Reaper's in Act 2, and so on), a little more often than a Gem of Incarnation. Right-click a piece in your bag and confirm, and you are taken straight to that act's boss lair for a fresh fight, even if you beat the boss before; no portal opens. Each piece takes its own bag cell. Not yet checked in play with this release's plugin ([details](#boss-soul-pieces)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Dungeon chest opens early** | Mods → Gameplay, off by default. A switch and a slider from 50 to 95 % (click the value to type it): in a key dungeon, the chest at the end opens once that share of all the dungeon's monsters is dead instead of every last one, counting every monster the dungeon plans when it loads, spawned yet or not (an estimate from its spawners). When 50 or fewer kills are left, a countdown tells you how many: above your character, in chat, or both, as you pick under the switch. Checked in a live game with this build in the Pumpkin Cellar at 50 %: the chest opened with over 100 monsters left, each countdown form showed where picked, and in the second run, after a fix to the label's font, the label above your character held steady; a boss dungeon not checked yet ([details](#dungeon-chest-opens-early)) |
@@ -987,7 +988,7 @@ to do, what was measured and what is not established yet:
 
 ## Gems of Incarnation
 
-Loot → **Gems of Incarnation**, the tab's last card: **Mythic Gems of
+Loot → **Gems of Incarnation**, the card before Boss soul pieces: **Mythic Gems of
 Incarnation** and **Max-roll Gems of Incarnation**, and under them
 **Filter...**, the mod filter. Both switches are off by default; the filter
 starts with every mod.
@@ -1032,6 +1033,56 @@ most of them Superior with one or two mods; 1 in 50 comes out Mythic, with 4 or
 
 How the game rolls these gems, measured on 14,521 of them, and what the mod
 changes: [`docs/incarnation-gems-research.md`](docs/incarnation-gems-research.md).
+
+## Boss soul pieces
+
+Loot → **Boss soul pieces**, the card after Gems of Incarnation (plugin
+command `soulpiece 1|0`, `soulpiece status` for its state). Off by default.
+
+With this on, an ordinary monster killed in a zone of an act sometimes drops a
+**Piece of <boss>'s Soul** for that act's boss: Gurag in Act 1, the Grim Reaper
+in Act 2, Anubis in Act 3, Damien in Act 4, the Karp King in Act 5, Satan in
+Act 6, Mevius in Act 7, Odin in Act 8 and Cthulhu in Act 9.
+
+- **Using a piece.** Right-click it in your bag and confirm, the way you use an
+  Edible PAS Logo. You are taken straight to that act's boss lair
+  (`Act_01_Boss` for Gurag, `Act_02_Boss` for the Grim Reaper, and so on) and
+  the piece is used up. No portal opens. It works from a town or any zone of an
+  act. Inside a boss lair, an uber realm, or a room that belongs to no act, the
+  use is refused and you keep the piece.
+- **A fresh fight every time.** Just before the move, ForgePact makes the game
+  forget the lair's saved state, so the lair is built as on your first visit
+  and the boss comes out again, even if you beat it before. Anything you left
+  on that lair's floor is gone with it. Whether beating a boss again this way
+  counts again for quests or act completion is not known yet; ForgePact
+  changes neither.
+- **How often.** Every time the game rolls a gem drop for a dying monster, the
+  piece rolls too, at five quarters of the Gem of Incarnation's chance: 1 in
+  7,200 against the gem's 1 in 9,000. The chance is fixed, so whatever makes
+  the game roll gems more often (more monsters from Monster Density, a
+  monster's own gem chance, a change to the gem's drop rate) gives more pieces
+  too. Bosses, chests and towns drop none, and neither do boss lairs or uber
+  realms.
+- **In your bag.** A piece takes its own bag cell; pieces do not stack. It is
+  the game's own Edible PAS Logo underneath, with its own name, so a save
+  holding pieces loads without ForgePact. Without ForgePact a piece shows as an
+  Edible PAS Logo, and using it then does what that item does.
+- **Switching off** stops the drops. A piece you already have stays in your
+  bag, and while ForgePact is installed its use is refused and the piece kept.
+- **Checked so far** in a research session on 2026-10-11, with the research
+  build: pieces built this way stayed apart in the bag, one per cell; the
+  game's right-click and confirm reached a piece and used it up; the game's own
+  travel took the character to the Act 1 and Act 2 boss lairs, where Gurag and
+  the Grim Reaper came out of the pentagram and died without a crash; and a
+  save holding a piece loaded again. The full use, from right-click to the lair,
+  and the boss coming back after you beat it, have not been checked in play with
+  this release's plugin yet. Only the Act 1 and Act 2 lairs were visited.
+
+`soulpiece status` prints one line: whether the switch is on, the room and its
+act, the chance in use, the gem rolls seen, the pieces dropped, the pieces
+used and the moves made, and any refusals by reason. How the game rolls the
+gem, uses an item and keeps a room's state, and what was measured:
+[`docs/boss-soul-pieces-research.md`](docs/boss-soul-pieces-research.md).
 
 ## Menu layout (for tools that drive the menus)
 
