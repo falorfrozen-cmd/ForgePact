@@ -53189,7 +53189,7 @@ struct SoulProbeState {
     std::string baseName;
     bool dress = false;
     SpShape shape = SpShape::Plain;  // `shape`: applies to `place <act>` on a key base only
-    bool icon = false;               // `icon on`: the dress writes item info key "11" too
+    bool icon = false;               // `icon on`: the dress writes item info key "11" too, on a key base only
     bool allow = false;              // `usewatch allow`: CanUsePotion answers true for a piece
     SpTakeMode take = SpTakeMode::Off;
     long allowed = 0, taken = 0;     // calls `allow` and `take` answered
@@ -53551,8 +53551,9 @@ static void SpBaseCommand(const std::string& arg)
 
 // ---- the dress -------------------------------------------------------------------------
 // From the shared Hook_CreateItemNew, on CreateItemNew's own return: a piece of
-// the chosen base (any shape) takes its act's name, and with `icon on` the Gem
-// of Incarnation's display sprite under item info key "11" (#158's Live 1: the
+// the chosen base (any shape) takes its act's name, and with `icon on`, on a key
+// base only, the Gem of Incarnation's display sprite under item info key "11"
+// (a legacy piece's key "11" is the shipped dress's alone) (#158's Live 1: the
 // bag and the ground item draw from it; the gem's own `itemSprite` read
 // undefined in Live procedure 1, so the key is the route). Both are written
 // before the item's hash is refreshed, which covers the info struct. The dress
@@ -53572,8 +53573,15 @@ static void SoulProbeAfterCreate(RValue& item)
             RValue map = g_Yytk->CallBuiltin("variable_global_get", { RValue("localization") });
             if (map.m_Kind == VALUE_REAL || map.m_Kind == VALUE_INT32 || map.m_Kind == VALUE_INT64 || map.m_Kind == VALUE_REF)
                 g_Yytk->CallBuiltin("ds_map_replace", { map, RValue(std::string(boss->pieceName)), RValue(std::string(boss->pieceName)) });
-            if (g_Sp.icon && g_SpIconReady)
-                g_Yytk->CallBuiltin("variable_struct_set", { it.info, RValue(SpNs::kIconInfoKey), g_SpIconValue });
+            // Key "11" on a key base only. A legacy (consumable) piece is the
+            // shipped dress's to dress through its Custom Forge entry, on the
+            // same CreateItemNew return; writing it here too would let the
+            // probe's write stand in for the shipped one, and the bag check on
+            // a legacy piece could then pass with the shipped route inert.
+            if (g_Sp.baseCategory == kSpKeyCategory) {
+                if (g_Sp.icon && g_SpIconReady)
+                    g_Yytk->CallBuiltin("variable_struct_set", { it.info, RValue(SpNs::kIconInfoKey), g_SpIconValue });
+            }
         }
         RefreshItemHash(item);
     } catch (...) {}
@@ -54575,7 +54583,8 @@ static void SpActCommand()
         + " eligible=" + (eligible ? std::string("yes") : "no(" + std::string(SpNs::Word(refusal)) + ")"));
 }
 
-// `icon on|off`: the dress's key "11" switch. Either way the Gem of
+// `icon on|off`: the dress's key "11" switch, for pieces of a key base (a legacy
+// piece's key "11" comes from the shipped dress alone). Either way the Gem of
 // Incarnation's sprite is resolved again by its name (the core's
 // kPieceSpriteName, through ForgeDisplaySprite, as the shipped dress resolves
 // it; never an index) and the line says what it resolved to, or why not.
