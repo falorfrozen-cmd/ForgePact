@@ -54086,7 +54086,11 @@ static CInstance* g_FlightPlayer = nullptr;   // the local player, refreshed eac
 static int g_FlightFamilyIdx = -1;
 static std::vector<int> g_FlightExcludedIdx;
 static int g_FlightControllerIdx = -1;     // Controller_obj's index, once resolved
-static RValue g_FlightLayerValue[2];       // the room's two layer ends, as the game holds them
+// The layers the last census listed, and the flight layer, each as the
+// runtime answered it, so every later builtin call passes back the same value.
+static std::unordered_map<int64_t, RValue> g_FlightLayerArgs;
+static RValue g_FlightLayerOwn;
+static int64_t g_FlightLayerOwnId = -1;
 static unsigned long long g_FlightArmedFrames = 0;   // frames the tick ran while armed and not installed
 static constexpr int kFlightMaxCharms = 64;
 
@@ -54204,8 +54208,8 @@ static bool FlightRoom(int64_t& room)
 }
 
 // The core's LayerEndsFn: global.gameLayer[room]'s first and last entries,
-// each with its layer_get_depth. The entries are kept as the game holds them,
-// so the write puts back the same value.
+// each with its layer_get_depth. The census reads them once per room visit,
+// for the game layers' front end (FcNs::GameFrontDepth).
 static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)
 {
     if (room < 0 || room > INT32_MAX) return false;
@@ -54227,22 +54231,148 @@ static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd&
             out[k]->layer = (int64_t)id;
             out[k]->depth = depth.ToDouble();
         }
-        g_FlightLayerValue[0] = ends[0];
-        g_FlightLayerValue[1] = ends[1];
         return true;
     } catch (...) {}
     return false;
 }
 
-// The layer the core chose, as the game holds it.
-static RValue FlightLayerValue(int64_t layer)
+// ---- the flight layer: the core's LayerOps, each builtin called by name ----
+// Only the core calls these: the census (all, detail, effect, place), the
+// re-choice (count, move) and the check before each write (valid). Nothing
+// here runs per frame on its own, and no address is used.
+
+// A layer id as the runtime answered it (a number or a reference).
+static bool FlightLayerId(const RValue& v, int64_t& id)
 {
-    for (const RValue& v : g_FlightLayerValue) {
-        try {
-            if ((JsNumber(v) || v.m_Kind == VALUE_REF) && (int64_t)v.ToDouble() == layer) return v;
-        } catch (...) {}
-    }
-    return RValue((double)layer);
+    if (!JsNumber(v) && v.m_Kind != VALUE_REF) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d) || d < 0.0 || std::floor(d) != d) return false;
+    id = (int64_t)d;
+    return true;
+}
+
+// The value to pass back for a layer id: the one the runtime answered.
+static RValue FlightLayerArg(int64_t id)
+{
+    if (id == g_FlightLayerOwnId) return g_FlightLayerOwn;
+    const auto it = g_FlightLayerArgs.find(id);
+    return it != g_FlightLayerArgs.end() ? it->second : RValue((double)id);
+}
+
+// layer_get_all, each with its layer_get_depth. The census's first read.
+static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)
+{
+    g_FlightLayerArgs.clear();
+    try {
+        const RValue layers = g_Yytk->CallBuiltin("layer_get_all", {});
+        if (layers.m_Kind != VALUE_ARRAY) return false;
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, layers);
+        for (int i = 0; i < count; ++i) {
+            RValue v;
+            int64_t id = -1;
+            if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, i, v) || !FlightLayerId(v, id)) continue;
+            const RValue depth = g_Yytk->CallBuiltin("layer_get_depth", { v });
+            if (!JsNumber(depth)) continue;
+            g_FlightLayerArgs[id] = v;
+            all.push_back(FcNs::LayerEnd{ id, depth.ToDouble() });
+        }
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// A listed layer's name, visibility and element count.
+static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)
+{
+    try {
+        const RValue arg = FlightLayerArg(id);
+        const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+        const RValue visible = g_Yytk->CallBuiltin("layer_get_visible", { arg });
+        const RValue elements = g_Yytk->CallBuiltin("layer_get_all_elements", { arg });
+        if (name.m_Kind != VALUE_STRING || elements.m_Kind != VALUE_ARRAY) return false;
+        if (visible.m_Kind != VALUE_BOOL && !JsNumber(visible)) return false;
+        layer.name = name.ToString();
+        layer.visible = visible.ToBoolean();
+        layer.elements = HeroSiege::YYTK::GetArrayLength(g_Yytk, elements);
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// Whether the layer carries a layer effect: layer_get_fx answers a struct.
+// Anything else is none; a read that throws fails, which the core also counts
+// as none.
+static bool FlightLayerEffect(int64_t id, bool& effect)
+{
+    try {
+        const RValue fx = g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) });
+        effect = fx.m_Kind == VALUE_OBJECT;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// A remembered layer's element count again, for the re-choice.
+static bool FlightLayerCount(int64_t id, int64_t& elements)
+{
+    try {
+        const RValue all = g_Yytk->CallBuiltin("layer_get_all_elements", { FlightLayerArg(id) });
+        if (all.m_Kind != VALUE_ARRAY) return false;
+        elements = HeroSiege::YYTK::GetArrayLength(g_Yytk, all);
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The flight layer at `depth`: looked up by name first and moved there, so a
+// room never holds two, and created by name only when the room holds none.
+static bool FlightLayerPlace(double depth, int64_t& id)
+{
+    try {
+        const RValue name = RValue(std::string(FcNs::kFlightLayerName));
+        RValue layer = g_Yytk->CallBuiltin("layer_get_id", { name });
+        int64_t found = -1;
+        if (FlightLayerId(layer, found)) {
+            g_Yytk->CallBuiltin("layer_depth", { layer, RValue(depth) });
+        } else {
+            layer = g_Yytk->CallBuiltin("layer_create", { RValue(depth), name });
+            if (!FlightLayerId(layer, found)) return false;
+        }
+        g_FlightLayerOwn = layer;
+        g_FlightLayerOwnId = found;
+        id = found;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// layer_depth: the re-choice moving the flight layer.
+static bool FlightLayerMove(int64_t id, double depth)
+{
+    try {
+        g_Yytk->CallBuiltin("layer_depth", { FlightLayerArg(id), RValue(depth) });
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// At the point of use, before each write: the cached layer still exists in
+// this room and carries our name. A new room may reuse the id for a layer of
+// its own, which the name check refuses.
+static bool FlightLayerValid(int64_t id)
+{
+    try {
+        const RValue arg = FlightLayerArg(id);
+        if (!g_Yytk->CallBuiltin("layer_exists", { arg }).ToBoolean()) return false;
+        const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+        return name.m_Kind == VALUE_STRING && name.ToString() == std::string(FcNs::kFlightLayerName);
+    } catch (...) {}
+    return false;
+}
+
+static double FlightClockMs()
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 // Does a wall or a lock block this query? The same original, same arguments
@@ -54359,8 +54489,10 @@ static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValu
 }
 
 // After the game's own UpdateDepth: the local player's `layer`, while flight
-// is on, to the room's front game layer. Any other self costs one compare and
-// one count (NoteDepthOther), so the trace line's `depth-other=` holds.
+// is on, to this room visit's flight layer, which the core validated just
+// before (LayerOps::valid) and placed by name at its census. Any other self
+// costs one compare and one count (NoteDepthOther), so the trace line's
+// `depth-other=` holds.
 static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& r = g_FlightOrigDepth(S, O, R, argc, A);
@@ -54373,7 +54505,7 @@ static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int
         int64_t room = -1;
         if (!FlightRoom(room)) room = -1;
         const FcNs::DepthWrite w = g_Flight.OnUpdateDepth((int64_t)g_RuntimeFrame, true, room);
-        if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerValue(w.layer) });
+        if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerArg(w.layer) });
     } catch (...) {}
     g_FlightBusy = false;
     return r;
@@ -54424,6 +54556,16 @@ static std::string FlightInstall()
         g_Flight.SetOverlap(&FlightOverlap);
         g_Flight.SetRoomSize(&JsRoomSize);
         g_Flight.SetLayerEnds(&FlightLayerEnds);
+        FcNs::Flight::LayerOps ops;
+        ops.all = &FlightLayerAll;
+        ops.detail = &FlightLayerDetail;
+        ops.effect = &FlightLayerEffect;
+        ops.count = &FlightLayerCount;
+        ops.place = &FlightLayerPlace;
+        ops.move = &FlightLayerMove;
+        ops.valid = &FlightLayerValid;
+        ops.clock = &FlightClockMs;
+        g_Flight.SetLayerOps(std::move(ops));
         g_FlightConfigured = true;
     }
     if (!g_FlightOrigIpt) {
@@ -54823,9 +54965,8 @@ static void FlpFree(const std::vector<std::string>& tail)
 }
 
 // The player's layer and its depth beside the room's two layer ends, the way
-// the flight adapter reads them (FlightLayerEnds, ChooseFrontLayer). That read
-// caches the ends' values for the adapter's write; they are put back, so this
-// changes nothing.
+// the flight adapter's census reads them (FlightLayerEnds, GameFrontDepth).
+// The read caches nothing and writes nothing.
 static void FlpDepth()
 {
     const std::string tag = "flightprobe depth: ";
@@ -54846,22 +54987,14 @@ static void FlpDepth()
     } catch (...) {}
     std::string frontText = "unreadable", backText = "unreadable", end = "unreadable";
     int64_t room = -1;
-    const RValue kept[2] = { g_FlightLayerValue[0], g_FlightLayerValue[1] };
     FcNs::LayerEnd first, last;
-    if (FlightRoom(room) && FlightLayerEnds(room, first, last)) {
-        int64_t front = -1;
-        if (FcNs::ChooseFrontLayer(first, last, front)) {
-            const bool firstFront = first.depth < last.depth;
-            frontText = FcpNs::NumberText((firstFront ? first : last).depth);
-            backText = FcpNs::NumberText((firstFront ? last : first).depth);
-            end = firstFront ? "first" : "last";
-        } else {
-            frontText = backText = "none";
-            end = "none(equal depths " + FcpNs::NumberText(first.depth) + ")";
-        }
+    double front = 0.0;
+    if (FlightRoom(room) && FlightLayerEnds(room, first, last) && FcNs::GameFrontDepth(first, last, front)) {
+        const bool firstFront = first.depth <= last.depth;
+        frontText = FcpNs::NumberText(front);
+        backText = FcpNs::NumberText((firstFront ? last : first).depth);
+        end = firstFront ? "first" : "last";
     }
-    g_FlightLayerValue[0] = kept[0];
-    g_FlightLayerValue[1] = kept[1];
     Out(tag + "layer=" + layerText + " depth=" + depthText + " front=" + frontText + " back=" + backText + " y=" + FcpNs::NumberText(y)
         + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState())) + " front-end=" + end
         + " room=" + (room >= 0 ? std::to_string(room) : std::string("unreadable")));

@@ -6,7 +6,8 @@
 // (object_is_ancestor answers from it the way the runtime does - an object is
 // not its own ancestor), the charms the local player wears, whether the
 // player overlaps the Collision_Parent_obj family, a room size, each room's
-// two game-layer ends, and a small inventory grid for the size guard. Frames
+// two game-layer ends and its own layers (with the flight layer once placed),
+// a millisecond clock, and a small inventory grid for the size guard. Frames
 // are plain numbers.
 //
 // seed_codec: the item table, every roll's seed and back, every range edge
@@ -22,8 +23,11 @@
 // or 1x5 charm waits for the end of its grid's load, a vanilla item takes its
 // cells first, a refused full footprint becomes 1x1 at its own cell (kept) and
 // a refused 1x1 counts failed; nested scopes flush their own lists (target).
-// front_layer: the end with the lower depth, no write for off, residual or
-// another self. stand_in: the even-count rule, its order, its refusal, the
+// front_layer: the flight layer one in front of the lowest of the game layers'
+// front end and every drawn room layer, a census once per room visit and a
+// re-choice at most once a second, validated where it is written, no write for
+// off, residual or another self; front_layer_filter: never past a filter, the
+// rearmost filter deciding (the room stacks are the data file's). stand_in: the even-count rule, its order, its refusal, the
 // coin. stat_line: the fresh session's line, byte for byte. install and
 // command: the install states and the `flightcharm` forms.
 #include <array>
@@ -76,6 +80,18 @@ static bool objectIsAncestor(int object, int ancestor)
     return false;
 }
 
+// One room layer as the runtime holds it: what layer_get_depth,
+// layer_get_name, layer_get_visible, the length of layer_get_all_elements and
+// layer_get_fx (a struct, or not) would answer.
+struct WorldLayer {
+    int64_t     id = -1;
+    double      depth = 0.0;
+    std::string name;
+    bool        visible = true;
+    int64_t     elements = 0;
+    bool        effect = false;
+};
+
 struct FlightWorld {
     unsigned equipped = 0;          // CharmBit()s of the charms the player wears
     bool equippedReadable = true;
@@ -85,7 +101,35 @@ struct FlightWorld {
     bool roomReadable = true;
     std::map<int64_t, std::pair<LayerEnd, LayerEnd>> layers;   // room -> gameLayer[room]'s two ends
     long equippedReads = 0, overlapReads = 0, roomReads = 0, layerReads = 0;
+    // The current room's own layers, which the census reads; the flight layer
+    // joins them once placed, and dies with them when a room is unloaded.
+    int64_t room = 7;                                   // the room the layer builtins see
+    std::map<int64_t, std::vector<WorldLayer>> rooms;   // room -> its layers
+    bool listReadable = true;                           // layer_get_all
+    std::set<int64_t> effectFails;                      // layers whose layer_get_fx read fails
+    double nowMs = 0.0;
+    int64_t nextId = 900;
+    long listReads = 0, detailReads = 0, effectReads = 0, countReads = 0;
+    long places = 0, creates = 0, moves = 0, valids = 0;
 };
+
+static WorldLayer* worldLayer(FlightWorld& w, int64_t id)
+{
+    for (WorldLayer& l : w.rooms[w.room])
+        if (l.id == id) return &l;
+    return nullptr;
+}
+
+// The current room's flight layer, or nullptr.
+static WorldLayer* worldFlightLayer(FlightWorld& w)
+{
+    for (WorldLayer& l : w.rooms[w.room])
+        if (l.name == kFlightLayerName) return &l;
+    return nullptr;
+}
+
+// gameLayer[room]'s ends as Live 1 read them: index 0 at 0, the last at -5500.
+static const std::pair<LayerEnd, LayerEnd> kGameEnds = { LayerEnd{ 11, 0.0 }, LayerEnd{ 19, -5500.0 } };
 
 static Flight makeFlight(FlightWorld& w)
 {
@@ -119,7 +163,162 @@ static Flight makeFlight(FlightWorld& w)
         last = it->second.second;
         return true;
     });
+    Flight::LayerOps ops;
+    ops.all = [&w](std::vector<LayerEnd>& all) {
+        ++w.listReads;
+        if (!w.listReadable) return false;
+        for (const WorldLayer& l : w.rooms[w.room]) all.push_back(LayerEnd{ l.id, l.depth });
+        return true;
+    };
+    ops.detail = [&w](int64_t id, RoomLayer& l) {
+        ++w.detailReads;
+        const WorldLayer* p = worldLayer(w, id);
+        if (!p) return false;
+        l.name = p->name;
+        l.visible = p->visible;
+        l.elements = p->elements;
+        return true;
+    };
+    ops.effect = [&w](int64_t id, bool& effect) {
+        ++w.effectReads;
+        const WorldLayer* p = worldLayer(w, id);
+        if (!p || w.effectFails.count(id)) return false;
+        effect = p->effect;
+        return true;
+    };
+    ops.count = [&w](int64_t id, int64_t& elements) {
+        ++w.countReads;
+        const WorldLayer* p = worldLayer(w, id);
+        if (!p) return false;
+        elements = p->elements;
+        return true;
+    };
+    // layer_get_id by name first, moved to the chosen depth; layer_create only
+    // when the room holds none.
+    ops.place = [&w](double depth, int64_t& id) {
+        ++w.places;
+        if (WorldLayer* p = worldFlightLayer(w)) {
+            p->depth = depth;
+            id = p->id;
+            return true;
+        }
+        ++w.creates;
+        w.rooms[w.room].push_back(WorldLayer{ w.nextId++, depth, std::string(kFlightLayerName), true, 0, false });
+        id = w.rooms[w.room].back().id;
+        return true;
+    };
+    ops.move = [&w](int64_t id, double depth) {
+        ++w.moves;
+        WorldLayer* p = worldLayer(w, id);
+        if (!p) return false;
+        p->depth = depth;
+        return true;
+    };
+    ops.valid = [&w](int64_t id) {
+        ++w.valids;
+        const WorldLayer* p = worldLayer(w, id);
+        return p && p->name == kFlightLayerName;
+    };
+    ops.clock = [&w]() { return w.nowMs; };
+    f.SetLayerOps(std::move(ops));
     return f;
+}
+
+// One UpdateDepth of the local player in `room` at `ms`; the player then sits
+// on the layer written, so the flight layer holds an element as in the game.
+static DepthWrite depthAt(Flight& f, FlightWorld& w, int64_t frame, int64_t room, double ms)
+{
+    w.room = room;
+    w.nowMs = ms;
+    const DepthWrite d = f.OnUpdateDepth(frame, true, room);
+    if (d.write)
+        if (WorldLayer* p = worldLayer(w, d.layer)) p->elements = 1;
+    return d;
+}
+
+static double flightDepthIn(FlightWorld& w, int64_t room)
+{
+    w.room = room;
+    const WorldLayer* p = worldFlightLayer(w);
+    return p ? p->depth : std::numeric_limits<double>::quiet_NaN();
+}
+
+static std::string counts(const FlightCounters& c);
+
+static std::string visitText(const Flight& f, FlightWorld& w, int64_t room)
+{
+    const FlightLayerVisit& v = f.Visit();
+    return "have=" + std::to_string(v.have) + " depth=" + std::to_string(v.depth)
+        + " world-depth=" + std::to_string(flightDepthIn(w, room)) + " by=" + std::to_string(v.by)
+        + " lists=" + std::to_string(w.listReads) + " counts=" + std::to_string(w.countReads)
+        + " effects=" + std::to_string(w.effectReads) + " creates=" + std::to_string(w.creates)
+        + " moves=" + std::to_string(w.moves) + " | " + counts(f.Stats());
+}
+
+// The room stacks the data file gives (context § "Drawing in front"), each a
+// list of { id, depth, name, visible, elements, effect }; the ids are the
+// harness's own.
+static std::vector<WorldLayer> town01()
+{
+    return {
+        { 301, -10300.0, "Effect_1", true, 0, true },               // _filter_lut_colour
+        { 302, -10200.0, "Wind_Leaves", false, 0, true },
+        { 303, -10100.0, "Xmas_Event_Assets_1", false, 6, false },
+        { 304, -10000.0, "Invisible_walls", true, 77, false },
+        { 305, -9900.0, "Windmill_Propels", true, 4, false },
+        { 306, -9800.0, "Raven_Creators", true, 3, false },
+        { 307, -9700.0, "Tree_Leaves", true, 34, true },              // _filter_underwater, the sway
+        { 308, 0.0, "Flames", true, 5, false },
+        { 309, 5.0, "Objects", true, 430, false },
+        { 310, 608.0, "Background_Tiles", true, 1, false },
+    };
+}
+
+static std::vector<WorldLayer> act01Pregame()
+{
+    return {
+        { 401, -10400.0, "Instances_2", true, 2, false },
+        { 402, -10300.0, "Effect_1", true, 0, true },
+        { 403, -10150.0, "Wind_Leaves", true, 0, true },
+        { 404, -10100.0, "Raven_Creators", true, 3, false },
+        { 405, 5.0, "Objects", true, 200, false },
+    };
+}
+
+static std::vector<WorldLayer> act0905()
+{
+    return {
+        { 501, -11300.0, "Sparks", true, 0, true },
+        { 502, -11200.0, "Smoke", true, 6, false },
+        { 503, -11100.0, "Effect_2", true, 0, true },
+        { 504, -11000.0, "Effect_1", true, 0, true },
+        { 505, 5.0, "Objects", true, 300, false },
+    };
+}
+
+static std::vector<WorldLayer> act0101()
+{
+    return {
+        { 601, -10100.0, "Effect_1", true, 0, true },               // _filter_lut_colour
+        { 602, -10000.0, "Tree_Leaves", true, 0, true },            // empty until the canopies exist
+        { 603, 5.0, "Objects", true, 250, false },
+    };
+}
+
+// A world with one room (7) holding `stack` behind gameLayer's measured ends,
+// and a Flight wearing Wings in it.
+static Flight flightIn(FlightWorld& w, std::vector<WorldLayer> stack)
+{
+    w.layers[7] = kGameEnds;
+    w.rooms[7] = std::move(stack);
+    Flight f = makeFlight(w);
+    w.equipped = CharmBit(Charm::Wings);
+    return f;
+}
+
+static bool sumsHold(const FlightCounters& c)
+{
+    return c.depthCalls == c.depthOther + c.depthSeen && c.depthSeen == c.depthIdle + c.noFront + c.depth;
 }
 
 // One hooked call after its original ran. `wallBlocks` is what re-running the
@@ -665,33 +864,217 @@ int main()
 
     // ======================= front_layer ===================================
     {
+        // The game layers' front end is the lower of gameLayer[room]'s two end
+        // depths, whichever index holds it; a non-finite end names none.
+        double d = 0.0;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const bool ok = GameFrontDepth(LayerEnd{ 1, 0.0 }, LayerEnd{ 2, -5500.0 }, d) && d == -5500.0
+            && GameFrontDepth(LayerEnd{ 1, -50.0 }, LayerEnd{ 2, 300.0 }, d) && d == -50.0
+            && GameFrontDepth(LayerEnd{ 1, 4.0 }, LayerEnd{ 2, 4.0 }, d) && d == 4.0
+            && !GameFrontDepth(LayerEnd{ 1, nan }, LayerEnd{ 2, 4.0 }, d)
+            && !GameFrontDepth(LayerEnd{ 1, 4.0 }, LayerEnd{ 2, std::numeric_limits<double>::infinity() }, d);
+        check("front_layer/the_game_front_is_the_lower_end", ok);
+    }
+    {
+        // Town_01_rm's stack: in front of Invisible_walls (-10000), behind the
+        // room's only visible filter, Effect_1 (-10300).
         FlightWorld w;
-        w.layers[7] = { LayerEnd{ 101, 100.0 }, LayerEnd{ 109, -100.0 } };
-        w.layers[8] = { LayerEnd{ 201, -50.0 }, LayerEnd{ 209, 300.0 } };
+        Flight f = flightIn(w, town01());
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        const bool town = d.write && d.layer == v.layer && v.have && v.depth == -10001.0 && flightDepthIn(w, 7) == -10001.0
+            && v.by >= 0 && v.layers[(size_t)v.by].name == "Invisible_walls" && v.gameFrontRead && v.gameFront == -5500.0
+            && v.listed == 10 && w.creates == 1;
+        // No room layer in front of the game layers: one in front of -5500.
+        FlightWorld e;
+        Flight g = flightIn(e, { { 309, 5.0, "Objects", true, 430, false }, { 310, 608.0, "Background_Tiles", true, 1, false } });
+        const DepthWrite de = depthAt(g, e, 1, 7, 0.0);
+        const bool empty = de.write && g.Visit().depth == -5501.0 && g.Visit().by == -1 && flightDepthIn(e, 7) == -5501.0;
+        check("front_layer/one_in_front_of_the_lowest_drawn_layer",
+            town && empty && f.Stats().depth == 1 && g.Stats().depth == 1, visitText(f, w, 7) + " || " + visitText(g, e, 7));
+    }
+    {
+        // A hidden layer, an empty layer with no effect, and the flight layer
+        // itself (found by name, holding the player at -20000) never count.
+        FlightWorld w;
+        std::vector<WorldLayer> stack = town01();
+        stack.push_back({ 320, -12000.0, "Hidden_Rocks", false, 9, false });
+        stack.push_back({ 321, -11000.0, "Empty_Instances", true, 0, false });
+        stack.push_back({ 322, -20000.0, std::string(kFlightLayerName), true, 1, false });
+        Flight f = flightIn(w, stack);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer/hidden_empty_and_the_flight_layer_itself_never_count",
+            d.write && d.layer == 322 && f.Visit().depth == -10001.0 && flightDepthIn(w, 7) == -10001.0 && w.creates == 0,
+            visitText(f, w, 7));
+    }
+    {
+        // The game layers' front end unreadable (no ends) or non-finite: no
+        // flight layer, nothing written, counted in no-front. Another layer
+        // whose depth reads non-finite is skipped.
+        FlightWorld w;
+        w.rooms[7] = town01();
         Flight f = makeFlight(w);
-        w.equipped = CharmBit(Charm::Elf);
-        const DepthWrite d7 = f.OnUpdateDepth(1, true, 7);
-        const DepthWrite d8 = f.OnUpdateDepth(2, true, 8);
-        int64_t layer = -1;
-        const bool chooser = ChooseFrontLayer(LayerEnd{ 1, 5.0 }, LayerEnd{ 2, 4.0 }, layer) && layer == 2
-            && ChooseFrontLayer(LayerEnd{ 1, -5.0 }, LayerEnd{ 2, 4.0 }, layer) && layer == 1
-            && !ChooseFrontLayer(LayerEnd{ 1, 4.0 }, LayerEnd{ 2, 4.0 }, layer)
-            && !ChooseFrontLayer(LayerEnd{ 1, std::numeric_limits<double>::quiet_NaN() }, LayerEnd{ 2, 4.0 }, layer);
-        check("front_layer/the_end_with_the_lower_depth_is_chosen",
-            d7.write && d7.layer == 109 && d8.write && d8.layer == 201 && chooser && f.Stats().depth == 2, counts(f.Stats()));
+        w.equipped = CharmBit(Charm::Wings);
+        const bool unreadable = !depthAt(f, w, 1, 7, 0.0).write && w.creates == 0;
+        FlightWorld n;
+        n.layers[7] = { LayerEnd{ 11, 0.0 }, LayerEnd{ 19, std::numeric_limits<double>::quiet_NaN() } };
+        n.rooms[7] = town01();
+        Flight g = makeFlight(n);
+        n.equipped = CharmBit(Charm::Wings);
+        const bool nonFinite = !depthAt(g, n, 1, 7, 0.0).write && n.creates == 0;
+        FlightWorld s;
+        std::vector<WorldLayer> stack = town01();
+        stack.push_back({ 330, std::numeric_limits<double>::quiet_NaN(), "Odd", true, 5, false });
+        Flight h = flightIn(s, stack);
+        const bool skipped = depthAt(h, s, 1, 7, 0.0).write && h.Visit().depth == -10001.0;
+        check("front_layer/an_unreadable_game_front_writes_nothing",
+            unreadable && nonFinite && skipped && f.Stats().noFront == 1 && f.Stats().depth == 0 && g.Stats().noFront == 1
+                && sumsHold(f.Stats()) && sumsHold(g.Stats()),
+            counts(f.Stats()) + " || " + counts(g.Stats()) + " || " + visitText(h, s, 7));
+    }
+    {
+        // The census once per room visit; the re-choice at most once a second,
+        // only while on, recounting the remembered layers alone; a new visit
+        // (the layer gone with its room) runs the census again.
+        FlightWorld w;
+        Flight f = flightIn(w, town01());
+        bool ok = true;
+        for (int frame = 1; frame <= 60; ++frame) ok = ok && depthAt(f, w, frame, 7, frame * 16.0).write;   // 16..960 ms
+        const long listsInVisit = w.listReads, countsBefore = w.countReads;
+        ok = ok && depthAt(f, w, 61, 7, 1000.0).write && depthAt(f, w, 62, 7, 1016.0).write;
+        const long countsAfterOne = w.countReads;   // one recount: the 7 remembered layers in front of -5500
+        // Off for three seconds: no write, no recount.
+        w.equipped = 0;
+        for (int frame = 63; frame <= 80; ++frame) ok = ok && !depthAt(f, w, frame, 7, 1016.0 + (frame - 62) * 200.0).write;
+        const long countsOff = w.countReads;
+        w.equipped = CharmBit(Charm::Wings);
+        ok = ok && depthAt(f, w, 81, 7, 5000.0).write;
+        const long countsBack = w.countReads;
+        // The room unloads with its layers; the same room's next visit.
+        w.rooms[7] = town01();
+        ok = ok && depthAt(f, w, 82, 7, 5016.0).write;
+        check("front_layer/the_census_once_per_visit_the_rechoice_once_a_second",
+            ok && listsInVisit == 1 && countsBefore == 0 && countsAfterOne == 7 && countsOff == 7 && countsBack == 14
+                && w.listReads == 2 && w.creates == 2 && w.moves == 0 && f.Stats().depth == 64 && sumsHold(f.Stats()),
+            visitText(f, w, 7));
+    }
+    {
+        // A census that yields nothing is retried at most once a second, never
+        // on every write.
+        FlightWorld w;
+        Flight f = flightIn(w, town01());
+        w.listReadable = false;
+        const bool first = !depthAt(f, w, 1, 7, 0.0).write;
+        const bool soon = !depthAt(f, w, 2, 7, 500.0).write && !depthAt(f, w, 3, 7, 999.0).write;
+        const long listsSoon = w.listReads;
+        w.listReadable = true;
+        const bool later = depthAt(f, w, 4, 7, 1000.0).write;
+        check("front_layer/a_census_that_yields_nothing_retries_once_a_second",
+            first && soon && later && listsSoon == 1 && w.listReads == 2 && f.Stats().noFront == 3 && f.Stats().depth == 1
+                && sumsHold(f.Stats()),
+            visitText(f, w, 7));
+    }
+    {
+        // Validated where it is written: before each write the layer must
+        // exist and carry our name. A layer id a new room reuses under another
+        // name starts a new visit, whose census finds no layer by name and
+        // creates one. A room change is a new visit too.
+        FlightWorld w;
+        Flight f = flightIn(w, town01());
+        const DepthWrite a = depthAt(f, w, 1, 7, 0.0);
+        const DepthWrite b = depthAt(f, w, 2, 7, 16.0);
+        worldFlightLayer(w)->name = "Instances_Reused";
+        const DepthWrite c = depthAt(f, w, 3, 7, 32.0);
+        w.layers[8] = kGameEnds;
+        w.rooms[8] = act01Pregame();
+        const DepthWrite d = depthAt(f, w, 4, 8, 48.0);
+        check("front_layer/validated_where_it_is_written_and_found_by_name",
+            a.write && b.write && a.layer == b.layer && c.write && c.layer != a.layer && d.write && d.layer != c.layer
+                && w.valids == 2 && w.listReads == 3 && w.creates == 3 && f.Visit().depth == -10101.0,
+            visitText(f, w, 8));
+    }
+    // ---- never past a filter (the owner, 2026-10-13) ----
+    {
+        FlightWorld w;
+        Flight f = flightIn(w, { { 701, -10000.0, "Invisible_walls", true, 40, false }, { 702, -9700.0, "Tree_Leaves", true, 34, true },
+                                 { 703, 5.0, "Objects", true, 100, false } });
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/no_filter", d.write && f.Visit().depth == -10001.0 && flightDepthIn(w, 7) == -10001.0,
+            visitText(f, w, 7));
     }
     {
         FlightWorld w;
-        w.layers[7] = { LayerEnd{ 101, 100.0 }, LayerEnd{ 109, -100.0 } };
-        w.layers[8] = { LayerEnd{ 201, -50.0 }, LayerEnd{ 209, 300.0 } };
-        Flight f = makeFlight(w);
-        w.equipped = CharmBit(Charm::Wings);
-        bool ok = true;
-        for (int frame = 1; frame <= 50; ++frame) ok = ok && f.OnUpdateDepth(frame, true, 7).layer == 109;
-        const long inSeven = w.layerReads;
-        ok = ok && f.OnUpdateDepth(51, true, 8).layer == 201 && f.OnUpdateDepth(52, true, 7).layer == 109;
-        check("front_layer/read_once_per_room", ok && inSeven == 1 && w.layerReads == 3 && f.Stats().depth == 52,
-            "layer-reads=" + std::to_string(w.layerReads));
+        Flight f = flightIn(w, town01());
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/a_filter_in_front_of_every_drawn_layer",
+            d.write && f.Visit().depth == -10001.0 && flightDepthIn(w, 7) > -10300.0, visitText(f, w, 7));
+    }
+    {
+        // Act_01_Pregame: Instances_2 (-10400) is in front of the filters and
+        // stays in front of him; -10101, not -10401.
+        FlightWorld w;
+        Flight f = flightIn(w, act01Pregame());
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/a_filter_behind_the_frontmost_drawn_layer",
+            d.write && v.depth == -10101.0 && v.by >= 0 && v.layers[(size_t)v.by].name == "Raven_Creators"
+                && flightDepthIn(w, 7) == -10101.0,
+            visitText(f, w, 7));
+    }
+    {
+        // Act_09_05: Smoke (-11200) sits between the filters; the rearmost
+        // filter (-11000) decides, so -5501, not -11201.
+        FlightWorld w;
+        Flight f = flightIn(w, act0905());
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/several_filters_the_rearmost_decides",
+            d.write && f.Visit().depth == -5501.0 && f.Visit().by == -1 && flightDepthIn(w, 7) == -5501.0, visitText(f, w, 7));
+    }
+    {
+        // A hidden filter (which, counted, would put -10000 out of reach and
+        // give -9701), and a filter behind the game layers' front end (600, as
+        // Act_09_Cult_Dungeon_rm's; counted, it would give -5501): neither
+        // changes the answer, and neither's effect is read.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 801, -10000.0, "Invisible_walls", true, 40, false }, { 802, -9800.0, "Hidden_Filter", false, 0, true },
+                                 { 803, -9700.0, "Tree_Leaves", true, 34, true }, { 804, 600.0, "Effect_1", true, 0, true } });
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/a_hidden_filter_and_one_behind_the_game_front_change_nothing",
+            d.write && f.Visit().depth == -10001.0 && w.effectReads == 0 && w.detailReads == 3, visitText(f, w, 7));
+    }
+    {
+        // Act_01_01: Tree_Leaves (-10000) carries an effect and is empty at the
+        // census, so it reads as a filter: -5501. Once it holds canopies, the
+        // next re-choice (not before a second) counts it as drawn and moves the
+        // layer to -10001, behind the room's filter (-10100).
+        FlightWorld w;
+        Flight f = flightIn(w, act0101());
+        const bool before = depthAt(f, w, 1, 7, 0.0).write && f.Visit().depth == -5501.0 && flightDepthIn(w, 7) == -5501.0;
+        worldLayer(w, 602)->elements = 40;
+        const bool notYet = depthAt(f, w, 2, 7, 500.0).write && f.Visit().depth == -5501.0 && w.moves == 0;
+        const DepthWrite d = depthAt(f, w, 3, 7, 1000.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/an_empty_effect_layer_that_fills",
+            before && notYet && d.write && v.depth == -10001.0 && flightDepthIn(w, 7) == -10001.0 && v.moves == 1 && w.moves == 1
+                && w.listReads == 1 && v.by >= 0 && v.layers[(size_t)v.by].name == "Tree_Leaves",
+            visitText(f, w, 7));
+    }
+    {
+        // A failed layer_get_fx read is no effect: that layer is not a filter.
+        // Read, the filter at -9800 would leave only -9700 behind it (-9701);
+        // failed, the real filter at -10300 still decides: -10001.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 901, -10300.0, "Effect_1", true, 0, true }, { 902, -10000.0, "Invisible_walls", true, 40, false },
+                                 { 903, -9800.0, "Effect_2", true, 0, true }, { 904, -9700.0, "Tree_Leaves", true, 34, true } });
+        w.effectFails.insert(903);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        FlightWorld r;
+        Flight g = flightIn(r, { { 901, -10300.0, "Effect_1", true, 0, true }, { 902, -10000.0, "Invisible_walls", true, 40, false },
+                                 { 903, -9800.0, "Effect_2", true, 0, true }, { 904, -9700.0, "Tree_Leaves", true, 34, true } });
+        const DepthWrite e = depthAt(g, r, 1, 7, 0.0);
+        check("front_layer_filter/a_failed_effect_read_is_no_filter",
+            d.write && f.Visit().depth == -10001.0 && w.effectReads == 2 && e.write && g.Visit().depth == -9701.0,
+            visitText(f, w, 7) + " || control " + visitText(g, r, 7));
     }
     {
         FlightWorld w;
@@ -705,18 +1088,12 @@ int main()
         const DepthWrite residual = f.OnUpdateDepth(3, true, 7);
         const bool isResidual = f.CurrentState() == State::Residual;
         const DepthWrite other = f.OnUpdateDepth(3, false, 7);
+        // Off, residual and another self run no census and create no layer:
+        // only the one write while on did.
         check("front_layer/no_write_for_off_residual_or_another_self",
-            !off.write && on.write && !residual.write && isResidual && !other.write && f.Stats().depth == 1,
+            !off.write && on.write && !residual.write && isResidual && !other.write && f.Stats().depth == 1
+                && w.layerReads == 1 && w.listReads == 1 && w.creates == 1,
             counts(f.Stats()));
-    }
-    {
-        FlightWorld w;
-        w.layers[7] = { LayerEnd{ 101, 0.0 }, LayerEnd{ 109, 0.0 } };
-        Flight f = makeFlight(w);
-        w.equipped = CharmBit(Charm::Wings);
-        const bool ok = !f.OnUpdateDepth(1, true, 7).write && !f.OnUpdateDepth(2, true, 9).write
-            && !f.OnUpdateDepth(3, true, 9).write && w.layerReads == 2 && f.Stats().depth == 0;
-        check("front_layer/equal_or_unreadable_ends_write_nothing", ok, "layer-reads=" + std::to_string(w.layerReads));
     }
 
     // ======================= trace =========================================

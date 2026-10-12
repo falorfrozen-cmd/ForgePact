@@ -33,7 +33,8 @@ namespace ForgePact::FlightCharms {
 //     (the point of use, never EVENT_FRAME), and by `flightcharm stat`.
 //   - flight's install state (armed when dressing first recognises a charm,
 //     installed once a character exists).
-//   - the front-layer choice made after the game's UpdateDepth.
+//   - the flight layer the flying player is drawn on after the game's
+//     UpdateDepth: its census once per room visit and its re-choice.
 //   - the size guard, which defers a dressed charm to the end of its grid's
 //     load so that it never takes a cell a vanilla item needs.
 //   - Pocket Elf's stand-in rule, and the coin every flight drop is decided by.
@@ -322,7 +323,7 @@ struct FlightCounters {
     uint64_t answered = 0;      // queries answered "nothing there"
     uint64_t excluded = 0;      // kept because a wall or a lock blocked, or was named
     uint64_t outsideRoom = 0;   // kept because a point was outside the room (or the room unreadable)
-    uint64_t depth = 0;         // front-layer writes
+    uint64_t depth = 0;         // flight-layer writes
     uint64_t calls = 0;         // hooked calls handed to the core, any self
     uint64_t notPlayer = 0;     // of calls, self was not the local player
     uint64_t unblocked = 0;     // of calls, the local player's, whose original answered free: it stands
@@ -335,7 +336,7 @@ struct FlightCounters {
     uint64_t depthOther = 0;    // of depthCalls, self was not the local player
     uint64_t depthSeen = 0;     // of depthCalls, the local player's
     uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
-    uint64_t noFront = 0;       // of depthSeen while on, no write: the room or its layer ends unreadable, or equal depths
+    uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none)
 };
 
 // One hooked call, after its original ran.
@@ -352,7 +353,24 @@ struct Query {
     double  y1 = 0.0;
 };
 
-// One end of global.gameLayer[room]: the layer id and its layer_get_depth.
+// ---- drawing in front: the flight layer ----------------------------------------
+//
+// While flight is on, the local player is drawn on a room layer of the mod's
+// own, `fp_flight`, made in the current room. GameMaker draws a lower layer
+// depth on top. Live 1 measured that no layer of global.gameLayer draws in
+// front of a room's Tree_Leaves (RDM § 19.7), so the flight layer goes one
+// below the lowest depth among the game layers' front end and every drawn room
+// layer behind the rearmost filter layer. The owner's rule (2026-10-13, "Never
+// past a filter"): the flying player is never drawn in front of a filter layer,
+// so he keeps every tint he has on the ground.
+
+inline constexpr std::string_view kFlightLayerName = "fp_flight";
+// The re-choice runs at most this often, and a census that yielded nothing is
+// retried no sooner.
+inline constexpr double kRechoiceMs = 1000.0;
+
+// A layer id and its layer_get_depth: an end of global.gameLayer[room], or a
+// room layer as the census lists it.
 struct LayerEnd {
     int64_t layer = -1;
     double  depth = 0.0;
@@ -363,23 +381,99 @@ struct DepthWrite {
     int64_t layer = -1;
 };
 
-// GameMaker draws a lower layer depth on top, so the front end is the one with
-// the lower depth. Equal or non-finite depths name no front: nothing is
-// written. Which end is in front was not settled by reading (RDM § 19.7), so
-// it is decided here, per room, and measured live (`flight-depth`).
-inline bool ChooseFrontLayer(const LayerEnd& first, const LayerEnd& last, int64_t& layer)
+// The game layers' front end: the lower of global.gameLayer[room]'s two end
+// depths (Live 1 read the last index at -5500 and index 0 at 0). A non-finite
+// end names none, and nothing is written.
+inline bool GameFrontDepth(const LayerEnd& first, const LayerEnd& last, double& depth)
 {
     if (!std::isfinite(first.depth) || !std::isfinite(last.depth)) return false;
-    if (first.depth < last.depth) {
-        layer = first.layer;
-        return true;
-    }
-    if (last.depth < first.depth) {
-        layer = last.layer;
-        return true;
-    }
-    return false;
+    depth = first.depth < last.depth ? first.depth : last.depth;
+    return true;
 }
+
+// One room layer in front of the game layers' front end, as the census read
+// it: layer_get_name, layer_get_visible, the length of layer_get_all_elements,
+// and, for a visible empty layer only, whether layer_get_fx answered a struct.
+struct RoomLayer {
+    int64_t     id = -1;
+    double      depth = 0.0;
+    std::string name;
+    bool        visible = false;
+    int64_t     elements = 0;
+    bool        effect = false;
+};
+
+// A filter layer: visible, holding no element, carrying a layer effect, and in
+// front of the game layers' front end. A layer that holds an element is never
+// a filter, so an effect-carrying instance layer (Tree_Leaves) is one only
+// while it is empty. The flight layer is never one.
+inline bool IsFilterLayer(const RoomLayer& l, double gameFront)
+{
+    return l.name != kFlightLayerName && std::isfinite(l.depth) && l.depth < gameFront && l.visible
+        && l.elements == 0 && l.effect;
+}
+
+// A drawn layer: visible and holding at least one element. The flight layer is
+// never one (it holds the flying player).
+inline bool IsDrawnLayer(const RoomLayer& l)
+{
+    return l.name != kFlightLayerName && std::isfinite(l.depth) && l.visible && l.elements > 0;
+}
+
+// The flight layer's depth: one below the lowest of the game layers' front end
+// and every drawn layer in front of it and behind the rearmost filter (the
+// filter with the highest depth). With no filter, every drawn layer counts.
+// `by` is the index in `layers` of the drawn layer that decided, -1 when the
+// game layers' front end did. Rearmost, not frontmost: a drawn layer between
+// two filters (Act_09_05's Smoke) stays in front of the flying player.
+struct FlightDepthChoice {
+    bool   ok = false;
+    double depth = 0.0;
+    int    by = -1;
+};
+
+inline FlightDepthChoice ChooseFlightDepth(double gameFront, const std::vector<RoomLayer>& layers)
+{
+    FlightDepthChoice c;
+    if (!std::isfinite(gameFront)) return c;
+    bool haveFilter = false;
+    double rearmost = 0.0;
+    for (const RoomLayer& l : layers) {
+        if (!IsFilterLayer(l, gameFront)) continue;
+        if (!haveFilter || l.depth > rearmost) rearmost = l.depth;
+        haveFilter = true;
+    }
+    double lowest = gameFront;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const RoomLayer& l = layers[i];
+        if (!IsDrawnLayer(l) || l.depth >= gameFront) continue;
+        if (haveFilter && l.depth <= rearmost) continue;   // in front of the rearmost filter: it stays in front
+        if (l.depth < lowest) {
+            lowest = l.depth;
+            c.by = static_cast<int>(i);
+        }
+    }
+    c.ok = true;
+    c.depth = lowest - 1.0;
+    return c;
+}
+
+// This room visit's flight layer, for `flightprobe depth`. A visit starts at
+// the census and ends when the flight layer no longer exists (layers die with
+// their room) or the room changes.
+struct FlightLayerVisit {
+    bool                   have = false;           // a flight layer this visit
+    int64_t                layer = -1;
+    double                 depth = 0.0;
+    int64_t                room = -1;
+    bool                   gameFrontRead = false;
+    double                 gameFront = 0.0;
+    int                    by = -1;                // ChooseFlightDepth's `by`, into `layers`
+    std::vector<RoomLayer> layers;                 // remembered: in front of the game layers' front end
+    size_t                 listed = 0;             // every layer layer_get_all listed
+    double                 censusMs = 0.0;
+    uint64_t               moves = 0;              // re-choices that moved the layer this visit
+};
 
 // ---- drops: the gate ------------------------------------------------------------
 
@@ -483,6 +577,33 @@ public:
     // global.gameLayer[room]'s first and last entries with their depths;
     // false when they cannot be read.
     using LayerEndsFn = std::function<bool(int64_t room, LayerEnd& first, LayerEnd& last)>;
+    // The flight layer's reads and writes, each a builtin the adapter calls by
+    // name in the current room. Every one may fail (false), and none is called
+    // per frame except `valid`, once before each write.
+    struct LayerOps {
+        // layer_get_all, each with its layer_get_depth. The census only.
+        std::function<bool(std::vector<LayerEnd>& all)> all;
+        // A listed layer's name, visibility and element count. The census only,
+        // for a layer in front of the game layers' front end.
+        std::function<bool(int64_t id, RoomLayer& layer)> detail;
+        // Whether layer_get_fx answers a struct. The census only, for a visible
+        // empty layer; a failed read is no effect.
+        std::function<bool(int64_t id, bool& effect)> effect;
+        // A remembered layer's element count again. The re-choice only.
+        std::function<bool(int64_t id, int64_t& elements)> count;
+        // The layer named kFlightLayerName, looked up by name (layer_get_id)
+        // and moved to `depth`, or created at `depth` by name when the room
+        // holds none. The census only, so a room never holds two.
+        std::function<bool(double depth, int64_t& id)> place;
+        // layer_depth: the re-choice moving the flight layer.
+        std::function<bool(int64_t id, double depth)> move;
+        // layer_exists and layer_get_name: the cached layer still exists and
+        // carries our name (a new room may reuse the id). Before each write.
+        std::function<bool(int64_t id)> valid;
+        // A steady clock in milliseconds, for the re-choice's schedule and the
+        // census's time. Unset, the frame counter stands in at 60 a second.
+        std::function<double()> clock;
+    };
 
     // The family table forgets everything once it holds this many objects, so
     // an adapter passing something other than an object index cannot grow it
@@ -505,7 +626,8 @@ public:
     void SetEquipped(EquippedFn fn) { equipped_ = std::move(fn); }
     void SetOverlap(OverlapFn fn) { overlap_ = std::move(fn); }
     void SetRoomSize(RoomSizeFn fn) { roomSize_ = std::move(fn); }
-    void SetLayerEnds(LayerEndsFn fn) { layerEnds_ = std::move(fn); haveRoom_ = false; }
+    void SetLayerEnds(LayerEndsFn fn) { layerEnds_ = std::move(fn); visit_ = FlightLayerVisit{}; haveCensus_ = false; }
+    void SetLayerOps(LayerOps ops) { ops_ = std::move(ops); visit_ = FlightLayerVisit{}; haveCensus_ = false; }
 
     bool Configured() const
     {
@@ -684,9 +806,13 @@ public:
 
     // After the game's UpdateDepth ran: whether to set the player's `layer`,
     // and to which layer. Only for the local player, only while flight is on
-    // (not residual); the room's two layer ends are read once per room. A
-    // negative room is one the adapter could not read: no write, counted in
-    // noFront, and the room read before it stays remembered.
+    // (not residual). The write goes to this room visit's flight layer, which
+    // is validated first (LayerOps::valid); a failed check, or a new room,
+    // starts a new visit, whose census runs once and places the layer. While
+    // the visit lasts, the re-choice runs at most once a second. A negative
+    // room is one the adapter could not read: no write, counted in noFront.
+    // A census that yields no layer writes nothing (noFront) and is retried no
+    // sooner than a second later.
     DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)
     {
         ++counters_.depthCalls;
@@ -704,19 +830,27 @@ public:
             ++counters_.noFront;
             return DepthWrite{};
         }
-        if (!haveRoom_ || room != room_) {
-            haveRoom_ = true;
-            room_ = room;
-            LayerEnd first, last;
-            roomFront_ = ReadLayerEnds(room, first, last) && ChooseFrontLayer(first, last, roomLayer_);
-        }
-        if (!roomFront_) {
-            ++counters_.noFront;
-            return DepthWrite{};
+        const double now = Now(frame);
+        if (visit_.have && visit_.room == room && LayerValid(visit_.layer)) {
+            Rechoose(now);
+        } else {
+            if (haveCensus_ && !visit_.have && visit_.room == room && now - censusAt_ < kRechoiceMs) {
+                ++counters_.noFront;
+                return DepthWrite{};
+            }
+            Census(room, now);
+            if (!visit_.have) {
+                ++counters_.noFront;
+                return DepthWrite{};
+            }
         }
         ++counters_.depth;
-        return DepthWrite{ true, roomLayer_ };
+        return DepthWrite{ true, visit_.layer };
     }
+
+    // This room visit's flight layer, as the last census and re-choice left
+    // it. Reading it runs nothing.
+    const FlightLayerVisit& Visit() const { return visit_; }
 
     const FlightCounters& Stats() const { return counters_; }
 
@@ -793,6 +927,94 @@ private:
         try { return layerEnds_(room, first, last); } catch (...) { return false; }
     }
 
+    // Each LayerOps call, with a missing callback or a throw read as a failure.
+    template <class Fn, class... Args>
+    static bool Call(const Fn& fn, Args&&... args)
+    {
+        if (!fn) return false;
+        try { return static_cast<bool>(fn(std::forward<Args>(args)...)); } catch (...) { return false; }
+    }
+
+    double Now(int64_t frame) const
+    {
+        if (ops_.clock) {
+            try {
+                const double ms = ops_.clock();
+                if (std::isfinite(ms)) return ms;
+            } catch (...) {}
+        }
+        return static_cast<double>(frame) * (1000.0 / 60.0);
+    }
+
+    bool LayerValid(int64_t id) const { return Call(ops_.valid, id); }
+
+    // Once per room visit: the game layers' front end, every layer's depth,
+    // and, for the layers in front of that end, their name, visibility and
+    // element count, plus layer_get_fx for a visible empty one. Remembers those
+    // layers, chooses, and places the flight layer by name.
+    void Census(int64_t room, double now)
+    {
+        haveCensus_ = true;
+        censusAt_ = now;
+        visit_ = FlightLayerVisit{};
+        visit_.room = room;
+        LayerEnd first, last;
+        visit_.gameFrontRead = ReadLayerEnds(room, first, last) && GameFrontDepth(first, last, visit_.gameFront);
+        std::vector<LayerEnd> all;
+        if (visit_.gameFrontRead && Call(ops_.all, all)) {
+            visit_.listed = all.size();
+            for (const LayerEnd& e : all) {
+                if (!std::isfinite(e.depth) || e.depth >= visit_.gameFront) continue;
+                RoomLayer l;
+                if (!Call(ops_.detail, e.layer, l)) continue;
+                if (l.name == kFlightLayerName) continue;   // the flight layer itself never counts
+                l.id = e.layer;
+                l.depth = e.depth;
+                l.effect = false;
+                bool effect = false;
+                if (l.visible && l.elements == 0 && Call(ops_.effect, e.layer, effect)) l.effect = effect;
+                visit_.layers.push_back(std::move(l));
+            }
+            const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
+            int64_t id = -1;
+            if (c.ok && Call(ops_.place, c.depth, id)) {
+                visit_.have = true;
+                visit_.layer = id;
+                visit_.depth = c.depth;
+                visit_.by = c.by;
+            }
+        }
+        // The census's own time, on the clock alone (the frame stand-in does
+        // not move within a call).
+        if (ops_.clock) {
+            const double end = Now(0);
+            if (end > now) visit_.censusMs = end - now;
+        }
+        choseAt_ = now;
+    }
+
+    // At most once a second while on: the remembered layers' elements again
+    // (a remembered filter that now holds one is a drawn layer), the rule
+    // re-applied, and the layer moved when the depth moves. The effect is not
+    // read again. A failed recount keeps the count the layer had.
+    void Rechoose(double now)
+    {
+        if (now - choseAt_ < kRechoiceMs) return;
+        choseAt_ = now;
+        for (RoomLayer& l : visit_.layers) {
+            int64_t elements = 0;
+            if (Call(ops_.count, l.id, elements)) l.elements = elements;
+        }
+        const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
+        if (!c.ok) return;
+        if (c.depth != visit_.depth) {
+            if (!Call(ops_.move, visit_.layer, c.depth)) return;
+            visit_.depth = c.depth;
+            ++visit_.moves;
+        }
+        visit_.by = c.by;
+    }
+
     IsAncestorFn isAncestor_;
     EquippedFn equipped_;
     OverlapFn overlap_;
@@ -808,10 +1030,11 @@ private:
     int64_t frame_ = 0;
     unsigned equippedMask_ = 0;
     State state_ = State::Off;
-    bool haveRoom_ = false;
-    int64_t room_ = 0;
-    bool roomFront_ = false;
-    int64_t roomLayer_ = -1;
+    LayerOps ops_;
+    FlightLayerVisit visit_;
+    bool haveCensus_ = false;   // a census has run (it may have yielded nothing)
+    double censusAt_ = 0.0;     // when the last census ran, in clock ms
+    double choseAt_ = 0.0;      // when the last census or re-choice chose
     FlightCounters counters_;
 };
 

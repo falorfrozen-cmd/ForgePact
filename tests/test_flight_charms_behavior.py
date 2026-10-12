@@ -17,7 +17,11 @@ inside it a dressed charm waits for the vanilla items, the target;
 `size_guard_two_charms`: two charms in one load both stay on the grid, in
 either save order, read either way round and with a cell unknown;
 `size_guard_counters`: the guard's own line), `trace_sums` (the trace
-line's counters add up as FlightCounters says), `front_layer`, `stand_in`
+line's counters add up as FlightCounters says), `front_layer` (the flight
+layer's depth, its census once per room visit and its re-choice at most once
+a second, validated where it is written; no write while off, residual or for
+another self, the baseline), `front_layer_filter` (never past a filter: the
+rearmost filter decides, on the data file's room stacks), `stand_in`
 (the even-count rule and the coin) and `stat_line` (the fresh session's line,
 byte for byte).
 """
@@ -189,12 +193,46 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     # ---- drawing in front ---------------------------------------------------
 
-    def test_front_layer_the_lower_depth_end(self):
-        self.assertScenarios("front_layer/the_end_with_the_lower_depth_is_chosen", "front_layer/read_once_per_room",
-                             "front_layer/equal_or_unreadable_ends_write_nothing")
-
     def test_front_layer_no_write_for_off_residual_or_another_self(self):
         self.assertScenarios("front_layer/no_write_for_off_residual_or_another_self")
+
+    def test_front_layer_one_in_front_of_the_lowest_drawn_layer(self):
+        self.assertScenarios("front_layer/the_game_front_is_the_lower_end",
+                             "front_layer/one_in_front_of_the_lowest_drawn_layer",
+                             "front_layer/hidden_empty_and_the_flight_layer_itself_never_count")
+
+    def test_front_layer_an_unreadable_game_front_writes_nothing(self):
+        self.assertScenarios("front_layer/an_unreadable_game_front_writes_nothing")
+
+    def test_front_layer_census_once_per_visit_rechoice_once_a_second(self):
+        self.assertScenarios("front_layer/the_census_once_per_visit_the_rechoice_once_a_second",
+                             "front_layer/a_census_that_yields_nothing_retries_once_a_second")
+
+    def test_front_layer_validated_where_it_is_written_and_found_by_name(self):
+        self.assertScenarios("front_layer/validated_where_it_is_written_and_found_by_name")
+
+    # ---- never past a filter (the owner, 2026-10-13) --------------------------
+
+    def test_front_layer_filter_none(self):
+        self.assertScenarios("front_layer_filter/no_filter")
+
+    def test_front_layer_filter_in_front_of_every_drawn_layer(self):
+        self.assertScenarios("front_layer_filter/a_filter_in_front_of_every_drawn_layer")
+
+    def test_front_layer_filter_behind_the_frontmost_drawn_layer(self):
+        self.assertScenarios("front_layer_filter/a_filter_behind_the_frontmost_drawn_layer")
+
+    def test_front_layer_filter_several_the_rearmost_decides(self):
+        self.assertScenarios("front_layer_filter/several_filters_the_rearmost_decides")
+
+    def test_front_layer_filter_hidden_or_behind_the_game_front_is_ignored(self):
+        self.assertScenarios("front_layer_filter/a_hidden_filter_and_one_behind_the_game_front_change_nothing")
+
+    def test_front_layer_filter_an_empty_effect_layer_that_fills(self):
+        self.assertScenarios("front_layer_filter/an_empty_effect_layer_that_fills")
+
+    def test_front_layer_filter_a_failed_effect_read_is_no_filter(self):
+        self.assertScenarios("front_layer_filter/a_failed_effect_read_is_no_filter")
 
     # ---- drops: the stand-ins and the coin ----------------------------------
 

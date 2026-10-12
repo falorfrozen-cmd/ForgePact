@@ -384,6 +384,13 @@ LEVER = {
     "equipped": "static bool FlightEquipped(unsigned& mask)",
     "overlap": "static bool FlightOverlap(bool& overlapping)",
     "layer_ends": "static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)",
+    "layer_all": "static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)",
+    "layer_detail": "static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)",
+    "layer_effect": "static bool FlightLayerEffect(int64_t id, bool& effect)",
+    "layer_count": "static bool FlightLayerCount(int64_t id, int64_t& elements)",
+    "layer_place": "static bool FlightLayerPlace(double depth, int64_t& id)",
+    "layer_move": "static bool FlightLayerMove(int64_t id, double depth)",
+    "layer_valid": "static bool FlightLayerValid(int64_t id)",
     "excluded": "static bool FlightExcludedBlocks(TRoutine orig, const FcNs::HookedRow& h, CInstance* S, CInstance* O, int argc, RValue* Args)",
     "on_builtin": "static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
     "tallest": "static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
@@ -443,8 +450,9 @@ class FlightCharmsLeverContract(unittest.TestCase):
 
     def test_the_flight_adapter_ships_in_both_builds(self):
         player = strip_research_blocks(self.plugin)
-        for name in ("array", "equipped", "overlap", "layer_ends", "excluded", "on_builtin", "tallest", "depth",
-                     "install", "install_if_ready", "tick", "player", "shared_detour", "shared_install"):
+        for name in ("array", "equipped", "overlap", "layer_ends", "layer_all", "layer_detail", "layer_effect",
+                     "layer_count", "layer_place", "layer_move", "layer_valid", "excluded", "on_builtin", "tallest",
+                     "depth", "install", "install_if_ready", "tick", "player", "shared_detour", "shared_install"):
             with self.subTest(function=name):
                 self.assertIn(LEVER[name], player)
         # The flight adapter comes after jumpscenery's, whose helpers it reuses.
@@ -591,9 +599,10 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("g_Flight.OnQuery(q)", hook)
         self.assertIn("r = FlightAnswerValue(answer);", hook)
 
-    def test_update_depth_writes_the_front_layer_for_the_player_only(self):
+    def test_update_depth_writes_the_flight_layer_for_the_player_only(self):
         hook = self.body("depth")
         self.assertIn("RValue& r = g_FlightOrigDepth(S, O, R, argc, A);", hook)
+        # The write comes after the game's own UpdateDepth.
         self.assertLess(hook.index("g_FlightOrigDepth(S, O, R, argc, A)"), hook.index("g_Flight.OnUpdateDepth("))
         lines = self.lines("depth")
         self.assertEqual(lines[1], "if (!S || g_FlightBusy || !g_Flight.Installed()) return r;")
@@ -601,12 +610,98 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertEqual(lines[2], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
         self.assertIn('RValue("layer")', hook)
         self.assertIn("if (w.write)", hook)
+        self.assertLess(hook.index("g_Flight.OnUpdateDepth("), hook.index('RValue("layer")'))
+        # The layer written is the one the core chose, as the runtime answered it.
+        self.assertIn("FlightLayerArg(w.layer)", hook)
         # yDepthSet stays as the game set it.
         self.assertNotIn("yDepthSet", self.code)
         ends = self.body("layer_ends")
         self.assertIn('"gameLayer"', ends)
         self.assertIn('"layer_get_depth"', ends)
         self.assertIn("g_Flight.SetLayerEnds(&FlightLayerEnds);", self.body("install"))
+
+    # ---- the flight layer: named, validated, never per frame -------------------------------
+
+    CORE = ROOT / "plugin" / "include" / "ForgePact" / "FlightCharms.hpp"
+    LAYER_OPS = (("all", "layer_all"), ("detail", "layer_detail"), ("effect", "layer_effect"), ("count", "layer_count"),
+                 ("place", "layer_place"), ("move", "layer_move"), ("valid", "layer_valid"))
+
+    def core(self):
+        return strip_comments(self.CORE.read_text(encoding="utf-8").replace("\r\n", "\n"))
+
+    def test_the_flight_layer_is_named_found_and_created_only_by_name(self):
+        place = self.body("layer_place")
+        # Looked up by name first, created by name only when the room holds none.
+        self.assertIn('"layer_get_id", { name }', place)
+        self.assertIn('"layer_create", { RValue(depth), name }', place)
+        self.assertLess(place.index('"layer_get_id"'), place.index('"layer_create"'))
+        self.assertIn("RValue(std::string(FcNs::kFlightLayerName))", place)
+        # The name is the core's one constant; the adapter never spells it.
+        self.assertIn('inline constexpr std::string_view kFlightLayerName = "fp_flight";', self.core())
+        self.assertNotIn('"fp_flight"', strip_comments(self.plugin))
+        # The one layer_create, and the one layer_get_id, in the whole plugin.
+        shipped = strip_comments(self.plugin)
+        self.assertEqual(shipped.count('"layer_create"'), 1)
+        self.assertEqual(shipped.count('"layer_get_id"'), 1)
+        # No layer id is written as a number: each comes back from the runtime.
+        self.assertIn("FlightLayerId(layer, found)", place)
+        self.assertIn("FlightLayerArg(id)", self.body("layer_move"))
+
+    def test_the_flight_layer_is_validated_where_it_is_written(self):
+        valid = self.body("layer_valid")
+        self.assertIn('"layer_exists"', valid)
+        self.assertIn('"layer_get_name"', valid)
+        self.assertIn("std::string(FcNs::kFlightLayerName)", valid)
+        self.assertLess(valid.index('"layer_exists"'), valid.index('"layer_get_name"'))
+        # The core checks it before each write: the write path of OnUpdateDepth
+        # asks LayerValid before it counts a write, and a failed check runs a
+        # new visit's census.
+        update = function_body(self.core(), "DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)")
+        self.assertIn("LayerValid(visit_.layer)", update)
+        self.assertLess(update.index("LayerValid(visit_.layer)"), update.index("++counters_.depth;"))
+        self.assertIn("Census(room, now);", update)
+        self.assertIn("ops.valid = &FlightLayerValid;", self.body("install"))
+
+    def test_no_census_and_no_layer_is_made_per_frame(self):
+        install = self.body("install")
+        shipped = strip_comments(self.plugin)
+        for field, which in self.LAYER_OPS:
+            function = "FlightLayer" + field.capitalize()
+            with self.subTest(op=field):
+                # Each op is handed to the core once, in the install, and the
+                # adapter never calls one itself.
+                self.assertIn("ops." + field + " = &" + function + ";", install)
+                self.assertEqual(len(re.findall(r"\b" + function + r"\b", shipped)), 2, "the definition and the install")
+        self.assertIn("g_Flight.SetLayerOps(std::move(ops));", install)
+        for source in (self.plugin, strip_research_blocks(self.plugin)):
+            for which in ("frame", "tick", "player"):
+                body = strip_comments(function_body(source, LEVER[which]))
+                for call in ('"layer_get_all"', '"layer_create"', '"layer_get_fx"', '"layer_depth"', "FlightLayer"):
+                    self.assertNotIn(call, body, which)
+        # In the core: layer_get_all, layer_get_fx and the placement run only in
+        # the census; the recount and the move only in the re-choice, which is
+        # due once a second.
+        core = self.core()
+        census = function_body(core, "void Census(int64_t room, double now)")
+        rechoose = function_body(core, "void Rechoose(double now)")
+        for op, where in (("all", census), ("effect", census), ("place", census), ("detail", census),
+                          ("count", rechoose), ("move", rechoose)):
+            with self.subTest(core_op=op):
+                self.assertEqual(core.count("ops_." + op + ","), 1, op)
+                self.assertIn("ops_." + op + ",", where)
+        self.assertIn("if (now - choseAt_ < kRechoiceMs) return;", rechoose)
+        self.assertIn("inline constexpr double kRechoiceMs = 1000.0;", core)
+
+    def test_the_effect_is_read_through_layer_get_fx_by_name_inside_the_census(self):
+        shipped = strip_comments(self.plugin)
+        self.assertEqual(shipped.count('"layer_get_fx"'), 1)
+        effect = self.body("layer_effect")
+        self.assertIn('g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) })', effect)
+        # A struct answer is an effect, anything else none; a throw fails the read.
+        self.assertIn("effect = fx.m_Kind == VALUE_OBJECT;", effect)
+        # The core reads it for a visible, empty layer only, inside the census.
+        census = function_body(self.core(), "void Census(int64_t room, double now)")
+        self.assertIn("if (l.visible && l.elements == 0 && Call(ops_.effect, e.layer, effect)) l.effect = effect;", census)
 
     # ---- residual, and no warp -----------------------------------------------------------
 
@@ -1163,13 +1258,14 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame,", depth)
         self.assertIn("FlightRoom(room)", depth)
         self.assertIn("FlightLayerEnds(room, first, last)", depth)
-        self.assertIn("FcNs::ChooseFrontLayer(first, last, front)", depth)
+        self.assertIn("FcNs::GameFrontDepth(first, last, front)", depth)
         self.assertIn('"layer_get_depth"', depth)
         self.assertIn("FcNs::StateName(g_Flight.CurrentState())", depth)
         self.assertNotIn("variable_instance_set", depth)
-        # The read keeps the flight adapter's cached layer values as they were.
-        self.assertIn("g_FlightLayerValue[0] = kept[0];", depth)
-        self.assertIn("g_FlightLayerValue[1] = kept[1];", depth)
+        # The probe never runs a census or creates a layer itself.
+        for call in ('"layer_create"', '"layer_depth"', '"layer_get_all"', '"layer_get_fx"', "FlightLayerPlace(",
+                     "FlightLayerAll(", "g_Flight.OnUpdateDepth("):
+            self.assertNotIn(call, depth)
 
     # ---- dress, copies, unique, stat -------------------------------------------------------------
 
