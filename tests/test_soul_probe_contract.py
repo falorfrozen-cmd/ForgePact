@@ -18,6 +18,13 @@ Portal_obj, its target written only through the
 protected store's setter and only under a key inside the store; `goto` only
 through NetworkRoomGoto; the boss kill only through `enemy_hp`; no stack hook
 and no boss creation.
+
+The follow-up (forgepact-197-piece-icon-stack, Live procedure 1) adds the
+stack shapes `place` builds on a key base (`shape plain|frac|cfrac`), the
+display sprite under item info key "11" (`icon`, the `sprite=` fields, `gem`'s
+`sprite11=`, `ground`), and two use modes (`usewatch allow`, `usewatch take
+all|one`) that act as branches inside detours the probe already has, so every
+script still carries one detour.
 """
 
 import re
@@ -52,7 +59,10 @@ USE_CANDIDATES = {
 # Every reply line Live procedure 3 greps.
 REPLY_PREFIXES = ("status", "keys", "act", "base", "dress", "gem", "place", "pickup", "keytab", "bag", "usewatch",
                   "usecall", "use", "gemwatch", "gemroll", "portals", "portal", "portalwatch", "portalset",
-                  "portalroute", "portaloffset", "goto", "bosses", "kill")
+                  "portalroute", "portaloffset", "goto", "bosses", "kill", "shape", "icon", "ground")
+
+# The follow-up's subcommands (ctx "### The research probe").
+STACK_AND_ICON_SUBS = ("shape", "icon", "ground")
 
 # Subcommands Replan 1 removed, with the state behind them.
 REMOVED = ("stackhook", "spawn", "spawnroute", "spawnoffset", "take", "sprite")
@@ -130,7 +140,7 @@ class SoulProbeContractTests(unittest.TestCase):
         command = self.body("static void SoulProbeCommand(")
         for sub in ("status", "keys", "act", "base", "dress", "gem", "place", "pickup", "keytab", "bag", "portals",
                     "portal", "portalset", "goto", "bosses", "portalroute", "portaloffset", "usewatch", "gemwatch",
-                    "kill"):
+                    "kill") + STACK_AND_ICON_SUBS:
             self.assertIn('sub == "%s"' % sub, command, sub)
 
     def test_replan_1_removed_the_stack_hook_the_spawn_the_take_and_the_sprite(self):
@@ -248,7 +258,7 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertIn("g_SpUseOrig[i] = SoulPieceUseCall;", shipped)
         self.assertIn("SoulPieceInstallUse();", shipped)
         watch = self.body("static RValue& SoulProbePotionUse(")
-        self.assertIn("if (g_Sp.use == SpUseMode::Off) return SoulPieceUseCall(S, O, R, argc, A);", watch)
+        self.assertIn("if (SpWatchIdle()) return SoulPieceUseCall(S, O, R, argc, A);", watch)
         self.assertIn("SpUseCall(kSpPotionUseSlot, S, O, R, argc, A)", watch)
         hook_body = function_body(self.plugin_code, "static RValue& Hook_SoulPieceUse(")
         self.assertRegex(hook_body, r"#ifndef FORGEPACT_RELEASE\s*return SoulProbePotionUse\(S, O, R, argc, A\);\s*#else\s*"
@@ -419,6 +429,199 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertEqual(1, len(re.findall(r"\bSpResolveObject\(", portal)))
         self.assertEqual(3, len(calls_of(self.section, "SpOpenPortal")),
                          "its definition, `portal` and a use; made nowhere else")
+
+    # ---- the follow-up: stack shapes, the display sprite, the Key-tab use ------------------------
+    def test_probe_places_every_stack_shape(self):
+        # The three shapes, chosen by `shape`, plain at startup.
+        command = self.body("static void SoulProbeCommand(")
+        shape = command[command.index('if (sub == "shape")'):]
+        shape = shape[:shape.index("return;\n    }")]
+        for name in ("plain", "frac", "cfrac"):
+            self.assertIn('"%s"' % name, shape, name)
+        self.assertIn("SpShape shape = SpShape::Plain;", self.section, "startup: plain")
+        names = self.body("static const char* SpShapeName(")
+        for name in ("frac", "cfrac", "plain"):
+            self.assertIn('"%s"' % name, names, name)
+        # `place <act>` builds each shape on a key base only; `place plain` and a
+        # consumable base stay the plain base, whatever the shape.
+        place = self.body("static void SpPlaceCommand(")
+        self.assertIn("const SpShape shape = plain || g_Sp.baseCategory != kSpKeyCategory ? SpShape::Plain : g_Sp.shape;", place)
+        self.assertIn("if (shape == SpShape::Frac) b = SpNs::KeyPieceB(g_Sp.baseIndex, act);", place,
+                      "frac's `b` is the core's KeyPieceB")
+        self.assertIn("else if (shape == SpShape::Cfrac) c = (double)act / kSpCfracDivisor;", place)
+        self.assertIn("SpPlaceOne(seed, b, c, self, px, py, it, ground, key)", place)
+        self.assertIn("static constexpr double kSpCfracDivisor = 20.0;", self.section)
+        # The JSON carries the shape's `b` and `c`, never the base's index alone.
+        one = self.body("static bool SpPlaceOne(")
+        self.assertIn('",\\"b\\":" + SpNum(b) + ",\\"c\\":" + SpNum(c) + ",\\"j\\":0,\\"o\\":1}"', one)
+        self.assertNotIn("std::to_string(g_Sp.baseIndex)", one)
+        # The place line's fields, in the order Live procedure 1 reads them.
+        line = re.search(r'Out\("soulprobe place: act=".*?\);', place, re.S).group(0)
+        fields = ("act=", " shape=", " ground=", " itemType=", " b=", " c=", " a=", " o=", " name=", " sprite=")
+        at = [line.find('"%s' % f if f.startswith(" ") else f) for f in fields]
+        self.assertNotIn(-1, at, line)
+        self.assertEqual(sorted(at), at, "fields in order")
+        # The Key tab prints every shape's fields, then its item count.
+        keytab = self.body("static void SpKeyTabCommand()")
+        for field in (" b=", " c=", " a=", " o=", " name=", " sprite=", " piece=", " shape="):
+            self.assertIn('"%s' % field, keytab, field)
+        self.assertLess(keytab.index("for (const SpStack& s : stacks)"), keytab.index('"soulprobe keytab: items="'))
+        # A piece of a key base is any shape: class, truncated `b`, seed.
+        base = self.body("static bool SpIsBaseItem(")
+        self.assertIn("std::trunc(it.b) == g_Sp.baseIndex", base, "the repository lookup truncates `b`")
+        piece = self.body("static int SpPieceAct(")
+        self.assertIn("return SpIsBaseItem(it) ? SpNs::ActOfSeed((long long)it.a) : 0;", piece)
+        shapes = self.body("static std::string SpShapeOfItem(")
+        self.assertIn("SpNs::kKeyPieceTolerance", shapes, "a value back from the save still reads as its shape")
+        # Fractions print with two decimals, whole numbers as before.
+        num = self.body("static std::string SpNum(")
+        self.assertIn("ForgePact::ItemTruth::WholeNumberText(v)", num)
+        self.assertIn('"%.2f"', num)
+        # The arithmetic the shapes rely on: each act's `frac` and `cfrac` value
+        # survives a two-decimal save within the core's tolerance and stays
+        # apart from every other act's and the whole base; every cfrac `c` is
+        # falsy (at most 0.5), so the normal repository.
+        core = CORE_SRC.read_text(encoding="utf-8")
+        divisor = float(re.search(r"kActFractionDivisor = ([\d.]+);", core).group(1))
+        tolerance = float(re.search(r"kKeyPieceTolerance = ([\d.]+);", core).group(1))
+        cfrac = float(re.search(r"kSpCfracDivisor = ([\d.]+);", self.section).group(1))
+        base_index = 2
+        fracs = [base_index + act / divisor for act in range(1, 10)]
+        for value in fracs:
+            self.assertLessEqual(abs(float("%.2f" % value) - value), tolerance)
+            self.assertGreater(value - int(value), tolerance, "never whole")
+        for a, b in zip(fracs, fracs[1:]):
+            self.assertGreater(b - a, 2 * tolerance)
+        for act in range(1, 10):
+            c = act / cfrac
+            self.assertLess(c, 0.5)
+            self.assertGreater(c, tolerance)
+            self.assertLessEqual(abs(float("%.2f" % c) - c), tolerance)
+        # Negative control for the order check: a line with two fields swapped is caught.
+        swapped = 'Out("soulprobe place: act=" + a + " ground=" + g + " shape=" + s);'
+        at = [swapped.find('"%s' % f if f.startswith(" ") else f) for f in ("act=", " shape=", " ground=")]
+        self.assertNotEqual(sorted(at), at)
+
+    def test_probe_reads_the_display_sprite_key(self):
+        # Key "11" read by the core's constant, as a sprite name, or `-`.
+        read = self.body("static std::string SpInfoSpriteName(")
+        self.assertIn("CmMember(info, SpNs::kIconInfoKey, v)", read)
+        self.assertIn('"sprite_exists", { v }', read)
+        self.assertIn('"sprite_get_name", { v }', read)
+        self.assertIn("IsNumericInstanceRead(v)", read, "ToDouble only on a kind it can read")
+        self.assertIn("SpInfoSpriteName(s.item.info)", self.body("static void SpKeyTabCommand()"))
+        self.assertIn("SpInfoSpriteName(it.info)", self.body("static void SpPlaceCommand("))
+        gem = self.body("static void SpGemCommand()")
+        self.assertIn("sprite11 = SpInfoSpriteName(it.info);", gem)
+        self.assertIn('" sprite11=" + sprite11', gem)
+        # `icon` resolves the gem's sprite by the core's name, as the shipped
+        # dress does, and says what it resolved to.
+        icon = self.body("static void SpIconCommand(")
+        self.assertIn("ForgeDisplaySprite(SpNs::kPieceSpriteName, spr)", icon)
+        self.assertIn('"soulprobe icon: "', icon)
+        self.assertIn('" index="', icon)
+        self.assertIn('"unresolved("', icon)
+        self.assertIn("bool icon = false;", self.section, "off at startup")
+        self.assertNotIn('"Gem_Incarnation_spr"', self.section, "the name is the core's constant")
+        # The dress writes the resolved value under key "11" only with `icon on`,
+        # before the hash refresh that covers the info struct.
+        dress = self.body("static void SoulProbeAfterCreate(")
+        write = "{ it.info, RValue(SpNs::kIconInfoKey), g_SpIconValue }"
+        self.assertIn(write, dress)
+        self.assertLess(dress.index("if (g_Sp.icon && g_SpIconReady)"), dress.index(write))
+        self.assertLess(dress.index(write), dress.index("RefreshItemHash(item);"))
+        # `ground` reads Loot_Ground_obj by its SDK name, near the player, and
+        # the sprite the ground instance draws, by name.
+        ground = self.body("static void SpGroundCommand()")
+        self.assertIn("HeroSiege::Objects::GameObject::Loot_Ground_obj", ground)
+        self.assertIn("SpResolveObject(", ground)
+        self.assertIn('RValue("sprite_index")', ground)
+        self.assertIn('"sprite_get_name", { si }', ground)
+        self.assertIn("std::hypot(x - px, y - py) > kSpGroundRadiusPx", ground)
+        self.assertIn("static constexpr double kSpGroundRadiusPx = 300.0;", self.section)
+        self.assertIn('"soulprobe ground: items="', ground)
+        self.assertNotIn("variable_instance_set", ground, "it reads only")
+        self.assertNotIn("variable_struct_set", ground, "it reads only")
+        # Never a numeric sprite index, anywhere the probe touches key "11".
+        number = r'kIconInfoKey\),\s*RValue\(\(?\w*\)?\s*\d|asset_get_index"\s*,\s*\{\s*RValue\(\d'
+        for body in (dress, icon, read):
+            self.assertIsNone(re.search(number, body))
+        self.assertIsNotNone(re.search(number, "{ it.info, RValue(SpNs::kIconInfoKey), RValue(4512) }"),
+                             "negative control: a numeric index is found")
+
+    def test_probe_use_modes_stay_inside_one_detour_per_script(self):
+        # Still one install site in the probe: the modes add no detour.
+        self.assertEqual(1, len(hook_one_script_calls(self.section)))
+        self.assertEqual(2, len(hook_one_script_calls(
+            'HookOneScript(a, "x", (PVOID)f, &o);\nHookOneScript(b, "y", (PVOID)g, &p);')), "negative control")
+        # `allow` acts in the candidate marked as the gate: CanUsePotion.
+        table = self.section[self.section.index("kSpUseTargets[] = {"):]
+        table = table[:table.index("};")]
+        gates = [line for line in table.splitlines() if re.search(r",\s*true\s*\},?\s*$", line)]
+        self.assertEqual(1, len(gates))
+        self.assertIn("gml_Script_CanUsePotion", gates[0])
+        self.assertIn("kSpCanUseSlot = SpGateSlot();", self.section)
+        # Both modes are branches of the one call path every watched call takes,
+        # ahead of `use`, and neither hands a piece to the original.
+        use = self.body("static RValue& SpUseCall(")
+        take = use.index("if (g_Sp.take != SpTakeMode::Off && act && n == kSpPotionUseSlot)")
+        allow = use.index("else if (g_Sp.allow && act && n == kSpCanUseSlot)")
+        portal = use.index("else if (g_Sp.use == SpUseMode::Use && act && n == g_Sp.useScript)")
+        self.assertLess(take, allow)
+        self.assertLess(allow, portal)
+        modes = use[take:portal]
+        self.assertNotIn("orig(", modes, "a piece never reaches the original")
+        for gone in ("SpOpenPortal", "SoulPieceUseCall", "pending", "NetworkRoomGoto", "DecideUse"):
+            self.assertNotIn(gone, modes, "no transfer: " + gone)
+        # take: the core's TakeOne; the count written on the item's own
+        # definition, then the item's hash refreshed.
+        take_branch = use[take:allow]
+        self.assertIn("SpNs::TakeOne(SpNs::UseVerdict::Transfer, before)", take_branch)
+        self.assertIn("SpNs::StackTake{ true, before }", take_branch, "`all` answers true with the count unchanged")
+        written = take_branch.index('{ item.def, RValue("o"), RValue((double)t.count) }')
+        self.assertLess(written, take_branch.index("RefreshItemHash(itemValue)"))
+        self.assertLess(take_branch.index("if (t.count != before)"), written, "written only when the count changes")
+        for field in ('"soulprobe use: script="', '" o="', '"->"', '" answer="', '" mode="', '" hash="'):
+            self.assertIn(field, take_branch, field)
+        allow_branch = use[allow:portal]
+        self.assertIn("R = RValue(true);", allow_branch)
+        self.assertIn('" answer=true(allowed)"', allow_branch)
+        # The watch runs while any mode is armed; usecall lines only with log|use.
+        idle = self.body("static bool SpWatchIdle()")
+        for part in ("g_Sp.use == SpUseMode::Off", "!g_Sp.allow", "g_Sp.take == SpTakeMode::Off"):
+            self.assertIn(part, idle)
+        self.assertIn("if (SpWatchIdle() || g_SpBusy > 0) return orig ? orig(S, O, R, argc, A) : R;", use)
+        self.assertIn("if (g_Sp.use != SpUseMode::Off && g_Sp.useLines < kSpLineCap)", use)
+        # `usewatch allow|take` install only the existing watches; `off` clears both.
+        command = self.body("static void SoulProbeCommand(")
+        usewatch = command[command.index('if (sub == "usewatch")'):command.index('if (sub == "gemwatch")')]
+        for mode in ('if (arg == "allow")', 'if (arg == "take")'):
+            branch = usewatch[usewatch.index(mode):]
+            branch = branch[:branch.index("return;\n        }")]
+            self.assertIn("SpInstallUseWatch();", branch, mode)
+            self.assertNotIn("HookOneScript", branch, mode)
+        off = usewatch[:usewatch.index('Out("soulprobe usewatch: off");')]
+        self.assertIn("g_Sp.allow = false;", off)
+        self.assertIn("g_Sp.take = SpTakeMode::Off;", off)
+        self.assertIn('"soulprobe usewatch: allow script="', usewatch)
+        self.assertIn('"soulprobe usewatch: take "', usewatch)
+
+    def test_probe_stack_and_icon_commands_are_research_only(self):
+        self.assertNotIn("soulprobe", self.allowlist)
+        command = self.body("static void SoulProbeCommand(")
+        for sub in STACK_AND_ICON_SUBS:
+            self.assertIn('sub == "%s"' % sub, command, sub)
+            self.assertIn('"soulprobe %s:' % sub, self.section, sub)
+        # Every name the follow-up added lives inside the probe's research block.
+        for name in ("SpGroundCommand", "SpIconCommand", "SpShapeOfItem", "SpShapeName", "SpInfoSpriteName", "SpWatchIdle",
+                     "SpGateSlot", "kSpCanUseSlot", "SpTakeMode", "SpShape", "g_SpIconValue", "g_SpIconReady",
+                     "kSpCfracDivisor", "kSpGroundRadiusPx"):
+            self.assertIn(name, self.section, name)
+            self.assertNotIn(name, self.player, name)
+        for signature in ("static void SpGroundCommand()", "static void SpIconCommand(", "static std::string SpShapeOfItem(",
+                          "static std::string SpInfoSpriteName(", "static bool SpWatchIdle()"):
+            self.assertEqual(1, self.plugin_code.count(signature), signature)
+            self.assertIn(signature, self.section_raw, signature)
 
 
 if __name__ == "__main__":

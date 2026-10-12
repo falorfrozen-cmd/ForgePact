@@ -54,7 +54,11 @@ sees:
 - **What a piece is.** A piece must load without ForgePact, so it is one of the
   game's own items marked by a reserved seed, never a new item id. After Live
   procedure 1 it is the game's own Edible PAS Logo (a bag consumable), not a
-  key: see "Rejected routes" for why the key and its Key tab went.
+  key: see "Rejected routes" for why the key and its Key tab went. The owner's
+  follow-up (2026-10-12) asks for the Key tab again, pieces stacked per act and
+  the Gem of Incarnation's icon; its readings ("The follow-up" under "Static
+  reading") propose a key piece whose `b` carries the act in tenths, which Live
+  procedure 1 of `forgepact-197-piece-icon-stack` measures.
 
 ## Static reading
 
@@ -120,7 +124,9 @@ of the runtime reference holds the same facts in the shared form.
   consumable's stack attempt went through `InventoryGridAddToStack`, not the
   bag's script this reading names. The key merge replayed hit `AddToInventory`
   once and `InventoryGridAddToStack` not at all; which code merged the key is
-  not established.
+  not established. **Corrected** by the follow-up's reading 1 below: this
+  reading has the two scripts the wrong way round, and the corrected order
+  explains both measurements.
 - **What a stack compares** (static reading 14). Both stack attempts walk their
   grid and merge into an item whose class, `b` and `c` match, comparing the
   three fields themselves; neither calls `ItemsAreStackable`, and neither looks
@@ -178,6 +184,92 @@ of the runtime reference holds the same facts in the shared form.
   flag portals carry in `pSpwd` (§ 20.5); the protected store faults on a key
   outside it (§ 11.2).
 
+### The follow-up: a piece in the Key tab, stacked per act, with the gem's icon
+
+The owner's follow-up (2026-10-12, workorder `forgepact-197-piece-icon-stack`)
+asks for pieces that show the Gem of Incarnation's icon, live in the bag's Key
+tab, stack per act, never join a real key, and load without ForgePact. These
+readings were made for it on 2026-10-12, through the `ghidra` MCP (same build)
+and headless `FindCallers.java` / `ListCallsIn.java` runs whose positive control
+(`InvGridClearItemNode` called from `UiAInventoryConsumeItemConfirm`, the known
+site) was found. The local material, outside every repository, is indexed with
+the hub's `tools/decomp_index.py`. Each is a static reading unless it says
+otherwise, in our words.
+
+1. **Which stack attempt the pickup makes.** Offline, `AddToInventory` first
+   asks `GetItemPreferredGrid` for the item. That script answers a grid of its
+   own for keys, materials, socketables, tarot cards and the vault, chosen by
+   the item's class (`inventoryKeyGrid` for a key). When there is one,
+   `AddToInventory` tries `GridAddToStack` on that grid first and only if that
+   fails `InventoryGridAddToStack`; when there is none (a consumable), it tries
+   `InventoryGridAddToStack` alone. A caller scan found one `GridAddToStack`
+   site and two `InventoryGridAddToStack` sites, all in `AddToInventory`. This
+   fits both Live procedure 3 measurements: the logo's pickups reached
+   `InventoryGridAddToStack`, and the key merge reached only `AddToInventory`,
+   because `GridAddToStack` (not watched then) took the key.
+2. **What a stack compares, and how.** `GridAddToStack` compares the class,
+   then both definitions' `b`, then their `c`, each through the runtime's
+   general value compare. That compare treats two reals as equal when they
+   differ by no more than the math epsilon (GameMaker's default is 0.00001;
+   whether the game changes it is not established). So `b` 2.1 and 2 differ,
+   and 2.1 and 2.1 match.
+3. **The repository lookup truncates.** `GetNormalRepoStruct` turns its index
+   argument into an integer through the runtime's real-to-int conversion, which
+   truncates toward zero, so `b` 2.1 looks up entry 2. The item constructor
+   takes the unique repository when the definition's `c` is truthy (a real
+   above 0.5), and the normal one otherwise.
+4. **The save writes reals through `string()`.** `CreateItemSaveStruct` copies
+   the definition, and `json_ordered_by_key` writes it, sending every real and
+   64-bit integer through the `string` builtin (the slot names came from the
+   decompile index's slot table). GameMaker's documented `string()` of a real
+   keeps two decimals and prints a whole number whole (runtime documentation,
+   not read here; Live procedure 1's `reload-frac-kept` and the hub's
+   `save_item_keys.py --defs` measure it). So a `b` in tenths survives a save,
+   and a finer fraction would not.
+5. **Who else compares `b`.** `CountInventoryItem`, whose only callers seen are
+   the crafting scripts `GetCraftItemsAvailable` and `CraftFindRecipeItems`,
+   compares the class, an item-info value and the definition's `b`, not `c`.
+   `FindInventoryItem` (called from `PlayerMouseAction` and two unnamed sites)
+   compares `b` and `c`. Both use the same epsilon compare. Which code a door
+   or an NPC uses to find its key (Heimdall for the Bifröst Key, and the rest)
+   was not read.
+6. **The bag's right-click.** `ProcessInventoryGridInput` is too large to
+   decompile through the MCP; the list of the scripts it calls holds, in
+   order, `ValidateItem`, `VaultUse`, `CanUsePotion`, `MessagePrompt` (the use
+   prompt), `PotionUse`, `InvGridClearItemNode`, then the equip scripts.
+   Whether the Key tab's grid goes through the same path, and whether
+   `CanUsePotion` answers true for a key, are not established. `PotionUse` is
+   also called from `UiAInventoryConsumeItemConfirm`, `ControllerCheckInput`,
+   `DrawMobilePotionIcon` and one unnamed site.
+7. **The confirm and a stack.** After `PotionUse` answers true,
+   `UiAInventoryConsumeItemConfirm` compares one item-info value with 6 (its
+   meaning was not read) and then clears the item's cells one by one. Whether
+   a stack of N then loses one or all N is not established.
+8. **The display sprite.** ForgePact #158's Live 1 (2026-10-12, on its own
+   branch) measured item info key `"11"` as the sprite the bag and the ground
+   item draw: a charm given a Grand charm's sprite there drew the Grand icon on
+   the ground and in the bag, a sprite added at run time drew in the bag and the
+   game's error sprite on the ground (the ground item looks up `Pickup_` + the
+   sprite's name, #158's static reading), no tooltip drew an icon, and the key
+   is not saved. hs-game-sdk's sprite table holds both `Gem_Incarnation_spr`
+   and `Pickup_Gem_Incarnation_spr`, so the gem's sprite has a ground
+   companion. That a built Gem of Incarnation carries `Gem_Incarnation_spr`
+   under `"11"` is not established (Live procedure 1's `gem-sprite`).
+9. **`ValidateItem`**, which the input script calls throughout, builds
+   description strings (type and rarity names, `sprite_get_name`, loot name
+   data); no removal call was seen in it.
+10. **Not observed** through the MCP: callers of `GetUniqueRepoStruct` and of
+    `CanUsePotion` (its reference table is mostly empty; not a negative).
+
+Together, readings 2 to 4 give a stack route with no hook on the add path: a
+piece on a key whose `b` is the key's index plus act/10 (2.1 for Act 1 on an
+index-2 key) loads as that key everywhere (reading 3), stacks only with pieces
+of its own act and never with the whole-`b` real key (reading 2), with or
+without ForgePact, because the save keeps the tenths (reading 4); crafting
+counts and any `b`-equality key check never take it for the key (reading 5).
+Live procedure 1 of the follow-up measures it beside a control and an
+alternative (`soulprobe shape frac`, `cfrac`, `plain`; "The instrument").
+
 ## Rejected routes, and why
 
 - **New item ids.** Appending a piece to `itemRepoNormal` makes a save that
@@ -189,7 +281,11 @@ of the runtime reference holds the same facts in the shared form.
   readings 13 and 14 say why: the Key tab's stack attempt compares class, `b`
   and `c` only. No key definition is established to be out of every player's
   reach, so the owner's own rule ("Key tab preferred, bag OK") selects the bag.
-  A load-safe key of our own is filed as research (ForgePact #210).
+  A load-safe key of our own is filed as research (ForgePact #210). The
+  follow-up (2026-10-12) revisits the Key tab with a piece whose `b` is not
+  whole, which that stack check keeps apart (the follow-up's readings 2 to 4);
+  what was rejected here is a key piece with the key's own whole `b`, which
+  Live procedure 1 of the follow-up keeps as its merge control.
 - **A veto on the add or stack path** (`InventoryGridAddToStack`,
   `GridAddToStack`, `ItemsAreStackable`). The owner ruled out a stack veto; a
   veto there would touch every key, material and socketable pickup in the game,
@@ -274,6 +370,36 @@ of the runtime reference holds the same facts in the shared form.
   not keep, and the game runs the travel, the boss, its fight and its death as
   it runs any other. Nothing is paused, frozen or restored.
 
+The follow-up's own rejected alternatives (2026-10-12):
+
+- **A veto or guard on `GridAddToStack`, `InventoryGridAddToStack` or
+  `AddToInventory`.** Ruled out by the owner in #197; it would touch every key,
+  material and socketable pickup, and with ForgePact removed the pieces would
+  merge again.
+- **New repository entries or item ids.** A save holding them cannot load
+  without ForgePact (the repository reading above).
+- **ForgePact #210's side file** (a key entry made at run time, the pieces kept
+  out of the save and put back at load): save-time hooks and a second store of
+  truth, for a result the definition value gives directly. It stays in the
+  backlog.
+- **Nine different whole key bases**, one per act: each merges with its real
+  key.
+- **Changing the class at creation over a consumable's `b`**: how a saved
+  item's class and repository category are split on load was not read, and
+  without ForgePact a consumable could load into the Key grid.
+- **`b` fractions finer than tenths** (sixteenths and the like): the save keeps
+  two decimals (the follow-up's reading 4).
+- **`CanUsePotion` as the use itself**: as above, the transfer would start on a
+  right-click the player then cancels. Answering "usable" there for a piece,
+  with the transfer still in `PotionUse` after the confirm, is a different
+  thing, and is what `soulprobe usewatch allow` measures.
+- **Taking a piece out of a stack ourselves after the game cleared it** (and
+  rebuilding a smaller stack): more moving parts than lowering the count
+  before the game clears anything (`soulprobe usewatch take one`).
+- **A sprite of our own** (`sprite_add`): #158 measured the game's error sprite
+  on the ground for one. The piece borrows the gem's own sprite and its ground
+  companion through key `"11"`.
+
 ## The instrument
 
 `soulprobe` is research build only (`plugin_build\build.bat dev`), never in the
@@ -288,22 +414,33 @@ Its portal commands (`portals`, `portal`, `portalroute`, `portaloffset`,
 history: the shipped mod opens no portal. Replan 1
 removed `stackhook`, `spawn`, `spawnroute`, `spawnoffset`, `take` and `sprite`,
 with their state: the stack veto, the boss beside the player, the probe's own
-take and the gem's sprite are all rejected above.
+take and the gem's sprite are all rejected above. The follow-up (2026-10-12)
+added `shape`, `icon` and `ground`, the `sprite=` fields and `gem`'s
+`sprite11=`, and two use modes, `usewatch allow` and `usewatch take all|one`,
+for Live procedure 1 of `forgepact-197-piece-icon-stack`: the stack shapes a
+key piece can take, the gem's display sprite under item info key `"11"` (not
+the old `itemSprite` route), and the Key tab's right-click. Fractions print
+with two decimals (`b=2.10`, `c=0.05`); a whole number prints whole.
 
 | Subcommand | What it does and prints |
 |---|---|
-| `status` | `base=`, `category=`, `dress=`, `usewatch=`, `usescript=`, `gemwatch=`, `portalroute=`, `portaloffset=`, the counters `usecalls`, `usecallsby=` (calls per candidate, so a script called every frame shows during `log`, before `use` is armed on it), `uses` (pieces the chosen script was handed in `use`), `portals` (portals opened, by `portal` or a use) and `gemrolls`, and the gem detour's `gemroute=`. |
+| `status` | `base=`, `category=`, `dress=`, `shape=`, `icon=`, `allow=`, `takemode=` (`off`, `all` or `one`), the counters `allowed=` and `taken=` (calls `allow` and `take` answered), `usewatch=`, `usescript=`, `gemwatch=`, `portalroute=`, `portaloffset=`, the counters `usecalls`, `usecallsby=` (calls per candidate, so a script called every frame shows during `log`, before `use` is armed on it), `uses` (pieces the chosen script was handed in `use`), `portals` (portals opened, by `portal` or a use) and `gemrolls`, and the gem detour's `gemroute=`. |
 | `keys` | Every category-12 entry: its repository name, `droprate.base`, and what `GetKeyDungeon` answered when given the entry's index; then `GetDungeonKeys`' list, the keys no dungeon names (`candidates=`), and `entries=`. |
 | `act` | The room's index and name, what `RoomActIndex` answered, the act the core takes from it, `town=`, `bossroom=` and the core's `eligible=`. |
 | `base <repository name>\|auto` | Chooses the base by its repository name, looked up in category 11 (consumables), then 12 (keys); `auto` is the core's `consumable_edible_pas_logo`. Prints its category and index. Never an index constant. |
-| `dress on\|off` | While on, a piece of the chosen base takes its act's name on `CreateItemNew`'s return (a consumer inside the shared detour), and the item's hash is refreshed. Off at startup. |
-| `gem` | Builds one Gem of Incarnation through the loader, places nothing, and prints its `itemSprite`, the gem's `droprate.base` (found by its repository name) and the D the core derives from it. |
-| `place <act> [count]` | Places `count` pieces (each its own item: the base's class, the base, `c` 0, `j` 0, `o` 1, seed 777100 + act), each built through `InitItemFromJson` and placed with `LootGroundCreateFromItem`, the player as self, then reads the ground item's struct back. Each item gets its own fingerprint key, `0-0-<stamp>-<class>`, from the millisecond clock stepped past the last stamp the verb used, so two items built in one millisecond never share a key; the line prints it as `key=`. |
-| `place plain [count]` | The same for the base itself with an ordinary seed (a random whole number outside 777000 to 777999), undressed: the control a piece is compared against. |
-| `pickup` | `PickupLoot` on each ground item of the base (pieces and plain), self the ground item and other the player (the companion's call shape with the player in the pet's place), and destroys the ground instance on a true return, as the game's callers do. |
-| `keytab` | The Key tab: the object that owns `inventoryKeyGrid` (the first of `New_Inventory_Data_obj`, `Controller_obj`, `UI_Inventory_obj`, `UI_Stash_obj`, `Player_obj` that carries it), its cells, and one line per item with its fingerprint, `b`, seed, count, name and act. |
+| `dress on\|off` | While on, a piece of the chosen base (any shape) takes its act's name on `CreateItemNew`'s return (a consumer inside the shared detour), and with `icon on` the Gem of Incarnation's sprite under item info key `"11"`; then the item's hash is refreshed, which covers both writes. The dress runs inside `InitItemFromJson`, so a placed piece's ground item is made from the dressed info. Off at startup. |
+| `shape plain\|frac\|cfrac` | How `place <act>` builds a piece on a key base (`soulprobe shape: <s>`; `plain` at startup). `plain`: the key's own whole `b`, `c` 0, the piece's seed: the first design, which merged, so the positive control for every "stays apart" result. `frac` (the candidate): `b` = the key's index + act/10 (the core's `KeyPieceB`: 2.1 for Act 1 on an index-2 key), `c` 0. `cfrac` (the measured alternative): the whole `b`, `c` = act/20 (0.05 to 0.45, under the 0.5 the runtime takes as truthy, so the normal repository). On a consumable base, and for `place plain`, the shape is ignored: the plain base. |
+| `icon on\|off` | `soulprobe icon: <on\|off> sprite=Gem_Incarnation_spr index=<i>` (or `index=unresolved(<why>)`): resolves the gem's sprite by the core's name, `Gem_Incarnation_spr`, through `asset_get_index` exactly as the shipped dress does (never an index), and switches the dress's key `"11"` write. Off at startup. |
+| `gem` | Builds one Gem of Incarnation through the loader, places nothing, and prints its `itemSprite`, its item info key `"11"` by name (`sprite11=`, or `-`), the gem's `droprate.base` (found by its repository name) and the D the core derives from it. |
+| `place <act> [count]` | Places `count` pieces (each its own item: the base's class, the shape's `b` and `c`, `j` 0, `o` 1, seed 777100 + act), each built through `InitItemFromJson` and placed with `LootGroundCreateFromItem`, the player as self, then reads the ground item's struct back. A fractional `b` or `c` goes into the item's JSON with two decimals. Each item gets its own fingerprint key, `0-0-<stamp>-<class>`, from the millisecond clock stepped past the last stamp the verb used, so two items built in one millisecond never share a key. The line: `act=`, `shape=`, `ground=<id>` (or why not), `itemType=`, `b=`, `c=`, `a=`, `o=`, `name=`, `sprite=` (key `"11"` of the item the ground instance carries, by name, or `-`), then `j=` and `key=`. |
+| `place plain [count]` | The same for the base itself with an ordinary seed (a random whole number outside 777000 to 777999) and the base's whole `b`, undressed: the control a piece is compared against. |
+| `pickup` | `PickupLoot` on each ground item of the base (every shape and plain: the class and the truncated `b`), self the ground item and other the player (the companion's call shape with the player in the pet's place), and destroys the ground instance on a true return, as the game's callers do. |
+| `ground` | Every ground item (`Loot_Ground_obj`, by its SDK name) within 300 px of the player: `soulprobe ground: id=<id> sprite=<name> itemType=<t> b=<b> a=<a> name=<name>`, the sprite being the ground instance's own `sprite_index` by name (`Pickup_` + the display sprite's name when the item carries one, #158's reading), then `soulprobe ground: items=<n>`. Reads only. |
+| `keytab` | The Key tab: the object that owns `inventoryKeyGrid` (the first of `New_Inventory_Data_obj`, `Controller_obj`, `UI_Inventory_obj`, `UI_Stash_obj`, `Player_obj` that carries it) and its cells, then one line per item, `soulprobe keytab: <fingerprint> b= c= a= o= name= sprite= piece=<act\|no> shape=<plain\|frac\|cfrac\|->` (`sprite=` is key `"11"` by name), then `soulprobe keytab: items=<n>`. A piece, here and for `allow` and `take`, is an item of a key base's class whose truncated `b` is the base's index and whose seed marks an act, any shape; on a consumable base, a legacy bag piece by the core's rule. The shape is read within the core's tolerance, so a value back from a two-decimal save still reads as its shape. |
 | `bag` | Every bag item of the base's class and `b`: a summary line with `route=` (which variable was read), the cells and the items, then one line per item with its fingerprint, class, `b`, seed, count, cells, name and act. Which variable holds the main bag grid is not established, so it tries `inventoryTab` and `inventoryData` on the same owners as the Key tab (a grid, or a grid per bag tab), then the open bag window's grid nodes, and says which it read and what the others held. |
 | `usewatch off\|log\|use [auto\|<script>]` | A both-route detour on each use candidate (`UiAInventoryConsumeItemConfirm`, `CanUsePotion`, `PotionUse`, `PotionUseFlask`, `InvGridClearItemNode`, `InvGridEquipV2`, `ConsumeToken`, `UiASteamInventoryItemUse`, `UiAGuildStashConsumeTabToken`), installed on the first `log` or `use`, with one route line each. Each call prints a `usecall` line: its script, self, the item it was given, whether that item is a piece, its answer, and its `depth=` among the candidates open on the thread. The item is an argument that is an item struct, or one handed over as a grid cell or a fingerprint-shaped string, resolved through `GetItemFromFingerprint` by name. In `log`, every call goes on as it would without the watch, pieces included: to the game for every candidate but `PotionUse`, whose watch rides the shipped mod's one detour, so there "the game" is the mod's own use (`SoulPieceUseCall`), which never hands a piece to the game's `PotionUse`. In `use`, a piece in the chosen script (`auto`: the first candidate whose line carried a piece) is never handed to the game: the core's `DecideUse` decides; on `portal` a portal opens as `portal` makes it, and the call answers as the game answered the control (the plain base) on that script, true when no control was seen, so the game clears the piece's cell itself; a refusal or a failed portal answers false, and the confirm stops with the piece kept. A `use` line names the act, the script, the portal (or the refusal or failure), the target, the answer and whether a control was seen. Every other call passes to the game. |
+| `usewatch allow` | `soulprobe usewatch: allow script=CanUsePotion`. Installs the same watches as `log` (no new detour) and, in `CanUsePotion`'s own watch, answers true for a call carrying a piece, without the original: `soulprobe use: script=CanUsePotion piece=<act> shape=<s> answer=true(allowed)`. It measures whether a "usable" answer opens the use prompt for a Key-tab piece the game itself would refuse. |
+| `usewatch take all\|one` | `soulprobe usewatch: take <all\|one> script=PotionUse`. A branch inside `PotionUse`'s watch, which rides the shipped detour: a call carrying a piece never reaches the original and makes no transfer. `all` answers true, so the game clears the cells as the confirm does; `one` takes one piece the way the core's `TakeOne` decides it: a stack above one has its count `o` lowered by one on the item's own definition, the item's hash refreshed, and the call answers false so the game keeps the cells; the last piece answers true. Line: `soulprobe use: script=PotionUse piece=<act> shape=<s> o=<before>-><after> answer=<true\|false> mode=<all\|one> hash=<refreshed\|unchanged\|failed>`. `usewatch off` turns `allow` and `take` off with the rest; neither prints `usecall` lines unless `log` or `use` is armed too. |
 | `gemwatch off\|log` | A consumer inside the shared `DropGems` detour (installed through the gem mod's own installer once a player exists): per call, the source's object and id, whether it is a monster and a boss, the room and act, and the core's drop verdict with the mod taken as on. Nothing is placed. |
 | `portals` | Every instance descending from `Portal_Parent_obj` in the room: its id, object, place, `visible`, the `portalZone` key and the room its record holds, and the `portalActive`, `isEligible`, `portalUsable` and `pSpwd` records. A record is read through `PC_GetVariableGMLWrapper` by name, and only for a whole-number key inside the store (0 to 262143); anything else prints why it was not read. The town's portals are the reference values for `portalset`. |
 | `portal <act> [scp\|depth]` | One `Portal_obj`, by its SDK name, at the player's x plus the offset (96 px, mirrored past the room's width) and the player's y: through the game's spawner `sCP` with the player as self (the default; when its answer is not the instance, the new `Portal_obj` nearest to that point), or `instance_create_depth` at the player's depth. Then the act's boss room (the core's `PortalTarget`, resolved by name) is written into the record its `portalZone` key names, through `PC_SetVariableGMLWrapper`, and read back. The line gives the target, the route, the id or why it failed, the place, the key and the record before and after; `portalwatch` lines follow at 1, 5, 10 and 30 s (exists, visible). |
@@ -367,6 +504,27 @@ mod's own counters. Neither carries a ForgePact detour (density's detour on
 `ZoneStateResetSingle` sits in `InstallDensityLifecycleHooks`, which nothing
 in `ModuleMain.cpp` calls), and both entries matched the game's copy
 (**measured**, Live procedure 4).
+
+Live procedure 1 of the follow-up (`forgepact-197-piece-icon-stack`, research
+build) plans these rows, with the same control and the same rule that the
+table of addresses stays on the researcher's machine:
+
+- **Control: `CheckTalentUse`**, in town, first; a zero elsewhere counts only
+  while it logs in the same window.
+- **`GridAddToStack` and `InventoryGridAddToStack`**, during each pickup of a
+  key piece: which stack attempt a Key-tab item makes (the follow-up's reading
+  1 expects `GridAddToStack`), for the plain control's merge and for a `frac`
+  piece kept apart.
+- **`CanUsePotion`**, during a right-click on the legacy bag piece (the
+  control, since Live procedure 3 measured it reached) and then on a Key-tab
+  piece: whether the Key tab's right-click reaches the use gate at all
+  (reading 6).
+
+All three are armed before any `soulprobe usewatch`, because a detour changes
+a function's first bytes, the bytes a breakpoint is set on and checked
+against; the `CanUsePotion` breakpoint is cleared before `usewatch allow`
+installs the probe's detour there. The debugger detaches before the game is
+stopped.
 
 ## Results
 
@@ -513,3 +671,24 @@ Beyond the sessions:
   cutscene, and Cthulhu was not observed among the alarm's objects.
 - Which key index each `keys_*` name holds, and what the values in
   `GetDungeonKeys`' list are.
+
+The follow-up's open questions (readings of 2026-10-12; Live procedure 1 of
+`forgepact-197-piece-icon-stack` measures the first five):
+
+- Whether a save keeps a `b` of 2.1 and a `c` of 0.05 as written, and a
+  reloaded `frac` piece still stays apart from the key (the follow-up's reading
+  4 rests on the runtime's documented `string()`, not read).
+- Whether the Key tab's right-click goes through `ProcessInventoryGridInput`'s
+  use path, whether `CanUsePotion` answers true for a key, and so whether the
+  use prompt opens for a Key-tab piece without help.
+- Whether the confirm clears one piece of a stack or the whole stack
+  (reading 7), and what the item-info value it compares with 6 means.
+- Whether a built Gem of Incarnation carries `Gem_Incarnation_spr` under item
+  info key `"11"`, whether the ground item draws `Pickup_Gem_Incarnation_spr`
+  for a piece carrying it, and whether either tooltip draws an icon.
+- Whether the game changes the runtime's math epsilon from GameMaker's default.
+- Which code a door or an NPC uses to find its key (Heimdall for the Bifröst
+  Key, and the rest): not read, so whether a key piece could open what its base
+  key opens is not established.
+- Who else reads `GetUniqueRepoStruct` and `CanUsePotion` (empty through the
+  MCP: not observed, not a negative).
