@@ -39,10 +39,13 @@ namespace ForgePact::SoulPieces {
 //
 // After Live procedure 1 the owner kept pieces as class-11 bag consumables
 // (2026-10-12: the Key tab's right-click never reached the use), so the key
-// piece above stays as research and pieces of one act stack in the bag
-// through one merge decision (DecideMerge, below): a piece joins the first
-// piece of its own act in the bag with room under the game's cap of 999, and
-// never a real item.
+// piece above stays as research, new drops stay legacy bag pieces, and pieces
+// of one act stack in the bag through one merge decision (DecideMerge, below):
+// a piece joins the first piece of its own act in the bag with room under the
+// game's cap of 999, and never a real item. Live procedure 2 measured the
+// merge on pickup and the game's confirm clearing a whole stack (so a use
+// takes one, TakeOne), Live procedure 4 a stack's count through the game's
+// own bag save and a reload; the player build ships both.
 //
 // This header holds the decisions and their counters only: no runtime type,
 // builtin or log call. The adapter in ModuleMain.cpp supplies the room's name
@@ -98,8 +101,11 @@ inline constexpr double kKeyPieceTolerance = 0.01;
 // The display sprite the dress writes under item info key "11" on every piece:
 // the Gem of Incarnation's own, resolved by name with `asset_get_index`, never
 // an index. The ground item looks up its pickup sprite as `Pickup_` + this name
-// (#158's static reading); hs-game-sdk's sprite table holds both. Not saved:
-// without ForgePact a piece shows its base's icon.
+// (#158's static reading); hs-game-sdk's sprite table holds both. #158 read a
+// charm's sprite back as its base's after a reload; Live procedure 4 read a
+// reloaded piece stack still drawing the gem, with ForgePact installed (whose
+// dress writes it again). What a piece shows without ForgePact is not
+// established.
 inline constexpr char kIconInfoKey[] = "11";
 inline constexpr char kPieceSpriteName[] = "Gem_Incarnation_spr";
 inline constexpr char kGroundSpritePrefix[] = "Pickup_";
@@ -319,7 +325,7 @@ inline UseVerdict DecideUse(bool modOn, std::string_view room, int roomAct, int 
 // ---- taking one from a stack ----------------------------------------------------------------
 // What the `PotionUse` detour answers for one decided use of a piece whose
 // stack holds `count` (the item's `o`), for the route where the game's confirm
-// clears the whole stack (Live procedure 1's `stackuse-route: take-one`). A
+// clears the whole stack (Live procedure 2's `bagstackuse-route: take-one`). A
 // refusal answers false with the count unchanged: the piece is kept. A
 // transfer from a stack of more than one answers false, so the game keeps the
 // cells, with the count one lower (the adapter writes it and refreshes the
@@ -551,7 +557,8 @@ inline void RecordZoneCallFailed(State& s) { ++s.counters.zoneCallFailed; }
 
 // ---- the status line ------------------------------------------------------------------------------
 // What the adapter knows and the core does not: the room, the gem rate it
-// read (or why it could not), each route, and the room the player was in
+// read (or why it could not), each route, the merges the
+// `InventoryGridAddToStack` detour made, and the room the player was in
 // before this one with what ZoneStateExists answered for it (`-` for both
 // before a room change was seen; `leftSaved` is ZoneAnswerText's word).
 struct StatusInputs {
@@ -562,6 +569,9 @@ struct StatusInputs {
     std::string_view gemRoute = "none";
     std::string_view useScript = "PotionUse";
     std::string_view useRoute = "none";
+    std::string_view mergeScript = "InventoryGridAddToStack";
+    std::string_view mergeRoute = "none";
+    long merged = 0;
     std::string_view left = "-";
     std::string_view leftSaved = "-";
 };
@@ -576,9 +586,11 @@ inline std::string NumberText(double v)
 
 // `soulpiece: <on|off> force=<on|off> room=<name> act=<n|none>
 // eligible=<yes|no(<word>)> gemrate=<G|unavailable(<why>)> chance=1/<D|->
-// gemrolls=<n> drops=<n> misses=<n> uses=<n> transfers=<n> fresh=<n>
+// gemrolls=<n> drops=<n> misses=<n> merged=<n> uses=<n> transfers=<n> fresh=<n>
 // cleared=<n> last=<boss room|-> left=<room|-> leftsaved=<yes|no|unread(<why>)|->
-// refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>`.
+// refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>
+// merge:InventoryGridAddToStack:<route|none>`.
+// `merged` counts the pickups the merge joined to a stack in the bag;
 // `uses` counts every piece use decided, refused or not; `transfers` the moves
 // carried out; `fresh` the transfers whose boss room answered a saved state
 // before the reset, and `cleared` those of them whose state was gone after
@@ -619,6 +631,7 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " gemrolls=" + std::to_string(c.gemRolls)
         + " drops=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Hit)])
         + " misses=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Miss)])
+        + " merged=" + std::to_string(in.merged)
         + " uses=" + std::to_string(uses)
         + " transfers=" + std::to_string(transfers)
         + " fresh=" + std::to_string(c.fresh)
@@ -628,7 +641,8 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " leftsaved=" + (in.leftSaved.empty() ? std::string("-") : std::string(in.leftSaved))
         + " refused=" + (refused.empty() ? std::string("-") : refused)
         + " hooks=gem:" + std::string(in.gemRoute)
-        + " use:" + std::string(in.useScript) + ":" + std::string(in.useRoute);
+        + " use:" + std::string(in.useScript) + ":" + std::string(in.useRoute)
+        + " merge:" + std::string(in.mergeScript) + ":" + std::string(in.mergeRoute);
 }
 
 } // namespace ForgePact::SoulPieces

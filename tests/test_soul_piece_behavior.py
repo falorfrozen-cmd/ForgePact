@@ -5,12 +5,12 @@ the mod is on, every time the game rolls a gem drop for a dying ordinary
 monster in a zone of an act, a Piece of <boss>'s Soul of that act rolls too, at
 1 in D with D = floor(G x 4 / 5), G being the Gem of Incarnation's own rate
 (9,000, measured in Live procedure 1, so 1 in 7,200): five quarters of the
-gem's chance on the same roll. A piece is built on a key (`keys_bifrost_key`,
-resolved by name) with `b` = the key's index + act/10, `c` 0 and the seed
-777100 + act, so it sits in the Key tab, stacks per act and never joins the
-real key; the first builds' pieces (the game's own Edible PAS Logo marked by
-the same seed) stay recognised as legacy bag pieces. Its display sprite is the
-Gem of Incarnation's. Right-clicking it and confirming moves the player
+gem's chance on the same roll. A piece is the game's own Edible PAS Logo
+marked by the seed 777100 + act, a bag consumable; pieces of one act stack in
+the bag through the merge below. The key piece (`keys_bifrost_key`, resolved by
+name, with `b` = the key's index + act/10, `c` 0 and the same seed) stays a
+research shape the player build never builds. Its display sprite is the Gem of
+Incarnation's. Right-clicking it and confirming moves the player
 straight into that act's boss room (`Act_0N_Boss`), from a town or any zone of
 an act, and takes one piece from the stack; it is refused off, in a room with
 no act, and in a `_Boss`, `Uber_` or `Dev_` room.

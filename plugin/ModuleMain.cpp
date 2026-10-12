@@ -52541,14 +52541,21 @@ static void EvCountCommand(const std::string& rest)
 //     own call first and, only for a soul piece with a piece of the same act
 //     already in the bag (the core's DecideMerge), adds the piece to that
 //     stack and marks the game's own result successful. The only detour on
-//     the pickup and stack path; it vetoes nothing. Until the player build
-//     arms it, only the research verb installs it (`soulprobe merge on`).
+//     the pickup and stack path; it vetoes nothing, and it merges only while
+//     `soulpiece` is on (follow-up Live procedures 2 and 4: the merge on
+//     pickup, and the count through the game's own bag save and a reload).
+//   - A use from a stack: the game's confirm clears every cell of an item
+//     PotionUse answered true for, a whole stack included (follow-up Live
+//     procedure 2), so for a piece whose stack holds more than one the
+//     PotionUse detour takes one from its count and answers false; the last
+//     piece answers true and the game clears the cell.
 //   - Installs: nothing before the first `soulpiece 1` or before the dress
 //     recognised a piece; then, once a player exists (a drop hook installed at
-//     character select stalls the runner, § 15), the PotionUse detour, and the
-//     gem consumer through GemsInstallDropHook() once the mod was turned on.
-//     `soulpiece 0` leaves both in place: the drop consumer returns at once and
-//     a piece's use is refused (`use-off`), the piece kept.
+//     character select stalls the runner, § 15), the PotionUse detour and the
+//     merge's, and the gem consumer through GemsInstallDropHook() once the mod
+//     was turned on. `soulpiece 0` leaves all three in place: the drop consumer
+//     returns at once, nothing merges, and a piece's use is refused
+//     (`use-off`), the piece kept.
 namespace SoulCore = ForgePact::SoulPieces;
 
 // Full names, for CallGameScript and CallGameScriptEx.
@@ -52723,7 +52730,7 @@ static void SoulPieceRegisterDress()
         piece.selector = { {"t", t}, {"a", seed}, {"b", b}, {"c", 0.0}, {"j", 0.0} };
         piece.keepNative = true;
         piece.name = boss->pieceName;
-        piece.lore = "Right-click it in the backpack to be taken to the boss's lair.";
+        piece.lore = "Right-click it in the backpack to be taken to the boss's lair. Pieces of the same boss stack in the backpack.";
         piece.mechanic = SoulCore::kMechanicTag;
         piece.sprite = SoulCore::kPieceSpriteName;   // the Gem of Incarnation's icon, by name
         piece.builtin = true;   // recognition only, see CustomForgeEntry::builtin
@@ -52842,17 +52849,42 @@ static void SoulPieceGemRoll(CInstance* S)
 // whose definition is the base, c 0, with a piece's seed (the core's
 // PieceActOfItem). Live procedure 3 measured PotionUse handed the item
 // struct itself. 0 for anything else, after at most one struct test for a
-// value that is not an item.
-static int SoulPieceActOfArg(const RValue* arg)
+// value that is not an item. `def` gets the item's definition and `count` its
+// stack count `o` (0 when it carries none), for the take-one.
+static int SoulPieceActOfArg(const RValue* arg, RValue& def, long long& count)
 {
+    count = 0;
     if (!arg || arg->m_Kind != VALUE_OBJECT || !ApIsPlainStruct(*arg)) return 0;
-    double t = -1, b = -1, c = 0, a = -1;
+    double t = -1, b = -1, c = 0, a = -1, o = 0;
     if (!TryStructNumber(*arg, "itemType", t) || t != (double)SoulCore::kBaseItemType) return 0;
-    RValue def;
     if (!CmMember(*arg, "itemDefinitionStruct", def)) return 0;
     if (!TryStructNumber(def, "b", b) || !TryStructNumber(def, "a", a)) return 0;
     TryStructNumber(def, "c", c);
+    TryStructNumber(def, "o", o);
+    count = std::isfinite(o) && std::fabs(o) < 9.0e15 ? std::llround(o) : 0;
     return SoulCore::PieceActOfItem((int)t, (long long)b, (long long)c, (long long)a, g_SoulPiece.baseIndex);
+}
+
+// The take-one's write: the stack's count `o` set from `from` to `to` on the
+// piece's own definition, then the item's hash refreshed over it, as the dress
+// does (ItemCheckHash refuses a stale hash on the item's next move). A failed
+// write or refresh puts the count back and refreshes again; false then, and the
+// use is refused with the stack as it was.
+static bool SoulPieceTakeFromStack(const RValue& item, const RValue& def, long long from, long long to)
+{
+    bool written = false;
+    try {
+        g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)to) });
+        written = true;
+        if (RefreshItemHash(item)) return true;
+    } catch (...) {}
+    if (written) {
+        try {
+            g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), RValue((double)from) });
+            RefreshItemHash(item);
+        } catch (...) {}
+    }
+    return false;
 }
 
 // PotionUse, with the shipped logic. A call that carries no piece goes to the
@@ -52860,14 +52892,25 @@ static int SoulPieceActOfArg(const RValue* arg)
 // is installed, so the base's own effect never runs: the core decides, a
 // refusal answers false (the confirm stops and the piece stays), and
 // `transfer`, with a player and the boss room resolving, records the pending
-// transfer and answers true, so the game clears the piece's cells itself.
+// transfer and answers as the core's TakeOne says (bagstackuse-route:
+// take-one, follow-up Live procedure 2: the confirm clears the whole stack on
+// true): from a stack of more than one, one piece is taken off its count here
+// and the call answers false, so the game keeps the cells; the last piece
+// answers true, so the game clears the piece's cell itself. A take that could
+// not be written refuses the use with the stack as it was.
 static RValue& SoulPieceUseCall(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     const PFUNC_YYGMLScript orig = g_SoulPieceOrigUse;
     int act = 0;
+    const RValue* pieceArg = nullptr;
+    RValue pieceDef;
+    long long count = 0;
     if (g_SoulPiece.baseIndex >= 0) {
         try {
-            for (int i = 0; i < argc && i < 4 && A && !act; ++i) act = SoulPieceActOfArg(A[i]);
+            for (int i = 0; i < argc && i < 4 && A && !act; ++i) {
+                act = SoulPieceActOfArg(A[i], pieceDef, count);
+                if (act) pieceArg = A[i];
+            }
         } catch (...) { act = 0; }
     }
     if (!act) return orig ? orig(S, O, R, argc, A) : R;
@@ -52882,16 +52925,21 @@ static RValue& SoulPieceUseCall(CInstance* S, CInstance* O, RValue& R, int argc,
             RValue asset, player;
             double index = -1;
             std::string why;
+            bool recorded = false;
+            const SoulCore::StackTake take = SoulCore::TakeOne(v, SoulCore::StackCount(count));
             if (g_SoulPiece.pending) why = "a transfer is already pending";
             else if (!target || !SoulPieceRoomByName(target, asset, index, why)) {}
             else if (!HhResolveLocalPlayer(player)) why = "no player";
+            else if (take.count != SoulCore::StackCount(count) && !SoulPieceTakeFromStack(*pieceArg, pieceDef, count, take.count))
+                why = "the stack's count could not be lowered";
             else {
                 g_SoulPiece.pending = true;
                 g_SoulPiece.pendingAct = act;
                 g_SoulPiece.pendingFrom = room.index;
-                answer = true;
+                recorded = true;
+                answer = take.answer;
             }
-            if (!answer) {
+            if (!recorded) {
                 SoulCore::RecordTransfer(g_SoulPiece.core, act, false, SoulCore::ZoneAnswer::Unread, SoulCore::ZoneAnswer::Unread);
                 if (g_SoulPiece.failLines < kSoulPieceFailLineCap) { ++g_SoulPiece.failLines; Out("soulpiece: transfer-failed act=" + std::to_string(act) + " (" + why + "); the piece is kept"); }
             }
@@ -52933,7 +52981,7 @@ static void SoulPieceInstallUse()
 // piece never stacks by itself. One both-route detour on InventoryGridAddToStack,
 // the stack script a consumable's pickup reaches (#197 Live procedure 3), runs
 // the game's own call first, with the call's own arguments, and keeps the
-// game's result. Only when the merge is armed, the result is a struct whose
+// game's result. Only while `soulpiece` is on (SoulPieceMergeOn), the result is a struct whose
 // `success` is not true, the item argument (the second) is a legacy soul piece
 // and the core's DecideMerge names a bag item of the same act with room under
 // the cap does it change anything: that item's count `o` rises by the incoming
@@ -52958,7 +53006,8 @@ static_assert((int)SoulPieceMergePass::Off == (int)SoulCore::MergeVerdict::Off
               && (int)SoulPieceMergePass::Cap == (int)SoulCore::MergeVerdict::Cap, "the core's verdicts, in its order");
 
 struct SoulPieceMergeState {
-    bool armed = false;            // the merge decides; off at startup
+    bool armed = false;            // research build: `soulprobe merge on`; off at startup
+    bool probed = false;           // research build: `soulprobe merge on|off` was sent, and `armed` decides
     bool tried = false;
     std::string route = "none";
     long calls = 0;                // every call the detour saw
@@ -52966,6 +53015,18 @@ struct SoulPieceMergeState {
 };
 static SoulPieceMergeState g_SoulPieceMerge;
 static PFUNC_YYGMLScript g_SoulPieceOrigMerge = nullptr;
+
+// Whether the merge decides: while `soulpiece` is on (a piece drops only then,
+// and nothing merges while it is off). In the research build, once `soulprobe
+// merge on|off` was sent, that switch decides instead, so a session can run its
+// no-merge control with the mod on.
+static bool SoulPieceMergeOn()
+{
+#ifndef FORGEPACT_RELEASE
+    if (g_SoulPieceMerge.probed) return g_SoulPieceMerge.armed;
+#endif
+    return g_SoulPiece.core.on;
+}
 
 // One call, as the research build's line prints it.
 struct SoulPieceMergeReport {
@@ -53122,7 +53183,7 @@ static void SoulPieceRestoreCount(const RValue& def, bool hadCount, const RValue
 // The merge, on the game's own result `res` (see the block comment above).
 static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, SoulPieceMergeReport& rep)
 {
-    if (!g_SoulPieceMerge.armed) return SoulPieceMergePass::Off;
+    if (!SoulPieceMergeOn()) return SoulPieceMergePass::Off;
     // The item being picked up is the call's second argument (static reading).
     SoulCore::BagItem incoming;
     RValue incomingDef;
@@ -53156,7 +53217,7 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
     rep.bagItems = static_cast<int>(bag.size());
     for (const SoulCore::BagItem& b : bag)
         if (SoulCore::BagPieceActOfItem(b, g_SoulPiece.baseIndex) == rep.act) ++rep.sameAct;
-    const SoulCore::MergeDecision d = SoulCore::DecideMerge(g_SoulPieceMerge.armed, incoming, g_SoulPiece.baseIndex, bag);
+    const SoulCore::MergeDecision d = SoulCore::DecideMerge(SoulPieceMergeOn(), incoming, g_SoulPiece.baseIndex, bag);
     if (d.verdict != SoulCore::MergeVerdict::Merge) {
         if (d.verdict < SoulCore::MergeVerdict::Merge) return static_cast<SoulPieceMergePass>(static_cast<int>(d.verdict));
         rep.why = "verdict";
@@ -53234,8 +53295,9 @@ static RValue& Hook_SoulPieceMerge(CInstance* S, CInstance* O, RValue& R, int ar
     return res;
 }
 
-// Installs the merge's detour, once. Until the player build arms it, only the
-// research verb (`soulprobe merge on`) calls this.
+// Installs the merge's detour, once: from the frame tick under the PotionUse
+// detour's rule (SoulPieceTick), or, in the research build, from `soulprobe
+// merge on`.
 static void SoulPieceInstallMerge()
 {
     if (g_SoulPieceMerge.tried) return;
@@ -53307,17 +53369,18 @@ static void SoulPieceCarryOut()
 // ---- the frame tick -------------------------------------------------------------------------
 // The dress's registration (every second until the base resolves, then every
 // ten seconds in case a reload dropped it), and, once the mod was turned on or
-// a piece recognised: the room cache, the installs once a player exists, and
-// the pending transfer.
+// a piece recognised: the room cache, the installs once a player exists (the
+// PotionUse detour and the merge's together), and the pending transfer.
 static void SoulPieceTick(uint32_t frame)
 {
     if (frame % (g_SoulPiece.baseIndex < 0 ? 60u : 600u) == 0) SoulPieceRegisterDress();
     if (!g_SoulPiece.wanted && !g_SoulPieceSeen) return;
     SoulPieceRoomNow();
-    if ((frame % 60) == 0 && (!g_SoulPiece.useTried || (g_SoulPiece.wanted && !g_GemDropHookTried))) {
+    if ((frame % 60) == 0 && (!g_SoulPiece.useTried || !g_SoulPieceMerge.tried || (g_SoulPiece.wanted && !g_GemDropHookTried))) {
         RValue player;
         if (HhResolveLocalPlayer(player)) {
             SoulPieceInstallUse();
+            SoulPieceInstallMerge();
             if (g_SoulPiece.wanted && !g_GemDropHookTried) GemsInstallDropHook();
         }
     }
@@ -53358,6 +53421,9 @@ static std::string SoulPieceStatus()
     in.gemRoute = gemRoute;
     in.useScript = kSoulPieceUseName;
     in.useRoute = g_SoulPiece.useRoute;
+    in.mergeScript = kSoulPieceMergeName;
+    in.mergeRoute = g_SoulPieceMerge.route;
+    in.merged = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::Merged)];
     in.left = g_SoulPiece.haveLeft ? std::string_view(g_SoulPiece.left.name) : std::string_view("-");
     in.leftSaved = leftSaved;
     return SoulCore::StatusLine(g_SoulPiece.core, in);
@@ -55088,10 +55154,12 @@ static void SoulProbeCommand(const std::string& rest)
             // detour (no detour of the probe's own): arm every debugger row first.
             SoulPieceInstallMerge();
             g_SoulPieceMerge.armed = true;
+            g_SoulPieceMerge.probed = true;
             g_Sp.mergeOtherSeen = false;
             g_Sp.mergeLines = 0;
         } else if (arg == "off" || arg == "0") {
             g_SoulPieceMerge.armed = false;
+            g_SoulPieceMerge.probed = true;
         } else {
             SoulProbeUsage();
             return;

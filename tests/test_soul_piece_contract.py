@@ -25,8 +25,13 @@ InventoryGridAddToStack: the game's call runs first, only a soul piece with a
 same-act piece in the bag (the core's DecideMerge) changes anything, and then
 only the target's count and hash and the game's own result's `success` and
 cell. Every other script on the pickup and stack path stays undetoured, and
-nothing is vetoed. Until the player build arms it, only the research verb
-(`soulprobe merge on`) installs it.
+nothing is vetoed. After Live procedures 2 (`merge-route: detour`,
+`bagstackuse-route: take-one`) and 4 (`save-route: kept`) the player build
+installs it under the PotionUse detour's rule (from the tick, once the mod was
+turned on or a piece recognised, once a player exists) and merges only while
+`soulpiece` is on; the PotionUse detour takes one piece from a stack (the
+core's TakeOne) and answers false so the game keeps the cells, true for the
+last piece. New drops stay legacy bag pieces on the Edible PAS Logo.
 """
 
 import re
@@ -189,9 +194,11 @@ class SoulPieceContractTests(unittest.TestCase):
         after = use[use.index(passthrough) + len(passthrough):]
         self.assertNotIn("orig(", after, "the base's own PotionUse never runs for a piece")
         self.assertIn("R = RValue(answer);", after)
-        self.assertLess(after.index("g_SoulPiece.pending = true;"), after.index("answer = true;"),
-                        "true only once the transfer is recorded")
-        self.assertEqual(1, after.count("answer = true;"))
+        self.assertLess(after.index("g_SoulPiece.pending = true;"), after.index("answer = take.answer;"),
+                        "an answer only once the transfer is recorded")
+        self.assertEqual(1, len(re.findall(r"\banswer = ", after)) - after.count("answer = false;"),
+                         "the one answer that can be true is the core's take")
+        self.assertNotIn("answer = true;", after)
         self.assertIn("v == SoulCore::UseVerdict::Transfer", after)
         self.assertIn("HhResolveLocalPlayer(player)", after, "validated with a player")
         arg = self.body("static int SoulPieceActOfArg(")
@@ -407,54 +414,12 @@ class SoulPieceContractTests(unittest.TestCase):
         # One detour on the script in the whole plugin, either build, and it is this one.
         pattern = r'kSoulPieceMergeName|gml_Script_InventoryGridAddToStack\b|"InventoryGridAddToStack"'
         self.assertEqual([MERGE_INSTALL], calls_naming(self.code, pattern))
-        # No player-build path reaches the installer yet: in the player build
-        # it is only defined; the research verb `soulprobe merge on` calls it.
-        self.assertEqual(1, len(re.findall(r"\bSoulPieceInstallMerge\(\)", self.player)), "its definition only")
-        self.assertIn("SoulPieceInstallMerge();", self.body("static void SoulProbeCommand("))
-        self.assertIn("bool armed = false;", self.section, "off at startup")
-        self.assertNotIn("g_SoulPieceMerge.armed = true", self.shipped, "only the research verb arms it")
-        # The game's call runs first, every time, with the call's own arguments,
-        # and its result is what the detour returns.
-        call = self.body("static RValue& SoulPieceMergeCall(")
-        self.assertEqual(1, call.count("orig("))
-        self.assertIn("RValue& res = orig ? orig(S, O, R, argc, A) : R;", call)
-        self.assertLess(call.index("orig(S, O, R, argc, A)"), call.index("SoulPieceMergeInto("))
-        self.assertIn("return res;", call)
-        self.assertIn("++g_SoulPieceMerge.calls;", call, "every call is counted")
-        self.assertIn("++g_SoulPieceMerge.outcomes[", call, "and its outcome, by reason")
-        # Only a soul piece, decided by the core, ever changes anything; every
-        # pass is decided before the bag is read or anything is written.
-        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
-        first_write = into.index('"variable_struct_set"')
-        for gate in ("if (!g_SoulPieceMerge.armed) return SoulPieceMergePass::Off;",
-                     "if (!SoulCore::IsAct(rep.act)) return SoulPieceMergePass::NotPiece;",
-                     "return SoulPieceMergePass::NotStruct;", "return SoulPieceMergePass::AlreadySuccess;",
-                     "return SoulPieceMergePass::ReadFailed;"):
-            self.assertTrue(gate_precedes(into, gate, "SoulCore::DecideMerge("), gate)
-            self.assertLess(into.index(gate), first_write, gate)
-        self.assertIn("rep.act = SoulCore::BagPieceActOfItem(incoming, g_SoulPiece.baseIndex);", into)
-        self.assertTrue(gate_precedes(into, "SoulPieceMergePass::AlreadySuccess", "SoulPieceReadBag("),
-                        "a result the game already made a success is left alone")
-        self.assertIn("SoulCore::DecideMerge(g_SoulPieceMerge.armed, incoming, g_SoulPiece.baseIndex, bag)", into)
-        self.assertIn("if (entries[i].item.m_Object == A[1]->m_Object) continue;", into, "never its own target")
-        # On a merge: the target's count, then its hash, then the game's own result.
-        count = into.index('{ target.def, RValue("o"), RValue((double)d.count) }')
-        hashed = into.index("RefreshItemHash(target.item)")
-        success = into.index('{ res, RValue("success"), RValue(true) }')
-        self.assertLess(count, hashed)
-        self.assertLess(hashed, success)
-        for field in ('RValue("tabNumber"), RValue(target.tab)', 'RValue("x"), RValue(target.x)', 'RValue("y"), RValue(target.y)'):
-            self.assertIn(field, into[success:], field)
-        # A failed refresh puts the count back and passes; nothing is a veto:
-        # no false success, no call skipped, no other result field written.
-        failed = into[hashed:success]
-        self.assertIn("return SoulPieceMergePass::HashFailed;", failed)
-        self.assertIn("SoulPieceRestoreCount(target.def, hadCount, oldCount);", failed)
-        for body in (call, into):
-            self.assertNotIn("RValue(false)", body)
-        self.assertEqual({"o", "success", "tabNumber", "x", "y"},
-                         set(re.findall(r'"variable_struct_set", \{ \w+(?:\.\w+)?, RValue\("(\w+)"\)', into)))
+        self.assertEqual([MERGE_INSTALL], calls_naming(self.player, pattern), "and the player build carries it")
+        # Nothing is vetoed: the detour never skips the game's call, never
+        # writes a false success, and the section never names a veto.
         self.assertIsNone(re.search(r"(?i)\bveto", self.section))
+        for body in (self.body("static RValue& SoulPieceMergeCall("), self.body("static SoulPieceMergePass SoulPieceMergeInto(")):
+            self.assertNotIn("RValue(false)", body)
         # The bag is read the way `soulprobe bag` measured it, never through a
         # blind GetProfileInventoryData call (§ 9.4).
         bag = self.body("static bool SoulPieceReadBag(")
@@ -469,9 +434,172 @@ class SoulPieceContractTests(unittest.TestCase):
         hook = function_body(self.player, "static RValue& Hook_SoulPieceMerge(")
         self.assertIn("SoulPieceMergeCall(S, O, R, argc, A, report)", hook)
         self.assertNotIn("SoulProbe", hook)
+        # Negative control for the install scan: a second install is found.
+        doubled = MERGE_INSTALL + ';\nHookOneScript("InventoryGridAddToStack", "b", (PVOID)f, &o);'
+        self.assertEqual(2, len(calls_naming(doubled, pattern)))
+
+    def test_merge_installs_under_the_potion_use_rule(self):
+        # From the tick, behind the mod's own gate (turned on, or a piece
+        # recognised by the dress) and once a player exists, beside the
+        # PotionUse detour; never from the verb, never at character select.
+        tick = self.body("static void SoulPieceTick(")
+        gate = "if (!g_SoulPiece.wanted && !g_SoulPieceSeen) return;"
+        self.assertTrue(gate_precedes(tick, gate, "SoulPieceInstallMerge();"))
+        self.assertTrue(gate_precedes(tick, "HhResolveLocalPlayer(player)", "SoulPieceInstallMerge();"),
+                        "never at character select")
+        self.assertIn("!g_SoulPieceMerge.tried", tick, "the tick tries until it is installed")
+        use = tick[tick.index("SoulPieceInstallUse();"):]
+        self.assertIn("SoulPieceInstallMerge();", use[:use.index("}")], "beside the PotionUse detour, under its rule")
+        command = self.body("static void SoulPieceCommand(")
+        self.assertNotIn("SoulPieceInstallMerge", command, "the verb only arms the mod")
+        # The player build reaches the installer from the tick alone.
+        self.assertEqual(2, len(re.findall(r"\bSoulPieceInstallMerge\(\)", self.player)), "its definition and the tick")
+        # It merges only while `soulpiece` is on: the core's switch, read at each call.
+        on = self.body("static bool SoulPieceMergeOn()", self.player)
+        self.assertIn("return g_SoulPiece.core.on;", on)
+        self.assertNotIn("armed", on, "the research verb's switch is research-only")
+        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
+        self.assertIn("if (!SoulPieceMergeOn()) return SoulPieceMergePass::Off;", into)
+        self.assertIn("SoulCore::DecideMerge(SoulPieceMergeOn(), incoming, g_SoulPiece.baseIndex, bag)", into)
+        self.assertIn("if (!modOn) return { MergeVerdict::Off, 0, -1, 0 };", self.body("inline MergeDecision DecideMerge(", self.core))
+        # The research verb's switch is off at startup and set only by the verb.
+        self.assertIn("bool armed = false;", self.section, "off at startup")
+        self.assertNotIn("g_SoulPieceMerge.armed = true", self.shipped, "only the research verb arms it")
+        # Negative control for the gate scan: an install ahead of the gate is caught.
+        self.assertFalse(gate_precedes("SoulPieceInstallMerge();\n" + gate, gate, "SoulPieceInstallMerge();"))
+
+    def test_merge_detour_joins_same_act_pieces_only(self):
+        # Only a soul piece, decided by the core, ever changes anything; every
+        # pass is decided before the bag is read or anything is written.
+        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
+        first_write = into.index('"variable_struct_set"')
+        for gate in ("if (!SoulPieceMergeOn()) return SoulPieceMergePass::Off;",
+                     "if (!SoulCore::IsAct(rep.act)) return SoulPieceMergePass::NotPiece;",
+                     "return SoulPieceMergePass::NotStruct;", "return SoulPieceMergePass::AlreadySuccess;",
+                     "return SoulPieceMergePass::ReadFailed;"):
+            self.assertTrue(gate_precedes(into, gate, "SoulCore::DecideMerge("), gate)
+            self.assertLess(into.index(gate), first_write, gate)
+        self.assertIn("rep.act = SoulCore::BagPieceActOfItem(incoming, g_SoulPiece.baseIndex);", into)
+        self.assertIn("if (entries[i].item.m_Object == A[1]->m_Object) continue;", into, "never its own target")
+        # The target is the core's: the first legacy piece of the same act with room.
+        decide = self.body("inline MergeDecision DecideMerge(", self.core)
+        self.assertIn("const int act = BagPieceActOfItem(incoming, baseIndex);", decide)
+        self.assertIn("if (BagPieceActOfItem(bag[i], baseIndex) != act) continue;", decide)
+        legacy = self.body("inline int BagPieceActOfItem(", self.core)
+        self.assertIn("return PieceActOfItem(", legacy, "the class-11 rule: the base by name, c 0, a piece's seed")
+        self.assertIn("SoulCore::MergeDecision d = SoulCore::DecideMerge(", into)
+        self.assertIn("SoulPieceBagEntry& target = entries[at[static_cast<size_t>(d.target)]];", into)
+        # A real item is never a target: no merge without the core's `merge`.
+        self.assertTrue(gate_precedes(into, "if (d.verdict != SoulCore::MergeVerdict::Merge) {", '"variable_struct_set"'))
+
+    def test_merge_runs_the_games_call_first_and_sets_its_success(self):
+        # The game's call runs first, every time, with the call's own arguments,
+        # and its result is what the detour returns.
+        call = self.body("static RValue& SoulPieceMergeCall(")
+        self.assertEqual(1, call.count("orig("))
+        self.assertIn("RValue& res = orig ? orig(S, O, R, argc, A) : R;", call)
+        self.assertLess(call.index("orig(S, O, R, argc, A)"), call.index("SoulPieceMergeInto("))
+        self.assertIn("return res;", call)
+        self.assertIn("++g_SoulPieceMerge.calls;", call, "every call is counted")
+        self.assertIn("++g_SoulPieceMerge.outcomes[", call, "and its outcome, by reason")
+        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
+        self.assertTrue(gate_precedes(into, "SoulPieceMergePass::AlreadySuccess", "SoulPieceReadBag("),
+                        "a result the game already made a success is left alone")
+        # On a merge: the target's count, then its hash, then the game's own result.
+        count = into.index('{ target.def, RValue("o"), RValue((double)d.count) }')
+        hashed = into.index("RefreshItemHash(target.item)")
+        success = into.index('{ res, RValue("success"), RValue(true) }')
+        self.assertLess(count, hashed)
+        self.assertLess(hashed, success)
+        for field in ('RValue("tabNumber"), RValue(target.tab)', 'RValue("x"), RValue(target.x)', 'RValue("y"), RValue(target.y)'):
+            self.assertIn(field, into[success:], field)
+        # A failed refresh puts the count back and passes; no other result field is written.
+        failed = into[hashed:success]
+        self.assertIn("return SoulPieceMergePass::HashFailed;", failed)
+        self.assertIn("SoulPieceRestoreCount(target.def, hadCount, oldCount);", failed)
+        self.assertEqual({"o", "success", "tabNumber", "x", "y"},
+                         set(re.findall(r'"variable_struct_set", \{ \w+(?:\.\w+)?, RValue\("(\w+)"\)', into)))
+        # The status line names the merge's route and counts the merges.
+        status = self.body("static std::string SoulPieceStatus()")
+        self.assertIn("in.mergeScript = kSoulPieceMergeName;", status)
+        self.assertIn("in.mergeRoute = g_SoulPieceMerge.route;", status)
+        self.assertIn("in.merged = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::Merged)];", status)
+        line = self.body("inline std::string StatusLine(", self.core)
+        self.assertIn('" merged=" + std::to_string(in.merged)', line)
+        self.assertIn('" merge:" + std::string(in.mergeScript) + ":" + std::string(in.mergeRoute)', line)
         # Negative control for the order scan: a write ahead of the decision is caught.
         self.assertFalse(gate_precedes('"variable_struct_set";\nSoulCore::DecideMerge(', "SoulCore::DecideMerge(",
                                        '"variable_struct_set"'))
+
+    # ---- the stack use and the drop's shape ------------------------------------------------------
+    def test_stack_use_leaves_the_rest_of_the_stack(self):
+        # bagstackuse-route: take-one (Live procedure 2: the confirm clears the
+        # whole stack when PotionUse answers true). The core's TakeOne decides:
+        # a stack above one loses one and the call answers false, so the game
+        # keeps the cells; the last piece answers true.
+        take = self.body("inline StackTake TakeOne(", self.core)
+        self.assertIn("if (v != UseVerdict::Transfer) return { false, count };", take)
+        self.assertIn("if (count > 1) return { false, count - 1 };", take)
+        use = self.body("static RValue& SoulPieceUseCall(")
+        self.assertIn("const SoulCore::StackTake take = SoulCore::TakeOne(v, SoulCore::StackCount(count));", use)
+        written = use.index("SoulPieceTakeFromStack(*pieceArg, pieceDef, count, take.count)")
+        pending = use.index("g_SoulPiece.pending = true;")
+        self.assertLess(use.index("SoulCore::TakeOne("), written)
+        self.assertLess(written, pending, "the count is lowered before the transfer is recorded")
+        self.assertLess(pending, use.index("answer = take.answer;"))
+        self.assertTrue(gate_precedes(use, "if (take.count != SoulCore::StackCount(count)", "SoulPieceTakeFromStack("),
+                        "written only when the count changes")
+        # The count on the piece's own definition, then its hash, as the dress does;
+        # a failed refresh puts the count back and the use is refused, the stack kept.
+        helper = self.body("static bool SoulPieceTakeFromStack(")
+        self.assertLess(helper.index('{ def, RValue("o"), RValue((double)to) }'), helper.index("RefreshItemHash(item)"))
+        self.assertIn('{ def, RValue("o"), RValue((double)from) }', helper)
+        self.assertIn("return false;", helper)
+        refused = use[written:pending]
+        self.assertIn("why = ", refused, "a failed take is a refusal with its reason")
+        # A refusal or a failed take records a failed transfer and keeps the piece.
+        self.assertIn("if (!recorded) {", use)
+        self.assertIn("the piece is kept", use)
+        # The piece's definition and count come from the same argument the core recognised.
+        arg = self.body("static int SoulPieceActOfArg(")
+        self.assertIn('TryStructNumber(def, "o", o)', arg)
+        self.assertIn("SoulCore::PieceActOfItem(", arg)
+
+    def test_new_drops_stay_bag_pieces(self):
+        # A new drop is the game's own Edible PAS Logo (class 11, the base found
+        # by name) with a piece's seed, c 0 and one count: never a key piece.
+        place = self.body("static bool SoulPiecePlace(")
+        self.assertIn('std::to_string(g_SoulPiece.baseIndex) + ",\\"c\\":0,\\"o\\":1}"', place)
+        self.assertIn('"-" + std::to_string(SoulCore::kBaseItemType)', place, "the fingerprint's class is the logo's")
+        self.assertIn("SoulCore::SeedOfAct(act)", place)
+        for name in ("KeyPieceB", "kKeyBaseRepoName", "kKeyBaseCategory", "kKeyBaseItemType", "KeyPieceActOfItem",
+                     "AnyPieceActOfItem", "kActFractionDivisor"):
+            self.assertNotIn(name, self.player, name)
+        # Negative control: the research probe still builds key shapes, so the strip is not removing everything.
+        self.assertIn("KeyPieceB", self.code)
+        # The lore says pieces of one boss stack in the backpack.
+        dress = self.body("static void SoulPieceRegisterDress()")
+        lore = re.search(r'piece\.lore = "([^"]*)";', dress).group(1)
+        self.assertIn("Right-click it in the backpack", lore)
+        self.assertIn("stack", lore)
+
+    def test_legacy_bag_pieces_keep_their_dress_and_use(self):
+        # The dress still recognises the first builds' pieces: the logo by its
+        # repository name with a piece's seed, the piece's name, the gem's icon.
+        dress = self.body("static void SoulPieceRegisterDress()")
+        self.assertIn("RepoAd(st) == SoulCore::kBaseRepoName", dress)
+        self.assertIn('piece.selector = { {"t", t}, {"a", seed}, {"b", b}, {"c", 0.0}, {"j", 0.0} };', dress)
+        self.assertIn("const double t = (double)SoulCore::kBaseItemType, b = (double)g_SoulPiece.baseIndex;", dress)
+        self.assertIn("piece.name = boss->pieceName;", dress)
+        self.assertIn("piece.sprite = SoulCore::kPieceSpriteName;", dress)
+        # And the use: the PotionUse detour recognises a legacy piece by the core's
+        # class-11 rule, so a piece (a stack's or a lone one) still transfers.
+        arg = self.body("static int SoulPieceActOfArg(")
+        self.assertIn("t != (double)SoulCore::kBaseItemType", arg)
+        self.assertIn("g_SoulPiece.baseIndex", arg)
+        self.assertIn("return SoulCore::PieceActOfItem(", arg)
+        piece = self.body("inline int PieceActOfItem(", self.core)
+        self.assertIn("itemType != kBaseItemType || b != baseIndex || c != 0", piece)
 
     def test_soulprobe_is_research_only(self):
         self.assertNotIn("soulprobe", self.allowlist)
