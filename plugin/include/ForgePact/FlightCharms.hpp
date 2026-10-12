@@ -297,21 +297,37 @@ inline constexpr std::string_view StateName(State s)
 }
 
 // The first four are the stat line's. The rest are the trace line's (TraceLine):
-// they say how far a quiet flight got. Every blocked query of the local player
-// that reaches the core counts once in `seen`, and then in exactly one of
-// idle, other, excluded, outsideRoom and answered, so the five add up to it.
-// Every UpdateDepth call of the local player counts in `depthSeen`; one made
-// while on that wrote nothing counts in `noFront`.
+// they say how far a quiet flight got, and every return of OnQuery and
+// OnUpdateDepth lands in exactly one of them, so a zero always has a cause.
+//
+// Queries: every hooked call handed to the core (OnQuery, or NoteCall for a
+// call the adapter returned from before building a Query) counts once in
+// `calls`, then in exactly one of notPlayer, unblocked and seen:
+//   calls = notPlayer + unblocked + seen
+// and every blocked query of the local player (`seen`) in exactly one of
+//   seen = idle + unconfigured + unreadable + other + excluded + outsideRoom + answered
+//
+// UpdateDepth: every call handed to the core counts once in `depthCalls`, then
+//   depthCalls = depthOther + depthSeen
+//   depthSeen  = depthIdle + noFront + depth
 struct FlightCounters {
     uint64_t answered = 0;      // queries answered "nothing there"
     uint64_t excluded = 0;      // kept because a wall or a lock blocked, or was named
     uint64_t outsideRoom = 0;   // kept because a point was outside the room (or the room unreadable)
     uint64_t depth = 0;         // front-layer writes
-    uint64_t seen = 0;          // the local player's blocked queries that reached the core
-    uint64_t idle = 0;          // of seen, kept because flight was off (or not configured)
-    uint64_t other = 0;         // of seen, kept because the object named is not in the family, or unreadable
-    uint64_t depthSeen = 0;     // the local player's UpdateDepth calls that reached the core
-    uint64_t noFront = 0;       // of those while on, no write: the room or its layer ends unreadable, or equal depths
+    uint64_t calls = 0;         // hooked calls handed to the core, any self
+    uint64_t notPlayer = 0;     // of calls, self was not the local player
+    uint64_t unblocked = 0;     // of calls, the local player's, whose original answered free: it stands
+    uint64_t seen = 0;          // of calls, the local player's blocked queries
+    uint64_t idle = 0;          // of seen, kept because flight was off
+    uint64_t unconfigured = 0;  // of seen, kept because the family or an exclusion did not resolve
+    uint64_t unreadable = 0;    // of seen, kept because the adapter could not read the object (-1)
+    uint64_t other = 0;         // of seen, kept because the object named is outside the family
+    uint64_t depthCalls = 0;    // UpdateDepth calls handed to the core, any self
+    uint64_t depthOther = 0;    // of depthCalls, self was not the local player
+    uint64_t depthSeen = 0;     // of depthCalls, the local player's
+    uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
+    uint64_t noFront = 0;       // of depthSeen while on, no write: the room or its layer ends unreadable, or equal depths
 };
 
 // One hooked call, after its original ran.
@@ -572,16 +588,37 @@ public:
     // blocked, family-named query of the local player while flight is on or
     // residual, with every point inside the room, and never for
     // InstancePlaceTallest. Any other self returns at once, reading nothing.
+    //
+    // Every return is counted (FlightCounters): another self in `notPlayer`, a
+    // free answer in `unblocked`, and each kept or answered blocked query in one
+    // bucket of `seen`. Out-of-range rows are not hooked calls and count
+    // nothing.
     template <class ExcludedBlocksFn>
     Answer OnQuery(const Query& q, ExcludedBlocksFn&& excludedBlocks)
     {
         const int i = static_cast<int>(q.row);
-        if (!q.playerSelf || i < 0 || i >= kHookedCount) return Answer::Real;
+        if (i < 0 || i >= kHookedCount) return Answer::Real;
+        ++counters_.calls;
+        if (!q.playerSelf) {
+            ++counters_.notPlayer;
+            return Answer::Real;
+        }
         Refresh(q.frame);
-        if (!q.reallyBlocked) return Answer::Real;
+        if (!q.reallyBlocked) {
+            ++counters_.unblocked;
+            return Answer::Real;
+        }
         ++counters_.seen;
-        if (state_ == State::Off || !Configured()) {
+        if (state_ == State::Off) {
             ++counters_.idle;
+            return Answer::Real;
+        }
+        if (!Configured()) {
+            ++counters_.unconfigured;
+            return Answer::Real;
+        }
+        if (q.object < 0) {
+            ++counters_.unreadable;
             return Answer::Real;
         }
         const Class c = Classify(q.object);
@@ -616,6 +653,27 @@ public:
         return OnQuery(q, []() { return true; });
     }
 
+    // A hooked call the adapter returns from before building a Query (another
+    // self, or the original answered free), so that the call still counts:
+    // `calls` and then `notPlayer` or `unblocked`, exactly as OnQuery would count
+    // it. Reads nothing and refreshes nothing, so another self still costs
+    // the adapter one compare and one increment. A blocked call of the local
+    // player belongs to OnQuery, not here; passed one, it counts as free.
+    void NoteCall(bool playerSelf)
+    {
+        ++counters_.calls;
+        if (!playerSelf) ++counters_.notPlayer;
+        else ++counters_.unblocked;
+    }
+
+    // An UpdateDepth call of another self the adapter returns from at once:
+    // `depthCalls` and `depthOther`, as OnUpdateDepth would count it.
+    void NoteDepthOther()
+    {
+        ++counters_.depthCalls;
+        ++counters_.depthOther;
+    }
+
     // After the game's UpdateDepth ran: whether to set the player's `layer`,
     // and to which layer. Only for the local player, only while flight is on
     // (not residual); the room's two layer ends are read once per room. A
@@ -623,10 +681,17 @@ public:
     // noFront, and the room read before it stays remembered.
     DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)
     {
-        if (!playerSelf) return DepthWrite{};
+        ++counters_.depthCalls;
+        if (!playerSelf) {
+            ++counters_.depthOther;
+            return DepthWrite{};
+        }
         ++counters_.depthSeen;
         Refresh(frame);
-        if (state_ != State::On) return DepthWrite{};
+        if (state_ != State::On) {
+            ++counters_.depthIdle;
+            return DepthWrite{};
+        }
         if (room < 0) {
             ++counters_.noFront;
             return DepthWrite{};
@@ -749,16 +814,28 @@ inline std::string RefusedLine(std::string_view why) { return "flightcharm: refu
 // of the player its hooks compare against: `match` when it is the local player
 // resolved now, `differs` when it is another instance, `none` when either is
 // missing. Read with the stat line, it says where a flight that answered
-// nothing stopped: no blocked query of the player reached it (`seen=0`: the
-// player pointer, or the hooked calls), it was off (`idle=`), the query named
-// something outside the family (`other=`), or it was kept for a wall, a lock
-// or the room's edge. For drawing in front: the player's UpdateDepth never
-// reached it (`depth-seen=0`), or no front layer could be chosen (`no-front=`).
+// nothing stopped, one cause per field (the sums are FlightCounters'):
+//   - `calls=0`: no hooked call reached the core at all (the hooks);
+//   - `not-player=` only: the calls came, but none from the player the hooks
+//     compare against (the player check; see `player=`);
+//   - `free=` only: the player's calls came, but none was blocked;
+//   - of the blocked ones (`seen=`): off (`idle=`), the family or an
+//     exclusion unresolved (`unconfigured=`), the object unreadable
+//     (`unreadable=`), outside the family (`other=`), or kept for a wall, a
+//     lock or the room's edge (the stat line's `excluded=`, `outside-room=`).
+// For drawing in front, the same: no call (`depth-calls=0`), none from the
+// player (`depth-other=` only), flight not on (`depth-idle=`), or no front
+// layer could be chosen (`no-front=`), against the stat line's `depth=`.
 inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 {
-    return "flightcharm trace: player=" + std::string(player) + " seen=" + std::to_string(c.seen)
-        + " idle=" + std::to_string(c.idle) + " other=" + std::to_string(c.other)
-        + " depth-seen=" + std::to_string(c.depthSeen) + " no-front=" + std::to_string(c.noFront);
+    return "flightcharm trace: player=" + std::string(player)
+        + " calls=" + std::to_string(c.calls) + " not-player=" + std::to_string(c.notPlayer)
+        + " free=" + std::to_string(c.unblocked) + " seen=" + std::to_string(c.seen)
+        + " idle=" + std::to_string(c.idle) + " unconfigured=" + std::to_string(c.unconfigured)
+        + " unreadable=" + std::to_string(c.unreadable) + " other=" + std::to_string(c.other)
+        + " depth-calls=" + std::to_string(c.depthCalls) + " depth-other=" + std::to_string(c.depthOther)
+        + " depth-seen=" + std::to_string(c.depthSeen) + " depth-idle=" + std::to_string(c.depthIdle)
+        + " no-front=" + std::to_string(c.noFront);
 }
 
 // ---- the size guard --------------------------------------------------------------
