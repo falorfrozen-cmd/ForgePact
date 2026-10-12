@@ -94,7 +94,19 @@ class CharmProbeContract(unittest.TestCase):
         player_text = strip_research_blocks(self.plugin)   # comments kept: not even a mention ships
         self.assertNotIn("FlightCharmProbe", player_text)
         self.assertNotIn("charmprobe", player_text)
-        self.assertIsNone(re.search(r"\bForgePact::FlightCharms\b", self.shipped))
+        # Phase 2's shipping core, FlightCharms.hpp, shares the namespace
+        # ForgePact::FlightCharms (ForgePact #158), so the namespace itself
+        # ships. What must not is the probe's own: its alias, its icon
+        # namespace, and every name its header declares that the core does not.
+        self.assertIsNone(re.search(r"\bFcpNs\b", self.shipped))
+        self.assertIsNone(re.search(r"\bForgePact::FlightCharmProbeIcon\b", self.shipped))
+        core = strip_comments((INCLUDE / "FlightCharms.hpp").read_text(encoding="utf-8").replace("\r\n", "\n"))
+        declared = r"\b(?:struct|class|enum(?:\s+class)?|using)\s+([A-Za-z_]\w*)"
+        probe_only = set(re.findall(declared, self.header)) - set(re.findall(declared, core))
+        self.assertTrue(probe_only)   # a scan that finds nothing would pass vacuously
+        for name in sorted(probe_only):
+            self.assertIsNone(re.search(r"\b(?:ForgePact::FlightCharms|FcNs)::" + re.escape(name) + r"\b", self.shipped),
+                              name + " reaches the player build")
 
     def test_not_a_player_command(self):
         run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
@@ -245,7 +257,14 @@ class CharmProbeContract(unittest.TestCase):
 
     def test_sprite_add_and_the_icon_bytes_stay_in_the_research_block(self):
         self.assertIn("sprite_add", self.code)                                # positive control
-        self.assertNotIn("sprite_add", self.shipped)
+        # Phase 2's forge loads the six charm icons in both builds (ForgePact
+        # #158, test_flight_charms_contract.py), from FlightIconsLoad alone; no
+        # other player-build code calls sprite_add.
+        forge_load = function_body(self.plugin, "static void FlightIconsLoad()")
+        self.assertIn("sprite_add", forge_load)                               # the one shipped call is that one
+        self.assertNotIn("sprite_add", strip_comments(strip_research_blocks(self.plugin).replace(forge_load, "")))
+        for probe_only in ("charmprobe", "FlightCharmProbeIcon", "kPng", "Fcp"):
+            self.assertNotIn(probe_only, forge_load)
         self.assertNotIn("FlightCharmProbeIcon", self.shipped)
         self.assertNotIn("kPng", self.shipped)
         self.assertEqual(self.plugin.count("#include <ForgePact/FlightCharmProbeIcon.hpp>"), 1)

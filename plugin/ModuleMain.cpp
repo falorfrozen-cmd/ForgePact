@@ -558,6 +558,14 @@ static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
 // adapter sits after jump through scenery's; the mod state reads the switch.
 #include <ForgePact/LootAnnounceMod.hpp>
 static ForgePact::LootAnnounceMod g_LootAnnounce;
+// Flight charms (`flightcharm`, ForgePact #158): the decision core and the
+// owner's six icons. The Custom Forge recognises and dresses the charms (what
+// it reads sits just before TryApplyCustomForge, the rest of the forge part
+// just before InstallCustomForgeItemHooks); dressing arms flight.
+#include <ForgePact/FlightCharms.hpp>
+#include <ForgePact/FlightCharmIcons.hpp>
+namespace FcNs = ForgePact::FlightCharms;
+static ForgePact::FlightCharms::Flight g_Flight;
 // Always show Chaos Pillar mods (`pillartips`, ForgePact #7): the decision
 // core. Its adapter sits just before Hook_DrawHudBuffs, which calls its tick;
 // the mod state reads the switch.
@@ -4439,6 +4447,10 @@ static bool ForgeCouldMatch(const RValue& item)
         if (!TryStructNumber(item, "itemType", t)) return false;
         RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
         if (def.m_Kind != VALUE_OBJECT || !TryStructNumber(def, "a", a) || !TryStructNumber(def, "b", b)) return false;
+        // The flight charms are built-ins matched by seed range, not by the
+        // exact index (TryApplyCustomForge, FlightCharmForgeEntry).
+        FcNs::Rolled flight;
+        if (t == FcNs::kCharmTypeT && b == FcNs::kCharmBaseB && FcNs::DecodeSeed((long long)a, flight)) return true;
         return g_ForgeSelectorKeys.count(std::to_string((long long)t) + "|" + std::to_string((long long)a) + "|" + std::to_string((long long)b)) > 0;
     } catch (...) { return true; }
 }
@@ -4525,6 +4537,100 @@ static std::map<std::string, double> TakeForgeAdditions(const RValue& item, cons
     return add;
 }
 
+// ---- Flight charms (FlightCharms.hpp): what the Custom Forge reads ----------
+// The three charms are built-in Custom Forge entries matched by seed range
+// rather than by one exact selector: a charm is saved as a plain Small Charm
+// (type 10, b 0, c 0, j 0) whose seed `a` falls in one of FlightCharms.hpp's
+// three ranges, and its rolls are decoded from the seed. TryApplyCustomForge
+// tries the ranges only after every loaded entry missed, so a sidecar entry
+// for the same item still wins, as with the signature items. The rest of the
+// forge part (the final pass's footprint and icon, the icons, the ground icon
+// and the size guard) sits just before InstallCustomForgeItemHooks.
+
+// A field of an item or a definition. The Custom Forge's own candidates are
+// structs, but a ground item's itemInstance may come back as the reference
+// this runner hands out instead (hs_game_sdk/player.hpp, ReadGroundRelic), so
+// both are read, each through its own builtins; anything else holds nothing.
+static bool FlightField(const RValue& owner, const char* name, RValue& out)
+{
+    try {
+        if (owner.m_Kind == VALUE_OBJECT) {
+            if (!owner.m_Object || !g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
+            return true;
+        }
+        if (owner.m_Kind == VALUE_REF) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static bool FlightNumber(const RValue& owner, const char* name, double& value)
+{
+    RValue v;
+    if (!FlightField(owner, name, v)) return false;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_BOOL) return false;
+    value = v.ToDouble();
+    return std::isfinite(value);
+}
+
+// The item's own fields through the core's rule. The type is read first, so
+// every other item the game builds costs one read.
+static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled)
+{
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    if (!FlightNumber(item, "itemType", t) || t != FcNs::kCharmTypeT) return false;
+    if (!FlightNumber(definition, "a", a) || !FlightNumber(definition, "b", b)
+        || !FlightNumber(definition, "c", c) || !FlightNumber(definition, "j", j)) return false;
+    return FcNs::IsFlightCharm(t, a, b, c, j, rolled);
+}
+
+static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)
+{
+    RValue definition;
+    if (!FlightField(item, "itemDefinitionStruct", definition)) return false;
+    return FlightCharmDecode(item, definition, rolled);
+}
+
+// The built-in entry for one charm: its row's name, rarity, tier and lore, the
+// gold `Flight` row, fp_mechanic = flight and its rolled stats, with the
+// native stats removed. The selector is the item's own, so each seed gets its
+// own lore key.
+static bool FlightCharmForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, FcNs::Rolled& rolled)
+{
+    if (!FlightCharmDecode(item, definition, rolled)) return false;
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    FlightNumber(item, "itemType", t);
+    FlightNumber(definition, "a", a);
+    FlightNumber(definition, "b", b);
+    FlightNumber(definition, "c", c);
+    FlightNumber(definition, "j", j);
+    const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
+    entry = CustomForgeEntry{};
+    entry.selector = { {"t", t}, {"a", a}, {"b", b}, {"c", c}, {"j", j} };
+    for (const auto& [id, value] : FcNs::StatsFor(rolled)) entry.stats[id] = (double)value;
+    entry.keepNative = false;
+    entry.rarity = row.rarity;
+    entry.tier = row.tier;
+    entry.name = std::string(row.name);
+    entry.lore = std::string(row.lore);
+    entry.affix = std::string(FcNs::kAffixRow);
+    entry.mechanic = std::string(FcNs::kMechanic);
+    entry.builtin = true;   // recognition only, as the signature items' entries
+    return true;
+}
+
+// Defined with the forge part below: the footprint and our bag icon, on
+// CreateItemNew's outermost return, before the item's hash is refreshed.
+static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled);
+// Whether the size guard holds this script (the research build's instruments
+// refuse it then). Defined with the guard below.
+static bool FlightGuardHolds(std::string_view runtimeName);
+// ---- end of what the Custom Forge reads for the flight charms ----------------
+
 static volatile LONG g_CustomForgeHashMisses = 0;
 #ifndef FORGEPACT_RELEASE
 // Per-route counters for `forgehash stat`. Research build only: none of these
@@ -4567,8 +4673,17 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 #endif
         }
 
-        for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
-            if (!CustomForgeMatches(entry, *candidate, definition)) continue;
+        // The loaded entries first (sidecar lines, then the signature items);
+        // only once every one missed, the flight charms' seed ranges, so a
+        // sidecar entry for the same item still wins.
+        const size_t entryCount = g_CustomForgeEntries.size();
+        CustomForgeEntry flightEntry;
+        FcNs::Rolled flightRolled;
+        for (size_t i = 0; i <= entryCount; ++i) {
+            const bool flightMatched = i == entryCount;
+            if (flightMatched && !FlightCharmForgeEntry(*candidate, definition, flightEntry, flightRolled)) break;
+            const CustomForgeEntry& entry = flightMatched ? flightEntry : g_CustomForgeEntries[i];
+            if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;
             if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
@@ -4655,6 +4770,9 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if (entry.mechanic == "tyrant") g_TyItemTagged = true;
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
                 if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
+                // Arming only sets a flag: the frame tick installs flight's
+                // hooks once a character exists, never CreateItemNew.
+                if (entry.mechanic == "flight") g_Flight.Arm();
             }
             if (finalPass) {
                 size_t rk = 0, sk = 0;
@@ -4673,6 +4791,9 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if ((rk || sk) && s_AddLogs < 20) { ++s_AddLogs; Out("forge additions: rune keys " + std::to_string(rk) + ", socket keys " + std::to_string(sk) + ", applied " + std::to_string(applied)); }
 #endif
             }
+            // A flight charm's footprint and bag icon: CreateItemNew's
+            // outermost return only, and before the hash below covers them.
+            if (finalPass && flightMatched) FlightCharmDressFinal(*candidate, flightRolled);
             {
                 const std::string before = ReadItemHash(*candidate);
                 std::string how;
@@ -16884,6 +17005,14 @@ static void PpInstall(const std::vector<std::string>& filters)
             if (!match) { ++skipped; continue; }
         }
         if (t.installed.load()) { Out(std::string("prospectprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        // The flight charms' size guard (ForgePact #158) owns ParseItemToGrid
+        // and InventoryGridAddItemPos from setup on; a second detour would fail.
+        if (FlightGuardHolds(t.runtimeName)) {
+            Out(std::string("prospectprobe hook: ") + t.label + " refused (held by the flight charms' size guard, installed"
+                " with the Custom Forge's hooks)");
+            ++failed;
+            continue;
+        }
         std::string why;
         PVOID src = PpResolve(t, why);
         if (!src) { Out(std::string("prospectprobe hook: ") + t.label + " " + why); ++failed; continue; }
@@ -21531,6 +21660,337 @@ static void InstallItemInspectHooks()
 }
 #endif
 
+// ---- Flight charms (FlightCharms.hpp): the forge adapter -----------------------
+// The rest of the Custom Forge's part in the flight charms (ForgePact #158);
+// recognition and the entry sit just before TryApplyCustomForge.
+//   - The final pass: on CreateItemNew's outermost return a dressed charm also
+//     gets its true footprint under itemInfoStruct "2" (width) and "3"
+//     (height), and our bag icon under "11" (RDM § 22.2 and § 22.5, both
+//     measured), before TryApplyCustomForge refreshes the item's hash.
+//   - The icons: the owner's six PNGs, embedded (FlightCharmIcons.hpp) and
+//     loaded the pack markers' way, lazily at the first dressing that needs
+//     one, once a session. A player's own file of the same name wins. A
+//     failed icon writes nothing: the charm keeps the Small Charm's icon.
+//   - The ground icon: the game picks a ground sprite by name from the bag
+//     sprite's name, and a sprite added at runtime has no such companion, so
+//     the ground drew the error sprite (RDM § 22.7). The one LootGroundInit
+//     detour (HookHiddenLootInit, installed by HiddenLootInstall) hands each
+//     call to FlightCharmOnGroundInit after hidden loot and loot
+//     announcements, which sets our ground icon after the game's own call.
+//   - The size guard: a reload rebuilds each charm at its true footprint, and
+//     the game's grid load ignores a refused placement (RDM § 22.6), so a
+//     charm whose footprint no longer fits would vanish, and one placed early
+//     could take a cell a vanilla item needs. ParseItemToGrid opens a scope;
+//     inside it a charm larger than 1x1 is held back from
+//     InventoryGridAddItemPos until the load ends, then placed at full size,
+//     or at 1x1 in its own cell when that is refused (FlightCharms.hpp,
+//     SizeGuard). Installed with the Custom Forge's own hooks, because the
+//     dressing it protects is unconditional and a load runs before any tick.
+// Every script is named through hs-game-sdk and hooked by name through
+// HookOneScript; nothing here computes an address.
+
+static bool g_FlightIconsTried = false;
+static bool g_FlightIconsFailed = false;
+static RValue g_FlightIconSprite[ForgePact::FlightCharmIcons::kIconCount];   // sprite_add's answer, as it came
+static bool g_FlightIconOk[ForgePact::FlightCharmIcons::kIconCount] = {};
+static bool g_FlightGroundReady = false;   // at least one ground icon loaded: the ground consumer has work
+static uint64_t g_FlightGround = 0;        // ground items given our icon
+// `flightprobe dress off` (research build) suspends the footprint write alone,
+// so a charm can be saved at 1x1 for the guard's live check.
+static bool g_FlightDressFootprint = true;
+
+// The icon of one charm (its bag icon, or its ground copy); kIconCount when
+// the table has none.
+static size_t FlightIconIndex(FcNs::Charm charm, bool ground)
+{
+    const std::string_view key = FcNs::RowOf(charm).key;
+    for (size_t k = 0; k < ForgePact::FlightCharmIcons::kIconCount; ++k) {
+        const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+        if (key == icon.charm && icon.ground == ground) return k;
+    }
+    return ForgePact::FlightCharmIcons::kIconCount;
+}
+
+// One icon as a path GameMaker can open: the embedded PNG is written to
+// bp_ipc\flightcharms\ only when no file of that name is there, so a player's
+// own design is kept and used. GameMaker reads relative paths from the game's
+// working directory, where bp_ipc lives (PackMarkerIconPath).
+static bool FlightIconPath(size_t k, std::string& gmlPath, std::string& absolutePath)
+{
+    if (k >= ForgePact::FlightCharmIcons::kIconCount) return false;
+    const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+    const std::string dir = IPC_DIR + "\\flightcharms";
+    const std::string file = dir + "\\" + icon.file;
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (!f) return false;
+            f.write(reinterpret_cast<const char*>(icon.data), static_cast<std::streamsize>(icon.size));
+            if (!f) return false;
+        }
+    } catch (...) { return false; }
+    gmlPath = std::string("bp_ipc\\flightcharms\\") + icon.file;
+    absolutePath = file;
+    return true;
+}
+
+// All six, once a session: sprite_add with the relative path first and the
+// absolute one second, the origin at the embedded size's centre, re-centred
+// when a player's PNG is another size (PackMarkers::LoadIcons).
+static void FlightIconsLoad()
+{
+    if (g_FlightIconsTried) return;
+    g_FlightIconsTried = true;
+    std::string failed;
+    for (size_t k = 0; k < ForgePact::FlightCharmIcons::kIconCount; ++k) {
+        const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+        std::string relative, absolute;
+        if (FlightIconPath(k, relative, absolute)) {
+            for (const std::string* path : { &relative, &absolute }) {
+                try {
+                    const RValue r = g_Yytk->CallBuiltin("sprite_add", { RValue(path->c_str()), RValue(1.0), RValue(0.0), RValue(0.0),
+                                                                         RValue(std::floor(icon.width / 2.0)), RValue(std::floor(icon.height / 2.0)) });
+                    const bool usable = r.m_Kind == VALUE_REAL || r.m_Kind == VALUE_INT32 || r.m_Kind == VALUE_INT64 || r.m_Kind == VALUE_REF;
+                    const double idx = usable ? r.ToDouble() : -1.0;
+                    if (!std::isfinite(idx) || idx < 0) continue;
+                    g_FlightIconSprite[k] = r;
+                    g_FlightIconOk[k] = true;
+                    const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
+                    const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
+                    if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && (w != icon.width || h != icon.height))
+                        g_Yytk->CallBuiltin("sprite_set_offset", { RValue(idx), RValue(std::floor(w / 2)), RValue(std::floor(h / 2)) });
+                    break;
+                } catch (...) {}
+            }
+        }
+        if (!g_FlightIconOk[k]) {
+            g_FlightIconsFailed = true;
+            failed += (failed.empty() ? "" : ", ") + std::string(icon.file);
+        } else if (icon.ground) {
+            g_FlightGroundReady = true;
+        }
+    }
+    if (!failed.empty())
+        Out("flightcharm: icons failed - " + failed + " did not load; those charms keep the game's own icon");
+}
+
+static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)
+{
+    if (g_TruthDepth != 0) return;
+    RValue info;
+    if (!FlightField(item, "itemInfoStruct", info)) return;
+    const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
+    try {
+        if (g_FlightDressFootprint) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue((double)row.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue((double)row.h) });
+        }
+        FlightIconsLoad();
+        const size_t k = FlightIconIndex(rolled.charm, false);
+        if (k >= ForgePact::FlightCharmIcons::kIconCount) return;
+        if (g_FlightIconOk[k])
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), g_FlightIconSprite[k] });
+    } catch (...) {}
+}
+
+// The shared LootGroundInit detour's third consumer, after the game's own
+// call returned. The ground item is identified by what it is: a flight
+// charm's seed, and our own bag icon under "11", which only our dressing
+// writes (a sidecar entry that claimed the seed leaves the game's icon).
+// Argument 0 is the new ground instance (measured: hidden loot's Live 3,
+// RDM § 16.11); its kind is never checked, the runner hands a reference.
+static void FlightCharmOnGroundInit(int argc, RValue** A)
+{
+    if (!g_FlightGroundReady) return;
+    if (argc < 1 || !A || !A[0]) return;
+    try {
+        const RValue& ground = *A[0];
+        const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { ground, RValue(field) }).ToBoolean()) return;
+        const RValue item = g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue(field) });
+        FcNs::Rolled rolled;
+        if (!FlightCharmOf(item, rolled)) return;
+        const size_t bag = FlightIconIndex(rolled.charm, false);
+        const size_t k = FlightIconIndex(rolled.charm, true);
+        if (bag >= ForgePact::FlightCharmIcons::kIconCount || k >= ForgePact::FlightCharmIcons::kIconCount) return;
+        if (!g_FlightIconOk[bag] || !g_FlightIconOk[k]) return;
+        RValue info, shown;
+        if (!FlightField(item, "itemInfoStruct", info) || !FlightField(info, "11", shown)) return;
+        if (shown.ToDouble() != g_FlightIconSprite[bag].ToDouble()) return;
+        g_Yytk->CallBuiltin("variable_instance_set", { ground, RValue("sprite_index"), g_FlightIconSprite[k] });
+        ++g_FlightGround;
+    } catch (...) {}
+}
+
+// ---- the size guard ----
+// What it takes to place a held-back charm again: the call's self and other,
+// its arguments as they came (the grid, the item, the cell's column and row,
+// and the flags; static reading), and the charm's name and cell for the log.
+struct FlightGuardPending {
+    CInstance* self = nullptr;
+    CInstance* other = nullptr;
+    std::vector<RValue> args;
+    RValue item;
+    std::string name;
+    long long x = -1;
+    long long y = -1;
+};
+static FcNs::SizeGuard<FlightGuardPending> g_FlightGuard;
+static PFUNC_YYGMLScript g_Orig_FlightParseItemToGrid = nullptr;
+static PFUNC_YYGMLScript g_Orig_FlightGridAddItemPos = nullptr;
+static bool g_FlightGuardTried = false;
+static bool g_FlightGuardOn = false;   // both hooks in, both routes
+
+static bool FlightGuardHolds(std::string_view runtimeName)
+{
+    if (runtimeName == HeroSiege::Scripts::gml_Script_ParseItemToGrid) return g_Orig_FlightParseItemToGrid != nullptr;
+    if (runtimeName == HeroSiege::Scripts::gml_Script_InventoryGridAddItemPos) return g_Orig_FlightGridAddItemPos != nullptr;
+    return false;
+}
+
+// The footprint the item carries now: "2" and "3", 1 where absent.
+static bool FlightItemFootprint(const RValue& item, int& w, int& h)
+{
+    RValue info;
+    if (!FlightField(item, "itemInfoStruct", info)) return false;
+    double dw = 1, dh = 1;
+    if (!FlightNumber(info, "2", dw)) dw = 1;
+    if (!FlightNumber(info, "3", dh)) dh = 1;
+    w = (int)dw;
+    h = (int)dh;
+    return true;
+}
+
+// The load ended: place each held-back charm at its full footprint through
+// the original, or, refused, at 1x1 in its own cell (1x1 under "2" and "3",
+// the hash refreshed, the struct tagged), and say which.
+static void FlightGuardClose()
+{
+    const auto place = [](const FlightGuardPending& p) -> bool {
+        if (!g_Orig_FlightGridAddItemPos) return false;
+        std::vector<RValue> args = p.args;
+        std::vector<RValue*> ptrs;
+        for (RValue& a : args) ptrs.push_back(&a);
+        RValue res;
+        g_Orig_FlightGridAddItemPos(p.self, p.other, res, (int)ptrs.size(), ptrs.data());
+        return res.ToBoolean();
+    };
+    const auto shrinkAndPlace = [&place](const FlightGuardPending& p) -> bool {
+        RValue info;
+        if (!FlightField(p.item, "itemInfoStruct", info)) return false;
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue(1.0) });
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue(1.0) });
+        RefreshItemHash(p.item);
+        g_Yytk->CallBuiltin("variable_struct_set", { p.item, RValue(std::string(FcNs::kGuardTag)), RValue(true) });
+        return place(p);
+    };
+    const auto report = [](const FlightGuardPending& p, FcNs::GuardOutcome o) {
+        const std::string line = FcNs::GuardLine(p.name, p.x, p.y, o);
+        if (!line.empty()) Out(line);
+    };
+    g_FlightGuard.Close(place, shrinkAndPlace, report);
+}
+
+static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_FlightGuardOn) return g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
+    g_FlightGuard.Open();
+    try {
+        RValue& r = g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
+        FlightGuardClose();
+        return r;
+    } catch (...) {
+        FlightGuardClose();
+        throw;
+    }
+}
+
+// Inside a load, a flight charm whose footprint is larger than 1x1 is held
+// back and the call answers true (the load ignores the answer; RDM § 22.6).
+// Every other call, and every call outside a load, is the game's own.
+static RValue& Hook_FlightGridAddItemPos(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_FlightGuardOn && g_FlightGuard.Depth() > 0 && argc >= 4 && A && A[1]) {
+        try {
+            FcNs::Rolled rolled;
+            int w = 1, h = 1;
+            if (FlightCharmOf(*A[1], rolled) && FlightItemFootprint(*A[1], w, h)) {
+                FlightGuardPending p;
+                p.self = S;
+                p.other = O;
+                for (int i = 0; i < argc; ++i) p.args.push_back(A[i] ? *A[i] : RValue());
+                p.item = *A[1];
+                p.name = std::string(FcNs::RowOf(rolled.charm).name);
+                const double x = A[2] ? A[2]->ToDouble() : -1.0, y = A[3] ? A[3]->ToDouble() : -1.0;
+                p.x = std::isfinite(x) ? (long long)x : -1;
+                p.y = std::isfinite(y) ? (long long)y : -1;
+                if (g_FlightGuard.Defer(p, true, w, h)) {
+                    R = RValue(true);
+                    return R;
+                }
+            }
+        } catch (...) {}
+    }
+    return g_Orig_FlightGridAddItemPos(S, O, R, argc, A);
+}
+
+// Both hooks by their SDK names, with the Custom Forge's own. Anything short
+// of both routes on both turns the guard off and says so: a table-only hook
+// is passed by the game's compiled calls, so it would guard nothing.
+static void FlightGuardInstall()
+{
+    if (g_FlightGuardTried) return;
+    g_FlightGuardTried = true;
+    bool parseNative = false, addNative = false;
+    const bool parse = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ParseItemToGrid), "fp_flight_parsegrid",
+                                     (PVOID)Hook_FlightParseItemToGrid, &g_Orig_FlightParseItemToGrid, &parseNative);
+    const bool add = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddItemPos), "fp_flight_gridaddpos",
+                                   (PVOID)Hook_FlightGridAddItemPos, &g_Orig_FlightGridAddItemPos, &addNative);
+    g_FlightGuardOn = parse && add && parseNative && addNative;
+    if (g_FlightGuardOn) return;
+    const auto route = [](bool ok, bool native) { return std::string(!ok ? "not installed" : native ? "both routes" : "TABLE-ONLY"); };
+    Out("flightcharm: size guard refused - ParseItemToGrid " + route(parse, parseNative) + ", InventoryGridAddItemPos "
+        + route(add, addNative) + "; the guard stays off, so a charm whose full size does not fit after a load may be left off its grid");
+}
+
+// `flightcharm stat`: the core's line. The drop fields read off until the
+// drop switches exist. The state is refreshed first, with the frame counter
+// every frame advances: a player standing still makes no hooked call, so the
+// last query's state could predate an equip. Before arming it reads nothing.
+static FcNs::StatFields FlightCharmStatFields()
+{
+    FcNs::StatFields s;
+    RValue player;
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, HhResolveLocalPlayer(player));
+    g_Flight.FillStat(s);
+    s.icons = !g_FlightIconsTried ? "not-loaded" : (g_FlightIconsFailed ? "failed" : "loaded");
+    s.ground = g_FlightGround;
+    g_FlightGuard.FillStat(s);
+    return s;
+}
+
+// `flightcharm elf|wings|broom 1|0 | stat`, a player command in both builds.
+static void FlightCharmCommand(const std::string& rest)
+{
+    std::vector<std::string> args;
+    {
+        std::istringstream in(Lower(rest));
+        std::string word;
+        while (in >> word) args.push_back(word);
+    }
+    FcNs::Command c;
+    std::string why;
+    if (!FcNs::ParseCommand(args, c, why)) { Out(why); return; }
+    if (c.form == FcNs::CommandForm::Switch) {
+        Out(FcNs::RefusedLine("the " + std::string(FcNs::RowOf(c.charm).key) + " drop switch is not available in this build"));
+        return;
+    }
+    Out(FcNs::StatLine(FlightCharmStatFields()));
+}
+// ---- end of the flight charms forge adapter ------------------------------------
+
 static void InstallCustomForgeItemHooks()
 {
     if (g_CustomForgeHooksAttempted || g_CustomForgeEntries.empty()) return;
@@ -21551,6 +22011,9 @@ static void InstallCustomForgeItemHooks()
     for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
         if (!entry.affix.empty() || !entry.mechanic.empty()) { InstallForgedTooltipHooks(); break; }
     }
+    // The flight charms' size guard (ForgePact #158): the dressing it protects
+    // is unconditional, and a save loads before any tick could arm anything.
+    FlightGuardInstall();
     WriteCustomForgeStatus(g_CustomForgeHooksActive ? "runtime hooks installed"
                                                      : "runtime hook installation failed");
 }
@@ -31151,6 +31614,14 @@ static void CpInstall(const std::vector<std::string>& filters)
         if (CmHolds(t.runtimeName)) {
             Out(std::string("craftprobe hook: ") + t.label + " held by craftmats (its install owns this function; neither"
                 " detoured nor failed here)");
+            ++held;
+            continue;
+        }
+        // The flight charms' size guard (ForgePact #158) owns ParseItemToGrid
+        // and InventoryGridAddItemPos from setup on, the same way.
+        if (FlightGuardHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by the flight charms' size guard (its install owns this"
+                " function; neither detoured nor failed here)");
             ++held;
             continue;
         }
@@ -52074,7 +52545,9 @@ static void FarSleepCommand(const std::string& rest)
 // script would be refused ("table entry is not code inside Hero_Siege.exe"),
 // so loot announcements install through HiddenLootInstall too, and this one
 // detour hands the call to each consumer in turn - hidden loot, then
-// LootAnnounceOnInit, which returns at once while `lootann` is off.
+// LootAnnounceOnInit, which returns at once while `lootann` is off, then
+// (ForgePact #158) FlightCharmOnGroundInit, which returns at once while no
+// flight charm's ground icon has loaded.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
@@ -52088,6 +52561,9 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
         hl.OnInit(argc > 0 && A && A[0] ? *A[0] : none, argc > 1 && A && A[1] ? *A[1] : none, S ? RValue(S) : none);
     }
     LootAnnounceOnInit(S, argc, A);
+    // The third consumer (ForgePact #158): a flight charm's ground icon, set
+    // after the game picked its sprite; returns at once while none loaded.
+    FlightCharmOnGroundInit(argc, A);
     return result;
 }
 // The one install attempt, on the first switch-on after setup. Both routes
@@ -56684,7 +57160,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips"
+        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -56845,6 +57321,8 @@ static void RunCommand(const std::string& line)
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Jump through scenery: the Mods tab's switch, the same early return.
     if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
+    // Flight charms: the Items tab's drop switches and `stat`, the same early return.
+    if (lc == "flightcharm") { FlightCharmCommand(rest); return; }
     // Loot announcements: the Mods tab's switch, the same early return.
     if (lc == "lootann") { LootAnnounceCommand(rest); return; }
     // Always show Chaos Pillar mods: the Mods tab's switch, the same early return.
