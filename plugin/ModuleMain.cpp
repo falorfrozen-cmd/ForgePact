@@ -54289,10 +54289,24 @@ static RValue FlightLayerArg(int64_t id)
     return it != g_FlightLayerArgs.end() ? it->second : RValue((double)id);
 }
 
+// How the census found layer_get_fx answering, one count per effect read
+// (FlightLayerEffect): a struct (an effect), any other answer (-1, undefined, a
+// number), or a read that threw. The last two both class the layer as no
+// effect, so these counts are what tell "no filter here" from "the read does
+// not work on this runner". Per room visit, for `flightprobe depth`'s `fx=`:
+// a census starts them afresh where it lists the layers.
+struct FlightFxReads {
+    uint64_t effect = 0;
+    uint64_t other = 0;
+    uint64_t failed = 0;
+};
+static FlightFxReads g_FlightFxVisit;
+
 // layer_get_all, each with its layer_get_depth. The census's first read.
 static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)
 {
     g_FlightLayerArgs.clear();
+    g_FlightFxVisit = FlightFxReads{};
     try {
         const RValue layers = g_Yytk->CallBuiltin("layer_get_all", {});
         if (layers.m_Kind != VALUE_ARRAY) return false;
@@ -54331,14 +54345,17 @@ static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)
 
 // Whether the layer carries a layer effect: layer_get_fx answers a struct.
 // Anything else is none; a read that throws fails, which the core also counts
-// as none.
+// as none. Each read lands in exactly one of g_FlightFxVisit's three counts.
 static bool FlightLayerEffect(int64_t id, bool& effect)
 {
     try {
         const RValue fx = g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) });
         effect = fx.m_Kind == VALUE_OBJECT;
+        if (effect) ++g_FlightFxVisit.effect;
+        else ++g_FlightFxVisit.other;
         return true;
     } catch (...) {}
+    ++g_FlightFxVisit.failed;
     return false;
 }
 
@@ -54713,8 +54730,15 @@ static void FlightCharmTick()
 //   - `free [dx dy] [family|<object name>]` asks the shared collision detours'
 //     saved originals of place_meeting and instance_position, as `jumpprobe
 //     free` asks its own: no detour (jumpscenery's or flight's) answers;
-//   - `depth` reads the player's layer and its depth beside the room's two
-//     layer ends, through the flight adapter's own read, and writes nothing;
+//   - `depth` reads the player's layer and its depth beside what this room
+//     visit's census chose (the flight layer, what it went in front of, the
+//     rearmost filter and how the census found layer_get_fx answering), from
+//     the flight adapter's own record; it never runs a census or creates a
+//     layer, and writes nothing;
+//   - `pool` reads the lists both rolls draw from (#74's Angelic element and
+//     lootListUnique[0..4]): their sizes, the Angelic entries the roll can drop,
+//     and the stand-ins' counts by the drop adapter's own rules; it pushes,
+//     records and writes nothing;
 //   - `dress off|on` suspends or restores the footprint write alone, so a
 //     charm can be saved at 1x1 for the size guard's live check;
 //   - `copies <k>` sets how many stand-in copies each switched-on charm pushes
@@ -54729,7 +54753,9 @@ static void FlightCharmTick()
 // Every game name is an hs-game-sdk constant or read back by name; nothing
 // here computes an address or installs a hook of its own.
 
-static constexpr const char* kFlpMarker = "flp1";
+// Replan 2 moved it from flp1, so Live 2's `marker` check proves this probe is
+// the one installed.
+static constexpr const char* kFlpMarker = "flp2";
 // The game's fallback ground sprite when an icon has no Pickup_ companion
 // (RDM § 22.7, static reading), compared by the name sprite_get_name reads.
 static constexpr const char* kFlpErrorSprite = "Error_spr";
@@ -54994,9 +55020,14 @@ static void FlpFree(const std::vector<std::string>& tail)
     Out(line);
 }
 
-// The player's layer and its depth beside the room's two layer ends, the way
-// the flight adapter's census reads them (FlightLayerEnds, GameFrontDepth).
-// The read caches nothing and writes nothing.
+// The player's layer and its depth beside what this room visit's census chose,
+// read from the flight adapter's own record (g_Flight.Visit(), and the
+// adapter's effect-read counts) with the core's own filter rule. The game
+// layers' front end is read as the census reads it (FlightLayerEnds,
+// GameFrontDepth). A visit counts only while it is this room's and its layer
+// still exists under our name, as the check before each write asks; before a
+// census, or in a room the census has not reached yet, the visit's fields read
+// none and 0. Nothing here runs a census, creates or moves a layer, or writes.
 static void FlpDepth()
 {
     const std::string tag = "flightprobe depth: ";
@@ -55015,19 +55046,175 @@ static void FlpDepth()
             if (JsNumber(d)) depthText = FcpNs::NumberText(d.ToDouble());
         }
     } catch (...) {}
-    std::string frontText = "unreadable", backText = "unreadable", end = "unreadable";
     int64_t room = -1;
+    const bool haveRoom = FlightRoom(room);
+    std::string gameFrontText = "unreadable";
     FcNs::LayerEnd first, last;
     double front = 0.0;
-    if (FlightRoom(room) && FlightLayerEnds(room, first, last) && FcNs::GameFrontDepth(first, last, front)) {
-        const bool firstFront = first.depth <= last.depth;
-        frontText = FcpNs::NumberText(front);
-        backText = FcpNs::NumberText((firstFront ? last : first).depth);
-        end = firstFront ? "first" : "last";
+    if (haveRoom && FlightLayerEnds(room, first, last) && FcNs::GameFrontDepth(first, last, front))
+        gameFrontText = FcpNs::NumberText(front);
+
+    const FcNs::FlightLayerVisit& v = g_Flight.Visit();
+    // This room's visit: the census ran here (it reached the layer list only when
+    // it read the game layers' front end, and the fx counts with it).
+    const bool visitHere = haveRoom && v.room >= 0 && v.room == room;
+    // Its layer still exists under our name: the question the core's check
+    // before each write asks (FlightLayerValid, which only the core calls),
+    // asked here again so a room re-entered under the same index reads none.
+    bool layerHere = false;
+    if (visitHere && v.have) {
+        try {
+            const RValue arg = FlightLayerArg(v.layer);
+            if (g_Yytk->CallBuiltin("layer_exists", { arg }).ToBoolean()) {
+                const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+                layerHere = name.m_Kind == VALUE_STRING && name.ToString() == std::string(FcNs::kFlightLayerName);
+            }
+        } catch (...) { layerHere = false; }
     }
-    Out(tag + "layer=" + layerText + " depth=" + depthText + " front=" + frontText + " back=" + backText + " y=" + FcpNs::NumberText(y)
-        + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState())) + " front-end=" + end
-        + " room=" + (room >= 0 ? std::to_string(room) : std::string("unreadable")));
+    std::string flightLayer = "none", flightDepth = "none", frontText = "none", filterText = "none";
+    if (layerHere) {
+        flightLayer = std::to_string(v.layer);
+        flightDepth = FcpNs::NumberText(v.depth);
+        if (v.by >= 0 && v.by < (int)v.layers.size())
+            frontText = v.layers[(size_t)v.by].name + "@" + FcpNs::NumberText(v.layers[(size_t)v.by].depth);
+        else
+            frontText = "game@" + FcpNs::NumberText(v.gameFront);
+    }
+    if (visitHere && v.gameFrontRead) {
+        // The rearmost filter in force: the one with the highest depth, as the
+        // choice takes it, on the elements the last re-choice counted.
+        const FcNs::RoomLayer* rearmost = nullptr;
+        for (const FcNs::RoomLayer& l : v.layers)
+            if (FcNs::IsFilterLayer(l, v.gameFront) && (!rearmost || l.depth > rearmost->depth)) rearmost = &l;
+        if (rearmost) filterText = rearmost->name + "@" + FcpNs::NumberText(rearmost->depth);
+    }
+    const bool counted = visitHere && v.gameFrontRead;
+    const std::string fx = counted ? std::to_string(g_FlightFxVisit.effect) + "/" + std::to_string(g_FlightFxVisit.other) + "/"
+                                         + std::to_string(g_FlightFxVisit.failed)
+                                   : std::string("0/0/0");
+    char ms[32];
+    std::snprintf(ms, sizeof ms, "%.2f", visitHere && std::isfinite(v.censusMs) ? v.censusMs : 0.0);
+    Out(tag + "layer=" + layerText + " depth=" + depthText + " flight-layer=" + flightLayer + " flight-depth=" + flightDepth
+        + " front=" + frontText + " game-front=" + gameFrontText + " filter=" + filterText + " fx=" + fx
+        + " layers=" + std::to_string(visitHere ? v.listed : 0) + " census-ms=" + ms
+        + " moves=" + std::to_string(visitHere ? v.moves : 0) + " y=" + FcpNs::NumberText(y)
+        + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState()))
+        + " room=" + (haveRoom ? std::to_string(room) : std::string("unreadable")));
+}
+
+// Whether the Angelic roll can drop an entry: its repository definition, by
+// name, has rarity ("27" of itemBaseInfoStruct) 7 or 10 and is not flagged
+// hidden ("40"), the roll's own two filters (RDM § 13.4, static reading). The
+// caller holds FlightDropOutsideRoll, so #74's typing hook records nothing.
+static bool FlpAngelicDroppable(const double t[3])
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue(t[0]), RValue(t[1]), RValue(t[2]) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double rarity = -1.0;
+        if (!TryStructNumber(info, "27", rarity)) return false;
+        const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+        bool hidden = false;
+        try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
+        return (rarity == 7.0 || rarity == 10.0) && !hidden;
+    } catch (...) { return false; }
+}
+
+// `pool`: the lists both rolls draw from, read and never written. The Angelic
+// element is the one #74's resolution names (g_SigListName[g_SigListIndex]),
+// read directly so that no resolution state is recorded; `droppable=` is T, the
+// entries the roll's re-draw can end on (each distinct entry asked once). The
+// stand-ins' counts follow the drop adapter's own rules on its own stand-ins:
+// Water Melon's and Soul Collector's as FlightDropCountAngelic counts them, and
+// Pocket Elf's stand-in as FlightDropResolveElf picks it (the core's even-count
+// rule over the candidates that pass the unique roll's filter), from the lists
+// as they are now. Refused while a roll's entries are on a list.
+static void FlpPool()
+{
+    const std::string tag = "flightprobe pool: ";
+    if (g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0) {
+        Out(tag + "refused a roll's stand-in entries are on the lists; nothing read");
+        return;
+    }
+    std::string why;
+    RValue instance;
+    if (!SignatureController(instance, why)) { Out(tag + "refused " + why); return; }
+    const std::string where = "Controller_obj." + g_SigListName + "[" + std::to_string(g_SigListIndex) + "]";
+    RValue sub;
+    double id = -1.0;
+    int size = -1;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(g_SigListName) }).ToBoolean()) {
+            Out(tag + "refused Controller_obj has no variable " + g_SigListName);
+            return;
+        }
+        const RValue outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { Out(tag + "refused Controller_obj." + g_SigListName + " is not an array"); return; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (g_SigListIndex < 0 || g_SigListIndex >= len) {
+            Out(tag + "refused Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements");
+            return;
+        }
+        sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)g_SigListIndex) });
+        std::string step;
+        if (!SigListHandle(sub, id, step)) { Out(tag + "refused " + where + " is not a ds_list (" + step + ")"); return; }
+        size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { Out(tag + "refused reading " + where + " threw"); return; }
+
+    const FcNs::StandIn* melon = FcNs::StandInFor(FcNs::Charm::Wings);
+    const FcNs::StandIn* soul = FcNs::StandInFor(FcNs::Charm::Broom);
+    const auto same = [](const double t[3], const FcNs::StandIn* s) {
+        return s && t[0] == (double)s->t && t[1] == (double)s->sub && t[2] == (double)s->b;
+    };
+    int droppable = 0, melonN = 0, soulN = 0;
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> counts{};
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool undersized = false;   // not `small`: the Windows headers define it as a macro
+    {
+        FlightDropOutsideRoll outside;
+        std::map<std::array<double, 3>, bool> asked;
+        for (int e = 0; e < size; ++e) {
+            double t[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(sub, e, t)) continue;
+            if (same(t, melon)) ++melonN;
+            if (same(t, soul)) ++soulN;
+            const std::array<double, 3> key = { t[0], t[1], t[2] };
+            auto it = asked.find(key);
+            if (it == asked.end()) it = asked.emplace(key, FlpAngelicDroppable(t)).first;
+            if (it->second) ++droppable;
+        }
+
+        RValue subs[FcNs::kUniqueSubLists];
+        if (!FlightDropReadUniqueLists(subs, ids, sizes, why)) { Out(tag + "refused " + why); return; }
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+            if (sizes[k] < kSigListMinSize) undersized = true;
+            for (int e = 0; e < sizes[k]; ++e) {
+                double t[3] = { 0.0, 0.0, 0.0 };
+                if (!SigEntry(subs[k], e, t)) continue;
+                for (int c = 0; c < FcNs::kElfCandidateCount; ++c)
+                    if (same(t, &FcNs::kElfCandidates[c])) ++counts[c].counts[k];
+            }
+        }
+        for (int c = 0; c < FcNs::kElfCandidateCount; ++c) counts[c].passes = FlightDropUniquePasses(FcNs::kElfCandidates[c]);
+    }
+    // A sub-list under the adapter's minimum is one it refuses to resolve, so it
+    // names no stand-in either.
+    const int pick = undersized ? -1 : FcNs::PickElfStandIn(counts);
+    const std::string standIn = undersized ? std::string("none") : FcNs::ElfStandInText(true, pick, counts);
+    std::string countsText = "none";
+    if (pick >= 0) {
+        countsText.clear();
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k)
+            countsText += (k ? "," : "") + std::to_string(counts[pick].counts[k]);
+    }
+    std::string sizesText;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) sizesText += (k ? "," : "") + std::to_string(sizes[k]);
+    Out(tag + "angelic list=" + g_SigListName + "[" + std::to_string(g_SigListIndex) + "]" + " size=" + std::to_string(size)
+        + " droppable=" + std::to_string(droppable) + " water-melon=" + std::to_string(melonN) + " soul-collector=" + std::to_string(soulN)
+        + " | unique sizes=" + sizesText + " standin-elf=" + standIn + " counts=" + countsText);
 }
 
 // `dress off|on`: the footprint write of the Custom Forge's final pass
@@ -55124,7 +55311,7 @@ static void FlpStat()
 static void FlpUsage()
 {
     Out(std::string("flightprobe: marker=") + kFlpMarker);
-    Out("  spawn elf|wings|broom [<p> <m> | <s>] | ground | free [dx dy] [family|<object name>] | depth | dress off|on"
+    Out("  spawn elf|wings|broom [<p> <m> | <s>] | ground | free [dx dy] [family|<object name>] | depth | pool | dress off|on"
         " | copies <k 1-" + std::to_string(kFlpMaxCopies) + "> | unique <n 1-" + std::to_string(kFlpMaxUnique) + "> | stat"
         "   research instrument for the flight charms, docs/flight-charms-research.md (research build only)");
 }
@@ -55140,6 +55327,7 @@ static void FlpCommand(const std::string& rest)
     if (sub == "ground") { FlpGround(); return; }
     if (sub == "free") { FlpFree(tail); return; }
     if (sub == "depth") { FlpDepth(); return; }
+    if (sub == "pool") { FlpPool(); return; }
     if (sub == "dress") { FlpDress(tail); return; }
     if (sub == "copies") { FlpCopies(tail); return; }
     if (sub == "unique") { FlpUnique(tail); return; }

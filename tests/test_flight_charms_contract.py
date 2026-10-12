@@ -1144,6 +1144,7 @@ PROBE = {
     "dress": "static void FlpDress(const std::vector<std::string>& tail)",
     "copies": "static void FlpCopies(const std::vector<std::string>& tail)",
     "unique": "static void FlpUnique(const std::vector<std::string>& tail)",
+    "pool": "static void FlpPool()",
     "stat": "static void FlpStat()",
 }
 
@@ -1198,13 +1199,19 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn("if (tok.empty()) { FlpUsage(); return; }", command)
         for form, handler in (("spawn", "FlpSpawn(tail);"), ("ground", "FlpGround();"), ("free", "FlpFree(tail);"),
                               ("depth", "FlpDepth();"), ("dress", "FlpDress(tail);"), ("copies", "FlpCopies(tail);"),
-                              ("unique", "FlpUnique(tail);"), ("stat", "FlpStat();")):
+                              ("unique", "FlpUnique(tail);"), ("pool", "FlpPool();"), ("stat", "FlpStat();")):
             with self.subTest(form=form):
                 self.assertIn('if (sub == "%s") { %s return; }' % (form, handler), command)
-        self.assertIn('static constexpr const char* kFlpMarker = "flp1";', self.code)
+        # Replan 2 moved the marker, so Live 2's `marker` check proves the new probe is installed.
+        self.assertIn('static constexpr const char* kFlpMarker = "flp2";', self.code)
+        self.assertNotIn('"flp1"', self.code)
         usage = self.body("usage")
         self.assertIn('Out(std::string("flightprobe: marker=") + kFlpMarker);', usage)
         self.assertLess(usage.index("marker="), usage.index("spawn elf|wings|broom"))
+        # The bare usage line names both of replan 2's forms.
+        for form in ("| depth |", "| pool |"):
+            with self.subTest(usage=form):
+                self.assertIn(form, usage)
 
     # ---- spawn and ground ----------------------------------------------------------------------
 
@@ -1266,8 +1273,97 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertNotIn("variable_instance_set", depth)
         # The probe never runs a census or creates a layer itself.
         for call in ('"layer_create"', '"layer_depth"', '"layer_get_all"', '"layer_get_fx"', "FlightLayerPlace(",
-                     "FlightLayerAll(", "g_Flight.OnUpdateDepth("):
+                     "FlightLayerAll(", "FlightLayerDetail(", "FlightLayerEffect(", "FlightLayerCount(",
+                     "FlightLayerMove(", "g_Flight.OnUpdateDepth("):
             self.assertNotIn(call, depth)
+
+    def test_depth_replies_with_what_the_adapters_census_chose(self):
+        depth = self.body("depth")
+        # Replan 2's reply, every field in order.
+        fields = ('"flightprobe depth: "', '"layer="', '" depth="', '" flight-layer="', '" flight-depth="', '" front="',
+                  '" game-front="', '" filter="', '" fx="', '" layers="', '" census-ms="', '" moves="', '" y="',
+                  '" state="', '" room="')
+        at = -1
+        for field in fields:
+            with self.subTest(field=field):
+                self.assertIn(field, depth)
+                self.assertGreater(depth.index(field), at, "out of order")
+                at = depth.index(field)
+        # It reads the census's own record: the visit, its choice, and the core's own filter rule.
+        self.assertIn("g_Flight.Visit()", depth)
+        self.assertIn("v.by", depth)
+        self.assertIn("v.moves", depth)
+        self.assertIn("v.censusMs", depth)
+        self.assertIn("v.listed", depth)
+        self.assertIn("FcNs::IsFilterLayer(l, v.gameFront)", depth)
+        self.assertIn('"game@"', depth)
+        # The visit's flight layer counts only while it is this room's and still ours.
+        self.assertIn("v.room == room", depth)
+        self.assertIn("FlightLayerArg(v.layer)", depth)
+        self.assertIn('"layer_exists"', depth)
+        self.assertIn("std::string(FcNs::kFlightLayerName)", depth)
+        self.assertLess(depth.index('"layer_exists"'), depth.index('"layer_get_name"'))
+        # fx= is the census's own sort of its layer_get_fx reads, kept by the adapter.
+        self.assertIn("g_FlightFxVisit.effect", depth)
+        self.assertIn("g_FlightFxVisit.other", depth)
+        self.assertIn("g_FlightFxVisit.failed", depth)
+        # The adapter sorts every effect read three ways where it makes it, and a census starts the
+        # visit's counts afresh where it lists the layers.
+        effect = strip_comments(function_body(self.plugin, "static bool FlightLayerEffect(int64_t id, bool& effect)"))
+        self.assertIn("++g_FlightFxVisit.effect", effect)
+        self.assertIn("++g_FlightFxVisit.other", effect)
+        self.assertIn("++g_FlightFxVisit.failed", effect)
+        self.assertLess(effect.index("catch (...)"), effect.index("++g_FlightFxVisit.failed"))
+        listing = strip_comments(function_body(self.plugin, "static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)"))
+        self.assertIn("g_FlightFxVisit = FlightFxReads{};", listing)
+        self.assertLess(listing.index("g_FlightFxVisit = FlightFxReads{};"), listing.index("try {"))
+
+    def test_pool_reads_both_rolls_lists_and_writes_nothing(self):
+        pool = self.body("pool")
+        for field in ('"flightprobe pool: "', '"angelic list="', '" size="', '" droppable="', '" water-melon="',
+                      '" soul-collector="', '" | unique sizes="', '" standin-elf="', '" counts="'):
+            with self.subTest(field=field):
+                self.assertIn(field, pool)
+        self.assertIn('"refused "', pool)
+        # The lists the rolls read: #74's Angelic element by its name and index, and lootListUnique[0..4].
+        self.assertIn("SignatureController(instance, why)", pool)
+        self.assertIn("g_SigListName", pool)
+        self.assertIn("g_SigListIndex", pool)
+        self.assertIn("SigListHandle(sub, id, step)", pool)
+        self.assertIn("FlightDropReadUniqueLists(subs, ids, sizes, why)", pool)
+        self.assertIn("SigEntry(sub, e, t)", pool)
+        # The adapter's own stand-ins and its even-count rule.
+        self.assertIn("FcNs::StandInFor(FcNs::Charm::Wings)", pool)
+        self.assertIn("FcNs::StandInFor(FcNs::Charm::Broom)", pool)
+        self.assertIn("FcNs::kElfCandidates[c]", pool)
+        self.assertIn("FlightDropUniquePasses(FcNs::kElfCandidates[c])", pool)
+        self.assertIn("FcNs::PickElfStandIn(counts)", pool)
+        self.assertIn("FcNs::ElfStandInText(true, pick, counts)", pool)
+        # Droppable: the Angelic roll's own two filters on the repository definition, read by name
+        # outside any roll, so #74's typing hook records nothing.
+        self.assertIn("FlpAngelicDroppable(t)", pool)
+        self.assertIn("FlightDropOutsideRoll outside;", pool)
+        droppable = strip_comments(function_body(self.block, "static bool FlpAngelicDroppable(const double t[3])"))
+        self.assertIn("HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct", droppable)
+        self.assertIn('RValue("itemBaseInfoStruct")', droppable)
+        self.assertIn('TryStructNumber(info, "27", rarity)', droppable)
+        self.assertIn('RValue("40")', droppable)
+        self.assertIn("rarity == 7.0 || rarity == 10.0", droppable)
+        # Refused while a roll's entries are on a list, since its sizes would count them.
+        self.assertIn("g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0", pool)
+        self.assertLess(pool.index("g_SigRollPushed > 0"), pool.index("SignatureController("))
+        # Read-only: nothing pushed, written, resolved or recorded.
+        for call in ("ds_list_add", "ds_list_insert", "ds_list_delete", "ds_list_replace", "ds_list_set",
+                     "variable_instance_set", "variable_struct_set", "array_set", "FlightDropPushOnto(",
+                     "SignatureListResolve(", "FlightDropResolveElf(", "FlightDropResolveAngelic(",
+                     "FlightDropCountAngelic(", "BuildAngelicPool(", "g_FlightDrop.elf", "g_FlightDrop.angelic",
+                     "g_SigList"):
+            with self.subTest(forbidden=call):
+                if call == "g_SigList":
+                    self.assertIsNone(re.search(r"\bg_SigList(?!Name\b|Index\b)\w*\s*=(?!=)", pool))
+                    continue
+                self.assertNotIn(call, pool)
+                self.assertNotIn(call, droppable)
 
     # ---- dress, copies, unique, stat -------------------------------------------------------------
 
