@@ -413,8 +413,8 @@ class JumpProbeContract(unittest.TestCase):
 
     def test_free_asks_the_saved_originals_never_the_lever(self):
         command = self.body("static void JpCommand(")
-        self.assertIn('if (sub == "free") { JpFree(); return; }', command)
-        free = self.body("static void JpFree()")
+        self.assertIn('if (sub == "free") { JpFree(tail); return; }', command)
+        free = self.body("static void JpFree(const std::vector<std::string>& tail)")
         meeting = free.index("meeting.orig(met, g_JpPlayer, g_JpPlayer, 3, meetArgs);")
         position = free.index("position.orig(at, g_JpPlayer, g_JpPlayer, 3, posArgs);")
         # Before `hook` there is no saved original: it refuses first.
