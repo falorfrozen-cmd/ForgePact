@@ -7,19 +7,19 @@ monster in a zone of an act, a Piece of <boss>'s Soul of that act rolls too, at
 (9,000, measured in Live procedure 1, so 1 in 7,200): five quarters of the
 gem's chance on the same roll. A piece is the game's own Edible PAS Logo marked
 by the seed 777100 + act. Right-clicking it in the backpack and confirming
-opens a portal beside the player to that act's boss room (`Act_0N_Boss`), from
-a town or any zone of an act; it is refused off, in a room with no act, and in
-a `_Boss`, `Uber_` or `Dev_` room.
+moves the player straight into that act's boss room (`Act_0N_Boss`), from a
+town or any zone of an act; it is refused off, in a room with no act, and in a
+`_Boss`, `Uber_` or `Dev_` room.
 
-The baseline class pins the mod off as the vanilla game: no drop and no portal
+The baseline class pins the mod off as the vanilla game: no drop and no transfer
 for any input, and a fresh state that is off; and the act that `RoomActIndex`
 answered as Live procedure 1 measured it (the answer is the act, 1.0 in
 Town_01_rm and Act_01_01, 2.0 in Act_02_01). The target class pins the chance at
 the measured rate and every refusal: forced drops that skip the chance but never
 the eligibility, a boss's own death, a source that is not a monster, towns and
-boss rooms, the use's portal in towns and zones and its refusals, the portal's
-target and place, all nine acts named (Act 7 Mevius), the base, and the seed
-round trip.
+boss rooms, the use's transfer from towns and zones and its refusals, the
+transfer's target and its counts, all nine acts named (Act 7 Mevius), the base,
+and the seed round trip.
 
 The header is compiled five times. Once as written, where every scenario must
 pass. Then four negative controls, each a one-line change to the header that
@@ -28,7 +28,7 @@ the mod-off gates removed (the baselines that pin off fail), the act read as
 `RoomActIndex`'s answer plus one (the first plan's mistake, which Live
 procedure 1 measured: the act baseline fails), the piece's chance replaced by
 the gem's own (the chance target fails), and the use's boss-room refusal
-removed (the use-refusal target fails while the portal target still passes).
+removed (the use-refusal target fails while the transfer target still passes).
 """
 import os
 import shutil
@@ -61,11 +61,11 @@ GEM_CHANCE = "return roll < 1.0 / gemRate ? DropVerdict::Hit : DropVerdict::Miss
 # The use's boss-room refusal; the fourth negative control removes it.
 USE_BOSS_ROOM_GATE = "if (IsBossRoom(room)) return UseVerdict::BossRoom;"
 
-OFF_BASELINES = ("baseline/off-never-drops", "baseline/off-never-opens-a-portal")
+OFF_BASELINES = ("baseline/off-never-drops", "baseline/off-never-transfers")
 ACT_BASELINE = "baseline/room-act-index-is-the-act"
 BASELINES = OFF_BASELINES + (ACT_BASELINE, "baseline/default-off")
 CHANCE = "target/chance-five-quarters"
-USE_PORTAL = "target/use-opens-a-portal-in-towns-and-zones"
+USE_TRANSFER = "target/use-transfers-from-towns-and-zones"
 USE_REFUSED = "target/use-refused-when-off-outside-acts-and-in-boss-rooms"
 TARGETS = (
     CHANCE,
@@ -73,9 +73,9 @@ TARGETS = (
     "target/boss-kill-never-drops",
     "target/not-monster-never-drops",
     "target/town-and-boss-rooms-refused",
-    USE_PORTAL,
+    USE_TRANSFER,
     USE_REFUSED,
-    "target/portal-target-is-the-act-boss-room",
+    "target/transfer-target-is-the-act-boss-room",
     "target/every-act-has-a-boss",
     "target/seed-round-trip",
     "target/base-is-the-edible-pas-logo",
@@ -199,9 +199,9 @@ class SoulPieceBaselineTests(_Scenarios):
         """Off: `off` for every room, act, source, rate and roll, forced or not; the same input on drops."""
         self.assertScenario("baseline/off-never-drops")
 
-    def test_mod_off_never_opens_a_portal(self):
-        """Off: `off` for every room, room act and piece act; the same piece on, in town, opens a portal."""
-        self.assertScenario("baseline/off-never-opens-a-portal")
+    def test_mod_off_never_transfers(self):
+        """Off: `off` for every room, room act and piece act; the same piece on, in town, transfers."""
+        self.assertScenario("baseline/off-never-transfers")
 
     def test_room_act_index_answer_is_the_act(self):
         """1.0 in Town_01_rm and Act_01_01 is act 1, 2.0 in Act_02_01 act 2 (Live procedure 1); undefined,
@@ -220,7 +220,7 @@ class SoulPieceBaselineTests(_Scenarios):
 
 
 class SoulPieceTargetTests(_Scenarios):
-    """The mod on: the chance at the measured rate, the portal and every refusal."""
+    """The mod on: the chance at the measured rate, the transfer and every refusal."""
 
     def test_chance_is_five_quarters_of_the_gem_rate(self):
         """D = floor(G x 4 / 5): 7,200 for the measured 9,000, 8,000 for 10,000, 8,800 for 11,000, at least 1,
@@ -245,21 +245,23 @@ class SoulPieceTargetTests(_Scenarios):
         """Town_ is `town`; _Boss, Uber_ and Dev_ rooms are `boss-room`; no act is `no-act`; zones, dungeons and rifts drop."""
         self.assertScenario("target/town-and-boss-rooms-refused")
 
-    def test_use_opens_a_portal_in_towns_and_zones(self):
-        """A piece of any act opens a portal from every town and every zone of an act."""
-        self.assertScenario(USE_PORTAL)
+    def test_use_transfers_from_towns_and_zones(self):
+        """A piece of any act transfers from every town and every zone of an act."""
+        self.assertScenario(USE_TRANSFER)
 
     def test_use_refused_when_off_outside_acts_and_in_boss_rooms(self):
         """In order: `off`, `not-piece`, `no-act` (boss rooms, uber realms, Satanic Zone), `boss-room` (_Boss,
-        Uber_, Dev_ rooms that have an act), each beside an input that opens a portal."""
+        Uber_, Dev_ rooms that have an act), each beside an input that transfers."""
         self.assertScenario(USE_REFUSED)
 
     def test_negative_control_use_refusal_fails_without_the_boss_room_rule(self):
-        self.assertOnlyThese(self.boss_room_use, (USE_REFUSED,), "a core that opens portals in boss rooms")
+        self.assertOnlyThese(self.boss_room_use, (USE_REFUSED,), "a core that transfers from boss rooms")
 
-    def test_portal_target_is_the_act_boss_room(self):
-        """Act_01_Boss .. Act_09_Boss by act; 96 px to the right, mirrored left past the room's width."""
-        self.assertScenario("target/portal-target-is-the-act-boss-room")
+    def test_transfer_target_is_the_act_boss_room(self):
+        """Act_01_Boss .. Act_09_Boss by act, none without one; a carried-out transfer counts by act, as
+        `fresh` when the boss room answered a saved state before the reset and as `cleared` when it was gone
+        after it; one that was not carried out counts as failed whatever the zone-state answers were."""
+        self.assertScenario("target/transfer-target-is-the-act-boss-room")
 
     def test_every_act_has_a_boss_including_mevius(self):
         self.assertScenario("target/every-act-has-a-boss")

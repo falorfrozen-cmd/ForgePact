@@ -3942,6 +3942,12 @@ static volatile long g_CustomForgeMechanicTags = 0;
 // freed (walking them at the main menu crashed the game, 2026-09-05).
 static std::atomic<bool> g_TyItemTagged{ false };
 static std::atomic<bool> g_BeItemTagged{ false };   // same, for mechanic=beacon
+// Boss soul pieces (ForgePact #197): set the first time the dress recognises a
+// piece (mechanic=soulpiece), so the mod's use guard installs even with the
+// mod off; and set by a room change or a `droprate` command, so the Gem of
+// Incarnation's rate is read again. The mod itself sits far below.
+static bool g_SoulPieceSeen = false;
+static bool g_SoulPieceGemStale = true;
 // Runtime item structs that carry a mechanic tag.  The game re-creates every
 // item struct on load, so the registry is refreshed by TryApplyCustomForge and
 // entries whose struct pointer reappears are replaced, never duplicated.
@@ -4658,6 +4664,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if (entry.mechanic == "tyrant") g_TyItemTagged = true;
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
                 if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
+                if (entry.mechanic == ForgePact::SoulPieces::kMechanicTag) g_SoulPieceSeen = true;
             }
             if (finalPass) {
                 size_t rk = 0, sk = 0;
@@ -5069,6 +5076,10 @@ static void GemsAfterCreate(RValue& item)
     } catch (...) {}
 }
 
+// Boss soul pieces (ForgePact #197): a consumer of this detour, after the
+// game's own DropGems returned, so the drop scope above is untouched; it
+// returns at once while the mod is off. Defined with the mod, far below.
+static void SoulPieceGemRoll(CInstance* S);
 #ifndef FORGEPACT_RELEASE
 // `soulprobe gemwatch log` (ForgePact #197): a consumer of this detour, after
 // the game's own DropGems returned, so the drop scope above is untouched.
@@ -5082,6 +5093,7 @@ static RValue& Hook_DropGems(CInstance* S, CInstance* O, RValue& R, int argc, RV
         struct Scope { Scope() { ++g_GemDropDepth; } ~Scope() { --g_GemDropDepth; } } scope;
         res = &g_Orig_DropGems(S, O, R, argc, A);
     }
+    SoulPieceGemRoll(S);
 #ifndef FORGEPACT_RELEASE
     SoulProbeGemRoll(S);
 #endif
@@ -26705,6 +26717,9 @@ static int DropGrupUygula(const DropGrup& g, double carpan, double& ornekEski, d
 
 static void DropRateCmd(const std::string& rest)
 {
+    // Boss soul pieces read the Gem of Incarnation's droprate.base once per
+    // room; any droprate command may change it, so they read it again.
+    g_SoulPieceGemStale = true;
     std::string alt, kalan; alt = FirstToken(rest, kalan);
     alt = Lower(alt);
     while (!alt.empty() && (alt.back()=='\r'||alt.back()=='\n'||alt.back()==' ')) alt.pop_back();
@@ -52450,6 +52465,542 @@ static void EvCountCommand(const std::string& rest)
 }
 #endif
 
+// ===== Boss soul pieces (`soulpiece`, ForgePact #197) ==========================
+// ForgePact/docs/boss-soul-pieces-research.md. Off by default (`soulpiece 1`
+// from the Loot tab's switch). Every decision is the core's
+// (ForgePact::SoulPieces, SoulPieceMod.hpp): the act of a room, the drop and
+// its 1 in D, the use, the transfer's target and the status line. This
+// adapter supplies only what the game answers, by name: the room and its
+// RoomActIndex, the dying source's ancestry, the Gem of Incarnation's
+// droprate.base, the item a use carries and the zone state of a boss room.
+//
+//   - The dress: nine Custom Forge built-in entries, one per act, matching the
+//     Edible PAS Logo (resolved by its repository name, never an index) with a
+//     piece's seed; they register the first frame category 11 resolves,
+//     before a character loads, whatever the switch says, so a piece always
+//     shows its name while ForgePact is installed.
+//   - The drop: one more consumer of the shared DropGems detour
+//     (Hook_DropGems, after the game's own DropGems returned). A piece is
+//     built through the loader (InitItemFromJson) and placed with
+//     LootGroundCreateFromItem, the dying source as self, so it keeps its seed.
+//   - The use: one both-route detour on PotionUse, the call whose true answer
+//     makes the backpack's confirm clear the item's cells (Live procedure 3's
+//     use-takes-one). For a piece the base's own PotionUse never runs; on
+//     `transfer` the detour answers true and the next frame tick carries the
+//     transfer out, as `soulprobe goto` ran in Live procedure 3. Any other
+//     call goes to the game untouched.
+//   - The transfer: ZoneStateExists(<boss room>) for the `fresh` count,
+//     ZoneStateResetSingle(<boss room>) so the boss comes out again, a second
+//     ZoneStateExists for `cleared`, then NetworkRoomGoto(<boss room>) with the
+//     player as self (Live procedure 3's goto-travel). All four are called by
+//     name through their hs-game-sdk constants; none is detoured here.
+//     No portal object, no boss spawn, nothing on the add or stack path.
+//   - Installs: nothing before the first `soulpiece 1` or before the dress
+//     recognised a piece; then, once a player exists (a drop hook installed at
+//     character select stalls the runner, § 15), the PotionUse detour, and the
+//     gem consumer through GemsInstallDropHook() once the mod was turned on.
+//     `soulpiece 0` leaves both in place: the drop consumer returns at once and
+//     a piece's use is refused (`use-off`), the piece kept.
+namespace SoulCore = ForgePact::SoulPieces;
+
+// Full names, for CallGameScript and CallGameScriptEx.
+static constexpr const char* kSoulPieceRoomActFull = HeroSiege::Scripts::gml_Script_RoomActIndex.data();
+static constexpr const char* kSoulPieceFromJsonFull = HeroSiege::Scripts::gml_Script_InitItemFromJson.data();
+static constexpr const char* kSoulPieceLootFromItemFull = HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem.data();
+static constexpr const char* kSoulPieceZoneExistsFull = HeroSiege::Scripts::gml_Script_ZoneStateExists.data();
+static constexpr const char* kSoulPieceZoneResetFull = HeroSiege::Scripts::gml_Script_ZoneStateResetSingle.data();
+// The travel: the game's own script, which sets the room up before room_goto
+// (§ 21.5); never the raw room_goto builtin.
+static constexpr const char* kSoulPieceTravelFull = HeroSiege::Scripts::gml_Script_NetworkRoomGoto.data();
+// The one script this mod detours, by its short name for HookOneScript.
+static constexpr const char* kSoulPieceUseName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PotionUse);
+static_assert((int)HeroSiege::Items::ItemType::Consumable == SoulCore::kBaseItemType
+              && SoulCore::kBaseItemType == SoulCore::kBaseCategory, "a piece's base is a consumable");
+
+struct SoulPieceRoomInfo {
+    double index = -1;
+    std::string name = "(unreadable)";
+    int act = 0;   // the core's ActOfRoomActIndex of RoomActIndex's answer; 0: no act
+};
+
+struct SoulPieceRuntime {
+    SoulCore::State core;
+    bool wanted = false;               // `soulpiece 1` was sent at least once this session
+    int baseIndex = -1;                // the base's category-11 index, by name; -1: not found yet
+    std::string baseWhy = "not searched yet";
+    bool dressLogged = false;
+    bool useTried = false;
+    std::string useRoute = "none";
+    bool roomRead = false;             // the frame tick's room cache
+    SoulPieceRoomInfo room;
+    bool haveLeft = false;
+    SoulPieceRoomInfo left;            // the room before the current one
+    int gemIndex = -1;                 // -1: not searched; -2: no entry of that name
+    double gemRate = 0;
+    std::string gemWhy = "unread";
+    bool pending = false;              // a `transfer` the next frame tick carries out
+    int pendingAct = 0;
+    double pendingFrom = -1;           // the room it was decided in
+    uint64_t roll = 0;
+    int failLines = 0;
+};
+static SoulPieceRuntime g_SoulPiece;
+static PFUNC_YYGMLScript g_SoulPieceOrigUse = nullptr;
+static constexpr int kSoulPieceFailLineCap = 20;
+
+// The `room` built-in's index, or false.
+static bool SoulPieceRoomIndex(double& index)
+{
+    index = -1;
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v)) || !IsNumericInstanceRead(v)) return false;
+        index = v.ToDouble();
+        return std::isfinite(index) && index >= 0;
+    } catch (...) { index = -1; return false; }
+}
+
+// A room's name and act: room_get_name, and RoomActIndex by name with the
+// room as its argument (Live procedure 1: the answer is the act).
+static SoulPieceRoomInfo SoulPieceReadRoom(double index)
+{
+    SoulPieceRoomInfo r;
+    r.index = index;
+    if (index < 0) return r;
+    try {
+        r.name = g_Yytk->CallBuiltin("room_get_name", { RValue(index) }).ToString();
+        const RValue answer = g_Yytk->CallGameScript(kSoulPieceRoomActFull, { RValue(index) });
+        double n = -1;
+        const bool isNumber = ApNumber(answer, n);
+        r.act = SoulCore::ActOfRoomActIndex(isNumber, n);
+    } catch (...) { r.name = "(unreadable)"; r.act = 0; }
+    return r;
+}
+
+// The room cache: read again only when the `room` built-in changed, and then
+// the room just left is kept as `left` and G is read again on the next roll.
+static const SoulPieceRoomInfo& SoulPieceRoomNow()
+{
+    double index = -1;
+    if (!SoulPieceRoomIndex(index)) {
+        static const SoulPieceRoomInfo unreadable;
+        return unreadable;
+    }
+    if (g_SoulPiece.roomRead && index == g_SoulPiece.room.index) return g_SoulPiece.room;
+    if (g_SoulPiece.roomRead) { g_SoulPiece.left = g_SoulPiece.room; g_SoulPiece.haveLeft = true; }
+    g_SoulPiece.room = SoulPieceReadRoom(index);
+    g_SoulPiece.roomRead = true;
+    g_SoulPiece.gemIndex = g_SoulPiece.gemIndex == -2 ? -1 : g_SoulPiece.gemIndex;
+    g_SoulPieceGemStale = true;
+    return g_SoulPiece.room;
+}
+
+// A room by its name, through asset_get_index, as the room asset the runtime
+// answers (kept as answered, for the zone-state calls) and its index.
+static bool SoulPieceRoomByName(const std::string& name, RValue& asset, double& index, std::string& why)
+{
+    index = -1;
+    try {
+        asset = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+        if (!ApNumber(asset, index) || index < 0 || !g_Yytk->CallBuiltin("room_exists", { RValue(index) }).ToBoolean()) {
+            why = "asset_get_index refused " + name;
+            index = -1;
+            return false;
+        }
+        return true;
+    } catch (...) { why = "asset_get_index threw"; index = -1; return false; }
+}
+
+// ZoneStateExists(<room>), by name, `self` the player. A failed call is
+// `unread(call failed)`; an answer that is neither a number nor a bool is
+// unread too, naming its kind, never taken for a no.
+static SoulCore::ZoneAnswer SoulPieceZoneExists(const RValue& room, CInstance* self, std::string& why, bool& callFailed)
+{
+    callFailed = false;
+    try {
+        RValue res;
+        if (!AurieSuccess(g_Yytk->CallGameScriptEx(res, kSoulPieceZoneExistsFull, self, self, { room }))) {
+            callFailed = true;
+            why = "call failed";
+            return SoulCore::ZoneAnswer::Unread;
+        }
+        if (res.m_Kind == VALUE_BOOL) return res.ToBoolean() ? SoulCore::ZoneAnswer::Yes : SoulCore::ZoneAnswer::No;
+        double n = -1;
+        if (res.m_Kind != VALUE_REF && ApNumber(res, n)) return n != 0.0 ? SoulCore::ZoneAnswer::Yes : SoulCore::ZoneAnswer::No;
+        why = Describe(res);
+        return SoulCore::ZoneAnswer::Unread;
+    } catch (...) { callFailed = true; why = "call threw"; return SoulCore::ZoneAnswer::Unread; }
+}
+
+// ---- the base and the dress ----------------------------------------------------------
+// The base by its repository name in category 11, walked as `droprate` walks
+// a category, only once the game's item repository exists (GetNormalRepoStruct
+// raises the runner's error on a repository that is not there). Then one
+// Custom Forge built-in entry per act: the piece's name, a lore line and the
+// mechanic tag, the item's own stats kept. Re-registered if a reload of the
+// Custom Forge's runtime file dropped them.
+static void SoulPieceRegisterDress()
+{
+    if (g_SoulPiece.baseIndex < 0) {
+        try {
+            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue("itemRepoNormal") }).ToBoolean()) {
+                g_SoulPiece.baseWhy = "the item repository is not built yet";
+                return;
+            }
+        } catch (...) { return; }
+        for (int i = 0; RepoIndexValid(SoulCore::kBaseCategory, i); ++i) {
+            RValue st;
+            if (!RepoStruct(SoulCore::kBaseCategory, i, st)) continue;
+            if (RepoAd(st) == SoulCore::kBaseRepoName) { g_SoulPiece.baseIndex = i; break; }
+        }
+        if (g_SoulPiece.baseIndex < 0) {
+            g_SoulPiece.baseWhy = std::string("no category 11 entry named ") + SoulCore::kBaseRepoName;
+            return;
+        }
+        g_SoulPiece.baseWhy.clear();
+    }
+    const double t = (double)SoulCore::kBaseItemType, b = (double)g_SoulPiece.baseIndex;
+    bool added = false;
+    for (int act = 1; act <= SoulCore::kActCount; ++act) {
+        const double seed = (double)SoulCore::SeedOfAct(act);
+        if (HasCustomForgeSelector(t, seed, b)) continue;
+        const SoulCore::ActBoss* boss = SoulCore::BossOfAct(act);
+        CustomForgeEntry piece;
+        piece.selector = { {"t", t}, {"a", seed}, {"b", b}, {"c", 0.0}, {"j", 0.0} };
+        piece.keepNative = true;
+        piece.name = boss->pieceName;
+        piece.lore = "Right-click it in the backpack to be taken to the boss's lair.";
+        piece.mechanic = SoulCore::kMechanicTag;
+        piece.builtin = true;   // recognition only, see CustomForgeEntry::builtin
+        g_CustomForgeEntries.push_back(std::move(piece));
+        added = true;
+    }
+    if (!added) return;
+    RebuildForgeSelectorIndex();
+    if (!g_SoulPiece.dressLogged) {
+        g_SoulPiece.dressLogged = true;
+        Out(std::string("soulpiece: the pieces' names are registered (base ") + SoulCore::kBaseRepoName
+            + " index " + std::to_string(g_SoulPiece.baseIndex) + ")");
+    }
+}
+
+// ---- the gem's rate (G) -------------------------------------------------------------
+// droprate.base of category 15's entry named socketable_gem_of_incarnation,
+// found by name, never by index; read again after a room change or a
+// `droprate` command.
+static bool SoulPieceGemRate(double& rate)
+{
+    if (!g_SoulPieceGemStale) { rate = g_SoulPiece.gemRate; return rate > 0; }
+    g_SoulPieceGemStale = false;
+    g_SoulPiece.gemRate = 0;
+    rate = 0;
+    try {
+        if (g_SoulPiece.gemIndex == -1) {
+            g_SoulPiece.gemIndex = -2;
+            for (int i = 0; RepoIndexValid(SoulCore::kGemCategory, i); ++i) {
+                RValue st;
+                if (!RepoStruct(SoulCore::kGemCategory, i, st)) continue;
+                if (RepoAd(st) == SoulCore::kGemRepoName) { g_SoulPiece.gemIndex = i; break; }
+            }
+        }
+        if (g_SoulPiece.gemIndex < 0) { g_SoulPiece.gemWhy = std::string("no entry named ") + SoulCore::kGemRepoName; return false; }
+        RValue st, dr, base;
+        if (!RepoStruct(SoulCore::kGemCategory, g_SoulPiece.gemIndex, st)) { g_SoulPiece.gemWhy = "entry unreadable"; return false; }
+        if (!CmMember(st, "droprate", dr) || !CmMember(dr, "base", base)) { g_SoulPiece.gemWhy = "no droprate.base"; return false; }
+        double g = 0;
+        if (!ApNumber(base, g) || g <= 0) { g_SoulPiece.gemWhy = "droprate.base " + Describe(base); return false; }
+        g_SoulPiece.gemRate = g;
+        g_SoulPiece.gemWhy.clear();
+        rate = g;
+        return true;
+    } catch (...) { g_SoulPiece.gemWhy = "read threw"; return false; }
+}
+
+// ---- the drop ------------------------------------------------------------------------
+// One piece of `act` at the dying source's x, y: the item built through the
+// loader (InitItemFromJson keeps the seed; LootGroundCreate would write a
+// fresh one, § 18.4), then placed by LootGroundCreateFromItem with the source
+// as self. The key "0-0-<stamp>-11" is the item's fingerprint, one per item:
+// the millisecond clock stepped past the last stamp used.
+static bool SoulPiecePlace(int act, CInstance* source, std::string& why)
+{
+    if (g_SoulPiece.baseIndex < 0) { why = "no base: " + g_SoulPiece.baseWhy; return false; }
+    if (!source) { why = "no source"; return false; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { why = "no global instance"; return false; }
+    const RValue src = source->ToRValue();
+    double x = 0, y = 0;
+    if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { src, RValue("x") }), x)
+        || !ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { src, RValue("y") }), y)) { why = "the source has no position"; return false; }
+    static long long s_LastStamp = 0;
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const long long stamp = ms > s_LastStamp ? ms : s_LastStamp + 1;
+    s_LastStamp = stamp;
+    const std::string key = "0-0-" + std::to_string(stamp) + "-" + std::to_string(SoulCore::kBaseItemType);
+    const std::string json = "{\"w\":1,\"a\":" + std::to_string(SoulCore::SeedOfAct(act)) + ",\"j\":0,\"b\":"
+                           + std::to_string(g_SoulPiece.baseIndex) + ",\"c\":0,\"o\":1}";
+    RValue parsed;
+    g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+    if (parsed.m_Kind != VALUE_OBJECT) { why = "json_parse answered " + Describe(parsed); return false; }
+    RValue item;
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, kSoulPieceFromJsonFull, g, g, { parsed, RValue(key) });
+    if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) { why = "InitItemFromJson st=" + std::to_string((int)st) + " " + Describe(item); return false; }
+    RValue res;
+    const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, kSoulPieceLootFromItemFull, source, source, { RValue(x), RValue(y), item });
+    if (!AurieSuccess(st2)) { why = "LootGroundCreateFromItem st=" + std::to_string((int)st2); return false; }
+    return true;
+}
+
+// From Hook_DropGems, after the game's own DropGems returned: the core's drop
+// verdict for this dying source, and on `hit` a piece of the room's act.
+static void SoulPieceGemRoll(CInstance* S)
+{
+    if (!g_SoulPiece.core.on) return;
+    try {
+        const SoulPieceRoomInfo room = SoulPieceRoomNow();
+        const int oi = CallerObjectIndex(S);
+        const bool monster = oi >= 0 && HeroSiege::Objects::IsDescendantOf(oi, (int32_t)HeroSiege::Objects::GameObject::Enemy_Parent_obj);
+        RValue self;
+        if (S) self = S->ToRValue();
+        const bool boss = S && RarInstanceIsBoss(self);
+        double G = 0;
+        SoulPieceGemRate(G);
+        if (!g_SoulPiece.roll) g_SoulPiece.roll = 11400714819323198485ull ^ (uint64_t)GetTickCount64();
+        g_SoulPiece.roll = ForgePact::IncarnationGems::Mix(g_SoulPiece.roll);
+        const double roll = (double)(g_SoulPiece.roll >> 11) * (1.0 / 9007199254740992.0);
+        const SoulCore::DropVerdict v = SoulCore::DecideDrop(g_SoulPiece.core.on, g_SoulPiece.core.forced, room.name, room.act,
+                                                             monster, boss, G, roll);
+        SoulCore::RecordDrop(g_SoulPiece.core, v, room.act);
+        if (v != SoulCore::DropVerdict::Hit) return;
+        std::string why;
+        bool placed = false;
+        try { placed = SoulPiecePlace(room.act, S, why); } catch (...) { why = "threw"; }
+        if (placed) return;
+        SoulCore::RecordDropFailed(g_SoulPiece.core);
+        if (g_SoulPiece.failLines < kSoulPieceFailLineCap) { ++g_SoulPiece.failLines; Out("soulpiece: drop-failed act=" + std::to_string(room.act) + " (" + why + ")"); }
+    } catch (...) {}
+}
+
+// ---- the use ----------------------------------------------------------------------------
+// The act of a piece an argument carries: an item struct of the base's class
+// whose definition is the base, c 0, with a piece's seed (the core's
+// PieceActOfItem). Live procedure 3 measured PotionUse handed the item
+// struct itself. 0 for anything else, after at most one struct test for a
+// value that is not an item.
+static int SoulPieceActOfArg(const RValue* arg)
+{
+    if (!arg || arg->m_Kind != VALUE_OBJECT || !ApIsPlainStruct(*arg)) return 0;
+    double t = -1, b = -1, c = 0, a = -1;
+    if (!TryStructNumber(*arg, "itemType", t) || t != (double)SoulCore::kBaseItemType) return 0;
+    RValue def;
+    if (!CmMember(*arg, "itemDefinitionStruct", def)) return 0;
+    if (!TryStructNumber(def, "b", b) || !TryStructNumber(def, "a", a)) return 0;
+    TryStructNumber(def, "c", c);
+    return SoulCore::PieceActOfItem((int)t, (long long)b, (long long)c, (long long)a, g_SoulPiece.baseIndex);
+}
+
+// PotionUse, with the shipped logic. A call that carries no piece goes to the
+// game untouched. For a piece the original is never called while ForgePact
+// is installed, so the base's own effect never runs: the core decides, a
+// refusal answers false (the confirm stops and the piece stays), and
+// `transfer`, with a player and the boss room resolving, records the pending
+// transfer and answers true, so the game clears the piece's cells itself.
+static RValue& SoulPieceUseCall(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    const PFUNC_YYGMLScript orig = g_SoulPieceOrigUse;
+    int act = 0;
+    if (g_SoulPiece.baseIndex >= 0) {
+        try {
+            for (int i = 0; i < argc && i < 4 && A && !act; ++i) act = SoulPieceActOfArg(A[i]);
+        } catch (...) { act = 0; }
+    }
+    if (!act) return orig ? orig(S, O, R, argc, A) : R;
+
+    bool answer = false;
+    try {
+        const SoulPieceRoomInfo room = SoulPieceRoomNow();
+        const SoulCore::UseVerdict v = SoulCore::DecideUse(g_SoulPiece.core.on, room.name, room.act, act);
+        SoulCore::RecordUse(g_SoulPiece.core, v);
+        if (v == SoulCore::UseVerdict::Transfer) {
+            const char* target = SoulCore::TransferTarget(act);
+            RValue asset, player;
+            double index = -1;
+            std::string why;
+            if (g_SoulPiece.pending) why = "a transfer is already pending";
+            else if (!target || !SoulPieceRoomByName(target, asset, index, why)) {}
+            else if (!HhResolveLocalPlayer(player)) why = "no player";
+            else {
+                g_SoulPiece.pending = true;
+                g_SoulPiece.pendingAct = act;
+                g_SoulPiece.pendingFrom = room.index;
+                answer = true;
+            }
+            if (!answer) {
+                SoulCore::RecordTransfer(g_SoulPiece.core, act, false, SoulCore::ZoneAnswer::Unread, SoulCore::ZoneAnswer::Unread);
+                if (g_SoulPiece.failLines < kSoulPieceFailLineCap) { ++g_SoulPiece.failLines; Out("soulpiece: transfer-failed act=" + std::to_string(act) + " (" + why + "); the piece is kept"); }
+            }
+        }
+    } catch (...) { answer = false; }
+    R = RValue(answer);
+    return R;
+}
+
+#ifndef FORGEPACT_RELEASE
+// `soulprobe usewatch` (research build): its watch on PotionUse rides this
+// detour, so the script keeps one; defined with the probe, far below.
+static RValue& SoulProbePotionUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+#endif
+static RValue& Hook_SoulPieceUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+#ifndef FORGEPACT_RELEASE
+    return SoulProbePotionUse(S, O, R, argc, A);
+#else
+    return SoulPieceUseCall(S, O, R, argc, A);
+#endif
+}
+
+static void SoulPieceInstallUse()
+{
+    if (g_SoulPiece.useTried) return;
+    g_SoulPiece.useTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(kSoulPieceUseName, "fp_soulpiece_use", (PVOID)Hook_SoulPieceUse, &g_SoulPieceOrigUse, &native);
+    g_SoulPiece.useRoute = !ok ? "failed" : native ? "both" : "table-only";
+    Out("soulpiece: the PotionUse detour is " + g_SoulPiece.useRoute
+        + (native ? std::string() : std::string(" - a piece's use may not be seen; its right-click is not handled")));
+}
+
+// ---- the transfer -------------------------------------------------------------------------
+// The pending transfer, once, on the frame tick after the detour decided it
+// (the context Live procedure 3's `soulprobe goto` ran in). Dropped as
+// `transfer-failed` when the room changed or the player is gone by then. The
+// boss room's zone state is read, dropped with ZoneStateResetSingle and read
+// again, the argument the boss room asset_get_index answers (the room the
+// player is about to enter, never the current one: a use in a boss room is
+// refused); then NetworkRoomGoto with the boss room's index, as goto-travel
+// measured it.
+static void SoulPieceCarryOut()
+{
+    const int act = g_SoulPiece.pendingAct;
+    const double from = g_SoulPiece.pendingFrom;
+    g_SoulPiece.pending = false;
+    std::string why;
+    double now = -1;
+    RValue player;
+    CInstance* self = nullptr;
+    if (HhResolveLocalPlayer(player)) self = HhResolveInstance(player);
+    const char* target = SoulCore::TransferTarget(act);
+    RValue asset;
+    double index = -1;
+    if (!SoulPieceRoomIndex(now) || now != from) why = "the room changed";
+    else if (!self) why = "no player";
+    else if (target) SoulPieceRoomByName(target, asset, index, why);
+    else why = "no act";
+    if (index < 0) {
+        SoulCore::RecordTransfer(g_SoulPiece.core, act, false, SoulCore::ZoneAnswer::Unread, SoulCore::ZoneAnswer::Unread);
+        Out("soulpiece: transfer-failed act=" + std::to_string(act) + " (" + why + "); the piece was used");
+        return;
+    }
+    std::string beforeWhy, afterWhy;
+    bool failed = false;
+    const SoulCore::ZoneAnswer before = SoulPieceZoneExists(asset, self, beforeWhy, failed);
+    if (failed) SoulCore::RecordZoneCallFailed(g_SoulPiece.core);
+    std::string reset = "yes";
+    try {
+        RValue res;
+        if (!AurieSuccess(g_Yytk->CallGameScriptEx(res, kSoulPieceZoneResetFull, self, self, { asset }))) {
+            reset = "failed";
+            SoulCore::RecordZoneCallFailed(g_SoulPiece.core);
+        }
+    } catch (...) { reset = "threw"; SoulCore::RecordZoneCallFailed(g_SoulPiece.core); }
+    const SoulCore::ZoneAnswer after = SoulPieceZoneExists(asset, self, afterWhy, failed);
+    if (failed) SoulCore::RecordZoneCallFailed(g_SoulPiece.core);
+    std::string travel = "yes";
+    try {
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, kSoulPieceTravelFull, self, self, { RValue(index) });
+        if (!AurieSuccess(st)) travel = "no(status " + std::to_string((int)st) + ")";
+    } catch (...) { travel = "no(threw)"; }
+    SoulCore::RecordTransfer(g_SoulPiece.core, act, travel == "yes", before, after);
+    Out("soulpiece: transfer act=" + std::to_string(act) + " target=" + target + " room=" + Describe(asset)
+        + " saved=" + SoulCore::ZoneAnswerText(before, beforeWhy) + " reset=" + reset
+        + " after=" + SoulCore::ZoneAnswerText(after, afterWhy) + " travel=" + travel);
+}
+
+// ---- the frame tick -------------------------------------------------------------------------
+// The dress's registration (every second until the base resolves, then every
+// ten seconds in case a reload dropped it), and, once the mod was turned on or
+// a piece recognised: the room cache, the installs once a player exists, and
+// the pending transfer.
+static void SoulPieceTick(uint32_t frame)
+{
+    if (frame % (g_SoulPiece.baseIndex < 0 ? 60u : 600u) == 0) SoulPieceRegisterDress();
+    if (!g_SoulPiece.wanted && !g_SoulPieceSeen) return;
+    SoulPieceRoomNow();
+    if ((frame % 60) == 0 && (!g_SoulPiece.useTried || (g_SoulPiece.wanted && !g_GemDropHookTried))) {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) {
+            SoulPieceInstallUse();
+            if (g_SoulPiece.wanted && !g_GemDropHookTried) GemsInstallDropHook();
+        }
+    }
+    if (g_SoulPiece.pending) SoulPieceCarryOut();
+}
+
+// ---- the verb -------------------------------------------------------------------------------
+static std::string SoulPieceStatus()
+{
+    const bool engaged = g_SoulPiece.wanted || g_SoulPieceSeen;
+    double index = -1;
+    SoulPieceRoomInfo room;
+    if (engaged) room = SoulPieceRoomNow();
+    else if (SoulPieceRoomIndex(index)) room = SoulPieceReadRoom(index);
+    double G = 0;
+    SoulPieceGemRate(G);
+    std::string leftSaved = "-";
+    if (g_SoulPiece.haveLeft) {
+        RValue asset, player;
+        double leftIndex = -1;
+        std::string why;
+        CInstance* self = HhResolveLocalPlayer(player) ? HhResolveInstance(player) : nullptr;
+        if (!self) leftSaved = SoulCore::ZoneAnswerText(SoulCore::ZoneAnswer::Unread, "no player");
+        else if (!SoulPieceRoomByName(g_SoulPiece.left.name, asset, leftIndex, why))
+            leftSaved = SoulCore::ZoneAnswerText(SoulCore::ZoneAnswer::Unread, why);
+        else {
+            bool failed = false;
+            const SoulCore::ZoneAnswer a = SoulPieceZoneExists(asset, self, why, failed);
+            leftSaved = SoulCore::ZoneAnswerText(a, why);
+        }
+    }
+    const std::string gemRoute = g_GemDropHookNative ? "both" : g_GemDropHookTried ? "not-native" : "none";
+    SoulCore::StatusInputs in;
+    in.room = room.name;
+    in.act = room.act;
+    in.gemRate = G;
+    in.gemRateWhy = g_SoulPiece.gemWhy.empty() ? std::string_view("unread") : std::string_view(g_SoulPiece.gemWhy);
+    in.gemRoute = gemRoute;
+    in.useScript = kSoulPieceUseName;
+    in.useRoute = g_SoulPiece.useRoute;
+    in.left = g_SoulPiece.haveLeft ? std::string_view(g_SoulPiece.left.name) : std::string_view("-");
+    in.leftSaved = leftSaved;
+    return SoulCore::StatusLine(g_SoulPiece.core, in);
+}
+
+// `soulpiece 1|0|on|off|status|force on|force off`: every form answers one
+// line. `1` only arms the mod: the frame tick installs what it needs once a
+// player exists.
+static void SoulPieceCommand(const std::string& rest)
+{
+    const SoulCore::Command c = SoulCore::ParseCommand(TrimCopy(rest));
+    if (!SoulCore::Apply(g_SoulPiece.core, c)) {
+        Out("soulpiece: usage -> soulpiece 1|0|on|off|status|force on|force off");
+        return;
+    }
+    if (c == SoulCore::Command::On) g_SoulPiece.wanted = true;
+    Out(SoulPieceStatus());
+}
+
 #ifndef FORGEPACT_RELEASE
 // ===== Boss soul pieces research probe (`soulprobe`, ForgePact #197) =========
 // ForgePact/docs/boss-soul-pieces-research.md, § The instrument. Research build
@@ -52458,17 +53009,22 @@ static void EvCountCommand(const std::string& rest)
 // lines. Each decision a line prints is the core's (ForgePact::SoulPieces,
 // SoulPieceMod.hpp): the act of a room (ActOfRoomActIndex) and the room rule
 // (RoomEligible), the drop verdict and its 1 in D (DecideDrop,
-// PieceDenominator), the use verdict (DecideUse) and where a piece's portal
-// leads (PortalTarget). The probe only supplies what the game answers: the
+// PieceDenominator), the use verdict (DecideUse) and the boss room a piece
+// leads to (TransferTarget). The probe only supplies what the game answers: the
 // room and its RoomActIndex, the dying source's ancestry, the Gem of
 // Incarnation's droprate.base, the items' seeds, the portals' records.
+// The portal commands are Live procedure 3's research history: the shipped mod
+// (above) moves the player with NetworkRoomGoto and makes no portal.
 //
 // What it hooks, each through HookOneScript (both routes) by its SDK constant,
 // on the first command that needs it and never at startup:
 //   - nothing of its own for the gem roll: `gemwatch log` is one more consumer
 //     inside the shared DropGems detour (Hook_DropGems, SoulProbeGemRoll),
 //     installed through GemsInstallDropHook() once a player exists;
-//   - each use candidate in kSpUseTargets, on the first `usewatch log|use`.
+//   - each use candidate in kSpUseTargets, on the first `usewatch log|use`,
+//     but PotionUse: the shipped mod's one detour on it (Hook_SoulPieceUse)
+//     hands every call to this watch first (SoulProbePotionUse), and the
+//     watch's "original" is the shipped logic (SoulPieceUseCall).
 // Nothing on the add or stack path (ItemsAreStackable and the rest): Live
 // procedure 3's debugger watches those by their first bytes. craftprobe,
 // prospectprobe, the script trace tables and the pet relic trace detour some
@@ -52510,11 +53066,17 @@ static_assert(kSpConsumableCategory == SpNs::kBaseCategory && kSpConsumableCateg
 // The protected records a portal keeps (static reading 15), the ones `portals`
 // prints and `portalset` may write.
 static constexpr const char* kSpPortalVars[] = { "portalZone", "portalActive", "isEligible", "portalUsable", "pSpwd" };
+// The probe's portal stands this far to the player's right, mirrored to the
+// left past the room's width (Live procedure 1: 1200 px was off-screen);
+// `portaloffset` changes it. Research only: the shipped mod opens no portal.
+static constexpr double kSpPortalOffsetPx = 96.0;
 
 // The use candidates (static reading 9, docs/RUNTIME_DATA_MODELS.md § 21):
-// one both-route detour each, installed by `usewatch log|use`. ConsumeToken's
-// SDK constant is listed without the gml_Script_ prefix, so it already is the
-// short name HookOneScript takes.
+// one both-route detour each, installed by `usewatch log|use`, except
+// PotionUse, whose one detour is the shipped mod's (kSpPotionUseSlot below;
+// its id here is never installed). ConsumeToken's SDK constant is listed
+// without the gml_Script_ prefix, so it already is the short name HookOneScript
+// takes.
 struct SpUseTarget {
     const char* name;
     const char* id;
@@ -52531,6 +53093,16 @@ static constexpr SpUseTarget kSpUseTargets[] = {
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_UiAGuildStashConsumeTabToken), "fp_soulprobe_use_guildtoken" },
 };
 static constexpr int kSpUseCount = (int)(sizeof(kSpUseTargets) / sizeof(kSpUseTargets[0]));
+// The candidate the shipped mod detours (kSoulPieceUseName): its watch rides
+// Hook_SoulPieceUse instead of a detour of its own, one detour per script.
+static constexpr int SpUseSlotOf(const char* name)
+{
+    for (int i = 0; i < kSpUseCount; ++i)
+        if (std::string_view(kSpUseTargets[i].name) == std::string_view(name)) return i;
+    return -1;
+}
+static constexpr int kSpPotionUseSlot = SpUseSlotOf(kSoulPieceUseName);
+static_assert(kSpPotionUseSlot >= 0, "the shipped mod's use script is one of the probe's candidates");
 
 enum class SpUseMode { Off, Log, Use };
 
@@ -52547,7 +53119,7 @@ struct SoulProbeState {
     long useCallsBy[kSpUseCount] = {};
     bool gemwatch = false, gemPending = false;
     bool portalScp = true;           // `portalroute`: the game's spawner first (ctx "### Opening the portal")
-    double portalOffset = SpNs::kPortalOffsetPx;
+    double portalOffset = kSpPortalOffsetPx;
     long usecalls = 0, uses = 0, portals = 0, gemrolls = 0;
     int useLines = 0, gemLines = 0;
 };
@@ -52697,12 +53269,12 @@ static std::string SpRoomText(const RValue& room)
     } catch (...) { return "unreadable(threw)"; }
 }
 
-// A piece's boss room, by the core's PortalTarget (an hs-game-sdk room name),
+// A piece's boss room, by the core's TransferTarget (an hs-game-sdk room name),
 // resolved with asset_get_index at run time; never an index constant.
 static bool SpBossRoom(int act, std::string& target, double& index, std::string& why)
 {
     index = -1;
-    const char* name = SpNs::PortalTarget(act);
+    const char* name = SpNs::TransferTarget(act);
     target = name ? name : "-";
     if (!name) { why = "no act " + std::to_string(act); return false; }
     try {
@@ -53550,12 +54122,14 @@ static bool SpLooksLikeFingerprint(const std::string& s)
 // One call of candidate n. Logged (at most kSpLineCap lines per `usewatch`),
 // with its nesting depth among the candidates. In `use`, a piece in the chosen
 // script is never handed to the game (ctx "### Using a piece"): the core's
-// DecideUse decides, and on `portal` a portal opens as `portal` makes it; the
+// DecideUse decides, and on `transfer` a portal opens as `portal` makes it
+// (Live procedure 3's research route; the shipped mod travels instead); the
 // call then answers as the game answered the control (the plain base) on that
 // script, true when no control was seen, so the game clears the piece's cell
 // itself, as it does for the logo. A refusal or a failed portal answers
 // false, and the confirm stops with the piece kept (static reading 9). Every
-// other call, and every call in `log`, passes to the game untouched.
+// other call, and every call in `log`, passes to the game untouched (for
+// PotionUse, "the game" is the shipped mod's logic, SoulPieceUseCall).
 static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     const PFUNC_YYGMLScript orig = g_SpUseOrig[n];
@@ -53606,9 +54180,9 @@ static RValue& SpUseCall(int n, CInstance* S, CInstance* O, RValue& R, int argc,
         ++g_Sp.uses;
         const SpRoom room = SpReadRoom();
         const SpNs::UseVerdict v = SpNs::DecideUse(true, room.name, room.act, act);
-        std::string portalText, target = SpNs::PortalTarget(act) ? SpNs::PortalTarget(act) : "-";
+        std::string portalText, target = SpNs::TransferTarget(act) ? SpNs::TransferTarget(act) : "-";
         bool opened = false;
-        if (v == SpNs::UseVerdict::Portal) {
+        if (v == SpNs::UseVerdict::Transfer) {
             struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
             const SpPortalResult p = SpOpenPortal(act, g_Sp.portalScp);
             SpPortalLine(act, g_Sp.portalScp, p);
@@ -53655,11 +54229,29 @@ static void SpInstallUseWatch()
     }
     g_Sp.useTried = true;
     for (int i = 0; i < kSpUseCount; ++i) {
-        bool native = false;
-        const bool ok = HookOneScript(kSpUseTargets[i].name, kSpUseTargets[i].id, (PVOID)kSpUseHooks[i], &g_SpUseOrig[i], &native);
-        g_Sp.useRoute[i] = !ok ? "failed(not found)" : native ? "both" : "table-only";
+        if (i == kSpPotionUseSlot) {
+            // One detour per script: PotionUse's is the shipped mod's, which
+            // hands every call here first (SoulProbePotionUse).
+            g_SpUseOrig[i] = SoulPieceUseCall;
+            SoulPieceInstallUse();
+            g_Sp.useRoute[i] = "shipped:" + g_SoulPiece.useRoute;
+        } else {
+            bool native = false;
+            const bool ok = HookOneScript(kSpUseTargets[i].name, kSpUseTargets[i].id, (PVOID)kSpUseHooks[i], &g_SpUseOrig[i], &native);
+            g_Sp.useRoute[i] = !ok ? "failed(not found)" : native ? "both" : "table-only";
+        }
         Out(std::string("soulprobe usewatch: ") + kSpUseTargets[i].name + " route=" + g_Sp.useRoute[i]);
     }
+}
+
+// PotionUse's watch, from the shipped mod's detour (Hook_SoulPieceUse): while
+// no watch is armed the call goes straight to the shipped logic; armed, it is
+// candidate kSpPotionUseSlot, whose "original" is that logic.
+static RValue& SoulProbePotionUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_Sp.use == SpUseMode::Off) return SoulPieceUseCall(S, O, R, argc, A);
+    g_SpUseOrig[kSpPotionUseSlot] = SoulPieceUseCall;
+    return SpUseCall(kSpPotionUseSlot, S, O, R, argc, A);
 }
 
 // ---- the frame tick ---------------------------------------------------------------------------
@@ -56898,7 +57490,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips"
+        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "soulpiece"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -57072,6 +57664,9 @@ static void RunCommand(const std::string& line)
     // Dungeon chest opens early (Mods > Gameplay): the switch-and-slider's
     // command and the countdown form, the same early return.
     if (lc == "dungeonchest") { DungeonChestCommand(rest); return; }
+    // Boss soul pieces (Loot tab, ForgePact #197): the switch's command and
+    // its status line, the same standalone early return.
+    if (lc == "soulpiece") { SoulPieceCommand(rest); return; }
     // Skill sliders (Modifiers > Skills, #160): `skillslider <lever> <value>`
     // and `skillslider list`; the same standalone early return.
     if (lc == "skillslider") { ForgePact::SkillSlidersMod::Instance().HandleCommand(rest); return; }
@@ -58550,6 +59145,11 @@ void FrameCallback(FWFrame& FrameContext)
     // once-a-second poll of the room's chest and monsters, under its own
     // throttle (DungeonChestTick). Returns at once while it is off.
     if (g_Setup) DungeonChestTick();
+    // Boss soul pieces (`soulpiece`, ForgePact #197): the pieces' names
+    // registered once the item repository exists; then, only once the mod was
+    // turned on or a piece recognised, the room cache, the installs once a
+    // player exists and a pending transfer.
+    if (g_Setup) SoulPieceTick(fc);
 #ifndef FORGEPACT_RELEASE
     // Its research probe's once-a-second census, after the tally's own poll.
     if (g_Setup) DungeonProbeTick();

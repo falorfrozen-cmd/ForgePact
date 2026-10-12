@@ -6,15 +6,16 @@
 // ModuleMain.cpp asks it (the gem roll's drop decision with the room's name
 // and act, the dying source's ancestry, the Gem of Incarnation's rate and a
 // roll; the act from `RoomActIndex`'s answer; a right-click's use decision with
-// the room's name and act and the piece's act; the portal's target and place),
-// with the values the runtime hands over. No game process is touched.
+// the room's name and act and the piece's act; the transfer's target and what
+// the frame tick reports back), with the values the runtime hands over. No
+// game process is touched.
 //
-// The baselines pin the mod off as the vanilla game: no drop and no portal for
-// any input, a fresh state that is off, and the act that `RoomActIndex`
+// The baselines pin the mod off as the vanilla game: no drop and no transfer
+// for any input, a fresh state that is off, and the act that `RoomActIndex`
 // answered as Live procedure 1 measured it (the answer is the act). The
 // targets pin the chance at the measured gem rate (five quarters of the gem's
 // own chance on the same roll) and every refusal, each "never" beside an
-// input that does give a piece or a portal, so a decision that refuses
+// input that does give a piece or a transfer, so a decision that refuses
 // everything fails them instead of passing them.
 #include <cmath>
 #include <cstdint>
@@ -118,10 +119,10 @@ int main() {
         all(kTowns, std::size(kTowns));
         all(kNameRule, std::size(kNameRule));
         all(kNoAct, std::size(kNoAct));
-        // The control: the same piece in the same town with the mod on opens a portal.
-        const bool control = SP::DecideUse(true, "Town_01_rm", 1, 1) == SP::UseVerdict::Portal;
-        check("baseline/off-never-opens-a-portal", bad == 0 && cases > 0 && control,
-            "cases=" + std::to_string(cases) + " notOff=" + std::to_string(bad) + " control=" + (control ? "portal" : "no")
+        // The control: the same piece in the same town with the mod on transfers.
+        const bool control = SP::DecideUse(true, "Town_01_rm", 1, 1) == SP::UseVerdict::Transfer;
+        check("baseline/off-never-transfers", bad == 0 && cases > 0 && control,
+            "cases=" + std::to_string(cases) + " notOff=" + std::to_string(bad) + " control=" + (control ? "transfer" : "no")
                 + (first.empty() ? "" : " first=" + first));
     }
     {
@@ -258,32 +259,32 @@ int main() {
         check("target/town-and-boss-rooms-refused", ok, detail);
     }
     {
-        // Use, the mod on: a piece of any act opens a portal from a town and from
-        // any zone of an act, whichever act the room and the piece belong to.
+        // Use, the mod on: a piece of any act transfers from a town and from any
+        // zone of an act, whichever act the room and the piece belong to.
         bool ok = true;
         std::string detail;
-        long portals = 0;
+        long transfers = 0;
         for (int pieceAct = 1; pieceAct <= SP::kActCount; ++pieceAct) {
             for (const Room& r : kTowns) {
                 SP::UseVerdict v = SP::DecideUse(true, r.name, r.act, pieceAct);
-                if (v == SP::UseVerdict::Portal) ++portals;
+                if (v == SP::UseVerdict::Transfer) ++transfers;
                 else { ok = false; detail += std::string(" ") + r.name + ":" + std::to_string(pieceAct) + "->" + W(v); }
             }
             for (const Room& r : kEligible) {
                 SP::UseVerdict v = SP::DecideUse(true, r.name, r.act, pieceAct);
-                if (v == SP::UseVerdict::Portal) ++portals;
+                if (v == SP::UseVerdict::Transfer) ++transfers;
                 else { ok = false; detail += std::string(" ") + r.name + ":" + std::to_string(pieceAct) + "->" + W(v); }
             }
         }
-        check("target/use-opens-a-portal-in-towns-and-zones", ok && portals > 0, "portals=" + std::to_string(portals) + detail);
+        check("target/use-transfers-from-towns-and-zones", ok && transfers > 0, "transfers=" + std::to_string(transfers) + detail);
     }
     {
-        // Use refusals, in DecideUse's order, each beside an input that opens a portal.
+        // Use refusals, in DecideUse's order, each beside an input that transfers.
         struct Case { bool on; const char* room; int roomAct; int pieceAct; SP::UseVerdict want; };
         const Case cases[] = {
             // off, beside the same use on
-            { false, "Town_01_rm", 1, 1, SP::UseVerdict::Off }, { true, "Town_01_rm", 1, 1, SP::UseVerdict::Portal },
-            { false, "Act_01_01", 1, 1, SP::UseVerdict::Off }, { true, "Act_01_01", 1, 1, SP::UseVerdict::Portal },
+            { false, "Town_01_rm", 1, 1, SP::UseVerdict::Off }, { true, "Town_01_rm", 1, 1, SP::UseVerdict::Transfer },
+            { false, "Act_01_01", 1, 1, SP::UseVerdict::Off }, { true, "Act_01_01", 1, 1, SP::UseVerdict::Transfer },
             // not a piece (and off before not-piece)
             { true, "Act_01_01", 1, 0, SP::UseVerdict::NotPiece }, { true, "Act_01_01", 1, 10, SP::UseVerdict::NotPiece },
             { true, "Act_01_01", 1, -1, SP::UseVerdict::NotPiece }, { false, "Act_01_01", 1, 0, SP::UseVerdict::Off },
@@ -297,8 +298,8 @@ int main() {
             { true, "Dev_5_Mika_Test_Abyss_Realm_rm", 9, 9, SP::UseVerdict::BossRoom },
             { true, "Act_09_Treasure_Dungeon_Boss_rm", 9, 9, SP::UseVerdict::BossRoom },
             { true, "Act_02_Boss", 0, 2, SP::UseVerdict::NoAct },
-            // beside them: an ordinary zone of the same act opens one
-            { true, "Act_02_03", 2, 2, SP::UseVerdict::Portal }, { true, "Act_09_Wasp_Nest_rm", 9, 9, SP::UseVerdict::Portal },
+            // beside them: an ordinary zone of the same act transfers
+            { true, "Act_02_03", 2, 2, SP::UseVerdict::Transfer }, { true, "Act_09_Wasp_Nest_rm", 9, 9, SP::UseVerdict::Transfer },
         };
         bool ok = true;
         std::string detail;
@@ -312,24 +313,42 @@ int main() {
         check("target/use-refused-when-off-outside-acts-and-in-boss-rooms", ok, detail);
     }
     {
-        // The portal leads to the piece's act boss room (`Act_0N_Boss`), and stands
-        // kPortalOffsetPx to the player's right, mirrored to the left past the
-        // room's width; an unknown width (0) keeps it to the right.
-        bool ok = SP::kPortalOffsetPx == 96.0;
+        // A piece takes the player to its act's boss room (`Act_0N_Boss`); no act,
+        // no target. The tick's report: a transfer carried out counts by act,
+        // as `fresh` when the boss room answered a saved state before the reset
+        // and as `cleared` too when it was gone after it; one that was not
+        // carried out counts as failed and moves `last` nowhere, whatever the
+        // zone-state answers were.
+        bool ok = true;
         std::string detail;
         for (int act = 1; act <= SP::kActCount; ++act) {
             const std::string want = std::string("Act_0") + std::to_string(act) + "_Boss";
-            const char* target = SP::PortalTarget(act);
+            const char* target = SP::TransferTarget(act);
             if (!target || want != target || std::string_view(SP::BossOfAct(act)->bossRoom) != want) {
                 ok = false; detail += " act" + std::to_string(act) + "=" + (target ? target : "null");
             }
         }
-        ok = ok && SP::PortalTarget(0) == nullptr && SP::PortalTarget(10) == nullptr && SP::PortalTarget(-1) == nullptr;
-        ok = ok && SP::PortalX(1000.0, 4000.0) == 1096.0
-                && SP::PortalX(3904.0, 4000.0) == 4000.0
-                && SP::PortalX(3950.0, 4000.0) == 3854.0
-                && SP::PortalX(1000.0, 0.0) == 1096.0;
-        check("target/portal-target-is-the-act-boss-room", ok, detail);
+        ok = ok && SP::TransferTarget(0) == nullptr && SP::TransferTarget(10) == nullptr && SP::TransferTarget(-1) == nullptr;
+        using ZA = SP::ZoneAnswer;
+        SP::State s;
+        SP::RecordTransfer(s, 1, true, ZA::No, ZA::No);          // first visit: nothing saved
+        SP::RecordTransfer(s, 1, true, ZA::Yes, ZA::No);         // saved, and gone after the reset
+        SP::RecordTransfer(s, 1, true, ZA::Yes, ZA::Yes);        // saved, and still there after it
+        SP::RecordTransfer(s, 1, true, ZA::Yes, ZA::Unread);     // saved, the second read failed
+        SP::RecordTransfer(s, 1, true, ZA::Unread, ZA::No);      // the first read failed
+        SP::RecordTransfer(s, 2, false, ZA::Yes, ZA::No);        // not carried out
+        SP::RecordTransfer(s, 0, true, ZA::Yes, ZA::No);         // no act
+        SP::RecordZoneCallFailed(s);
+        ok = ok && s.counters.transfersByAct[1] == 5 && s.counters.transfersByAct[2] == 0 && s.counters.fresh == 3
+                && s.counters.cleared == 1 && s.counters.transferFailed == 2 && s.counters.zoneCallFailed == 1
+                && s.lastTransferAct == 1;
+        detail += " transfers1=" + std::to_string(s.counters.transfersByAct[1]) + " fresh=" + std::to_string(s.counters.fresh)
+                + " cleared=" + std::to_string(s.counters.cleared) + " failed=" + std::to_string(s.counters.transferFailed);
+        // The words the status line shows for each answer.
+        ok = ok && SP::ZoneAnswerText(ZA::Yes, "x") == "yes" && SP::ZoneAnswerText(ZA::No, "x") == "no"
+                && SP::ZoneAnswerText(ZA::Unread, "call failed") == "unread(call failed)"
+                && SP::ZoneAnswerText(ZA::Unread, "") == "unread(?)";
+        check("target/transfer-target-is-the-act-boss-room", ok, detail);
     }
     {
         // Nine acts, in order, each with a named boss object, a "Piece of" name and
@@ -350,9 +369,9 @@ int main() {
                 && std::string_view(SP::BossOfAct(7)->bossObject) == "Mevius_obj"
                 && std::string_view(SP::BossOfAct(7)->pieceName) == "Piece of Mevius' Soul"
                 && std::string_view(SP::BossOfAct(2)->pieceName) == "Piece of the Grim Reaper's Soul";
-        // Every act drops and opens a portal: no act reaches `unnamed`.
+        // Every act drops and transfers: no act reaches `unnamed`.
         for (int act = 1; act <= SP::kActCount; ++act)
-            ok = ok && SP::DecideUse(true, "Act_01_01", 1, act) == SP::UseVerdict::Portal
+            ok = ok && SP::DecideUse(true, "Act_01_01", 1, act) == SP::UseVerdict::Transfer
                     && SP::DecideDrop(true, true, "Act_01_01", act, true, false, kMeasuredRate, 0.0) == SP::DropVerdict::Hit;
         check("target/every-act-has-a-boss", ok, detail);
     }
@@ -390,28 +409,37 @@ int main() {
         SP::RecordDrop(s, SP::DropVerdict::Miss, 1);
         SP::RecordDrop(s, SP::DropVerdict::Miss, 2);
         SP::RecordDrop(s, SP::DropVerdict::Town, 1);
-        SP::RecordUse(s, SP::UseVerdict::Portal, 2, true);
-        SP::RecordUse(s, SP::UseVerdict::Portal, 1, false);
-        SP::RecordUse(s, SP::UseVerdict::BossRoom, 1, false);
+        SP::RecordUse(s, SP::UseVerdict::Transfer);
+        SP::RecordUse(s, SP::UseVerdict::Transfer);
+        SP::RecordUse(s, SP::UseVerdict::BossRoom);
+        SP::RecordTransfer(s, 2, true, SP::ZoneAnswer::Yes, SP::ZoneAnswer::No);
+        SP::RecordTransfer(s, 1, false, SP::ZoneAnswer::No, SP::ZoneAnswer::No);
+        SP::RecordZoneCallFailed(s);
+        SP::RecordDropFailed(s);
+        const std::string leftSaved = SP::ZoneAnswerText(SP::ZoneAnswer::Yes, "");
         SP::StatusInputs in;
         in.room = "Act_01_01"; in.act = 1; in.gemRate = kMeasuredRate;
-        in.gemRoute = "both"; in.useRoute = "both"; in.portalRoute = "portal-obj";
+        in.gemRoute = "both"; in.useRoute = "both";
+        in.left = "Town_01_rm"; in.leftSaved = leftSaved;
         const std::string line = SP::StatusLine(s, in);
         const std::string want = "soulpiece: on force=off room=Act_01_01 act=1 eligible=yes gemrate=9000 chance=1/7200"
-            " gemrolls=4 drops=1 misses=2 uses=3 portals=1 last=Act_02_Boss refused=town=1,use-boss-room=1,portal-failed=1"
-            " hooks=gem:both use:PotionUse:both portal:portal-obj";
-        ok = ok && line == want && s.counters.dropsByAct[1] == 1 && s.counters.portalsByAct[2] == 1
-                && s.counters.portalsByAct[1] == 0 && s.counters.portalFailed == 1;
+            " gemrolls=4 drops=1 misses=2 uses=3 transfers=1 fresh=1 cleared=1 last=Act_02_Boss left=Town_01_rm leftsaved=yes"
+            " refused=town=1,drop-failed=1,use-boss-room=1,transfer-failed=1,zone-call-failed=1 hooks=gem:both use:PotionUse:both";
+        ok = ok && line == want && s.counters.dropsByAct[1] == 1 && s.counters.transfersByAct[2] == 1
+                && s.counters.transfersByAct[1] == 0 && s.counters.transferFailed == 1;
         SP::State off;
         SP::StatusInputs town;
         town.room = "Town_01_rm"; town.act = 1; town.gemRate = 0.0; town.gemRateWhy = "unread";
         const std::string offLine = SP::StatusLine(off, town);
         const std::string wantOff = "soulpiece: off force=off room=Town_01_rm act=1 eligible=no(town) gemrate=unavailable(unread)"
-            " chance=1/- gemrolls=0 drops=0 misses=0 uses=0 portals=0 last=- refused=- hooks=gem:none use:PotionUse:none portal:portal-obj";
-        ok = ok && offLine == wantOff;
-        SP::StatusInputs gotoRoute;
-        gotoRoute.room = "Act_02_01"; gotoRoute.act = 2; gotoRoute.gemRate = kMeasuredRate; gotoRoute.portalRoute = "goto";
-        ok = ok && SP::StatusLine(off, gotoRoute).ends_with(" portal:goto");
+            " chance=1/- gemrolls=0 drops=0 misses=0 uses=0 transfers=0 fresh=0 cleared=0 last=- left=- leftsaved=-"
+            " refused=- hooks=gem:none use:PotionUse:none";
+        ok = ok && offLine == wantOff && offLine.find("portal") == std::string::npos;
+        // An unread answer for the room left names why.
+        const std::string unread = SP::ZoneAnswerText(SP::ZoneAnswer::Unread, "call failed");
+        SP::StatusInputs left = town;
+        left.left = "Act_01_Boss"; left.leftSaved = unread;
+        ok = ok && SP::StatusLine(off, left).find(" left=Act_01_Boss leftsaved=unread(call failed) ") != std::string::npos;
         check("command/status-line", ok, "[" + line + "] [" + offLine + "]");
     }
     {

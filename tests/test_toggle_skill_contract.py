@@ -871,6 +871,8 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # Always show Chaos Pillar mods (ForgePact #7;
             # test_chaos_pillar_tips_contract.py).
             "pillartips",
+            # Boss soul pieces (ForgePact #197; test_soul_piece_contract.py).
+            "soulpiece",
         }
         self.assertEqual(entries, expected)
 
@@ -3084,9 +3086,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # `skillslider` is the skill sliders (ForgePact #160,
         # test_skill_sliders_contract.py), `gambapity` is Goburin's Head pity
         # (ForgePact #134, test_gamba_pity_contract.py), `lootann` is Loot
-        # announcements (ForgePact #17, test_loot_announce_contract.py), and
+        # announcements (ForgePact #17, test_loot_announce_contract.py),
         # `pillartips` is Always show Chaos Pillar mods (ForgePact #7,
-        # test_chaos_pillar_tips_contract.py).
+        # test_chaos_pillar_tips_contract.py), and `soulpiece` is Boss soul
+        # pieces (ForgePact #197, test_soul_piece_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3095,7 +3098,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
                                         "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
-                                        "pillartips"})
+                                        "pillartips", "soulpiece"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

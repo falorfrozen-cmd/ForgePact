@@ -11,8 +11,10 @@ It is research build only, and it reaches the game only by name. These tests
 read the plugin as text, comment-stripped, in the shape of
 test_hidden_loot_contract.py: research only; placement through the loader;
 the gem watch as a consumer of the shared DropGems detour; one both-route
-detour per use candidate, none a script the player build already detours; the
-portal made only from Portal_obj, its target written only through the
+detour per use candidate but PotionUse, none a script the player build already
+detours, and PotionUse's watch riding the shipped mod's one detour on it; the
+portal (research history: the shipped mod travels instead) made only from
+Portal_obj, its target written only through the
 protected store's setter and only under a key inside the store; `goto` only
 through NetworkRoomGoto; the boss kill only through `enemy_hp`; no stack hook
 and no boss creation.
@@ -220,9 +222,38 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertNotIn("HookOneScriptTable", self.section)
         self.assertNotIn("MmCreateHook", self.section)
 
-    def test_no_candidate_is_a_script_the_player_build_detours(self):
+    def test_no_candidate_but_potion_use_is_a_script_the_player_build_detours(self):
         for name in USE_CANDIDATES.values():
+            if name == "PotionUse":
+                continue
             self.assertEqual([], player_build_detours(self.player, name), name)
+        # PotionUse carries exactly one detour, the shipped mod's, through the
+        # constant its install names.
+        self.assertIn("kSoulPieceUseName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PotionUse);", self.player)
+        installs = [c for c in hook_one_script_calls(self.player) if "kSoulPieceUseName" in c]
+        self.assertEqual(1, len(installs))
+        # and no other install names PotionUse, by literal or by SDK constant.
+        self.assertEqual([], player_build_detours(self.player, "PotionUse"))
+
+    def test_potion_use_watch_rides_the_shipped_detour(self):
+        # One detour per script: the probe installs none of its own on
+        # PotionUse; the shipped detour hands every call to the watch first,
+        # and the watch's "original" is the shipped logic, never the game's.
+        self.assertIn("kSpPotionUseSlot = SpUseSlotOf(kSoulPieceUseName);", self.section)
+        install = self.body("static void SpInstallUseWatch()")
+        slot = install.index("if (i == kSpPotionUseSlot)")
+        hook = install.index("HookOneScript(kSpUseTargets[i].name")
+        self.assertLess(slot, hook, "PotionUse is taken out before the probe's own detour")
+        shipped = install[slot:hook]
+        self.assertIn("g_SpUseOrig[i] = SoulPieceUseCall;", shipped)
+        self.assertIn("SoulPieceInstallUse();", shipped)
+        watch = self.body("static RValue& SoulProbePotionUse(")
+        self.assertIn("if (g_Sp.use == SpUseMode::Off) return SoulPieceUseCall(S, O, R, argc, A);", watch)
+        self.assertIn("SpUseCall(kSpPotionUseSlot, S, O, R, argc, A)", watch)
+        hook_body = function_body(self.plugin_code, "static RValue& Hook_SoulPieceUse(")
+        self.assertRegex(hook_body, r"#ifndef FORGEPACT_RELEASE\s*return SoulProbePotionUse\(S, O, R, argc, A\);\s*#else\s*"
+                                    r"return SoulPieceUseCall\(S, O, R, argc, A\);\s*#endif")
+        self.assertNotIn("SoulProbePotionUse", function_body(self.player, "static RValue& Hook_SoulPieceUse("))
 
     def test_the_player_build_detour_scan_sees_a_detour(self):
         # Negative control for the scan above: a player-build install of a
@@ -242,8 +273,8 @@ class SoulProbeContractTests(unittest.TestCase):
         intercepted = use[branch:other]
         self.assertNotIn("orig(", intercepted, "the original is never called for a piece in `use`")
         self.assertIn("SpNs::DecideUse(true, room.name, room.act, act)", intercepted)
-        self.assertLess(intercepted.index("SpNs::UseVerdict::Portal"), intercepted.index("SpOpenPortal(act, g_Sp.portalScp)"),
-                        "a portal opens only on the core's `portal`")
+        self.assertLess(intercepted.index("SpNs::UseVerdict::Transfer"), intercepted.index("SpOpenPortal(act, g_Sp.portalScp)"),
+                        "a research portal opens only on the core's `transfer`")
         self.assertIn("R = opened ? (g_SpHaveControl[n] ? g_SpControlRet[n] : RValue(true)) : RValue(false);", intercepted,
                       "the control's answer on success, false on a refusal or a failed portal")
         self.assertIn("res = orig ? &orig(S, O, R, argc, A) : &R;", use[other:], "everything else passes to the game")
@@ -266,7 +297,7 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertEqual(1, len(re.findall(r"ApCallScript\(kSpScpName,", self.section)))
         # The target is the core's boss room, resolved by name.
         room = self.body("static bool SpBossRoom(")
-        self.assertIn("SpNs::PortalTarget(act)", room)
+        self.assertIn("SpNs::TransferTarget(act)", room)
         self.assertIn('"asset_get_index", { RValue(std::string(name)) }', room)
         self.assertIn('"room_exists"', room)
 

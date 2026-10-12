@@ -7,9 +7,12 @@ namespace ForgePact::SoulPieces {
 // Boss soul pieces (`soulpiece 1|0|on|off|status|force on|force off`, issue
 // #197): while the mod is on, an ordinary monster dying in a zone of an act
 // can drop a Piece of <boss>'s Soul of that act, and right-clicking a piece in
-// the backpack and confirming opens a portal beside the player to that act's
-// boss room (`Act_0N_Boss`). The boss room's own pentagram brings the boss
-// out; nothing here creates, moves or kills a boss.
+// the backpack and confirming moves the player straight into that act's boss
+// room (`Act_0N_Boss`) through the game's own travel script, after the room's
+// remembered state is dropped so the fight is fresh (Live procedure 3's
+// goto-travel; the owner chose the direct transfer over a portal, 2026-10-11).
+// The boss room's own pentagram brings the boss out; nothing here creates,
+// moves or kills a boss.
 //
 // The drop rolls inside the game's own gem roll (one more consumer of the
 // shared `DropGems` detour): a `DropGems` call means the game already decided
@@ -62,19 +65,16 @@ inline constexpr int kBaseCategory = 11;
 inline constexpr int kBaseItemType = 11;
 inline constexpr char kBaseRepoName[] = "consumable_edible_pas_logo";
 
-// The portal stands this far to the player's right, mirrored to the left past
-// the room's width (Live procedure 1: 1200 px to the side was off-screen).
-inline constexpr double kPortalOffsetPx = 96.0;
 // The dress's mechanic tag.
 inline constexpr char kMechanicTag[] = "soulpiece";
 
 // ---- the act table ---------------------------------------------------------------
 // One row per act: the boss its room is expected to bring out (an SDK object
 // name), the piece's name, and the act's boss room (an SDK room name, resolved
-// by name at run time), where the piece's portal leads. Acts 1 and 2 come from
-// the issue; 3-6, 8 and 9 from their boss rooms' decor (static reading); Act 7
-// is the owner's (2026-10-11). `named` false would make an act drop nothing
-// and open no portal (`unnamed`); every shipped row is named.
+// by name at run time), where the piece takes the player. Acts 1 and 2 come
+// from the issue; 3-6, 8 and 9 from their boss rooms' decor (static reading);
+// Act 7 is the owner's (2026-10-11). `named` false would make an act drop
+// nothing and move nobody (`unnamed`); every shipped row is named.
 struct ActBoss {
     int act;
     const char* bossObject;
@@ -148,8 +148,8 @@ static_assert(sizeof(kDropVerdictWords) / sizeof(kDropVerdictWords[0]) == kDropV
 
 // The use's verdicts, in the order DecideUse asks them; every one but the
 // last is a refusal, and the piece is kept.
-enum class UseVerdict { Off, NotPiece, NoAct, BossRoom, Unnamed, Portal, Count };
-inline constexpr const char* kUseVerdictWords[] = { "off", "not-piece", "no-act", "boss-room", "unnamed", "portal" };
+enum class UseVerdict { Off, NotPiece, NoAct, BossRoom, Unnamed, Transfer, Count };
+inline constexpr const char* kUseVerdictWords[] = { "off", "not-piece", "no-act", "boss-room", "unnamed", "transfer" };
 inline constexpr int kUseVerdictCount = static_cast<int>(UseVerdict::Count);
 static_assert(sizeof(kUseVerdictWords) / sizeof(kUseVerdictWords[0]) == kUseVerdictCount);
 
@@ -166,7 +166,7 @@ inline const char* Word(UseVerdict v)
 }
 
 // ---- rooms -----------------------------------------------------------------------------
-// A town drops no piece (a piece's portal may open from one).
+// A town drops no piece (a piece may be used in one).
 inline bool IsTownRoom(std::string_view room) { return room.starts_with("Town_"); }
 
 // The name rule beside the town: `_Boss` rooms (act boss rooms, boss
@@ -221,10 +221,10 @@ inline DropVerdict DecideDrop(bool modOn, bool forced, std::string_view room, in
 // ---- the use -------------------------------------------------------------------------------
 // A right-click on an item in the backpack, confirmed. `room` and `roomAct`
 // are the player's room and its act (0: none); `pieceAct` is the item's
-// PieceActOfItem (0: not a piece). Towns are allowed: a portal from town is
-// the natural use. A room with no act (uber realms, Chaos Tower, the act boss
-// rooms, which `RoomActIndex` leaves undefined) and the drop's boss-room name
-// rule refuse it.
+// PieceActOfItem (0: not a piece). Towns are allowed (the owner, after
+// Replan 1). A room with no act (uber realms, Chaos Tower, the act boss rooms,
+// which `RoomActIndex` leaves undefined) and the drop's boss-room name rule
+// refuse it, so a piece is never used inside the room it would reset.
 inline UseVerdict DecideUse(bool modOn, std::string_view room, int roomAct, int pieceAct)
 {
     if (!modOn) return UseVerdict::Off;
@@ -233,25 +233,31 @@ inline UseVerdict DecideUse(bool modOn, std::string_view room, int roomAct, int 
     if (IsBossRoom(room)) return UseVerdict::BossRoom;
     const ActBoss* boss = BossOfAct(pieceAct);
     if (!boss || !boss->named) return UseVerdict::Unnamed;
-    return UseVerdict::Portal;
+    return UseVerdict::Transfer;
 }
 
-// ---- the portal ----------------------------------------------------------------------------
-// Where a piece's portal leads: its act's boss room, by SDK room name
-// (nullptr for no act). The adapter resolves it with `asset_get_index`.
-inline const char* PortalTarget(int pieceAct)
+// ---- the transfer --------------------------------------------------------------------------
+// Where a piece takes the player: its act's boss room, by SDK room name
+// (nullptr for no act). The adapter resolves it with `asset_get_index`, drops
+// that room's saved zone state and travels there with `NetworkRoomGoto`.
+inline const char* TransferTarget(int pieceAct)
 {
     const ActBoss* boss = BossOfAct(pieceAct);
     return boss ? boss->bossRoom : nullptr;
 }
 
-// The portal's x: kPortalOffsetPx to the player's right, or to the left when
-// that would pass the room's width. A width of 0 or less (unread) keeps it to
-// the right. Its y is the player's.
-inline double PortalX(double playerX, double roomWidth)
+// What `ZoneStateExists(<room>)` answered: a saved entry that answers true, no
+// entry (or one that answers false), or no answer to read (the call failed, or
+// gave neither a number nor a bool). Before the reset it decides `fresh`;
+// after it, `cleared`; for the room the player left, the status line's
+// `leftsaved`.
+enum class ZoneAnswer { Yes, No, Unread };
+
+inline std::string ZoneAnswerText(ZoneAnswer a, std::string_view why)
 {
-    const double right = playerX + kPortalOffsetPx;
-    return roomWidth > 0.0 && right > roomWidth ? playerX - kPortalOffsetPx : right;
+    if (a == ZoneAnswer::Yes) return "yes";
+    if (a == ZoneAnswer::No) return "no";
+    return "unread(" + std::string(why.empty() ? std::string_view("?") : why) + ")";
 }
 
 // ---- the verb ---------------------------------------------------------------------------------
@@ -288,16 +294,20 @@ struct Counters {
     long gemRolls = 0;                         // DropGems calls decided
     long drop[kDropVerdictCount]{};            // by verdict
     long dropsByAct[kActCount + 1]{};          // hits, by act
+    long dropFailed = 0;                       // hits whose piece could not be placed
     long use[kUseVerdictCount]{};              // piece uses decided, by verdict
-    long portalsByAct[kActCount + 1]{};        // portals opened, by act
-    long portalFailed = 0;                     // `portal` uses whose portal did not open
+    long transfersByAct[kActCount + 1]{};      // transfers carried out, by act
+    long transferFailed = 0;                   // `transfer` uses that were not carried out
+    long fresh = 0;                            // transfers whose boss room answered a saved state before the reset
+    long cleared = 0;                          // of those, the ones whose state was gone after it
+    long zoneCallFailed = 0;                   // ZoneStateExists/ZoneStateResetSingle calls that failed on a transfer
 };
 
 struct State {
     bool on = false;
     bool forced = false;
     Counters counters;
-    int lastPortalAct = 0;                     // 0: none yet
+    int lastTransferAct = 0;                   // 0: none yet
 };
 
 // Applies a verb; false for Invalid (nothing changes). `force` is kept apart
@@ -323,25 +333,46 @@ inline void RecordDrop(State& s, DropVerdict v, int act)
     if (v == DropVerdict::Hit && IsAct(act)) ++s.counters.dropsByAct[act];
 }
 
-// One decided use of a piece of `act`. `opened`: for `portal`, whether the
-// portal opened with its target written and read back (the piece is taken
-// only then); a `portal` that did not open counts as `portal-failed`.
-inline void RecordUse(State& s, UseVerdict v, int act, bool opened)
+// One decided use of a piece, by its verdict: the detour decides it inside
+// `PotionUse`, and the piece is used up only on `transfer`.
+inline void RecordUse(State& s, UseVerdict v)
 {
     const int i = static_cast<int>(v);
     if (i < 0 || i >= kUseVerdictCount) return;
     ++s.counters.use[i];
-    if (v != UseVerdict::Portal) return;
-    if (!opened) { ++s.counters.portalFailed; return; }
-    if (IsAct(act)) {
-        ++s.counters.portalsByAct[act];
-        s.lastPortalAct = act;
-    }
 }
+
+// A `hit` whose piece the adapter could not build or place (`drop-failed`):
+// counted apart, so `drops=` never claims a piece nobody saw.
+inline void RecordDropFailed(State& s) { ++s.counters.dropFailed; }
+
+// One `transfer` after the detour decided it. `done`: the travel call went out
+// (false: the boss room did not resolve, or by the frame tick the room had
+// changed, the player was gone or the call failed; counted `transfer-failed`).
+// `before` and `after`: what ZoneStateExists answered for the boss room before
+// and after ZoneStateResetSingle. `fresh` counts a carried-out transfer whose
+// boss room answered a saved state before the reset; `cleared` those of them
+// whose state was gone after it (the entry existed and the reset dropped it).
+inline void RecordTransfer(State& s, int act, bool done, ZoneAnswer before, ZoneAnswer after)
+{
+    if (!done || !IsAct(act)) { ++s.counters.transferFailed; return; }
+    ++s.counters.transfersByAct[act];
+    if (before == ZoneAnswer::Yes) {
+        ++s.counters.fresh;
+        if (after == ZoneAnswer::No) ++s.counters.cleared;
+    }
+    s.lastTransferAct = act;
+}
+
+// A ZoneStateExists or ZoneStateResetSingle call on a transfer that the
+// runtime reported failed (`zone-call-failed`); the transfer still goes ahead.
+inline void RecordZoneCallFailed(State& s) { ++s.counters.zoneCallFailed; }
 
 // ---- the status line ------------------------------------------------------------------------------
 // What the adapter knows and the core does not: the room, the gem rate it
-// read (or why it could not) and each route.
+// read (or why it could not), each route, and the room the player was in
+// before this one with what ZoneStateExists answered for it (`-` for both
+// before a room change was seen; `leftSaved` is ZoneAnswerText's word).
 struct StatusInputs {
     std::string_view room = "none";
     int act = 0;
@@ -350,7 +381,8 @@ struct StatusInputs {
     std::string_view gemRoute = "none";
     std::string_view useScript = "PotionUse";
     std::string_view useRoute = "none";
-    std::string_view portalRoute = "portal-obj";   // `portal-obj` or `goto`
+    std::string_view left = "-";
+    std::string_view leftSaved = "-";
 };
 
 inline std::string NumberText(double v)
@@ -363,13 +395,17 @@ inline std::string NumberText(double v)
 
 // `soulpiece: <on|off> force=<on|off> room=<name> act=<n|none>
 // eligible=<yes|no(<word>)> gemrate=<G|unavailable(<why>)> chance=1/<D|->
-// gemrolls=<n> drops=<n> misses=<n> uses=<n> portals=<n> last=<boss room|->
-// refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>
-// portal:<portal-obj|goto>`.
-// `uses` counts every piece use decided, refused or not; `portals` the
-// portals that opened; `last` the boss room the latest one leads to.
-// `refused` lists the drop refusals by their word, then the use refusals as
-// `use-<word>` and failed portals as `portal-failed`, `-` when there is none.
+// gemrolls=<n> drops=<n> misses=<n> uses=<n> transfers=<n> fresh=<n>
+// cleared=<n> last=<boss room|-> left=<room|-> leftsaved=<yes|no|unread(<why>)|->
+// refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>`.
+// `uses` counts every piece use decided, refused or not; `transfers` the moves
+// carried out; `fresh` the transfers whose boss room answered a saved state
+// before the reset, and `cleared` those of them whose state was gone after
+// it; `last` the latest transfer's boss room; `left` the room before the
+// current one and `leftsaved` its ZoneStateExists answer. `refused` lists the
+// drop refusals by their word, `drop-failed`, then the use refusals as
+// `use-<word>`, failed transfers as `transfer-failed` and failed zone-state
+// calls as `zone-call-failed`, `-` when there is none.
 inline std::string StatusLine(const State& s, const StatusInputs& in)
 {
     const Counters& c = s.counters;
@@ -383,13 +419,15 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         refused += word + "=" + std::to_string(n);
     };
     for (int i = 0; i < static_cast<int>(DropVerdict::Hit); ++i) add(kDropVerdictWords[i], c.drop[i]);
-    for (int i = 0; i < static_cast<int>(UseVerdict::Portal); ++i) add(std::string("use-") + kUseVerdictWords[i], c.use[i]);
-    add("portal-failed", c.portalFailed);
+    add("drop-failed", c.dropFailed);
+    for (int i = 0; i < static_cast<int>(UseVerdict::Transfer); ++i) add(std::string("use-") + kUseVerdictWords[i], c.use[i]);
+    add("transfer-failed", c.transferFailed);
+    add("zone-call-failed", c.zoneCallFailed);
     long uses = 0;
     for (int i = 0; i < kUseVerdictCount; ++i) uses += c.use[i];
-    long portals = 0;
-    for (int act = 1; act <= kActCount; ++act) portals += c.portalsByAct[act];
-    const char* last = PortalTarget(s.lastPortalAct);
+    long transfers = 0;
+    for (int act = 1; act <= kActCount; ++act) transfers += c.transfersByAct[act];
+    const char* last = TransferTarget(s.lastTransferAct);
     return std::string("soulpiece: ") + (s.on ? "on" : "off")
         + " force=" + (s.forced ? "on" : "off")
         + " room=" + std::string(in.room)
@@ -401,12 +439,15 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " drops=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Hit)])
         + " misses=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Miss)])
         + " uses=" + std::to_string(uses)
-        + " portals=" + std::to_string(portals)
+        + " transfers=" + std::to_string(transfers)
+        + " fresh=" + std::to_string(c.fresh)
+        + " cleared=" + std::to_string(c.cleared)
         + " last=" + (last ? last : "-")
+        + " left=" + (in.left.empty() ? std::string("-") : std::string(in.left))
+        + " leftsaved=" + (in.leftSaved.empty() ? std::string("-") : std::string(in.leftSaved))
         + " refused=" + (refused.empty() ? std::string("-") : refused)
         + " hooks=gem:" + std::string(in.gemRoute)
-        + " use:" + std::string(in.useScript) + ":" + std::string(in.useRoute)
-        + " portal:" + std::string(in.portalRoute);
+        + " use:" + std::string(in.useScript) + ":" + std::string(in.useRoute);
 }
 
 } // namespace ForgePact::SoulPieces
