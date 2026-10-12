@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "created": "2026-10-12",
+  "tool": "built-in imagegen",
+  "assets": [
+    {
+      "file": "pocket_elf.png",
+      "width": 32,
+      "height": 32,
+      "transparent_background": true,
+      "reference": "none",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art charm inventory icon for a dark-fantasy action RPG. Transparent RGBA PNG with actual alpha; no background or checkerboard, no words, labels, frame, watermark or UI. Crisp old-school pixel art with hard square pixel clusters, a dark charcoal outline, restrained roughly 20-color palette, upper-left highlights, strong small-scale silhouette. No smoothing, antialiasing, gradients, soft glow, painted texture or photorealism. Only one charm, fully visible, centered and no detached decorative particles. This is production sprite art, not a mockup. Subject: Pocket Elf, a tiny charming full-body woodland elf with pointed ears, honey-blond hair, emerald green cap and tunic, brown boots, and a compact pair of pale turquoise fairy wings. Friendly mischievous expression, front three-quarter view, arms held close to the body, charming treasure-like readable silhouette. Intended final sprite canvas is exactly 32 x 32 pixels; compose and simplify on a 32-column x 32-row pixel grid, use big readable color clusters. Character should occupy nearly the full square with a one-pixel transparent margin. If rendering enlarged, make it an integer nearest-neighbor enlargement of this low-resolution pixel sprite; never draw miniature fine details."
+    },
+    {
+      "file": "gabriel_wings.png",
+      "width": 64,
+      "height": 64,
+      "transparent_background": true,
+      "reference": "none",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art charm inventory icon for a dark-fantasy action RPG. Transparent RGBA PNG with actual alpha; no background or checkerboard, no words, labels, frame, watermark or UI. Crisp old-school pixel art with hard square pixel clusters, a dark charcoal outline, restrained roughly 20-color palette, upper-left highlights, strong small-scale silhouette. No smoothing, antialiasing, gradients, soft glow, painted texture or photorealism. Only one charm, fully visible, centered and no detached decorative particles. This is production sprite art, not a mockup. Subject: Gabriel Wings charm: a single paired set of luminous ivory angel wings spread upward in a symmetric gentle V, with broad stepped feather groups, cool blue-gray shadows and warm cream highlights, attached to a small antique-gold central clasp with a deep ruby gem. Wings alone, no person, body, armor or halo. Elegant treasured fantasy item, impressive but clearly readable. Intended final canvas exactly 64 x 64 pixels; compose on a 64-column x 64-row pixel grid. Pair of wings nearly fills the square with a two-pixel transparent margin. Each feather uses deliberate hard pixel clusters and bold stepped outlines. If enlarged, integer nearest-neighbor enlargement of the low-resolution sprite only."
+    },
+    {
+      "file": "witch_broomstick.png",
+      "width": 32,
+      "height": 160,
+      "transparent_background": true,
+      "reference": "none",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art charm inventory icon for a dark-fantasy action RPG. Transparent RGBA PNG with actual alpha; no background or checkerboard, no words, labels, frame, watermark or UI. Crisp old-school pixel art with hard square pixel clusters, a dark charcoal outline, restrained roughly 20-color palette, upper-left highlights, strong small-scale silhouette. No smoothing, antialiasing, gradients, soft glow, painted texture or photorealism. Only one charm, fully visible, centered and no detached decorative particles. This is production sprite art, not a mockup. Subject: Witch's Broomstick: one very tall slender enchanted broom standing upright, straight vertical polished dark chestnut wood handle with a slight curved hook at the top, violet cloth binding above the rich golden straw bristles, a small violet charm tied into the binding. No witch, hand, stand, scenery, magic smoke or floating particles. Bristles point downward, handle occupies most of the height, broom head broadens naturally at the bottom; elegant readable silhouette. Intended final canvas exactly 32 pixels wide x 160 pixels tall (1:5 portrait); design at that logical pixel grid. Keep the entire item vertically upright with a one-pixel transparent margin and no clipping. Put this narrow upright sprite centrally in transparent space if the source canvas must be wider, retaining its 1:5 icon silhouette. Bold hard pixel clusters, not high-resolution illustrative texture."
+    },
+    {
+      "file": "pocket_elf_ground.png",
+      "width": 16,
+      "height": 16,
+      "transparent_background": true,
+      "reference": "pocket_elf inventory master (design reference)",
+      "prompt": "Use case: stylized-concept. Asset type: separate original dropped charm ground sprite for a dark-fantasy pixel action RPG. The input image is a DESIGN/IDENTITY REFERENCE only, not an edit target. Generate a new deliberately much simpler sprite of the same charm for a tiny final pixel canvas. Transparent RGBA PNG with real alpha, no background, checkerboard, text, watermark, label, border, scenic ground or glow. Classic crisp hand-clustered pixel art, solid dark outline and about 12-16 flat colors, no smoothing, antialiasing or gradient. Bold silhouettes and minimal identifiable details, the actual size must remain readable. Show only a single item, fully visible. Render enlarged logical pixels as uniform square blocks. Pocket Elf ground icon, final logical canvas 16 x 16 pixels. Same emerald cap/tunic, blond hair, peach pointed ears, brown boots and pale aqua wings as the reference. Simplify into a compact full-body miniature elf: one simple face cluster, two tiny dark eye pixels, little green body, two brown feet, small aqua wing shapes. Each facial feature only a pixel or two. Only about 14 x 14 occupied pixels inside a transparent one-pixel margin; must be authentically a tiny 16x16 sprite, not a detailed character illustration. Do not copy the reference at full detail or merely shrink its bag artwork."
+    },
+    {
+      "file": "gabriel_wings_ground.png",
+      "width": 24,
+      "height": 24,
+      "transparent_background": true,
+      "reference": "gabriel_wings inventory master (design reference)",
+      "prompt": "Use case: stylized-concept. Asset type: separate original dropped charm ground sprite for a dark-fantasy pixel action RPG. The input image is a DESIGN/IDENTITY REFERENCE only, not an edit target. Generate a new deliberately much simpler sprite of the same charm for a tiny final pixel canvas. Transparent RGBA PNG with real alpha, no background, checkerboard, text, watermark, label, border, scenic ground or glow. Classic crisp hand-clustered pixel art, solid dark outline and about 12-16 flat colors, no smoothing, antialiasing or gradient. Bold silhouettes and minimal identifiable details, the actual size must remain readable. Show only a single item, fully visible. Render enlarged logical pixels as uniform square blocks. Gabriel Wings ground icon, final logical canvas 24 x 24 pixels. Same paired ivory wings, antique-gold central clasp and ruby-red central jewel as reference. A symmetric single pair of wings spreads in a shallow upward V, three or four large stepped feather groups per side, bold charcoal outline and blue-gray inner shadow. A tiny 2x3 red jewel at the middle. Approximately 22 x 22 occupied pixels with transparent one-pixel margin. Dramatically simplify small feathers; must read at 24x24 and look like real classic low-res pixel art rather than fine detailed pixel illustration."
+    },
+    {
+      "file": "witch_broomstick_ground.png",
+      "width": 34,
+      "height": 17,
+      "transparent_background": true,
+      "reference": "witch_broomstick inventory master (design reference)",
+      "prompt": "Use case: stylized-concept. Asset type: separate original dropped charm ground sprite for a dark-fantasy pixel action RPG. The input image is a DESIGN/IDENTITY REFERENCE only, not an edit target. Generate a new deliberately much simpler sprite of the same charm for a tiny final pixel canvas. Transparent RGBA PNG with real alpha, no background, checkerboard, text, watermark, label, border, scenic ground or glow. Classic crisp hand-clustered pixel art, solid dark outline and about 12-16 flat colors, no smoothing, antialiasing or gradient. Bold silhouettes and minimal identifiable details, the actual size must remain readable. Show only a single item, fully visible. Render enlarged logical pixels as uniform square blocks. Witch's Broomstick lying on the ground, final logical canvas exactly 34 pixels wide by 17 pixels tall. Same chestnut wooden handle, violet binding and golden straw broom head as reference. Recompose into a horizontal side-view item with a slight diagonal from lower left (gold straw) to upper right (curled wood handle), so the dropped item fills a wide 2:1 silhouette. Long thin brown shaft, tiny hooked tip, compact straw fan, a three-pixel violet binding, minimal grain. Whole broom must fit inside 32 by 15 occupied logical pixels with one transparent pixel margin. No vertical broom, no standing pose, no shadow ellipse or floor. Must be clearly readable at 34x17, distinctly simpler than inventory artwork."
+    }
+  ]
+}
