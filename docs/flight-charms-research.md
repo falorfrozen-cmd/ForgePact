@@ -1,0 +1,461 @@
+# Flight charms (ForgePact #158): research phase
+
+**Question.** Three charms that grant a new **Flight** modifier (Pocket Elf,
+Gabriel Wings, Witch's Broomstick) need three things nobody here knows yet.
+What stops the player's walk at a prop, and does answering the player's own
+collision queries "nothing there" let a walk cross it? Can a forged charm take
+a 2x2 or 1x5 footprint, and what does a save do when that footprint appears or
+goes away? And which of the game's rolls drops a Heroic unique?
+
+**Why it matters.** Issue #158 asks for flight as a charm modifier: while one
+of the three charms sits in the charm grid, the player passes over scenery.
+Jump through scenery (#16, `jump-scenery-research.md`) answered the blocking
+question for the jump only. A jump is a 104-frame window decided at take-off,
+and a walk into the same prop stayed blocked under that research's `all hold`
+lever. Flight is continuous and can end anywhere, so the walk is the case that
+matters. The two larger charms want footprints no normal charm has, and the
+Custom Forge has only ever dressed an item's stats, name and rarity, never its
+size or its art. So this phase extends the research build's `jumpprobe` with a
+walk lever and an object tally, adds a research-build `charmprobe`, runs one
+live session, and records a `## Decision`. The mod itself (three Custom Forge
+entries, a flight lever in the player build, drop entries, panel switches that
+are off by default, the `NATIVE_BOOLEANS` oracle entries and a release-notes
+line) is phase 2, written against that decision.
+
+**Posture.** Everything here is measured runtime behaviour, a reading written
+in our own words, or our own code. Game objects and scripts are named by their
+`hs-game-sdk` names and indices. This doc carries no decompiled script text, no
+address and no struct offset. A reading is labelled as a reading, and it is not
+a fact until a live session records it.
+
+**Out of scope for this phase.** The mod itself and every phase 2 design
+choice; final art or the charms' own sprites (the sprite probe uses one
+placeholder icon we drew); the Item Editor and its signature item list;
+co-op; enemies' movement; leap, charge and blink skills; moving the player
+from code (`playerwarp` is the operator's recovery tool only); and anything
+that suspends the game's own loop.
+
+## Status
+
+- **Phase:** research (phase 1 of 2). Nothing in this phase is
+  player-visible, and the player build is free of it.
+- **Instruments:** the extended `jumpprobe` and the new `charmprobe`
+  (§ Instrument), research build only, on the ForgePact branch
+  `158-flight-charms`.
+- **Static reading:** done on 2026-10-11 through the ghidra MCP and a local
+  scan for the names a function's code references (§ Static reading). The
+  readings about the game are also in the toolkit's
+  `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 21, labelled as static readings.
+- **Live procedure 1:** not run yet.
+- **Decision:** every key reads `pending` until Live 1 runs (§ Decision).
+- **Later phases:** phase 2, the mod, is planned from this phase's Decision.
+
+## Static search
+
+Searched on 2026-10-11 over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp`,
+`objects.hpp`, the Python name tables (`hs_game_sdk.scripts`,
+`hs_game_sdk.objects`) and every `ForgePact/docs/*.md`, for names containing
+`fly`, `flight`, `wing`, `float`, `hover`, `phas`, `charm` and `size`, and
+for the movement and roll scripts the jump research and the Angelic roll
+research already named. Code spells each name through its SDK constant; each
+index below is that constant's index.
+
+**Flight-shaped names.** No script or object named for flying is a player
+movement mechanism.
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_StatPhasing` | 3390 | the getter behind item stat 26, "Movement Phasing" (walk through monsters); reached from `ReturnSpecificStat` (3344) |
+| `gml_Script_GetWingSprite` | 1797 | cosmetic wings (`playerWings`) |
+| `gml_Script_ReturnWingsInfo` | 3467 | cosmetic wings |
+| `gml_Script_CA_playerWings` | 323 | the co-op relay of the wings choice, by its `CA_*` family (**name only**) |
+| `gml_Script_UiSetFloating` | 4472 | the interface's floating state (`floating`), not the player's |
+| `gml_Script_CA_addFlyingProjectile` | 220 | a projectile (**name only**) |
+| `Pyromancer_Phoenix_Flight_obj` | 3867 | a Pyromancer skill effect (**name only**, not read) |
+| `Easter_Egg_Wings_Bat_obj`, `Easter_Egg_Wings_Fairy_obj` | 1385, 1386 | wing cosmetics, by name (**name only**, not read) |
+
+**Movement and collision.**
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_PlayerMovement` | 2774 | the player's movement step (§ Static reading) |
+| `gml_Script_CanMove` | 467 | a movement check; calls `InstancePlaceTallest` |
+| `gml_Script_InstancePlaceTallest` | 599 | the tallest instance at a place (§ Static reading) |
+| `gml_Script_playerJumpGravity` | 2764 | the jump's per-frame script (RDM § 19.1, measured) |
+| `gml_Script_ClassStepEvent` | 561 | the class step; six sites call `InstancePlaceTallest` |
+| `gml_Script_TilePlaceMeeting` | 3866 | a tile row of `jumpprobe` |
+| `gml_Script_CheckTalentUse` | 539 | `jumpprobe`'s per-frame positive control (RDM § 7.2) |
+
+**Charms and item size.**
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_GetPlayerCharmData` | 493 | the equipped charms of a player (§ Static reading) |
+| `gml_Script_UpdateCharmData` | 491 | rebuilds that list from the charm grid |
+| `gml_Script_NetworkSendClientCharmData` | 492 | the co-op send of it (**name only**) |
+| `gml_Script_RunItemEquipped` | 3483 | a caller of `UpdateCharmData` |
+| `gml_Script_GetItemSize` | 1976 | an item's footprint in grid cells |
+| `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs` | 2035 | the item method `GetItemSize` reads through |
+| `gml_Script_GetItemStats` | 1682 | stat aggregation; reads the equipped charms |
+| `gml_Script_LoadSpecificStat` | 2296 | stat aggregation; reads the equipped charms |
+| `gml_Script_DefineItemNormalCharms` | 832 | the normal charm definitions (**name only**) |
+| `gml_Script_DefineItemUniqueCharms` | 904 | the unique charm definitions (**name only**) |
+| `gml_Script_DropCharms` | 1326 | a charm drop (**name only**) |
+| `gml_Script_DropAngelicCharm` | 1306 | an Angelic charm drop (**name only**) |
+| `gml_Script_GetUniqueCharm` | 1130 | a unique charm pick (**name only**) |
+
+**Unique rolls.**
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_DropUniqueItems` | 1424 | the ordinary unique roll, from `LoadDrops` (2171) |
+| `gml_Script_DropItemHeroic` | 1374 | a unique roll that skips Angelic and Unholy |
+| `gml_Script_DropItem` | 1364 | the Angelic roll (RDM § 13.4) |
+| `gml_Script_GetUniqueRepoStruct` | 819 | the unique repository, rarity in field 27 |
+| `gml_Script_CreateDefaultParams` | 2349 | the drop's parameters, called by both rolls |
+| `gml_Script_VaultUse` | 4597 | a caller of `DropItemHeroic` |
+
+**What the jump research already answers.** During a jump, the player's own
+`position_meeting`, `place_meeting`, `instance_position` and `collision_line`
+(each naming `Collision_Parent_obj` itself, 957) and `collision_circle`
+(naming `Wall_Parent_obj`) decide the crossing, and answering them "nothing
+there" lets the jump cross a prop (RDM § 19.2 and § 19.3, measured). The
+proven route is `HookBuiltin` on those builtins, a family test through
+`object_is_ancestor` by name, and gates and locks kept blocking by running the
+original against `Gate_Parent_obj` and `Lock_obj`. What it does not cover:
+the walk stayed blocked under `jumpprobe pass 1 ... all hold` (RDM § 19.2,
+measured), while two things ran unanswered during that walk. One was
+`InstancePlaceTallest`, with 1944 player-self calls (the `scripts` flag that
+answers it was not set). The other was 6252 player-self `place_meeting` calls
+naming an object outside the family, which was never named. A walk with
+`all scripts hold` was never run. What the game does with a player left
+inside a prop is not established (the jump research's `valid-landing:` is
+`not-observed`), and map edges, buildings and gates were not tried on foot.
+
+## Static reading
+
+Read on 2026-10-11 in the build Ghidra imported (the one
+`py -3 tools/decomp_index.py build-hash` names), through the ghidra MCP and a
+local scan for the names a function's code references. A name scan lists
+candidate direct call sites. It is blind to calls through the script table or
+a method value, so a call it did not find is not observed, not absent. The
+same readings are in the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.6 and
+§ 21.
+
+**Walking.**
+
+- `PlayerMovement` does not decompile within the tool's limit; it is roughly
+  200 KB of compiled code. Read as the names its code references, it uses
+  `place_meeting`, `position_meeting` and `collision_circle`, the path
+  builtins, `point_distance`, `instance_nearest` and `object_is_ancestor`,
+  and the variables `x`, `y`, `hSpeedFactor`, `vSpeedFactor`, `moving`,
+  `mountId`, `inputState` and `pSt`. It references none of `instance_place`,
+  `tilemap_get_at_pixel`, the `mp_grid_*` builtins or `move_and_collide`, and
+  the scan found no direct call from it to `CanMove` or
+  `InstancePlaceTallest`. **Static reading.**
+- `InstancePlaceTallest` gathers the instances at a place through
+  `instance_place_list` into a list it reuses, and answers the one with the
+  largest `height`, or `noone` when there is none. Its direct callers are
+  `CanMove`, `playerJumpGravity` and six sites in `ClassStepEvent`.
+  **Static reading.**
+- What this means for the lever: the walk's own test is most plausibly the
+  three meeting builtins it references, the ones the jump lever already
+  answers. Since `all` did not free the walk, either one of its queries names
+  an object outside the family (the 6252 calls above), or a script outside
+  `PlayerMovement` holds it (`InstancePlaceTallest`'s 1944 calls). The walk
+  lever below is built to tell those apart in one session. **Reading.**
+- `StatPhasing` is the getter behind item stat 26, "Movement Phasing" ("you
+  walk through monsters", in the Item Editor's stat catalog), and the only
+  caller found is `ReturnSpecificStat`. So the game has a native
+  pass-through-monsters stat and no pass-through-terrain one. **Static
+  reading**; what stat 26 does on a character is not measured.
+- `playerWings` (cosmetic wings, through `GetWingSprite` and
+  `ReturnWingsInfo`) and `floating` (the interface's floating state, through
+  `UiSetFloating`) are not flight mechanisms. **Static reading.**
+
+**Equipped charms.**
+
+- Offline, `GetPlayerCharmData` answers, for player number p, the
+  `localCharmItemArray` of `Controller_obj.inventoryData` at index p - 1, the
+  entry the relic tab lives in (RDM § 2, where the key rule is measured).
+  Online it answers the player's `charmItemArray` on `Client_obj.players`.
+  **Static reading.**
+- `UpdateCharmData` rebuilds that array. It walks the entry's
+  `inventoryCharmGrid` nodes and takes each distinct `nodeFingerprint` once,
+  so a charm covering several cells is counted once. It resolves each
+  fingerprint to its item through `GetOnlinePlayerItemOwner` and
+  `GetItemFromFingerprint` and pushes the item. Its direct callers are
+  `RunItemEquipped` and a `Client_obj` closure. **Static reading.**
+- `GetPlayerCharmData`'s direct callers are `GetItemStats` and five sites in
+  `LoadSpecificStat`, so the stat aggregation reads the equipped charms.
+  Whether a stat the Custom Forge writes on a built charm counts is **not
+  measured**: the Miner's Helmet's forged stats were never read off the
+  character. **Static reading** for the callers.
+
+**Item size.**
+
+- `GetItemSize` asks the item's own `GetItemInfo` method twice, each time
+  with a constant key and one shared default, and answers the two values as
+  the item's footprint. `GetItemInfo` answers the item's `itemInfoStruct`
+  entry for the key, or the default when it is undefined. So an item's
+  footprint is read off the built item's `itemInfoStruct`, the struct the
+  Custom Forge already writes (`"27"`, `"28"`, `"29"`, `"32"`). **Static
+  reading.**
+- Which two keys hold the footprint is **not established**: the reading did
+  not render the constants. `charmprobe` identifies them from samples.
+- `GetItemSize` has 38 direct callers across the grid scripts, among them
+  `InventoryGridAddItem`, `GridHasSpace`, `InventoryGridHasSpace` and its
+  `Multi` form, `GridAddItem`, `InventorySortTab`, `InvGridEquipV2`,
+  `InventorySwapItemsNew`, `ProcessInventoryGridInput` and `CraftEditGrid`.
+  Whether every reader of an item's size goes through it is **not
+  established**. **Static reading.**
+- A save keeps only an item's compact definition (RDM § 16.1, measured), so a
+  footprint written into the built struct is not saved and has to be written
+  each time the item is built. What the saved grid does when a footprint
+  appears or goes away is what `dress-removed:` and `dress-added:` measure.
+
+**Unique rolls by rarity.**
+
+- `DropUniqueItems`, called from `LoadDrops`, picks one entry of
+  `Controller_obj.lootListUnique` at a sub-list from 0 to 4, taken from a
+  protected zone value with a random chance of stepping up. It keeps the
+  entry only when its repository rarity (`GetUniqueRepoStruct`, field 27) is
+  below Angelic (7) and it is not flagged hidden, then calls
+  `CreateDefaultParams` and the placement. **Static reading.**
+- `DropItemHeroic` takes a position and a sub-list index that defaults to 5.
+  It draws from that sub-list until an entry is unflagged and is neither
+  Angelic (7) nor Unholy (10), so it can give a Heroic or a Satanic unique,
+  then calls `CreateDefaultParams` and the placement. Its direct callers are
+  `VaultUse` and a Chaos Tower NPC closure. ForgePact has never called it.
+  **Static reading.**
+- The Angelic roll keeps only rarity 7 or 10 (RDM § 13.4). So of the three
+  rolls, only `DropItemHeroic` can drop a Heroic (9) unique. **Static
+  reading.**
+
+**Not readings: the Item Editor's catalog** (`hs_full_catalog.json`, in the
+owner's checkout of the Item Editor; not a reading of the game and not
+measured).
+
+- Normal charms are Small (`b` 0-19, 1x1), Large (20-39, 1x2) and Grand
+  (40-59, 1x3). No normal 2x2 or 1x5 charm exists.
+- 2x2 uniques include the Angelic melons (`b` 47-50) and Goburin's Head
+  (Unholy, 98). The only 1x5 is Soul Collector (Unholy, 91). The Heroic 1x1
+  charms are Torstein's Anvil (52), Wizard's Dice (82) and Gladiator's Dice
+  (83).
+- Aimbot.exe `{10, 0, 76}` is listed as Satanic, not Heroic.
+- Item stat ids: 25 Increased Movement Speed (%), 159 Physical Damage Taken
+  Reduced by (%), 160 Magic Damage Taken Reduced by (%), 162 a flat Damage
+  Taken Reduced by, from all sources. `hs_game_sdk.stats.StatId` numbers stats
+  another way (it gives 19 for movement speed), so it is not used for item
+  stats.
+
+## Instrument
+
+Both instruments are research build only (`#ifndef FORGEPACT_RELEASE`), are
+not player commands, and reach the game by name only. This section states
+what each is for; the forms and their output are in the module guide's
+Command Reference.
+
+**The walk lever, in `jumpprobe`.** The jump research's lever answers the
+local player's own collision queries "nothing there" under a rule. This
+phase adds a third rule, `any`, which answers the player's query whatever
+object it names, the two object-less rows included, beside the existing
+`props` and `all`. It adds an object tally: per builtin row, the player's own
+calls are counted by the object they name whenever the probe is hooked, so a
+walk names the object it is blocked by, family or outside. And it adds
+`jumpprobe free`, which asks the original `place_meeting` and
+`instance_position` builtins, never the lever, whether the player stands
+inside the collision family, and by which object. Its positive controls are
+the jump research's: `CheckTalentUse` counts once per frame and
+`position_meeting` counts on a walk.
+
+**The charm probe, `charmprobe`.** It reads the equipped charms from
+`localCharmItemArray` (reading the variables, not calling
+`GetPlayerCharmData`), with each item's definition, rarity, name and footprint
+(from `GetItemSize`, called by name), and identifies the two size keys of
+`itemInfoStruct` from samples of known size. It reads the unique
+repository's rarity and hidden flag for one entry. It spawns a normal charm
+on the ground through the route the signature items already use, with an
+optional footprint and optional stats written into the built struct. It can
+dress a spawned charm's footprint at the Custom Forge's final pass, so a size
+can appear or go away across a save. It calls `DropItemHeroic` by name and
+reads back the rarity of each ground item it placed. And its sprite form
+loads one placeholder icon we drew by the pack markers' route, identifies the
+item's display-sprite key from samples, and spawns a charm carrying our icon,
+to see which surfaces draw it and whether a save keeps it. Its positive
+controls are the S10 read of a charm the character already wears, the S12
+read of Goburin's Head (known Unholy, 10) and S19's same charm with its own
+sprite.
+
+## Live procedure 1
+
+The full procedure, with every command in order, is in the toolkit workorder
+`forgepact-158-flight-charms`, context file, § "Live procedure 1". That is a
+local working note, so the setup and the checks are repeated here.
+
+**Setup:**
+
+- **Build:** the research build (`build.bat dev`) at the workorder's final
+  commit. The owner installs it when asked, and its SHA-256 is recorded in the
+  session's log.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`. The saves are backed
+  up first and restored at teardown whatever happened.
+- **Launch:** `jumpscenery` stays off, because its hooks would hold the
+  builtins `jumpprobe` needs: `jumpscenery 0` at character select.
+- **Walking:** holding the move key toward the target for the stated time,
+  by hs-drive key input or by the person.
+- **Order:** S0 to S14, then S18, S19, S15, S16, S20 and S17. S17 runs last
+  because it may crash the game.
+- **Cases:** for walking, the jump research's town prop (ordinary scenery)
+  and a building wall if one is in reach (the outlier). For sizes, one normal
+  charm of each size. For the repository, the Heroic 1x1 candidate and the
+  two size outliers (a 2x2 Angelic, the 1x5 Unholy). For the sprite, one
+  normal 1x1 charm (`b` 3) with and without our icon; the 2x2 and 1x5
+  outliers are not drawn in this phase.
+
+**Checks.** S0 to S4 establish that the session is valid. For the rest, a
+`fail` or a `not-observed` is itself the finding, as long as the check's
+positive control passed in the same session.
+
+| Check | Step | Expected |
+| --- | --- | --- |
+| S0 `dll-hash` | before launch | the installed DLL's SHA-256 equals the research build's recorded hash |
+| S1 `marker` | bare `jumpprobe`, bare `charmprobe` | `jumpprobe: rows=20 hooked=0 held=0 builtins=0`, and `charmprobe` reports `marker=fcp1` |
+| S2 `control` | `ping` | `pong (YYTK 4.0.1)` |
+| S3 `jumpscenery-off` | `jumpscenery stat` | ends `install=not-armed` |
+| S4 `walk-control` | `jumpprobe hook`, walk 3 s on open ground, `jumpprobe show` | `hook` answers `20 detoured, 0 failed, 0 held, 10 builtins`, and the `calls=` of both `CheckTalentUse` and `position_meeting` rose |
+| S5 `vanilla-walk-block` | the person places Sorak 30-40 px from the jump research's prop (screenshot); `jumpprobe state`, `jumpprobe objects reset`, walk into the prop 3 s, `jumpprobe state` | the position stopped at the prop and did not cross |
+| S6 `walk-objects` | `jumpprobe objects` | at least one row; every object named is recorded, `place_meeting`'s `outside` objects especially |
+| S7 `walk-all-scripts` | `jumpprobe pass 1 90 all scripts hold`, walk into the prop 3 s, `jumpprobe state`, `jumpprobe pass stat` | `passed=` climbs; crossed or held is recorded, and the check passes if the walk crossed |
+| S8 `walk-any` | `jumpprobe pass 0`, `jumpprobe pass 1 90 any scripts hold`, the same walk and reads; if it crossed, S8b: `pass 0`, `pass 1 90 any hold`, the same again | passes if S8 crossed; S8b goes in the note. With a building wall in reach, S7 and S8 are repeated there (the outlier) |
+| S9 `stuck-inside` | only if S7 or S8 crossed: with that lever, stop while overlapping the prop (screenshot), `jumpprobe free`, `jumpprobe pass 0`, walk 1 s in each of the four directions with `jumpprobe state` after each | `free` reads `blocked=yes`; whether the game ejected the player, the player walked out, or the player stayed stuck is recorded. Recovery is the operator's `playerwarp` to the S5 position. If neither S7 nor S8 crossed, `not-observed` |
+| S10 `charm-read` | `charmprobe charms` (count n), `charmprobe spawn 0`, `spawn 20`, `spawn 40`, the person drags the three into the charm grid (screenshot), `charmprobe charms` | each spawn answers `placed`, and the count is n + 3 with the three seeds at `t=10` |
+| S11 `size-keys` | S10's output | `size=1x1`, `1x2` and `1x3`, and `charmprobe sizekeys` names a key for w and for h rather than `unknown` |
+| S12 `repo-rarity` | `charmprobe repo 10 0 76`, then 52, 47, 91 and 98 | each prints a rarity; the control is that 98 (Goburin's Head) reads 10. Aimbot.exe's (76) code is recorded |
+| S13 `forged-stat-applies` | on open ground, walk right for exactly 2 s with `jumpprobe state` before and after (distance d0), screenshot of the sheet's movement speed; `charmprobe spawn 1 stat 25=100`, the person drags it into the charm grid; the walk again (d1) and the screenshot | passes if d1/d0 is at least 1.3 or the sheet's value rose |
+| S14 `heroic-route` | `charmprobe heroic 10` | `placed=10`, with the rarity histogram recorded; passes if no placed rarity is 7 or 10 |
+| S18 `sprite-load` | `charmprobe sprite load`, then `charmprobe sprite` | `loaded=` an index, with `kind=` and `path=`, and a `key=` other than `unknown` (the S10 and S11 reads are its samples). If the key stays `unknown`, the operator picks it from the `info=` dump with `charmprobe sprite key` and records that in the note. Passes if loaded and a key is set |
+| S19 `sprite-draw` | on open ground, `charmprobe spawn 3` (the control: the same charm with its own sprite) and `charmprobe spawn 3 sprite`; screenshots on the ground; the person picks both into the bag (screenshot) and hovers each (screenshot of each tooltip); `charmprobe charms` | both answer `placed`. The control must draw the base icon everywhere, or the session measured nothing. Per surface (ground, grid, tooltip), whether our icon drew is recorded; passes if all three drew it, with `partial` or `none` in the note otherwise. Both charms stay in the bag |
+| S15 `size-override` | `charmprobe spawn 2 size 2 2`; the person drops it on a free 2x2 area of the bag (screenshot) | passes if it covers 2x2 cells |
+| S16 `dress-removed` | with that charm in the bag, save and quit to the menu, load slot 14 again (screenshot of the bag) | the game loads, the charm is 1x1, and no item is lost, duplicated or overlapped |
+| S20 `sprite-save` | after S16, before S17: note what S16's reload showed for S19's two charms; `charmprobe charms` (the custom charm's `sprite=` index i); save and quit; stop the game and launch the same DLL without ever sending `charmprobe sprite load`; `jumpscenery 0`; load slot 14; screenshot the bag and both tooltips; `charmprobe charms` | `safe` if the game loaded, the charm draws its base icon and its `sprite=` equals the control's (not i); `persisted` if it still holds i; `crash` if the game crashed (it is restarted the same way before S17). S1 to S3 run again afterwards |
+| S17 `dress-added` | last: the person puts S15's now-1x1 charm where its right and lower neighbours are occupied; `charmprobe dress` with S15's seed and 2 2; save and quit; load slot 14 (screenshot, then `charmprobe charms`) | `safe`, `overlap` or `crash` is recorded |
+
+**What the procedure relies on.** The `Collision_Parent_obj` family and the
+five builtins (RDM § 19.2 and § 19.3, measured); `InstancePlaceTallest`'s
+player-self calls on a walk (RDM § 19.2, a measured count, and § 19.6, a
+static reading); `CheckTalentUse` once per frame (RDM § 7.2); `jumpprobe`
+refusing while `jumpscenery` holds the builtins (the module guide's "Jump
+through scenery" cost); `inventoryData` and its key rule (RDM § 2, measured
+for the relic grid); `localCharmItemArray` (RDM § 21.1, a static reading,
+never read live before this session); `GetItemFromFingerprint` and
+`GetOnlinePlayerItemOwner` (RDM § 2, measured); `GetItemSize` and
+`GetItemInfo` (RDM § 21.2, a static reading); the json, `InitItemFromJson`,
+`LootGroundCreateFromItem` spawn (RDM § 16.2, measured, and `sigdrop`);
+`GetUniqueRepoStruct`, field 27 and flag 40 (RDM § 13.4); `DropItemHeroic`
+(RDM § 21.4, a static reading); the Custom Forge's final pass (RDM § 16.1 and
+§ 16.9, measured); stat 25 (the Item Editor's stat catalog; its effect on the
+character is not in the shared references); `sprite_add` from `bp_ipc\` with a
+relative then an absolute path, a `VALUE_REF` index and `sprite_set_offset`
+(the module guide's pack marker icons, verified on the 2026-09-22 build only);
+the item's display-sprite key (not in the shared references; S18 identifies
+it); and a save keeping only the compact definition (RDM § 16.1, measured).
+
+**Teardown:** `jumpprobe pass 0`; the saves restored from the session's
+backup whatever happened; the hs-drive lease released.
+
+## Results
+
+### Live 1 results
+
+Not run yet.
+
+## Decision
+
+Every key below reads `pending` until Live 1 runs. Each then takes exactly
+one of its listed values, on a line of its own, with the check that decides
+it.
+
+walk-lever: pending
+
+`walk-lever:` (S7, S8, S8b) takes exactly one of these values:
+
+- `all-scripts`: S7 crossed. (`all` alone was already blocked, in the jump
+  research's Live 1.)
+- `any`: S8b crossed.
+- `any-scripts`: only S8 crossed.
+- `not-observed`: nothing crossed while `passed=` climbed.
+- `lever-not-engaged`: `passed=` never climbed, so the run says nothing about
+  the game.
+
+stuck-inside: pending
+
+`stuck-inside:` (S9): `game-ejects`, `walks-out`, `stuck` or `not-observed`.
+
+charm-read: pending
+
+`charm-read:` (S10): `localCharmItemArray` or `not-observed`.
+
+size-keys: pending
+
+`size-keys:` (S11): `found` or `not-observed`.
+
+size-override: pending
+
+`size-override:` (S15): `works`, `ignored` or `not-run`.
+
+dress-removed: pending
+
+`dress-removed:` (S16): `safe`, `unsafe` or `not-run`.
+
+dress-added: pending
+
+`dress-added:` (S17): `safe`, `overlap`, `crash` or `not-run`.
+
+forged-stat-applies: pending
+
+`forged-stat-applies:` (S13): `yes`, `no` or `not-observed`.
+
+heroic-route: pending
+
+`heroic-route:` (S14): `heroic-only`, `heroic-and-satanic` or
+`not-observed`.
+
+aimbot-rarity: pending
+
+`aimbot-rarity:` (S12): the rarity code S12 read, or `not-observed`.
+
+sprite-draw: pending
+
+`sprite-draw:` (S19): `all` (the grid, the tooltip and the ground all drew our
+icon), `partial` (some did; the note names which), `none`, or `not-run` (S18
+or the key failed).
+
+sprite-save: pending
+
+`sprite-save:` (S20): `safe`, `persisted`, `crash` or `not-run`.
+
+## Not established
+
+Before Live 1, these are open. Each is a check above.
+
+- **What holds a walk at a prop.** Whether the walk's own builtin queries
+  name an object outside `Collision_Parent_obj`'s family, or a script such as
+  `InstancePlaceTallest` holds it (S6, S7, S8).
+- **What the game does with a player left inside a prop**, and whether the
+  player can walk out once the lever is off (S9).
+- **Map edges, building walls and gates on foot** (S8's outlier case only).
+- **Whether `localCharmItemArray` holds the worn charms** as the reading says
+  (S10).
+- **Which two `itemInfoStruct` keys hold an item's footprint**, and whether
+  every reader of a size goes through `GetItemSize` (S11, S15).
+- **What a save does when a footprint appears or goes away** (S16, S17).
+- **Whether a stat written on a built charm counts toward the player's
+  stats** (S13).
+- **What `DropItemHeroic` actually places**, and Aimbot.exe's rarity in the
+  game's own repository (S12, S14).
+- **Which key, if any, holds an item's display sprite**, which surfaces draw
+  it, and whether a save keeps it (S18, S19, S20).
+- **Where the walk's collision test lives inside `PlayerMovement`**: it does
+  not decompile, so the reading is the list of names its code references,
+  not its order or its branches.
