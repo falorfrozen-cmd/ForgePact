@@ -1,0 +1,208 @@
+"""Run the flight charms' real decision core against a controlled world.
+
+ForgePact #158 phase 2 adds three built-in charms: Pocket Elf, Gabriel Wings
+and Witch's Broomstick. While one is worn the local player walks through
+scenery (the Collision_Parent_obj family) but not through walls, gates,
+locks, monsters or the room's edge, and is drawn in front of scenery. These
+scenarios pin the decisions ModuleMain.cpp's adapter takes from
+plugin/include/ForgePact/FlightCharms.hpp, compiled whole, together with
+FlightCharmProbe.hpp, which shares its namespace.
+
+Test names carry the substrings the workorder's criteria select with `-k`:
+`seed_codec` (the table and the seeds, a save format), `exclusion` (no charm
+worn: every query real, the baseline; worn: a blocked family query answered,
+walls, locks, monsters, the room's edge and other selves kept, the target),
+`residual`, `size_guard` (outside a load scope nothing changes, the baseline;
+inside it a dressed charm waits for the vanilla items, the target),
+`front_layer`, `stand_in` (the even-count rule and the coin) and `stat_line`
+(the fresh session's line, byte for byte).
+"""
+import os
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class FlightCharmsCoreBehaviorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        header = (ROOT / "plugin/include/ForgePact/FlightCharms.hpp").read_text(encoding="utf-8")
+        core = "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
+        # One directory per process: the criteria runner starts several `-k`
+        # selections at once, and two compiles into one .obj fail with
+        # "Permission denied". A failure carries the compiler's output in its
+        # message and every scenario assertion quotes the harness's output, so
+        # the directory goes when the class does.
+        out = ROOT / "build/flight-charms-behavior" / f"pid-{os.getpid()}"
+        out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
+        code = (ROOT / "tests/flight_charms_harness.cpp").read_text(encoding="utf-8")
+        code = code.replace("// PRODUCTION_FLIGHTCHARMS", core)
+        cpp = out / "flightcharmscore.cpp"
+        cpp.write_text(code, encoding="utf-8")
+        cls.binary = out / ("flightcharmscore.exe" if os.name == "nt" else "flightcharmscore")
+        if os.name == "nt":
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+            if not vswhere.is_file():
+                raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
+            install = subprocess.check_output(
+                [str(vswhere), "-latest", "-products", "*", "-requires",
+                 "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                text=True).strip()
+            if not install:
+                raise unittest.SkipTest("Visual Studio C++ toolchain not installed")
+            vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
+            batch = out / "compile.cmd"
+            batch.write_text(
+                f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "flightcharmscore.obj"}"\n'
+                f'exit /b %errorlevel%\n', encoding="utf-8")
+            command = ["cmd", "/d", "/c", str(batch)]
+        else:
+            compiler = shutil.which("c++")
+            if not compiler:
+                raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
+            command = [compiler, "-std=c++20", "-O2", "-Wall", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
+        # The compiler speaks the machine's locale; decode leniently so a
+        # localized diagnostic cannot itself crash the test.
+        result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+        run = subprocess.run([str(cls.binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        cls.output = run.stdout
+
+    def line(self, label):
+        for line in self.output.split("\n"):
+            if line.split(" ")[1:2] == [label]:
+                return line
+        raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+
+    def assertScenarios(self, *labels):
+        for label in labels:
+            self.assertTrue(self.line(label).startswith("PASS "), self.line(label))
+
+    def test_all_scenarios_pass(self):
+        self.assertIn("RESULT OK", self.output, self.output)
+        self.assertNotIn("FAIL ", self.output, self.output)
+
+    # ---- the item table and the seed codec (a save format) ----------------
+
+    def test_seed_codec_the_table(self):
+        self.assertScenarios("seed_codec/the_table", "seed_codec/keys_and_stats")
+
+    def test_seed_codec_round_trips_and_range_edges(self):
+        self.assertScenarios("seed_codec/round_trips_every_roll", "seed_codec/every_range_edge_and_one_past_it",
+                             "seed_codec/an_out_of_range_roll_has_no_seed",
+                             "seed_codec/no_collision_with_seeds_in_use")
+
+    def test_seed_codec_t_b_c_or_j_off_by_one_is_not_a_flight_charm(self):
+        self.assertScenarios("seed_codec/t_b_c_or_j_off_by_one_is_not_a_flight_charm")
+
+    def test_seed_codec_a_uniform_draw(self):
+        self.assertScenarios("seed_codec/a_uniform_draw_covers_each_roll_once")
+
+    # ---- flight's answers: baseline, then target --------------------------
+
+    def test_exclusion_baseline_no_charm_every_query_real(self):
+        self.assertScenarios("exclusion/the_six_rows", "exclusion/baseline_no_charm_every_query_real")
+
+    def test_exclusion_target_family_answered(self):
+        self.assertScenarios("exclusion/target_a_blocked_family_query_is_answered",
+                             "exclusion/target_block_dynamic_sprite_is_family_not_a_wall",
+                             "exclusion/target_a_free_answer_stands")
+
+    def test_exclusion_target_walls_locks_monsters_and_the_room_edge_keep_their_answer(self):
+        self.assertScenarios("exclusion/target_a_wall_or_lock_named_query_keeps_its_answer",
+                             "exclusion/target_a_query_whose_rerun_a_wall_blocks_keeps_its_answer",
+                             "exclusion/target_a_monster_named_query_keeps_its_answer",
+                             "exclusion/target_a_point_outside_the_room_keeps_its_answer")
+
+    def test_exclusion_target_another_self_is_never_touched(self):
+        self.assertScenarios("exclusion/target_another_self_is_never_touched")
+
+    def test_exclusion_instance_place_tallest(self):
+        self.assertScenarios("exclusion/instance_place_tallest_family_result_noone_wall_result_stays")
+
+    def test_exclusion_point_of_use_and_fail_closed(self):
+        self.assertScenarios("exclusion/the_worn_charms_are_read_once_a_frame",
+                             "exclusion/an_unresolved_family_or_exclusion_answers_for_nothing",
+                             "exclusion/each_object_is_classified_once")
+
+    # ---- residual -----------------------------------------------------------
+
+    def test_residual_taken_off_inside_a_prop(self):
+        self.assertScenarios("residual/taken_off_inside_a_prop_until_the_first_free_read",
+                             "residual/worn_again_goes_back_on")
+
+    def test_residual_taken_off_outside_a_prop_and_baseline(self):
+        self.assertScenarios("residual/taken_off_outside_a_prop_goes_straight_to_off",
+                             "residual/baseline_no_charm_is_never_residual",
+                             "residual/an_unreadable_read_fails_closed")
+
+    # ---- the size guard -----------------------------------------------------
+
+    def test_size_guard_baseline(self):
+        self.assertScenarios("size_guard/baseline_outside_the_scope_or_for_another_item_nothing_changes")
+
+    def test_size_guard_target_deferral_and_order(self):
+        self.assertScenarios("size_guard/target_deferred_to_the_end_of_the_load_whatever_the_order",
+                             "size_guard/target_a_vanilla_item_places_first",
+                             "size_guard/target_a_full_footprint_that_fits_is_placed_whole",
+                             "size_guard/target_a_1x1_charm_is_never_deferred")
+
+    def test_size_guard_target_kept_and_failed(self):
+        self.assertScenarios("size_guard/target_a_refused_full_footprint_becomes_1x1_at_its_own_cell",
+                             "size_guard/target_a_1x5_charm_is_deferred_and_kept",
+                             "size_guard/target_a_refused_1x1_counts_failed",
+                             "size_guard/flushing_defers_nothing_and_a_throw_counts_failed",
+                             "size_guard/the_log_line")
+
+    def test_size_guard_target_nested_scopes(self):
+        self.assertScenarios("size_guard/target_nested_scopes_flush_their_own_lists")
+
+    # ---- drawing in front ---------------------------------------------------
+
+    def test_front_layer_the_lower_depth_end(self):
+        self.assertScenarios("front_layer/the_end_with_the_lower_depth_is_chosen", "front_layer/read_once_per_room",
+                             "front_layer/equal_or_unreadable_ends_write_nothing")
+
+    def test_front_layer_no_write_for_off_residual_or_another_self(self):
+        self.assertScenarios("front_layer/no_write_for_off_residual_or_another_self")
+
+    # ---- drops: the stand-ins and the coin ----------------------------------
+
+    def test_stand_in_table_and_even_count_rule(self):
+        self.assertScenarios("stand_in/the_table_and_its_order",
+                             "stand_in/the_first_even_candidate_that_passes_the_filter",
+                             "stand_in/counting_and_the_unique_filter")
+
+    def test_stand_in_refusal(self):
+        self.assertScenarios("stand_in/no_candidate_refuses_and_names_the_counts")
+
+    def test_stand_in_coin(self):
+        self.assertScenarios("stand_in/the_coin_c_over_n_plus_c")
+
+    # ---- the install and the command ----------------------------------------
+
+    def test_install_states(self):
+        self.assertScenarios("install/armed_by_a_charm_installed_once_a_character_exists",
+                             "install/a_refusal_is_final_for_the_session",
+                             "install/looks_for_the_player_every_60_frames")
+
+    def test_command_forms(self):
+        self.assertScenarios("command/accepted_forms", "command/refused_forms_name_the_usage")
+
+    # ---- the stat line ------------------------------------------------------
+
+    def test_stat_line_fresh_session_byte_for_byte(self):
+        self.assertScenarios("stat_line/the_fresh_session_line_byte_for_byte")
+
+    def test_stat_line_fields_after_use(self):
+        self.assertScenarios("stat_line/fields_after_use_and_their_names")
+
+
+if __name__ == "__main__":
+    unittest.main()
