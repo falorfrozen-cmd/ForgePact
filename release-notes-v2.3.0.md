@@ -34,19 +34,27 @@ fresh fight.
   and confirm, and you are taken straight to that act's boss lair for a fresh
   fight, even if you beat the boss before; no portal opens. It works from a
   town or any zone of an act, and is refused (you keep the piece) inside a
-  boss lair or an uber realm. Each piece takes its own bag cell; pieces do not
-  stack. Using a piece makes the game forget what it kept of that lair, which
-  may include loot left on its floor (not tested). A piece is an Edible PAS
-  Logo underneath, so your save needs nothing from ForgePact to load, and
-  without ForgePact a piece shows and works as an Edible PAS Logo. Checked in
+  boss lair or an uber realm. In your bag a piece looks like a Gem of
+  Incarnation, and pieces of the same boss stack into one cell, with the count
+  drawn on it (Gurag's pieces in one stack, the Grim Reaper's in another, never
+  with a real item); right-click a stack and confirm, and one piece is used and
+  the rest stay. Pieces stack only while the switch is on. A stack keeps its
+  count when the game saves your bag, which it does when you close the stash or
+  save and exit to the main menu (closing the game does not always save it).
+  Using a piece makes the game forget what it kept of that lair, which may
+  include loot left on its floor (not tested). A piece is an Edible PAS Logo
+  underneath, so your save needs no new item from ForgePact to load; what a
+  piece shows and does with ForgePact removed has not been checked. Checked in
   play with this release's plugin, in Acts 1 and 2: monsters dropped named
-  pieces, one bag cell each, and none with the switch off (those drops were
-  forced with the `soulpiece force on` command, so the 1 in 7,200 chance itself
-  was not seen in play); a piece used in a
-  zone or in town took the character straight to the Act 1 or Act 2 lair and
-  was used up; Gurag came out, was beaten and came out again on the next
-  piece; and the Grim Reaper came out in his lair. The lairs of Acts 3 to 9
-  were not visited.
+  pieces, and none with the switch off (those drops were forced with the
+  `soulpiece force on` command, so the 1 in 7,200 chance itself was not seen in
+  play); a piece used in a zone or in town took the character straight to the
+  Act 1 or Act 2 lair and was used up; Gurag came out, was beaten and came out
+  again on the next piece; and the Grim Reaper came out in his lair. The gem
+  icon and the stacks were checked in research sessions with a test build:
+  pieces of one boss stacked on pickup, the bag drew the count, each use took
+  one piece from the stack, and stacks kept their counts through a save and a
+  restart. The lairs of Acts 3 to 9 were not visited.
 
 ## How to update
 

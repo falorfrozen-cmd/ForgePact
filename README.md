@@ -58,7 +58,7 @@ none of these diagnostic hooks or the recorder. See
 | **Craft from the stash** | Off by default. At the game's own Crafting Cube, a recipe also counts the materials and socketables in your shared stash's Materials and Socketable tabs, so a recipe the stash covers is no longer greyed out; the game greys a recipe exactly as before, on the bag and those two tabs together. When you craft, only what your bag is short of leaves the stash - onto your bag's stack of it, into a new bag stack, or into the Cube's own grid when the bag has no room - and the game uses it up as it would from the bag; the stash is saved right after. Other stash tabs are never touched, and a move that cannot be confirmed refuses the craft instead ([details](#craft-from-the-stash)) |
 | **Move all into the stash** | Mods → Quality of Life, off by default. With the stash open, click the **Move All** button, with the look of the backpack's Sort button, in its row just left of it and under the Extra tab above, or press F4, and every item on the backpack tab you are looking at moves into the stash tab you are looking at, one at a time, by the game's own move for each item. When the tab fills up, the rest stay in your backpack and never spill onto another stash tab or page. A stackable joins a stack of its kind with room for it (up to 999), or starts a new stack on the same tab; on the Socketable tab a socketable joins the one stack of its kind, and a new kind stays in your backpack ([details](#move-all-into-the-stash)) |
 | **Gems of Incarnation** | Loot → Gems of Incarnation. Off by default. Every Gem of Incarnation that drops is Mythic, with 4 or 5 mods, rolled by the game itself - and with a filter, with the mods you ticked; every mod on every Gem of Incarnation shows the highest value its best tier can roll. Two switches and a mod filter, nothing written to your save ([details](#gems-of-incarnation)) |
-| **Boss soul pieces** | Loot → Boss soul pieces, off by default (plugin command `soulpiece 1` / `soulpiece 0`, `soulpiece status`). Monsters in an act's zones sometimes drop a Piece of that act's boss's Soul (Gurag's in Act 1, the Grim Reaper's in Act 2, and so on), a little more often than a Gem of Incarnation. Right-click a piece in your bag and confirm, and you are taken straight to that act's boss lair for a fresh fight, even if you beat the boss before; no portal opens. Each piece takes its own bag cell. Checked in play for Acts 1 and 2 ([details](#boss-soul-pieces)) |
+| **Boss soul pieces** | Loot → Boss soul pieces, off by default (plugin command `soulpiece 1` / `soulpiece 0`, `soulpiece status`). Monsters in an act's zones sometimes drop a Piece of that act's boss's Soul (Gurag's in Act 1, the Grim Reaper's in Act 2, and so on), a little more often than a Gem of Incarnation. Right-click a piece in your bag and confirm, and you are taken straight to that act's boss lair for a fresh fight, even if you beat the boss before; no portal opens. In your bag a piece looks like a Gem of Incarnation, and pieces of the same boss stack into one cell (never with a real item); using one from a stack uses one piece. Checked in play for Acts 1 and 2 ([details](#boss-soul-pieces)) |
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Dungeon chest opens early** | Mods → Gameplay, off by default. A switch and a slider from 50 to 95 % (click the value to type it): in a key dungeon, the chest at the end opens once that share of all the dungeon's monsters is dead instead of every last one, counting every monster the dungeon plans when it loads, spawned yet or not (an estimate from its spawners). When 50 or fewer kills are left, a countdown tells you how many: above your character, in chat, or both, as you pick under the switch. Checked in a live game with this build in the Pumpkin Cellar at 50 %: the chest opened with over 100 monsters left, each countdown form showed where picked, and in the second run, after a fix to the label's font, the label above your character held steady; a boss dungeon not checked yet ([details](#dungeon-chest-opens-early)) |
@@ -1066,13 +1066,25 @@ lair's look, and the lair itself brings out whatever boss it always does.
   monster's own gem chance, a change to the gem's drop rate) gives more pieces
   too. Bosses, chests and towns drop none, and neither do boss lairs or uber
   realms.
-- **In your bag.** A piece takes its own bag cell; pieces do not stack. It is
-  the game's own Edible PAS Logo underneath, with its own name, so a save
-  holding pieces needs nothing from ForgePact to load (checked with
-  ForgePact's piece names switched off). Without ForgePact a piece shows as an
-  Edible PAS Logo, and using it then does what that item does.
-- **Switching off** stops the drops. A piece you already have stays in your
-  bag, and while ForgePact is installed its use is refused and the piece kept.
+- **In your bag.** A piece shows a Gem of Incarnation's icon in your bag
+  (lying on the ground it keeps the plain item's pickup icon, and its tooltip
+  shows its name and no icon). Pieces of the same boss stack: a Piece of
+  Gurag's Soul you pick up joins the Gurag stack already in your bag, and a
+  Piece of the Grim Reaper's Soul starts or joins its own; the bag draws the
+  count on the stack, and a stack holds up to 999. A piece never joins a real item.
+  Right-click a stack and confirm, and one piece is used: the rest stay in the
+  stack, and the last one leaves the cell empty. Stacking happens only while
+  the switch is on; pieces picked up with it off take a cell each.
+- **Your save.** A stack keeps its count through the game's own save of your
+  bag and a reload. The game writes your bag to your save when you close the
+  stash or save and exit to the main menu; closing the game does not always
+  do it, so close the stash or save to the menu before you stop if you want
+  the stacks you just built kept. A piece is the game's own Edible PAS Logo underneath, so a save
+  holding pieces needs no new item from ForgePact to load. What a piece shows,
+  and what using it does, with ForgePact removed has not been checked.
+- **Switching off** stops the drops and the stacking. A piece you already
+  have stays in your bag, and while ForgePact is installed its use is refused
+  and the piece kept.
 - **Checked in play** on 2026-10-12 with this release's plugin, in Acts 1 and
   2: monsters dropped Pieces of Gurag's Soul and of the Grim Reaper's Soul,
   one bag cell each, and none with the switch off; a right-click and confirm,
@@ -1080,15 +1092,20 @@ lair's look, and the lair itself brings out whatever boss it always does.
   lair with no portal and used one piece, and was refused with the switch
   off; Gurag came out, was beaten, and came out again on the next piece; the
   Grim Reaper came out in his lair; and a save holding pieces loaded again.
-  A research session on 2026-10-11 also loaded a save holding a piece with
-  ForgePact's piece names switched off, and the piece showed as an Edible PAS
-  Logo; a save was not loaded with ForgePact removed. Only the Act 1 and
-  Act 2 lairs were visited; how often pieces drop unforced was not counted
-  (the checks forced a drop on every gem roll).
+  The gem icon and the stacks were checked on 2026-10-12 in research sessions
+  with a test build: pieces of one boss joined one stack on pickup, a piece of
+  the other act and a real Edible PAS Logo each kept their own cell, the bag
+  drew the stack's count, each use from a stack of three used one piece, and
+  a stack of three and one of two were back with their counts after the game
+  saved the bag at a stash close and the game was restarted. A save was not
+  loaded with ForgePact removed. Only the Act 1 and Act 2 lairs were visited;
+  how often pieces drop unforced was not counted (the checks forced a drop on
+  every gem roll).
 
 `soulpiece status` prints one line: whether the switch is on, the room and its
-act, the chance in use, the gem rolls seen, the pieces dropped, the pieces
-used and the moves made, and any refusals by reason. How the game rolls the
+act, the chance in use, the gem rolls seen, the pieces dropped, the pickups
+stacked onto a piece already in the bag, the pieces used and the moves made,
+any refusals by reason, and whether the stacking hook is in place. How the game rolls the
 gem, uses an item and keeps a room's state, and what was measured:
 [`docs/boss-soul-pieces-research.md`](docs/boss-soul-pieces-research.md).
 
