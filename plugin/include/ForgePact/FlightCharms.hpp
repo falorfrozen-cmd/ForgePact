@@ -732,14 +732,27 @@ inline std::string RefusedLine(std::string_view why) { return "flightcharm: refu
 // a cell where the charm does not fit stays refused, as in the game.
 //
 // `Pending` is whatever the adapter needs to place the item again (its grid,
-// item, cell and flags); the guard only keeps and hands it back.
+// item, cell and flags); the guard only keeps and hands it back. When it has
+// `x` and `y` members, they are the saved cell (negative for unknown), and the
+// flush keeps charms off each other's cells: a charm whose full footprint would
+// cover another held-back charm's own cell goes straight to 1x1 (`Yielded`),
+// so the order of two charms in the save never decides which one is lost. A
+// charm with the same cell as another is not shrunk for it: both cannot fit.
+//
+// The counters say how far a load got, so a quiet line can be told apart from
+// a guard that never saw anything: `opens` loads, `seen` placements inside one
+// that reached the adapter, `charms` of those whose item it recognised.
 
-enum class GuardOutcome : int { Full, Kept, Failed };
+enum class GuardOutcome : int { Full, Kept, Failed, Yielded };
 
 struct GuardCounters {
+    uint64_t opens = 0;      // grid loads (ParseItemToGrid scopes) opened
+    uint64_t seen = 0;       // placements the adapter saw inside a load
+    uint64_t charms = 0;     // of those, the ones whose item is a flight charm
     uint64_t deferred = 0;   // placements held back to the end of their load
     uint64_t full = 0;       // placed at the full footprint when the load ended
-    uint64_t kept = 0;       // refused at full size, placed at 1x1
+    uint64_t kept = 0;       // placed at 1x1: refused at full size, or yielded
+    uint64_t yielded = 0;    // of kept, the ones whose full size would cover another charm's cell
     uint64_t failed = 0;     // refused at 1x1 too
 };
 
@@ -747,8 +760,21 @@ template <class Pending>
 class SizeGuard {
 public:
     // A grid load starts. Loads nest; each flushes only its own list.
-    void Open() { scopes_.emplace_back(); }
+    void Open()
+    {
+        scopes_.emplace_back();
+        ++counters_.opens;
+    }
     size_t Depth() const { return scopes_.size(); }
+
+    // The adapter saw a placement; counted only inside a load and outside a
+    // flush. `flightCharm` when it recognised the item as one.
+    void Saw(bool flightCharm)
+    {
+        if (scopes_.empty() || flushing_) return;
+        ++counters_.seen;
+        if (flightCharm) ++counters_.charms;
+    }
 
     // A placement inside a load. True when it was recorded instead of passed
     // on: a flight charm whose dressed footprint is larger than 1x1. Never
@@ -757,7 +783,12 @@ public:
     {
         if (scopes_.empty() || flushing_ || !flightCharm) return false;
         if (w <= 1 && h <= 1) return false;
-        scopes_.back().push_back(p);
+        Held held{ p, -1, -1, w, h };
+        if constexpr (requires(const Pending& q) { q.x; q.y; }) {
+            held.x = static_cast<long long>(p.x);
+            held.y = static_cast<long long>(p.y);
+        }
+        scopes_.back().push_back(std::move(held));
         ++counters_.deferred;
         return true;
     }
@@ -770,23 +801,28 @@ public:
     void Close(PlaceFull&& placeFull, PlaceOne&& placeOne, Report&& report)
     {
         if (scopes_.empty()) return;
-        std::vector<Pending> list = std::move(scopes_.back());
+        std::vector<Held> list = std::move(scopes_.back());
         scopes_.pop_back();
         const bool wasFlushing = flushing_;
         flushing_ = true;
-        for (const Pending& p : list) {
-            bool full = false;
-            try { full = static_cast<bool>(placeFull(p)); } catch (...) { full = false; }
-            if (full) {
-                ++counters_.full;
-                Tell(report, p, GuardOutcome::Full);
-                continue;
+        for (size_t i = 0; i < list.size(); ++i) {
+            const Pending& p = list[i].p;
+            const bool yields = CoversAnotherCell(list, i);
+            if (!yields) {
+                bool full = false;
+                try { full = static_cast<bool>(placeFull(p)); } catch (...) { full = false; }
+                if (full) {
+                    ++counters_.full;
+                    Tell(report, p, GuardOutcome::Full);
+                    continue;
+                }
             }
             bool one = false;
             try { one = static_cast<bool>(placeOne(p)); } catch (...) { one = false; }
             if (one) {
                 ++counters_.kept;
-                Tell(report, p, GuardOutcome::Kept);
+                if (yields) ++counters_.yielded;
+                Tell(report, p, yields ? GuardOutcome::Yielded : GuardOutcome::Kept);
             } else {
                 ++counters_.failed;
                 Tell(report, p, GuardOutcome::Failed);
@@ -810,13 +846,37 @@ public:
     }
 
 private:
+    struct Held {
+        Pending p;
+        long long x = -1;   // the saved cell; negative when unknown
+        long long y = -1;
+        int w = 1;          // the dressed footprint
+        int h = 1;
+    };
+
+    // Would list[i] at its full footprint cover the saved cell of another
+    // charm held back in the same load? Only cells both known, and not a cell
+    // they share.
+    static bool CoversAnotherCell(const std::vector<Held>& list, size_t i)
+    {
+        const Held& a = list[i];
+        if (a.x < 0 || a.y < 0) return false;
+        for (size_t j = 0; j < list.size(); ++j) {
+            const Held& b = list[j];
+            if (j == i || b.x < 0 || b.y < 0) continue;
+            if (b.x == a.x && b.y == a.y) continue;
+            if (b.x >= a.x && b.x < a.x + a.w && b.y >= a.y && b.y < a.y + a.h) return true;
+        }
+        return false;
+    }
+
     template <class Report>
     static void Tell(Report& report, const Pending& p, GuardOutcome o)
     {
         try { report(p, o); } catch (...) {}
     }
 
-    std::vector<std::vector<Pending>> scopes_;
+    std::vector<std::vector<Held>> scopes_;
     bool flushing_ = false;
     GuardCounters counters_;
 };
@@ -828,9 +888,26 @@ inline std::string GuardLine(std::string_view name, long long x, long long y, Gu
     const std::string cell = std::to_string(x) + "," + std::to_string(y);
     if (o == GuardOutcome::Kept)
         return "flightcharm: guard kept " + std::string(name) + " at 1x1 in cell " + cell + " (its full size did not fit)";
+    if (o == GuardOutcome::Yielded)
+        return "flightcharm: guard kept " + std::string(name) + " at 1x1 in cell " + cell
+            + " (its full size would cover another flight charm's cell)";
     if (o == GuardOutcome::Failed)
         return "flightcharm: guard failed " + std::string(name) + " in cell " + cell + " (no room even at 1x1)";
     return std::string();
+}
+
+// The guard's own line, which `flightcharm stat` prints after the stat line.
+// `route` is the adapter's install result: `on`, `table-only`, `refused` or
+// `not-installed`. Read top to bottom, the counters say where a quiet guard
+// stopped: no load reached it (`opens=0`), no placement inside one did
+// (`seen=0`), no item was recognised (`charms=0`), or every charm fitted.
+inline std::string GuardStatLine(std::string_view route, const GuardCounters& c)
+{
+    return "flightcharm guard: route=" + std::string(route) + " opens=" + std::to_string(c.opens)
+        + " seen=" + std::to_string(c.seen) + " charms=" + std::to_string(c.charms)
+        + " deferred=" + std::to_string(c.deferred) + " full=" + std::to_string(c.full)
+        + " kept=" + std::to_string(c.kept) + " yielded=" + std::to_string(c.yielded)
+        + " failed=" + std::to_string(c.failed);
 }
 
 // ---- drops: the stand-ins and the coin --------------------------------------------

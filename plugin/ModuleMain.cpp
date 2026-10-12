@@ -21846,6 +21846,7 @@ static PFUNC_YYGMLScript g_Orig_FlightParseItemToGrid = nullptr;
 static PFUNC_YYGMLScript g_Orig_FlightGridAddItemPos = nullptr;
 static bool g_FlightGuardTried = false;
 static bool g_FlightGuardOn = false;   // both hooks in, both routes
+static const char* g_FlightGuardRoute = "not-installed";   // on | table-only | refused, once tried
 
 static bool FlightGuardHolds(std::string_view runtimeName)
 {
@@ -21913,14 +21914,19 @@ static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R,
 
 // Inside a load, a flight charm whose footprint is larger than 1x1 is held
 // back and the call answers true (the load ignores the answer; RDM § 22.6).
-// Every other call, and every call outside a load, is the game's own.
+// Every other call, and every call outside a load, is the game's own. Each
+// call inside a load is counted, and so is each whose A[1] is a flight charm,
+// so `seen=` and `charms=` say whether the argument layout held.
 static RValue& Hook_FlightGridAddItemPos(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
-    if (g_FlightGuardOn && g_FlightGuard.Depth() > 0 && argc >= 4 && A && A[1]) {
+    if (g_FlightGuardOn && g_FlightGuard.Depth() > 0) {
+        bool charm = false;
         try {
             FcNs::Rolled rolled;
             int w = 1, h = 1;
-            if (FlightCharmOf(*A[1], rolled) && FlightItemFootprint(*A[1], w, h)) {
+            charm = argc >= 4 && A && A[1] && FlightCharmOf(*A[1], rolled);
+            g_FlightGuard.Saw(charm);
+            if (charm && FlightItemFootprint(*A[1], w, h)) {
                 FlightGuardPending p;
                 p.self = S;
                 p.other = O;
@@ -21935,7 +21941,9 @@ static RValue& Hook_FlightGridAddItemPos(CInstance* S, CInstance* O, RValue& R, 
                     return R;
                 }
             }
-        } catch (...) {}
+        } catch (...) {
+            if (!charm) g_FlightGuard.Saw(false);   // a throw before the count still counts the call
+        }
     }
     return g_Orig_FlightGridAddItemPos(S, O, R, argc, A);
 }
@@ -21953,6 +21961,7 @@ static void FlightGuardInstall()
     const bool add = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddItemPos), "fp_flight_gridaddpos",
                                    (PVOID)Hook_FlightGridAddItemPos, &g_Orig_FlightGridAddItemPos, &addNative);
     g_FlightGuardOn = parse && add && parseNative && addNative;
+    g_FlightGuardRoute = g_FlightGuardOn ? "on" : (parse && add) ? "table-only" : "refused";
     if (g_FlightGuardOn) return;
     const auto route = [](bool ok, bool native) { return std::string(!ok ? "not installed" : native ? "both routes" : "TABLE-ONLY"); };
     Out("flightcharm: size guard refused - ParseItemToGrid " + route(parse, parseNative) + ", InventoryGridAddItemPos "
@@ -21992,6 +22001,9 @@ static void FlightCharmCommand(const std::string& rest)
         return;
     }
     Out(FcNs::StatLine(FlightCharmStatFields()));
+    // The guard's own line: its route and how far each load got, so a quiet
+    // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
+    Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
 }
 // ---- end of the flight charms forge adapter ------------------------------------
 
