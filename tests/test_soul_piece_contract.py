@@ -290,6 +290,51 @@ class SoulPieceContractTests(unittest.TestCase):
         tick = self.body("static void SoulPieceTick(")
         self.assertTrue(gate_precedes(tick, "SoulPieceRegisterDress();", "if (!g_SoulPiece.wanted && !g_SoulPieceSeen) return;"))
 
+    # ---- the icon ----------------------------------------------------------------------------
+    def test_piece_icon_is_the_gem_sprite_resolved_by_name(self):
+        self.assertIn('inline constexpr char kPieceSpriteName[] = "Gem_Incarnation_spr";', self.core)
+        self.assertIn('inline constexpr char kIconInfoKey[] = "11";', self.core)
+        entry = self.code[self.code.index("struct CustomForgeEntry"):]
+        entry = entry[:entry.index("};")]
+        self.assertIn("std::string sprite;", entry, "an entry names its sprite, never an index")
+        dress = self.body("static void SoulPieceRegisterDress()")
+        self.assertIn("piece.sprite = SoulCore::kPieceSpriteName;", dress, "every piece entry names the gem's sprite")
+        resolve = self.body("static bool ForgeDisplaySprite(")
+        self.assertIn('"asset_get_index", { RValue(name) }', resolve)
+        # Resolved to a sprite of exactly that name, or nothing.
+        self.assertIn('"sprite_exists", { spr }', resolve)
+        self.assertIn('"sprite_get_name", { spr }', resolve)
+        self.assertIn("!= name) return false;", resolve)
+        forge = self.body("static bool TryApplyCustomForge(")
+        self.assertIn("ForgeDisplaySprite(entry.sprite, sprite)", forge)
+        self.assertIn('{ info, RValue("11"), sprite }', forge, "the resolved value is what is written")
+        # Never a numeric sprite index, in the dress, the forge pass or the resolver.
+        number = r'RValue\("11"\),\s*RValue\(\(?\w*\)?\s*\d|sprite\s*=\s*-?\d|asset_get_index"\s*,\s*\{\s*RValue\(\d'
+        for body in (dress, forge, resolve):
+            self.assertIsNone(re.search(number, body))
+        # Negative control for the scan: a numeric index is found.
+        self.assertIsNotNone(re.search(number, 'g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), RValue(4512) });'))
+        self.assertIsNotNone(re.search(number, "piece.sprite = 4512;"))
+
+    def test_piece_icon_is_written_before_the_hash_refresh(self):
+        forge = self.body("static bool TryApplyCustomForge(")
+        write = '{ info, RValue("11"), sprite }'
+        self.assertTrue(gate_precedes(forge, write, "RefreshItemHash(*candidate, &how)"),
+                        "the hash covers the info struct: the icon is written before it is refreshed")
+        # Only on an entry that names one, and only once it resolved.
+        self.assertTrue(gate_precedes(forge, "if (!entry.sprite.empty()) {", write))
+        self.assertTrue(gate_precedes(forge, "if (ForgeDisplaySprite(entry.sprite, sprite))", write))
+        self.assertIn("!entry.sprite.empty())", forge[:forge.index("if (!entry.sprite.empty()) {")],
+                      "the info struct is fetched for an entry with only a sprite")
+        # A name that does not resolve writes nothing and says so, capped.
+        miss = forge[forge.index("if (ForgeDisplaySprite(entry.sprite, sprite))"):]
+        miss = miss[:miss.index("RefreshItemHash(")]
+        self.assertIn("InterlockedIncrement(&g_ForgeSpriteMisses) == 1", miss)
+        self.assertIn("Out(", miss)
+        # Negative control for the order scan: a write after the refresh is caught.
+        self.assertFalse(gate_precedes("RefreshItemHash(*candidate, &how);\n" + write, write,
+                                       "RefreshItemHash(*candidate, &how)"))
+
     def test_no_new_hook_installs_while_off_without_a_piece(self):
         command = self.body("static void SoulPieceCommand(")
         for install in ("HookOneScript", "SoulPieceInstallUse", "GemsInstallDropHook"):

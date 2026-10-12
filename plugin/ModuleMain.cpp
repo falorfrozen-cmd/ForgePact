@@ -3755,6 +3755,13 @@ struct CustomForgeEntry
     // Optional "affix=<percent-encoded>" extra: up to three gold text rows drawn
     // above the item's stat rows in the inventory tooltip (fp_affix on the struct).
     std::string affix;
+    // Optional display sprite, by its asset name (never an index): written to
+    // itemInfoStruct["11"], which the bag and the ground item draw from (#158's
+    // Live 1). Resolved with asset_get_index when the entry applies; a name that
+    // is not a sprite writes nothing and the item keeps its base's icon. The game
+    // does not save the key, so without ForgePact the item shows its base's icon.
+    // Set by built-in entries only (the soul pieces), not read from the runtime file.
+    std::string sprite;
     // True only for the plugin's own hardcoded recognition seeds (see
     // AddBuiltInSignatureEntries) - never for a line loaded from the Item
     // Editor's runtime file. These exist so a dropped/traded signature item is
@@ -4546,6 +4553,27 @@ static volatile LONG g_ForgeHashViaDirect = 0;
 static volatile LONG g_ForgeHashViaRoutine = 0;
 static volatile LONG g_ForgeHashDirectNoHash = 0;
 #endif
+// Entries whose display sprite name did not resolve to a sprite: the first one
+// is logged, the rest only counted.
+static volatile LONG g_ForgeSpriteMisses = 0;
+
+// A Custom Forge entry's display sprite, by name: the value asset_get_index
+// returns, kept only when it is a sprite whose own name is `name` (an object or
+// sound of that name, or none, resolves to nothing). The value is written as the
+// runtime returned it, so whatever kind the runner uses for an asset reaches the
+// item unchanged.
+static bool ForgeDisplaySprite(const std::string& name, RValue& out)
+{
+    if (name.empty()) return false;
+    try {
+        const RValue spr = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+        if (!IsNumericInstanceRead(spr) || spr.ToDouble() < 0) return false;
+        if (!g_Yytk->CallBuiltin("sprite_exists", { spr }).ToBoolean()) return false;
+        if (g_Yytk->CallBuiltin("sprite_get_name", { spr }).ToString() != name) return false;
+        out = spr;
+        return true;
+    } catch (...) { return false; }
+}
 static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 {
     if (!candidate || candidate->m_Kind != VALUE_OBJECT || g_CustomForgeEntries.empty())
@@ -4612,7 +4640,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                     stats, RValue(std::to_string(stat.first)), RValue(stat.second)
                 });
             }
-            if (entry.rarity >= 0 || entry.tier >= 0 || !entry.lore.empty() || !entry.name.empty()) {
+            if (entry.rarity >= 0 || entry.tier >= 0 || !entry.lore.empty() || !entry.name.empty() || !entry.sprite.empty()) {
                 RValue hasInfo = g_Yytk->CallBuiltin(
                     "variable_struct_exists", { *candidate, RValue("itemInfoStruct") });
                 RValue info = hasInfo.ToBoolean()
@@ -4652,6 +4680,19 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                         if (map.m_Kind == VALUE_REAL || map.m_Kind == VALUE_INT32 || map.m_Kind == VALUE_INT64 || map.m_Kind == VALUE_REF) {
                             g_Yytk->CallBuiltin("ds_map_replace", { map, RValue(key), RValue(entry.lore) });
                             g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("29"), RValue(key) });
+                        }
+                    }
+                    if (!entry.sprite.empty()) {
+                        // ["11"] is the display sprite the bag and the ground item
+                        // draw; the ground item derives its pickup sprite from this
+                        // one's name. Written before the hash refresh below, which
+                        // covers the info struct. A name that is not a sprite
+                        // writes nothing: the item keeps its base's icon.
+                        RValue sprite;
+                        if (ForgeDisplaySprite(entry.sprite, sprite)) {
+                            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), sprite });
+                        } else if (InterlockedIncrement(&g_ForgeSpriteMisses) == 1) {
+                            Out("custom forge: display sprite " + entry.sprite + " is not a sprite; the item keeps its own icon");
                         }
                     }
                 }
@@ -52636,8 +52677,9 @@ static SoulCore::ZoneAnswer SoulPieceZoneExists(const RValue& room, CInstance* s
 // The base by its repository name in category 11, walked as `droprate` walks
 // a category, only once the game's item repository exists (GetNormalRepoStruct
 // raises the runner's error on a repository that is not there). Then one
-// Custom Forge built-in entry per act: the piece's name, a lore line and the
-// mechanic tag, the item's own stats kept. Re-registered if a reload of the
+// Custom Forge built-in entry per act: the piece's name, a lore line, the
+// mechanic tag and the Gem of Incarnation's display sprite (by name), the item's
+// own stats kept. Re-registered if a reload of the
 // Custom Forge's runtime file dropped them.
 static void SoulPieceRegisterDress()
 {
@@ -52671,6 +52713,7 @@ static void SoulPieceRegisterDress()
         piece.name = boss->pieceName;
         piece.lore = "Right-click it in the backpack to be taken to the boss's lair.";
         piece.mechanic = SoulCore::kMechanicTag;
+        piece.sprite = SoulCore::kPieceSpriteName;   // the Gem of Incarnation's icon, by name
         piece.builtin = true;   // recognition only, see CustomForgeEntry::builtin
         g_CustomForgeEntries.push_back(std::move(piece));
         added = true;
