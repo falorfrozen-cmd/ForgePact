@@ -1138,8 +1138,8 @@ item can be displaced by a charm. Between two charms, the yield rule decides:
 a held charm whose full footprint would cover another held charm's saved cell
 goes straight to 1x1 at its own cell (`yielded=`, counted in `kept=` too), so
 every full placement leaves every other held charm's cell free, and no save
-order of two charms leaves one off the grid. The footprint is tested both ways
-round, `"2"` columns by `"3"` rows and the transpose, because which of
+order of two charms leaves one off the grid. The footprint is tested in both
+orientations, `"2"` columns by `"3"` rows and the transpose, because which of
 `InventoryGridAddItemPos`'s arguments is the column and which the row is a
 static reading only (RDM § 22.6 does not record it). When one of the held
 charms' cells is unknown, every held charm in that load yields, since the
