@@ -1059,8 +1059,10 @@ lair's look, and the lair itself brings out whatever boss it always does.
   this way counts again for quests or act completion is not known yet;
   ForgePact changes neither.
 - **How often.** Every time the game rolls a gem drop for a dying monster, the
-  piece rolls too, at five quarters of the Gem of Incarnation's chance: 1 in
-  7,200 against the gem's 1 in 9,000. The chance is fixed, so whatever makes
+  piece rolls too, at 1 in 7,200: five quarters of the Gem of Incarnation's
+  listed drop rate (1 in 9,000). Whether the game gives the gem exactly that
+  chance on each roll is not established, so how pieces compare with the gem
+  in play has not been measured. The chance is fixed, so whatever makes
   the game roll gems more often (more monsters from Monster Density, a
   monster's own gem chance, a change to the gem's drop rate) gives more pieces
   too. Bosses, chests and towns drop none, and neither do boss lairs or uber
