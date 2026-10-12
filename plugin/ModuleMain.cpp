@@ -4634,6 +4634,9 @@ static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled);
 // Whether the size guard holds this script (the research build's instruments
 // refuse it then). Defined with the guard below.
 static bool FlightGuardHolds(std::string_view runtimeName);
+// A drop of ours the game built, on CreateItemNew's own return: `built=` of the
+// `flightcharm stat` line. Defined with the drop adapter.
+static void FlightDropNoteBuilt(FcNs::Charm charm);
 // ---- end of what the Custom Forge reads for the flight charms ----------------
 
 static volatile LONG g_CustomForgeHashMisses = 0;
@@ -4690,6 +4693,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
             const CustomForgeEntry& entry = flightMatched ? flightEntry : g_CustomForgeEntries[i];
             if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;
             if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
+            if (finalPass && flightMatched) FlightDropNoteBuilt(flightRolled.charm);   // #158: a game-built flight charm drop
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
                 if (names.m_Kind == VALUE_ARRAY) {
@@ -12931,6 +12935,84 @@ static volatile long g_SigStandinPicks = 0, g_SigHeldMiss = 0, g_SigTypeAgree = 
 static double g_SigHitBuiltType = -1.0;  // the current hit's built itemType, for builtType=
 static bool g_SigHitTypeNoted = false;   // the current hit's first built item was compared
 #endif
+// ---- Flight charms (FlightCharms.hpp): the drop adapter's state -----------------------------
+// The three flight charms (#158) drop from the game's own rolls, each only while its panel switch
+// (`flightcharm elf|wings|broom 1`) is on, as Headhunter and Tyrant's Crown do (#74, above).
+// Gabriel Wings and Witch's Broomstick join the Angelic roll's lootListUnique[5] beside #74's
+// rows, with a fixed stand-in each; Pocket Elf joins the ordinary unique roll (DropUniqueItems),
+// one stand-in entry on each of lootListUnique[0..4], the stand-in chosen by the core's
+// even-count rule. The typing, the hit and the rewrite point are #74's own hooks, whose "roll in
+// progress" (g_SigRollDepth) the unique roll's hook raises too. The functions sit after
+// Hook_GetUniqueRepoStruct; everything they keep is here, in one struct, game thread only.
+struct FlightDropState {
+    bool            switches[FcNs::kCharmCount] = { false, false, false };
+    bool            refused[FcNs::kCharmCount] = { false, false, false };   // the refusal latch, as #74's
+    std::string     refusedWhy[FcNs::kCharmCount];
+    FcNs::DropTally tally[FcNs::kCharmCount];               // ours = hits that fell to the charm, built = what the game built
+    int             pending[FcNs::kCharmCount] = { 0, 0, 0 };   // rewritten records not yet seen built, this roll
+    long            injected = 0, refusals = 0, anomalies = 0;
+    // Gabriel Wings' and Witch's Broomstick's fixed stand-ins: validated against the Angelic pool,
+    // and n, each one's count in lootListUnique[5], counted on the sub-list of that length and id.
+    bool            angelicOk[FcNs::kCharmCount] = { false, false, false };
+    int             angelicN[FcNs::kCharmCount] = { 0, 0, 0 };
+    int             angelicLen = -1;
+    double          angelicId = -1.0;
+    // Pocket Elf: lootListUnique[0..4] as last counted (each sub-list's length and id), every
+    // candidate's counts and filter, and the stand-in they gave (-1: refused, kElfNoStandIn).
+    bool            elfResolved = false;
+    std::string     elfWhy = "not resolved yet";
+    int             elfPick = -1;
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> elfCounts{};
+    int             elfLen[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    double          elfId[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    bool            elfRefusalLogged = false;
+    // DropUniqueItems' hook, by its SDK name, installed by `flightcharm elf 1` alone.
+    bool            uniqueTried = false, uniqueNative = false;
+    std::string     uniqueRoute = "not-installed";
+    // The current roll: which, the entries it carries per charm (copies on each list), the lists
+    // they went onto (their index in lootListUnique, the handle as read, the size before), and
+    // whether the held read-back's refusal was logged since it last passed.
+    bool            rollUnique = false;
+    int             rollPushed = 0;   // entries on every list together, for injected=
+    int             rollCopies[FcNs::kCharmCount] = { 0, 0, 0 };
+    int             rollLists = 0;
+    int             rollIndex[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    RValue          rollSub[FcNs::kUniqueSubLists];
+    int             rollBefore[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool            heldMissLogged = false;
+    // The current hit: the charm whose stand-in it was (-1 none), the coin (share in n + share),
+    // the charm it fell to (-1: the game's own stand-in), and whether its record was rewritten.
+    int             hitStandIn = -1, hitCharm = -1;
+    long long       hitN = 0, hitShare = 0;
+    bool            hitRewritten = false;
+    std::string     hitWhy;
+};
+static FlightDropState g_FlightDrop;
+static PFUNC_YYGMLScript g_Orig_FlightDropUnique = nullptr;
+// How many copies of its stand-in each switched-on charm pushes per roll and list: the constant 1
+// in the player build (one entry's share); the research build's `flightprobe copies <k>` sets it.
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_FlightDropCopies = 1;
+#else
+static int g_FlightDropCopies = 1;
+#endif
+// Called from #74's roll machinery below; defined with the drop adapter.
+static void FlightDropHitReset();
+static void FlightDropAngelicPush();
+static void FlightDropAngelicRemove();
+static void FlightDropAttributeHit();
+static void FlightDropBeforeCreate(RValue& record, const std::string& missing);
+static void FlightDropAfterHit();
+// The shared ground-icon hook (hidden loot's one LootGroundInit detour), installed once; defined
+// after HiddenLootInstall.
+static void FlightGroundIconInstall();
+#ifndef FORGEPACT_RELEASE
+// Which research row holds DropUniqueItems now (`angelicprobe on`'s drop-unique row, gambaprobe's
+// DropUniqueItems row), or empty; each is defined with its own table.
+static bool ApRollHoldsDropUnique();
+static bool GpHoldsDropUnique();
+#endif
+// ---- end of the drop adapter's state -------------------------------------------------------
 // Which signature item's panel switch (Mods -> Items -> Tyrant's Crown / Headhunter) is on:
 // 0 = Tyrant's Crown, 1 = Headhunter.  The panel sends `tyrant force` / `headhunter force` for an
 // ON switch and `off` clears it, so the forced flags are the switch.  Owner, 2026-10-02 ("Panel
@@ -13630,8 +13712,10 @@ static void SignatureInjectRemove()
 // one invocation (extra rolls included) and come off on every way out, a throw from the game's
 // roll included.  An invocation nested inside another adds nothing.
 struct SignatureInjectGuard {
-    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} } }
-    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { SignatureInjectRemove(); } catch (...) {} } }
+    // #158: the flight charms' Angelic rows go on after #74's and come off before them, so each
+    // removal finds its own entries at the tail.
+    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} try { FlightDropAngelicPush(); } catch (...) {} } }
+    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { FlightDropAngelicRemove(); SignatureInjectRemove(); } catch (...) {} } }
     SignatureInjectGuard(const SignatureInjectGuard&) = delete;
     SignatureInjectGuard& operator=(const SignatureInjectGuard&) = delete;
 };
@@ -13763,6 +13847,8 @@ static void SignatureBeforeCreate(int argc, RValue** A)
         Out("angelic hit record: vanilla " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
     if (g_SigHitReplace) return;
 #endif
+    // #158: a hit that fell to a flight charm is rewritten to that charm's own definition here.
+    if (which < 0 && g_FlightDrop.hitCharm >= 0) { FlightDropBeforeCreate(record, missing); return; }
     if (which < 0) return;   // the game's own hit: its record is never touched
 #ifndef FORGEPACT_RELEASE
     if (g_SigHitShow) Out("angelic hit record: before " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
@@ -13831,6 +13917,7 @@ static void SignatureHitReset()
     g_SigHitReplace = false; g_SigHitShow = false;
     g_SigHitBuiltType = -1.0; g_SigHitTypeNoted = false;
 #endif
+    FlightDropHitReset();   // #158: the flight charms' share of the same hit
 }
 #ifndef FORGEPACT_RELEASE
 // Research build: Loot_Ground_obj by its SDK name, for `lootDelta=` and the replace mode.
@@ -13982,6 +14069,11 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
     if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0) {
         try { SignatureAttributeHit(); } catch (...) {}
     }
+    // #158: the same typed hit, when the roll (the Angelic one or the unique one) carries a
+    // flight charm's stand-in entries.
+    if (g_SigRollDepth > 0 && g_SigHitTyped && g_FlightDrop.rollPushed > 0) {
+        try { FlightDropAttributeHit(); } catch (...) {}
+    }
     return r;
 }
 // GetUniqueRepoStruct, installed by name from InstallSignatureAngelicHooks beside the other two
@@ -14000,6 +14092,649 @@ static RValue& Hook_GetUniqueRepoStruct(CInstance* S, CInstance* O, RValue& R, i
     }
     return g_Orig_GetUniqueRepoStruct ? g_Orig_GetUniqueRepoStruct(S, O, R, argc, A) : R;
 }
+
+// ---- Flight charms (FlightCharms.hpp): the drop adapter ------------------------------------
+// The three drop switches (#158), on #74's machinery above; the state is FlightDropState. A
+// switch on installs #74's detection (InstallSignatureAngelicHooks), and Pocket Elf's switch also
+// the hook on DropUniqueItems, by its SDK name; with every switch off nothing is pushed and both
+// rolls are the game's own. A stand-in hit is the charm's at c in n + c, the coin #74 uses, and on
+// ours the record the item is built from is rewritten at CreateItemNew's entry to the charm's own
+// definition (type 10, a its seed for a uniformly drawn roll, b 0, c 0, j 0), so the game builds
+// and places the charm, and the Custom Forge dresses it. `sigdrop status` is #74's line alone:
+// the flight counters print on `flightcharm stat`.
+
+// The game's own calls a pool build or a repository read makes, outside a roll's scope, so no call
+// it makes is taken for the roll's read or a hit (SignatureInjectPush's rule).
+struct FlightDropOutsideRoll {
+    int depth = g_SigRollDepth;
+    FlightDropOutsideRoll() { g_SigRollDepth = 0; }
+    ~FlightDropOutsideRoll() { g_SigRollDepth = depth; }
+    FlightDropOutsideRoll(const FlightDropOutsideRoll&) = delete;
+    FlightDropOutsideRoll& operator=(const FlightDropOutsideRoll&) = delete;
+};
+
+// A charm's stand-in now: the fixed one for the Angelic two, the chosen one for Pocket Elf.
+static const FcNs::StandIn* FlightDropStandIn(FcNs::Charm c)
+{
+    if (c != FcNs::Charm::Elf) return FcNs::StandInFor(c);
+    const int pick = g_FlightDrop.elfPick;
+    return pick >= 0 && pick < FcNs::kElfCandidateCount ? &FcNs::kElfCandidates[pick] : nullptr;
+}
+
+// One charm's gate, #74's rule: on only with its switch on, no refused rewrite, every detection
+// hook inline (and DropUniqueItems' too, for Pocket Elf), and its list resolved with a validated
+// stand-in. The word is `gate=`'s, as `angelicDrops=` reads for #74's items.
+static FcNs::Gate FlightDropGate(FcNs::Charm c)
+{
+    const int i = static_cast<int>(c);
+    if (i < 0 || i >= FcNs::kCharmCount || !g_FlightDrop.switches[i]) return FcNs::Gate::Off;
+    if (g_FlightDrop.refused[i]) return FcNs::Gate::Refused;
+    if (!g_SigDetectNative) return FcNs::Gate::NoDetection;
+    if (c == FcNs::Charm::Elf) {
+        if (!g_FlightDrop.uniqueNative) return FcNs::Gate::NoDetection;
+        if (!g_FlightDrop.elfResolved) return FcNs::Gate::NotResolved;
+        return g_FlightDrop.elfPick >= 0 ? FcNs::Gate::On : FcNs::Gate::Refused;
+    }
+    return g_SigListOk && g_FlightDrop.angelicOk[i] ? FcNs::Gate::On : FcNs::Gate::NotResolved;
+}
+
+static bool FlightDropOn(FcNs::Charm c) { return FlightDropGate(c) == FcNs::Gate::On; }
+
+// Why a switched-on charm drops nothing, in words.
+static std::string FlightDropOffReason(FcNs::Charm c)
+{
+    const int i = static_cast<int>(c);
+    switch (FlightDropGate(c)) {
+    case FcNs::Gate::On:          return "on";
+    case FcNs::Gate::Off:         return "switch off";
+    case FcNs::Gate::Refused:
+        return g_FlightDrop.refused[i] ? "rewrite refused: " + g_FlightDrop.refusedWhy[i] : std::string(FcNs::kElfNoStandIn);
+    case FcNs::Gate::NoDetection:
+        if (c == FcNs::Charm::Elf && g_SigDetectNative) return "the DropUniqueItems hook is " + g_FlightDrop.uniqueRoute;
+        return "detection not installed (" + g_SigDetectRoute + ")";
+    case FcNs::Gate::NotResolved:
+        if (c == FcNs::Charm::Elf) return "lootListUnique[0..4] not resolved (" + g_FlightDrop.elfWhy + ")";
+        return !g_SigListOk ? std::string("the game's Angelic list not resolved") : std::string("stand-in not validated");
+    }
+    return "?";
+}
+
+// Gabriel Wings' and Witch's Broomstick's stand-ins against the validated Angelic pool, by their
+// whole entry; tried again while either is not validated (BuildAngelicPool throttles a retry).
+static void FlightDropResolveAngelic()
+{
+    if (g_FlightDrop.angelicOk[(int)FcNs::Charm::Wings] && g_FlightDrop.angelicOk[(int)FcNs::Charm::Broom]) return;
+    FlightDropOutsideRoll outside;
+    BuildAngelicPool(false);
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+        const FcNs::StandIn* s = FcNs::StandInFor(c);
+        bool ok = false;
+        for (const AngelicCandidate& p : g_AngelicPool)
+            if (s && p.type == s->t && p.sub == s->sub && p.b == s->b) { ok = true; break; }
+        g_FlightDrop.angelicOk[(int)c] = ok;
+    }
+}
+
+// n for the two Angelic stand-ins: their count in the sub-list's vanilla entries, counted again
+// whenever its length or id differs from the last count.
+static void FlightDropCountAngelic(const RValue& sub)
+{
+    if (g_FlightDrop.angelicLen == g_SigListLen && g_FlightDrop.angelicId == g_SigListId) return;
+    int n[FcNs::kCharmCount] = { 0, 0, 0 };
+    for (int e = 0; e < g_SigListLen; ++e) {
+        double t[3] = { 0.0, 0.0, 0.0 };
+        if (!SigEntry(sub, e, t)) continue;
+        for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+            const FcNs::StandIn* s = FcNs::StandInFor(c);
+            if (s && t[0] == (double)s->t && t[1] == (double)s->sub && t[2] == (double)s->b) ++n[(int)c];
+        }
+    }
+    for (int i = 0; i < FcNs::kCharmCount; ++i) g_FlightDrop.angelicN[i] = n[i];
+    g_FlightDrop.angelicLen = g_SigListLen;
+    g_FlightDrop.angelicId = g_SigListId;
+}
+
+// lootListUnique[0..4] read lightly - each element's handle, id and size, no walk - for the
+// "has a sub-list changed" check before every unique roll. False when any is not a live ds_list.
+static bool FlightDropReadUniqueLists(RValue subs[], double ids[], int sizes[], std::string& why)
+{
+    RValue instance, outer;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { why = "Controller_obj." + g_SigListName + " is not an array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (len < FcNs::kUniqueSubLists) { why = "Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements"; return false; }
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+            subs[k] = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)k) });
+            std::string step;
+            if (!SigListHandle(subs[k], ids[k], step)) { why = "Controller_obj." + g_SigListName + "[" + std::to_string(k) + "] is not a ds_list (" + step + ")"; return false; }
+            sizes[k] = (int)g_Yytk->CallBuiltin("ds_list_size", { subs[k] }).ToDouble();
+        }
+    } catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; return false; }
+    return true;
+}
+
+// Whether the ordinary unique roll keeps a candidate: its repository definition by name, rarity
+// ("27" of itemBaseInfoStruct) below 7 and not flagged hidden ("40"), RDM § 22.4 and § 22.8.
+static bool FlightDropUniquePasses(const FcNs::StandIn& s)
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue((double)s.t), RValue((double)s.sub), RValue((double)s.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double rarity = -1.0;
+        if (!TryStructNumber(info, "27", rarity)) return false;
+        const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+        bool hidden = false;
+        try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
+        return FcNs::PassesUniqueFilter((int)rarity, hidden);
+    } catch (...) { return false; }
+}
+
+// Pocket Elf's stand-in: lootListUnique[0..4] each a live ds_list of at least kSigListMinSize
+// entries, every candidate counted in each (an entry that is not three numbers is skipped, as the
+// roll itself drops nothing for one) and filtered by the roll's own rule, and the first candidate
+// with the same count in all five chosen (the core's PickElfStandIn). None: the refusal is logged
+// once per change and the gate stays off.
+static void FlightDropResolveElf()
+{
+    FlightDropOutsideRoll outside;
+    FlightDropState& d = g_FlightDrop;
+    const int before = d.elfResolved ? d.elfPick : -2;
+    std::string why;
+    RValue subs[FcNs::kUniqueSubLists];
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool ok = FlightDropReadUniqueLists(subs, ids, sizes, why);
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> counts{};
+    for (int k = 0; ok && k < FcNs::kUniqueSubLists; ++k) {
+        const RValue& sub = subs[k];
+        const int size = sizes[k];
+        if (size < kSigListMinSize) {
+            ok = false;
+            why = "Controller_obj." + g_SigListName + "[" + std::to_string(k) + "] has " + std::to_string(size)
+                + " entries, fewer than " + std::to_string(kSigListMinSize);
+            break;
+        }
+        d.elfLen[k] = size;
+        d.elfId[k] = ids[k];
+        for (int e = 0; e < size; ++e) {
+            double t[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(sub, e, t)) continue;
+            for (int c = 0; c < FcNs::kElfCandidateCount; ++c) {
+                const FcNs::StandIn& s = FcNs::kElfCandidates[c];
+                if (t[0] == (double)s.t && t[1] == (double)s.sub && t[2] == (double)s.b) ++counts[c].counts[k];
+            }
+        }
+    }
+    if (!ok) {
+        d.elfResolved = false;
+        d.elfPick = -1;
+        d.elfWhy = why;
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) { d.elfLen[k] = -1; d.elfId[k] = -1.0; }
+        return;
+    }
+    for (int c = 0; c < FcNs::kElfCandidateCount; ++c) counts[c].passes = FlightDropUniquePasses(FcNs::kElfCandidates[c]);
+    d.elfCounts = counts;
+    d.elfResolved = true;
+    d.elfWhy.clear();
+    d.elfPick = FcNs::PickElfStandIn(counts);
+    if (d.elfPick >= 0) { d.elfRefusalLogged = false; return; }
+    if (before != -1 || !d.elfRefusalLogged) {
+        d.elfRefusalLogged = true;
+        if (d.switches[(int)FcNs::Charm::Elf])
+            Out(FcNs::RefusedLine(FcNs::kElfNoStandIn) + " (standin-elf=" + FcNs::ElfStandInText(true, -1, counts) + ")");
+    }
+}
+
+// Whether list k of this roll ends with exactly this roll's entries: its size before, plus each
+// charm's stand-in rollCopies[c] times, in table order (the order they were pushed).
+static bool FlightDropTailHolds(int k, int& len)
+{
+    len = -1;
+    const RValue& sub = g_FlightDrop.rollSub[k];
+    const int before = g_FlightDrop.rollBefore[k];
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { return false; }
+    int at = before;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        for (int n = 0; n < g_FlightDrop.rollCopies[(int)row.charm]; ++n) {
+            double e[3] = { 0.0, 0.0, 0.0 };
+            if (!s || !SigEntry(sub, at++, e) || e[0] != (double)s->t || e[1] != (double)s->sub || e[2] != (double)s->b) return false;
+        }
+    }
+    return at == len;
+}
+
+// The held read-back, #74's: the variable read again by name off the first Controller_obj, each
+// list pushed onto must be the same ds_list at the same index and hold the push (size and tail).
+static bool FlightDropHeldReadBack(std::string& seen)
+{
+    seen = "nothing";
+    RValue instance;
+    std::string why;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        const RValue held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (held.m_Kind != VALUE_ARRAY) { seen = "no array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { held }).ToDouble();
+        for (int k = 0; k < g_FlightDrop.rollLists; ++k) {
+            const int index = g_FlightDrop.rollIndex[k];
+            double want = -1.0, got = -1.0;
+            if (index < 0 || index >= len) { seen = "no element [" + std::to_string(index) + "]"; return false; }
+            if (!SigListHandle(g_FlightDrop.rollSub[k], want, why)) { seen = "the list pushed onto: " + why; return false; }
+            const RValue sub = g_Yytk->CallBuiltin("array_get", { held, RValue((double)index) });
+            if (!SigListHandle(sub, got, why) || got != want) { seen = "another value at [" + std::to_string(index) + "]"; return false; }
+            int size = -1;
+            if (!FlightDropTailHolds(k, size)) { seen = "[" + std::to_string(index) + "] with " + std::to_string(size) + " entries"; return false; }
+        }
+        return true;
+    } catch (...) { seen = "a read that threw"; return false; }
+}
+
+// Takes this roll's entries off every list they went onto again - one ds_list_delete of the last
+// entry per entry, only while the tail still holds exactly them - else leaves the list as found,
+// says so and counts it (`anomalies=`). Never throws: #74's removal runs after it.
+static void FlightDropRemove()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollPushed <= 0 || d.rollLists <= 0) { d.rollPushed = 0; d.rollLists = 0; return; }
+    int perList = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) perList += d.rollCopies[i];
+    for (int k = 0; k < d.rollLists; ++k) {
+        int len = -1;
+        bool tail = false;
+        try {
+            tail = FlightDropTailHolds(k, len);
+            if (tail) {
+                for (int n = 0; n < perList; ++n)
+                    g_Yytk->CallBuiltin("ds_list_delete", { d.rollSub[k], RValue((double)(len - 1 - n)) });
+                len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.rollSub[k] }).ToDouble();
+                if (len == d.rollBefore[k]) continue;
+            }
+        } catch (...) {}
+        ++d.anomalies;
+        Out("flightcharm: " + g_SigListName + "[" + std::to_string(d.rollIndex[k]) + "] "
+            + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(d.rollBefore[k])
+                    : "changed during the roll, left as found (size " + std::to_string(d.rollBefore[k]) + " + "
+                      + std::to_string(perList) + " pushed, now " + std::to_string(len) + ")"));
+    }
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) d.rollSub[k] = RValue();
+}
+
+// Pushes each switched-on charm's stand-in entry g_FlightDropCopies times onto every list this
+// roll reads (in table order), then the held read-back; a push it does not show comes off again,
+// is logged once per change and counted, and the roll carries nothing.
+static void FlightDropPushOnto(const RValue subs[], const int indices[], const int before[], int lists)
+{
+    FlightDropState& d = g_FlightDrop;
+    d.rollLists = lists;
+    for (int k = 0; k < lists; ++k) { d.rollSub[k] = subs[k]; d.rollIndex[k] = indices[k]; d.rollBefore[k] = before[k]; }
+    bool threw = false;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        if (threw || d.rollCopies[i] <= 0) continue;
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        int pushed = 0;
+        for (int k = 0; k < lists && !threw; ++k) {
+            for (int n = 0; n < d.rollCopies[i] && !threw; ++n) {
+                try {
+                    RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)s->t) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)s->sub) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)s->b) });
+                    g_Yytk->CallBuiltin("ds_list_add", { d.rollSub[k], entry });
+                    ++pushed;
+                } catch (...) { threw = true; }
+            }
+        }
+        d.rollPushed += pushed;
+        if (threw) Out("flightcharm: pushing " + std::string(row.name) + "'s stand-in threw");
+    }
+    std::string seen;
+    if (!threw && FlightDropHeldReadBack(seen)) {
+        d.heldMissLogged = false;
+        d.injected += d.rollPushed;
+        return;
+    }
+    // A throw mid-push leaves a tail that is not the whole push: it is left as found and counted.
+    const int pushed = d.rollPushed;
+    FlightDropRemove();
+    if (threw) return;
+    ++d.anomalies;
+    if (!d.heldMissLogged) {
+        d.heldMissLogged = true;
+        Out("flightcharm: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen + ", expected "
+            + std::to_string(pushed) + " pushed) - taken off again; rolls carry no flight charm until a push reads back");
+    }
+}
+
+static void FlightDropHitReset()
+{
+    FlightDropState& d = g_FlightDrop;
+    d.hitStandIn = -1;
+    d.hitCharm = -1;
+    d.hitN = 0;
+    d.hitShare = 0;
+    d.hitRewritten = false;
+    d.hitWhy.clear();
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.pending[i] = 0;
+}
+
+// Before the Angelic roll (SignatureInjectGuard, after #74's own push): Gabriel Wings' and Witch's
+// Broomstick's rows onto lootListUnique[5], after any entries #74 pushed. With both switches off
+// it makes no call at all. Inside the unique roll it adds nothing.
+static void FlightDropAngelicPush()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollUnique) return;
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    if (!g_SigDetectNative || (!d.switches[(int)FcNs::Charm::Wings] && !d.switches[(int)FcNs::Charm::Broom])) return;
+    FlightDropResolveAngelic();
+    RValue sub;
+    int before = -1;
+    if (g_SigRollPushed > 0) {
+        sub = g_SigRollListId;
+        before = g_SigRollBefore + g_SigRollPushed;
+    } else {
+        RValue list;
+        if (!SignatureListResolve(list, false, false, &sub)) return;
+        before = g_SigListLen;
+    }
+    FlightDropCountAngelic(sub);
+    int any = 0;
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom })
+        if (FlightDropOn(c)) any += d.rollCopies[(int)c] = g_FlightDropCopies;
+    if (!any) return;
+    const RValue subs[1] = { sub };
+    const int indices[1] = { g_SigListIndex };
+    const int befores[1] = { before };
+    FlightDropPushOnto(subs, indices, befores, 1);
+}
+
+// After the Angelic roll, before #74's own removal (SignatureInjectGuard).
+static void FlightDropAngelicRemove()
+{
+    if (g_FlightDrop.rollUnique) return;
+    try { FlightDropRemove(); } catch (...) {}
+}
+
+// Before the unique roll: Pocket Elf's stand-in onto each of lootListUnique[0..4]. The sub-lists
+// are counted again whenever one's length or id changed since the last count, so the stand-in
+// and n are always the current lists'. Runs outside the roll's scope: the filter reads the
+// repository through the typing hook.
+static void FlightDropUniquePush()
+{
+    FlightDropState& d = g_FlightDrop;
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    const int elf = (int)FcNs::Charm::Elf;
+    if (!d.switches[elf] || d.refused[elf] || !g_SigDetectNative || !d.uniqueNative) return;
+    RValue subs[FcNs::kUniqueSubLists];
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    std::string why;
+    if (!FlightDropReadUniqueLists(subs, ids, sizes, why)) {
+        d.elfResolved = false;
+        d.elfPick = -1;
+        d.elfWhy = why;
+        return;
+    }
+    bool changed = !d.elfResolved;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) changed = changed || ids[k] != d.elfId[k] || sizes[k] != d.elfLen[k];
+    if (changed) FlightDropResolveElf();
+    if (!FlightDropOn(FcNs::Charm::Elf)) return;
+    d.rollCopies[elf] = g_FlightDropCopies;
+    const int indices[FcNs::kUniqueSubLists] = { 0, 1, 2, 3, 4 };
+    FlightDropPushOnto(subs, indices, sizes, FcNs::kUniqueSubLists);
+}
+
+// A typed hit inside a roll that carries flight entries (Hook_CreateDefaultParams, after the
+// game's CreateDefaultParams returned and #74's own attribution): when its whole entry is a pushed
+// charm's stand-in, it is that charm's at k in n + k (k the copies on the list, n the stand-in's
+// own count there), and handed to the rewrite point; anything else is the game's own.
+static void FlightDropAttributeHit()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollPushed <= 0 || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        const int k = d.rollCopies[i];
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        if (k <= 0 || !s || g_SigHitType != (double)s->t || g_SigLastSub != (double)s->sub || g_SigLastB != (double)s->b) continue;
+        long long n = 0;
+        if (row.charm == FcNs::Charm::Elf) n = d.elfPick >= 0 ? d.elfCounts[d.elfPick].counts[0] : 0;
+        else n = d.angelicN[i];
+        d.hitStandIn = i;
+        d.hitN = n;
+        d.hitShare = k;
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        if (!FcNs::CoinOurs(n, k, u)) return;
+        d.hitCharm = i;
+        ++d.tally[i].ours;
+        return;
+    }
+}
+
+// A refused rewrite: one line with the reason and the record as it was left, `refused=` counted,
+// and the charm latched off for the session, as #74's SignatureRefuse.
+static void FlightDropRefuse(int i, const std::string& record)
+{
+    FlightDropState& d = g_FlightDrop;
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    ++d.refusals;
+    const bool first = !d.refused[i];
+    if (first) { d.refused[i] = true; d.refusedWhy[i] = d.hitWhy; }
+    const std::string name(FcNs::kCharms[i].name);
+    Out("flightcharm: " + name + " refused (" + d.hitWhy + "), the record left vanilla: " + record
+        + (first ? "; " + name + " stays off for this session (rewrite refused)" : std::string()));
+}
+
+// The rewrite point (SignatureBeforeCreate, CreateItemNew's entry): the record becomes the
+// charm's own definition - type 10's Small Charm base, a the seed of a uniformly drawn roll - read
+// back by #74's SignatureRewriteParams, which puts every field back on a refusal.
+static void FlightDropBeforeCreate(RValue& record, const std::string& missing)
+{
+    FlightDropState& d = g_FlightDrop;
+    const int i = d.hitCharm;
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    const FcNs::Charm c = static_cast<FcNs::Charm>(i);
+    std::string why = missing;
+    bool ok = false;
+    if (why.empty()) {
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        const SignatureItem item{ "flight charm", -1, FcNs::kCharmTypeT, (double)FcNs::SeedFromUniform(c, u), (double)FcNs::kCharmBaseB, nullptr };
+        ok = SignatureRewriteParams(record, item, why);
+    }
+    d.hitRewritten = ok;
+    if (ok) { ++d.pending[i]; return; }
+    d.hitWhy = why;
+    FlightDropRefuse(i, missing.empty() ? SigJson(record) : "<" + missing + ">");
+}
+
+static void FlightDropNoteBuilt(FcNs::Charm charm)
+{
+    const int i = static_cast<int>(charm);
+    if (i < 0 || i >= FcNs::kCharmCount || g_FlightDrop.pending[i] <= 0) return;
+    --g_FlightDrop.pending[i];
+    ++g_FlightDrop.tally[i].built;
+}
+
+// After a roll returned with a hit: one `flightcharm hit:` line when the hit fell to a charm,
+// saying whether the game built it; quiet otherwise (every other hit is the game's own). Ours with
+// no CreateItemNew call at the rewrite point is a refusal, as #74's.
+static void FlightDropAfterHit()
+{
+    FlightDropState& d = g_FlightDrop;
+    const int i = d.hitCharm;
+    if (i >= 0 && i < FcNs::kCharmCount) {
+        const FcNs::CharmRow& row = FcNs::kCharms[i];
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        const std::string who = std::string(row.name) + " (stand-in " + (s ? std::string(s->name) : std::string("?")) + ", "
+            + std::to_string(d.hitShare) + " in " + std::to_string(d.hitN + d.hitShare) + ")";
+        if (!g_SigHitAtPoint) {
+            d.hitWhy = "CreateItemNew did not run for it during the roll";
+            FlightDropRefuse(i, "<no record seen>");
+        }
+        std::string outcome;
+        if (!d.hitRewritten) outcome = who + " refused (" + d.hitWhy + "), the game placed its own stand-in";
+        else if (d.pending[i] == 0) outcome = who + " built by the game";
+        else outcome = who + " handed to the game, not seen built during the roll";
+        Out(std::string("flightcharm hit: ") + (d.rollUnique ? "unique" : "angelic") + " roll -> " + outcome);
+    }
+    for (int k = 0; k < FcNs::kCharmCount; ++k) d.pending[k] = 0;
+}
+
+// The unique roll's push and removal, on every way out, a throw from the game's roll included.
+struct FlightUniqueInjectGuard {
+    FlightUniqueInjectGuard() { g_FlightDrop.rollUnique = true; try { FlightDropUniquePush(); } catch (...) {} }
+    ~FlightUniqueInjectGuard() { try { FlightDropRemove(); } catch (...) {} g_FlightDrop.rollUnique = false; }
+    FlightUniqueInjectGuard(const FlightUniqueInjectGuard&) = delete;
+    FlightUniqueInjectGuard& operator=(const FlightUniqueInjectGuard&) = delete;
+};
+
+// #74's counters belong to the Angelic roll: what the unique roll's hits add to them is put back,
+// so `sigdrop status` reads exactly as before.
+struct FlightUniqueCounterScope {
+    long untyped = g_SigUntyped;
+#ifndef FORGEPACT_RELEASE
+    long picks = g_SigStandinPicks, agree = g_SigTypeAgree, disagree = g_SigTypeDisagree;
+#endif
+    FlightUniqueCounterScope() = default;
+    ~FlightUniqueCounterScope()
+    {
+        g_SigUntyped = untyped;
+#ifndef FORGEPACT_RELEASE
+        g_SigStandinPicks = picks; g_SigTypeAgree = agree; g_SigTypeDisagree = disagree;
+#endif
+    }
+    FlightUniqueCounterScope(const FlightUniqueCounterScope&) = delete;
+    FlightUniqueCounterScope& operator=(const FlightUniqueCounterScope&) = delete;
+};
+
+// DropUniqueItems, by its SDK name (FlightDropInstallUnique). With Pocket Elf's switch off, inside
+// the Angelic roll, or nested in itself, it is the game's own call untouched. Otherwise, for the
+// length of the call: the stand-in on each of lootListUnique[0..4] (outside the roll's scope),
+// then #74's roll-in-progress, so the call's GetUniqueRepoStruct read types the hit, its
+// CreateDefaultParams call is the hit, and its CreateItemNew entry is the rewrite point.
+static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_FlightDropUnique) return R;
+    if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])
+        return g_Orig_FlightDropUnique(S, O, R, argc, A);
+    FlightUniqueInjectGuard inject;
+    SignatureRollScope roll;
+    FlightUniqueCounterScope counters;
+    SignatureHitReset();
+    RValue& r = g_Orig_FlightDropUnique(S, O, R, argc, A);
+    if (g_SigHitSeen) {
+        g_SigHitSeen = false;
+        try { FlightDropAfterHit(); } catch (...) {}
+    }
+    return r;
+}
+
+// The hook on DropUniqueItems, once, by its SDK name; anything short of an inline detour keeps
+// Pocket Elf off and says so, since the game's compiled calls pass a table-only hook by. In the
+// research build a probe row that holds the script refuses it (and is refused in turn).
+static void FlightDropInstallUnique()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.uniqueTried) return;
+#ifndef FORGEPACT_RELEASE
+    if (ApRollHoldsDropUnique() || GpHoldsDropUnique()) {
+        d.uniqueRoute = ApRollHoldsDropUnique() ? "held-by-angelicprobe" : "held-by-gambaprobe";
+        Out(FcNs::RefusedLine("elf: DropUniqueItems is " + d.uniqueRoute + " - relaunch without that probe"));
+        return;
+    }
+#endif
+    d.uniqueTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems), "fp_flight_duniq",
+                                  (PVOID)Hook_FlightDropUniqueItems, &g_Orig_FlightDropUnique, &native);
+    d.uniqueNative = ok && native;
+    d.uniqueRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    if (!d.uniqueNative)
+        Out(FcNs::RefusedLine("elf: the DropUniqueItems hook is " + d.uniqueRoute
+                              + " - the game's own calls would pass it by, so Pocket Elf stays off the unique roll"));
+}
+
+// `flightcharm elf|wings|broom 1|0`: the panel switch. On installs #74's detection, Pocket Elf's
+// DropUniqueItems hook and the shared ground-icon hook, and resolves the charm's stand-in; off
+// only stops the pushes (the hooks stay and pass through).
+static void FlightDropSwitch(FcNs::Charm c, bool on)
+{
+    const int i = static_cast<int>(c);
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    g_FlightDrop.switches[i] = on;
+    if (on) {
+        InstallSignatureAngelicHooks();
+        if (c == FcNs::Charm::Elf) {
+            FlightDropInstallUnique();
+            g_FlightDrop.elfRefusalLogged = false;
+            FlightDropResolveElf();
+        } else {
+            FlightDropResolveAngelic();
+        }
+        FlightGroundIconInstall();
+    }
+    const std::string key(FcNs::RowOf(c).key);
+    if (!on) { Out("flightcharm: " + key + " drop off"); return; }
+    Out("flightcharm: " + key + " drop " + (FlightDropOn(c) ? std::string("on") : "switched on, not dropping yet: " + FlightDropOffReason(c)));
+}
+
+// The drop fields of the `flightcharm stat` line. gate= is the first switched-on charm's that is
+// on, else the first switched-on charm's own word, else off.
+static void FlightDropFillStat(FcNs::StatFields& s)
+{
+    const FlightDropState& d = g_FlightDrop;
+    FcNs::Gate first = FcNs::Gate::Off;
+    bool on = false;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        s.switches[i] = d.switches[i];
+        s.drops[i] = d.tally[i];
+        const FcNs::Gate g = FlightDropGate(row.charm);
+        if (g == FcNs::Gate::On) on = true;
+        else if (first == FcNs::Gate::Off) first = g;
+    }
+    s.gate = on ? FcNs::Gate::On : first;
+    s.injected = (uint64_t)d.injected;
+    s.refused = (uint64_t)d.refusals;
+    s.anomalies = (uint64_t)d.anomalies;
+    s.standinElf = FcNs::ElfStandInText(d.elfResolved, d.elfPick, d.elfCounts);
+}
+
+// The drops' own trace line on `flightcharm stat`: what the gate rests on, so `gate=` other than
+// on names where the drop stopped.
+static std::string FlightDropTraceLine()
+{
+    const FlightDropState& d = g_FlightDrop;
+    std::string s = "flightcharm drops: detect=" + g_SigDetectRoute + " unique-hook=" + d.uniqueRoute
+        + " angelic-list=" + SignatureListText();
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+        const FcNs::StandIn* st = FcNs::StandInFor(c);
+        s += " " + std::string(FcNs::RowOf(c).key) + "=" + (st ? std::string(st->key) : std::string("?"))
+            + (d.angelicOk[(int)c] ? "(n=" + std::to_string(d.angelicN[(int)c]) + ")" : std::string("(not validated)"));
+    }
+    s += " elf=" + (d.elfResolved ? FcNs::ElfStandInText(true, d.elfPick, d.elfCounts) : "not-resolved(" + d.elfWhy + ")");
+    for (const FcNs::CharmRow& row : FcNs::kCharms)
+        if (d.switches[(int)row.charm] && !FlightDropOn(row.charm))
+            s += " | " + std::string(row.key) + ": " + FlightDropOffReason(row.charm);
+    return s;
+}
+// ---- end of the flight charms drop adapter -------------------------------------------------
 
 // Resolve through the runner rather than YYTK 4's version-dependent room layout.
 // Its stale active-list offset can make GetInstanceObject see only the last object.
@@ -21969,8 +22704,8 @@ static void FlightGuardInstall()
         + route(add, addNative) + "; the guard stays off, so a charm whose full size does not fit after a load may be left off its grid");
 }
 
-// `flightcharm stat`: the core's line. The drop fields read off until the
-// drop switches exist. The state is refreshed first, with the frame counter
+// `flightcharm stat`: the core's line, its drop fields from the drop adapter
+// (FlightDropFillStat). The state is refreshed first, with the frame counter
 // every frame advances: a player standing still makes no hooked call, so the
 // last query's state could predate an equip. Before arming it reads nothing.
 static FcNs::StatFields FlightCharmStatFields()
@@ -21982,6 +22717,7 @@ static FcNs::StatFields FlightCharmStatFields()
     s.icons = !g_FlightIconsTried ? "not-loaded" : (g_FlightIconsFailed ? "failed" : "loaded");
     s.ground = g_FlightGround;
     g_FlightGuard.FillStat(s);
+    FlightDropFillStat(s);
     return s;
 }
 
@@ -21998,7 +22734,7 @@ static void FlightCharmCommand(const std::string& rest)
     std::string why;
     if (!FcNs::ParseCommand(args, c, why)) { Out(why); return; }
     if (c.form == FcNs::CommandForm::Switch) {
-        Out(FcNs::RefusedLine("the " + std::string(FcNs::RowOf(c.charm).key) + " drop switch is not available in this build"));
+        FlightDropSwitch(c.charm, c.on);
         return;
     }
     Out(FcNs::StatLine(FlightCharmStatFields()));
@@ -22009,6 +22745,9 @@ static void FlightCharmCommand(const std::string& rest)
     // The guard's own line: its route and how far each load got, so a quiet
     // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
     Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
+    // The drops' own line: the detection, the lists and the stand-ins the
+    // gate rests on, so a `gate=` other than on names where the drop stopped.
+    Out(FlightDropTraceLine());
 }
 // ---- end of the flight charms forge adapter ------------------------------------
 
@@ -23677,6 +24416,7 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
                 x = HhReadNumber(self, "x", 0.0); y = HhReadNumber(self, "y", 0.0);
             }
             SignatureAfterHit(S, x, y);
+            FlightDropAfterHit();   // #158: a hit that fell to Gabriel Wings or Witch's Broomstick
         } catch (...) {}
     };
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
@@ -24303,6 +25043,14 @@ static bool ApRollHoldsUniqueRepo()
         if (std::string_view(r.id) == "unique-repo") return r.tramp != nullptr;
     return false;
 }
+// #158: the drop-unique row and Pocket Elf's DropUniqueItems hook, the same rule: whichever comes
+// second refuses. The question FlightDropInstallUnique asks; ApRollAttach asks the other way round.
+static bool ApRollHoldsDropUnique()
+{
+    for (const ApRollRow& r : g_ApRollRows)
+        if (std::string_view(r.id) == "drop-unique") return r.tramp != nullptr;
+    return false;
+}
 
 static std::atomic<bool> g_ApRollAttached{ false };
 // Baselines, so `reset` zeroes what `show` prints without touching the
@@ -24466,6 +25214,13 @@ static void ApRollAttach(ApRollRow& r)
     if (std::string_view(r.id) == "unique-repo" && g_Orig_GetUniqueRepoStruct) {
         ApRollSetRoute(r, kApRollBlocked, "blocked: the #74 typing hook (Hook_GetUniqueRepoStruct) already holds this script - "
             "its own counters (untyped=, typeAgree=, typeDisagree=) are the measure");
+        return;
+    }
+    // #158: Pocket Elf's hook installed first holds DropUniqueItems; this row refuses rather than
+    // stack a second detour on it (ApRollHoldsDropUnique is the other half of the rule).
+    if (std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems) already holds this script - "
+            "`flightcharm stat`'s elf= and injected= are the measure");
         return;
     }
     const std::string full = "gml_Script_" + std::string(r.script);
@@ -49653,6 +50408,12 @@ static GpScriptRow g_GpScriptRows[] = {
 #undef GP_SCRIPT_ENTRY
 #undef GAMBAPROBE_SCRIPTS
 static_assert(sizeof(g_GpScriptRows) / sizeof(g_GpScriptRows[0]) == (size_t)kGpScriptCount, "one gambaprobe row per script");
+// #158: whether the DropUniqueItems row holds its script, in which case Pocket Elf's hook refuses
+// (GpInstallScripts refuses the row the other way round).
+static bool GpHoldsDropUnique()
+{
+    return g_GpScriptRows[kGpScript_DropUniqueItems].orig != nullptr;
+}
 
 // ---- the builtin rows, in GambaProbe.hpp's kBuiltins order ------------------------
 struct GpBuiltinRow {
@@ -50895,6 +51656,13 @@ static void GpInstallScripts(HMODULE mainMod)
     for (GpScriptRow& t : g_GpScriptRows) {
         if (t.tried && t.route != GpNs::Route::Missing) {
             Out(GpScriptRowLine(t, "already in"));
+            continue;
+        }
+        // #158: Pocket Elf's hook holds DropUniqueItems; the row refuses rather than stack a
+        // second detour on it (FlightDropInstallUnique refuses the other way round).
+        if (&t == &g_GpScriptRows[kGpScript_DropUniqueItems] && g_Orig_FlightDropUnique) {
+            t.status = "held by the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems); not hooked";
+            Out(GpScriptRowLine(t, t.status));
             continue;
         }
         t.tried = true;
@@ -52603,6 +53371,12 @@ static void HiddenLootInstall()
     Out(std::string("hiddenloot: LootGroundInit hook ") + (ok ? "TABLE-ONLY" : "not installed")
         + " - the game's own drop calls may pass it by, so a pass every 18 frames over the awake ground items"
           " puts hidden loot to sleep instead");
+}
+// The flight charms' ground icon rides the same detour (ForgePact #158): a drop
+// switch turned on installs it once, so it is in before a charm can reach the ground.
+static void FlightGroundIconInstall()
+{
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
 }
 // The show key: the async key state, polled once a frame by the class, and
 // counted only while the foreground window belongs to this process - a key

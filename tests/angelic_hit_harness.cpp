@@ -50,6 +50,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+// The flight charms' decision core (#158): the drop adapter's stand-ins, coin and stat line. Game-
+// independent by contract, so it compiles here whole.
+#include <ForgePact/FlightCharms.hpp>
+namespace FcNs = ForgePact::FlightCharms;
 
 enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_UNSET, VALUE_ARRAY,
        VALUE_BOOL, VALUE_PTR, VALUE_NULL };
@@ -110,6 +114,7 @@ inline constexpr std::string_view gml_Script_DropItemAngelicChance = "gml_Script
 inline constexpr std::string_view gml_Script_CreateDefaultParams = "gml_Script_CreateDefaultParams";
 inline constexpr std::string_view gml_Script_GetUniqueRepoStruct = "gml_Script_GetUniqueRepoStruct";
 inline constexpr std::string_view gml_Script_CreateItemNew = "gml_Script_CreateItemNew";
+inline constexpr std::string_view gml_Script_DropUniqueItems = "gml_Script_DropUniqueItems";
 }
 namespace HeroSiege::Objects {
 enum class GameObject { Loot_Ground_obj = 902, Controller_obj = 984 };
@@ -278,6 +283,14 @@ static std::string variableShape() { RValue* v = listVariable(); return v ? shap
 static std::vector<Triple> plus(std::vector<Triple> v, std::initializer_list<Triple> extra) { v.insert(v.end(), extra.begin(), extra.end()); return v; }
 // droprate.base per (type, sub, b); the crown's default stand-in is the type-0 one with the lowest.
 static std::map<Triple, double> repoBase;
+// The definition's itemBaseInfoStruct per (type, sub, b), for the triples a flight scenario names:
+// its rarity ("27") and whether it is flagged hidden ("40"). The unique roll keeps an entry only
+// when the rarity is below 7 and it is not hidden (RDM § 22.4, § 22.8); so does the elf's filter.
+struct RepoInfo { double rarity; bool hidden; };
+static std::map<Triple, RepoInfo> repoInfo;
+static RValue repoInfoStruct(const RepoInfo& i) {
+    return makeStruct({ { "27", RValue(i.rarity) }, { "40", RValue(i.hidden ? 1.0 : 0.0) } });
+}
 // The unique data the plugin's own pool build reads (scenarios with `gamePool` only): each known
 // triple's name key (itemBaseInfoStruct "28"), and whether the game has it yet. Before it does -
 // the panel's auto-apply at the main menu - the model's GetUniqueRepoStruct gives no definition;
@@ -379,8 +392,12 @@ struct FakeYytk {
             return makeStruct({ { "itemBaseInfoStruct", makeStruct({ { "28", RValue(key->second) } }) },
                                 { "droprate", makeStruct({ { "base", RValue(it == repoBase.end() ? 50000000.0 : it->second) } }) } });
         }
-        if (it == repoBase.end()) return RValue();
-        return makeStruct({ { "droprate", makeStruct({ { "base", RValue(it->second) } }) } });
+        const auto info = repoInfo.find(t);
+        if (it == repoBase.end() && info == repoInfo.end()) return RValue();
+        std::map<std::string, RValue> f;
+        if (it != repoBase.end()) f["droprate"] = makeStruct({ { "base", RValue(it->second) } });
+        if (info != repoInfo.end()) f["itemBaseInfoStruct"] = repoInfoStruct(info->second);
+        return makeStruct(std::move(f));
     }
     // InitItemFromJson(parsed, "0-0-1-<type>"): the pool build's probe item, rarity 7 (Angelic)
     // for a unique the game knows, nothing before its unique data is there.
@@ -535,6 +552,25 @@ static SignatureStandIn g_SigStandIn[2];
 #ifdef HAS_SIGNATURENOTEBUILT
 static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
 #endif
+#ifdef HAS_FLIGHTDROPSTATE
+// The flight charms' drop adapter (#158): its state and the globals beside it, as ModuleMain.cpp
+// declares them (the copies a plain int here, as the research build's lever leaves it), and the
+// functions #74's machinery calls before they are defined.
+static FlightDropState g_FlightDrop;
+static PFUNC_YYGMLScript g_Orig_FlightDropUnique = nullptr;
+static int g_FlightDropCopies = 1;
+static void FlightDropHitReset();
+static void FlightDropAngelicPush();
+static void FlightDropAngelicRemove();
+static void FlightDropAttributeHit();
+static void FlightDropBeforeCreate(RValue& record, const std::string& missing);
+static void FlightDropAfterHit();
+static void FlightDropNoteBuilt(FcNs::Charm charm);
+#endif
+// The shared ground-icon hook a drop switch installs (hidden loot's one LootGroundInit detour),
+// counted here: the model has no ground.
+static int groundIconInstalls = 0;
+static void FlightGroundIconInstall() { ++groundIconInstalls; }
 
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
 // CreateDefaultParams(sub, b, c) returns the struct Live 2 measured, {"b":51.0,"j":0.0,"c":1.0}:
@@ -565,8 +601,11 @@ static RValue& gameGetUniqueRepoStruct(CInstance*, CInstance*, RValue& result, i
     ++gameRepoCalls;
     result = makeStruct({});
     if (argc > 2) {
-        const auto it = repoBase.find({ A[0]->number, A[1]->number, A[2]->number });
+        const Triple t{ A[0]->number, A[1]->number, A[2]->number };
+        const auto it = repoBase.find(t);
         if (it != repoBase.end()) result = makeStruct({ { "droprate", makeStruct({ { "base", RValue(it->second) } }) } });
+        const auto info = repoInfo.find(t);
+        if (info != repoInfo.end()) obj(result)["itemBaseInfoStruct"] = repoInfoStruct(info->second);
     }
     return result;
 }
@@ -688,6 +727,57 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
     return originalReturn;
 }
 
+// DropUniqueItems(x, y), the ordinary unique roll (RDM § 22.8, static reading): element `uniqueK`
+// (0..4, the zone value) of the same Controller_obj variable, one index drawn (the picker above),
+// and only when that entry is an array its definition read through GetUniqueRepoStruct by direct
+// call; kept when the rarity is below 7 and it is not hidden, then CreateDefaultParams(sub, b, 1)
+// by direct call and the placement under the entry's type. A failed pick drops nothing: no second
+// draw and no die.
+static int uniqueK = 2;
+static int uniqueCalls = 0;
+static bool uniqueThrows = false;
+static std::vector<std::vector<std::vector<Triple>>> uniqueLayoutDuringCall;   // every element, per call
+static RValue uniqueReturn;
+static RValue& gameDropUniqueItems(CInstance* self, CInstance* other, RValue&, int, RValue**) {
+    ++uniqueCalls;
+    uniqueLayoutDuringCall.push_back(layoutNow());
+    if (uniqueThrows) throw std::runtime_error("the game's unique roll threw");
+    uniqueReturn = RValue();
+    RValue* v = listVariable();
+    if (!v || v->m_Kind != VALUE_ARRAY || v->array->size() <= (size_t)uniqueK) return uniqueReturn;
+    std::vector<RValue>* list = dsFind((*v->array)[(size_t)uniqueK]);
+    if (!list || list->empty()) return uniqueReturn;
+    size_t index = 0;
+    if (pickPolicy == Pick::Last) index = list->size() - 1;
+    else if (pickPolicy == Pick::Among) {
+        std::vector<size_t> candidates;
+        for (size_t i = 0; i < list->size(); ++i)
+            if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[i])) != pickTriples.end()) candidates.push_back(i);
+        if (!candidates.empty()) index = candidates[std::uniform_int_distribution<size_t>(0, candidates.size() - 1)(pickRng)];
+    }
+    if ((*list)[index].m_Kind != VALUE_ARRAY) return uniqueReturn;
+    const Triple picked = tripleOf((*list)[index]);
+    RValue type(picked[0]), sub(picked[1]), b(picked[2]), definition;
+    RValue* readArgs[] = { &type, &sub, &b };
+    RValue& def = repoEntry(self, other, definition, 3, readArgs);
+    double rarity = 99.0;
+    bool hidden = false;
+    if (def.m_Kind == VALUE_OBJECT && def.fields->count("itemBaseInfoStruct")) {
+        auto& info = obj((*def.fields)["itemBaseInfoStruct"]);
+        rarity = info["27"].number;
+        hidden = info["40"].number != 0.0;
+    }
+    if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);   // a read the hit cannot be typed from
+    if (!(rarity < 7.0) || hidden) return uniqueReturn;
+    RValue c(1.0), params;
+    RValue* args[] = { &sub, &b, &c };
+    RValue& made = cdpEntry(self, other, params, 3, args);
+    gameLootGroundCreate(picked[0], made);
+    return uniqueReturn;
+}
+// Where the game's own calls to DropUniqueItems land: its function, or a detoured hook on it.
+static PFUNC_YYGMLScript uniqueEntry = gameDropUniqueItems;
+
 // HookOneScript into a fake table: one install per name, a second call answers from the table.
 // By default every install is an inline detour (`*nativeOut = true`), so the roll's direct call
 // reaches the hook. `tableOnlyHook` names one hook whose detour fails, as HookOneScript's
@@ -726,6 +816,12 @@ static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest,
         else gameImage.push_back(reinterpret_cast<const void*>(gameCreateItemNew));
         return true;
     }
+    if (name == "DropUniqueItems") {
+        *origOut = gameDropUniqueItems;
+        if (native) uniqueEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameDropUniqueItems));
+        return true;
+    }
     return false;
 }
 // The production test for "this saved original is the game's own code" (HookOneScript's
@@ -754,6 +850,15 @@ static RValue& Hook_CreateItemNew(CInstance* S, CInstance* O, RValue& R, int arg
         if (w >= 0) SignatureNoteBuilt(kSelectors[w]);
 #else
         (void)w;
+#endif
+#ifdef HAS_FLIGHTDROPNOTEBUILT
+        // The Custom Forge's flight-charm row (#158): a built item whose own fields are a flight
+        // charm's, reported as TryApplyCustomForge's final pass does.
+        const RValue definition = obj(res)["itemDefinitionStruct"];
+        FcNs::Rolled rolled;
+        if (FcNs::IsFlightCharm(obj(res)["itemType"].number, field(definition, "a"), field(definition, "b"),
+                                field(definition, "c"), field(definition, "j"), rolled))
+            FlightDropNoteBuilt(rolled.charm);
 #endif
     }
     return res;
@@ -806,6 +911,11 @@ static void reset() {
     g_SigPending[0] = g_SigPending[1] = 0;
 #ifdef HAS_SIGNATURESTANDIN
     g_SigStandIn[0] = SignatureStandIn{}; g_SigStandIn[1] = SignatureStandIn{};
+#endif
+    repoInfo.clear(); groundIconInstalls = 0;
+    uniqueEntry = gameDropUniqueItems; uniqueK = 2; uniqueCalls = 0; uniqueThrows = false; uniqueLayoutDuringCall.clear();
+#ifdef HAS_FLIGHTDROPSTATE
+    g_FlightDrop = FlightDropState{}; g_Orig_FlightDropUnique = nullptr; g_FlightDropCopies = 1;
 #endif
 }
 static void require(bool condition, const std::string& message) {
@@ -893,6 +1003,93 @@ static void requireStatusTail(const std::string& tail, const std::string& when) 
 
 static const Triple kBeltStandIn{ 8, 0, 51 };    // Liquor Holster
 static const Triple kCrownStandIn{ 0, 0, 86 };   // Mask of the Celestial: the model's lowest type-0 droprate.base
+
+// ---- the flight charms' drops (#158) -------------------------------------------------------------
+static const Triple kWaterMelon{ 10, 0, 47 };     // Gabriel Wings' stand-in, Angelic (7)
+static const Triple kSoulCollector{ 10, 0, 91 };  // Witch's Broomstick's stand-in, Unholy (10)
+static const Triple kAimbot{ 10, 0, 76 };         // Pocket Elf's first candidate, Satanic (6)
+static const Triple kWitchesClaw{ 10, 0, 41 };
+static const Triple kMapJournal{ 10, 0, 24 };
+static const Triple kCrowsFeather{ 10, 0, 68 };
+static const Triple kSteve{ 10, 0, 12 };
+// The validated Angelic pool with the two Angelic stand-ins in it, and every candidate's definition
+// as the repository measured it (Aimbot.exe 6, Water Melon 7, Soul Collector 10; the other four
+// candidates' rarities are the model's).
+static void flightRepo() {
+    poolExtras.push_back({ 10, 0, 47, "Water Melon", true });
+    poolExtras.push_back({ 10, 0, 91, "Soul Collector", false });
+    for (const Triple& t : { kAimbot, kWitchesClaw, kMapJournal, kCrowsFeather, kSteve }) repoInfo[t] = { 6.0, false };
+    repoInfo[kWaterMelon] = { 7.0, false };
+    repoInfo[kSoulCollector] = { 10.0, false };
+}
+// lootListUnique[0..4] for the unique roll: twenty ordinary uniques of each sub-list's own
+// (rarity 3) plus `extra[k]`, and [5] the Angelic list as setList builds it.
+static void setUniqueLayout(const std::array<std::vector<Triple>, 5>& extra, const std::vector<Triple>& angelic = vanillaTriples()) {
+    dsLists.clear(); nextDsId = 40;
+    std::vector<RValue> ids;
+    for (int k = 0; k < 5; ++k) {
+        std::vector<Triple> l;
+        for (int i = 0; i < 20; ++i) {
+            const Triple t{ 4, 0, (double)(100 * k + i) };
+            l.push_back(t);
+            repoInfo[t] = { 3.0, false };
+        }
+        l.insert(l.end(), extra[(size_t)k].begin(), extra[(size_t)k].end());
+        ids.push_back(dsHandle(dsCreate(entriesOf(l))));
+    }
+    ids.push_back(dsHandle(dsCreate(entriesOf(angelic))));
+    controllerVars[kModelListName] = makeArray(std::move(ids));
+    vanilla = angelic;
+    vanillaIds = idsNow();
+    vanillaLayout = layoutNow();
+}
+// One call of the unique roll as LoadDrops makes it: x, y.
+static void dropUnique(CInstance& monster, double x = 640.5, double y = 320.25) {
+    static RValue a0, a1, result;
+    a0 = RValue(x);
+    a1 = RValue(y);
+    RValue* args[] = { &a0, &a1 };
+    uniqueEntry(&monster, nullptr, result, 2, args);
+}
+// The built items that are a flight charm (by their own fields), and of which charm.
+static int countFlightBuilds(int charm) {
+    int n = 0;
+    for (const auto& b : builds) {
+        FcNs::Rolled r;
+        if (FcNs::IsFlightCharm(b.t, b.a, b.b, b.c, b.j, r) && (charm < 0 || (int)r.charm == charm)) ++n;
+    }
+    return n;
+}
+static std::string flightStatLine() {
+#ifdef HAS_FLIGHTDROPFILLSTAT
+    FcNs::StatFields s;
+    FlightDropFillStat(s);
+    return FcNs::StatLine(s);
+#else
+    return std::string();
+#endif
+}
+static bool flightSwitch(FcNs::Charm c, bool on) {
+#ifdef HAS_FLIGHTDROPSWITCH
+    FlightDropSwitch(c, on);
+    return true;
+#else
+    (void)c; (void)on;
+    return false;
+#endif
+}
+static FcNs::Gate flightGate(FcNs::Charm c) {
+#ifdef HAS_FLIGHTDROPGATE
+    return FlightDropGate(c);
+#else
+    (void)c;
+    return FcNs::Gate::Off;
+#endif
+}
+static const char* const kFreshFlightLine =
+    "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
+    " outside-room=0 depth=0 | icons=not-loaded ground=0 | guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0"
+    " injected=0 refused=0 anomalies=0 standin-elf=none";
 
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
@@ -1818,6 +2015,292 @@ int main(int argc, char** argv) {
             require(linesStartingWith("angeliclist:") - listed == (int)std::size(kAngelicBases), "`angeliclist` did not list every row");
 #else
             require(false, "this source has no kAngelicBases for the model's unique data");
+#endif
+        // ---- the flight charms' drops (#158): baseline, holds against the source before them too ----
+        } else if (test == "flight_untouched_installs_nothing") {
+            // No switch ever touched: both rolls are the game's own and the plugin calls nothing.
+            setUniqueLayout({ { { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot } } });
+            flightRepo();
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            dropUnique(monster);
+            require(installs["DropUniqueItems"] == 0 && uniqueEntry == gameDropUniqueItems, "DropUniqueItems was hooked with no switch on");
+            require(builtinCalls == 0, "with no switch on the plugin called the runtime");
+            require(uniqueCalls == 1 && uniqueLayoutDuringCall[0] == vanillaLayout, "the unique roll saw lists that are not the game's own");
+            require(builds.size() == 2 && countFlightBuilds(-1) == 0, "a roll with no switch on built a flight charm");
+            require(builds[1].t == 10 && builds[1].b == 76 && builds[1].c == 1.0, "the unique roll did not build the game's own Aimbot.exe");
+            require(linesStartingWith("flightcharm") == 0, "a flight line was logged with no switch on");
+        } else if (test == "flight_switches_off_rows_vanilla") {
+            // Every switch on and off again (the hooks stay installed and pass through): the rows
+            // the rolls read, and what they build, are the game's own, byte for byte.
+            setUniqueLayout({ { { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot } } });
+            flightRepo();
+            for (FcNs::Charm c : { FcNs::Charm::Elf, FcNs::Charm::Wings, FcNs::Charm::Broom }) flightSwitch(c, true);
+            for (FcNs::Charm c : { FcNs::Charm::Elf, FcNs::Charm::Wings, FcNs::Charm::Broom }) flightSwitch(c, false);
+            installDetection();
+            pickPolicy = Pick::Last;
+            roll(monster, { false });
+            roll(monster, { true });
+            for (int k = 0; k < 5; ++k) { uniqueK = k; dropUnique(monster); }
+            for (const auto& seen : layoutDuringCall) require(seen == vanillaLayout, "switched off, the Angelic roll saw a changed list");
+            for (const auto& seen : uniqueLayoutDuringCall) require(seen == vanillaLayout, "switched off, the unique roll saw a changed list");
+            require(layoutNow() == vanillaLayout, "switched off, the lists are not the game's own after the rolls");
+            require(builds.size() == 6 && countFlightBuilds(-1) == 0, "switched off, a flight charm was built");
+            require(builds[0].t == 0 && builds[0].b == 86 && builds[0].c == 1.0, "switched off, the Angelic hit did not build the game's own pick");
+            for (size_t i = 1; i < builds.size(); ++i)
+                require(builds[i].t == 10 && builds[i].b == 76 && builds[i].c == 1.0, "switched off, a unique roll built something else");
+            require(linesStartingWith("flightcharm hit:") == 0, "switched off, a hit was taken for a flight charm");
+            const std::string line = flightStatLine();
+            if (!line.empty())
+                require(line.find(" drops gate=off elf=0/0 wings=0/0 broom=0/0 injected=0 refused=0 anomalies=0 ") != std::string::npos,
+                        "switched off, the stat line moved: " + line);
+        // ---- the flight charms' drops (#158): target, fails against the source before them ----
+        } else if (test == "flight_stat_line_fresh") {
+            require(flightStatLine() == kFreshFlightLine, "the fresh `flightcharm stat` line is not the requirement: " + flightStatLine());
+        } else if (test == "flight_wings_angelic_hit_built") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            flightSwitch(FcNs::Charm::Wings, true);
+            require(flightGate(FcNs::Charm::Wings) == FcNs::Gate::On, "the wings switch did not arm: " + lastLine("flightcharm:"));
+            require(anyLineHas("flightcharm: wings drop", " on"), "the switch-on did not say the drop is on");
+            require(installs["DropUniqueItems"] == 0, "the wings switch hooked DropUniqueItems");
+            require(groundIconInstalls == 1, "the switch-on did not install the shared ground-icon hook");
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kWaterMelon }), "the Angelic roll did not carry Water Melon once: " + describe(listDuringCall[0]));
+            for (int k = 0; k < 5; ++k) require(layoutDuringCall[0][(size_t)k] == vanillaLayout[(size_t)k], "the wings switch pushed onto lootListUnique[0..4]");
+            require(listTriples() == vanilla, "after the roll the Angelic list is not the game's own");
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(builds.size() == 1, "not one item for one hit");
+            const BuildRecord b = builds[0];
+            require(b.t == 10 && b.b == 0 && b.c == 0 && b.j == 0 && b.a >= 777200 && b.a <= 777343,
+                    "the game was not handed a Gabriel Wings definition {t 10, a 777200..777343, b 0, c 0, j 0}");
+            require(countFlightBuilds((int)FcNs::Charm::Wings) == 1, "the build is not Gabriel Wings");
+            require(g_SigOurHits == 0 && g_SigBuilt == 0, "the hit was counted as #74's");
+            require(anyLineHas("flightcharm hit:", "angelic roll -> Gabriel Wings (stand-in Water Melon, 1 in 1) built by the game"),
+                    "the hit line does not say the game built Gabriel Wings: " + lastLine("flightcharm hit:"));
+            require(flightStatLine().find(" drops gate=on elf=0/0 wings=1/1 broom=0/0 injected=2 refused=0 anomalies=0 ") != std::string::npos,
+                    "the stat line does not count it: " + flightStatLine());
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_broom_coin_one_in_two") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setList(plus(vanillaTriples(), { kSoulCollector }));   // n = 1: ours 1 in 2
+            flightSwitch(FcNs::Charm::Broom, true);
+            pickPolicy = Pick::Among; pickTriples = { kSoulCollector };
+            for (int i = 0; i < 2000; ++i) roll(monster, { true });
+            const long long ours = (long long)g_FlightDrop.tally[(int)FcNs::Charm::Broom].ours;
+            require(ours >= 850 && ours <= 1150, "a Soul Collector hit was not ours about 1 in 2: " + std::to_string(ours));
+            require(countFlightBuilds((int)FcNs::Charm::Broom) == ours && (long long)g_FlightDrop.tally[(int)FcNs::Charm::Broom].built == ours,
+                    "the game did not build a Witch's Broomstick for every hit that was ours");
+            for (const auto& b : builds) {
+                FcNs::Rolled r;
+                if (FcNs::IsFlightCharm(b.t, b.a, b.b, b.c, b.j, r)) require(b.a >= 777400 && b.a <= 777490, "a broom was built from another seed");
+                else require(b.t == 10 && b.b == 91 && b.c == 1.0, "a hit that was not ours did not build the game's own Soul Collector");
+            }
+            require(linesEndingWith("flightcharm hit:", "Witch's Broomstick (stand-in Soul Collector, 1 in 2) built by the game") == (int)ours,
+                    "an our-hit line does not say the game built it");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_angelic_rows_after_74s") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            g_HhForced = true;
+            installDetection();
+            flightSwitch(FcNs::Charm::Wings, true);
+            flightSwitch(FcNs::Charm::Broom, true);
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn, kWaterMelon, kSoulCollector }),
+                    "the roll did not carry #74's row and then both flight rows: " + describe(listDuringCall[0]));
+            require(listTriples() == vanilla, "after the roll the list is not the game's own");
+            require(g_SigInjected == 1 && g_FlightDrop.injected == 2 && g_SigAnomalies == 0 && g_FlightDrop.anomalies == 0,
+                    "the pushes were not counted, or a removal found someone else's tail");
+            setList(vanillaTriples(false));   // n = 0 for all three: every stand-in hit is ours
+            pickPolicy = Pick::Among; pickTriples = { kBeltStandIn, kWaterMelon, kSoulCollector };
+            for (int i = 0; i < 300; ++i) roll(monster, { true });
+            require(builds.size() == 300, "not one item per hit");
+            require(countBuilds(1) > 0 && countFlightBuilds((int)FcNs::Charm::Wings) > 0 && countFlightBuilds((int)FcNs::Charm::Broom) > 0,
+                    "not all three were built");
+            require(countBuilds(1) + countFlightBuilds(-1) == 300, "a hit on a pushed entry built something else");
+            require(listTriples() == vanilla && g_SigAnomalies == 0 && g_FlightDrop.anomalies == 0, "the rolls left the list changed");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_elf_unique_roll_built") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({});   // no candidate anywhere: every count is 0, so Aimbot.exe is the stand-in
+            // An entry that is not an array (the roll drops nothing for it) is no reason to refuse.
+            dsList((*listVariable()->array)[0]).push_back(RValue(7.0));
+            vanillaLayout = layoutNow();
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "the elf switch did not hook DropUniqueItems, detoured");
+            require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::On, "the elf switch did not arm: " + lastLine("flightcharm:"));
+            require(flightStatLine().find(" standin-elf=aimbot") != std::string::npos, "the stand-in is not Aimbot.exe: " + flightStatLine());
+            const std::string sig = sigdropStatusLine();
+            uniqueK = 3;
+            pickPolicy = Pick::Last;
+            dropUnique(monster);
+            require(uniqueCalls == 1, "the game's unique roll did not run once");
+            for (int k = 0; k < 5; ++k)
+                require(uniqueLayoutDuringCall[0][(size_t)k] == plus(vanillaLayout[(size_t)k], { kAimbot }),
+                        "lootListUnique[" + std::to_string(k) + "] did not carry Aimbot.exe once during the call");
+            require(uniqueLayoutDuringCall[0][5] == vanillaLayout[5], "the elf pushed onto the Angelic list");
+            require(layoutNow() == vanillaLayout, "after the call the lists are not the game's own");
+            require(builds.size() == 1, "not one item for one call");
+            const BuildRecord b = builds[0];
+            require(b.t == 10 && b.a == 777100 && b.b == 0 && b.c == 0 && b.j == 0,
+                    "the game was not handed Pocket Elf's definition {t 10, a 777100, b 0, c 0, j 0}");
+            require(anyLineHas("flightcharm hit:", "unique roll -> Pocket Elf (stand-in Aimbot.exe, 1 in 1) built by the game"),
+                    "the hit line does not say the game built Pocket Elf: " + lastLine("flightcharm hit:"));
+            require(flightStatLine().find(" elf=1/1 wings=0/0 broom=0/0 injected=5 refused=0 anomalies=0 standin-elf=aimbot") != std::string::npos,
+                    "the stat line does not count it: " + flightStatLine());
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(g_SigRollDepth == 0 && !g_FlightDrop.rollUnique, "the roll state stayed raised");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_elf_coin_one_in_two") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({ { { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot }, { kAimbot } } });   // n = 1 in each
+            flightSwitch(FcNs::Charm::Elf, true);
+            pickPolicy = Pick::Among; pickTriples = { kAimbot };
+            for (int i = 0; i < 2000; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            const long long ours = (long long)g_FlightDrop.tally[(int)FcNs::Charm::Elf].ours;
+            require(ours >= 850 && ours <= 1150, "an Aimbot.exe pick was not ours about 1 in 2: " + std::to_string(ours));
+            require(builds.size() == 2000 && countFlightBuilds((int)FcNs::Charm::Elf) == ours
+                    && (long long)g_FlightDrop.tally[(int)FcNs::Charm::Elf].built == ours, "the game did not build a Pocket Elf for every pick that was ours");
+            for (const auto& b : builds)
+                if (b.a != 777100) require(b.t == 10 && b.b == 76 && b.c == 1.0, "a pick that was not ours did not build the game's own Aimbot.exe");
+            require(linesEndingWith("flightcharm hit:", "Pocket Elf (stand-in Aimbot.exe, 1 in 2) built by the game") == (int)ours,
+                    "an our-hit line does not say the game built it");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_elf_even_count_rule") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            // The first candidate, in table order, with the same count in all five sub-lists that
+            // the roll's own filter keeps; none, and the switch refuses and pushes nothing.
+            struct Case { const char* name; std::array<std::vector<Triple>, 5> extra; void (*arrange)(); const char* want; };
+            const Case cases[] = {
+                { "uneven first", { { { kAimbot, kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw } } }, [] {}, "witches-claw" },
+                { "even but Angelic", { { { kAimbot, kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw } } },
+                  [] { repoInfo[kWitchesClaw] = { 7.0, false }; }, "map-journal" },
+                { "even but hidden", { { { kAimbot, kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw }, { kWitchesClaw } } },
+                  [] { repoInfo[kWitchesClaw] = { 6.0, true }; }, "map-journal" },
+            };
+            for (const Case& c : cases) {
+                reset();
+                flightRepo();
+                c.arrange();
+                setUniqueLayout(c.extra);
+                flightSwitch(FcNs::Charm::Elf, true);
+                require(flightStatLine().find(std::string(" standin-elf=") + c.want) != std::string::npos,
+                        std::string(c.name) + ": the stand-in is not " + c.want + ": " + flightStatLine());
+                require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::On, std::string(c.name) + ": the gate is not on");
+            }
+            reset();
+            flightRepo();
+            const std::array<std::vector<Triple>, 5> uneven = { { { kAimbot, kWitchesClaw, kMapJournal, kCrowsFeather, kSteve }, {}, {}, {}, {} } };
+            setUniqueLayout(uneven);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(anyLineHas("flightcharm: refused - ", "elf: no stand-in with an even count across lootListUnique[0..4]"),
+                    "the switch did not refuse naming the rule: " + lastLine("flightcharm:"));
+            require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::Refused, "the gate is not refused");
+            require(flightStatLine().find(" drops gate=refused ") != std::string::npos
+                    && flightStatLine().find(" standin-elf=refused(aimbot:1/0/0/0/0,") != std::string::npos,
+                    "the stat line does not name the refusal and the counts: " + flightStatLine());
+            pickPolicy = Pick::Last;
+            dropUnique(monster);
+            require(uniqueLayoutDuringCall[0] == vanillaLayout && g_FlightDrop.injected == 0, "refused, the roll carried an entry");
+            // A sub-list's length changes: counted again, and now Aimbot.exe is even.
+            for (int k = 1; k < 5; ++k) dsList((*listVariable()->array)[(size_t)k]).push_back(makeEntry(kAimbot));
+            vanillaLayout = layoutNow();
+            dropUnique(monster);
+            require(flightStatLine().find(" standin-elf=aimbot") != std::string::npos, "a changed sub-list was not counted again: " + flightStatLine());
+            for (int k = 0; k < 5; ++k)
+                require(uniqueLayoutDuringCall[1][(size_t)k] == plus(vanillaLayout[(size_t)k], { kAimbot }), "the recounted stand-in was not pushed");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_elf_untyped_and_not_ours_are_vanilla") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({});
+            flightSwitch(FcNs::Charm::Elf, true);
+            const std::string sig = sigdropStatusLine();
+            pickPolicy = Pick::First;   // an ordinary unique: the game's own
+            dropUnique(monster);
+            repoRead = RepoRead::PickedThenOther;   // a hit no read types: never ours
+            pickPolicy = Pick::Last;
+            dropUnique(monster);
+            require(builds.size() == 2 && countFlightBuilds(-1) == 0, "a pick that was not ours built a flight charm");
+            require(builds[0].t == 4 && builds[0].c == 1.0 && builds[1].t == 10 && builds[1].b == 76 && builds[1].c == 1.0,
+                    "the game did not build its own picks");
+            require(g_FlightDrop.tally[0].ours == 0 && linesStartingWith("flightcharm hit:") == 0, "a pick that was not ours was taken");
+            require(g_SigUntyped == 0 && g_SigGameHits == 0, "the unique roll moved #74's counters");
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_elf_table_only_never_arms") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({});
+            tableOnlyHook = "DropUniqueItems";
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::NoDetection, "a table-only DropUniqueItems hook armed the elf");
+            require(anyLineHas("flightcharm: refused - ", "TABLE-ONLY"), "the switch-on did not say the hook is table-only");
+            pickPolicy = Pick::Last;
+            dropUnique(monster);
+            require(uniqueLayoutDuringCall[0] == vanillaLayout && g_FlightDrop.injected == 0 && countFlightBuilds(-1) == 0,
+                    "a table-only hook changed the roll");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_refused_rewrite_latches") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            flightSwitch(FcNs::Charm::Wings, true);
+            frozenField = "a";
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(anyLineHas("flightcharm: Gabriel Wings refused (", "stays off for this session"), "the refusal was not logged: " + lastLine("flightcharm:"));
+            require(flightGate(FcNs::Charm::Wings) == FcNs::Gate::Refused, "the refused charm is not latched off");
+            require(builds.size() == 1 && countFlightBuilds(-1) == 0 && builds[0].b == 47, "a refused rewrite did not leave the game's own Water Melon");
+            require(flightStatLine().find(" drops gate=refused elf=0/0 wings=1/0 broom=0/0 injected=1 refused=1 ") != std::string::npos,
+                    "the stat line does not count the refusal: " + flightStatLine());
+            roll(monster, { false });
+            require(listDuringCall.back() == vanilla, "a latched-off charm was still pushed");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_unique_throw_removes_entries") {
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({});
+            flightSwitch(FcNs::Charm::Elf, true);
+            uniqueThrows = true;
+            bool threw = false;
+            try { dropUnique(monster); } catch (const std::runtime_error&) { threw = true; }
+            require(threw, "the game's exception did not reach the caller");
+            require(uniqueLayoutDuringCall[0][0] == plus(vanillaLayout[0], { kAimbot }), "the entry was not on the list while the roll ran");
+            require(layoutNow() == vanillaLayout, "after a throw the entries stayed on the lists");
+            require(g_SigRollDepth == 0 && !g_FlightDrop.rollUnique, "the roll state stayed raised after a throw");
+            uniqueThrows = false;
+            pickPolicy = Pick::Last;
+            dropUnique(monster);
+            require(countFlightBuilds((int)FcNs::Charm::Elf) == 1, "after a throw, the next pick of ours was not built");
+#else
+            require(false, "this source has no flight drop switch");
 #endif
         } else return 2;
         std::cout << "PASS " << test << '\n';

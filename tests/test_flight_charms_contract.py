@@ -25,6 +25,11 @@ guard):
   says so, and the research build's instruments refuse those two scripts;
 - `flightcharm` is a player command with its own early return;
 - no address is computed anywhere in it.
+
+The lever part (FlightCharmsLeverContract) and the drop part
+(FlightCharmsDropContract, the three drop switches on #74's machinery; its
+behaviour runs in tests/test_angelic_hit_behavior.py's flight scenarios) say
+what they pin in their own docstrings.
 """
 import re
 import sys
@@ -654,6 +659,320 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertNotIn("GetModuleHandle", self.code)
         # Not even a mention of the research probe ships in it.
         self.assertNotIn("charmprobe", strip_research_blocks(self.block))
+
+
+# ---- the drops: the three drop switches -------------------------------------------------
+
+DROP_STATE_START = "// ---- Flight charms (FlightCharms.hpp): the drop adapter's state"
+DROP_STATE_END = "// ---- end of the drop adapter's state"
+DROP_START = "// ---- Flight charms (FlightCharms.hpp): the drop adapter ---"
+DROP_END = "// ---- end of the flight charms drop adapter"
+
+DROPS = {
+    "gate": "static FcNs::Gate FlightDropGate(FcNs::Charm c)",
+    "resolve_angelic": "static void FlightDropResolveAngelic()",
+    "resolve_elf": "static void FlightDropResolveElf()",
+    "passes": "static bool FlightDropUniquePasses(const FcNs::StandIn& s)",
+    "tail": "static bool FlightDropTailHolds(int k, int& len)",
+    "held": "static bool FlightDropHeldReadBack(std::string& seen)",
+    "remove": "static void FlightDropRemove()",
+    "push_onto": "static void FlightDropPushOnto(const RValue subs[], const int indices[], const int before[], int lists)",
+    "angelic_push": "static void FlightDropAngelicPush()",
+    "angelic_remove": "static void FlightDropAngelicRemove()",
+    "unique_push": "static void FlightDropUniquePush()",
+    "attribute": "static void FlightDropAttributeHit()",
+    "refuse": "static void FlightDropRefuse(int i, const std::string& record)",
+    "before_create": "static void FlightDropBeforeCreate(RValue& record, const std::string& missing)",
+    "note_built": "static void FlightDropNoteBuilt(FcNs::Charm charm)",
+    "after_hit": "static void FlightDropAfterHit()",
+    "unique_hook": "static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "install_unique": "static void FlightDropInstallUnique()",
+    "switch": "static void FlightDropSwitch(FcNs::Charm c, bool on)",
+    "fill_stat": "static void FlightDropFillStat(FcNs::StatFields& s)",
+    "trace": "static std::string FlightDropTraceLine()",
+}
+
+
+class FlightCharmsDropContract(unittest.TestCase):
+    """The three drop switches, on #74's machinery.
+
+    Pinned here: Pocket Elf's DropUniqueItems hook goes in by its SDK name
+    through HookOneScript from `flightcharm elf 1` alone, and a table-only
+    result keeps the elf off; a switch-on installs #74's detection and the
+    shared ground-icon hook; the Angelic rows go on after #74's and come off
+    before them, inside the roll's own guard; a hit is typed, coined and
+    rewritten by #74's own hooks, whose roll-in-progress the unique roll's hook
+    raises; `sigdrop status` stays #74's line alone; the player build pushes
+    one copy; and the research rows that hook DropUniqueItems refuse, and are
+    refused, both ways.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plugin = PLUGIN.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.state = cls.plugin[cls.plugin.index(DROP_STATE_START):cls.plugin.index(DROP_STATE_END)]
+        cls.block = cls.plugin[cls.plugin.index(DROP_START):cls.plugin.index(DROP_END)]
+        cls.code = strip_comments(cls.state + cls.block)
+        cls.shipped = strip_comments(strip_research_blocks(cls.plugin))
+        cls.all_code = strip_comments(cls.plugin)
+
+    def body(self, which, source=None):
+        signature = DROPS[which] if which in DROPS else which
+        return strip_comments(function_body(source if source is not None else self.plugin, signature))
+
+    # ---- both builds -----------------------------------------------------------------
+
+    def test_the_drop_adapter_ships_in_both_builds(self):
+        player = strip_research_blocks(self.plugin)
+        for name, signature in DROPS.items():
+            with self.subTest(function=name):
+                self.assertIn(signature, player)
+        self.assertIn("static FlightDropState g_FlightDrop;", self.shipped)
+        # The state sits before #74's roll machinery, which calls into it; the
+        # functions after Hook_GetUniqueRepoStruct, whose helpers they reuse.
+        self.assertLess(self.plugin.index(DROP_STATE_START), self.plugin.rindex("static bool SignatureSwitchOn("))
+        self.assertLess(self.plugin.index("static RValue& Hook_GetUniqueRepoStruct("), self.plugin.index(DROP_START))
+
+    def test_the_player_build_pushes_one_copy(self):
+        self.assertIn("static constexpr int g_FlightDropCopies = 1;", self.shipped)
+        self.assertEqual(re.findall(r"\bg_FlightDropCopies\s*=(?!=)\s*\w+", self.shipped), ["g_FlightDropCopies = 1"])
+
+    # ---- installed from the switch alone --------------------------------------------------
+
+    def test_drop_unique_items_is_hooked_by_sdk_name_from_the_elf_switch_alone(self):
+        install = self.body("install_unique")
+        self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_DropUniqueItems\),\s*"
+                                  r"\"fp_flight_duniq\",\s*\(PVOID\)Hook_FlightDropUniqueItems,\s*&g_Orig_FlightDropUnique,\s*&native\)")
+        self.assertEqual(self.all_code.count("(PVOID)Hook_FlightDropUniqueItems"), 1)
+        self.assertNotIn('"DropUniqueItems"', self.code)
+        self.assertNotIn("HookOneScriptTable", self.code)
+        # A table-only hook is passed by the game's compiled calls: the elf stays off.
+        self.assertIn("d.uniqueNative = ok && native;", install)
+        self.assertIn("if (!d.uniqueNative)", install)
+        self.assertIn("FcNs::RefusedLine(", install)
+        # One HookOneScript in the whole adapter, and one caller of the installer:
+        # the elf's switch-on.
+        self.assertEqual(self.code.count("HookOneScript("), 1)
+        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 2, "the definition and the switch-on")
+        switch = self.body("switch")
+        self.assertIn("if (on) {", switch)
+        self.assertLess(switch.index("if (on) {"), switch.index("FlightDropInstallUnique();"))
+        self.assertLess(switch.index("if (c == FcNs::Charm::Elf)"), switch.index("FlightDropInstallUnique();"))
+
+    def test_a_switch_on_installs_the_detection_and_the_ground_icon(self):
+        switch = self.body("switch")
+        on = switch[switch.index("if (on) {"):]
+        self.assertIn("InstallSignatureAngelicHooks();", on)
+        self.assertIn("FlightGroundIconInstall();", on)
+        ground = strip_comments(function_body(self.plugin, "static void FlightGroundIconInstall()"))
+        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ground)
+        # The switch is the command's only way in, in both builds.
+        command = strip_comments(function_body(self.plugin, SIGNATURES["command"]))
+        self.assertIn("FlightDropSwitch(c.charm, c.on);", command)
+        self.assertEqual(self.all_code.count("FlightDropSwitch("), 2, "the definition and the command")
+        self.assertNotIn("not available in this build", command)
+
+    def test_nothing_runs_at_startup_or_every_frame(self):
+        frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
+        for name in ("FlightDrop", "Hook_FlightDropUniqueItems"):
+            self.assertNotIn(name, frame)
+        for signature in ("static void InstallHook()", "EXPORTED AurieStatus ModuleInitialize", "static void InstallCustomForgeItemHooks()"):
+            with self.subTest(function=signature):
+                self.assertNotIn("FlightDrop", strip_comments(function_body(self.plugin, signature)))
+
+    # ---- the Angelic rows ------------------------------------------------------------------
+
+    def test_the_angelic_rows_ride_the_rolls_own_guard_after_74s(self):
+        guard = strip_comments(function_body(self.shipped, "struct SignatureInjectGuard {"))
+        ctor = guard[guard.index("SignatureInjectGuard()"):guard.index("~SignatureInjectGuard()")]
+        self.assertLess(ctor.index("SignatureInjectPush();"), ctor.index("FlightDropAngelicPush();"))
+        dtor = guard[guard.index("~SignatureInjectGuard()"):]
+        self.assertLess(dtor.index("FlightDropAngelicRemove();"), dtor.index("SignatureInjectRemove();"),
+                        "flight's entries come off first, so #74's removal finds its own tail")
+        push = self.body("angelic_push")
+        gate = push.index("if (!g_SigDetectNative || (!d.switches[(int)FcNs::Charm::Wings] && !d.switches[(int)FcNs::Charm::Broom])) return;")
+        for later in ("SignatureListResolve(", "FlightDropResolveAngelic(", "FlightDropPushOnto("):
+            self.assertLess(gate, push.index(later), later)
+        # After #74's push the tail starts after its entries, on the same ds_list.
+        self.assertIn("before = g_SigRollBefore + g_SigRollPushed;", push)
+        self.assertIn("sub = g_SigRollListId;", push)
+        self.assertIn("FlightDropOn(c)", push)
+        self.assertIn("if (d.rollUnique) return;", push)
+
+    def test_the_angelic_stand_ins_are_validated_against_the_pool(self):
+        resolve = self.body("resolve_angelic")
+        self.assertIn("BuildAngelicPool(false);", resolve)
+        self.assertIn("FcNs::StandInFor(c)", resolve)
+        self.assertIn("p.type == s->t && p.sub == s->sub && p.b == s->b", resolve)
+        self.assertIn("FlightDropOutsideRoll outside;", resolve)
+
+    # ---- the unique roll -------------------------------------------------------------------
+
+    def test_the_unique_hook_raises_the_roll_and_pushes_outside_it(self):
+        hook = self.body("unique_hook")
+        lines = [line.strip() for line in hook.split("\n") if line.strip()]
+        self.assertEqual(lines[0], "if (!g_Orig_FlightDropUnique) return R;")
+        passthrough = "if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])"
+        self.assertIn(passthrough, hook)
+        inject = hook.index("FlightUniqueInjectGuard inject;")
+        roll = hook.index("SignatureRollScope roll;")
+        counters = hook.index("FlightUniqueCounterScope counters;")
+        reset = hook.index("SignatureHitReset();")
+        original = hook.rindex("g_Orig_FlightDropUnique(S, O, R, argc, A)")
+        self.assertLess(hook.index(passthrough), inject)
+        # The push runs before the roll is raised: its repository reads are not the roll's.
+        self.assertLess(inject, roll)
+        self.assertLess(roll, counters)
+        self.assertLess(counters, reset)
+        self.assertLess(reset, original)
+        self.assertLess(original, hook.index("FlightDropAfterHit();"))
+        guard = strip_comments(function_body(self.plugin, "struct FlightUniqueInjectGuard {"))
+        self.assertRegex(guard, r"FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropUniquePush\(\);")
+        self.assertRegex(guard, r"~FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropRemove\(\);")
+
+    def test_the_unique_roll_leaves_74s_counters_as_they_were(self):
+        scope = strip_comments(function_body(strip_research_blocks(self.plugin), "struct FlightUniqueCounterScope {"))
+        self.assertIn("long untyped = g_SigUntyped;", scope)
+        self.assertIn("g_SigUntyped = untyped;", scope)
+        status = strip_comments(function_body(self.plugin, "static void SigDropStatus()"))
+        for name in ("Flight", "flight"):
+            self.assertNotIn(name, status, "`sigdrop status` stays #74's line")
+
+    def test_the_elf_stand_in_is_the_cores_even_count_rule(self):
+        resolve = self.body("resolve_elf")
+        self.assertIn("FlightDropReadUniqueLists(subs, ids, sizes, why)", resolve)
+        self.assertIn("if (size < kSigListMinSize)", resolve)
+        # An entry that is not three numbers is skipped, never a refusal: the roll drops nothing for one.
+        self.assertIn("if (!SigEntry(sub, e, t)) continue;", resolve)
+        self.assertIn("for (int k = 0; ok && k < FcNs::kUniqueSubLists; ++k)", resolve)
+        self.assertIn("FcNs::kElfCandidates[c]", resolve)
+        self.assertIn("d.elfPick = FcNs::PickElfStandIn(counts);", resolve)
+        self.assertIn("FcNs::RefusedLine(FcNs::kElfNoStandIn)", resolve)
+        self.assertIn("FlightDropOutsideRoll outside;", resolve)
+        passes = self.body("passes")
+        self.assertIn("HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct", passes)
+        self.assertIn('RValue("itemBaseInfoStruct")', passes)
+        self.assertIn('TryStructNumber(info, "27", rarity)', passes)
+        self.assertIn('RValue("40")', passes)
+        self.assertIn("FcNs::PassesUniqueFilter(", passes)
+        # Counted again whenever a sub-list's length or id changed.
+        push = self.body("unique_push")
+        self.assertIn("ids[k] != d.elfId[k] || sizes[k] != d.elfLen[k]", push)
+        self.assertLess(push.index("FlightDropResolveElf();"), push.index("FlightDropPushOnto("))
+        self.assertIn("FcNs::kUniqueSubLists", push)
+
+    def test_the_push_is_read_back_and_removed_under_the_tail_rule(self):
+        onto = self.body("push_onto")
+        self.assertEqual(onto.count('"array_set", { entry,'), 3)
+        self.assertLess(onto.rindex('"ds_list_add", { d.rollSub[k], entry }'), onto.index("FlightDropHeldReadBack(seen)"))
+        self.assertLess(onto.index("FlightDropHeldReadBack(seen)"), onto.index("d.injected += d.rollPushed;"))
+        self.assertIn("++d.anomalies;", onto)
+        self.assertIn("d.heldMissLogged", onto)
+        self.assertIn("n < d.rollCopies[i]", onto)
+        held = self.body("held")
+        self.assertIn("SignatureController(instance, why)", held)
+        self.assertIn('"variable_instance_get", { instance, RValue(g_SigListName) }', held)
+        self.assertIn("got != want", held)
+        self.assertNotIn("SignatureListShape", held)
+        remove = self.body("remove")
+        self.assertLess(remove.index("FlightDropTailHolds(k, len)"), remove.index('"ds_list_delete"'))
+        self.assertIn('"ds_list_delete", { d.rollSub[k], RValue((double)(len - 1 - n)) }', remove)
+        self.assertIn("changed during the roll, left as found", remove)
+        self.assertNotIn("array_resize", self.code)
+        self.assertNotIn("array_push", self.code)
+        tail = self.body("tail")
+        self.assertIn("e[0] != (double)s->t || e[1] != (double)s->sub || e[2] != (double)s->b", tail)
+        self.assertIn("return at == len;", tail)
+
+    # ---- the hit, the coin, the rewrite ------------------------------------------------------
+
+    def test_the_hit_is_74s_typed_hit_and_the_coin_is_c_in_n_plus_c(self):
+        hook = strip_comments(function_body(self.plugin, "static RValue& Hook_CreateDefaultParams("))
+        call = "if (g_SigRollDepth > 0 && g_SigHitTyped && g_FlightDrop.rollPushed > 0)"
+        self.assertIn(call, hook)
+        self.assertLess(hook.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), hook.index("FlightDropAttributeHit();"))
+        self.assertLess(hook.index("SignatureAttributeHit();"), hook.index("FlightDropAttributeHit();"))
+        attribute = self.body("attribute")
+        self.assertIn("g_SigHitItem >= 0", attribute, "a hit #74 took is never also a charm's")
+        self.assertIn("g_SigHitType != (double)s->t || g_SigLastSub != (double)s->sub || g_SigLastB != (double)s->b", attribute)
+        self.assertIn("FcNs::CoinOurs(n, k, u)", attribute)
+        self.assertIn("++d.tally[i].ours;", attribute)
+        self.assertNotIn("SignatureRewriteParams(", attribute)
+
+    def test_the_rewrite_runs_at_74s_point_to_the_charms_own_definition(self):
+        before = strip_comments(function_body(self.plugin, "static void SignatureBeforeCreate("))
+        call = "if (which < 0 && g_FlightDrop.hitCharm >= 0) { FlightDropBeforeCreate(record, missing); return; }"
+        self.assertIn(call, before)
+        self.assertLess(before.index(call), before.index("if (which < 0) return;"))
+        rewrite = self.body("before_create")
+        self.assertIn("FcNs::SeedFromUniform(c, u)", rewrite)
+        self.assertIn("FcNs::kCharmTypeT", rewrite)
+        self.assertIn("(double)FcNs::kCharmBaseB", rewrite)
+        self.assertIn("SignatureRewriteParams(record, item, why)", rewrite)
+        self.assertIn("++d.pending[i];", rewrite)
+        self.assertIn("FlightDropRefuse(i,", rewrite)
+        refuse = self.body("refuse")
+        self.assertIn("d.refused[i] = true;", refuse)
+        self.assertIn("++d.refusals;", refuse)
+        self.assertIn("if (g_FlightDrop.refused[i]) return FcNs::Gate::Refused;", self.body("gate"))
+        reset = strip_comments(function_body(self.plugin, "static void SignatureHitReset("))
+        self.assertIn("FlightDropHitReset();", reset)
+
+    def test_built_is_what_the_forge_hook_saw_the_game_build(self):
+        forge = strip_comments(function_body(self.plugin, SIGNATURES["forge"]))
+        self.assertIn("if (finalPass && flightMatched) FlightDropNoteBuilt(flightRolled.charm);", forge)
+        note = self.body("note_built")
+        self.assertIn("g_FlightDrop.pending[i] <= 0", note)
+        self.assertIn("++g_FlightDrop.tally[i].built;", note)
+        roll = strip_comments(function_body(self.plugin, "static RValue& HookAngelicChance("))
+        self.assertLess(roll.index("SignatureAfterHit(S, x, y);"), roll.index("FlightDropAfterHit();"))
+        after = self.body("after_hit")
+        self.assertIn("if (!g_SigHitAtPoint)", after)
+        self.assertIn('" built by the game"', after)
+
+    def test_nothing_on_the_drop_path_spawns(self):
+        for name in ("SpawnSignatureItem(", "LootGroundCreateFromItem", "InitItemFromJson", "instance_create"):
+            self.assertNotIn(name, self.code)
+
+    # ---- the stat line ------------------------------------------------------------------------
+
+    def test_the_stat_line_carries_the_drop_fields(self):
+        fields = strip_comments(function_body(self.plugin, SIGNATURES["stat_fields"]))
+        self.assertIn("FlightDropFillStat(s);", fields)
+        fill = self.body("fill_stat")
+        for field in ("s.switches[i]", "s.drops[i]", "s.gate", "s.injected", "s.refused", "s.anomalies",
+                      "s.standinElf = FcNs::ElfStandInText(d.elfResolved, d.elfPick, d.elfCounts);"):
+            self.assertIn(field, fill)
+        command = strip_comments(function_body(self.plugin, SIGNATURES["command"]))
+        self.assertIn("Out(FlightDropTraceLine());", command)
+
+    # ---- the research rows, both directions ----------------------------------------------------
+
+    def test_the_research_rows_and_the_elf_hook_never_both_detour(self):
+        install = function_body(self.plugin, DROPS["install_unique"])
+        research = install[install.index("#ifndef FORGEPACT_RELEASE"):install.index("#endif", install.index("#ifndef FORGEPACT_RELEASE"))]
+        self.assertIn("ApRollHoldsDropUnique() || GpHoldsDropUnique()", research)
+        self.assertLess(install.index("ApRollHoldsDropUnique()"), install.index("HookOneScript("))
+        for name in ("ApRollHoldsDropUnique", "GpHoldsDropUnique"):
+            self.assertNotIn(name, self.shipped)
+        self.assertIn('"drop-unique"', strip_comments(function_body(self.plugin, "static bool ApRollHoldsDropUnique()")))
+        self.assertIn("g_GpScriptRows[kGpScript_DropUniqueItems].orig", strip_comments(function_body(self.plugin, "static bool GpHoldsDropUnique()")))
+        attach = strip_comments(function_body(self.plugin, "static void ApRollAttach("))
+        refusal = attach.index('std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique')
+        self.assertLess(refusal, attach.index("MmCreateHook("))
+        self.assertIn("kApRollBlocked", attach[refusal:attach.index("return;", refusal)])
+        scripts = strip_comments(function_body(self.plugin, "static void GpInstallScripts("))
+        refusal = scripts.index("&t == &g_GpScriptRows[kGpScript_DropUniqueItems] && g_Orig_FlightDropUnique")
+        self.assertLess(refusal, scripts.index("HookOneScript("))
+
+    # ---- no address ----------------------------------------------------------------------------
+
+    def test_no_hand_resolved_address(self):
+        self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", self.code))
+        self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*\+", self.code))
+        self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{5,}", self.code))
+        self.assertNotIn("GetModuleHandle", self.code)
+        self.assertNotIn("MmCreateHook", self.code)
 
 
 if __name__ == "__main__":
