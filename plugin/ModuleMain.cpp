@@ -570,6 +570,7 @@ static ForgePact::LootAnnounceMod g_LootAnnounce;
 namespace FcNs = ForgePact::FlightCharms;
 static ForgePact::FlightCharms::Flight g_Flight;
 static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
+static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
 // Always show Chaos Pillar mods (`pillartips`, ForgePact #7): the decision
 // core. Its adapter sits just before Hook_DrawHudBuffs, which calls its tick;
 // the mod state reads the switch.
@@ -22001,6 +22002,10 @@ static void FlightCharmCommand(const std::string& rest)
         return;
     }
     Out(FcNs::StatLine(FlightCharmStatFields()));
+    // Flight's own trace line: whether the player its hooks compare against is
+    // the local player, and how far the player's queries and UpdateDepth calls
+    // got, so `answered=0` or `depth=0` names where flight stopped.
+    Out(FcNs::TraceLine(FlightPlayerCheck(), g_Flight.Stats()));
     // The guard's own line: its route and how far each load got, so a quiet
     // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
     Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
@@ -53529,16 +53534,19 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
     try {
         const int64_t frame = (int64_t)g_RuntimeFrame;
         g_Flight.Refresh(frame);
+        FcNs::Query q{};
+        q.row = static_cast<FcNs::Hooked>(row);
+        q.frame = frame;
+        q.playerSelf = true;
+        q.object = -1;
+        q.reallyBlocked = true;
+        // Off, nothing more is read; the core still counts the query (`seen=`
+        // and `idle=`), so the trace line shows the player's queries reach it.
         if (g_Flight.CurrentState() != FcNs::State::Off) {
-            FcNs::Query q{};
-            q.row = static_cast<FcNs::Hooked>(row);
-            q.frame = frame;
-            q.playerSelf = true;
             q.object = (Args && h.objectArg < argc) ? JsObjectIndexOf(Args[h.objectArg]) : -1;
-            q.reallyBlocked = true;
             FlightPoints(row, argc, Args, q);
-            answer = g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); });
         }
+        answer = g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); });
     } catch (...) { answer = FcNs::Answer::Real; }
     g_FlightBusy = false;
     if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);
@@ -53554,17 +53562,19 @@ static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValu
     try {
         const int64_t frame = (int64_t)g_RuntimeFrame;
         g_Flight.Refresh(frame);
+        FcNs::Query q{};
+        q.row = FcNs::Hooked::InstancePlaceTallest;
+        q.frame = frame;
+        q.playerSelf = true;
+        q.object = -1;
+        q.reallyBlocked = true;
+        // As FlightOnBuiltin: off, nothing is read, and the core counts the call.
         if (g_Flight.CurrentState() != FcNs::State::Off) {
-            FcNs::Query q{};
-            q.row = FcNs::Hooked::InstancePlaceTallest;
-            q.frame = frame;
-            q.playerSelf = true;
             q.object = FlightInstanceObject(r);
-            q.reallyBlocked = true;
             q.x0 = FlightArgNumber(argc > 0 && A ? A[0] : nullptr);
             q.y0 = FlightArgNumber(argc > 1 && A ? A[1] : nullptr);
-            answer = g_Flight.OnQuery(q);
         }
+        answer = g_Flight.OnQuery(q);
     } catch (...) { answer = FcNs::Answer::Real; }
     g_FlightBusy = false;
     if (answer != FcNs::Answer::Real) r = FlightAnswerValue(answer);
@@ -53579,11 +53589,12 @@ static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int
     if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;
     g_FlightBusy = true;
     try {
+        // An unreadable room still reaches the core, as -1, so the call counts
+        // in `depth-seen=` and, while on, in `no-front=`.
         int64_t room = -1;
-        if (FlightRoom(room)) {
-            const FcNs::DepthWrite w = g_Flight.OnUpdateDepth((int64_t)g_RuntimeFrame, true, room);
-            if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerValue(w.layer) });
-        }
+        if (!FlightRoom(room)) room = -1;
+        const FcNs::DepthWrite w = g_Flight.OnUpdateDepth((int64_t)g_RuntimeFrame, true, room);
+        if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerValue(w.layer) });
     } catch (...) {}
     g_FlightBusy = false;
     return r;
@@ -53683,6 +53694,21 @@ static void FlightRefreshPlayer()
     } catch (...) { inst = nullptr; }
     g_FlightBusy = false;
     g_FlightPlayer = inst;
+}
+
+// ` player=` on the trace line: the pointer the hooks compare `self` against,
+// checked against the local player resolved now. `none` when either is
+// missing (before the install, or at character select); `differs` would mean
+// the hooks are comparing against a stale instance and answer nothing.
+static const char* FlightPlayerCheck()
+{
+    CInstance* now = nullptr;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) now = HhResolveInstance(p);
+    } catch (...) { now = nullptr; }
+    if (!now || !g_FlightPlayer) return "none";
+    return now == g_FlightPlayer ? "match" : "differs";
 }
 
 // Installs when the core says so (Flight::ShouldInstall): armed, not yet

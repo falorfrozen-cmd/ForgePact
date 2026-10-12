@@ -296,11 +296,22 @@ inline constexpr std::string_view StateName(State s)
     return "?";
 }
 
+// The first four are the stat line's. The rest are the trace line's (TraceLine):
+// they say how far a quiet flight got. Every blocked query of the local player
+// that reaches the core counts once in `seen`, and then in exactly one of
+// idle, other, excluded, outsideRoom and answered, so the five add up to it.
+// Every UpdateDepth call of the local player counts in `depthSeen`; one made
+// while on that wrote nothing counts in `noFront`.
 struct FlightCounters {
     uint64_t answered = 0;      // queries answered "nothing there"
     uint64_t excluded = 0;      // kept because a wall or a lock blocked, or was named
     uint64_t outsideRoom = 0;   // kept because a point was outside the room (or the room unreadable)
     uint64_t depth = 0;         // front-layer writes
+    uint64_t seen = 0;          // the local player's blocked queries that reached the core
+    uint64_t idle = 0;          // of seen, kept because flight was off (or not configured)
+    uint64_t other = 0;         // of seen, kept because the object named is not in the family, or unreadable
+    uint64_t depthSeen = 0;     // the local player's UpdateDepth calls that reached the core
+    uint64_t noFront = 0;       // of those while on, no write: the room or its layer ends unreadable, or equal depths
 };
 
 // One hooked call, after its original ran.
@@ -567,9 +578,17 @@ public:
         const int i = static_cast<int>(q.row);
         if (!q.playerSelf || i < 0 || i >= kHookedCount) return Answer::Real;
         Refresh(q.frame);
-        if (state_ == State::Off || !q.reallyBlocked || !Configured()) return Answer::Real;
+        if (!q.reallyBlocked) return Answer::Real;
+        ++counters_.seen;
+        if (state_ == State::Off || !Configured()) {
+            ++counters_.idle;
+            return Answer::Real;
+        }
         const Class c = Classify(q.object);
-        if (!c.family) return Answer::Real;
+        if (!c.family) {
+            ++counters_.other;
+            return Answer::Real;
+        }
         if (c.excluded) {
             ++counters_.excluded;
             return Answer::Real;
@@ -599,19 +618,29 @@ public:
 
     // After the game's UpdateDepth ran: whether to set the player's `layer`,
     // and to which layer. Only for the local player, only while flight is on
-    // (not residual); the room's two layer ends are read once per room.
+    // (not residual); the room's two layer ends are read once per room. A
+    // negative room is one the adapter could not read: no write, counted in
+    // noFront, and the room read before it stays remembered.
     DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)
     {
         if (!playerSelf) return DepthWrite{};
+        ++counters_.depthSeen;
         Refresh(frame);
         if (state_ != State::On) return DepthWrite{};
+        if (room < 0) {
+            ++counters_.noFront;
+            return DepthWrite{};
+        }
         if (!haveRoom_ || room != room_) {
             haveRoom_ = true;
             room_ = room;
             LayerEnd first, last;
             roomFront_ = ReadLayerEnds(room, first, last) && ChooseFrontLayer(first, last, roomLayer_);
         }
-        if (!roomFront_) return DepthWrite{};
+        if (!roomFront_) {
+            ++counters_.noFront;
+            return DepthWrite{};
+        }
         ++counters_.depth;
         return DepthWrite{ true, roomLayer_ };
     }
@@ -714,6 +743,23 @@ private:
 };
 
 inline std::string RefusedLine(std::string_view why) { return "flightcharm: refused - " + std::string(why); }
+
+// Flight's own trace line, which `flightcharm stat` prints after the stat line
+// (whose fresh-session text stays as it is). `player` is the adapter's check
+// of the player its hooks compare against: `match` when it is the local player
+// resolved now, `differs` when it is another instance, `none` when either is
+// missing. Read with the stat line, it says where a flight that answered
+// nothing stopped: no blocked query of the player reached it (`seen=0`: the
+// player pointer, or the hooked calls), it was off (`idle=`), the query named
+// something outside the family (`other=`), or it was kept for a wall, a lock
+// or the room's edge. For drawing in front: the player's UpdateDepth never
+// reached it (`depth-seen=0`), or no front layer could be chosen (`no-front=`).
+inline std::string TraceLine(std::string_view player, const FlightCounters& c)
+{
+    return "flightcharm trace: player=" + std::string(player) + " seen=" + std::to_string(c.seen)
+        + " idle=" + std::to_string(c.idle) + " other=" + std::to_string(c.other)
+        + " depth-seen=" + std::to_string(c.depthSeen) + " no-front=" + std::to_string(c.noFront);
+}
 
 // ---- the size guard --------------------------------------------------------------
 //
