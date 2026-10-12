@@ -54295,13 +54295,15 @@ static int FlightInstanceObject(const RValue& v)
 }
 
 // flight's part of a shared builtin detour, after the original (and
-// jumpscenery) ran. Any self but the local player costs one compare.
+// jumpscenery) ran. Any self but the local player costs one compare and one
+// count (NoteCall), so the trace line's `not-player=` and `free=` hold.
 static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
-    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return;
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return;
     if (row < 0 || row >= JsNs::kBuiltinCount) return;
+    if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }
     const FcNs::HookedRow& h = FcNs::kHooked[row];
-    if (!FlightBlocked(h.answer, Result)) return;   // a free answer stands
+    if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }   // a free answer stands
     const TRoutine orig = g_JsOrig[row];
     FcNs::Answer answer = FcNs::Answer::Real;
     g_FlightBusy = true;
@@ -54329,8 +54331,9 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
 static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& r = g_FlightOrigIpt(S, O, R, argc, A);
-    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;
-    if (!FlightBlocked(FcNs::Answer::Noone, r)) return r;   // `noone` stands
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }
+    if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }   // `noone` stands
     FcNs::Answer answer = FcNs::Answer::Real;
     g_FlightBusy = true;
     try {
@@ -54356,11 +54359,13 @@ static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValu
 }
 
 // After the game's own UpdateDepth: the local player's `layer`, while flight
-// is on, to the room's front game layer. Any other self costs one compare.
+// is on, to the room's front game layer. Any other self costs one compare and
+// one count (NoteDepthOther), so the trace line's `depth-other=` holds.
 static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& r = g_FlightOrigDepth(S, O, R, argc, A);
-    if (!S || S != g_FlightPlayer || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }
     g_FlightBusy = true;
     try {
         // An unreadable room still reaches the core, as -1, so the call counts
