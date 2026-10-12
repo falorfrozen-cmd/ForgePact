@@ -52972,6 +52972,10 @@ struct SoulPieceMergeReport {
     SoulPieceMergePass outcome = SoulPieceMergePass::Off;
     bool seeded = false;           // the item argument carries a reserved seed
     int act = 0;                   // the core's act of the item argument; 0: not a piece
+    bool base = false;             // the item argument is the base itself (category 11, its index), piece or not
+    int bagItems = -1;             // bag items the merge's own walk read, the item argument left out; -1: not read
+    int sameAct = 0;               // of those, the pieces of the item argument's act
+    std::string why;               // why `read-failed`, when it was
     std::string into;              // the target's fingerprint
     long long before = 0, after = 0;
     double tab = -1, x = -1, y = -1;
@@ -53124,6 +53128,8 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
     RValue incomingDef;
     if (argc < 2 || !A || !A[1] || g_SoulPiece.baseIndex < 0 || !SoulPieceReadBagItem(*A[1], incoming, incomingDef))
         return SoulPieceMergePass::NotPiece;
+    rep.base = incoming.itemType == SoulCore::kBaseItemType && std::isfinite(incoming.b)
+            && std::trunc(incoming.b) == g_SoulPiece.baseIndex;
     rep.seeded = SoulCore::ActOfSeed(incoming.seed) != 0;
     rep.act = SoulCore::BagPieceActOfItem(incoming, g_SoulPiece.baseIndex);
     if (!SoulCore::IsAct(rep.act)) return SoulPieceMergePass::NotPiece;
@@ -53134,7 +53140,10 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
     if (hasSuccess && SoulPieceTruthy(success)) return SoulPieceMergePass::AlreadySuccess;
     std::vector<SoulPieceBagEntry> entries;
     std::string why;
-    if (!SoulPieceReadBag(entries, why)) return SoulPieceMergePass::ReadFailed;
+    if (!SoulPieceReadBag(entries, why)) {
+        rep.why = why;
+        return SoulPieceMergePass::ReadFailed;
+    }
     std::vector<SoulCore::BagItem> bag;
     std::vector<size_t> at;
     for (size_t i = 0; i < entries.size(); ++i) {
@@ -53142,11 +53151,21 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
         bag.push_back(entries[i].read);
         at.push_back(i);
     }
+    // What this walk saw, so a `no-target` from an empty walk reads apart
+    // from one where the bag held no piece of this act.
+    rep.bagItems = static_cast<int>(bag.size());
+    for (const SoulCore::BagItem& b : bag)
+        if (SoulCore::BagPieceActOfItem(b, g_SoulPiece.baseIndex) == rep.act) ++rep.sameAct;
     const SoulCore::MergeDecision d = SoulCore::DecideMerge(g_SoulPieceMerge.armed, incoming, g_SoulPiece.baseIndex, bag);
-    if (d.verdict != SoulCore::MergeVerdict::Merge)
-        return d.verdict < SoulCore::MergeVerdict::Merge ? static_cast<SoulPieceMergePass>(static_cast<int>(d.verdict))
-                                                          : SoulPieceMergePass::ReadFailed;
-    if (d.target < 0 || static_cast<size_t>(d.target) >= at.size()) return SoulPieceMergePass::ReadFailed;
+    if (d.verdict != SoulCore::MergeVerdict::Merge) {
+        if (d.verdict < SoulCore::MergeVerdict::Merge) return static_cast<SoulPieceMergePass>(static_cast<int>(d.verdict));
+        rep.why = "verdict";
+        return SoulPieceMergePass::ReadFailed;
+    }
+    if (d.target < 0 || static_cast<size_t>(d.target) >= at.size()) {
+        rep.why = "target-range";
+        return SoulPieceMergePass::ReadFailed;
+    }
     SoulPieceBagEntry& target = entries[at[static_cast<size_t>(d.target)]];
     rep.into = target.fingerprint;
     rep.tab = target.tab;
@@ -53177,6 +53196,7 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
         if (hasSuccess) {
             try { g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), success }); } catch (...) {}
         }
+        rep.why = "result-write";
         return SoulPieceMergePass::ReadFailed;
     }
     rep.after = d.count;
@@ -53191,7 +53211,10 @@ static RValue& SoulPieceMergeCall(CInstance* S, CInstance* O, RValue& R, int arg
     ++g_SoulPieceMerge.calls;
     try {
         rep.outcome = SoulPieceMergeInto(res, argc, A, rep);
-    } catch (...) { rep.outcome = SoulPieceMergePass::ReadFailed; }
+    } catch (...) {
+        rep.outcome = SoulPieceMergePass::ReadFailed;
+        rep.why = "threw";
+    }
     ++g_SoulPieceMerge.outcomes[static_cast<int>(rep.outcome)];
     return res;
 }
@@ -54858,15 +54881,20 @@ static std::string SpResultSuccess(const RValue& result)
 
 // From the shipped merge detour (Hook_SoulPieceMerge), after the game's call
 // and the merge: while `merge on`, one line per call whose item carries a
-// soul piece (or a reserved seed the core does not take for one), merged or
-// passed with its reason, and once per `merge on` the first call carrying
-// anything else, `first-other`, the game's own result shape: the control.
-// Reads only: the result it prints is the one the detour returns.
+// soul piece, a reserved seed the core does not take for one, or the base
+// itself (a plain logo prints its `pass(not-piece)`), merged or passed with
+// its reason, what the merge's own bag walk read (`bag=`, -1 when it did not
+// walk, and `sameact=`) and, for `read-failed`, `why=`; and once per
+// `merge on` the first call carrying anything else, `first-other`, the game's
+// own result shape: the control. Reads only: the result it prints is the one
+// the detour returns.
 static void SoulProbeMergeLine(const SoulPieceMergeReport& r, const RValue& result)
 {
     if (!g_SoulPieceMerge.armed) return;
     try {
-        if (!r.seeded && !r.act) {
+        const std::string walk = " bag=" + std::to_string(r.bagItems) + " sameact=" + std::to_string(r.sameAct)
+                               + (r.why.empty() ? std::string() : " why=" + r.why);
+        if (!r.seeded && !r.act && !r.base) {
             if (g_Sp.mergeOtherSeen) return;
             g_Sp.mergeOtherSeen = true;
             Out("soulprobe merge: first-other success=" + SpResultSuccess(result) + " fields=" + SpFieldNames(result));
@@ -54879,13 +54907,13 @@ static void SoulProbeMergeLine(const SoulPieceMergeReport& r, const RValue& resu
                 + " o=" + std::to_string(r.before) + "->" + std::to_string(r.after)
                 + " cell=" + SpNum(r.tab) + "," + SpNum(r.x) + "," + SpNum(r.y)
                 + " success=" + r.successBefore + "->" + SpResultSuccess(result) + " hash=" + r.hash
-                + " fields=" + SpFieldNames(result));
+                + walk + " fields=" + SpFieldNames(result));
             return;
         }
         Out("soulprobe merge: act=" + (r.act ? std::to_string(r.act) : std::string("no"))
             + " pass(" + kSoulPieceMergeOutcomeWords[static_cast<int>(r.outcome)] + ")"
             + (r.into.empty() ? std::string() : " into=" + r.into)
-            + " success=" + SpResultSuccess(result) + " fields=" + SpFieldNames(result));
+            + walk + " success=" + SpResultSuccess(result) + " fields=" + SpFieldNames(result));
     } catch (...) {}
 }
 
