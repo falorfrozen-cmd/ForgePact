@@ -93,7 +93,9 @@ def _compile_and_run(name, header_text):
         line for line in header_text.split("\n")
         if not line.strip().startswith("#pragma once") and '#include "Common.hpp"' not in line
     )
-    out = ROOT / "build/soul-piece-behavior"
+    # One directory per process: two criteria that run this module at the same
+    # time otherwise race on one soulpiece.obj (C1083 "Permission denied").
+    out = ROOT / "build/soul-piece-behavior" / f"pid-{os.getpid()}"
     out.mkdir(parents=True, exist_ok=True)
     cpp = out / f"{name}.cpp"
     cpp.write_text(HARNESS.read_text(encoding="utf-8").replace("// PRODUCTION_SOULPIECES", klass), encoding="utf-8")
