@@ -13,7 +13,7 @@ it. This phase ships one research-build instrument for that launch,
   return straight after `HandleSkillProbeCommand` (RunCommand's else-if chain
   is at MSVC's C1061 limit);
 - the only piece on the frame path is one tick, which returns at once while
-  nothing is armed, traced or on;
+  nothing is hooked (the object tally), armed, traced or on;
 - every script row is an hs-game-sdk constant (the jump scripts derived from
   scripts.hpp, not from a hand list), every detour sits behind
   AddrIsExecutableInModule, and `hook` refuses while citrace holds a spatial
@@ -25,7 +25,10 @@ it. This phase ships one research-build instrument for that launch,
 - the research document carries its eight headings and the two Decision keys,
   answered from Live 1 (2026-10-03) with a label its recorded checks back, and
   an outcome of their own (`lever-not-engaged`) for a lever the session never
-  proved engaged.
+  proved engaged;
+- the walk lever (ForgePact #158) is research-only too: `pass 1 ... any`, the
+  object tally that `hook` switches on and `objects` / `objects reset` print,
+  and `free`, which asks the saved originals and never the lever.
 
 JumpSceneryProbe.hpp's decision itself is exercised by
 test_jump_scenery_behavior.py.
@@ -114,7 +117,7 @@ class JumpProbeContract(unittest.TestCase):
         symbols = set(re.findall(JP_SYMBOL, self.code)) | set(re.findall(r"\bJUMPPROBE_\w+|\bJP_[A-Z_]+\b", self.code))
         # A scan that finds nothing would pass vacuously.
         for expected in ("JpCommand", "JpInstall", "JpOnScript", "JpOnBuiltin", "JpFrameTick", "g_JpRows",
-                         "g_JpCore", "kJpRowCount", "JUMPPROBE_TARGETS", "JP_ENTRY"):
+                         "g_JpCore", "kJpRowCount", "JUMPPROBE_TARGETS", "JP_ENTRY", "JpObjects", "JpFree"):
             self.assertIn(expected, symbols)
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
@@ -169,9 +172,14 @@ class JumpProbeContract(unittest.TestCase):
         tick = self.body("static void JpFrameTick()")
         lines = [line.strip() for line in tick.split("\n") if line.strip()]
         self.assertEqual(lines[0], "if (!g_JpCore.Active()) return;")
-        # Active() is armed, tracing or the lever on - nothing else.
+        # Active() is armed, tracing, tallying or the lever on - nothing else,
+        # and the tally is switched on only by a `hook` that hooked a builtin.
         active = braced_block(self.header, "bool Active() const {")
-        self.assertEqual(active.strip(), "return armed_ || trace_ || lever_;")
+        self.assertEqual(active.strip(), "return armed_ || trace_ || tallyOn_ || lever_;")
+        self.assertEqual(self.code.count("SetTally("), 1)
+        install = self.body("static void JpInstall()")
+        self.assertIn("if (builtins > 0 && !g_JpCore.Tallying()) {", install)
+        self.assertLess(install.rindex("++builtins;"), install.index("g_JpCore.SetTally(true);"))
         # Every detour takes the same early way out to the original.
         script = self.body("static RValue& JpOnScript(")
         builtin = self.body("static void JpOnBuiltin(")
@@ -363,6 +371,62 @@ class JumpProbeContract(unittest.TestCase):
             self.assertIn(name, STD_HEADERS, name + " is not a standard header")
         for word in ("RValue", "CInstance", "g_Yytk", "YYTK", "Aurie", "CallBuiltin"):
             self.assertNotIn(word, self.header)
+
+    # ---- the walk lever (ForgePact #158) ------------------------------------------
+
+    def test_any_is_a_third_family_rule_props_and_all_unchanged(self):
+        self.assertIn("enum class FamilyRule : int { Props, All, Any };", self.header)
+        decide = braced_block(self.header, "Answer DecideBuiltin(Builtin row, int64_t frame, bool playerSelf, ObjectFn&& objectOf)\n    {")
+        self.assertIn("if (rule_ == FamilyRule::Any) {\n            answers = true;", decide)
+        # `props` and `all` keep their own branches, after `any`'s.
+        self.assertLess(decide.index("FamilyRule::Any"), decide.index("answers = rule_ == FamilyRule::All;"))
+        self.assertIn("const int family = rule_ == FamilyRule::All ? allFamily_ : propFamily_;", decide)
+        lever = self.body("static void JpPass(")
+        self.assertIn('else if (a == "any") rule = JpNs::FamilyRule::Any;', lever)
+        self.assertIn("pass 1 [frames] [props|all|any] [scripts] [hold]", lever)
+        self.assertIn("[props|all|any]", self.body("static void JpUsage()"))
+        self.assertNotIn("FamilyRule", self.shipped)
+
+    def test_the_object_tally_counts_every_player_call_lever_on_or_off(self):
+        decide = braced_block(self.header, "Answer DecideBuiltin(Builtin row, int64_t frame, bool playerSelf, ObjectFn&& objectOf)\n    {")
+        order = [decide.index(s) for s in ("if (!playerSelf)", "if (tallyOn_) TallyAdd(", "if (!lever_)")]
+        self.assertEqual(order, sorted(order), "the tally counts the player's calls before the lever decides anything")
+        self.assertIn("inline constexpr int kTallyMaxObjects = 64;", self.header)
+        # `pass 1` zeroes the lever's counters, never the tally.
+        self.assertNotIn("tally_", braced_block(self.header, "bool SetLever(int64_t frames, FamilyRule rule, bool scripts, bool hold = false)\n    {"))
+
+    def test_objects_prints_the_tally_by_the_games_own_names(self):
+        command = self.body("static void JpCommand(")
+        self.assertIn('if (sub == "objects") { JpObjects(tail); return; }', command)
+        objects = self.body("static void JpObjects(")
+        self.assertIn('Lower(tail[0]) == "reset"', objects)
+        self.assertIn("g_JpCore.TallyReset();", objects)
+        self.assertIn('"jumpprobe objects " + JpBuiltinName(i) + ":"', objects)
+        self.assertIn('JpObjectName(o.object) + "(" + std::to_string(o.object) + ")=" + std::to_string(o.n)', objects)
+        self.assertIn('(g_JpCore.ObjectInFamily(o.object) ? " family" : " outside")', objects)
+        self.assertIn('" other=" + std::to_string(t.other)', objects)
+        self.assertIn('"jumpprobe objects: rows=" + std::to_string(totals.rows) + " distinct=" + std::to_string(totals.distinct)', objects)
+        self.assertIn('" outside=" + std::to_string(totals.outside)', objects)
+        # The names come from the game's own object_get_name, called by name.
+        self.assertIn('g_Yytk->CallBuiltin("object_get_name"', self.body("static std::string JpObjectName(int obj)"))
+        self.assertIn("ObjectInFamily(int object) { return InFamily(object, allFamily_); }", self.header)
+
+    def test_free_asks_the_saved_originals_never_the_lever(self):
+        command = self.body("static void JpCommand(")
+        self.assertIn('if (sub == "free") { JpFree(); return; }', command)
+        free = self.body("static void JpFree()")
+        meeting = free.index("meeting.orig(met, g_JpPlayer, g_JpPlayer, 3, meetArgs);")
+        position = free.index("position.orig(at, g_JpPlayer, g_JpPlayer, 3, posArgs);")
+        # Before `hook` there is no saved original: it refuses first.
+        refusal = free.index("if (!meeting.installed || !meeting.orig || !position.installed || !position.orig) {")
+        self.assertLess(refusal, min(meeting, position))
+        self.assertIn('"jumpprobe free: refused - place_meeting and instance_position are not both hooked', free)
+        self.assertIn("const double family = (double)g_JpCore.AllFamily();", free)
+        for never in ("DecideBuiltin", "JpOnBuiltin", 'CallBuiltin("place_meeting"', 'CallBuiltin("instance_position"'):
+            self.assertNotIn(never, free)
+        self.assertIn('"jumpprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")', free)
+        self.assertIn('" by=" + (by >= 0 ? JpObjectName(by) : std::string("none"))', free)
+        self.assertIn('" x=" + MenuLayoutValueText(x) + " y=" + MenuLayoutValueText(y)', free)
 
     # ---- the research document --------------------------------------------------
 

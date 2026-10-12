@@ -15,7 +15,10 @@
 // walls and answers the two object-less rows; the window closes at exactly
 // `frames`; the `scripts` flag rewrites only its three rows; `hold` keeps the
 // window open with no jump script at all, and a lever no window ever opened
-// for is named inert rather than read as ON.
+// for is named inert rather than read as ON. The walk lever (ForgePact #158):
+// `any` answers the player's query whatever object it names while `props` and
+// `all` answer as before, and the object tally counts the player's calls per
+// row and object, lever on or off, capped per row and cleared by reset.
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -406,6 +409,159 @@ int main()
         const bool noCallback = ask(q, Builtin::PositionMeeting, 11, true, Fence) == Answer::RunOriginal
             && ask(q, Builtin::PositionMeeting, 11, true, CollisionProp) == Answer::False;
         check("failclosed/unresolved_family_or_no_callback", none && noCallback);
+    }
+
+    // ---- `any`: the walk lever's third family rule (ForgePact #158) -------
+    // A walk into the prop a jump crossed stayed blocked under `all`, so the
+    // walk lever asks whether a query naming an object outside
+    // Collision_Parent_obj is what stops it. Baseline first: `props` and
+    // `all` answer exactly what they answered before `any` existed.
+    {
+        Probe props = make();
+        props.SetLever(90, FamilyRule::Props, false, true);
+        Probe all = make();
+        all.SetLever(90, FamilyRule::All, false, true);
+        const bool unchanged = ask(props, Builtin::PositionMeeting, 5, true, Fence) == Answer::False
+            && ask(props, Builtin::InstancePlace, 5, true, InvisibleWall) == Answer::RunOriginal
+            && ask(props, Builtin::PlaceMeeting, 5, true, BossBlock) == Answer::RunOriginal
+            && ask(props, Builtin::PlaceMeeting, 5, true, EnemyParent) == Answer::RunOriginal
+            && ask(props, Builtin::PlaceFree, 5, true, -1) == Answer::RunOriginal
+            && ask(props, Builtin::TilemapGetAtPixel, 5, true, -1) == Answer::RunOriginal
+            && ask(all, Builtin::PositionMeeting, 5, true, InvisibleWall) == Answer::False
+            && ask(all, Builtin::PlaceMeeting, 5, true, BossBlock) == Answer::RunOriginal
+            && ask(all, Builtin::InstancePlace, 5, true, EnemyParent) == Answer::RunOriginal
+            && ask(all, Builtin::InstancePlace, 5, true, -1) == Answer::RunOriginal
+            && ask(all, Builtin::PlaceFree, 5, true, -1) == Answer::True;
+        check("any/baseline_props_and_all_unchanged", unchanged);
+        check("any/rule_names", FamilyName(FamilyRule::Props) == "props" && FamilyName(FamilyRule::All) == "all"
+            && FamilyName(FamilyRule::Any) == "any");
+
+        // Target: whatever object the player's own query names, the two
+        // object-less rows and an unresolved object argument included.
+        Probe p = make();
+        p.SetLever(90, FamilyRule::Any, false, true);
+        const long readsBefore = g_ObjectReads;
+        bool outside = true;
+        std::string bad;
+        for (Builtin b : kObjectRows) {
+            const Answer want = kBuiltins[static_cast<int>(b)].answer;
+            for (int obj : { (int)BossBlock, (int)EnemyParent, (int)Skeleton, (int)AvoidableParent, (int)Fence, (int)InvisibleWall }) {
+                const Answer got = ask(p, b, 5, true, obj);
+                if (got != want) { outside = false; bad += name(b) + "/" + std::to_string(obj) + "=" + text(got) + " "; }
+            }
+        }
+        check("any/answers_objects_outside_collision_parent", outside
+            && p.BuiltinCounters(Builtin::PlaceMeeting).passed == 6 && p.BuiltinCounters(Builtin::PlaceMeeting).otherFamily == 0, bad);
+        const bool objectless = ask(p, Builtin::PlaceFree, 6, true, -1) == Answer::True
+            && ask(p, Builtin::TilemapGetAtPixel, 6, true, -1) == Answer::Zero
+            && p.BuiltinCounters(Builtin::PlaceFree).passed == 1 && p.BuiltinCounters(Builtin::TilemapGetAtPixel).passed == 1;
+        check("any/answers_objectless_rows", objectless);
+        const bool unresolved = ask(p, Builtin::InstancePlace, 7, true, -1) == Answer::Noone
+            && ask(p, Builtin::PlaceMeeting, 7, true, -3) == Answer::False;
+        check("any/answers_unresolved_object_arguments", unresolved);
+        // The rule depends on no object, so without the tally it reads none.
+        check("any/reads_no_object_without_the_tally", g_ObjectReads == readsBefore,
+            "reads=" + std::to_string(g_ObjectReads - readsBefore));
+
+        // Still the local player's only, and the lever off runs everything.
+        bool others = true;
+        for (int i = 0; i < kBuiltinCount; ++i)
+            if (ask(p, static_cast<Builtin>(i), 8, false, BossBlock) != Answer::RunOriginal) others = false;
+        const bool otherCounted = p.BuiltinCounters(Builtin::PlaceMeeting).otherSelf == 1;
+        p.LeverOff();
+        bool off = true;
+        for (int i = 0; i < kBuiltinCount; ++i)
+            if (ask(p, static_cast<Builtin>(i), 9, true, BossBlock) != Answer::RunOriginal) off = false;
+        check("any/other_selves_and_lever_off_pass_through", others && otherCounted && off
+            && p.BuiltinCounters(Builtin::PlaceMeeting).passthrough == 1, counts(p.BuiltinCounters(Builtin::PlaceMeeting)));
+
+        // Without `hold`, still only inside a jump's window.
+        Probe w = make();
+        w.SetLever(90, FamilyRule::Any, false);
+        const bool before = ask(w, Builtin::PlaceMeeting, 5, true, BossBlock) == Answer::RunOriginal;
+        w.OnJumpEntry(10, true);
+        const bool inside = ask(w, Builtin::PlaceMeeting, 11, true, BossBlock) == Answer::False;
+        const bool after = ask(w, Builtin::PlaceMeeting, 100, true, BossBlock) == Answer::RunOriginal;
+        check("any/still_inside_the_window_only", before && inside && after, counts(w.BuiltinCounters(Builtin::PlaceMeeting)));
+        // `scripts` is its own flag: `any` alone rewrites no script row.
+        check("any/scripts_flag_still_its_own", w.DecideScript(ScriptLever::CanMove, 11, true) == Answer::RunOriginal);
+    }
+
+    // ---- the object tally (ForgePact #158) --------------------------------
+    // Per builtin row, the local player's calls by the object they name (-1
+    // for the object-less rows), lever on or off, at most kTallyMaxObjects
+    // distinct objects a row.
+    {
+        // Negative control: the tally off counts nothing and reads nothing.
+        Probe off = make();
+        off.SetLever(90, FamilyRule::Props, false, true);
+        const long readsBefore = g_ObjectReads;
+        ask(off, Builtin::PlaceFree, 5, true, -1);
+        const long propsReads = g_ObjectReads - readsBefore;   // object-less: no read
+        check("tally/off_counts_nothing", !off.Tallying() && off.TallyOf(Builtin::PlaceFree).total == 0 && propsReads == 0
+            && off.TallyTotals().rows == 0);
+
+        Probe p = make();
+        const bool idle = !p.Active();
+        p.SetTally(true);
+        check("tally/tally_alone_makes_the_probe_active", idle && p.Active() && p.Tallying() && !p.LeverOn());
+        // The lever off: every call runs the original, and is counted.
+        bool runs = true;
+        for (int k = 0; k < 3; ++k) if (ask(p, Builtin::PlaceMeeting, 5, true, Fence) != Answer::RunOriginal) runs = false;
+        if (ask(p, Builtin::PlaceMeeting, 5, true, BossBlock) != Answer::RunOriginal) runs = false;
+        for (int k = 0; k < 2; ++k) if (ask(p, Builtin::PositionMeeting, 5, true, Crate) != Answer::RunOriginal) runs = false;
+        if (ask(p, Builtin::PlaceFree, 5, true, -1) != Answer::RunOriginal) runs = false;
+        const long readsOther = g_ObjectReads;
+        for (int k = 0; k < 5; ++k) ask(p, Builtin::PlaceMeeting, 5, false, Fence);   // other selves: not counted, not read
+        const bool otherIgnored = g_ObjectReads == readsOther;
+        const RowTally& pm = p.TallyOf(Builtin::PlaceMeeting);
+        const RowTally& pos = p.TallyOf(Builtin::PositionMeeting);
+        const RowTally& pf = p.TallyOf(Builtin::PlaceFree);
+        const bool perRow = pm.total == 4 && pm.used == 2 && pos.total == 2 && pos.used == 1 && pos.objects[0].object == Crate
+            && pos.objects[0].n == 2 && pf.total == 1 && pf.used == 1 && pf.objects[0].object == -1
+            && p.TallyOf(Builtin::InstancePlace).total == 0;
+        check("tally/counts_per_row_and_object_lever_off", runs && perRow && otherIgnored,
+            "place_meeting total=" + std::to_string(pm.total) + " used=" + std::to_string(pm.used));
+        const std::vector<ObjectCount> sorted = p.TallySorted(Builtin::PlaceMeeting);
+        check("tally/sorted_by_count", sorted.size() == 2 && sorted[0].object == Fence && sorted[0].n == 3
+            && sorted[1].object == BossBlock && sorted[1].n == 1);
+        // `pass 1` zeroes the lever's counters, never the tally, and the
+        // lever's answer is the same with the tally on.
+        p.SetLever(90, FamilyRule::Props, false, true);
+        const bool answered = ask(p, Builtin::PlaceMeeting, 6, true, Fence) == Answer::False
+            && ask(p, Builtin::PlaceMeeting, 6, true, BossBlock) == Answer::RunOriginal;
+        const std::vector<ObjectCount> again = p.TallySorted(Builtin::PlaceMeeting);
+        check("tally/counts_with_lever_on_and_survives_pass", answered && again.size() == 2 && again[0].n == 4 && again[1].n == 2
+            && p.BuiltinCounters(Builtin::PlaceMeeting).passed == 1);
+        // family = Collision_Parent_obj or a descendant; outside = anything else.
+        const TallySummary t = p.TallyTotals();
+        check("tally/totals_rows_distinct_outside", t.rows == 3 && t.distinct == 3 && t.outside == 1,
+            "rows=" + std::to_string(t.rows) + " distinct=" + std::to_string(t.distinct) + " outside=" + std::to_string(t.outside));
+        check("tally/family_is_collision_parent", p.ObjectInFamily(Fence) && p.ObjectInFamily(InvisibleWall)
+            && p.ObjectInFamily(CollisionParent) && !p.ObjectInFamily(BossBlock) && !p.ObjectInFamily(EnemyParent)
+            && !p.ObjectInFamily(-1));
+
+        // The per-row cap: the 65th distinct object goes to other=.
+        Probe c = make();
+        c.SetTally(true);
+        for (int k = 0; k < kTallyMaxObjects + 6; ++k) ask(c, Builtin::InstancePlace, 5, true, 10000 + k);
+        ask(c, Builtin::InstancePlace, 5, true, 10000);                         // has a slot
+        ask(c, Builtin::InstancePlace, 5, true, 10000 + kTallyMaxObjects + 5);  // has none
+        const RowTally& ip = c.TallyOf(Builtin::InstancePlace);
+        check("tally/per_row_cap_64_rest_to_other", kTallyMaxObjects == 64 && ip.used == 64 && ip.other == 7
+            && ip.total == (uint64_t)kTallyMaxObjects + 8 && c.TallySorted(Builtin::InstancePlace)[0].object == 10000
+            && c.TallySorted(Builtin::InstancePlace)[0].n == 2 && c.TallyTotals().distinct == 64,
+            "used=" + std::to_string(ip.used) + " other=" + std::to_string(ip.other) + " total=" + std::to_string(ip.total));
+
+        // `objects reset` clears it and counting goes on; the tally off stops it.
+        p.TallyReset();
+        bool cleared = p.TallyTotals().rows == 0 && p.Tallying();
+        for (int i = 0; i < kBuiltinCount; ++i) if (p.TallyOf(static_cast<Builtin>(i)).total != 0) cleared = false;
+        ask(p, Builtin::PositionMeeting, 7, true, Barrel);
+        const bool fresh = p.TallyOf(Builtin::PositionMeeting).total == 1 && p.TallySorted(Builtin::PositionMeeting)[0].object == Barrel;
+        p.SetTally(false);
+        ask(p, Builtin::PositionMeeting, 8, true, Barrel);
+        check("tally/reset_clears_it", cleared && fresh && p.TallyOf(Builtin::PositionMeeting).total == 1);
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";

@@ -46874,8 +46874,17 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
 // against Collision_Prop_obj (or, with `all`, Collision_Parent_obj) - decided
 // through object_is_ancestor by name - is answered "no collision" without
 // running the game's function. Everything else runs the original. The one
-// per-frame piece, JpFrameTick, returns at once while nothing is armed,
-// traced or on.
+// per-frame piece, JpFrameTick, returns at once while nothing is hooked,
+// armed, traced or on.
+//
+// The walk lever (ForgePact #158, docs/flight-charms-research.md): a walk
+// into the prop a jump crossed stayed blocked under `all`, so `pass 1 ...
+// any` answers the local player's own query whatever object it names. From
+// `hook` on, the object tally counts every player-self builtin call by the
+// object it names, lever on or off (`objects`, `objects reset`), which costs
+// one object read per such call; and `free` asks the saved originals of
+// place_meeting and instance_position, never the lever, whether the player's
+// own spot is inside Collision_Parent_obj's family.
 #include <ForgePact/JumpSceneryProbe.hpp>
 
 namespace JpNs = ForgePact::JumpScenery;
@@ -47359,11 +47368,20 @@ static void JpInstall()
         t.status = "hooked";
         ++builtins;
     }
+    // The object tally counts from here on, lever on or off, so a vanilla
+    // walk can be compared with the same walk under the lever.
+    if (builtins > 0 && !g_JpCore.Tallying()) {
+        g_JpCore.SetTally(true);
+        JpRefreshPlayer();
+    }
     Out("jumpprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed, " + std::to_string(held)
         + " held, " + std::to_string(builtins) + " builtins"
         + (builtinsFailed ? ", " + std::to_string(builtinsFailed) + " builtins failed" : std::string()));
     Out("  Next: `jumpprobe show` twice while walking - CheckTalentUse and position_meeting must climb, or nothing here counts."
         " Nothing is logged until `jumpprobe arm`.");
+    Out(std::string("  objects: ") + (g_JpCore.Tallying()
+        ? "the local player's builtin calls are counted by object from now on - `jumpprobe objects`, `objects reset`"
+        : "nothing counts - no collision builtin is hooked"));
 }
 
 // ---- arm, show, pass ------------------------------------------------------------
@@ -47441,7 +47459,7 @@ static void JpWarnIfInert(const std::string& prefix)
     Out(prefix + "INERT - the lever is ON but no window has opened (windows-opened=0, outside-window="
         + std::to_string(g_JpCore.OutsideWindowTotal()) + "): neither CA_playerJump nor PlayerForceJump ran with the"
         " local player as self, so every call ran the game's own function. Nothing from this run says what blocks"
-        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all> hold`");
+        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all|any> hold`");
 }
 
 // Every row's calls since the previous `show`, the two controls first. A
@@ -47507,10 +47525,10 @@ static void JpPassStat()
     }
 }
 
-// `pass 1 [frames] [props|all] [scripts] [hold]` / `pass 0` / `pass stat`.
+// `pass 1 [frames] [props|all|any] [scripts] [hold]` / `pass 0` / `pass stat`.
 static void JpPass(const std::vector<std::string>& tail)
 {
-    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat";
+    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all|any] [scripts] [hold] | pass 0 | pass stat";
     if (tail.empty() || Lower(tail[0]) == "stat") { JpPassStat(); return; }
     const std::string v = Lower(tail[0]);
     if (v == "0" || v == "off") {
@@ -47527,11 +47545,12 @@ static void JpPass(const std::vector<std::string>& tail)
         const std::string a = Lower(tail[i]);
         if (a == "props") rule = JpNs::FamilyRule::Props;
         else if (a == "all") rule = JpNs::FamilyRule::All;
+        else if (a == "any") rule = JpNs::FamilyRule::Any;
         else if (a == "scripts") scripts = true;
         else if (a == "hold") hold = true;
         else {
             try { size_t used = 0; frames = std::stoll(a, &used); if (used != a.size()) throw 0; }
-            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts|hold; nothing changed"); return; }
+            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|any|scripts|hold; nothing changed"); return; }
         }
     }
     JpResolveFamilies();
@@ -47564,6 +47583,98 @@ static void JpPass(const std::vector<std::string>& tail)
             " `jumpprobe hook` first");
     if (!g_JpPlayer)
         Out("jumpprobe pass: WARNING - no local player resolved, so no call counts as the player's: load a character");
+}
+
+// ---- objects, free (the walk lever, ForgePact #158) ----------------------------
+
+// `objects` / `objects reset`: the object tally, one line per builtin row the
+// local player called since `hook` (or the last reset), each object named by
+// the game's own object_get_name and labelled `family` (Collision_Parent_obj
+// or a descendant, what `all` answers for) or `outside`, most-called first.
+static void JpObjects(const std::vector<std::string>& tail)
+{
+    if (!tail.empty()) {
+        if (tail.size() == 1 && Lower(tail[0]) == "reset") {
+            g_JpCore.TallyReset();
+            Out(std::string("jumpprobe objects: reset - every row's tally cleared; ")
+                + (g_JpCore.Tallying() ? "counting goes on" : "nothing counts until `jumpprobe hook`"));
+            return;
+        }
+        Out("jumpprobe objects: usage -> objects | objects reset");
+        return;
+    }
+    if (!g_JpCore.Tallying()) {
+        Out("jumpprobe objects: nothing counted - no collision builtin is hooked by jumpprobe: `jumpprobe hook` first");
+        return;
+    }
+    JpResolveFamilies();
+    std::vector<std::string> lines;
+    JpNs::TallySummary totals;
+    g_JpBusy = true;
+    try {
+        for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+            const auto row = static_cast<JpNs::Builtin>(i);
+            const JpNs::RowTally& t = g_JpCore.TallyOf(row);
+            if (t.total == 0) continue;
+            std::string line = "jumpprobe objects " + JpBuiltinName(i) + ":";
+            for (const JpNs::ObjectCount& o : g_JpCore.TallySorted(row))
+                line += " " + JpObjectName(o.object) + "(" + std::to_string(o.object) + ")=" + std::to_string(o.n)
+                    + (g_JpCore.ObjectInFamily(o.object) ? " family" : " outside");
+            if (t.other) line += " other=" + std::to_string(t.other);
+            lines.push_back(line);
+        }
+        totals = g_JpCore.TallyTotals();
+    } catch (...) {}
+    g_JpBusy = false;
+    for (const std::string& line : lines) Out(line);
+    Out("jumpprobe objects: rows=" + std::to_string(totals.rows) + " distinct=" + std::to_string(totals.distinct)
+        + " outside=" + std::to_string(totals.outside)
+        + (g_JpCore.AllFamily() < 0 ? std::string(" (Collision_Parent_obj did not resolve by name: every object reads outside)")
+                                    : std::string()));
+}
+
+// `free`: is the local player's own spot inside Collision_Parent_obj's
+// family? Asked of the saved originals of place_meeting (blocked=, the
+// player's mask at its x, y) and instance_position (by=, the instance at the
+// point), called directly with the player as self - never through the lever,
+// and not counted by the tally. Refused before `hook`: without a saved
+// original the call would go through whatever detour holds the builtin.
+static void JpFree()
+{
+    JpBuiltinRow& meeting = g_JpBuiltinRows[(int)JpNs::Builtin::PlaceMeeting];
+    JpBuiltinRow& position = g_JpBuiltinRows[(int)JpNs::Builtin::InstancePosition];
+    if (!meeting.installed || !meeting.orig || !position.installed || !position.orig) {
+        Out("jumpprobe free: refused - place_meeting and instance_position are not both hooked by jumpprobe, so there is"
+            " no saved original to ask: `jumpprobe hook` first");
+        return;
+    }
+    JpResolveFamilies();
+    if (g_JpCore.AllFamily() < 0) {
+        Out("jumpprobe free: refused - Collision_Parent_obj did not resolve by name; nothing asked");
+        return;
+    }
+    JpRefreshPlayer();
+    if (!g_JpPlayer) { Out("jumpprobe free: refused - no local player resolved: load a character"); return; }
+    std::string line;
+    g_JpBusy = true;
+    try {
+        const RValue self = g_JpPlayer->ToRValue();
+        const RValue x = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("x") });
+        const RValue y = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("y") });
+        const double family = (double)g_JpCore.AllFamily();
+        RValue meetArgs[3] = { x, y, RValue(family) };
+        RValue met;
+        meeting.orig(met, g_JpPlayer, g_JpPlayer, 3, meetArgs);
+        RValue posArgs[3] = { x, y, RValue(family) };
+        RValue at;
+        position.orig(at, g_JpPlayer, g_JpPlayer, 3, posArgs);
+        const int by = JpObjectIndexOf(at);
+        line = std::string("jumpprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")
+            + " by=" + (by >= 0 ? JpObjectName(by) : std::string("none"))
+            + " x=" + MenuLayoutValueText(x) + " y=" + MenuLayoutValueText(y);
+    } catch (...) { line = "jumpprobe free: unreadable (a read or a saved original threw); nothing answered"; }
+    g_JpBusy = false;
+    Out(line);
 }
 
 // ---- state and trace (hook-free) ------------------------------------------------
@@ -47687,7 +47798,8 @@ static void JpTraceSample(int64_t frame)
 
 // The one per-frame piece, from FrameCallback: closes an expired window,
 // refreshes the local player the detours compare their self against, and
-// samples the trace. Returns at once while nothing is armed, traced or on.
+// samples the trace. Returns at once while nothing is hooked (the object
+// tally), armed, traced or on.
 static void JpFrameTick()
 {
     if (!g_JpCore.Active()) return;
@@ -47714,10 +47826,15 @@ static void JpUsage()
         " land, fall, height, zpos, hover or fly");
     Out("  trace 1|0                         one line per frame in which x, y or a state variable changed (at most "
         + std::to_string(JpNs::kTraceMaxLines) + " a session)");
-    Out("  pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
+    Out("  pass 1 [frames] [props|all|any] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
         " opens a window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision"
-        " builtins against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites"
-        " CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open until pass 0, jump or no jump");
+        " builtins against Collision_Prop_obj (all: Collision_Parent_obj; any: whatever object they name) answer no"
+        " collision; scripts also rewrites CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open"
+        " until pass 0, jump or no jump");
+    Out("  objects | objects reset           from `hook` on, the local player's builtin calls per row by the object they"
+        " name (family = Collision_Parent_obj or a descendant, else outside), lever on or off; reset clears it");
+    Out("  free                              the saved place_meeting and instance_position against Collision_Parent_obj at"
+        " the player's own x, y, never through the lever: blocked=yes|no by=<object>|none (after `hook` only)");
 }
 
 static void JpCommand(const std::string& rest)
@@ -47733,6 +47850,8 @@ static void JpCommand(const std::string& rest)
     if (sub == "state") { JpState(); return; }
     if (sub == "trace") { JpTrace(tail); return; }
     if (sub == "pass") { JpPass(tail); return; }
+    if (sub == "objects") { JpObjects(tail); return; }
+    if (sub == "free") { JpFree(); return; }
     JpUsage();
 }
 #endif // FORGEPACT_RELEASE (jumpprobe)
@@ -56920,7 +57039,7 @@ void FrameCallback(FWFrame& FrameContext)
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
     CrashWatchTick(fc);   // crashwatch's heartbeat (#173); returns at once while off
-    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
+    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is hooked, armed, traced or on
     GpFrameTick();   // gambaprobe's live machines; returns at once while nothing is armed or on
 #endif
 
