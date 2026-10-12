@@ -793,6 +793,143 @@ C0000409 (hexadecimal) after the plugin's `==== clean shutdown ====` line,
 including Live procedure 2's relaunched game, which never had a debugger
 attached; the cause is not attributed.
 
+### The piece icon and stack follow-up
+
+Four more sessions on 2026-10-12, slot 14 ("Sorak"), each restoring its own
+save backup at the end; Live procedure 4 ran before Live procedure 3. The
+captures are local to the hub's workorder folder, as above.
+
+**Live procedure 1** (`forgepact-197-piece-icon-stack-live-1`, research DLL
+sha256 `82fcd53f…811e9`, x64dbg with its `CheckTalentUse` control proven; 32
+checks: 20 pass, 4 fail, 8 not observed). A built Gem of Incarnation carries
+`Gem_Incarnation_spr` under item info key `"11"` [gem-sprite]. A key piece
+with a whole `b` (the Bifröst Key's 2) merged into the owner's Bifröst Key
+stack (38 to 39) with the `GridAddToStack` logpoint logging the pickup and
+the `InventoryGridAddToStack` one not [merge-control] [dbg-merge-route], so
+the key merge #197's Live procedure 3 could not attribute is
+`GridAddToStack`'s. Key pieces with the act's tenths in `b` (2.10 for Act 1,
+2.20 for Act 2) stayed apart from the real key, and a second Act 1 piece
+joined the first through `GridAddToStack` [frac-apart-key] [frac-stack]
+[frac-apart-act]; pieces with `c` 0.05 did the same [cfrac-stack]
+[cfrac-apart]. The Key tab drew the pieces with the gem's icon and the real
+key with its own [icon-keytab], and a class-11 bag piece drew the gem's icon
+too [icon-legacy-bag]. On the ground a piece kept its base's own pickup
+sprite (`Pickup_Bifrost_Key_spr`, `Pickup_Edible_Pas_Logo_spr`), never
+`Pickup_Gem_Incarnation_spr` and never the error sprite [icon-ground].
+Neither tooltip drew an icon; a key piece's tooltip named the piece and kept
+the real key's type and description [icon-tooltip]. Right-clicking a key
+piece in the Key tab opened no prompt, and the `CanUsePotion` logpoint stayed
+at its count with the control logging, where the bag logo's right-click had
+hit it once [keyuse-prompt] [dbg-keyuse-canuse]; with the probe's allow
+armed, the right-click reached `InvGridEquipV2` twice and never the use
+[keyuse-allow] [keyuse-potionuse]. No use ran, so the four stack-use checks
+were not observed. The graceful stop did not rewrite `inventory_order_13.hss`,
+so after the relaunch the Key tab held no piece and the four reload checks
+were not observed.
+
+```
+stack-route: none
+keyuse-route: not-reached
+stackuse-route: none
+icon-route: bag-only
+```
+
+The stack route reads none because its reload checks were not observed,
+though every in-session fraction check passed; the use route reads
+not-reached because `keyuse-allow` failed with `dbg-canuse-control` passing;
+no stack use ran; and the icon route reads bag-only because `icon-keytab`
+passed and the ground showed the base's own pickup sprite. The owner then
+dropped the Key tab (2026-10-12): pieces stay bag consumables, used by
+right-click and confirm, and pieces of one act stack in the bag.
+
+**Live procedure 2** (`forgepact-197-piece-icon-stack-live-2`, research DLL
+sha256 `21aa4ea0…3099`, x64dbg with its control proven; 27 checks: 22 pass, 1
+fail, 4 not observed). With the merge off, two Act 1 pieces took two cells,
+each pickup hitting `AddToInventory` and `InventoryGridAddToStack` once
+[bag-no-stack-control] [dbg-pickup-route]. With the merge on, a third Act 1
+piece joined the first (`o=1->2`, the game's result `success=false->true`,
+the hash refreshed), nothing was left on the ground, and the Act 1 counts
+summed to the three picked up [merge-stack] [merge-no-duplicate]; an Act 2
+piece (`no-target`) and a plain logo (`not-piece`) kept cells of their own
+[merge-apart-act] [merge-apart-real]. The game's result carried `tabNumber`,
+`x`, `y`, `tabType` and `success` on every call. The `InventoryGridAddToStack`
+logpoint and the detour's own call count both rose by three, so the detour
+saw every call the logpoint did [dbg-merge-calls]. The bag drew the count
+"2" on the stack's cell [stack-draw], and the tooltip named the piece and
+showed no count [stack-tooltip]. A right-click on the stack opened the game's
+prompt [stack-prompt]. With `PotionUse` answering true, the confirm cleared
+the whole stack, both pieces [stackuse-all]. With the probe's take-one, a
+stack of 3 went to 2 with `PotionUse` answering false, the prompt closed with
+no message, the stack still moved to another cell, and the last piece
+answered true and its cell cleared [stackuse-one] [stackuse-after-false]
+[stackuse-move] [stackuse-last]. `SaveInventoryOrderNew` logged no call at
+any pickup, merge or use [dbg-invsave], and the stop did not rewrite the bag
+file [save-written], so the save and reload checks were not observed. That
+session's save token (not-written) measured only that the game never saved
+the bag, not that a stack is lost; Live procedure 4 replaced it.
+
+```
+merge-route: detour
+bagstackuse-route: take-one
+stackdraw-route: game
+```
+
+**Live procedure 4** (`forgepact-197-piece-icon-stack-live-4`, the same
+research DLL, x64dbg with its control proven, every step the operator's; 17
+checks: 16 pass, 1 fail). Six pickups built an Act 1 stack of 3, an Act 2
+stack of 2 and a plain logo in a cell of its own [stacks-built], and none of
+them saved the bag: no `SaveLocalFile`, `SaveInventoryOrderNew` or
+inventory-window Destroy call, and the file unchanged [dbg-pickup-nosave].
+The I key (and B) did not open the bag window, so the bag window's own close
+never ran. Opening and closing the stash (`hs_stash_open`, `hs_stash_close`)
+did save it: at the close the debugger logged the inventory window parent's
+Destroy event once, `SaveLocalFile` seven times and `SaveInventoryOrderNew`
+once, and `inventory_order_13.hss`, the character file and `stash.hss` were
+rewritten within the same second [dbg-bagclose] [dbg-savelocal]
+[dbg-bagsave] [save-written]. A fourth Act 1 piece picked up after that save
+took the stack to 4 with no save; the graceful stop then rewrote the
+character file but not the bag file, which still held 3 [stop-bag-write]
+(hub issue #506). The file held the Act 1 key at `o` 3, the Act 2 key at `o`
+2 and the logo's key [save-defs]. After a relaunch with the probe's dress,
+icon and merge off and `soulpiece` never on, the bag read the same three
+rows with the same counts [reload-stack-kept], and a new Act 1 piece took a
+cell of its own beside the kept stack [reload-off-apart]. The reloaded stack
+did not show as an Edible PAS Logo: its tooltip named the piece with its
+lore line, and its cell drew the gem's icon with the count 3 [reload-base,
+the one fail]. The plugin had registered its pieces' Custom Forge entries
+(name, lore and sprite, matched by base and seed) at boot, which it does
+whether `soulpiece` is on or not, so whether that look came from the save or
+from the registration was not separated; no load ran with the plugin removed.
+
+```
+save-route: kept
+save-trigger: stash-close
+```
+
+The save route reads kept because `save-written`, `save-defs` and
+`reload-stack-kept` passed; the trigger reads stash-close because the bag
+window never opened and the stash's open and close wrote first.
+
+**Live procedure 3** (`forgepact-197-piece-icon-stack-live-3`, the player DLL
+sha256 `f433bdd9…893c`, no debugger; 15 checks, all pass). `soulpiece 1`
+installed the `PotionUse` and `InventoryGridAddToStack` detours, both routes
+each [verb-on]. Forced drops gave two pieces in Act 1 and two in Act 2 (the
+owner picked up one more Act 2 piece than asked), and the bag held two
+cells, each drawing the gem's icon and the count 2, their tooltips naming a
+Piece of Gurag's Soul and a Piece of the Grim Reaper's Soul [on-bag-stack]
+[on-icon] [on-name] [on-apart-act]; the status line read `merged=2`, one per
+act, read once after both acts [on-merged-count]. Right-clicking the Act 1
+stack and confirming took the player to `Act_01_Boss` (`transfers=1`) and
+left one piece in the stack [on-transfer] [on-takes-one]. With the mod off,
+the Act 2 stack's use was refused (`use-off`) and the stack kept its 2
+[off-use-refused]. Opening and closing the stash wrote the bag file
+[save-written], which held the two pieces' keys with `o` 1 and 2
+[save-defs]; after a relaunch with the mod left off, both stacks were back
+with their counts and the pieces' names [reload-off-loads].
+
+Every graceful stop of these four sessions also ended with process status
+C0000409; the cause is still not attributed.
+
 ## Not established
 
 - Whether a boss killed again after its room's state was dropped credits its
@@ -805,8 +942,9 @@ attached; the cause is not attributed.
   survives a relaunch: Live procedure 2's first transfer of a fresh launch
   read `saved=no`, but no saved boss room was carried across a relaunch.
 - Why a run-time `Portal_obj`'s `portalZone` record read back as the zone's
-  next zone (the owner's reading is above), and which code merged the key in
-  Live procedure 3 without reaching `InventoryGridAddToStack`.
+  next zone (the owner's reading is above). (Which code merged the key in
+  Live procedure 3 is now measured: `GridAddToStack`, the follow-up's Live
+  procedure 1, `dbg-merge-route`.)
 - Which hook placed the jump on `RoomGoto`'s entry in the research build.
 
 Beyond the sessions:
@@ -820,20 +958,19 @@ Beyond the sessions:
 - Which key index each `keys_*` name holds, and what the values in
   `GetDungeonKeys`' list are.
 
-The follow-up's open questions (readings of 2026-10-12; Live procedure 1 of
-`forgepact-197-piece-icon-stack` measures the first five):
+The follow-up's open questions, as its four sessions left them (what they
+answered is in § Results, "The piece icon and stack follow-up"):
 
-- Whether a save keeps a `b` of 2.1 and a `c` of 0.05 as written, and a
-  reloaded `frac` piece still stays apart from the key (the follow-up's reading
-  4 rests on the runtime's documented `string()`, not read).
-- Whether the Key tab's right-click goes through `ProcessInventoryGridInput`'s
-  use path, whether `CanUsePotion` answers true for a key, and so whether the
-  use prompt opens for a Key-tab piece without help.
-- Whether the confirm clears one piece of a stack or the whole stack
-  (reading 7), and what the item-info value it compares with 6 means.
-- Whether a built Gem of Incarnation carries `Gem_Incarnation_spr` under item
-  info key `"11"`, whether the ground item draws `Pickup_Gem_Incarnation_spr`
-  for a piece carrying it, and whether either tooltip draws an icon.
+- Whether a save keeps a `b` of 2.1 and a `c` of 0.05 as written: Live
+  procedure 1's stop did not save the bag, and the Key tab route was dropped
+  before another session reloaded one (the reading rests on the runtime's
+  documented `string()`, not read).
+- Whether `CanUsePotion` would answer true for a key: the Key tab's
+  right-click never reached it (it reached `InvGridEquipV2`), so the question
+  did not arise.
+- What the item-info value the confirm compares with 6 means. That the
+  confirm clears a whole stack on `true` is measured (Live procedure 2,
+  `stackuse-all`).
 - Whether the game changes the runtime's math epsilon from GameMaker's default.
 - Which code a door or an NPC uses to find its key (Heimdall for the Bifröst
   Key, and the rest): not read, so whether a key piece could open what its base
@@ -841,37 +978,34 @@ The follow-up's open questions (readings of 2026-10-12; Live procedure 1 of
 - Who else reads `GetUniqueRepoStruct` and `CanUsePotion` (empty through the
   MCP: not observed, not a negative).
 
-Pieces that stack in the bag (the bag-stack readings; Live procedure 2 of
-`forgepact-197-piece-icon-stack` measures each with `soulprobe merge`, `bag`,
-`usewatch take` and the debugger rows above):
+Pieces that stack in the bag, as the follow-up's sessions left them (the
+merge, the count drawn, the confirm on a stack, the take-one and the save
+round trip are measured, § Results):
 
-- Whether the pickup takes the merge cleanly: the incoming piece gone from the
-  ground and not placed in a cell of its own once the result says `success`
-  (`merge-no-duplicate`), and whether `AddToInventory` reads any field of the
-  result but `success`.
-- Whether the merge detour sees every call compiled GML makes to
-  `InventoryGridAddToStack` (`dbg-merge-calls`), and whether every piece's
-  pickup reaches it (`dbg-pickup-route`).
-- Which way round the bag's `inventoryTab` holds its cells (rows of columns, as
-  a grid node's, or columns of rows), so whether the `x` and `y` the merge
-  writes are the column and the row; and whether the game's own result names
-  the tab in `tabNumber` as the walk counts it.
-- Whether the bag draws a consumable stack's count on its cell (`stack-draw`),
-  and what the tooltip shows for one.
-- What the confirm does to a stack when `PotionUse` answers true: one piece or
-  the whole cell (`stackuse-all`; the follow-up's reading 7); and, when it
-  answers false after lowering the count, whether the prompt closes cleanly and
-  the stack still moves (`stackuse-one`, `stackuse-move`, `stackuse-last`).
-- Whether the game writes the bag file during play or only at a save, why Live
-  procedure 1's bag file was not rewritten at its stop, and whether a stack's
-  count survives a save and a reload (`save-written`, `save-defs`,
-  `reload-stack-kept`), shown as Edible PAS Logos with their count.
+- Whether `AddToInventory` reads any field of the stack result but `success`:
+  the merge writes `tabNumber`, `x` and `y` too, and the pickup then finished
+  cleanly (Live procedure 2, `merge-no-duplicate`), but which fields it reads
+  was not separated. Likewise which way round the bag's `inventoryTab` holds
+  its cells, so whether the `x` and `y` the merge writes are the column and
+  the row, was not read.
+- Whether the bag window's own close saves the bag: its Destroy event asks
+  for the bag file by the static reading, but Live procedure 4's I and B keys
+  never opened the window (the owner opens it with C), so only the stash's
+  close was measured, which reached the same Destroy logpoint.
+- What decides whether a stop writes the bag file: none did in Live
+  procedures 1, 2 and 4 (hub issue #506).
+- What a piece or a stack shows, and what its use does, with the plugin
+  removed: Live procedure 4's reload showed the piece's name and the gem's
+  icon with the probe's dress off, while the plugin's own registration of the
+  pieces was in place; no load ran without the plugin.
+- The 999 cap and a merge into a full stack: not reached live.
 - What `IsStackable`'s item-info value is (the bag-stack reading 1), and under
   what condition `InventoryGridAddToStack`'s later walk reads the bag's
   `inventoryTab` (reading 2).
 
-The driver reads Live procedure 2's capture into four route tokens, which decide
-what the player build ships:
+The driver read the sessions' captures into these route tokens, which decided
+what the player build ships (Live procedure 2's save token was replaced by
+Live procedure 4's, read by the same rule):
 
 - `merge-route: detour` when the merge-off control keeps two pieces apart and
   the merged pickup, no duplicate, another act apart and a real logo apart all
