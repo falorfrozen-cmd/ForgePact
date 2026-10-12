@@ -46,11 +46,11 @@ that suspends the game's own loop.
 - **Static reading:** done on 2026-10-11 through the ghidra MCP and a local
   scan for the names a function's code references (§ Static reading). The
   readings about the game are also in the toolkit's
-  `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 21, labelled as static readings.
+  `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 22, labelled as static readings.
 - **Live procedure 1:** run on 2026-10-12 (§ Results, "Live 1 results"):
   the five validity checks passed; 21 of 26 checks pass, 3 fail and 2 are
   not-observed. The measured facts about the game are also in
-  `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 21, relabelled as measured.
+  `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 22, relabelled as measured.
 - **Decision:** recorded from Live 1 (§ Decision). `dress-added` reads
   `item-missing`, the value added for the outcome S17 measured: the dressed
   charm missing after the reload, with no crash and no overlap.
@@ -146,7 +146,7 @@ local scan for the names a function's code references. A name scan lists
 candidate direct call sites. It is blind to calls through the script table or
 a method value, so a call it did not find is not observed, not absent. The
 same readings are in the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.6 and
-§ 21.
+§ 22.
 
 **Walking.**
 
@@ -662,13 +662,13 @@ player-self calls on a walk (RDM § 19.2, a measured count, and § 19.6, a
 static reading); `CheckTalentUse` once per frame (RDM § 7.2); `jumpprobe`
 refusing while `jumpscenery` holds the builtins (the module guide's "Jump
 through scenery" cost); `inventoryData` and its key rule (RDM § 2, measured
-for the relic grid); `localCharmItemArray` (RDM § 21.1, a static reading,
+for the relic grid); `localCharmItemArray` (RDM § 22.1, a static reading,
 never read live before this session); `GetItemFromFingerprint` and
 `GetOnlinePlayerItemOwner` (RDM § 2, measured); `GetItemSize` and
-`GetItemInfo` (RDM § 21.2, a static reading); the json, `InitItemFromJson`,
+`GetItemInfo` (RDM § 22.2, a static reading); the json, `InitItemFromJson`,
 `LootGroundCreateFromItem` spawn (RDM § 16.2, measured, and `sigdrop`);
 `GetUniqueRepoStruct`, field 27 and flag 40 (RDM § 13.4); `DropItemHeroic`
-(RDM § 21.4, a static reading); the Custom Forge's final pass (RDM § 16.1 and
+(RDM § 22.4, a static reading); the Custom Forge's final pass (RDM § 16.1 and
 § 16.9, measured); stat 25 (the Item Editor's stat catalog; its effect on the
 character is not in the shared references); `sprite_add` from `bp_ipc\` with a
 relative then an absolute path, a `VALUE_REF` index and `sprite_set_offset`
