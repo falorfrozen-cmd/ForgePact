@@ -270,6 +270,65 @@ counts and any `b`-equality key check never take it for the key (reading 5).
 Live procedure 1 of the follow-up measures it beside a control and an
 alternative (`soulprobe shape frac`, `cfrac`, `plain`; "The instrument").
 
+### After the follow-up's Live procedure 1: pieces that stack in the bag
+
+Live procedure 1 measured the Key tab's right-click going to the equip script,
+never to the use (`keyuse-route: not-reached`), and the owner then kept pieces
+as class-11 bag consumables, used by right-click and confirm from the bag, with
+pieces of one act stacking there and never joining a real item (2026-10-12).
+These readings were made for that on 2026-10-12, through the `ghidra` MCP (same
+build) and local annotated decompiles that the hub's `tools/decomp_index.py`
+indexes (`InventoryGridAddToStack`, `ItemsAreStackable`, `IsStackable`,
+`AddToInventory`, and two new ones, `SaveInventoryOrderNew` and
+`InventoryGridCanAddToStack`). Each is a static reading, in our words.
+
+1. **The class rule.** `IsItemTypeStackable` answers true for classes 12, 13,
+   14 and 15 only. `IsStackable` first asks the item's own item-info lookup for
+   one value (which info key was not resolved) and answers false when it is
+   truthy; otherwise it applies the same four-class rule.
+2. **`InventoryGridAddToStack` refuses a consumable first.** Its item is its
+   second argument. It applies the `IsStackable` rule itself, before anything
+   else, and gives up at once when the rule fails, before it reads a grid or
+   compares a field. So a class-11 piece is refused whatever its `b`, `c`, seed
+   or count: this is why the logo's pickups reached the script in Live
+   procedure 3 and still never stacked. For a class that passes, it picks its
+   grid by class (15 the socket grid, 12 the Key grid, 13 and 14 the material
+   grid); a later walk reads the bag's `inventoryTab`, under a condition not
+   read.
+3. **The cap.** A merge goes ahead only while the summed count stays at most
+   999.
+4. **The result.** Every path, the early refusal included, ends by building the
+   game's `s_ItemOperation` struct (`gml_Script_s_ItemOperation` in
+   hs-game-sdk) and returning it, and `AddToInventory` reads that result's
+   `success` at each of its stack attempts. The runtime reference (§ 9.7)
+   measured a success result's fields on the prospect path: `tabNumber`, `x`,
+   `y`, `tabType`, `success`. Whether `AddToInventory` reads any field but
+   `success` was not read.
+5. **The bag's save writer.** `SaveInventoryOrderNew` writes the bag's tabs and
+   the special tabs (key, material, socket, tarot, relic, vault, charms)
+   through `json_stringify`; when the game calls it was not read. Live
+   procedure 1's `inventory_order_13.hss` was not rewritten at its graceful
+   stop, while every #197 session's bag file was rewritten with the same
+   C0000409 exit, so the exit code is not the difference; Live procedure 1's
+   Key tab held fractional-`b` pieces. The cause is not established.
+6. **So no route without a hook exists.** No consumable class or base stacks
+   through the game's stack code, and no value in a piece's own definition can
+   make a class-11 piece stack (readings 1 and 2; Live procedure 3 and #197's
+   Live procedure 2 measured class 11 never stacking). Every class that does
+   stack goes to its own tab (the Key, material or socket grid), not the bag,
+   and the Key tab's right-click never reaches the use (Live procedure 1).
+7. **The bag's own data.** `soulprobe bag` read the bag as
+   `New_Inventory_Data_obj.inventoryTab` in Live procedure 3 (450 cells, every
+   piece listed); the runtime reference names `New_Inventory_Data_obj` as the
+   inventory data instance. A blind `GetProfileInventoryData` call crashed the
+   game in an earlier probe (runtime reference § 9.4), so nothing calls it.
+8. **Not observed** through the MCP: the stack scripts' callees (its reference
+   table is mostly empty; not a negative).
+
+So the stack is made by one detour on `InventoryGridAddToStack` that changes
+only a call carrying a soul piece (the bag stack route, under "Rejected routes,
+and why"), and Live procedure 2 of the follow-up measures it.
+
 ## Rejected routes, and why
 
 - **New item ids.** Appending a piece to `itemRepoNormal` makes a save that
@@ -400,6 +459,70 @@ The follow-up's own rejected alternatives (2026-10-12):
   on the ground for one. The piece borrows the gem's own sprite and its ground
   companion through key `"11"`.
 
+**The bag stack route** (after the follow-up's Live procedure 1, 2026-10-12).
+The owner had preferred no hook at all; the bag-stack readings above show that
+"no hook" and "bag consumables that stack" cannot both hold, so pieces stack
+through one both-route detour on `InventoryGridAddToStack`, the stack script
+every class-11 pickup reaches (Live procedure 3, under the debugger, with the
+pickup's own `self`). It always calls the game's own script first with the
+call's own arguments and keeps the game's result. Only when the merge is
+armed, the result is a struct whose `success` is not true, the item argument
+is a legacy soul piece (the core's class-11 rule: class 11, the base's index,
+seed 777101 to 777109) and the core's `DecideMerge` names a bag item of the
+same act with room under the cap does it change anything: that item's count
+`o` rises by the incoming count, its hash is refreshed as the dress does
+(`ItemCheckHash` refuses a stale one), and the game's own result gets
+`success` true and the target's tab and cell in `tabNumber`, `x` and `y`;
+every other field stays as the game wrote it. The first piece of the act in
+walk order with room takes it; a real item (no reserved seed) is never a
+target and never merged, a key-shape piece is not a bag piece, and the item
+being picked up is never its own target. Anything else, a failed read
+included, returns the game's result untouched and is counted by reason; a
+hash refresh that fails puts the count back, so the game places the piece
+apart rather than counting it twice. This answers the three reasons recorded
+against a stack hook in #197: it vetoes nothing (the owner's ruling was against
+a veto), it changes only calls carrying a soul piece (a key, material or
+socketable pickup passes through untouched), and with ForgePact removed nothing
+can merge a class-11 piece into anything, so a saved stack stays an Edible PAS
+Logo stack with its count. It is one value changed inside a call the game is
+already making, and the game's pickup then finishes as for any stack it made
+itself, which Live procedure 2 checks (`merge-no-duplicate`). The bag is read
+the way `soulprobe bag` read it (static reading 7 above). Until the player
+build arms it, only the research verb installs it (`soulprobe merge on`).
+
+Added after the follow-up's Live procedure 1 (bag pieces that stack):
+
+- **Key-tab pieces** (`frac` and the rest): Live procedure 1 measured the Key
+  tab's right-click going to `InvGridEquipV2`, never reaching `CanUsePotion`,
+  even with the probe's allow armed; the owner chose bag consumables.
+- **A consumable class or base that the game already stacks in the bag:** none
+  exists. Every stack script takes classes 12 to 15 only, and those classes go
+  to their own tabs (the bag-stack readings 1, 2 and 6). Potions are flasks, a
+  different container, not items in a bag cell.
+- **Merging at the frame boundary** (a tick that finds two pieces of one act in
+  the bag and folds one into the other, clearing a cell with
+  `InvGridClearItemNode` by name): no hook on the stack path, but it moves bag
+  cells outside any call the game is making, needs the grid node as `self`
+  (runtime reference § 9.7 measured that on the open prospect grid only),
+  leaves the piece standing alone for at least a frame, and validates at the
+  frame boundary rather than at the point of use (hub `AGENTS.md`, "Check a
+  Permission Where It Is Used"). The pickup's own stack call is that point of
+  use.
+- **A result struct of our own** for the merge: the game's own result already
+  carries whatever `AddToInventory` reads beyond `success` (not read), so the
+  merge changes `success` and the cell on the game's own struct and keeps the
+  rest.
+- **A detour on `AddToInventory`, `GridAddToStack`, `ItemsAreStackable` or
+  `IsStackable`:** `AddToInventory` sees every pickup; `GridAddToStack` is
+  never reached by a consumable (it has no preferred grid); the two predicates
+  are not on a consumable's pickup route (#197's Live procedures 1 and 3
+  counted `ItemsAreStackable` at zero). `InventoryGridAddToStack` is the
+  narrowest script a consumable's pickup is measured to reach. `StashAddToStack`
+  is the stash's, which pieces do not enter.
+- **Making the piece's class stackable for the duration of the call:** the
+  stack script then routes it to the Key, material or socket grid by class.
+- **A `CanUsePotion` detour:** the bag's right-click already reaches the use.
+
 ## The instrument
 
 `soulprobe` is research build only (`plugin_build\build.bat dev`), never in the
@@ -420,11 +543,15 @@ added `shape`, `icon` and `ground`, the `sprite=` fields and `gem`'s
 for Live procedure 1 of `forgepact-197-piece-icon-stack`: the stack shapes a
 key piece can take, the gem's display sprite under item info key `"11"` (not
 the old `itemSprite` route), and the Key tab's right-click. Fractions print
-with two decimals (`b=2.10`, `c=0.05`); a whole number prints whole.
+with two decimals (`b=2.10`, `c=0.05`); a whole number prints whole. For
+Live procedure 2 (pieces that stack in the bag) it added `soulprobe merge
+on|off`, which installs the shipped mod's one `InventoryGridAddToStack` detour
+(the bag stack route, above) and no detour of its own, the merge's counters on
+`status`, and each `bag` row's cell and key `"11"` sprite.
 
 | Subcommand | What it does and prints |
 |---|---|
-| `status` | `base=`, `category=`, `dress=`, `shape=`, `icon=`, `allow=`, `takemode=` (`off`, `all` or `one`), the counters `allowed=` and `taken=` (calls `allow` and `take` answered), `usewatch=`, `usescript=`, `gemwatch=`, `portalroute=`, `portaloffset=`, the counters `usecalls`, `usecallsby=` (calls per candidate, so a script called every frame shows during `log`, before `use` is armed on it), `uses` (pieces the chosen script was handed in `use`), `portals` (portals opened, by `portal` or a use) and `gemrolls`, and the gem detour's `gemroute=`. |
+| `status` | `base=`, `category=`, `dress=`, `shape=`, `icon=`, `allow=`, `takemode=` (`off`, `all` or `one`), the counters `allowed=` and `taken=` (calls `allow` and `take` answered), `usewatch=`, `usescript=`, `gemwatch=`, `portalroute=`, `portaloffset=`, the counters `usecalls`, `usecallsby=` (calls per candidate, so a script called every frame shows during `log`, before `use` is armed on it), `uses` (pieces the chosen script was handed in `use`), `portals` (portals opened, by `portal` or a use) and `gemrolls`, and the gem detour's `gemroute=`; then the bag merge's `merge=<on\|off>`, `mergeroute=` (`none` until the first `merge on`), `mergecalls=` (every call the detour saw), `merged=`, `mergepass=` (every call it left as the game answered it) and `mergepassby=` (those, by reason). |
 | `keys` | Every category-12 entry: its repository name, `droprate.base`, and what `GetKeyDungeon` answered when given the entry's index; then `GetDungeonKeys`' list, the keys no dungeon names (`candidates=`), and `entries=`. |
 | `act` | The room's index and name, what `RoomActIndex` answered, the act the core takes from it, `town=`, `bossroom=` and the core's `eligible=`. |
 | `base <repository name>\|auto` | Chooses the base by its repository name, looked up in category 11 (consumables), then 12 (keys); `auto` is the core's `consumable_edible_pas_logo`. Prints its category and index. Never an index constant. |
@@ -437,7 +564,8 @@ with two decimals (`b=2.10`, `c=0.05`); a whole number prints whole.
 | `pickup` | `PickupLoot` on each ground item of the base (every shape and plain: the class and the truncated `b`), self the ground item and other the player (the companion's call shape with the player in the pet's place), and destroys the ground instance on a true return, as the game's callers do. |
 | `ground` | Every ground item (`Loot_Ground_obj`, by its SDK name) within 300 px of the player: `soulprobe ground: id=<id> sprite=<name> itemType=<t> b=<b> a=<a> name=<name>`, the sprite being the ground instance's own `sprite_index` by name (`Pickup_` + the display sprite's name when the item carries one, #158's reading), then `soulprobe ground: items=<n>`. Reads only. |
 | `keytab` | The Key tab: the object that owns `inventoryKeyGrid` (the first of `New_Inventory_Data_obj`, `Controller_obj`, `UI_Inventory_obj`, `UI_Stash_obj`, `Player_obj` that carries it) and its cells, then one line per item, `soulprobe keytab: <fingerprint> b= c= a= o= name= sprite= piece=<act\|no> shape=<plain\|frac\|cfrac\|->` (`sprite=` is key `"11"` by name), then `soulprobe keytab: items=<n>`. A piece, here and for `allow` and `take`, is an item of a key base's class whose truncated `b` is the base's index and whose seed marks an act, any shape; on a consumable base, a legacy bag piece by the core's rule. The shape is read within the core's tolerance, so a value back from a two-decimal save still reads as its shape. |
-| `bag` | Every bag item of the base's class and `b`: a summary line with `route=` (which variable was read), the cells and the items, then one line per item with its fingerprint, class, `b`, seed, count, cells, name and act. Which variable holds the main bag grid is not established, so it tries `inventoryTab` and `inventoryData` on the same owners as the Key tab (a grid, or a grid per bag tab), then the open bag window's grid nodes, and says which it read and what the others held. |
+| `bag` | Every bag item of the base's class and `b`: a summary line with `route=` (which variable was read), the cells and the items, then one line per item, `soulprobe bag: <fingerprint> t= b= a= o= cells= cell=<tab>,<x>,<y> name= sprite= piece=<act\|no>`: its class, `b`, seed, count `o`, the cells it covers, the cell it starts in (the first the walk meets: the tab, then the column and the row, taking a grid as rows of cells; the merge writes the same cell into the game's result), its name, key `"11"`'s sprite by name (or `-`) and its act. Which variable holds the main bag grid is not established, so it tries `inventoryTab` and `inventoryData` on the same owners as the Key tab (a grid, or a grid per bag tab), then the open bag window's grid nodes, and says which it read and what the others held (Live procedure 3 read `New_Inventory_Data_obj.inventoryTab`, the route the merge reads). |
+| `merge on\|off` | `soulprobe merge: <on\|off> route=<both\|table-only\|failed(<why>)\|none>`. The first `on` installs the shipped mod's one both-route detour on `InventoryGridAddToStack` (the bag stack route, above), so every debugger row is armed before it; off at startup, and `off` leaves the detour in place, passing every call. While on, a call whose item carries a soul piece (or a reserved seed the core does not take for one) prints `soulprobe merge: act=<n> into=<fingerprint> o=<before>-><after> cell=<tab>,<x>,<y> success=<before>-><after> hash=refreshed fields=<the result's field names>` when it merged, else `soulprobe merge: act=<n\|no> pass(<reason>) success=<value> fields=<names>`, the reason one of `not-piece`, `no-target` (no piece of that act in the bag), `cap` (every one would pass 999), `not-struct` (the game's result is not a struct), `already-success` (the game stacked it itself), `read-failed` (the bag or the result could not be read or written) or `hash-failed` (the target's hash did not refresh, so its count went back; the line names it with `into=`). A call carrying anything else prints nothing, except the first one after each `on`: `soulprobe merge: first-other success=<value> fields=<names>`, the game's own result shape, the control. The lines only read: the result printed is the one the detour returned. |
 | `usewatch off\|log\|use [auto\|<script>]` | A both-route detour on each use candidate (`UiAInventoryConsumeItemConfirm`, `CanUsePotion`, `PotionUse`, `PotionUseFlask`, `InvGridClearItemNode`, `InvGridEquipV2`, `ConsumeToken`, `UiASteamInventoryItemUse`, `UiAGuildStashConsumeTabToken`), installed on the first `log` or `use`, with one route line each. Each call prints a `usecall` line: its script, self, the item it was given, whether that item is a piece, its answer, and its `depth=` among the candidates open on the thread. The item is an argument that is an item struct, or one handed over as a grid cell or a fingerprint-shaped string, resolved through `GetItemFromFingerprint` by name. In `log`, every call goes on as it would without the watch, pieces included: to the game for every candidate but `PotionUse`, whose watch rides the shipped mod's one detour, so there "the game" is the mod's own use (`SoulPieceUseCall`), which never hands a piece to the game's `PotionUse`. In `use`, a piece in the chosen script (`auto`: the first candidate whose line carried a piece) is never handed to the game: the core's `DecideUse` decides; on `portal` a portal opens as `portal` makes it, and the call answers as the game answered the control (the plain base) on that script, true when no control was seen, so the game clears the piece's cell itself; a refusal or a failed portal answers false, and the confirm stops with the piece kept. A `use` line names the act, the script, the portal (or the refusal or failure), the target, the answer and whether a control was seen. Every other call passes to the game. |
 | `usewatch allow` | `soulprobe usewatch: allow script=CanUsePotion`. Installs the same watches as `log` (no new detour) and, in `CanUsePotion`'s own watch, answers true for a call carrying a piece, without the original: `soulprobe use: script=CanUsePotion piece=<act> shape=<s> answer=true(allowed)`. It measures whether a "usable" answer opens the use prompt for a Key-tab piece the game itself would refuse. |
 | `usewatch take all\|one` | `soulprobe usewatch: take <all\|one> script=PotionUse`. A branch inside `PotionUse`'s watch, which rides the shipped detour: a call carrying a piece never reaches the original and makes no transfer. `all` answers true, so the game clears the cells as the confirm does; `one` takes one piece the way the core's `TakeOne` decides it: a stack above one has its count `o` lowered by one on the item's own definition, the item's hash refreshed, and the call answers false so the game keeps the cells; the last piece answers true. Line: `soulprobe use: script=PotionUse piece=<act> shape=<s> o=<before>-><after> answer=<true\|false> mode=<all\|one> hash=<refreshed\|unchanged\|failed>`. `usewatch off` turns `allow` and `take` off with the rest; neither prints `usecall` lines unless `log` or `use` is armed too. |
@@ -453,9 +581,10 @@ with two decimals (`b=2.10`, `c=0.05`); a whole number prints whole.
 Every script is reached by its hs-game-sdk constant, every object by its SDK
 name and every room by the core's name for it, each resolved with
 `asset_get_index` at run time. No address is stored. `craftprobe` and
-`prospectprobe` list some of the same use candidates: arm `usewatch` only in a
-session where neither is armed, since a script another hook already holds
-installs table-only, and its route line says so. Its structure is pinned by
+`prospectprobe` list some of the same use candidates, and `prospectprobe`'s
+script table holds `InventoryGridAddToStack` too: arm `usewatch` or `merge on`
+only in a session where neither is armed, since a script another hook already
+holds installs table-only, and its route line says so. Its structure is pinned by
 `tests/test_soul_probe_contract.py`.
 
 ### The debugger breakpoints
@@ -525,6 +654,25 @@ a function's first bytes, the bytes a breakpoint is set on and checked
 against; the `CanUsePotion` breakpoint is cleared before `usewatch allow`
 installs the probe's detour there. The debugger detaches before the game is
 stopped.
+
+Live procedure 2 of the follow-up (research build, pieces that stack in the
+bag) plans these rows, with the same control and the same rule:
+
+- **Control: `CheckTalentUse`**, in town, first.
+- **`AddToInventory`**: whether every pickup of a piece reaches the add path
+  (bag-stack reading 2 and the follow-up's reading 1 put the consumable's stack
+  attempt inside it).
+- **`InventoryGridAddToStack`**: the script the merge rides. Its count across
+  the merged pickups is compared with `soulprobe status`'s `mergecalls`: a
+  logpoint on the script's entry sees the calls the inline route carries, so
+  equal counts mean the detour saw every call compiled GML made, not only the
+  calls through the script table.
+- **`SaveInventoryOrderNew`**: whether the game writes the bag during play, at
+  a pickup or at any step (bag-stack reading 5), since Live procedure 1's bag
+  file was not rewritten at its stop.
+
+All four are armed before `soulprobe merge on` or any `usewatch`, because the
+merge's detour changes `InventoryGridAddToStack`'s first bytes.
 
 ## Results
 
@@ -692,3 +840,55 @@ The follow-up's open questions (readings of 2026-10-12; Live procedure 1 of
   key opens is not established.
 - Who else reads `GetUniqueRepoStruct` and `CanUsePotion` (empty through the
   MCP: not observed, not a negative).
+
+Pieces that stack in the bag (the bag-stack readings; Live procedure 2 of
+`forgepact-197-piece-icon-stack` measures each with `soulprobe merge`, `bag`,
+`usewatch take` and the debugger rows above):
+
+- Whether the pickup takes the merge cleanly: the incoming piece gone from the
+  ground and not placed in a cell of its own once the result says `success`
+  (`merge-no-duplicate`), and whether `AddToInventory` reads any field of the
+  result but `success`.
+- Whether the merge detour sees every call compiled GML makes to
+  `InventoryGridAddToStack` (`dbg-merge-calls`), and whether every piece's
+  pickup reaches it (`dbg-pickup-route`).
+- Which way round the bag's `inventoryTab` holds its cells (rows of columns, as
+  a grid node's, or columns of rows), so whether the `x` and `y` the merge
+  writes are the column and the row; and whether the game's own result names
+  the tab in `tabNumber` as the walk counts it.
+- Whether the bag draws a consumable stack's count on its cell (`stack-draw`),
+  and what the tooltip shows for one.
+- What the confirm does to a stack when `PotionUse` answers true: one piece or
+  the whole cell (`stackuse-all`; the follow-up's reading 7); and, when it
+  answers false after lowering the count, whether the prompt closes cleanly and
+  the stack still moves (`stackuse-one`, `stackuse-move`, `stackuse-last`).
+- Whether the game writes the bag file during play or only at a save, why Live
+  procedure 1's bag file was not rewritten at its stop, and whether a stack's
+  count survives a save and a reload (`save-written`, `save-defs`,
+  `reload-stack-kept`), shown as Edible PAS Logos with their count.
+- What `IsStackable`'s item-info value is (the bag-stack reading 1), and under
+  what condition `InventoryGridAddToStack`'s later walk reads the bag's
+  `inventoryTab` (reading 2).
+
+The driver reads Live procedure 2's capture into four route tokens, which decide
+what the player build ships:
+
+- `merge-route: detour` when the merge-off control keeps two pieces apart and
+  the merged pickup, no duplicate, another act apart and a real logo apart all
+  pass; otherwise `merge-route: none`. If the merge-off control itself fails
+  (two pieces stacked with the merge off), no token is set: the session then
+  measured nothing about the merge.
+- `bagstackuse-route: game-takes-one` when the game's own confirm leaves the
+  stack one smaller; `bagstackuse-route: take-one` when it clears the cell and
+  the take-one path (count lowered, `false` answered, the stack still moving,
+  the last piece `true`) passes; else `bagstackuse-route: none`.
+- `stackdraw-route: game` when the bag draws a count on the stack's cell; else
+  `stackdraw-route: none`.
+- `save-route: kept` when the bag file was written, holds the pieces' keys and
+  counts, and a reload shows the stacks with their counts; `save-route:
+  not-written` when the file was not written; `save-route: lost` when it was
+  written but the keys or the reloaded counts are wrong.
+
+The player build arms the merge only on `merge-route: detour`, `save-route:
+kept` and a `bagstackuse-route` of `game-takes-one` or `take-one`, with either
+`stackdraw-route`; any other combination goes back to the owner.

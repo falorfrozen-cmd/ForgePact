@@ -25,6 +25,13 @@ display sprite under item info key "11" (`icon`, the `sprite=` fields, `gem`'s
 `sprite11=`, `ground`), and two use modes (`usewatch allow`, `usewatch take
 all|one`) that act as branches inside detours the probe already has, so every
 script still carries one detour.
+
+After that session the owner kept pieces in the bag, stacked per act, so the
+probe gains `merge on|off`: it installs the shipped mod's one
+InventoryGridAddToStack detour (no detour of the probe's own), and prints one
+line per call carrying a soul piece (merged, or which pass) plus the first
+other call's result as the control; `bag` lines gain the item's cell and its
+key "11" sprite, and `status` the merge's counters.
 """
 
 import re
@@ -59,10 +66,16 @@ USE_CANDIDATES = {
 # Every reply line Live procedure 3 greps.
 REPLY_PREFIXES = ("status", "keys", "act", "base", "dress", "gem", "place", "pickup", "keytab", "bag", "usewatch",
                   "usecall", "use", "gemwatch", "gemroll", "portals", "portal", "portalwatch", "portalset",
-                  "portalroute", "portaloffset", "goto", "bosses", "kill", "shape", "icon", "ground")
+                  "portalroute", "portaloffset", "goto", "bosses", "kill", "shape", "icon", "ground", "merge")
 
 # The follow-up's subcommands (ctx "### The research probe").
 STACK_AND_ICON_SUBS = ("shape", "icon", "ground")
+
+# The bag merge's research verb (ctx "### The bag-stack probe").
+MERGE_SUBS = ("merge",)
+
+# The merge's pass reasons, as the probe's line names them.
+MERGE_PASS_WORDS = ("off", "not-piece", "no-target", "cap", "not-struct", "already-success", "read-failed")
 
 # Subcommands Replan 1 removed, with the state behind them.
 REMOVED = ("stackhook", "spawn", "spawnroute", "spawnoffset", "take", "sprite")
@@ -140,7 +153,7 @@ class SoulProbeContractTests(unittest.TestCase):
         command = self.body("static void SoulProbeCommand(")
         for sub in ("status", "keys", "act", "base", "dress", "gem", "place", "pickup", "keytab", "bag", "portals",
                     "portal", "portalset", "goto", "bosses", "portalroute", "portaloffset", "usewatch", "gemwatch",
-                    "kill") + STACK_AND_ICON_SUBS:
+                    "kill") + STACK_AND_ICON_SUBS + MERGE_SUBS:
             self.assertIn('sub == "%s"' % sub, command, sub)
 
     def test_replan_1_removed_the_stack_hook_the_spawn_the_take_and_the_sprite(self):
@@ -157,6 +170,11 @@ class SoulProbeContractTests(unittest.TestCase):
             self.assertIn(field, status, field)
         for field in ("stackhook=", "sprite=", "take=", "spawnroute=", "spawned=", "armed=", "suppressed="):
             self.assertNotIn(field, status, field)
+        # The bag merge is not the removed stack hook: no veto, and its state
+        # is the shipped mod's (SoulPieceMerge*), which the status line reads.
+        for field in (" merge=", " mergecalls=", " merged=", " mergepass="):
+            self.assertIn(field, status, field)
+        self.assertIn("g_SoulPieceMerge.armed", status)
 
     # ---- placement ---------------------------------------------------------------------
     def test_pieces_are_placed_through_the_loader_not_loot_ground_create(self):
@@ -415,9 +433,16 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertIn("SpHp(h)", bosses)
 
     def test_no_stack_hook_and_no_boss_is_created(self):
-        self.assertNotIn("ItemsAreStackable", self.section)
-        for name in ("InventoryGridAddToStack", "GridAddToStack", "AddToInventory"):
+        # The probe detours nothing on the pickup or stack path: `merge on`
+        # installs the shipped mod's one InventoryGridAddToStack detour
+        # (test_probe_merge_rides_one_inventory_grid_add_to_stack_detour), and
+        # no script there is named in the probe at all.
+        for pattern in (r"(?<![A-Za-z0-9])ItemsAreStackable\b", r"(?<![A-Za-z0-9])IsStackable\b",
+                        r"(?<![A-Za-z0-9])StashAddToStack\b"):
+            self.assertIsNone(re.search(pattern, self.section), pattern)
+        for name in ("InventoryGridAddToStack", "GridAddToStack", "AddToInventory", "InventoryGridCanAddToStack"):
             self.assertNotIn("gml_Script_%s" % name, self.section, name)
+        self.assertEqual(1, len(hook_one_script_calls(self.section)), "the use watch's, and no stack detour")
         for boss in BOSS_OBJECTS:
             for call in calls_of(self.section, "SpOpenPortal") + re.findall(r"[^\n]*instance_create_depth[^\n]*", self.section):
                 self.assertNotIn(boss, call, boss)
@@ -609,6 +634,102 @@ class SoulProbeContractTests(unittest.TestCase):
         self.assertIn("g_Sp.take = SpTakeMode::Off;", off)
         self.assertIn('"soulprobe usewatch: allow script="', usewatch)
         self.assertIn('"soulprobe usewatch: take "', usewatch)
+
+    # ---- the bag merge (after the follow-up's Live procedure 1) ----------------------------------
+    def test_probe_merge_rides_one_inventory_grid_add_to_stack_detour(self):
+        command = self.body("static void SoulProbeCommand(")
+        merge = command[command.index('if (sub == "merge")'):]
+        merge = merge[:merge.index("\n    }\n") + 6]
+        # `merge on` installs the shipped mod's detour and arms it; `off` disarms.
+        on = merge[merge.index('if (arg == "on"'):merge.index('else if (arg == "off"')]
+        self.assertIn("SoulPieceInstallMerge();", on)
+        self.assertLess(on.index("SoulPieceInstallMerge();"), on.index("g_SoulPieceMerge.armed = true;"))
+        self.assertIn("g_SoulPieceMerge.armed = false;", merge[merge.index('else if (arg == "off"'):])
+        self.assertNotIn("HookOneScript", merge, "the probe adds no detour of its own")
+        self.assertIn('"soulprobe merge: "', merge)
+        self.assertIn('" route=" + g_SoulPieceMerge.route', merge)
+        # One detour on InventoryGridAddToStack in the whole plugin, by its SDK
+        # constant, in the shipped section; still one install site in the probe.
+        pattern = r'kSoulPieceMergeName|gml_Script_InventoryGridAddToStack\b|"InventoryGridAddToStack"'
+        installs = [c for c in hook_one_script_calls(self.code) if re.search(pattern, c)]
+        self.assertEqual(1, len(installs))
+        self.assertIn("HookOneScript(kSoulPieceMergeName,", installs[0])
+        self.assertEqual(1, len(hook_one_script_calls(self.section)))
+        self.assertIn("kSoulPieceMergeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);",
+                      self.player)
+        # The probe's line rides the shipped detour, research build only.
+        hook = function_body(self.plugin_code, "static RValue& Hook_SoulPieceMerge(")
+        self.assertRegex(hook, r"#ifndef FORGEPACT_RELEASE\s*SoulProbeMergeLine\(report, res\);\s*#endif")
+        self.assertNotIn("SoulProbeMergeLine", function_body(self.player, "static RValue& Hook_SoulPieceMerge("))
+        self.assertIn("static void SoulProbeMergeLine(", self.section_raw)
+        # Off at startup; the status line says so.
+        self.assertIn("bool armed = false;", self.code)
+        # Negative control for the install scan: a second install is found.
+        doubled = ('HookOneScript(kSoulPieceMergeName, "a", (PVOID)f, &o, &n);\n'
+                   'HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack), "b", (PVOID)f, &o);')
+        self.assertEqual(2, len([c for c in hook_one_script_calls(doubled) if re.search(pattern, c)]))
+
+    def test_probe_merge_keeps_the_games_result_and_sets_success(self):
+        line = self.body("static void SoulProbeMergeLine(")
+        self.assertIn("if (!g_SoulPieceMerge.armed) return;", line, "nothing while the merge is off")
+        for field in ('"soulprobe merge: act="', '" into="', '" o="', '" cell="', '" success="', '" hash="', '" fields="',
+                      '" pass("', '"soulprobe merge: first-other success="'):
+            self.assertIn(field, line, field)
+        # The merge line's fields, in the order the procedure reads them.
+        merged = re.search(r'Out\("soulprobe merge: act=" \+ std::to_string\(r\.act\) \+ " into=".*?\);', line, re.S).group(0)
+        at = [merged.index('"%s' % f if f.startswith(" ") else f) for f in
+              (" into=", " o=", " cell=", " success=", " hash=", " fields=")]
+        self.assertEqual(sorted(at), at)
+        # The line only reads: the result it prints is the one the detour returned.
+        for write in ("variable_struct_set", "variable_instance_set", "RefreshItemHash"):
+            self.assertNotIn(write, line, write)
+        # The first call carrying anything else prints once per `merge on`: the control.
+        self.assertIn("if (g_Sp.mergeOtherSeen) return;", line)
+        command = self.body("static void SoulProbeCommand(")
+        on = command[command.index('if (arg == "on"', command.index('if (sub == "merge")')):]
+        self.assertIn("g_Sp.mergeOtherSeen = false;", on[:on.index("else if")])
+        # Every pass reason has its word, and the merge its own; the first four
+        # are the core's MergeVerdict words, in its order.
+        words = re.search(r"kSoulPieceMergeOutcomeWords\[\] = \{(?P<w>[^}]*)\}", self.code).group("w")
+        listed = re.findall(r'"([a-z-]+)"', words)
+        for word in MERGE_PASS_WORDS + ("hash-failed", "merged"):
+            self.assertIn(word, listed, word)
+        core = strip_comments(CORE_SRC.read_text(encoding="utf-8"))
+        core_words = re.findall(r'"([a-z-]+)"', re.search(r"kMergeVerdictWords\[\] = \{([^}]*)\}", core).group(1))
+        self.assertEqual(core_words[:4], listed[:4])
+        self.assertIn("(int)SoulPieceMergePass::Cap == (int)SoulCore::MergeVerdict::Cap, \"the core's verdicts, in its order\");",
+                      self.code)
+        # The shipped merge sets `success` true only after the count and the hash,
+        # and never writes a false one.
+        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
+        self.assertLess(into.index("RefreshItemHash(target.item)"), into.index('{ res, RValue("success"), RValue(true) }'))
+        self.assertNotIn("RValue(false)", into)
+
+    def test_probe_bag_lines_carry_the_count_and_cell(self):
+        bag = self.body("static void SpBagCommand()")
+        line = re.search(r'Out\("soulprobe bag: " \+ s\.fingerprint.*?\);', bag, re.S).group(0)
+        fields = (" t=", " b=", " a=", " o=", " cells=", " cell=", " name=", " sprite=", " piece=")
+        at = [line.find('"%s' % f) for f in fields]
+        self.assertNotIn(-1, at, line)
+        self.assertEqual(sorted(at), at, "fields in order")
+        self.assertIn("SpInfoSpriteName(s.item.info)", line, "key \"11\"'s sprite, by name")
+        self.assertIn("SpNum(s.tab)", line)
+        # The cell is the item's first cell in the walk (its top-left: the
+        # column, then the row), the rule the merge writes into the game's result.
+        walk = self.body("static void SpWalkGrid(")
+        self.assertIn("s.tab = tab;", walk)
+        self.assertIn("s.x = c;", walk)
+        self.assertIn("s.y = r;", walk)
+        self.assertIn("SpWalkGrid(row, lookup, stacks, cells, depth + 1, (double)r)", walk, "a grid per bag tab: its index")
+        shipped = self.body("static void SoulPieceWalkTab(")
+        self.assertIn("e.tab = tab;", shipped)
+        self.assertIn("e.x = c;", shipped)
+        self.assertIn("e.y = r;", shipped)
+        # The summary line and the status line keep their fields.
+        self.assertIn('"soulprobe bag: route="', bag)
+        status = self.body("static void SpStatus()")
+        for field in (" merge=", " mergecalls=", " merged=", " mergepass="):
+            self.assertIn('"%s' % field, status, field)
 
     def test_probe_stack_and_icon_commands_are_research_only(self):
         self.assertNotIn("soulprobe", self.allowlist)

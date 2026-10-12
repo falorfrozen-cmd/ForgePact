@@ -16,9 +16,17 @@ test_soul_probe_contract.py: off by default and a player command; the drop a
 consumer of the shared DropGems detour, placed through the loader; one
 both-route detour on PotionUse that never hands a piece to the base's own use;
 the transfer and the zone-state reset by SDK name, the reset only on the boss
-room and before the travel; no portal, no stack hook, no boss spawn; no hook
-before the mod is turned on or a piece is seen; the research probe stays
-research-only.
+room and before the travel; no portal, no boss spawn; no hook before the mod
+is turned on or a piece is seen; the research probe stays research-only.
+
+The follow-up (forgepact-197-piece-icon-stack, after its Live procedure 1)
+stacks pieces of one act in the bag through one both-route detour on
+InventoryGridAddToStack: the game's call runs first, only a soul piece with a
+same-act piece in the bag (the core's DecideMerge) changes anything, and then
+only the target's count and hash and the game's own result's `success` and
+cell. Every other script on the pickup and stack path stays undetoured, and
+nothing is vetoed. Until the player build arms it, only the research verb
+(`soulprobe merge on`) installs it.
 """
 
 import re
@@ -41,6 +49,15 @@ SECTION_END = "// ===== Boss soul pieces research probe (`soulprobe`, ForgePact 
 # The act bosses a pentagram brings out, as their SDK names: the mod creates none.
 BOSS_OBJECTS = ("Gurag_obj", "Reaper_obj", "Anubis_obj", "Damien_obj", "Karp_King_obj", "Satan_obj", "Mevius_obj",
                 "Odin_Phase_1_obj", "Cthulhu_obj", "Enemy_Child_Boss_obj")
+
+# The pickup and stack scripts the mod never detours or calls: everything on
+# that path but InventoryGridAddToStack, the one script the merge rides.
+OTHER_STACK_PATH = (r"(?<![A-Za-z0-9])ItemsAreStackable\b", r"(?<![A-Za-z0-9])IsStackable\b", r"(?<!Inventory)GridAddToStack",
+                    r"(?<![A-Za-z0-9])AddToInventory\b", r"(?<![A-Za-z0-9])StashAddToStack\b", r"InventoryGridCanAddToStack")
+
+# The merge detour's install, by its SDK constant.
+MERGE_INSTALL = ('HookOneScript(kSoulPieceMergeName, "fp_soulpiece_merge", (PVOID)Hook_SoulPieceMerge, '
+                 '&g_SoulPieceOrigMerge, &native)')
 
 
 def hook_one_script_calls(code):
@@ -157,7 +174,9 @@ class SoulPieceContractTests(unittest.TestCase):
         self.assertIn('HookOneScript(kSoulPieceUseName, "fp_soulpiece_use", (PVOID)Hook_SoulPieceUse, &g_SoulPieceOrigUse, &native)',
                       install)
         self.assertIn("if (g_SoulPiece.useTried) return;", install, "installed once")
-        self.assertEqual(1, len(hook_one_script_calls(self.section)), "the mod's only detour")
+        installs = hook_one_script_calls(self.section)
+        self.assertEqual(2, len(installs), "PotionUse's and InventoryGridAddToStack's, and no third")
+        self.assertEqual(1, len([c for c in installs if "kSoulPieceUseName" in c]))
         self.assertNotIn("HookOneScriptTable", self.section)
         self.assertNotIn("MmCreateHook", self.section)
         hook = self.body("static RValue& Hook_SoulPieceUse(", self.player)
@@ -352,9 +371,17 @@ class SoulPieceContractTests(unittest.TestCase):
         self.assertFalse(gate_precedes("SoulPieceInstallUse();\n" + gate, gate, "SoulPieceInstallUse();"))
 
     def test_no_stack_or_spawn_route_ships(self):
-        for name in ("ItemsAreStackable", "InventoryGridAddToStack", "GridAddToStack", "AddToInventory", "gml_Script_sCP",
-                     "instance_destroy", "instance_copy"):
-            self.assertNotIn(name, self.section, name)
+        # The stack path carries exactly one detour, InventoryGridAddToStack's
+        # merge (test_the_only_stack_path_detour_is_inventory_grid_add_to_stack);
+        # every other script on it is neither detoured nor called.
+        for pattern in OTHER_STACK_PATH + (r"gml_Script_sCP\b", r"instance_destroy", r"instance_copy"):
+            self.assertIsNone(re.search(pattern, self.section), pattern)
+        # Negative control for the patterns: each other script is found, and
+        # the merge's own script is not taken for GridAddToStack.
+        for name in ("ItemsAreStackable", "IsStackable", "GridAddToStack", "AddToInventory", "StashAddToStack",
+                     "InventoryGridCanAddToStack"):
+            self.assertTrue(any(re.search(p, "gml_Script_%s" % name) for p in OTHER_STACK_PATH), name)
+        self.assertFalse(any(re.search(p, "gml_Script_InventoryGridAddToStack") for p in OTHER_STACK_PATH))
         for boss in BOSS_OBJECTS:
             self.assertNotIn(boss, self.section, boss)
         self.assertIsNone(re.search(r'"instance_create\w*"', self.section))
@@ -369,6 +396,82 @@ class SoulPieceContractTests(unittest.TestCase):
                  + re.findall(r"CallGameScriptEx\(\w+, kSoulPiece\w+Full,", self.section))
         self.assertTrue(calls)
         self.assertEqual(len(calls), len(named))
+
+    # ---- the bag merge ----------------------------------------------------------------------
+    def test_the_only_stack_path_detour_is_inventory_grid_add_to_stack(self):
+        self.assertIn("kSoulPieceMergeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);",
+                      self.section)
+        install = self.body("static void SoulPieceInstallMerge()")
+        self.assertIn(MERGE_INSTALL, install)
+        self.assertIn("if (g_SoulPieceMerge.tried) return;", install, "installed once")
+        # One detour on the script in the whole plugin, either build, and it is this one.
+        pattern = r'kSoulPieceMergeName|gml_Script_InventoryGridAddToStack\b|"InventoryGridAddToStack"'
+        self.assertEqual([MERGE_INSTALL], calls_naming(self.code, pattern))
+        # No player-build path reaches the installer yet: in the player build
+        # it is only defined; the research verb `soulprobe merge on` calls it.
+        self.assertEqual(1, len(re.findall(r"\bSoulPieceInstallMerge\(\)", self.player)), "its definition only")
+        self.assertIn("SoulPieceInstallMerge();", self.body("static void SoulProbeCommand("))
+        self.assertIn("bool armed = false;", self.section, "off at startup")
+        self.assertNotIn("g_SoulPieceMerge.armed = true", self.shipped, "only the research verb arms it")
+        # The game's call runs first, every time, with the call's own arguments,
+        # and its result is what the detour returns.
+        call = self.body("static RValue& SoulPieceMergeCall(")
+        self.assertEqual(1, call.count("orig("))
+        self.assertIn("RValue& res = orig ? orig(S, O, R, argc, A) : R;", call)
+        self.assertLess(call.index("orig(S, O, R, argc, A)"), call.index("SoulPieceMergeInto("))
+        self.assertIn("return res;", call)
+        self.assertIn("++g_SoulPieceMerge.calls;", call, "every call is counted")
+        self.assertIn("++g_SoulPieceMerge.outcomes[", call, "and its outcome, by reason")
+        # Only a soul piece, decided by the core, ever changes anything; every
+        # pass is decided before the bag is read or anything is written.
+        into = self.body("static SoulPieceMergePass SoulPieceMergeInto(")
+        first_write = into.index('"variable_struct_set"')
+        for gate in ("if (!g_SoulPieceMerge.armed) return SoulPieceMergePass::Off;",
+                     "if (!SoulCore::IsAct(rep.act)) return SoulPieceMergePass::NotPiece;",
+                     "return SoulPieceMergePass::NotStruct;", "return SoulPieceMergePass::AlreadySuccess;",
+                     "return SoulPieceMergePass::ReadFailed;"):
+            self.assertTrue(gate_precedes(into, gate, "SoulCore::DecideMerge("), gate)
+            self.assertLess(into.index(gate), first_write, gate)
+        self.assertIn("rep.act = SoulCore::BagPieceActOfItem(incoming, g_SoulPiece.baseIndex);", into)
+        self.assertTrue(gate_precedes(into, "SoulPieceMergePass::AlreadySuccess", "SoulPieceReadBag("),
+                        "a result the game already made a success is left alone")
+        self.assertIn("SoulCore::DecideMerge(g_SoulPieceMerge.armed, incoming, g_SoulPiece.baseIndex, bag)", into)
+        self.assertIn("if (entries[i].item.m_Object == A[1]->m_Object) continue;", into, "never its own target")
+        # On a merge: the target's count, then its hash, then the game's own result.
+        count = into.index('{ target.def, RValue("o"), RValue((double)d.count) }')
+        hashed = into.index("RefreshItemHash(target.item)")
+        success = into.index('{ res, RValue("success"), RValue(true) }')
+        self.assertLess(count, hashed)
+        self.assertLess(hashed, success)
+        for field in ('RValue("tabNumber"), RValue(target.tab)', 'RValue("x"), RValue(target.x)', 'RValue("y"), RValue(target.y)'):
+            self.assertIn(field, into[success:], field)
+        # A failed refresh puts the count back and passes; nothing is a veto:
+        # no false success, no call skipped, no other result field written.
+        failed = into[hashed:success]
+        self.assertIn("return SoulPieceMergePass::HashFailed;", failed)
+        self.assertIn("SoulPieceRestoreCount(target.def, hadCount, oldCount);", failed)
+        for body in (call, into):
+            self.assertNotIn("RValue(false)", body)
+        self.assertEqual({"o", "success", "tabNumber", "x", "y"},
+                         set(re.findall(r'"variable_struct_set", \{ \w+(?:\.\w+)?, RValue\("(\w+)"\)', into)))
+        self.assertIsNone(re.search(r"(?i)\bveto", self.section))
+        # The bag is read the way `soulprobe bag` measured it, never through a
+        # blind GetProfileInventoryData call (§ 9.4).
+        bag = self.body("static bool SoulPieceReadBag(")
+        self.assertIn("HeroSiege::Objects::GameObject::New_Inventory_Data_obj", bag)
+        self.assertIn('RValue("inventoryTab")', bag)
+        self.assertNotIn("GetProfileInventoryData", self.section)
+        walk = self.body("static void SoulPieceWalkTab(")
+        self.assertIn("ApCallScript(kSoulPieceFromFpName, lookup, { fp, RValue(0.0) }, item)", walk)
+        self.assertIn("kSoulPieceFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);",
+                      self.section)
+        # The research build's line rides the detour; the player build's hook is the merge alone.
+        hook = function_body(self.player, "static RValue& Hook_SoulPieceMerge(")
+        self.assertIn("SoulPieceMergeCall(S, O, R, argc, A, report)", hook)
+        self.assertNotIn("SoulProbe", hook)
+        # Negative control for the order scan: a write ahead of the decision is caught.
+        self.assertFalse(gate_precedes('"variable_struct_set";\nSoulCore::DecideMerge(', "SoulCore::DecideMerge(",
+                                       '"variable_struct_set"'))
 
     def test_soulprobe_is_research_only(self):
         self.assertNotIn("soulprobe", self.allowlist)

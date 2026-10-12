@@ -52535,7 +52535,14 @@ static void EvCountCommand(const std::string& rest)
 //     ZoneStateExists for `cleared`, then NetworkRoomGoto(<boss room>) with the
 //     player as self (Live procedure 3's goto-travel). All four are called by
 //     name through their hs-game-sdk constants; none is detoured here.
-//     No portal object, no boss spawn, nothing on the add or stack path.
+//     No portal object, no boss spawn.
+//   - The bag merge: one both-route detour on InventoryGridAddToStack, the
+//     stack script every consumable's pickup reaches, that runs the game's
+//     own call first and, only for a soul piece with a piece of the same act
+//     already in the bag (the core's DecideMerge), adds the piece to that
+//     stack and marks the game's own result successful. The only detour on
+//     the pickup and stack path; it vetoes nothing. Until the player build
+//     arms it, only the research verb installs it (`soulprobe merge on`).
 //   - Installs: nothing before the first `soulpiece 1` or before the dress
 //     recognised a piece; then, once a player exists (a drop hook installed at
 //     character select stalls the runner, § 15), the PotionUse detour, and the
@@ -52553,8 +52560,13 @@ static constexpr const char* kSoulPieceZoneResetFull = HeroSiege::Scripts::gml_S
 // The travel: the game's own script, which sets the room up before room_goto
 // (§ 21.5); never the raw room_goto builtin.
 static constexpr const char* kSoulPieceTravelFull = HeroSiege::Scripts::gml_Script_NetworkRoomGoto.data();
-// The one script this mod detours, by its short name for HookOneScript.
+// The two scripts this mod detours, by their short names for HookOneScript:
+// the use, and the bag merge's stack script.
 static constexpr const char* kSoulPieceUseName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PotionUse);
+static constexpr const char* kSoulPieceMergeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddToStack);
+// The bag's item lookup, by its short name for ApCallScript (script_execute),
+// the call `soulprobe bag` read the bag through.
+static constexpr const char* kSoulPieceFromFpName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemFromFingerprint);
 static_assert((int)HeroSiege::Items::ItemType::Consumable == SoulCore::kBaseItemType
               && SoulCore::kBaseItemType == SoulCore::kBaseCategory, "a piece's base is a consumable");
 
@@ -52914,6 +52926,304 @@ static void SoulPieceInstallUse()
         + (native ? std::string() : std::string(" - a piece's use may not be seen; its right-click is not handled")));
 }
 
+// ---- the bag merge ------------------------------------------------------------------------
+// Pieces of one act stack in the bag (owner, 2026-10-12, after the follow-up's
+// Live procedure 1). The game's own stack scripts take classes 12 to 15 only and
+// refuse a class-11 item before comparing anything (static reading), so a
+// piece never stacks by itself. One both-route detour on InventoryGridAddToStack,
+// the stack script a consumable's pickup reaches (#197 Live procedure 3), runs
+// the game's own call first, with the call's own arguments, and keeps the
+// game's result. Only when the merge is armed, the result is a struct whose
+// `success` is not true, the item argument (the second) is a legacy soul piece
+// and the core's DecideMerge names a bag item of the same act with room under
+// the cap does it change anything: that item's count `o` rises by the incoming
+// count, its hash is refreshed as the dress does (ItemCheckHash refuses a stale
+// one), and the game's own result gets `success` true and the target's tab and
+// cell in `tabNumber`, `x`, `y`; every other field stays as the game wrote it,
+// and the pickup finishes as for a stack the game made itself. Anything else, a
+// failed read included, returns the game's result untouched, counted by
+// reason. A call that carries no soul piece is never changed: nothing is
+// vetoed, and with ForgePact removed nothing merges a piece at all.
+
+// What one call came to. The first four are the core's MergeVerdict, in its
+// order; the rest are the adapter's own reads, then the merge itself.
+enum class SoulPieceMergePass { Off, NotPiece, NoTarget, Cap, NotStruct, AlreadySuccess, ReadFailed, HashFailed, Merged, Count };
+static constexpr const char* kSoulPieceMergeOutcomeWords[] = {
+    "off", "not-piece", "no-target", "cap", "not-struct", "already-success", "read-failed", "hash-failed", "merged" };
+static constexpr int kSoulPieceMergeOutcomeCount = static_cast<int>(SoulPieceMergePass::Count);
+static_assert(sizeof(kSoulPieceMergeOutcomeWords) / sizeof(kSoulPieceMergeOutcomeWords[0]) == kSoulPieceMergeOutcomeCount);
+static_assert((int)SoulPieceMergePass::Off == (int)SoulCore::MergeVerdict::Off
+              && (int)SoulPieceMergePass::NotPiece == (int)SoulCore::MergeVerdict::NotPiece
+              && (int)SoulPieceMergePass::NoTarget == (int)SoulCore::MergeVerdict::NoTarget
+              && (int)SoulPieceMergePass::Cap == (int)SoulCore::MergeVerdict::Cap, "the core's verdicts, in its order");
+
+struct SoulPieceMergeState {
+    bool armed = false;            // the merge decides; off at startup
+    bool tried = false;
+    std::string route = "none";
+    long calls = 0;                // every call the detour saw
+    long outcomes[kSoulPieceMergeOutcomeCount] = {};
+};
+static SoulPieceMergeState g_SoulPieceMerge;
+static PFUNC_YYGMLScript g_SoulPieceOrigMerge = nullptr;
+
+// One call, as the research build's line prints it.
+struct SoulPieceMergeReport {
+    SoulPieceMergePass outcome = SoulPieceMergePass::Off;
+    bool seeded = false;           // the item argument carries a reserved seed
+    int act = 0;                   // the core's act of the item argument; 0: not a piece
+    std::string into;              // the target's fingerprint
+    long long before = 0, after = 0;
+    double tab = -1, x = -1, y = -1;
+    std::string successBefore = "-";
+    std::string hash = "-";
+};
+
+// One bag item: its fingerprint, the item struct and its definition, what the
+// core reads of it, and where it starts.
+struct SoulPieceBagEntry {
+    std::string fingerprint;
+    RValue item, def;
+    SoulCore::BagItem read;
+    double tab = 0, x = -1, y = -1;
+};
+
+// An item struct as the merge reads it: its class and its definition's `b`,
+// `c`, seed `a` and count `o` (0 when it carries none). False when it is not
+// item-shaped.
+static bool SoulPieceReadBagItem(const RValue& item, SoulCore::BagItem& out, RValue& def)
+{
+    out = SoulCore::BagItem{};
+    if (!ApIsPlainStruct(item) || !CmMember(item, "itemDefinitionStruct", def) || def.m_Kind != VALUE_OBJECT) return false;
+    double t = -1, b = -1, c = 0, a = 0, o = 0;
+    if (!TryStructNumber(item, "itemType", t) || std::fabs(t) > 1.0e6 || !TryStructNumber(def, "b", b)) return false;
+    TryStructNumber(def, "c", c);
+    TryStructNumber(def, "a", a);
+    TryStructNumber(def, "o", o);
+    out.itemType = static_cast<int>(t);
+    out.b = b;
+    out.c = c;
+    out.seed = std::fabs(a) < 9.0e15 ? static_cast<long long>(a) : 0;
+    out.count = std::fabs(o) < 9.0e15 ? std::llround(o) : 0;
+    return true;
+}
+
+// One bag tab's grid (rows of cells): one entry per item, at the first cell
+// the walk meets it in, its top-left (x the column, y the row, taking the grid
+// as rows of cells as § 9.1 measured a grid node's; the bag's own orientation
+// is not established). The item is read from the cell or, when the cell holds
+// only its fingerprint (§ 9.1), through GetItemFromFingerprint(<fingerprint>,
+// 0) by name with `lookup` as self, the call `soulprobe bag` made. An item that
+// does not read is left out: it is no target.
+static void SoulPieceWalkTab(const RValue& grid, double tab, CInstance* lookup, std::vector<SoulPieceBagEntry>& out,
+                             std::vector<std::string>& seen)
+{
+    const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
+    for (int r = 0; r < rows && r < 64; ++r) {
+        const RValue row = g_Yytk->CallBuiltin("array_get", { grid, RValue((double)r) });
+        if (row.m_Kind != VALUE_ARRAY) continue;
+        const int cols = (int)g_Yytk->CallBuiltin("array_length", { row }).ToDouble();
+        for (int c = 0; c < cols && c < 64; ++c) {
+            const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
+            if (ApIsEmptyCell(cell)) continue;
+            RValue fp;
+            std::string text;
+            if (!ApCellFingerprint(cell, fp, text)) continue;
+            if (std::find(seen.begin(), seen.end(), text) != seen.end()) continue;
+            seen.push_back(text);
+            SoulPieceBagEntry e;
+            e.fingerprint = text;
+            e.tab = tab;
+            e.x = c;
+            e.y = r;
+            if (SoulPieceReadBagItem(cell, e.read, e.def)) {
+                e.item = cell;
+            } else {
+                RValue item;
+                if (!lookup || !ApCallScript(kSoulPieceFromFpName, lookup, { fp, RValue(0.0) }, item)
+                    || !SoulPieceReadBagItem(item, e.read, e.def)) continue;
+                e.item = item;
+            }
+            out.push_back(std::move(e));
+        }
+    }
+}
+
+// The bag, as `soulprobe bag` read it in #197 Live procedure 3:
+// New_Inventory_Data_obj's `inventoryTab`, a grid per bag tab (450 cells),
+// never a blind GetProfileInventoryData call (§ 9.4: called without its
+// window as self it crashed the game). The lookup's self is Console_Save_obj,
+// else the inventory data instance, as the probe's. False, with `why`, when the
+// instance or the variable is not there.
+static bool SoulPieceReadBag(std::vector<SoulPieceBagEntry>& out, std::string& why)
+{
+    out.clear();
+    RValue h;
+    CInstance* inst = nullptr;
+    if (!CmInstance(HeroSiege::Objects::GameObject::New_Inventory_Data_obj, h, inst)) { why = "no inventory data instance"; return false; }
+    if (!g_Yytk->CallBuiltin("variable_instance_exists", { h, RValue("inventoryTab") }).ToBoolean()) { why = "no inventoryTab"; return false; }
+    const RValue tabs = g_Yytk->CallBuiltin("variable_instance_get", { h, RValue("inventoryTab") });
+    if (tabs.m_Kind != VALUE_ARRAY) { why = "inventoryTab is not an array"; return false; }
+    CInstance* lookup = CmSaveInstance();
+    if (!lookup) lookup = inst;
+    // A grid per bag tab when its rows hold grids, else one grid (tab 0).
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { tabs }).ToDouble();
+    bool perTab = false;
+    if (n > 0) {
+        const RValue first = g_Yytk->CallBuiltin("array_get", { tabs, RValue(0.0) });
+        perTab = first.m_Kind == VALUE_ARRAY && g_Yytk->CallBuiltin("array_length", { first }).ToDouble() > 0
+              && g_Yytk->CallBuiltin("array_get", { first, RValue(0.0) }).m_Kind == VALUE_ARRAY;
+    }
+    std::vector<std::string> seen;
+    if (!perTab) {
+        SoulPieceWalkTab(tabs, 0, lookup, out, seen);
+        return true;
+    }
+    for (int t = 0; t < n && t < 64; ++t) {
+        const RValue grid = g_Yytk->CallBuiltin("array_get", { tabs, RValue((double)t) });
+        if (grid.m_Kind == VALUE_ARRAY) SoulPieceWalkTab(grid, t, lookup, out, seen);
+    }
+    return true;
+}
+
+// The runtime's truthiness for a result field: a bool as itself, a number
+// above 0.5; anything else is not true.
+static bool SoulPieceTruthy(const RValue& v)
+{
+    if (v.m_Kind == VALUE_BOOL) return v.ToBoolean();
+    double n = 0;
+    return v.m_Kind != VALUE_REF && ApNumber(v, n) && n > 0.5;
+}
+
+// A result field as the line prints it: `true`/`false`, a whole number, or
+// what Describe makes of anything else.
+static std::string SoulPieceValueText(const RValue& v)
+{
+    if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
+    double n = 0;
+    if (v.m_Kind != VALUE_REF && ApNumber(v, n) && n == std::floor(n) && std::fabs(n) < 1.0e15) return std::to_string((long long)n);
+    return Describe(v);
+}
+
+// The target's count put back as it was (or removed, when it had none), then
+// its hash refreshed over it.
+static void SoulPieceRestoreCount(const RValue& def, bool hadCount, const RValue& oldCount)
+{
+    try {
+        if (hadCount) g_Yytk->CallBuiltin("variable_struct_set", { def, RValue("o"), oldCount });
+        else g_Yytk->CallBuiltin("variable_struct_remove", { def, RValue("o") });
+    } catch (...) {}
+}
+
+// The merge, on the game's own result `res` (see the block comment above).
+static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, SoulPieceMergeReport& rep)
+{
+    if (!g_SoulPieceMerge.armed) return SoulPieceMergePass::Off;
+    // The item being picked up is the call's second argument (static reading).
+    SoulCore::BagItem incoming;
+    RValue incomingDef;
+    if (argc < 2 || !A || !A[1] || g_SoulPiece.baseIndex < 0 || !SoulPieceReadBagItem(*A[1], incoming, incomingDef))
+        return SoulPieceMergePass::NotPiece;
+    rep.seeded = SoulCore::ActOfSeed(incoming.seed) != 0;
+    rep.act = SoulCore::BagPieceActOfItem(incoming, g_SoulPiece.baseIndex);
+    if (!SoulCore::IsAct(rep.act)) return SoulPieceMergePass::NotPiece;
+    if (!ApIsPlainStruct(res)) return SoulPieceMergePass::NotStruct;
+    RValue success;
+    const bool hasSuccess = CmMember(res, "success", success);
+    if (hasSuccess) rep.successBefore = SoulPieceValueText(success);
+    if (hasSuccess && SoulPieceTruthy(success)) return SoulPieceMergePass::AlreadySuccess;
+    std::vector<SoulPieceBagEntry> entries;
+    std::string why;
+    if (!SoulPieceReadBag(entries, why)) return SoulPieceMergePass::ReadFailed;
+    std::vector<SoulCore::BagItem> bag;
+    std::vector<size_t> at;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].item.m_Object == A[1]->m_Object) continue;
+        bag.push_back(entries[i].read);
+        at.push_back(i);
+    }
+    const SoulCore::MergeDecision d = SoulCore::DecideMerge(g_SoulPieceMerge.armed, incoming, g_SoulPiece.baseIndex, bag);
+    if (d.verdict != SoulCore::MergeVerdict::Merge)
+        return d.verdict < SoulCore::MergeVerdict::Merge ? static_cast<SoulPieceMergePass>(static_cast<int>(d.verdict))
+                                                          : SoulPieceMergePass::ReadFailed;
+    if (d.target < 0 || static_cast<size_t>(d.target) >= at.size()) return SoulPieceMergePass::ReadFailed;
+    SoulPieceBagEntry& target = entries[at[static_cast<size_t>(d.target)]];
+    rep.into = target.fingerprint;
+    rep.tab = target.tab;
+    rep.x = target.x;
+    rep.y = target.y;
+    rep.before = SoulCore::StackCount(target.read.count);
+    // The count, then the hash over it, then the game's own result.
+    RValue oldCount;
+    const bool hadCount = CmMember(target.def, "o", oldCount);
+    g_Yytk->CallBuiltin("variable_struct_set", { target.def, RValue("o"), RValue((double)d.count) });
+    if (!RefreshItemHash(target.item)) {
+        SoulPieceRestoreCount(target.def, hadCount, oldCount);
+        RefreshItemHash(target.item);
+        rep.hash = "failed";
+        return SoulPieceMergePass::HashFailed;
+    }
+    rep.hash = "refreshed";
+    try {
+        g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), RValue(true) });
+        g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("tabNumber"), RValue(target.tab) });
+        g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("x"), RValue(target.x) });
+        g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("y"), RValue(target.y) });
+    } catch (...) {
+        // The result could not say so: the count goes back, so the game
+        // places the piece apart rather than counting it twice.
+        SoulPieceRestoreCount(target.def, hadCount, oldCount);
+        RefreshItemHash(target.item);
+        if (hasSuccess) {
+            try { g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), success }); } catch (...) {}
+        }
+        return SoulPieceMergePass::ReadFailed;
+    }
+    rep.after = d.count;
+    return SoulPieceMergePass::Merged;
+}
+
+// The detour's body: the game's call first, then the merge on its result.
+static RValue& SoulPieceMergeCall(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A, SoulPieceMergeReport& rep)
+{
+    const PFUNC_YYGMLScript orig = g_SoulPieceOrigMerge;
+    RValue& res = orig ? orig(S, O, R, argc, A) : R;
+    ++g_SoulPieceMerge.calls;
+    try {
+        rep.outcome = SoulPieceMergeInto(res, argc, A, rep);
+    } catch (...) { rep.outcome = SoulPieceMergePass::ReadFailed; }
+    ++g_SoulPieceMerge.outcomes[static_cast<int>(rep.outcome)];
+    return res;
+}
+
+#ifndef FORGEPACT_RELEASE
+// `soulprobe merge` (research build): its line rides this detour; defined
+// with the probe, far below.
+static void SoulProbeMergeLine(const SoulPieceMergeReport& r, const RValue& result);
+#endif
+static RValue& Hook_SoulPieceMerge(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    SoulPieceMergeReport report;
+    RValue& res = SoulPieceMergeCall(S, O, R, argc, A, report);
+#ifndef FORGEPACT_RELEASE
+    SoulProbeMergeLine(report, res);
+#endif
+    return res;
+}
+
+// Installs the merge's detour, once. Until the player build arms it, only the
+// research verb (`soulprobe merge on`) calls this.
+static void SoulPieceInstallMerge()
+{
+    if (g_SoulPieceMerge.tried) return;
+    g_SoulPieceMerge.tried = true;
+    bool native = false;
+    const bool ok = HookOneScript(kSoulPieceMergeName, "fp_soulpiece_merge", (PVOID)Hook_SoulPieceMerge, &g_SoulPieceOrigMerge, &native);
+    g_SoulPieceMerge.route = !ok ? "failed(not found)" : native ? "both" : "table-only";
+    Out("soulpiece: the InventoryGridAddToStack detour is " + g_SoulPieceMerge.route
+        + (native ? std::string() : std::string(" - a piece's pickup may not be seen; pieces then do not stack")));
+}
+
 // ---- the transfer -------------------------------------------------------------------------
 // The pending transfer, once, on the frame tick after the detour decided it
 // (the context Live procedure 3's `soulprobe goto` ran in). Dropped as
@@ -53076,8 +53386,11 @@ static void SoulPieceCommand(const std::string& rest)
 // item info key "11") and the ground read (`ground`) hook nothing: the shapes
 // are values in the definition `place` builds, and the game's own stack check
 // is what keeps them apart or merges them.
-// Nothing on the add or stack path (ItemsAreStackable and the rest): Live
-// procedure 3's debugger watches those by their first bytes. craftprobe,
+// Nothing of its own on the add or stack path (ItemsAreStackable and the rest):
+// `merge on` installs the shipped mod's one InventoryGridAddToStack detour
+// (SoulPieceInstallMerge), and its line rides that detour (SoulProbeMergeLine);
+// the debugger watches the rest by their first bytes, so every debugger row is
+// armed before the first `merge on` or `usewatch`. craftprobe,
 // prospectprobe, the script trace tables and the pet relic trace detour some
 // of the scripts that debugger watches, and craftprobe and prospectprobe list
 // some use candidates too: arm none of them in a session that runs this probe.
@@ -53204,6 +53517,8 @@ struct SoulProbeState {
     double portalOffset = kSpPortalOffsetPx;
     long usecalls = 0, uses = 0, portals = 0, gemrolls = 0;
     int useLines = 0, gemLines = 0;
+    bool mergeOtherSeen = false;     // `merge on`'s control line, the first call carrying no piece, was printed
+    int mergeLines = 0;
 };
 static SoulProbeState g_Sp;
 // Whether no `usewatch` mode is armed (`log`, `use`, `allow`, `take`): every
@@ -53603,13 +53918,16 @@ struct SpStack {
     SpItem item;
     bool read = false;
     int cells = 0;
+    double tab = 0, x = -1, y = -1;   // the item's first cell in the walk, as the merge's SoulPieceWalkTab takes it
 };
 
 // One grid's items, one per fingerprint (an item spans its cells), each read
 // from its cell, or through GetItemFromFingerprint(<fingerprint>, 0) by name,
 // self `lookup`, when the cell holds only the fingerprint. A grid whose rows
-// hold grids (one per bag tab) is walked one level down.
-static void SpWalkGrid(const RValue& grid, CInstance* lookup, std::vector<SpStack>& stacks, int& cells, int depth = 0)
+// hold grids (one per bag tab) is walked one level down, each row's index its
+// tab. An item's cell is the first the walk meets: its tab, column and row.
+static void SpWalkGrid(const RValue& grid, CInstance* lookup, std::vector<SpStack>& stacks, int& cells, int depth = 0,
+                       double tab = 0)
 {
     try {
         const int rows = (int)g_Yytk->CallBuiltin("array_length", { grid }).ToDouble();
@@ -53620,7 +53938,7 @@ static void SpWalkGrid(const RValue& grid, CInstance* lookup, std::vector<SpStac
             for (int c = 0; c < cols && c < 64; ++c) {
                 const RValue cell = g_Yytk->CallBuiltin("array_get", { row, RValue((double)c) });
                 if (cell.m_Kind == VALUE_ARRAY) {
-                    if (depth < 1) SpWalkGrid(row, lookup, stacks, cells, depth + 1);
+                    if (depth < 1) SpWalkGrid(row, lookup, stacks, cells, depth + 1, (double)r);
                     break;
                 }
                 ++cells;
@@ -53634,6 +53952,9 @@ static void SpWalkGrid(const RValue& grid, CInstance* lookup, std::vector<SpStac
                 SpStack s;
                 s.fingerprint = text;
                 s.cells = 1;
+                s.tab = tab;
+                s.x = c;
+                s.y = r;
                 s.read = SpReadItem(cell, s.item);
                 if (!s.read && lookup) {
                     struct Busy { Busy() { ++g_SpBusy; } ~Busy() { --g_SpBusy; } } busy;
@@ -53753,7 +54074,9 @@ static bool SpReadBag(std::vector<SpStack>& stacks, std::string& route, int& cel
     return false;
 }
 
-// `bag`: every bag item of the base's class and `b`, pieces and the plain base.
+// `bag`: every bag item of the base's class and `b`, pieces and the plain base,
+// each with its count, its cells, the cell it starts in (`cell=<tab>,<x>,<y>`,
+// the one the merge writes into the game's result) and key "11"'s sprite.
 static void SpBagCommand()
 {
     if (g_Sp.baseIndex < 0) { Out("soulprobe bag: refused(no base: `soulprobe base auto|<name>` first)"); return; }
@@ -53772,8 +54095,9 @@ static void SpBagCommand()
         if (!s.read || !SpIsBaseItem(s.item)) continue;
         const int act = SpPieceAct(s.item);
         Out("soulprobe bag: " + s.fingerprint + " t=" + SpNum(s.item.t) + " b=" + SpNum(s.item.b) + " a=" + SpNum(s.item.a)
-            + " o=" + SpNum(s.item.o) + " cells=" + std::to_string(s.cells) + " name=" + s.item.name
-            + " piece=" + (act ? std::to_string(act) : std::string("no")));
+            + " o=" + SpNum(s.item.o) + " cells=" + std::to_string(s.cells)
+            + " cell=" + SpNum(s.tab) + "," + SpNum(s.x) + "," + SpNum(s.y) + " name=" + s.item.name
+            + " sprite=" + SpInfoSpriteName(s.item.info) + " piece=" + (act ? std::to_string(act) : std::string("no")));
     }
 }
 
@@ -54507,6 +54831,64 @@ static RValue& SoulProbePotionUse(CInstance* S, CInstance* O, RValue& R, int arg
     return SpUseCall(kSpPotionUseSlot, S, O, R, argc, A);
 }
 
+// ---- the merge watch ---------------------------------------------------------------------------
+// A struct's member names, comma-separated; `-` for none or not a struct.
+static std::string SpFieldNames(const RValue& s)
+{
+    try {
+        if (!ApIsPlainStruct(s)) return "-";
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+        if (names.m_Kind != VALUE_ARRAY) return "-";
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        std::string out;
+        for (int i = 0; i < n && i < 64; ++i)
+            out += (i ? "," : "") + g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) }).ToString();
+        return out.empty() ? "-" : out;
+    } catch (...) { return "-"; }
+}
+
+// A result's `success` as the line prints it; `-` when it has none.
+static std::string SpResultSuccess(const RValue& result)
+{
+    try {
+        RValue v;
+        return CmMember(result, "success", v) ? SoulPieceValueText(v) : std::string("-");
+    } catch (...) { return "-"; }
+}
+
+// From the shipped merge detour (Hook_SoulPieceMerge), after the game's call
+// and the merge: while `merge on`, one line per call whose item carries a
+// soul piece (or a reserved seed the core does not take for one), merged or
+// passed with its reason, and once per `merge on` the first call carrying
+// anything else, `first-other`, the game's own result shape: the control.
+// Reads only: the result it prints is the one the detour returns.
+static void SoulProbeMergeLine(const SoulPieceMergeReport& r, const RValue& result)
+{
+    if (!g_SoulPieceMerge.armed) return;
+    try {
+        if (!r.seeded && !r.act) {
+            if (g_Sp.mergeOtherSeen) return;
+            g_Sp.mergeOtherSeen = true;
+            Out("soulprobe merge: first-other success=" + SpResultSuccess(result) + " fields=" + SpFieldNames(result));
+            return;
+        }
+        if (g_Sp.mergeLines >= kSpLineCap) return;
+        ++g_Sp.mergeLines;
+        if (r.outcome == SoulPieceMergePass::Merged) {
+            Out("soulprobe merge: act=" + std::to_string(r.act) + " into=" + r.into
+                + " o=" + std::to_string(r.before) + "->" + std::to_string(r.after)
+                + " cell=" + SpNum(r.tab) + "," + SpNum(r.x) + "," + SpNum(r.y)
+                + " success=" + r.successBefore + "->" + SpResultSuccess(result) + " hash=" + r.hash
+                + " fields=" + SpFieldNames(result));
+            return;
+        }
+        Out("soulprobe merge: act=" + (r.act ? std::to_string(r.act) : std::string("no"))
+            + " pass(" + kSoulPieceMergeOutcomeWords[static_cast<int>(r.outcome)] + ")"
+            + (r.into.empty() ? std::string() : " into=" + r.into)
+            + " success=" + SpResultSuccess(result) + " fields=" + SpFieldNames(result));
+    } catch (...) {}
+}
+
 // ---- the frame tick ---------------------------------------------------------------------------
 // The gem watch's install once a player exists (a drop hook installed at
 // character select stalls the runner, § 15), and the portal and kill watches.
@@ -54556,6 +54938,15 @@ static void SpStatus()
     std::string by;
     for (int i = 0; i < kSpUseCount; ++i)
         if (g_Sp.useCallsBy[i]) by += (by.empty() ? "" : ",") + std::string(kSpUseTargets[i].name) + ":" + std::to_string(g_Sp.useCallsBy[i]);
+    // The merge detour's outcomes: merges, and every pass by its reason.
+    const long merged = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::Merged)];
+    long passed = 0;
+    std::string passBy;
+    for (int i = 0; i < kSoulPieceMergeOutcomeCount; ++i) {
+        if (i == static_cast<int>(SoulPieceMergePass::Merged) || !g_SoulPieceMerge.outcomes[i]) continue;
+        passed += g_SoulPieceMerge.outcomes[i];
+        passBy += (passBy.empty() ? "" : ",") + std::string(kSoulPieceMergeOutcomeWords[i]) + ":" + std::to_string(g_SoulPieceMerge.outcomes[i]);
+    }
     Out(std::string("soulprobe status: base=") + (g_Sp.baseName.empty() ? "none" : g_Sp.baseName)
         + " category=" + (g_Sp.baseCategory >= 0 ? std::to_string(g_Sp.baseCategory) : std::string("-"))
         + " dress=" + (g_Sp.dress ? "on" : "off")
@@ -54569,7 +54960,11 @@ static void SpStatus()
         + " usecalls=" + std::to_string(g_Sp.usecalls) + " usecallsby=" + (by.empty() ? std::string("-") : by)
         + " uses=" + std::to_string(g_Sp.uses) + " portals=" + std::to_string(g_Sp.portals)
         + " gemrolls=" + std::to_string(g_Sp.gemrolls)
-        + " gemroute=" + (g_GemDropHookNative ? "native" : g_GemDropHookTried ? "failed" : g_Sp.gemPending ? "pending" : "off"));
+        + " gemroute=" + (g_GemDropHookNative ? "native" : g_GemDropHookTried ? "failed" : g_Sp.gemPending ? "pending" : "off")
+        + " merge=" + (g_SoulPieceMerge.armed ? "on" : "off") + " mergeroute=" + g_SoulPieceMerge.route
+        + " mergecalls=" + std::to_string(g_SoulPieceMerge.calls)
+        + " merged=" + std::to_string(merged) + " mergepass=" + std::to_string(passed)
+        + " mergepassby=" + (passBy.empty() ? std::string("-") : passBy));
 }
 
 static void SpActCommand()
@@ -54615,7 +55010,7 @@ static void SoulProbeUsage()
 {
     Out("soulprobe: status | keys | act | base auto|<repository name> | dress on|off | shape plain|frac|cfrac | icon on|off | gem"
         " | place <act>|plain [count] | pickup | ground"
-        " | keytab | bag | usewatch off|log|use [auto|<script>]|allow|take all|one | gemwatch off|log"
+        " | keytab | bag | merge on|off | usewatch off|log|use [auto|<script>]|allow|take all|one | gemwatch off|log"
         " | portals | portal <act> [scp|depth] | portalroute scp|depth | portaloffset <px>"
         " | portalset <id> <portalZone|portalActive|isEligible|portalUsable|pSpwd> <value> | goto <act> | bosses | kill <id>");
 }
@@ -54659,6 +55054,23 @@ static void SoulProbeCommand(const std::string& rest)
     if (sub == "ground") { SpGroundCommand(); return; }
     if (sub == "keytab") { SpKeyTabCommand(); return; }
     if (sub == "bag") { SpBagCommand(); return; }
+    if (sub == "merge") {
+        if (arg == "on" || arg == "1") {
+            // The first `on` installs the shipped mod's one InventoryGridAddToStack
+            // detour (no detour of the probe's own): arm every debugger row first.
+            SoulPieceInstallMerge();
+            g_SoulPieceMerge.armed = true;
+            g_Sp.mergeOtherSeen = false;
+            g_Sp.mergeLines = 0;
+        } else if (arg == "off" || arg == "0") {
+            g_SoulPieceMerge.armed = false;
+        } else {
+            SoulProbeUsage();
+            return;
+        }
+        Out(std::string("soulprobe merge: ") + (g_SoulPieceMerge.armed ? "on" : "off") + " route=" + g_SoulPieceMerge.route);
+        return;
+    }
     if (sub == "portals") { SpPortalsCommand(); return; }
     if (sub == "portal") { SpPortalCommand(tail); return; }
     if (sub == "portalset") { SpPortalSetCommand(tail); return; }
