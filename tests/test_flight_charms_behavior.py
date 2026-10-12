@@ -21,7 +21,11 @@ line's counters add up as FlightCounters says), `front_layer` (the flight
 layer's depth, its census once per room visit and its re-choice at most once
 a second, validated where it is written; no write while off, residual or for
 another self, the baseline), `front_layer_filter` (never past a filter: the
-rearmost filter decides, on the data file's room stacks), `stand_in`
+rearmost filter decides, on the data file's room stacks), `tooltip_rows`
+(a forged item's gold rows anchor at its first present format-2/3 stat call,
+the baseline, or at the first format-2/3 call on an item with no stats,
+Pocket Elf, the target; ForgedTooltipRows.hpp, which the harness includes),
+`stand_in`
 (the even-count rule and the coin) and `stat_line` (the fresh session's line,
 byte for byte).
 """
@@ -233,6 +237,19 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_front_layer_filter_a_failed_effect_read_is_no_filter(self):
         self.assertScenarios("front_layer_filter/a_failed_effect_read_is_no_filter")
+
+    # ---- the gold row on an item with no stats (ForgedTooltipRows.hpp) --------
+
+    def test_tooltip_rows_baseline_an_item_with_stats(self):
+        self.assertScenarios("tooltip_rows/baseline_an_item_with_stats_anchors_at_its_first_present_row_call")
+
+    def test_tooltip_rows_target_an_item_with_no_stats(self):
+        self.assertScenarios("tooltip_rows/target_an_item_with_no_stats_anchors_at_the_first_row_call")
+
+    def test_tooltip_rows_formats_once_a_pass_and_no_rows(self):
+        self.assertScenarios("tooltip_rows/formats_other_than_2_and_3_never_anchor",
+                             "tooltip_rows/a_pass_anchors_at_most_once",
+                             "tooltip_rows/with_no_rows_nothing_anchors")
 
     # ---- drops: the stand-ins and the coin ----------------------------------
 

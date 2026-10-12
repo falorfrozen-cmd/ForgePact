@@ -26,7 +26,9 @@ guard):
 - `flightcharm` is a player command with its own early return;
 - no address is computed anywhere in it.
 
-The lever part (FlightCharmsLeverContract) and the drop part
+The tooltip part (FlightCharmsTooltipContract: the gold row on an item with no
+stats, anchored through ForgedTooltipRows.hpp), the lever part
+(FlightCharmsLeverContract) and the drop part
 (FlightCharmsDropContract, the three drop switches on #74's machinery; its
 behaviour runs in tests/test_angelic_hit_behavior.py's flight scenarios) say
 what they pin in their own docstrings.
@@ -1318,6 +1320,61 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertNotIn("GetModuleHandle", self.code)
         self.assertNotIn("MmCreateHook", self.code)
         self.assertNotIn("HookOneScript", self.code)
+
+
+class FlightCharmsTooltipContract(unittest.TestCase):
+    """The gold row on an item with no stats (Pocket Elf, Live 1's `bag-icon`).
+
+    The forged rows anchor through ForgedTooltipRows.hpp's rule, which the
+    harness's `tooltip_rows` scenarios run: the stats hook decides through
+    the header, and the rows' arming reads "no stats" once a pass, in both
+    places that arm them (the player's tooltip and the Item Editor's drawn
+    one). Both return paths of the stats hook stay as
+    test_item_truth_contract.py pins them.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        plugin = PLUGIN.read_text(encoding="utf-8").replace("\r\n", "\n")
+        cls.release = strip_comments(strip_research_blocks(plugin))
+        cls.header = (ROOT / "plugin" / "include" / "ForgePact" / "ForgedTooltipRows.hpp").read_text(encoding="utf-8")
+
+    def test_the_header_is_booleans_and_numbers(self):
+        self.assertIn("namespace ForgePact::ForgedTooltipRows {", self.header)
+        for signature in ("constexpr bool Pending(std::size_t rowCount)",
+                          "constexpr bool IsAnchorFormat(double format)",
+                          "constexpr bool NeedsStatRead(bool pending, double format, bool itemHasNoStats)",
+                          "constexpr bool AnchorsHere(bool pending, double format, bool statPresent, bool itemHasNoStats)"):
+            self.assertIn(signature, self.header)
+        self.assertNotRegex(strip_comments(self.header), r"RValue|CInstance|#include <(string|vector)>")
+        self.assertIn("#include <ForgePact/ForgedTooltipRows.hpp>", self.release)
+
+    def test_the_stats_hook_decides_through_the_headers_rule(self):
+        stat = function_body(self.release, "static RValue& Hook_DrawInventoryStatsNew(")
+        read = stat.index("ForgePact::ForgedTooltipRows::NeedsStatRead(g_TipRowsPending, fmt, g_TipItemNoStats)")
+        present = stat.index("&& TipStatPresent(A, argc);")
+        anchor = stat.index(
+            "if (ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)) {")
+        self.assertLess(read, present, "the stat is read only when the rule asks")
+        self.assertLess(present, anchor)
+        self.assertLess(anchor, stat.index("g_TipRowsPending = false;"), "an anchor ends the pending rows")
+        self.assertNotIn("fmt == 2.0 || fmt == 3.0) && TipStatPresent", stat, "no second copy of the rule")
+        self.assertEqual(2, stat.count("TipNoteStat("))
+        self.assertEqual(2, stat.count("g_Tip.statId = outerStat;"))
+
+    def test_no_stats_is_read_once_a_pass_where_the_rows_are_armed(self):
+        for name in ("static RValue& Hook_DrawInventoryItemV2(", "static bool TipDrawOne("):
+            body = function_body(self.release, name)
+            arm = body.index("g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());")
+            nostats = body.index("g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(")
+            self.assertLess(arm, nostats, name)
+            self.assertIn("g_TipItemNoStats = false;", body[nostats:], name + " clears it when the pass ends")
+        stat = function_body(self.release, "static RValue& Hook_DrawInventoryStatsNew(")
+        self.assertNotIn("TipItemHasNoStats(", stat, "never read on every stat call")
+        reader = function_body(self.release, "static bool TipItemHasNoStats(const RValue& item)")
+        self.assertIn('RValue("itemStatStruct")', reader)
+        self.assertIn('"variable_struct_names_count"', reader)
+        self.assertIn("catch (...) { return false; }", reader, "a failed read keeps the old anchor")
 
 
 if __name__ == "__main__":

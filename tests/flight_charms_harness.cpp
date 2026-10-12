@@ -27,7 +27,11 @@
 // front end and every drawn room layer, a census once per room visit and a
 // re-choice at most once a second, validated where it is written, no write for
 // off, residual or another self; front_layer_filter: never past a filter, the
-// rearmost filter deciding (the room stacks are the data file's). stand_in: the even-count rule, its order, its refusal, the
+// rearmost filter deciding (the room stacks are the data file's). tooltip_rows:
+// a forged item's gold rows anchor at its first present format-2/3 stat call
+// (baseline), or at its first format-2/3 call when it has no stats at all
+// (target, Pocket Elf), at most once a pass and never with no rows
+// (ForgedTooltipRows.hpp). stand_in: the even-count rule, its order, its refusal, the
 // coin. stat_line: the fresh session's line, byte for byte. install and
 // command: the install states and the `flightcharm` forms.
 #include <array>
@@ -45,6 +49,9 @@
 // The research build's charmprobe header shares the namespace. Including it
 // first proves the two compile together, as ModuleMain.cpp includes both.
 #include <ForgePact/FlightCharmProbe.hpp>
+// Where a forged item's gold rows anchor in the tooltip pass. It is not a
+// flight header, but Pocket Elf is the item with no stats that needs it.
+#include <ForgePact/ForgedTooltipRows.hpp>
 
 // PRODUCTION_FLIGHTCHARMS
 
@@ -339,6 +346,35 @@ static void check(const std::string& label, bool ok, const std::string& detail =
 }
 
 static bool has(const std::string& line, const std::string& part) { return line.find(part) != std::string::npos; }
+
+// ---- one tooltip pass, the way Hook_DrawInventoryStatsNew walks it ---------
+// The pass calls DrawInventoryStatsNew once per stat line it knows, whether
+// or not the item has that stat (RDM § 16.6). Each call carries a format and
+// whether its stat is present on the item. The rows are armed once a pass,
+// with the item's no-stats answer; an anchor draws them and ends the pending
+// state, as the adapter does. The stat is read only when the rule asks.
+struct TipCall { double format; bool present; };
+struct TipPass { int anchor = -1; int anchors = 0; int statReads = 0; };
+static TipPass tipPass(size_t rows, bool noStats, const std::vector<TipCall>& calls)
+{
+    namespace R = ForgePact::ForgedTooltipRows;
+    TipPass p;
+    bool pending = R::Pending(rows);
+    for (size_t i = 0; i < calls.size(); ++i) {
+        bool present = false;
+        if (R::NeedsStatRead(pending, calls[i].format, noStats)) { ++p.statReads; present = calls[i].present; }
+        if (R::AnchorsHere(pending, calls[i].format, present, noStats)) {
+            if (p.anchor < 0) p.anchor = static_cast<int>(i);
+            ++p.anchors;
+            pending = false;
+        }
+    }
+    return p;
+}
+static std::string tipText(const TipPass& p)
+{
+    return "anchor=" + std::to_string(p.anchor) + " anchors=" + std::to_string(p.anchors) + " reads=" + std::to_string(p.statReads);
+}
 
 static std::string counts(const FlightCounters& c)
 {
@@ -1094,6 +1130,59 @@ int main()
             !off.write && on.write && !residual.write && isResidual && !other.write && f.Stats().depth == 1
                 && w.layerReads == 1 && w.listReads == 1 && w.creates == 1,
             counts(f.Stats()));
+    }
+
+    // ======================= tooltip_rows ==================================
+    {
+        // Baseline: an item with stats anchors at its first format-2/3 call
+        // whose stat it has, never at an absent one before it, nor at a
+        // present call of another format.
+        const TipPass p = tipPass(2, false, { { 2.0, false }, { 1.0, true }, { 3.0, false }, { 3.0, true }, { 2.0, true } });
+        check("tooltip_rows/baseline_an_item_with_stats_anchors_at_its_first_present_row_call",
+            p.anchor == 3 && p.anchors == 1 && p.statReads == 3, tipText(p));
+    }
+    {
+        // Target: an item with no stats (Pocket Elf) anchors at the first
+        // format-2/3 call, reading no stat. The control is Live 1's bug: the
+        // same pass read as an item with stats never anchors.
+        const std::vector<TipCall> calls = { { 1.0, false }, { 0.0, false }, { 2.0, false }, { 3.0, false } };
+        const TipPass p = tipPass(1, true, calls);
+        const TipPass control = tipPass(1, false, calls);
+        check("tooltip_rows/target_an_item_with_no_stats_anchors_at_the_first_row_call",
+            p.anchor == 2 && p.anchors == 1 && p.statReads == 0 && control.anchor == -1 && control.statReads == 2,
+            tipText(p) + " || control " + tipText(control));
+    }
+    {
+        // Formats other than 2 and 3 never anchor, stat present or not.
+        const std::vector<TipCall> calls = { { 0.0, true }, { 1.0, true }, { 4.0, true }, { -1.0, true }, { 2.5, true } };
+        const TipPass stats = tipPass(3, false, calls);
+        const TipPass none = tipPass(3, true, calls);
+        bool formats = ForgePact::ForgedTooltipRows::IsAnchorFormat(2.0) && ForgePact::ForgedTooltipRows::IsAnchorFormat(3.0);
+        for (const TipCall& c : calls) formats = formats && !ForgePact::ForgedTooltipRows::IsAnchorFormat(c.format);
+        check("tooltip_rows/formats_other_than_2_and_3_never_anchor",
+            formats && stats.anchor == -1 && stats.statReads == 0 && none.anchor == -1,
+            tipText(stats) + " || no stats " + tipText(none));
+    }
+    {
+        // A pass anchors at most once, with stats or without, and reads no
+        // stat after its anchor.
+        const std::vector<TipCall> calls = { { 2.0, true }, { 3.0, true }, { 2.0, true }, { 3.0, true } };
+        const TipPass stats = tipPass(3, false, calls);
+        const TipPass none = tipPass(3, true, calls);
+        check("tooltip_rows/a_pass_anchors_at_most_once",
+            stats.anchor == 0 && stats.anchors == 1 && stats.statReads == 1 && none.anchor == 0 && none.anchors == 1
+                && none.statReads == 0,
+            tipText(stats) + " || no stats " + tipText(none));
+    }
+    {
+        // With no rows nothing is pending: nothing anchors and no stat is read.
+        const std::vector<TipCall> calls = { { 2.0, true }, { 3.0, false }, { 3.0, true } };
+        const TipPass stats = tipPass(0, false, calls);
+        const TipPass none = tipPass(0, true, calls);
+        check("tooltip_rows/with_no_rows_nothing_anchors",
+            !ForgePact::ForgedTooltipRows::Pending(0) && ForgePact::ForgedTooltipRows::Pending(1) && stats.anchors == 0
+                && stats.statReads == 0 && none.anchors == 0 && none.statReads == 0,
+            tipText(stats) + " || no stats " + tipText(none));
     }
 
     // ======================= trace =========================================

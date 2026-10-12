@@ -604,6 +604,8 @@ static ForgePact::ChaosPillarTips::Core g_PillarTips;
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
+// Where a forged item's gold rows anchor in the tooltip pass (Hook_DrawInventoryStatsNew).
+#include <ForgePact/ForgedTooltipRows.hpp>
 #include <ForgePact/ExitSafeThread.hpp>
 #include <ForgePact/FrameProfiler.hpp>
 #include <ForgePact/FrameProfilerBuiltins.hpp>
@@ -21891,6 +21893,7 @@ static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
 static std::vector<std::string> g_TipRows;   // rows still to draw in the current tooltip pass
 static bool g_TipRowsPending = false;
+static bool g_TipItemNoStats = false;   // the pass's item has no stats: its rows anchor at the first row call
 static bool g_TipInsideStat = false;
 static const double kTipRowHeight = 30.0;
 
@@ -21953,6 +21956,21 @@ static bool TipStatPresent(RValue** A, int argc)
         std::string key = std::to_string((long long)A[3]->ToDouble());
         RValue present = g_Yytk->CallBuiltin("variable_struct_exists", { stats, RValue(key) });
         return present.ToBoolean();
+    } catch (...) { return false; }
+}
+
+// True when the item has no stats at all: its itemStatStruct is missing or holds
+// no names (Pocket Elf). Read once a pass, where the rows are armed; a failed read
+// answers false, so the rows anchor as they always did.
+static bool TipItemHasNoStats(const RValue& item)
+{
+    try {
+        if (item.m_Kind != VALUE_OBJECT || !item.m_Object) return false;
+        RValue has = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemStatStruct") });
+        if (!has.ToBoolean()) return true;
+        RValue stats = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemStatStruct") });
+        if (stats.m_Kind != VALUE_OBJECT || !stats.m_Object) return true;
+        return g_Yytk->CallBuiltin("variable_struct_names_count", { stats }).ToDouble() <= 0.0;
     } catch (...) { return false; }
 }
 
@@ -22093,7 +22111,8 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     g_Tip.drawnBy = TipObjectName(S);
     g_Tip.request = g_TipDraw.id;
     g_TipRows = ForgedTooltipRows(item);
-    g_TipRowsPending = !g_TipRows.empty();
+    g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
+    g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(item);
     RValue result;
     try {
         TipDepthGuard depth(g_Tip.itemDepth);
@@ -22101,6 +22120,7 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     } catch (...) {}
     g_TipRows.clear();
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     const bool drew = g_Tip.rowCount > 0;
     TipCaptureEnd();
     return drew;
@@ -22163,9 +22183,14 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 #endif
     g_TipRows.clear();
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     try {
-        if (argc > 3 && A && A[3]) { g_TipRows = ForgedTooltipRows(*A[3]); g_TipRowsPending = !g_TipRows.empty(); }
-    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; }
+        if (argc > 3 && A && A[3]) {
+            g_TipRows = ForgedTooltipRows(*A[3]);
+            g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
+            g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(*A[3]);
+        }
+    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; }
     g_TipStatCallsInTooltip = 0;
     const bool capturing = TipCaptureBegin(argc, A);
     if (capturing) g_Tip.drawnBy = TipObjectName(S);
@@ -22180,6 +22205,7 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     return r;
 }
 
@@ -22199,7 +22225,11 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     if (g_Tip.active) g_Tip.statId = TipStatIdOf(argc, A);
     if (g_TipRowsPending && argc > 5 && A && isNum(A[0]) && isNum(A[1]) && isNum(A[5])) {
         double fmt = -1.0; try { fmt = A[5]->ToDouble(); } catch (...) { fmt = -1.0; }
-        if ((fmt == 2.0 || fmt == 3.0) && TipStatPresent(A, argc)) {
+        // The anchor rule (ForgedTooltipRows.hpp): the first row call whose stat
+        // the item has, or the first row call at all on an item with no stats.
+        const bool present = ForgePact::ForgedTooltipRows::NeedsStatRead(g_TipRowsPending, fmt, g_TipItemNoStats)
+            && TipStatPresent(A, argc);
+        if (ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)) {
             try {
                 const double x = A[0]->ToDouble(), y = A[1]->ToDouble();
                 double extra = 0.0;
