@@ -40,7 +40,9 @@ fresh fight.
   Logo underneath, so your save needs nothing from ForgePact to load, and
   without ForgePact a piece shows and works as an Edible PAS Logo. Checked in
   play with this release's plugin, in Acts 1 and 2: monsters dropped named
-  pieces, one bag cell each, and none with the switch off; a piece used in a
+  pieces, one bag cell each, and none with the switch off (those drops were
+  forced with the `soulpiece force on` command, so the 1 in 7,200 chance itself
+  was not seen in play); a piece used in a
   zone or in town took the character straight to the Act 1 or Act 2 lair and
   was used up; Gurag came out, was beaten and came out again on the next
   piece; and the Grim Reaper came out in his lair. The lairs of Acts 3 to 9
