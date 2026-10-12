@@ -140,7 +140,7 @@
 </div>
 
 <div class="card tab-card" data-tab="mods" id="itemsCard" role="tabpanel" aria-labelledby="subtab-items">
-  <div class="hint">Custom forge mechanics tied to items made in the Item Editor. Settings apply immediately while the game is running.</div>
+  <div class="hint">Custom forge mechanics tied to items made in the Item Editor, and ForgePact's own charms. Settings apply immediately while the game is running.</div>
   <div class="row" id="minerHelmetCard">
     <div>
       <strong>Miner's Helmet</strong>
@@ -164,6 +164,23 @@
     <span class="lbl" style="width:auto;flex:1">Beacon: every monster hunts you<br><span class="feature-description">For an amulet forged with Mechanic: Beacon. While on, every monster on the map hunts you the moment it spawns and never turns back, through the game's own aggro system. Plugin commands: beaconmode rare limits it to rares and champions, beaconrange &lt;px&gt; caps the distance.</span></span>
     <label class="switch"><input type="checkbox" id="beacon"><span class="sl"></span></label>
     <span class="val" id="beval">on</span>
+  </div>
+  <!-- The flight charms (#158): each switch gates only its charm's drop, as Headhunter's does; a charm already owned
+       flies either way. Three top-level rows, wired like Jump through scenery's. -->
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Pocket Elf drops<br><span class="feature-description">Lets Pocket Elf, a ForgePact charm, drop among the game's own unique items. While you wear it, you walk through scenery and are drawn in front of it; walls, gates, locks and monsters still stop you. One you already have works either way. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_flight_elf" aria-label="Pocket Elf drops"><span class="sl"></span></label>
+    <span class="val" id="mfeval">off</span>
+  </div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Gabriel Wings drops<br><span class="feature-description">Lets Gabriel Wings, a ForgePact charm, drop from the game's own Angelic roll. It lowers the physical and magic damage you take, and while you wear it you walk through scenery; walls, gates, locks and monsters still stop you. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_flight_wings" aria-label="Gabriel Wings drops"><span class="sl"></span></label>
+    <span class="val" id="mfwval">off</span>
+  </div>
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Witch's Broomstick drops<br><span class="feature-description">Lets Witch's Broomstick, a ForgePact charm, drop from the game's own Angelic roll. It adds movement speed, and while you wear it you walk through scenery; walls, gates, locks and monsters still stop you. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_flight_broom" aria-label="Witch's Broomstick drops"><span class="sl"></span></label>
+    <span class="val" id="mfbval">off</span>
   </div>
 </div>
 

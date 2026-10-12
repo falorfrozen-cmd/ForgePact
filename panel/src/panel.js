@@ -504,6 +504,13 @@ async function boot(){
     document.getElementById('mod_pillar_tips').checked=mpt;
     document.getElementById('mptval').textContent=mpt?'on':'off';
     document.getElementById('mptval').className='val '+(mpt?'':'off');
+    // The flight charms' drop switches (#158), on Mods > Items.
+    for(const [id,val] of [['mod_flight_elf','mfeval'],['mod_flight_wings','mfwval'],['mod_flight_broom','mfbval']]){
+      const on=!!c[id];
+      document.getElementById(id).checked=on;
+      document.getElementById(val).textContent=on?'on':'off';
+      document.getElementById(val).className='val '+(on?'':'off');
+    }
     for(const [id,val,key] of [['mod_gem_mythic','mgmval','mod_gem_mythic'],['mod_gem_maxroll','mgrval','mod_gem_maxroll']]){
       const on=!!c[key];
       document.getElementById(id).checked=on;
@@ -881,6 +888,21 @@ function bind(){
         const v=document.getElementById('mptval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Always show Chaos Pillar mods '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
+    document.getElementById('mod_flight_elf').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_elf',value:e.target.checked})});
+        const v=document.getElementById('mfeval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Pocket Elf drops '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_flight_wings').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_wings',value:e.target.checked})});
+        const v=document.getElementById('mfwval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast('Gabriel Wings drops '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
+    document.getElementById('mod_flight_broom').onchange=async(e)=>{
+        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_broom',value:e.target.checked})});
+        const v=document.getElementById('mfbval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+        toast("Witch's Broomstick drops "+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+    };
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
     // The search and the All mods / Enabled / Disabled filter only show and
@@ -1218,11 +1240,11 @@ export function refreshSavedControls(){
   });
   for(const [range] of painted)if(range.oninput)range.oninput();
   for(const [range,typed] of painted){if(typed===undefined)delete range.dataset.typed;else range.dataset.typed=typed}
-  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_jump_scenery:'mod_jump_scenery',mod_loot_announce:'mod_loot_announce',mod_pillar_tips:'mod_pillar_tips',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll',mod_dungeon_chest:'mod_dungeon_chest',mod_gambapity:'mod_gambapity'};
+  const booleans={den_on:'density_on',autoapply:'auto_apply',enemyspeed_ct:'enemy_speed_ct',map_reveal:'map_reveal',map_reveal_packs:'map_reveal_packs',map_reveal_spawn:'map_reveal_spawn',headhunter:'headhunter',tyrant:'tyrant',beacon:'beacon',mod_filter_max_relics:'mod_filter_max_relics',mod_orb_pickup_radius:'mod_orb_pickup_radius',mod_pet_quest_pickup:'mod_pet_quest_pickup',mod_pet_relic_pickup:'mod_pet_relic_pickup',mod_pet_loot_unstick:'mod_pet_loot_unstick',mod_auto_prospect:'mod_auto_prospect',mod_auto_prospect_bag:'mod_auto_prospect_bag',mod_toggle_indicator:'mod_toggle_indicator',mod_toggle_guard:'mod_toggle_guard',mod_restart_anytime:'mod_restart_anytime',mod_far_sleep:'mod_far_sleep',density_rolling:'density_rolling',mod_hidden_loot:'mod_hidden_loot',mod_jump_scenery:'mod_jump_scenery',mod_loot_announce:'mod_loot_announce',mod_pillar_tips:'mod_pillar_tips',mod_flight_elf:'mod_flight_elf',mod_flight_wings:'mod_flight_wings',mod_flight_broom:'mod_flight_broom',mod_craft_mats:'mod_craft_mats',mod_stash_move_all:'mod_stash_move_all',mod_gem_mythic:'mod_gem_mythic',mod_gem_maxroll:'mod_gem_maxroll',mod_dungeon_chest:'mod_dungeon_chest',mod_gambapity:'mod_gambapity'};
   for(const [id,key] of Object.entries(booleans))document.getElementById(id).checked=!!c[key];
   document.getElementById('mod_skill_timer_style').value=c.mod_skill_timer_style||'off';
   document.getElementById('boss_rarity').value=c.boss_rarity||'off';
-  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mprpval:'mod_pet_relic_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mjsval:'mod_jump_scenery',mlaval:'mod_loot_announce',mptval:'mod_pillar_tips',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
+  for(const [id,key] of Object.entries({hhval:'headhunter',tyval:'tyrant',beval:'beacon',mfmrval:'mod_filter_max_relics',morval:'mod_orb_pickup_radius',mpqpval:'mod_pet_quest_pickup',mprpval:'mod_pet_relic_pickup',mpluval:'mod_pet_loot_unstick',autoprospval:'mod_auto_prospect',mtival:'mod_toggle_indicator',mtgval:'mod_toggle_guard',mraval:'mod_restart_anytime',mfsval:'mod_far_sleep',drlval:'density_rolling',mhlval:'mod_hidden_loot',mjsval:'mod_jump_scenery',mlaval:'mod_loot_announce',mptval:'mod_pillar_tips',mfeval:'mod_flight_elf',mfwval:'mod_flight_wings',mfbval:'mod_flight_broom',mcmval:'mod_craft_mats',msmaval:'mod_stash_move_all',mgmval:'mod_gem_mythic',mgrval:'mod_gem_maxroll',mapval:'map_reveal'})){
     const value=document.getElementById(id);value.textContent=c[key]?'on':'off';value.className='val '+(c[key]?'':'off');
   }
   document.getElementById('enemyspeedctval').textContent=c.enemy_speed_ct?'CT only':'all zones';
