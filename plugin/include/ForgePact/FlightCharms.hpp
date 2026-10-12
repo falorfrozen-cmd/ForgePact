@@ -30,7 +30,7 @@ namespace ForgePact::FlightCharms {
 //   - flight's per-query decision for the five builtins jumpscenery hooks and
 //     InstancePlaceTallest, with the off / on / residual state, refreshed at
 //     most once a frame by the first query of the local player in that frame
-//     (the point of use, never EVENT_FRAME).
+//     (the point of use, never EVENT_FRAME), and by `flightcharm stat`.
 //   - flight's install state (armed when dressing first recognises a charm,
 //     installed once a character exists).
 //   - the front-layer choice made after the game's UpdateDepth.
@@ -517,7 +517,9 @@ public:
     // ---- the state, refreshed at the point of use ----------------------------
     // At most once a frame: the first player-self call of a frame reads the
     // worn charms, and, only when none is worn after flight was on or
-    // residual, whether the player still overlaps the family.
+    // residual, whether the player still overlaps the family. `flightcharm
+    // stat` refreshes too (RefreshForStat), so what it prints never depends on
+    // a hooked call having run since the last equip.
     void Refresh(int64_t frame)
     {
         if (haveFrame_ && frame == frame_) return;
@@ -534,6 +536,20 @@ public:
         if (state_ == State::Off) return;
         bool inside = false;
         state_ = (ReadOverlap(inside) && inside) ? State::Residual : State::Off;
+    }
+
+    // Before `flightcharm stat` (and flightprobe's depth and stat) fill the
+    // line. A player standing still may make no hooked call at all: nothing
+    // measured shows UpdateDepth or a collision query running while the player
+    // stands, so without this a charm equipped in place would print
+    // `state=off equipped=none` until the next step. The adapter passes the
+    // frame counter its queries use and whether the local player resolved;
+    // the overlap read needs the player as self, so an unresolved player
+    // reads nothing and leaves the state as it was. Nothing is read before
+    // arming, so the fresh session's line stays the same.
+    void RefreshForStat(int64_t frame, bool playerResolved)
+    {
+        if (armed_ && playerResolved) Refresh(frame);
     }
 
     State CurrentState() const { return state_; }
@@ -602,6 +618,7 @@ public:
 
     const FlightCounters& Stats() const { return counters_; }
 
+    // Prints the last refresh; call RefreshForStat first.
     void FillStat(StatFields& s) const
     {
         s.install = std::string(InstallStateName());
