@@ -118,7 +118,11 @@ after the game's own exit call, so this reading predicts that the Exit path
 changes nothing about `0xC0000409`. Live procedure 1 measures it. Not
 established statically: the button's text, its `uiNodeCallstack`, whether a
 confirmation follows, and whether an injected Escape opens the pause menu at
-all (on 2026-09-22 it was opened by hand).
+all (on 2026-09-22 it was opened by hand). The sessions measured all four
+(§ "Results"): an injected Escape opens it, the button reads "Save & Exit"
+with `uiNodeCallstack` `PauseSaveExit`, no confirmation follows, and the game
+reaches `Chose_rm` with both save files rewritten. That the button runs
+`UiAIngameExit` stays a static reading.
 
 ## Live procedures
 
@@ -152,9 +156,12 @@ in-world close with every mod off; G, Save & Exit then close; F, an in-world
 close with three mods on: `lootann 1` and `stashmoveall 1`, which hook at
 character load and add a UI node, and `frameprof start 600`, the outlier, a
 ForgePact worker thread still running at teardown (the shape guide item 26
-aborted on). Each is expected to read `0x00000000` and leave no dump; the
-producer-present dumps of Live procedure 1 are the dump reader's positive
-control for that "no dump". A non-zero code in any cell is recorded with its
+aborted on). Each is expected to read `0x00000000` and leave no dump. A
+fifth cell, H, closes the session with the driver putting the producer back
+and a main-menu close: it aborts (HS-Offline-Tracker PR #8 saw it on a plain
+main-menu close) and so is the dump reader's positive control in the same
+session, which a "no dump" in the four cells before it needs (the owner's
+amendment, 2026-10-13). A non-zero code in any cell is recorded with its
 dump's `raised-in`, and the session goes on.
 
 **Why the matrix is smaller than the owner's.** The owner asked for
@@ -187,3 +194,79 @@ otherwise. The Save & Exit hypothesis: refuted when the producer-present Save
 & Exit close still reads `0xC0000409`; supported when it reads `0x00000000`
 while the in-world close reads `0xC0000409`; not observed when the Exit route
 did not complete.
+
+## Results
+
+Both sessions ran on 2026-10-13, back to back, on the ForgePact DLL already
+installed (`BloodPactPlugin.dll` v2.2.1, sha256 `8a16a38e…4bc92`, the same at
+both leases), slot 14 "Sorak", with `ping` -> `pong (YYTK 4.0.1)` and
+`hs_selfcheck`'s `exit_code_readback` reading `0x00000000` and `0xC0000409`
+back exactly before each. No debugger, no build, no install. The captures are
+`forgepact-201-exit-c0000409-live-1` and `forgepact-201-exit-c0000409-live-2`,
+kept with the hub's workorder; both sessions restored their save backups and
+inspected clean afterwards. All readings below are **measured**.
+
+**Live procedure 1, the producer present** (capture
+`forgepact-201-exit-c0000409-live-1`, 17 checks, 16 pass). Cell B, the
+in-world close: slot 14 loaded, `hs_stop_game` (`WM_CLOSE`, not forced) read
+`0xC0000409`, `out.txt` ended `==== clean shutdown ====`, and the dump reader
+named the producer: `code=0xc0000409 subcode=7
+raised-in=HSOfflineTrackerProducer`, the faulting thread being `ucrtbase!abort`
+<- `terminate` <- `HSOfflineTrackerProducer+0x1aa03` <- `execute_onexit_table`
+<- the producer's exit-time code <- `LdrShutdownProcess` <-
+`RtlExitUserProcess`, the stack the ten kept dumps showed. Cell C, Save & Exit
+then close: `hs_exit_to_menu` opened the pause menu with an injected Escape,
+found one new button, a `UI_Button_obj` reading "Save & Exit" with
+`uiNodeCallstack` `PauseSaveExit`, clicked it on the first call, and the game
+reached `Chose_rm` with no confirmation in between. The close from
+`Chose_rm` still read `0xC0000409`, after the clean-shutdown line, with the
+same twelve-frame dump naming the producer. The one check that failed is a
+research one: the in-world stop did not rewrite the bag file
+`inventory_order_13.hss` (it rewrote `herosiege13.hss`), as hub #506
+predicted. The Exit rewrote both files within the same second, and the close
+from `Chose_rm` after it rewrote neither.
+
+**Live procedure 2, the producer held aside** (capture
+`forgepact-201-exit-c0000409-live-2`, 25 checks, 24 pass). The driver moved
+`HSOfflineTrackerProducer.dll` out of `mods\aurie`, hash-checked on both
+sides, and `test ! -e` confirmed it gone. Cell E, the main-menu close with no
+character, read `0x00000000`, the first clean code hs-drive has read, and left
+no dump (the reader waited 30 s and exited 3). Cell D, the in-world close with
+every mod off, read `0x00000000`, ended `==== clean shutdown ====` and left no
+dump. Cell G, Save & Exit then close, reached `Chose_rm` through the same
+"Save & Exit" row on the first call and read `0x00000000` with no dump. Cell
+F, the in-world close with `lootann 1`, `stashmoveall 1` and `frameprof start
+600` switched on after the character loaded (each replied `on`, `frameprof`
+naming its 250-per-second sampler for 600 s), read `0x00000000` with the
+clean-shutdown line and no dump, so ForgePact's own exit-time code, the
+`frameprof` worker thread still running at teardown included, exits cleanly
+on these paths. Cell H, after the driver put the producer back (its sha256
+`36608aa0…b14e` confirmed in full), was a main-menu close that read
+`0xC0000409` with a dump naming `HSOfflineTrackerProducer`, so dumps were
+being written in that session and the four "no dump" readings before it are
+evidence. The failed check is again the bag: the in-world stop left
+`inventory_order_13.hss` as it was with the producer absent too, while the
+Exit rewrote it, so #506 is not the producer's doing.
+
+So the only module that turned a graceful close into `0xC0000409` on this
+machine is the tracker producer, whether the close came from the world, from
+the main menu or after the game's own Save & Exit, and whatever ForgePact mods
+were on. The owner's hypothesis is refuted: Save & Exit first does not change
+the code while the producer is loaded, and all four closes made without it
+read clean. Not covered: a vanilla game and a game without ForgePact (see "Why
+the matrix is smaller than the owner's"), and close paths other than these
+four.
+
+exit-attribution: producer-only
+saveexit-hypothesis: refuted
+
+The follow-on is a ForgePact fix workorder: re-pin
+`modfiles_shipped/HSOfflineTrackerProducer.dll` in `tools/toolchain-pins.json`
+to HS-Offline-Tracker v0.1.4's fixed build, with provenance, release notes for
+the milestone #201 is given, and a live gate in which an in-world
+`hs_stop_game` reads `0x00000000` with the re-pinned producer. Whether
+`hs_stop_game` should take Save & Exit first is not decided by the exit code
+(it changes nothing there); it rests on #506's bag observations, which these
+sessions add to: an in-world stop rewrites the character file and not the bag
+file, with the producer present or absent, and the game's Save & Exit
+rewrites both.
