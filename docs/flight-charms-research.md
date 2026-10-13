@@ -1055,6 +1055,29 @@ observed".
 - `InstancePlaceTallest` gathers the instances at a place and answers the
   tallest, or `noone`, as § 19.6 of RDM already says.
 
+**Monsters** (RDM § 19.9), read on 2026-10-13 after the owner asked for a
+flying player to walk through monsters. From the data file's object table,
+`Enemy_Parent_obj` (1429), a child of `Avoidable_Parent_obj`, has 336
+descendants under four direct children (`Enemy_Child_Basic_obj`,
+`Enemy_Child_Boss_obj`, `Enemy_Child_Destructible_obj` and
+`Demon_Lightning_obj`); the destructible child's six children are boss parts,
+so they count as monsters too. `Player_obj`, `Mercenary_obj` and
+`Summon_Parent_obj` sit under `Enemy_Aggroable_obj`, which has no parent, so
+none of them is in the monster family, and `Enemy_Only_Passage_obj`, which the
+blocked walk's tally named (§ Live 1 results, `walk-objects`), has no parent
+either: it is not a monster and keeps blocking. The training dummies,
+`Attack_Dummy_obj` and `Attack_Dummy_Boss_obj`, descend from
+`Enemy_Child_Basic_obj`; the data file's room table places seven plain dummies
+and one boss dummy on `Town_01_rm`'s `Spawners` layer, two of the plain ones
+standing apart at (1816, 704) and (1736, 544). As a static reading, a local
+byte scan finds exactly one direct call to `StatPhasing`, the getter of stat
+26 "Movement Phasing", inside the stat dispatcher `ReturnSpecificStat`; how the
+movement uses stat 26 is not established, because neither its decompile nor
+the movement's completed through the ghidra MCP. The walk's `place_meeting`
+named `Enemy_Parent_obj` 3015 times in Live 1's tally (measured), but that a
+monster in the path is what holds a walk is not established: no session has
+walked into one yet. Mod live procedure 3 measures it against a dummy.
+
 ### Why the canopy covered the flying player
 
 Mod live 1 (2026-10-12) failed five checks, for three reasons in the game
