@@ -1609,7 +1609,10 @@ Angelic drops, all within what the shares above predict; to see that many
 drops, the sessions raised the Angelic roll's chance and called the unique
 roll directly, so how often those rolls happen in normal play was not
 measured. Walking through monsters came after those two sessions and has not
-been checked in a game session yet.
+been checked in a game session yet: a third session tried it on the town's
+training dummies, but they do not stop you even without a flight charm, so it
+showed nothing either way. That session did check that walls still stop a
+flying walk.
 
 ## Goburin's Head pity
 

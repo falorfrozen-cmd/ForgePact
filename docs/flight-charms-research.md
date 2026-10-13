@@ -1075,8 +1075,10 @@ byte scan finds exactly one direct call to `StatPhasing`, the getter of stat
 movement uses stat 26 is not established, because neither its decompile nor
 the movement's completed through the ghidra MCP. The walk's `place_meeting`
 named `Enemy_Parent_obj` 3015 times in Live 1's tally (measured), but that a
-monster in the path is what holds a walk is not established: no session has
-walked into one yet. Mod live procedure 3 measures it against a dummy.
+monster in the path is what holds a walk is not established. Mod live 3
+walked into a dummy and found that a dummy does not hold a vanilla walk, so
+the question stays open for live monsters (§ "Mod live 3 results"); the same
+session measured `StatPhasing` entered on every step.
 
 ### Why the canopy covered the flying player
 
@@ -2143,10 +2145,76 @@ The worn Broomstick that the game did not list was still drawn in the grid,
 as in Mod live 1. The owner's 2026-10-13 decision that flight should also
 ignore monsters came while this session ran; nothing here tested monsters.
 
+### Mod live 3 results
+
+Run on 2026-10-13 by the live operator, on the research DLL built from
+ForgePact `c879f69` with `build.bat dev` (sha256
+`8a16a38edd8325dd288e7d77538b2a34ff4390d5ba783d6276ba17851874bc92`): the
+monster rule and the marker `flp3`. Save slot 14 "Sorak", in `Town_01_rm`,
+on the same game build as both earlier sessions, starting from the restored
+saves with no flight charm owned. The record is the session capture
+`forgepact-158-flight-charms-mod-live-3.md`, kept with the hub's workorder
+files and not tracked. `tools/live_checks.py` reads 14 checks from it: 11
+pass, 1 fail (`monster-baseline`), 2 not observed (`attack-control`,
+`flight-attack`), none not run. The operator drove every person-step through
+hs-drive; none went to the owner. The saves were restored at teardown and
+read back clean.
+
+**The monster path is not verified by this session.** `monster-baseline`,
+the control for the monster walk, failed: with flight off, Sorak's walk
+crossed the training dummy. So a training dummy does not stop a vanilla
+player walk, and `flight-monster`'s pass shows nothing about what flight
+changes. That a flying player walks through monsters is **not observed
+live**; the owner checks it in play, in a zone, and that report relabels it.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The DLL the lease hashed was the research build above. |
+| `marker` | pass | Bare `flightprobe` answered `marker=flp3`, the build with the monster rule. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `dummy-control` | pass | From (1816, 800), 96 px south of the lone dummy at (1816, 704), the spot read free against the family and against `Enemy_Parent_obj`, and the spot 96 px north read blocked by `Attack_Dummy_obj`. So the dummy is there, and is a monster to the saved original. |
+| `monster-baseline` | fail | With flight off, a 1.5 s walk north from (1816, 800) ended at y 503.24, past the dummy's row (below 704 − 40). The dummy did not hold the walk. The trace counted 52 blocked queries of the player during the walk, all left alone because flight was off (`idle=`), not split by object. |
+| `dbg-control` | pass | The `CheckTalentUse` logpoint logged throughout, and the control hold proved the attach by the game's frame counter (13041 and 13149 before the arm, no answer at the hold, 13305 after the resume). |
+| `dbg-phasing` | pass | `StatPhasing` was entered during both walks (419 times in window A while the control rose 418; 385 in window B against 386) and also while Sorak stood still, one-for-one with the control (317 against 317 before window A, 12693 against 12692 between the windows). Measured: the getter of item stat 26 runs on every step, once per `CheckTalentUse` hit, standing included. |
+| `dbg-ipt` | pass | `InstancePlaceTallest` was entered 111 times during window A's walk and 103 during window B's, and not at all while Sorak stood still. The first arm was refused because ForgePact's own detour sits at the function's entry in the live game; the operator armed it on the detoured entry. |
+| `flight-monster` | pass | With Pocket Elf worn, the same walk ended at y 474.554, and the trace's `monster=` rose from 0 to 19 while `monster-kept=` and `idle=` stayed put. The monster rule answered the dummy's `place_meeting` queries; because the walk crossed without flight too, this does not show that flight changes the walk. Sorak ended inside a haystack's collision, which flight allows. |
+| `monster-rows` | pass | During the flying walk `monster=` rose (0 to 19) and `monster-kept=` did not (0 to 0): no other row named the dummy and was kept. |
+| `attack-control` | not observed | With flight off, a 1.5 s left-button hold with the pointer on the dummy walked Sorak 334 px north, past the dummy to the fence; a `Q` cast at it moved him 0 px. No damage number appeared in any screenshot of the session, although the DPS meter read 26 to 32 million throughout, so the check's instrument read nothing. |
+| `flight-attack` | not observed | Flying, the same `Q` cast moved him 0 px and the state stayed `on`; no damage number, for the same reason. |
+| `monster-ends-inside` | pass | Flying, warped onto the dummy: the monster read was blocked by `Attack_Dummy_obj` and the family read free. With the charm taken off, flight read `residual`; the first 1 s walk south moved him from y 704 to 910.538, both reads came back free, and flight read `off`. While he stood on the dummy, `residual`, `monster=` rose from 19 to 1819 and `monster-kept=` from 0 to 703 (inside `other=`, also 0 to 703): the other rows named the dummy while he stood inside it, and kept their answers. Since the dummy does not hold a vanilla walk, this shows the residual state ending on the monster read, not that he needed it to walk out. |
+| `wall-still` | pass | Flying, at the excluded spot (929.9, 2031.1) the `Wall_Parent_obj` read one step south was blocked; a 3 s walk south moved him 0 px while `excluded=` rose from 0 to 3920. The monster rule did not open walls. |
+
+**The debugger's counts**, by name: the control `ctu`, on `CheckTalentUse`;
+`phasing`, on `StatPhasing`; `ipt`, on `InstancePlaceTallest`. Window A is
+the walk at the dummy with flight off, window B the same walk flying.
+
+| Name | At arming | A start | A end | A rise | B start | B end | B rise |
+|---|---|---|---|---|---|---|---|
+| `ctu` | 2912 | 3229 | 3647 | +418 | 16339 | 16725 | +386 |
+| `phasing` | 1256 | 1573 | 1992 | +419 | 14685 | 15070 | +385 |
+| `ipt` | none | 0 | 111 | +111 | 111 | 214 | +103 |
+
+**What `dbg-phasing` changes.** The monster rule rejected hooking
+`StatPhasing` because nothing showed the game reading stat 26 on every step
+rather than from a value cached when the stats are rebuilt. This session
+measured that the getter is entered once per step, walking or standing. What
+calls it each step, and whether the movement uses its answer to let a player
+through monsters, is still not established. Whether that makes the game's own
+stat a better route than the `place_meeting` answer is the owner's question,
+not decided here.
+
+Notes, not checks: the game exited with code C0000409 on a graceful close, as
+in every earlier session. The bag opened with `C` held 150 ms, not 80 ms.
+Nothing moved one of Sorak's own charms: the charm grid had room for Pocket
+Elf.
+
 ### Status and what is not established
 
-Both sessions are recorded. Every acceptance check of Mod live 2 passed, and
-it re-ran every check Mod live 1 failed or did not observe. Measured:
+All three sessions are recorded. Every acceptance check of Mod live 2 passed,
+and it re-ran every check Mod live 1 failed or did not observe. Mod live 3
+tried the monster rule against a town training dummy; its control failed, so
+it verified the walls and the residual state but not the monster path.
+Measured:
 
 - the flight lever crosses scenery and stops at walls (`flight-prop` in Mod
   live 1; `flight-excluded` in Mod live 2) and ends cleanly when the charm
@@ -2161,7 +2229,15 @@ it re-ran every check Mod live 1 failed or did not observe. Measured:
   `reload-broom`), the true sizes in the bag, the charm grid and the stash;
 - the drops at one entry's share, at the player build's single copy
   (`rate-elf`, `rate-angelic`), and none with the switches off (`drop-off`);
-- the game counts one flight charm at a time (`one-flight`).
+- the game counts one flight charm at a time (`one-flight`);
+- the monster rule leaves walls blocking (`wall-still`: 0 px moved,
+  `excluded=` +3920) and ends `residual` on the monster read when the charm
+  comes off inside a monster (`monster-ends-inside`);
+- a training dummy (`Attack_Dummy_obj`) does not stop a vanilla player walk
+  (`monster-baseline`, the failed control);
+- `StatPhasing`, the getter of item stat 26, is entered on every step, once
+  per `CheckTalentUse` hit, standing still included (`dbg-phasing`), and
+  `InstancePlaceTallest` during walks only (`dbg-ipt`).
 
 **Not established**, each written as not observed live rather than as a
 negative:
@@ -2182,7 +2258,18 @@ negative:
   inference; wearing the two together was not tried. Whether that is
   acceptable is the owner's question, not decided here.
 - **Monsters.** The owner decided on 2026-10-13 that flight should ignore
-  monsters too; that change and its check are not part of these sessions.
+  monsters too. Mod live 3 walked into a training dummy, but with flight off
+  the walk crossed it as well, so `flight-monster`'s pass shows nothing: that
+  a flying player walks through monsters is not observed live, pending the
+  owner's play check in a zone. Whether a live monster holds a vanilla walk
+  at all, through `place_meeting` or another row, is not observed either.
+  Monsters' damage and the player's attacks with flight on are not observed
+  (`attack-control` and `flight-attack`: no damage number in any
+  screenshot).
+- **What `StatPhasing`'s answer is used for.** It runs on every step
+  (`dbg-phasing`); whether the movement reads it to let a player through
+  monsters, and so whether the game's own stat is a better lever than the
+  `place_meeting` answer, is the owner's question.
 - **Not tried:** Pocket Elf in a zone, the 8 colour-filter rooms where "Never
   past a filter" changes the answer (the harness's `front_layer_filter`
   scenarios prove the rule), gates and locks and map edges outside town, the
