@@ -8,11 +8,13 @@ tests/fixtures/tracker/parity-script.txt (AGENTS.md, "HS Game SDK Usage"):
 - tests/tracker_mod_parity_harness.cpp plays the script through the real core
   and its Win32 writer - kills, gold and XP calls the core accepts and ones it
   refuses, drops of every tracked rarity, Mythic and Common drops, a duplicate,
-  a bag drop the creation guard holds, room changes, a Satanic zone and a
-  heartbeat - into a real session file, and prints its own counters;
+  a bag drop the creation guard holds, room changes, a Satanic zone, a zone
+  read that answers only after a room change's first read did not, a rotation
+  with no room change and a heartbeat - into a real session file, and prints
+  its own counters;
 - the service reads that file as the panel would, and its ledger must report
   the same gold, XP and kill sums, the same recorded drops, by rarity and in
-  the journal, and the same rooms.
+  the journal, the same rooms and the same last Satanic zone.
 
 The record-kind list is pinned on both sides: the kinds the header writes, the
 kinds the ledger calls the sensor's (`protocol.SENSOR_KINDS`) and the kinds in
@@ -72,6 +74,13 @@ def compile_harness(out: Path) -> Path:
     if result.returncode:
         raise AssertionError(result.stdout + result.stderr)
     return binary
+
+
+def stat_word(stat: str, key: str) -> str:
+    match = re.search(r"(?:^| )%s=(\S+)" % re.escape(key), stat)
+    if match is None:
+        raise AssertionError("%s not in the stat line: %s" % (key, stat))
+    return match.group(1)
 
 
 def stat_value(stat: str, key: str) -> int:
@@ -167,8 +176,24 @@ class TrackerParityTests(unittest.TestCase):
         self.assertEqual(replay["rooms"], self.rooms)
         snap = self.service().snapshot()
         self.assertEqual(snap["room"], self.rooms[-1])
-        self.assertEqual(snap["satanic_zone"]["zone"], "Satanic_1_3")
+        self.assertEqual(snap["satanic_zone"]["zone"], "Satanic_2_4")
         self.assertEqual(snap["character"]["name"], "Sorak")
+
+    def test_the_zone_after_a_late_answer_and_a_rotation_agrees(self):
+        # The script's last room change finds no player on its first zone read;
+        # a later read answers, a repeat of it writes nothing, and a rotation
+        # with no room change is written (replan 2's zone rule).
+        self.assertEqual(stat_value(self.stat, "zone-unresolved"), 1)
+        self.assertEqual(stat_word(self.stat, "zone-why"), "no-player")
+        last = stat_word(self.stat, "zone")
+        self.assertEqual(last, "Satanic_2_4", "the rotation is the last zone written")
+        snap = self.service().snapshot()
+        self.assertEqual(snap["satanic_zone"]["zone"], last)
+        zones = [parse_line(line) for line in self.file.read_bytes().split(b"\n") if line]
+        zones = [r for r in zones if r["kind"] == "satanic_zone"]
+        # two recorded at the act rooms, the late answer, the rotation
+        self.assertEqual(len(zones), stat_value(self.stat, "zones-written"))
+        self.assertEqual([r["zone"] for r in zones], ["Satanic_1_3", "Satanic_1_3", "Satanic_1_3", "Satanic_2_4"])
 
     def test_the_replay_tool_reads_the_same_totals(self):
         replay = tracker_replay.replay_session(self.file)

@@ -10,7 +10,8 @@
 // test to hold the panel's ledger against:
 //
 //   FILE <path>                    the session file
-//   STAT <tracker stat line>       gold-sum, xp-sum, kills-sum and the drop counts
+//   STAT <tracker stat line>       gold-sum, xp-sum, kills-sum, the drop counts
+//                                  and the zone's (zone=, zones-written=)
 //   RECORDED <rarity>\t<name>      each drop the core recorded, in order
 //   ROOM <name>                    each room the core recorded, in order
 //   RESULT OK | RESULT FAIL <why>
@@ -85,6 +86,16 @@ std::vector<int> Ids(const std::string& w)
     return ids;
 }
 
+// A reason token, as `zone-why=` prints it, back to the core's enum.
+TrackerMod::ZoneWhy Why(const std::string& token)
+{
+    for (int i = 0; i <= (int)TrackerMod::ZoneWhy::NotActZone; ++i) {
+        const auto why = (TrackerMod::ZoneWhy)i;
+        if (token == TrackerMod::ZoneWhyName(why)) return why;
+    }
+    throw std::runtime_error("unknown zone reason: " + token);
+}
+
 struct Player {
     TrackerMod core;
     ForgePact::TrackerJournalFile file;
@@ -151,6 +162,10 @@ std::string Play(Player& p, const std::string& line)
         p.core.RecordProgress(Rest(line, 1));
     } else if (op == "zone") {
         p.core.RecordSatanicZone(TrackerMod::SatanicZoneCode(w.at(1)), Ids(w.at(2)), Ids(w.at(3)), w.at(4) == "1");
+    } else if (op == "zoneread") {
+        p.core.ZoneAnswered(w.at(1), Ids(w.at(2)), Ids(w.at(3)));
+    } else if (op == "zonemiss") {
+        p.core.ZoneUnanswered(Why(w.at(1)));
     } else if (op == "gold") {
         const int argc = counterArgs(1);
         p.core.CountGold(TrackerMod::CaptureGold(argc, args.data()));

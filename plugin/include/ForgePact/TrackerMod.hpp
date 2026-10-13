@@ -673,7 +673,7 @@ public:
         s += " zone=" + (m_LastZone.empty() ? std::string("none") : m_LastZone);
         s += " zones-written=" + n(m_Stats.zonesWritten) + " zone-polls=" + n(m_Stats.zonePolls);
         s += " zone-unresolved=" + n(m_Stats.zoneUnresolved) + " zone-why=" + ZoneWhyName(m_ZoneWhy);
-        s += " file="+ (fileName.empty() ? std::string("none") : fileName);
+        s += " file=" + (fileName.empty() ? std::string("none") : fileName);
         return s;
     }
 

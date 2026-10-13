@@ -11,9 +11,12 @@ sensor: a session from a live run can be checked here without a panel, and
 Live procedure 1 compares its totals with the file's own sums.
 
     py -3 ForgePact/tools/tracker_replay.py <session file> [--json]
-    py -3 ForgePact/tools/tracker_replay.py --save <slot> [--json] [--saves-root <dir>]
+    py -3 ForgePact/tools/tracker_replay.py --save <N> [--json] [--saves-root <dir>]
 
-`--save` reads `herosiege<slot>.hss` through the panel's save reader
+`--save` takes the save file's number, not the character-select slot. The
+files count from 0: slot N of character select loads `herosiege<N-1>.hss`, so
+slot 14 (Sorak, in the live procedures) is `--save 13` (RDM § 8.2). It reads
+`herosiege<N>.hss` through the panel's save reader
 (`src/tracker_saves.py`) and prints the `progress` record it makes: the
 character, experience, kills and the boss and chest tallies. The saves root
 defaults to `%LOCALAPPDATA%\\Hero_Siege`; `hs2saves\\` is read first, the
@@ -142,13 +145,15 @@ def _print_save(record: dict) -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("session", nargs="?", help="a session-<pid>-<ms>.ndjson file")
-    parser.add_argument("--save", type=int, metavar="SLOT", help="read herosiege<SLOT>.hss instead")
+    parser.add_argument("--save", type=int, metavar="N",
+                        help="read save file herosiege<N>.hss instead. The files count from 0, so character-select "
+                             "slot 14 is --save 13")
     parser.add_argument("--saves-root", default=None, help="the saves root (default %%LOCALAPPDATA%%\\Hero_Siege)")
     parser.add_argument("--json", action="store_true", help="print JSON")
     args = parser.parse_args(argv)
     if (args.session is None) == (args.save is None):
         parser.print_usage(sys.stderr)
-        print("tracker_replay: give a session file or --save <slot>, not both", file=sys.stderr)
+        print("tracker_replay: give a session file or --save <N>, not both", file=sys.stderr)
         return 2
     try:
         if args.save is not None:

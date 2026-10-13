@@ -17,6 +17,10 @@
 #   zone <act room> <buffs> <debuffs> <here 0|1>
 #                                     RecordSatanicZone(SatanicZoneCode(room)),
 #                                     ids comma-separated, `-` for none
+#   zoneread <act room> <buffs> <debuffs>
+#                                     ZoneAnswered: a polled zone read that
+#                                     answered; the core decides whether to write
+#   zonemiss <reason token>           ZoneUnanswered: a polled read that did not
 #   gold|xp|kill <argc> <value...>    CountGold/CountXp/CountKill of what
 #                                     CaptureGold/CaptureXp/CaptureKill decode;
 #                                     a value is r<real>, i<int32>, l<int64> or x
@@ -91,9 +95,22 @@ gold 2 r0 r40
 xp 2 r60 r1
 end
 frames 29 1700000012016 16
-# A minute on, back in town: long enough for the run to be filed.
+# A minute on, back in town: long enough for the run to be filed. The room
+# change owes a zone record; the first read finds no player, a later one
+# answers (written, since it was owed), a repeat writes nothing, and a
+# rotation with no room change is written.
 frame 1700000075000
 room Town_01
+zonemiss no-player
 kill 1 r12
+end
+frame 1700000075250
+zoneread Act_01_03 6,14 3
+end
+frame 1700000075500
+zoneread Act_01_03 6,14 3
+end
+frame 1700000076000
+zoneread Act_02_04 2,5 7,9
 end
 drain

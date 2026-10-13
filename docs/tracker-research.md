@@ -74,15 +74,39 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   recorded, with the producer's rarity names; the item's `itemType`,
   `itemDefinitionStruct.b` and `.j` and info `"28"` (the name) are read only
   for those, as the producer's ground-item capture read them.
-- **The room: polled, not hooked.** Each tick compares `room_get_name` of the
-  `room` builtin with the last name. On a change the sensor writes `room`, a
-  `progress` with the local player's `name` variable (the read Loot
-  announcements' chat line uses), and, when ForgePact's satzone readers answer
-  (`Controller_obj.satanicZone`, `GPV` with the player as `self`, the
-  `satanicZoneBuff`/`satanicZoneDebuff` arrays; module guide Known
-  Limitations, the `satmods` item's 2026-10-03 correction, and RDM § 14.1), a
-  `satanic_zone` named `Satanic_<act>_<zone>` as the producer names it, and a
-  `vitals` saying whether the character stands in it.
+- **The room: polled, not hooked; the zone and the name read until they
+  answer** (replan 2, after Live procedure 1 below). Each tick compares
+  `room_get_name` of the `room` builtin with the last name. On a change (and
+  at install) the sensor writes `room` and marks a `satanic_zone` and the
+  character's name as owed. It reads the zone on that tick and then every
+  15th tick, owed or not, and the name on the same ticks while it is owed:
+  - the name is the local player's `name` variable (the read Loot
+    announcements' chat line uses), written once as a `progress` when it
+    reads as text;
+  - the zone goes through the tracker's own copy of ForgePact's satzone
+    readers: `Controller_obj.satanicZone`, `GPV` of that key by SDK name with
+    the local player as `self` (the proven pair `HhResolveLocalPlayer` +
+    `HhResolveInstance`, the shape every measured read used), `room_get_name`
+    of the room it answers, and the `satanicZoneBuff`/`satanicZoneDebuff`
+    arrays (module guide Known Limitations, the `satmods` item's 2026-10-03
+    correction, and RDM § 14.1). Its code is `Satanic_<act>_<zone>`, as the
+    producer names it.
+  An answer writes a `satanic_zone` and a `vitals` (whether the character
+  stands in the zone's room) when a record is owed, or when the zone, the
+  buffs or the debuffs differ from the last record written: a rotation, which
+  the game rolls on its own between room changes (RDM § 14.1, **measured**
+  2026-10-03: the store moved 20 to 4 within one session). A read that does
+  not answer writes nothing, keeps the record owed, and keeps the step that
+  failed for `zone-why=` (`no-controller`, `no-zone-key`, `no-player`,
+  `gpv-failed`, `no-zone-rolled`, `room-unnamed`, `not-act-zone`). Why reads
+  can fail on a room change's first ticks: `GetMyPlayer` answers noone with
+  no `Player_obj` (**static reading**), `Player_obj` gets a new instance id
+  on a room change, and there is no `Player_obj` while the map is open (both
+  **measured**; RDM § 1, "How the local player arrives"). How many ticks a new
+  act zone runs without a player is **not established**; Live procedure 2
+  reads it from `zone-why=`. The tracker writes nothing of `satzone`'s state
+  and does not call `SatZoneReadValue`, which records its failures as
+  `satzone stat`'s last reason.
 - **Arming:** armed at launch, hooked once a character exists, as Loot
   announcements (module guide Known Limitations item 8).
 - **Writing:** on the game thread only, every 30 frames, one append of whole
@@ -91,12 +115,74 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   open with lines pending across `ExitProcess` and reads exit `0x0` and the
   lines intact, against `0x7E2` for a joinable `std::thread` left at exit.
 
-**Not established** until Live procedure 1 of the toolkit workorder
-`forgepact-185-tracker-move` runs: that the sensor's call counts equal debugger
-hit counts on the three counter scripts, that its sums equal the save's
-experience and kill differences, that a real bag drop is held, that a zone
-change writes its `room` and `satanic_zone`, and that the game closes cleanly
-with the sensor and the producer both installed.
+Live procedure 1 (below) measured the counters, a held bag drop and a clean
+close with the producer installed. **Not established** until Live procedure 2
+of the toolkit workorder `forgepact-185-tracker-move` runs: that the rule
+above writes the `satanic_zone` and the name after a room change and on a
+rotation in a real session.
+
+## Live procedure 1 (2026-10-13)
+
+Capture: `.claude/workorders/forgepact-185-tracker-move-live-1.md` in the
+toolkit hub (`forgepact-185-tracker-move-live-1`). The research build
+(sha256 `5d56eda0…`), Sorak in character-select slot 14, HS Offline
+Tracker's v0.1.4 producer (`5f83e542…`) installed beside it, the ForgePact
+panel closed, and x64dbg logpoints on the three counter scripts beside a
+`CheckTalentUse` control. The owner took one step by hand: the bag drop, and
+the travel to `Act_01_01` with the fighting there. The checks, with the
+results the capture gives them:
+
+- **Session validity**, all `pass`: `dll-hash`, `exit-reader`, `control`,
+  `marker`, `dump-control` (cell A's forced crash read `0xC0000005` and its
+  dump parsed), `dbg-control` (the control rose from hit 3,473 to 26,856).
+- **Shipped behaviour:**
+  - `arms-at-select` `pass`: `tracker 1` with no character answered
+    `install=waiting-for-character` (sent at the main menu, not on the
+    save-slot screen);
+  - `installs-with-character` `pass`: `install=installed`, every route
+    `both`, 5 s after the load;
+  - `session-file` and `identity-records` `pass`: one file for the pid, 139
+    lines, sequence 1 to 139 with none bad; `bridge_status`
+    `transport_ready`, `room` `Town_01_rm` and `progress` `Sorak` first;
+  - `placed-heroic` `pass`: a placed Heroic belt became one `ground_drop`;
+    `mythic-untracked` `pass`: a placed Mythic did not, and
+    `drops-untracked=` rose by 1;
+  - `bag-drop-held` `pass`: the Heroic, picked up and dropped from the bag by
+    the owner, wrote no `ground_drop`, and `held-bag-drop=` went from 0 to 1;
+  - `deltas-flow` and `replay-matches` `pass`: the file's `session_delta`
+    sums, 1,267 gold, 501,483 XP and 588 kills, equal `gold-sum=`,
+    `xp-sum=`, `kills-sum=` and `tools/tracker_replay.py`'s totals;
+  - `room-change` `pass`: a `room` record `Act_01_01`;
+  - `save-read` `fail`: the procedure read save file 14, another character's.
+    The save files count from 0, so slot 14 is file 13 (RDM § 8.2); the
+    replay tool's `--save` now says so;
+  - `clean-close` `pass`: `hs_stop_game` in the world with the tracker on
+    read `0x00000000`, `out.txt` ended on `==== clean shutdown ====`, and the
+    dump reader found no dump.
+- **Research:**
+  - `dbg-gold`, `dbg-xp`, `dbg-kills` `pass`: 17 `GoldLogAdd`, 588
+    `ExperienceUpdate` and 588 `EnemyAddStatistics` hits, each equal to the
+    matching `*-calls=` rise, with 2, 2 and 1 arguments on every hit. The
+    candidates' first bytes were the installed detours' jumps, as the
+    procedure expected, so the logpoints were armed on the live bytes.
+    **Measured**: each script's argument count, and that the sensor sees
+    every call the debugger sees. Gold's amount index stays the reviewed
+    profile, and whether every gold credit passes through `GoldLogAdd` stays
+    **not established**;
+  - `kills-vs-save` and `xp-vs-save` `fail` as written: they read file 14.
+    The operator's own reads of Sorak's file 13 moved by +588 kills and
+    +501,483 experience, exactly the sensor's sums (**measured**);
+  - `zone-record` `fail`: after the room change to `Act_01_01` the file
+    gained no `satanic_zone` and no `progress`, and the stat read
+    `zone-unresolved=1`. The only `satanic_zone` was the one written at
+    install, in town. The sensor read both once, on the room change's own
+    tick; replan 2's rule (Routes, the room) reads them until they answer;
+  - `producer-coexists` `pass`, though whether the producer loaded into the
+    process was not separately observed.
+
+One 4.6 s freeze in town lined up in time with a debugger break in
+`discordhook64.dll` that the debugger's keeper resumed. Its cause is **not
+established** beyond that timing.
 
 ## Rejected routes
 
@@ -134,3 +220,25 @@ with the sensor and the producer both installed.
 - **Settings inside `forgepact.json`.** Keeping the Tracker's own
   `settings.json` shape makes the import a copy and lets the Tracker tab port
   the Tracker's settings components.
+
+Turned down in replan 2, for the zone after Live procedure 1:
+
+- **Reading the zone inside `RoomGoto`, as the producer did.** The producer
+  hooks `RoomGoto` and resolves the zone after the original returns, with
+  that call's own `self` and `other`, before the new room loads. That is a
+  new hook target, and it would still see a rotation only at the next room
+  change. A polled read that retries covers both.
+- **`GPV` with the global instance as `self`**, so the read needs no player.
+  `GPV` hands its `self` on to its implementation (static reading), and every
+  measured read used the player. A new call shape is a research question;
+  the player's absence now costs only a retry.
+- **Writing a zone only when it changes**, with no record per room change. A
+  room change into or out of the zone's room changes `satanic_here`, which
+  the ledger takes from `vitals`, and the producer also wrote one per room
+  change.
+- **Retrying only after a room change**, with no read between room changes.
+  It misses a rotation while the player stays in one room (RDM § 14.1: the
+  store moved on its own within a session).
+- **A fixed delay after a room change.** The readers are asked until they
+  answer, as map reveal asks its creators whether they are ready, rather
+  than guessing how long a room takes to load.
