@@ -57,7 +57,7 @@ ROWS = (
     ("PlayerJumpGravity", "gml_Script_playerJumpGravity"),
     ("StatJumpPower", "gml_Script_StatJumpPower"),
 )
-SDK_OBJECTS = ("Profile_Manager_obj", "Collision_Parent_obj", "Wall_Parent_obj")
+SDK_OBJECTS = ("Profile_Manager_obj", "Input_Device_Manager_obj", "Collision_Parent_obj", "Wall_Parent_obj")
 
 # Builtins and calls that change game state. The adapter may use the first
 # three only inside M1pWriteTarget; the rest never.
@@ -275,6 +275,24 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn('"pSt"', resolve)
         self.assertIn("HeroSiege::Objects::GameObject::Profile_Manager_obj", resolve)
         self.assertIn('"instance_find"', resolve)
+        # profile and input read the gate's own source: the entry of
+        # Input_Device_Manager_obj's playerProfileSlot at CheckTalentUse's
+        # third argument, and no stand-in when that route is unresolved.
+        self.assertIn("HeroSiege::Objects::GameObject::Input_Device_Manager_obj", resolve)
+        self.assertIn("g_M1pSlotArg", resolve)
+        self.assertNotIn("Profile_Manager_obj#0", resolve)
+        note = self.body("static void M1pNoteLocalCall(int row, int64_t frame, int argc, RValue** A)")
+        self.assertIn("g_M1pSlotArg = A[2]->ToDouble();", note)
+        # queue: abilityQueue and mobileTalentPressed are globals, never
+        # written wholesale; any other member name is refused.
+        member = self.body("static bool M1pResolveMember(CInstance* player, M1pNs::Scope scope, const std::string& name, M1pScopeRef& out, std::string& why)")
+        self.assertIn('"abilityQueue"', member)
+        self.assertIn('"mobileTalentPressed"', member)
+        self.assertIn('"stackSkillList"', member)
+        write = self.body("static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pNs::Value& v)")
+        self.assertIsNotNone(re.search(r"else if \(s\.isGlobal\)\s*\{\s*return false;", write))
+        # A write counts as applied only when it reads back as written.
+        self.assertIn("return M1pReadTarget(player, t, back) && back.number == v.number;", write)
         # A struct is told apart from an instance before an instance is assumed.
         as_scope = self.body("static bool M1pAsScope(const RValue& v, const std::string& label, M1pScopeRef& out, std::string& why)")
         self.assertLess(as_scope.index('"is_struct"'), as_scope.index('"instance_exists"'))
