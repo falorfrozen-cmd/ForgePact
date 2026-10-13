@@ -52,6 +52,13 @@ against the plugin before it (ForgePact `b1f7cce`, which latched the first pool
 build even when it came back empty): the plugin's own `BuildAngelicPool`, run
 against the model's unique data, keeps only a build that found candidates, so a
 later roll or switch-on resolves the stand-ins once the data is there.
+`test_flight_baseline` and `test_flight_target` are the flight charms' drop
+switches (#158), on the same machinery: the model adds `DropUniqueItems`, the
+ordinary unique roll (one draw over `lootListUnique[k]`, k 0..4, kept when the
+repository's rarity is below 7 and the entry is not hidden), and the
+repository's rarity and hidden flag for the triples a scenario names. The
+baseline holds against the source before #158 too; every target scenario
+fails there (no `FlightDropSwitch`).
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -64,6 +71,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The plugin's own headers: the flight charms' decision core (FlightCharms.hpp) compiles in whole.
+INCLUDE = ROOT / 'plugin' / 'include'
 
 # Inserted at `// PRODUCTION_TYPES`, ahead of the harness globals that use them.
 PRODUCTION_TYPES = (
@@ -73,6 +82,7 @@ PRODUCTION_TYPES = (
     'struct SignatureItem {',
     'static constexpr SignatureItem kSignatureItems[]',
     'struct SignatureStandIn {',
+    'struct FlightDropState {',                  # #158: the flight charms' drop adapter's state
 )
 
 # Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
@@ -117,6 +127,37 @@ PRODUCTION = (
     'static std::string ApRollKindName(',        # the research dump's kind names
     'static void SigListDump(',                   # replan 2, research build: `angelicprobe list dump`
     'static void SigInjectStatus(',               # research build: `angelicprobe inject status`, for its list=
+    # #158: the flight charms' drop adapter, after everything it calls.
+    'struct FlightDropOutsideRoll {',
+    'static const FcNs::StandIn* FlightDropStandIn(',
+    'static FcNs::Gate FlightDropGate(',
+    'static bool FlightDropOn(',
+    'static std::string FlightDropOffReason(',
+    'static void FlightDropResolveAngelic(',
+    'static void FlightDropCountAngelic(',
+    'static bool FlightDropReadUniqueLists(',
+    'static bool FlightDropUniquePasses(',
+    'static void FlightDropResolveElf(',
+    'static bool FlightDropTailHolds(',
+    'static bool FlightDropHeldReadBack(',
+    'static void FlightDropRemove(',
+    'static void FlightDropPushOnto(',
+    'static void FlightDropHitReset(',
+    'static void FlightDropAngelicPush(',
+    'static void FlightDropAngelicRemove(',
+    'static void FlightDropUniquePush(',
+    'static void FlightDropAttributeHit(',
+    'static void FlightDropRefuse(',
+    'static void FlightDropBeforeCreate(',
+    'static void FlightDropNoteBuilt(',
+    'static void FlightDropAfterHit(',
+    'struct FlightUniqueInjectGuard {',
+    'struct FlightUniqueCounterScope {',
+    'static RValue& Hook_FlightDropUniqueItems(',
+    'static void FlightDropInstallUnique(',
+    'static void FlightDropSwitch(',
+    'static void FlightDropFillStat(',
+    'static std::string FlightDropTraceLine(',
 )
 
 # The plugin's own pool build, appended to the functions under another name: the harness's
@@ -198,13 +239,13 @@ class AngelicHitBehaviorTests(unittest.TestCase):
                 raise unittest.SkipTest('Visual Studio C++ toolchain not installed')
             vcvars = Path(install) / 'VC/Auxiliary/Build/vcvars64.bat'
             batch = output / 'compile.cmd'
-            batch.write_text(f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\ncl /nologo /std:c++20 /EHsc /W4 /O2 "{cpp}" /Fe:"{cls.binary}" /Fo:"{output / "angelic_hit.obj"}"\nexit /b %errorlevel%\n', encoding='utf-8')
+            batch.write_text(f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\ncl /nologo /std:c++20 /EHsc /W4 /O2 /I "{INCLUDE}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{output / "angelic_hit.obj"}"\nexit /b %errorlevel%\n', encoding='utf-8')
             command = ['cmd', '/d', '/c', str(batch)]
         else:
             compiler = shutil.which('c++')
             if not compiler:
                 raise unittest.SkipTest('A C++20 compiler is required for native angelic-hit tests')
-            command = [compiler, '-std=c++20', '-O2', str(cpp), '-o', str(cls.binary)]
+            command = [compiler, '-std=c++20', '-O2', '-I', str(INCLUDE), str(cpp), '-o', str(cls.binary)]
         # The compiler speaks the machine's locale (/W4 notes included); decode
         # leniently so a localized line cannot crash the test itself.
         result = subprocess.run(command, cwd=output, capture_output=True, text=True, encoding='utf-8', errors='replace')
@@ -318,6 +359,39 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'install_is_idempotent', 'detection_not_detoured_never_arms',
             'status_reports_detect_route', 'autoarm_enabled_not_forced_no_drop',
         ))
+
+    def test_flight_baseline(self):
+        # #158, the flight charms' drop switches: with no switch ever touched both rolls are the
+        # game's own and the plugin calls nothing; with every switch on and then off again (the
+        # hooks installed, passing through) the rows the Angelic roll and the unique roll read,
+        # and what they build, are the game's own. Holds against the source before #158 too.
+        self.run_scenarios(('flight_untouched_installs_nothing', 'flight_switches_off_rows_vanilla'))
+
+    def test_flight_target(self):
+        # #158: Gabriel Wings and Witch's Broomstick join the Angelic roll's lootListUnique[5]
+        # after #74's rows, typed, coined (c in n + c) and rewritten to their own seed, built by
+        # the game once per hit; Pocket Elf joins the ordinary unique roll (a model of
+        # DropUniqueItems: one draw over lootListUnique[k], no second draw), its stand-in on each
+        # of lootListUnique[0..4] by the even-count rule, refused when no candidate has one count
+        # in all five, counted again when a sub-list changes; an untyped or vanilla pick stays the
+        # game's, and #74's `sigdrop status` does not move; a table-only DropUniqueItems hook and
+        # a refused rewrite keep the charm off; the fresh `flightcharm stat` line is byte-exact.
+        # Every scenario fails against the source before #158 (no FlightDropSwitch).
+        self.run_scenarios((
+            'flight_stat_line_fresh', 'flight_wings_angelic_hit_built', 'flight_broom_coin_one_in_two',
+            'flight_angelic_rows_after_74s', 'flight_elf_unique_roll_built', 'flight_elf_coin_one_in_two',
+            'flight_elf_even_count_rule', 'flight_elf_untyped_and_not_ours_are_vanilla',
+            'flight_elf_table_only_never_arms', 'flight_refused_rewrite_latches',
+            'flight_unique_throw_removes_entries',
+        ))
+
+    def test_flight_partial_push(self):
+        # PR #214 review round 1: ds_list_add refused partway through a flight push. The entries
+        # that did go on come off again before the roll, on the Angelic list (where they sat
+        # after #74's row, whose own tail-checked removal they used to block) and on each of the
+        # unique roll's sub-lists, and the refused push counts one anomaly, not an injection.
+        # Fails against 9b12f86, which left a partial push on the lists as found.
+        self.run_scenarios(('flight_partial_push_angelic_removes_its_entries', 'flight_partial_push_unique_removes_its_entries'))
 
 
 if __name__ == '__main__':

@@ -128,6 +128,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Always show Chaos Pillar mods, Mods > Quality of Life (ForgePact #7;
     # test_chaos_pillar_tips_contract.py).
     "pillartips",
+    # Flight charms, Mods > Items: the three drop switches and `stat`
+    # (ForgePact #158; test_flight_charms_contract.py pins it).
+    "flightcharm",
     # Boss soul pieces, the Loot tab's switch (ForgePact #197;
     # test_soul_piece_contract.py).
     "soulpiece",

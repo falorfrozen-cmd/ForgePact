@@ -211,6 +211,14 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         lai = _code(_body(self.plugin, "static void LootAnnounceInstall()"))
         self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", lai)
 
+    def test_the_announcement_comes_before_the_flight_charms_ground_icon(self):
+        # ForgePact #158: the flight charms' ground icon is the detour's third
+        # consumer, after the announcement, so the announcement sees the call
+        # exactly as before.
+        hook = _code(_body(self.plugin, "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
+        self.assertEqual(hook.count("FlightCharmOnGroundInit(argc, A);"), 1)
+        self.assertLess(hook.index("LootAnnounceOnInit(S, argc, A);"), hook.index("FlightCharmOnGroundInit(argc, A);"))
+
     def test_the_shared_detour_hands_the_call_on_after_the_original(self):
         hook = _code(_body(self.plugin, "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
         self.assertEqual(hook.count("LootAnnounceOnInit(S, argc, A);"), 1)

@@ -49,6 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
+| **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -197,7 +198,7 @@ everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard, the timed skill countdown and Goburin's Head pity), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon), and **Gameplay**, which holds the Bosses setting and Dungeon
+Crown, Beacon) and the drop switches of ForgePact's own flight charms, and **Gameplay**, which holds the Bosses setting and Dungeon
 chest opens early. Quality of
 Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
@@ -1617,6 +1618,88 @@ strongbox in Path of Exile.
 `pillartips stat` prints whether the switch is on and its counters (pillars
 seen, on screen, shown, activated and unreadable, and any writes or pillar
 counts it could not make).
+
+## Flight charms (Pocket Elf, Gabriel Wings, Witch's Broomstick)
+
+Mods → Items → **Pocket Elf drops**, **Gabriel Wings drops** and **Witch's
+Broomstick drops** (plugin command `flightcharm elf|wings|broom 1|0`,
+`flightcharm stat` for the state). All three off by default.
+
+Three charms of ForgePact's own. Each draws its own icon in the bag and on the
+ground, and its tooltip shows its name in its rarity's colour and a gold
+**Flight** line. Pocket Elf, which has no other stats, shows its **Flight**
+line too.
+
+| Charm | Rarity | Size | Also |
+| --- | --- | --- | --- |
+| Pocket Elf | Satanic | 1 cell | nothing else |
+| Gabriel Wings | Angelic | 2x2 cells | 1-12% physical and 1-12% magic damage reduction |
+| Witch's Broomstick | Unholy | 1 wide, 5 tall | +10-100% movement speed |
+
+- **Flight.** While one of them sits in your charm slots, you walk through
+  rocks, fences, carts, trees, the edge of a ravine and the other scenery that
+  stops a walk, and your character is drawn in front of scenery instead of
+  disappearing behind it, tree canopies included. A room's colour filter
+  (its tint or lighting overlay) still covers you as it does on the ground, so
+  in the few rooms that put scenery in front of their filter, that scenery
+  stays in front of you. You also walk through monsters instead of being
+  held up by them, but they still hit you and you still hit them: only
+  bumping into them changes (owner-confirmed in play, 2026-10-13). Walls (zone gates count as walls), locked doors
+  and the edge of the map still stop you. A few stone walls are built by the
+  game as scenery rather than as walls, such as the town church's, and those
+  you would walk through: a game session measured that the church wall is
+  scenery, not a wall, but nobody has walked it with a charm on yet.
+- **One flight charm at a time.** The game itself counts only one flight charm
+  at a time: wear two and only one of them works, stats included.
+- **Taking one off inside a prop.** Nothing moves you on its own. If you take
+  the charm off while you stand inside scenery or a monster, flight stays on
+  until you have walked out of it, and then ends.
+- **Drops.** Each switch lets one charm drop from the game's own rolls: Pocket
+  Elf among the ordinary unique items a monster drops, Gabriel Wings and
+  Witch's Broomstick from the game's Angelic roll (the one a Blood Pact or
+  dungeon "Angelic item drop chance" effect turns on). For the length of each
+  roll ForgePact adds the charm to the roll's list in place of one real unique
+  of the same kind (its stand-in), and a hit on that stand-in goes to the
+  charm with the added entry's share; the stand-in keeps its own rate and
+  ForgePact adds no die of its own. So the charm is about as rare as one
+  particular unique, and no drop chance changes: Gabriel Wings and Witch's
+  Broomstick each come as about 1 in 50 of the Angelic roll's drops (the
+  same share as Headhunter and Tyrant's Crown), and Pocket Elf on about 1 in
+  51 to 1 in 222 of the ordinary unique roll's draws, depending on which of
+  the game's unique lists the roll draws from. If the plugin cannot set the
+  roll up safely on your game, the switch says why and the roll stays the
+  game's own.
+- **You keep what you have.** A charm you already own works, and keeps its
+  look and size, whether its switch is on or off. With ForgePact removed it
+  loads as a plain Small Charm.
+- **Size after a reload.** If a charm's full size no longer fits where it was
+  saved (for example after you played without ForgePact, where it is one
+  cell, and put it next to other items), it loads at one
+  cell in its own place instead of disappearing, and every other item keeps
+  its place. It is full size again on the next load where its cells are free.
+- **Offline only.** Online and in co-op, flight stays off.
+
+`flightcharm stat` prints the three switches, whether flight is installed and
+on, which charms you wear, how many collision answers it changed or kept, how
+many icons loaded, the size fixes after a load, and the drop counters.
+
+Checked in three game sessions on a research build of the plugin (2026-10-12
+and 2026-10-13), plus the owner's own play check: walking through scenery and stopping at walls, being drawn
+over tree canopies in town and in the Outskirts of Inoya, the icons and the
+**Flight** line on all three charms, the sizes after a reload, and the drops,
+where at the normal one entry per charm Pocket Elf came once in 100 ordinary
+unique draws and Witch's Broomstick twice and Gabriel Wings never in 102
+Angelic drops, all within what the shares above predict; to see that many
+drops, the sessions raised the Angelic roll's chance and called the unique
+roll directly, so how often those rolls happen in normal play was not
+measured. Walking through monsters came after the first two sessions: the
+third tried it on the town's training dummies, but they do not stop you even
+without a flight charm, so it showed nothing either way; it did check that
+walls still stop a flying walk. Walking through monsters, with monsters still
+hitting you and you still hitting them, is owner-confirmed in play,
+2026-10-13: the owner played with a Pocket Elf on the research build and
+reported it working as intended. That is the owner's report, not a measured
+test.
 
 ## Goburin's Head pity
 

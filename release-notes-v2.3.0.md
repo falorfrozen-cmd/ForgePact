@@ -8,6 +8,10 @@ A new **Boss soul pieces** switch, also off by default, lets monsters drop a
 piece of their act boss's soul that takes you straight to that boss for a
 fresh fight.
 
+Three new charms, **Pocket Elf**, **Gabriel Wings** and **Witch's
+Broomstick**, let you walk through scenery and monsters while you wear one,
+and each can join the game's own drops behind its own switch, off by default.
+
 ## New
 
 - **Always show Chaos Pillar mods (#7).** A Chaos Pillar shows its box of
@@ -23,6 +27,60 @@ fresh fight.
   supported. Checked in a game session with mouse play: boxes showed without
   hovering, hid when the pillars went off screen and when one was activated,
   and switching off brought back the hover-only boxes.
+- **Flight charms: Pocket Elf, Gabriel Wings and Witch's Broomstick (#158).**
+  Three charms of ForgePact's own, each with its own icon in the bag and on
+  the ground and a gold **Flight** line in its tooltip. While you wear one in
+  your charm slots, you walk through rocks, fences, carts, trees and other
+  scenery, and your character is drawn in front of it instead of hidden
+  behind it, tree canopies included. A room's colour filter (its tint or
+  lighting overlay) still covers you as it does on the ground, so in the few
+  rooms that put scenery in front of their filter, that scenery stays in front
+  of you. You also walk through monsters instead of being held up by them, but
+  they still hit you and you still hit them (owner-confirmed in play,
+  2026-10-13). Walls (zone gates count as walls), locked doors and the edge of
+  the map still stop you. A few stone walls are built by the game as scenery
+  rather than as walls, such as the town church's, and those you would walk
+  through: a game session measured that the church wall is scenery, not a
+  wall, but nobody has walked it with a charm on yet. Take the charm
+  off while you stand inside a prop or a monster and you can still walk out;
+  nothing moves you on its own. The game
+  itself counts only one flight charm at a time: wear two and only one of
+  them works.
+  - **Pocket Elf** (Satanic, one cell) can drop among the game's own unique
+    items. It has no other stats, and its tooltip still shows the gold
+    **Flight** line.
+  - **Gabriel Wings** (Angelic, 2x2 cells) also lowers the physical and the
+    magic damage you take, each by 1 to 12%. It can drop from the game's own
+    Angelic roll.
+  - **Witch's Broomstick** (Unholy, one cell wide and five tall) also adds 10
+    to 100% movement speed. It can drop from the game's own Angelic roll.
+
+  Each charm's drop has its own switch in Mods → Items, all off by default. A
+  switch only lets that charm drop, about as rarely as one particular unique
+  of the game's own does; it changes no drop chance. Gabriel Wings and Witch's
+  Broomstick each come as about 1 in 50 of the Angelic roll's drops, the
+  same share as Headhunter and Tyrant's Crown, and Pocket Elf on about 1 in
+  51 to 1 in 222 of the ordinary unique roll's draws. A charm you already own
+  works whether its switch is on or off.
+  If a charm's full size no longer fits where it was saved, it loads at one
+  cell in its own place instead of disappearing, and is full size again the
+  next time it fits. It also loads at one cell when its full size would cover
+  the place of another flight charm in the same bag, instead of pushing that
+  charm out.
+  Offline play only. Checked in three game sessions on a test build, plus the
+  owner's own play check: you walk
+  through scenery and stop at walls, you are drawn over tree canopies in town
+  and in the Outskirts of Inoya, all three charms show their icons and the
+  **Flight** line, the sizes survive a reload, and with each switch on Pocket
+  Elf came once in 100 unique drops and Witch's Broomstick twice and Gabriel
+  Wings never in 102 Angelic drops, as the shares above predict (the test
+  raised the Angelic roll's chance to get that many drops, so how often that
+  roll happens in normal play was not measured). Walking through monsters
+  came last: the third session showed walls still stop a flying walk, and
+  that monsters let you through while they still hit you and you still hit
+  them is owner-confirmed in play, 2026-10-13 (the owner's report from
+  playing with the charm, not a measured test).
+
 - **Boss soul pieces (#197).** Fighting an act's boss again means making your
   way back through the act to its lair. With
   this switch on (Loot → Boss soul pieces, off by default), monsters in an
@@ -66,8 +124,9 @@ fresh fight.
 
 Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
-and Boss soul pieces switches) and the panel (their switches on the Mods and
-Loot tabs), so updating only one of them leaves the other behind. Your existing settings are retained. Start the
+switch, the Boss soul pieces switch and the three flight charms) and the panel
+(their switches on the Mods and Loot tabs), so updating only one of them leaves
+the other behind. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 

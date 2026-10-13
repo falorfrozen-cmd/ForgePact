@@ -1,9 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace ForgePact::JumpScenery {
 
@@ -98,10 +100,50 @@ inline constexpr Answer kScriptAnswers[kScriptLeverCount] = { Answer::True, Answ
 // Which objects the lever answers for. Props: Collision_Prop_obj or one of its
 // descendants (the scenery). All: Collision_Parent_obj or a descendant (also
 // the level's blocks, the map-edge walls and the zone gates), and the two
-// object-less rows.
-enum class FamilyRule : int { Props, All };
+// object-less rows. Any (the walk lever, ForgePact #158): the local player's
+// own query whatever object it names - outside Collision_Parent_obj, `all`,
+// an unresolved argument - and the two object-less rows. A walk into the prop
+// a jump crossed stayed blocked under `all`; `any` asks whether a query
+// naming some other object is what stops it.
+enum class FamilyRule : int { Props, All, Any };
 
-inline constexpr std::string_view FamilyName(FamilyRule r) { return r == FamilyRule::All ? "all" : "props"; }
+inline constexpr std::string_view FamilyName(FamilyRule r)
+{
+    switch (r) {
+    case FamilyRule::Props: return "props";
+    case FamilyRule::All:   return "all";
+    case FamilyRule::Any:   return "any";
+    }
+    return "?";
+}
+
+// The object tally (ForgePact #158): per builtin row, the local player's own
+// calls counted by the object index they name (-1 for the object-less rows,
+// and for an argument that is no object), whatever the lever does. At most
+// kTallyMaxObjects distinct objects a row; the calls naming any further one
+// are counted under `other`.
+inline constexpr int kTallyMaxObjects = 64;
+
+struct ObjectCount {
+    int      object = -1;
+    uint64_t n = 0;
+};
+
+struct RowTally {
+    ObjectCount objects[kTallyMaxObjects]{};
+    int         used = 0;    // distinct objects with a slot
+    uint64_t    other = 0;   // calls naming an object past the cap
+    uint64_t    total = 0;   // every counted call of the row
+};
+
+// `objects`' last line: the rows with a counted call, the distinct objects
+// (index 0 or above) named across them, and how many of those lie outside
+// Collision_Parent_obj's family.
+struct TallySummary {
+    int rows = 0;
+    int distinct = 0;
+    int outside = 0;
+};
 
 // Where one call went. The order of the checks is the order here, after
 // Passed: the self first, then the lever, the window and the family.
@@ -141,19 +183,24 @@ public:
     int AllFamily() const { return allFamily_; }
 
     // ---- what makes the probe do anything per call ----------------------
-    // Armed (`arm`), tracing (`trace 1`) or the lever on: the adapter refreshes
-    // the local player and classifies calls only then. Otherwise its detours
-    // only count calls, and its per-frame tick returns at once.
+    // Armed (`arm`), tracing (`trace 1`), tallying (from `hook` on) or the
+    // lever on: the adapter refreshes the local player and classifies calls
+    // only then. Otherwise its detours only count calls, and its per-frame
+    // tick returns at once.
     void SetArmed(bool on) { armed_ = on; }
     void SetTrace(bool on) { trace_ = on; }
+    void SetTally(bool on) { tallyOn_ = on; }
     bool Armed() const { return armed_; }
     bool Tracing() const { return trace_; }
-    bool Active() const { return armed_ || trace_ || lever_; }
+    bool Tallying() const { return tallyOn_; }
+    bool Active() const { return armed_ || trace_ || tallyOn_ || lever_; }
 
     // ---- the lever -------------------------------------------------------
-    // `pass 1 [frames] [props|all] [scripts] [hold]`: on, with every counter
-    // zeroed and no window open. False, and nothing changed, for frames out of
-    // range.
+    // `pass 1 [frames] [props|all|any] [scripts] [hold]`: on, with every
+    // counter zeroed and no window open. False, and nothing changed, for
+    // frames out of range. The object tally is not one of those counters:
+    // only `objects reset` clears it, so a walk counted with the lever off
+    // can be compared with the same walk under it.
     //
     // `hold` keeps the window open for as long as the lever is on, with no
     // jump script at all. The static reading predicts that neither window
@@ -243,10 +290,11 @@ public:
 
     // ---- the decisions ---------------------------------------------------
     // One hooked builtin call. `objectOf()` returns the object index of the
-    // call's object argument (-1 when it is not one) and is called only when
-    // the answer depends on it: the local player's call, inside the window,
-    // on a row that takes an object - so a call the lever does not touch costs
-    // no read of its arguments.
+    // call's object argument (-1 when it is not one) and is called at most
+    // once, only for the local player's call on a row that takes an object,
+    // and only when the tally counts it or the answer depends on it (inside
+    // the window, under `props` or `all`) - so a call nothing reads costs no
+    // read of its arguments.
     template <class ObjectFn>
     Answer DecideBuiltin(Builtin row, int64_t frame, bool playerSelf, ObjectFn&& objectOf)
     {
@@ -255,14 +303,23 @@ public:
         Counters& c = builtin_[i];
         const BuiltinRow& b = kBuiltins[i];
         if (!playerSelf) { ++c.otherSelf; return Answer::RunOriginal; }
+        int object = -1;
+        bool objectRead = false;
+        const auto readObject = [&]() {
+            if (!objectRead) { object = objectOf(); objectRead = true; }
+            return object;
+        };
+        if (tallyOn_) TallyAdd(i, b.objectArg < 0 ? -1 : readObject());
         if (!lever_) { ++c.passthrough; return Answer::RunOriginal; }
         if (!WindowOpen(frame)) { ++c.outsideWindow; return Answer::RunOriginal; }
         bool answers = false;
-        if (b.objectArg < 0) {
+        if (rule_ == FamilyRule::Any) {
+            answers = true;
+        } else if (b.objectArg < 0) {
             answers = rule_ == FamilyRule::All;
         } else {
             const int family = rule_ == FamilyRule::All ? allFamily_ : propFamily_;
-            answers = InFamily(objectOf(), family);
+            answers = InFamily(readObject(), family);
         }
         if (!answers) { ++c.otherFamily; return Answer::RunOriginal; }
         ++c.passed;
@@ -303,6 +360,46 @@ public:
         return yes;
     }
 
+    // ---- the object tally ------------------------------------------------
+    const RowTally& TallyOf(Builtin row) const { return tally_[static_cast<int>(row)]; }
+
+    // `objects reset`: every row's tally cleared. Whether it counts is
+    // unchanged.
+    void TallyReset() { for (RowTally& t : tally_) t = RowTally{}; }
+
+    // A row's objects, the most-called first (ties by object index).
+    std::vector<ObjectCount> TallySorted(Builtin row) const
+    {
+        const RowTally& t = TallyOf(row);
+        std::vector<ObjectCount> out(t.objects, t.objects + t.used);
+        std::sort(out.begin(), out.end(), [](const ObjectCount& a, const ObjectCount& b) {
+            return a.n != b.n ? a.n > b.n : a.object < b.object;
+        });
+        return out;
+    }
+
+    // `objects` labels an object `family` when it is Collision_Parent_obj or
+    // one of its descendants (what `all` answers for), `outside` otherwise;
+    // -1 names no object and is never family.
+    bool ObjectInFamily(int object) { return InFamily(object, allFamily_); }
+
+    TallySummary TallyTotals()
+    {
+        TallySummary totals;
+        std::vector<int> seen;
+        for (const RowTally& t : tally_) {
+            if (t.total > 0) ++totals.rows;
+            for (int k = 0; k < t.used; ++k) {
+                const int object = t.objects[k].object;
+                if (object < 0 || std::find(seen.begin(), seen.end(), object) != seen.end()) continue;
+                seen.push_back(object);
+                ++totals.distinct;
+                if (!ObjectInFamily(object)) ++totals.outside;
+            }
+        }
+        return totals;
+    }
+
     // ---- the trace's session cap -----------------------------------------
     // One `trace` line may be written; false once kTraceMaxLines were.
     bool TakeTraceLine()
@@ -319,12 +416,23 @@ private:
         return windowOpen_ && frame >= windowStart_ && frame - windowStart_ < frames_;
     }
 
+    void TallyAdd(int row, int object)
+    {
+        RowTally& t = tally_[row];
+        ++t.total;
+        for (int k = 0; k < t.used; ++k)
+            if (t.objects[k].object == object) { ++t.objects[k].n; return; }
+        if (t.used < kTallyMaxObjects) { t.objects[t.used++] = ObjectCount{ object, 1 }; return; }
+        ++t.other;
+    }
+
     IsAncestorFn isAncestor_;
     int propFamily_ = -1;
     int allFamily_ = -1;
     std::unordered_map<int64_t, bool> familyCache_;
     bool armed_ = false;
     bool trace_ = false;
+    bool tallyOn_ = false;
     bool lever_ = false;
     bool scripts_ = false;
     bool hold_ = false;
@@ -335,6 +443,7 @@ private:
     uint64_t windowsOpened_ = 0;
     Counters builtin_[kBuiltinCount]{};
     Counters script_[kScriptLeverCount]{};
+    RowTally tally_[kBuiltinCount]{};
     int traceLines_ = 0;
 };
 

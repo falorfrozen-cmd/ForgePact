@@ -97,6 +97,9 @@ STRICT_DOCS = (
     # Written to this standard from the start (ForgePact #68): the static
     # reading as call order, argument counts and branches, in words.
     "stash-move-research.md",
+    # Written to this standard from the start (ForgePact #158): the walk, charm
+    # and roll readings as names, callers and branches, in words.
+    "flight-charms-research.md",
 )
 
 # One known-bad sample per category, built in pieces.

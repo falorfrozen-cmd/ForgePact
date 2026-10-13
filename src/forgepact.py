@@ -334,6 +334,14 @@ DEFAULTS = {
     # activated shows it on hover again, as before. Off by default; offline
     # only, like every mod here.
     "mod_pillar_tips": False,
+    # The flight charms (docs/flight-charms-research.md, #158): each switch
+    # lets one ForgePact charm drop from the game's own rolls (Pocket Elf from
+    # the ordinary unique roll, Gabriel Wings and Witch's Broomstick from the
+    # Angelic roll). A charm the player already owns flies either way. Off by
+    # default; offline only, like every mod here.
+    "mod_flight_elf": False,
+    "mod_flight_wings": False,
+    "mod_flight_broom": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -1027,6 +1035,14 @@ def skill_timer_style_valid(value) -> bool:
     return isinstance(value, str) and value.strip().lower() in SKILL_TIMER_STYLES
 
 
+# The flight charms' drop switches (#158): config key to the word the plugin's
+# `flightcharm <word> 1|0` takes, in the order the Items card lists them.
+FLIGHT_CHARM_WORDS = {
+    "mod_flight_elf": "elf",
+    "mod_flight_wings": "wings",
+    "mod_flight_broom": "broom",
+}
+
 # "Show hidden loot while held" (Sleep loot your filter hides): the keys and
 # mouse buttons the panel offers, as (Windows virtual-key code, name), in the
 # order the select lists them. panel/src/hidden-loot-keys.js carries the same
@@ -1249,6 +1265,12 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: `pillartips 1` only turns the switch on;
         # the plugin shows nothing until a Chaos Pillar is on screen.
         out.append("pillartips 1")
+    for key, word in FLIGHT_CHARM_WORDS.items():
+        if cfg.get(key, False):
+            # Safe to send at launch: `flightcharm <word> 1` only turns that
+            # charm's drop switch on; the plugin installs its drop hook from
+            # this line and touches nothing until the game rolls a drop.
+            out.append(f"flightcharm {word} 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -2977,7 +2999,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_pillar_tips", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_pillar_tips", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3139,6 +3161,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"lootann {1 if cfg['mod_loot_announce'] else 0}"], cfg)
                     elif key == "mod_pillar_tips":
                         send_cmds([f"pillartips {1 if cfg['mod_pillar_tips'] else 0}"], cfg)
+                    elif key in FLIGHT_CHARM_WORDS:
+                        send_cmds([f"flightcharm {FLIGHT_CHARM_WORDS[key]} {1 if cfg[key] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:

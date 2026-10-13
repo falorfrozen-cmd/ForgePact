@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 25);
+  assert.equal(BOOLEAN_MODS.length, 28);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -122,6 +122,18 @@ test('jump through scenery is an entry while on and off by default', () => {
   assert.ok(BOOLEAN_MODS.includes('mod_jump_scenery'));
   assert.equal(DEFAULTS.mod_jump_scenery, false);
   assert.deepEqual(enabledControls(cfg({ mod_jump_scenery: true })), ['mod_jump_scenery']);
+});
+
+test('the three flight charms\' drop switches are entries while on and off by default', () => {
+  const keys = ['mod_flight_elf', 'mod_flight_wings', 'mod_flight_broom'];
+  for (const key of keys) {
+    assert.ok(BOOLEAN_MODS.includes(key), key);
+    assert.equal(DEFAULTS[key], false, key);
+    assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
+    assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
+  }
+  // Each is its own entry, in the Items card's order.
+  assert.deepEqual(enabledControls(cfg(Object.fromEntries(keys.map((k) => [k, true])))), keys);
 });
 
 test('loot announcements is an entry while on and off by default', () => {
