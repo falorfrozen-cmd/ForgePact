@@ -1187,6 +1187,18 @@ That separates a census that never read an effect (`fx=0/0/0`, with
 `unread=` saying why) from a read that did not answer a struct, so the first
 is never mistaken for a fact about `layer_get_fx`.
 
+What the effect read supplies matters as much as what it answers. The census
+hands `layer_get_fx` the layer as `layer_get_all` listed it (the id value the
+runtime answered, or the id as a number), never the layer's name. The other
+layer builtins the census calls take an id or a name, but nothing in this
+repository shows that `layer_get_fx` takes an id on this runner, and
+GameMaker's manual documents the FX builtins with a layer name. So a struct answer shows the id
+shape works, while a read that throws, is refused or answers undefined or a
+real (−1, say) cannot tell "this runner does not answer a struct" from "this
+builtin wants the name". Such an outcome is recorded here, naming the
+argument supplied (a layer id), and is not a runner fact until a read that
+passes the layer's name answers the same.
+
 What the effect read answers on this runner is **not established**. It is
 **established only by** a reading that names the layer the census classed as
 the filter: `flightprobe depth`'s `filter=` naming `Effect_1` with an `fx=`
@@ -1572,10 +1584,13 @@ locks outside town, co-op, and the Angelic roll's natural chance.
   instrument is wrong. `filter=none` fails even with the depth right, and the
   counts name the cause. A struct count of 1 or more means the census read an
   effect but classed no filter, a classification defect to compare with T6. A
-  failed count of 1 or more with no struct means the read throws or is
-  refused on this runner. No struct and no failure, with `other` 1 or more
-  and `fx-kind=` 5 (undefined) or 0 (a real), means `layer_get_fx` does not
-  answer a struct on this runner. `other` with any other `fx-kind=` (15, a
+  failed count of 1 or more with no struct means the read, given a layer id,
+  throws or is refused. No struct and no failure, with `other` 1 or more
+  and `fx-kind=` 5 (undefined) or 0 (a real), means `layer_get_fx`, given a
+  layer id, does not answer a struct. Neither of those two is a runner fact:
+  the census never passes the layer's name, so each is as consistent with
+  the builtin wanting the name as with this runner (§ "Drawing in front"),
+  and each is recorded with the argument supplied, a layer id. `other` with any other `fx-kind=` (15, a
   ref; 2, an array; ...) means the census's struct test is too narrow for
   what this runner answers, a defect in our kind test rather than a runner
   fact. `fx=0/0/0` means the census never read an effect, and `unread=`
@@ -1706,9 +1721,12 @@ count of 1 or more in `Town_01_rm` (and in the Outskirts of Inoya once its
 canopies hold), never by `flight-depth=` (§ "Drawing in front"); on that
 condition § 19.7's `layer_get_fx` reading is relabelled measured. A read
 that throws or is refused, and one that does not answer a struct
-(`fx-kind=` 5 or 0), are measured runner facts and go to § 19.7 as such;
-`fx=0/0/0` and a too-narrow kind test are findings for this document
-only. The rest it relies on: the tooltip pass (RDM § 16.6, measured, with the cache an
+(`fx-kind=` 5 or 0), are findings for this document only, recorded with the
+argument supplied (the layer id `layer_get_all` answered, never the name):
+the census's call shape cannot tell either from a builtin that wants the
+layer's name, so neither reaches § 19.7 as a runner fact until a read that
+passes the name answers the same. `fx=0/0/0` and a too-narrow kind test are
+findings for this document only too. The rest it relies on: the tooltip pass (RDM § 16.6, measured, with the cache an
 inference); the one-flight rule (§ 22.1, owner-stated and static) and the
 charm read (§ 22.1, measured); the guard's load (§ 22.6, static, measured in
 Mod live 1); `DropUniqueItems` and its by-name call shape (§ 22.4 and § 22.8,
