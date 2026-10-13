@@ -56160,10 +56160,18 @@ static void LootAnnounceCommand(const std::string& rest)
 //     reading the item's type, id, weapon type and name.
 // No RoomGoto hook: the room is the `room` builtin's room_get_name, polled
 // every tick and compared with the last one. On a change (and at install) it
-// writes `room`, the character's name (`progress`) and, when the game's own
-// readers resolve it, the Satanic zone (`satanic_zone` and `vitals`), read
-// through the satzone readers: Controller_obj.satanicZone, GPV with the player
-// as self (SatZoneReadValue), and the satanicZoneBuff/Debuff arrays.
+// writes `room`, and the core marks the Satanic zone and the character's name
+// owed. The zone is read on that tick and then every kZonePollTicks ticks,
+// owed or not, and the name on those ticks while it is owed, until the game's
+// readers answer: a new room can have no player on its first tick, which is
+// how Live 1 lost the zone after its one room change (replan 2). The zone is
+// read the way the satzone readers read it, but with none of satzone's state
+// touched (TrReadZone): Controller_obj.satanicZone, GPV by its SDK name with
+// the player from the proven pair as self, room_get_name of the room it
+// answers, and the satanicZoneBuff/Debuff arrays. Each answer goes to the
+// core, which writes it when owed or when it differs from the last one
+// written (a rotation); a read that did not answer hands the core the failed
+// step as its reason token (`zone-why=`).
 //
 // No thread, and nothing at process exit: hooks and the tick run on the game
 // thread, records are appended every kFlushFrames frames from the tick, the
@@ -56183,7 +56191,6 @@ static long long g_TrUnidentified = 0;   // noted calls with no live Loot_Ground
 static long long g_TrNoItem = 0;         // a ground item with no item struct to read
 static long long g_TrNoIdentity = 0;     // an identity that could not be read: counted, not decided
 static long long g_TrQueueFull = 0;      // calls not noted because a frame's queue was full
-static long long g_TrZoneUnresolved = 0; // room changes whose Satanic zone the game's readers did not answer
 static constexpr size_t kTrPendingCap = 512;   // per frame
 static_assert(ForgePact::TrackerMod::kRarityUnread == ForgePact::LootAnnounceMod::kRarityUnread,
               "LaRarity's unread value is the tracker's too");
@@ -56381,30 +56388,61 @@ static std::string TrCharacterName()
     return "";
 }
 
-// The Satanic zone the game rolled, through the satzone readers: the handle in
-// Controller_obj.satanicZone, GPV with the player as self, the room's name.
-static void TrRecordZone(const std::string& room)
+// The room of the Satanic zone the game rolled, read the way SatZoneReadValue
+// reads it: the handle in Controller_obj.satanicZone, then GPV by its SDK name
+// with the local player, from the proven pair HhResolveLocalPlayer +
+// HhResolveInstance, as self (instance_find hands back a VALUE_REF on this
+// runner), then room_get_name of the index it answers. Its own copy rather
+// than SatZoneReadValue, because that one records its failures as satzone's
+// last reason, and the tracker leaves satzone's state alone. Answers the step
+// that failed, or None with the room's name in `zoneRoom`.
+static ForgePact::TrackerMod::ZoneWhy TrReadZone(const RValue& controller, std::string& zoneRoom)
 {
-    RValue controller;
-    if (!ResolveControllerObj(controller)) { ++g_TrZoneUnresolved; return; }
+    using Why = ForgePact::TrackerMod::ZoneWhy;
     RValue key;
     try { key = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue("satanicZone") }); }
-    catch (...) { ++g_TrZoneUnresolved; return; }
-    double zoneRoom = -1.0;
-    std::string chosen;
-    // Below 0: no zone rolled (the difficulty has none, or not yet).
-    if (!SatZoneReadValue(key, zoneRoom) || zoneRoom < 0.0 || !SatZoneRoomName((int)zoneRoom, chosen)) {
-        ++g_TrZoneUnresolved;
-        return;
-    }
-    const std::string code = ForgePact::TrackerMod::SatanicZoneCode(chosen);
-    if (code.empty()) { ++g_TrZoneUnresolved; return; }
-    g_Tracker.RecordSatanicZone(code, ReadIntArray(controller, "satanicZoneBuff"),
-                                ReadIntArray(controller, "satanicZoneDebuff"), chosen == room);
+    catch (...) { return Why::NoZoneKey; }
+    if (key.m_Kind == VALUE_UNDEFINED) return Why::NoZoneKey;
+    CInstance* inst = nullptr;
+    try {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) inst = HhResolveInstance(player);
+    } catch (...) { inst = nullptr; }
+    if (!inst) return Why::NoPlayer;
+    double value = -1.0;
+    try {
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GPV.data(), inst, inst, { key });
+        if (!AurieSuccess(st)) return Why::GpvFailed;
+        value = res.ToDouble();
+    } catch (...) { return Why::GpvFailed; }
+    if (!std::isfinite(value)) return Why::GpvFailed;
+    // Below 0: no zone rolled (the difficulty has none, or none yet).
+    if (value < 0.0) return Why::NoZoneRolled;
+    if (value > 2147483647.0 || !SatZoneRoomName((int)value, zoneRoom)) return Why::RoomUnnamed;
+    return Why::None;
 }
 
-// Every tick: the `room` builtin's name against the last one. On a change, the
-// room, the character's name and the zone.
+// On a zone tick: the name while it is owed (first, so a `progress` comes
+// before the `satanic_zone`, as Live 1 measured at install), then the zone,
+// each answer or failed step handed to the core.
+static void TrReadZoneAndName()
+{
+    using Why = ForgePact::TrackerMod::ZoneWhy;
+    if (g_Tracker.NameOwed()) g_Tracker.NameRead(TrCharacterName());
+    RValue controller;
+    if (!ResolveControllerObj(controller)) { g_Tracker.ZoneUnanswered(Why::NoController); return; }
+    std::string zoneRoom;
+    const Why why = TrReadZone(controller, zoneRoom);
+    if (why != Why::None) { g_Tracker.ZoneUnanswered(why); return; }
+    g_Tracker.ZoneAnswered(zoneRoom, ReadIntArray(controller, "satanicZoneBuff"),
+                           ReadIntArray(controller, "satanicZoneDebuff"));
+}
+
+// Every tick: the `room` builtin's name against the last one, then the zone
+// (and the name, while owed) on the tick of a change and every kZonePollTicks
+// ticks. The core counts the ticks, so this runs once per installed tick, plus
+// once at install.
 static void TrPollRoom()
 {
     std::string name;
@@ -56412,11 +56450,9 @@ static void TrPollRoom()
         RValue roomV;
         g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, roomV);
         name = g_Yytk->CallBuiltin("room_get_name", { roomV }).ToString();
-    } catch (...) { return; }
-    if (name.empty() || name == "<undefined>") return;
-    if (!g_Tracker.NoteRoom(name)) return;
-    g_Tracker.RecordProgress(TrCharacterName());
-    TrRecordZone(name);
+    } catch (...) { name.clear(); }
+    const bool changed = !name.empty() && name != "<undefined>" && g_Tracker.NoteRoom(name);
+    if (g_Tracker.ZoneReadDue(changed)) TrReadZoneAndName();
 }
 
 // One append of the batch, opening the session file first if it is not yet
@@ -56523,8 +56559,7 @@ static std::string TrackerStatLine()
         + " unidentified=" + std::to_string(g_TrUnidentified)
         + " no-item=" + std::to_string(g_TrNoItem)
         + " no-identity=" + std::to_string(g_TrNoIdentity)
-        + " queue-full=" + std::to_string(g_TrQueueFull)
-        + " zone-unresolved=" + std::to_string(g_TrZoneUnresolved);
+        + " queue-full=" + std::to_string(g_TrQueueFull);
 }
 
 // `tracker 1|0` (the panel's switch, from the tab workorder on); bare `tracker`

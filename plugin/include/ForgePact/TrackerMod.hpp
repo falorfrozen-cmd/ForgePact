@@ -62,6 +62,15 @@ namespace ForgePact {
 //   - a room is recorded when its name differs from the last one; the
 //     Satanic zone's code is `Satanic_<act>_<zone>` of the act room the game
 //     rolled (the producer's SatanicZoneCode).
+//   - a room change (and the install's first room) owes a `satanic_zone` and
+//     the character's name. The zone is read on that tick and then every
+//     kZonePollTicks ticks, owed or not, and the name on those ticks while it
+//     is owed, until the game's readers answer: a new room can have no player
+//     on its first tick, which is how Live 1 lost the zone after its one room
+//     change. An answer is written when a record is owed, or when it differs
+//     from the last one written (a rotation: another zone, other buffs or
+//     other debuffs). A read that did not answer writes nothing, counts, and
+//     keeps its reason token for `zone-why=`.
 //   - the arming rule is Loot announcements': armed at launch, hooked on the
 //     first frame setup is done and the local player resolves, once per
 //     session (the guide's Known Limitations item 8).
@@ -337,7 +346,9 @@ public:
     }
 
     // ---- the room, the zone, the character -------------------------------------
-    // A `room` record when the name differs from the last one noted.
+    // A `room` record when the name differs from the last one noted. The
+    // change owes a `satanic_zone` and the character's name, written at the
+    // first read of each that answers.
     bool NoteRoom(const std::string& room)
     {
         if (!m_Enabled || room.empty() || room == m_Room) return false;
@@ -346,6 +357,8 @@ public:
         line += ",\"room\":";
         AppendEscaped(line, room);
         Commit(line);
+        m_ZoneOwed = true;
+        m_NameOwed = true;
         return true;
     }
     const std::string& Room() const { return m_Room; }
@@ -373,7 +386,8 @@ public:
         return "Satanic_" + std::to_string(std::stoi(act)) + "_" + std::to_string(std::stoi(zone));
     }
     // A `satanic_zone` and the `vitals` that says whether the character stands
-    // in it.
+    // in it. A record a cap kept out is not the last one written, and stays
+    // owed.
     void RecordSatanicZone(const std::string& zone, const std::vector<int>& buffs, const std::vector<int>& debuffs,
                            bool here)
     {
@@ -383,7 +397,12 @@ public:
         AppendEscaped(line, zone);
         AppendIds(line, "buffs", buffs);
         AppendIds(line, "debuffs", debuffs);
-        Commit(line);
+        if (!Commit(line)) return;
+        ++m_Stats.zonesWritten;
+        m_ZoneOwed = false;
+        m_LastZone = zone;
+        m_LastBuffs = buffs;
+        m_LastDebuffs = debuffs;
         std::string vitals = Envelope("vitals");
         vitals += here ? ",\"satanic_here\":true" : ",\"satanic_here\":false";
         Commit(vitals);
@@ -395,8 +414,86 @@ public:
         std::string line = Envelope("progress");
         line += ",\"name\":";
         AppendEscaped(line, name);
-        Commit(line);
+        if (Commit(line)) m_NameOwed = false;
     }
+
+    // Why a zone read did not answer: the step that failed, as the adapter
+    // names it. Fixed tokens: Live procedure 2 and the tests read them.
+    enum class ZoneWhy : int { None, NoController, NoZoneKey, NoPlayer, GpvFailed, NoZoneRolled, RoomUnnamed, NotActZone };
+    static constexpr const char* ZoneWhyName(ZoneWhy why)
+    {
+        switch (why) {
+        case ZoneWhy::None: return "none";
+        case ZoneWhy::NoController: return "no-controller";   // no Controller_obj, as in the menus
+        case ZoneWhy::NoZoneKey: return "no-zone-key";        // Controller_obj.satanicZone unread
+        case ZoneWhy::NoPlayer: return "no-player";           // no local player resolves
+        case ZoneWhy::GpvFailed: return "gpv-failed";         // GPV refused, threw, or answered no finite number
+        case ZoneWhy::NoZoneRolled: return "no-zone-rolled";  // GPV below 0: none for this difficulty, or none yet
+        case ZoneWhy::RoomUnnamed: return "room-unnamed";     // room_get_name had no name for GPV's room
+        case ZoneWhy::NotActZone: return "not-act-zone";      // the room named is no act zone: the code is empty
+        }
+        return "unknown";
+    }
+
+    // The zone is read on the tick of a room change (and at install), then
+    // every kZonePollTicks ticks, owed or not: a rotation between room
+    // changes is caught within that many ticks. Called once per installed
+    // tick, after NoteRoom; true when the adapter reads this tick. Off,
+    // nothing is read.
+    static constexpr int kZonePollTicks = 15;
+    bool ZoneReadDue(bool roomChanged)
+    {
+        if (!m_Enabled) return false;
+        if (roomChanged) {
+            m_ZoneTicks = 0;
+            return true;
+        }
+        if (++m_ZoneTicks < kZonePollTicks) return false;
+        m_ZoneTicks = 0;
+        return true;
+    }
+    bool ZoneOwed() const { return m_Enabled && m_ZoneOwed; }
+    // The name is read on the zone's ticks only while it is owed.
+    bool NameOwed() const { return m_Enabled && m_NameOwed; }
+
+    // A zone read that answered: the room GPV named, and the two arrays. True
+    // when a record was written: one was owed, or the answer differs from the
+    // last one written. `satanic_here` is whether that room is the current
+    // one. A room that is no act zone gives no code, and counts as a read that
+    // did not answer.
+    bool ZoneAnswered(const std::string& zoneRoom, const std::vector<int>& buffs, const std::vector<int>& debuffs)
+    {
+        if (!m_Enabled) return false;
+        const std::string code = SatanicZoneCode(zoneRoom);
+        if (code.empty()) {
+            ZoneUnanswered(ZoneWhy::NotActZone);
+            return false;
+        }
+        ++m_Stats.zonePolls;
+        const bool rotated = code != m_LastZone || buffs != m_LastBuffs || debuffs != m_LastDebuffs;
+        if (!m_ZoneOwed && !rotated) return false;
+        const long long before = m_Stats.zonesWritten;
+        RecordSatanicZone(code, buffs, debuffs, !m_Room.empty() && zoneRoom == m_Room);
+        return m_Stats.zonesWritten != before;
+    }
+    // A zone read that did not answer: nothing written, the record still
+    // owed, the reason kept for `zone-why=`.
+    void ZoneUnanswered(ZoneWhy why)
+    {
+        if (!m_Enabled) return;
+        ++m_Stats.zonePolls;
+        ++m_Stats.zoneUnresolved;
+        m_ZoneWhy = why;
+    }
+    // A name read while owed: written once, when it reads as text. True when
+    // it was written.
+    bool NameRead(const std::string& name)
+    {
+        if (!NameOwed() || name.empty()) return false;
+        RecordProgress(name);
+        return !m_NameOwed;
+    }
+    const std::string& LastZone() const { return m_LastZone; }
     // At install: ready, or blocked with a reason; `detail` is the route summary.
     void RecordBridgeStatus(bool ready, const std::string& reason, const std::string& detail)
     {
@@ -549,6 +646,9 @@ public:
         long long writeErrors = 0;     // appends that failed
         long long bufferFull = 0;      // records dropped at the buffer's cap
         long long fileFull = 0;        // records dropped at the file's cap
+        long long zonesWritten = 0;    // satanic_zone records buffered
+        long long zonePolls = 0;       // zone reads tried: the read's own positive control
+        long long zoneUnresolved = 0;  // zone reads that did not answer
     };
     const Counters& Stats() const { return m_Stats; }
 
@@ -570,7 +670,10 @@ public:
         s += " heartbeats=" + n(m_Stats.heartbeats);
         s += " lines=" + n(m_Stats.lines) + " write-errors=" + n(m_Stats.writeErrors);
         s += " buffer-full=" + n(m_Stats.bufferFull) + " file-full=" + n(m_Stats.fileFull);
-        s += " file=" + (fileName.empty() ? std::string("none") : fileName);
+        s += " zone=" + (m_LastZone.empty() ? std::string("none") : m_LastZone);
+        s += " zones-written=" + n(m_Stats.zonesWritten) + " zone-polls=" + n(m_Stats.zonePolls);
+        s += " zone-unresolved=" + n(m_Stats.zoneUnresolved) + " zone-why=" + ZoneWhyName(m_ZoneWhy);
+        s += " file="+ (fileName.empty() ? std::string("none") : fileName);
         return s;
     }
 
@@ -721,6 +824,13 @@ private:
     std::uint64_t m_FileBytes = 0;
     std::int64_t m_PendingGold = 0, m_PendingXp = 0, m_PendingKills = 0;
     std::string m_Room;
+    bool m_ZoneOwed = false;        // a room change's satanic_zone, not yet written
+    bool m_NameOwed = false;        // a room change's progress name, not yet written
+    int m_ZoneTicks = 0;            // ticks since the last zone read
+    ZoneWhy m_ZoneWhy = ZoneWhy::None;   // the last read that did not answer
+    std::string m_LastZone;         // the last satanic_zone written, and its arrays
+    std::vector<int> m_LastBuffs;
+    std::vector<int> m_LastDebuffs;
     std::set<ItemKey> m_CreatedNow;
     std::set<ItemKey> m_CreatedBefore;
     std::set<std::string> m_Seen;

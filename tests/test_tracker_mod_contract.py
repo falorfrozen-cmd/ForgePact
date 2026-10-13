@@ -15,7 +15,10 @@ pins what neither can see, in ModuleMain.cpp and MiningOreMod.hpp:
   notes creations from the shared Hook_CreateItemNew;
 - it starts no thread, hooks no RoomGoto and runs nothing at process exit;
 - it hooks only after `tracker 1` and a resolved local player;
-- the mod state's `tracker` key and the stat line's keys.
+- the mod state's `tracker` key and the stat line's keys;
+- (replan 2) the zone is read on a room change and every 15th tick, through
+  the proven player pair and GPV by its SDK name, with none of satzone's
+  state touched and no new hook.
 """
 import re
 import unittest
@@ -32,10 +35,12 @@ MINING_HARNESS = ROOT / "tests" / "mining_ore_harness.cpp"
 ADAPTER_START = "// ---- HS Offline Tracker's sensor (TrackerMod.hpp): the adapter"
 ADAPTER_END = "// ---- end of the tracker adapter"
 
-#: The keys Live procedure 1 reads off `tracker stat`.
+#: The keys Live procedures 1 and 2 read off `tracker stat`; the last five are
+#: replan 2's zone keys.
 STAT_KEYS = ("install=", "gold=", "xp=", "kills=", "drops=", "gold-calls=", "xp-calls=", "kill-calls=",
              "gold-sum=", "xp-sum=", "kills-sum=", "drops-written=", "held-bag-drop=", "drops-untracked=",
-             "drops-seen=", "init-calls=", "lines=", "write-errors=", "file=")
+             "drops-seen=", "init-calls=", "lines=", "write-errors=", "file=",
+             "zone=", "zones-written=", "zone-polls=", "zone-unresolved=", "zone-why=")
 
 #: A file-scope `static` object declaration in the adapter (not a function, not
 #: a constexpr): its type and name.
@@ -97,7 +102,56 @@ class TrackerModContractTests(unittest.TestCase):
         summary = self.body("std::string RouteSummary() const", self.header)
         for key in STAT_KEYS:
             self.assertTrue(f" {key}" in stat or f'"{key}' in summary or f' {key}' in summary, key)
-        self.assertIn("g_Tracker.StatLine(g_TrInstallTried,", self.body("static std::string TrackerStatLine()"))
+        line = self.body("static std::string TrackerStatLine()")
+        self.assertIn("g_Tracker.StatLine(g_TrInstallTried,", line)
+        # The zone keys come from the core alone, not a second count here.
+        self.assertNotIn("zone", line)
+
+    # ---- the zone and the name, read until they answer (replan 2) -------------------
+
+    def test_the_zone_read_uses_the_proven_player_pair_and_gpv_by_name(self):
+        read = self.body("static ForgePact::TrackerMod::ZoneWhy TrReadZone(const RValue& controller, std::string& zoneRoom)")
+        self.assertIn("HhResolveLocalPlayer(player)", read)
+        self.assertIn("inst = HhResolveInstance(player);", read)
+        self.assertIn("g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GPV.data(), inst, inst, { key });", read)
+        self.assertIn('variable_instance_get", { controller, RValue("satanicZone") }', read)
+        self.assertIn("SatZoneRoomName((int)value, zoneRoom)", read)
+        self.assertNotIn("GetInstanceObject", read)
+        # Each failed step answers its own reason token.
+        for why in ("NoZoneKey", "NoPlayer", "GpvFailed", "NoZoneRolled", "RoomUnnamed"):
+            self.assertIn(f"return Why::{why};", read, why)
+        both = self.body("static void TrReadZoneAndName()")
+        self.assertIn("g_Tracker.ZoneUnanswered(Why::NoController);", both)
+        self.assertIn("g_Tracker.ZoneUnanswered(why);", both)
+        # The name is read first, while owed, so `progress` precedes the zone.
+        self.assertBefore("if (g_Tracker.NameOwed()) g_Tracker.NameRead(TrCharacterName());", "TrReadZone(controller, zoneRoom)",
+                          both, "TrReadZoneAndName")
+        self.assertIn("g_Tracker.ZoneAnswered(zoneRoom, ReadIntArray(controller, \"satanicZoneBuff\"),", both)
+
+    def test_the_zone_is_read_on_a_room_change_and_every_15th_tick(self):
+        poll = self.body("static void TrPollRoom()")
+        self.assertIn("const bool changed = !name.empty() && name != \"<undefined>\" && g_Tracker.NoteRoom(name);", poll)
+        self.assertEqual(1, poll.count("g_Tracker.ZoneReadDue("))
+        self.assertIn("if (g_Tracker.ZoneReadDue(changed)) TrReadZoneAndName();", poll)
+        self.assertIn("static constexpr int kZonePollTicks = 15;", self.header)
+        # The install reads too: it polls the room once, with its first room a change.
+        self.assertIn("TrPollRoom();", self.body("static void TrackerInstall()"))
+        self.assertEqual(1, len(re.findall(r"\bTrReadZoneAndName\(\);", self.code)))
+
+    def test_the_zone_read_leaves_satzone_state_alone(self):
+        # Positive control: the token checked for is the one satzone's own
+        # reader really sets.
+        self.assertIn("SATZONE_WHY(", self.body("static bool SatZoneReadValue(const RValue& key, double& out)"))
+        for forbidden in ("SATZONE_WHY", "g_SatZone", "SatZoneReadValue(", "SatZoneWriteValue(", "SatZoneTick("):
+            self.assertNotIn(forbidden, self.adapter, forbidden)
+
+    def test_no_new_zone_hook(self):
+        for name, code in (("the adapter", self.adapter), ("TrackerMod.hpp", self.header)):
+            for forbidden in ("RoomGoto", "LoadSatanicZone", "GetSatanicZoneOffline", "GetSatanicZoneEligible", "HookOneScript(\"GPV"):
+                self.assertNotIn(forbidden, code, f"{name}: {forbidden}")
+        self.assertIsNone(re.search(r"HookOneScript\w*\([^;]*(RoomGoto|GetSatanicZoneOffline|GetSatanicZoneEligible)", self.code))
+        # LoadSatanicZone keeps satzone's one hook, and only that.
+        self.assertEqual(1, len(re.findall(r"HookOneScript\w*\([^;]*LoadSatanicZone", self.code)))
 
     # ---- the routes ------------------------------------------------------------
 

@@ -13,7 +13,10 @@ Baseline: with the switch off nothing is counted, decided, remembered or
 written, and no install is asked for. Target: the counter rules (decoding,
 each capture rule, the explicit-false XP rejection, saturation, unsupported
 kinds); the drop decision order with Mythic 5 and Common 1 untracked; arming;
-room changes and the zone code; every record kind's envelope, a sequence that
+room changes and the zone code; the zone and the name a room change owes,
+read until the readers answer, a zone rotation written with no room change and
+a reason token for each read that did not answer (replan 2, after Live 1);
+every record kind's envelope, a sequence that
 rises by 1 and names escaped; one append per 30 frames, a heartbeat every
 10 s of the frame clock and capped buffers that count what they drop; the stat
 line's keys. The negative control is the same harness built with the creation
@@ -175,6 +178,24 @@ class TrackerModBehaviorTests(unittest.TestCase):
     def test_room_changes_and_the_zone(self):
         self.assertScenarios("room/the_first_room_and_each_change_are_recorded", "zone/code_from_an_act_room",
                              "zone/a_satanic_zone_and_a_vitals_record")
+
+    # ---- the zone and the name after a room change (replan 2) ----------------------
+
+    def test_baseline_the_zone_and_the_name_as_before(self):
+        self.assertScenarios("baseline/off_reads_no_zone",
+                             "baseline/an_answer_on_the_room_change_tick_writes_as_before")
+
+    def test_the_zone_is_read_until_it_answers_and_on_every_rotation(self):
+        # Live 1: after a room change the new room had no player on its first
+        # tick, the one read did not answer, and no zone was ever written.
+        self.assertScenarios("zone/owed_after_a_room_change_until_the_readers_answer",
+                             "zone/a_rotation_without_a_room_change_is_written",
+                             "zone/an_unchanged_answer_writes_nothing",
+                             "zone/an_unanswered_read_keeps_its_reason",
+                             "zone/here_when_the_zone_names_the_current_room")
+
+    def test_the_name_is_read_until_it_answers(self):
+        self.assertScenarios("progress/owed_after_a_room_change_until_the_name_reads")
 
     # ---- the journal ------------------------------------------------------------
 

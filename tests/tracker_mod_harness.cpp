@@ -17,7 +17,10 @@
 // order (off, the creation guard, the tracked rarities 4/6/7/9/10, a
 // duplicate, unread fields), Mythic 5 and Common 1 untracked; arming
 // (not-armed, waiting-for-character, installed; one install per session);
-// room changes and the Satanic zone code; every record kind's envelope and a
+// room changes and the Satanic zone code; the zone and the name a room change
+// owes, read until the game's readers answer (scripted here: a read that
+// answers, or the reason token of the step that failed), and the zone's
+// rotations between room changes; every record kind's envelope and a
 // sequence rising by one, with names escaped; one append per 30 frames and a
 // heartbeat every 10 s of the frame clock; capped buffer and file that count
 // what they drop; the stat line's keys.
@@ -412,6 +415,181 @@ int main(int argc, char** argv)
               z.empty() ? "" : z[0]);
     }
 
+    // ---- the zone and the name after a room change (replan 2) ---------------------
+    {
+        // Off: no zone or name is read, and nothing is written.
+        TrackerMod m;
+        const bool changed = m.NoteRoom("Act_01_01");
+        m.RecordProgress("Sorak");
+        m.RecordSatanicZone("Satanic_1_3", { 19, 24, 3 }, { 19, 15 }, false);
+        bool due = false;
+        for (int tick = 0; tick <= 2 * TrackerMod::kZonePollTicks; ++tick) due = m.ZoneReadDue(tick == 0) || due;
+        const bool decided = m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 }) || m.NameRead("Sorak");
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::NoPlayer);
+        check("baseline/off_reads_no_zone",
+              !changed && !due && !decided && !m.ZoneOwed() && !m.NameOwed() && m.Buffered() == 0 && m.Sequence() == 0
+                  && m.Stats().zonePolls == 0 && m.Stats().zoneUnresolved == 0,
+              m.StatLine(false, "none"));
+    }
+    {
+        // The readers answer on the tick of the room change: the records that
+        // follow the `room` are what Live 1 measured at install. The record
+        // calls the adapter made before replan 2 (the room, the name, the
+        // zone, once) and the decisions it asks for now write the same bytes.
+        TrackerMod before;
+        on(before);
+        const bool changed = before.NoteRoom("Town_01_rm");
+        before.RecordProgress("Sorak");
+        before.RecordSatanicZone("Satanic_1_3", { 19, 24, 3 }, { 19, 15 }, false);
+        const std::string was = before.TakeBatch();
+        const std::vector<std::string> l = lines(was);
+        TrackerMod now;
+        on(now);
+        const bool due = now.ZoneReadDue(now.NoteRoom("Town_01_rm"));
+        const bool named = now.NameOwed() && now.NameRead("Sorak");
+        const bool zoned = now.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        const std::string is = now.TakeBatch();
+        check("baseline/an_answer_on_the_room_change_tick_writes_as_before",
+              changed && l.size() == 4 && l[0].find("\"kind\":\"room\"") != std::string::npos
+                  && l[1].find("\"kind\":\"progress\"") != std::string::npos && l[1].find("\"name\":\"Sorak\"}") != std::string::npos
+                  && l[2].find("\"zone\":\"Satanic_1_3\",\"buffs\":[19,24,3],\"debuffs\":[19,15]}") != std::string::npos
+                  && l[3].find("\"satanic_here\":false}") != std::string::npos
+                  && due && named && zoned && is == was && !now.ZoneOwed() && !now.NameOwed(),
+              is);
+    }
+    {
+        // Live 1: the new room had no player on the tick of the change, so the
+        // read did not answer. The record stays owed, the reads go on every
+        // kZonePollTicks ticks, and the first answer is written, though it
+        // names the zone written in town, with no second `room` before it.
+        TrackerMod m;
+        on(m);
+        m.NoteRoom("Town_01_rm");
+        m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        m.TakeBatch();
+        const bool changed = m.NoteRoom("Act_01_01");
+        const bool dueOnChange = m.ZoneReadDue(changed);
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::NoPlayer);
+        const bool owedAfterMiss = m.ZoneOwed();
+        int due = 0, dueAt = 0;
+        for (int tick = 1; tick <= TrackerMod::kZonePollTicks; ++tick)
+            if (m.ZoneReadDue(false)) { ++due; dueAt = tick; }
+        const bool written = m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        const std::string batch = m.TakeBatch();
+        const std::vector<std::string> l = lines(batch);
+        check("zone/owed_after_a_room_change_until_the_readers_answer",
+              changed && dueOnChange && owedAfterMiss && due == 1 && dueAt == TrackerMod::kZonePollTicks && written
+                  && !m.ZoneOwed() && l.size() == 3 && count(batch, "\"kind\":\"room\"") == 1
+                  && l[0].find("\"room\":\"Act_01_01\"}") != std::string::npos
+                  && l[1].find("\"zone\":\"Satanic_1_3\",\"buffs\":[19,24,3],\"debuffs\":[19,15]}") != std::string::npos
+                  && l[2].find("\"kind\":\"vitals\"") != std::string::npos && m.Stats().zonesWritten == 2,
+              std::to_string(due) + " " + batch);
+    }
+    {
+        // A rotation between room changes: another zone, or the same zone
+        // with other buffs or other debuffs, is written with no room change.
+        TrackerMod m;
+        on(m);
+        m.NoteRoom("Town_01_rm");
+        m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        m.TakeBatch();
+        const bool otherZone = m.ZoneAnswered("Act_04_02", { 19, 24, 3 }, { 19, 15 });
+        const bool otherBuffs = m.ZoneAnswered("Act_04_02", { 5, 6 }, { 19, 15 });
+        const bool otherDebuffs = m.ZoneAnswered("Act_04_02", { 5, 6 }, { 7 });
+        const std::string batch = m.TakeBatch();
+        check("zone/a_rotation_without_a_room_change_is_written",
+              otherZone && otherBuffs && otherDebuffs && count(batch, "\"kind\":\"satanic_zone\"") == 3
+                  && count(batch, "\"kind\":\"vitals\"") == 3 && count(batch, "\"kind\":\"room\"") == 0
+                  && count(batch, "\"zone\":\"Satanic_4_2\",\"buffs\":[5,6],\"debuffs\":[7]}") == 1
+                  && m.LastZone() == "Satanic_4_2" && m.Stats().zonesWritten == 4,
+              batch);
+    }
+    {
+        // With no record owed, an answer equal to the last one written writes
+        // nothing; the read still counts as a poll.
+        TrackerMod m;
+        on(m);
+        m.NoteRoom("Town_01_rm");
+        m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        m.TakeBatch();
+        const bool again = m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 });
+        check("zone/an_unchanged_answer_writes_nothing",
+              !again && m.Buffered() == 0 && m.Stats().zonePolls == 2 && m.Stats().zonesWritten == 1
+                  && m.Stats().zoneUnresolved == 0,
+              m.StatLine(true, "none"));
+    }
+    {
+        // A read that does not answer writes nothing, counts, keeps its reason
+        // token for `zone-why=` and leaves the record owed.
+        TrackerMod m;
+        on(m);
+        const bool noneAtFirst = m.StatLine(true, "none").find(" zone=none zones-written=0 zone-polls=0 zone-unresolved=0 zone-why=none ")
+            != std::string::npos;
+        m.NoteRoom("Act_01_01");
+        m.TakeBatch();
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::NoController);
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::NoPlayer);
+        const bool afterTwo = m.Buffered() == 0 && m.ZoneOwed() && m.Stats().zoneUnresolved == 2 && m.Stats().zonePolls == 2
+            && m.StatLine(true, "none").find(" zone=none zones-written=0 zone-polls=2 zone-unresolved=2 zone-why=no-player ")
+                != std::string::npos;
+        // A room GPV named that is no act zone: the code comes out empty.
+        const bool town = !m.ZoneAnswered("Town_01_rm", { 1 }, {});
+        const bool notActZone = town && m.Buffered() == 0 && m.ZoneOwed() && m.Stats().zoneUnresolved == 3
+            && m.StatLine(true, "none").find(" zone-why=not-act-zone ") != std::string::npos;
+        std::string names;
+        for (const TrackerMod::ZoneWhy why :
+             { TrackerMod::ZoneWhy::None, TrackerMod::ZoneWhy::NoController, TrackerMod::ZoneWhy::NoZoneKey,
+               TrackerMod::ZoneWhy::NoPlayer, TrackerMod::ZoneWhy::GpvFailed, TrackerMod::ZoneWhy::NoZoneRolled,
+               TrackerMod::ZoneWhy::RoomUnnamed, TrackerMod::ZoneWhy::NotActZone })
+            names += std::string(TrackerMod::ZoneWhyName(why)) + " ";
+        // Answered at last: written, and the reason stays the last failure's.
+        const bool answered = m.ZoneAnswered("Act_01_02", { 2 }, { 3 }) && !m.ZoneOwed()
+            && m.StatLine(true, "none").find(" zone=Satanic_1_2 zones-written=1 zone-polls=4 zone-unresolved=3 zone-why=not-act-zone ")
+                != std::string::npos;
+        check("zone/an_unanswered_read_keeps_its_reason",
+              noneAtFirst && afterTwo && notActZone && answered
+                  && names == "none no-controller no-zone-key no-player gpv-failed no-zone-rolled room-unnamed not-act-zone ",
+              names + m.StatLine(true, "none"));
+    }
+    {
+        // `satanic_here` is true only when the zone's room is the current room.
+        TrackerMod m;
+        on(m);
+        m.NoteRoom("Act_04_02");
+        m.ZoneAnswered("Act_04_02", { 1 }, { 2 });
+        const std::string in = m.TakeBatch();
+        m.NoteRoom("Act_04_03");
+        m.ZoneAnswered("Act_04_02", { 1 }, { 2 });
+        const std::string next = m.TakeBatch();
+        m.NoteRoom("Act_04_02");
+        m.ZoneAnswered("Act_04_02", { 1 }, { 2 });
+        const std::string back = m.TakeBatch();
+        check("zone/here_when_the_zone_names_the_current_room",
+              count(in, "\"satanic_here\":true}") == 1 && count(next, "\"satanic_here\":false}") == 1
+                  && count(back, "\"satanic_here\":true}") == 1 && count(next, "\"kind\":\"satanic_zone\"") == 1,
+              in + next + back);
+    }
+    {
+        // The name, owed at install and after each room change, is written
+        // once it reads as text, and not again until the next room change.
+        TrackerMod m;
+        on(m);
+        const bool owedBefore = m.NameOwed();
+        m.NoteRoom("Town_01_rm");
+        const bool owedAtInstall = m.NameOwed();
+        const bool first = m.NameRead("Sorak");
+        const bool notAgain = !m.NameRead("Sorak") && !m.NameOwed();
+        m.NoteRoom("Act_01_01");
+        const bool owedAfterChange = m.NameOwed();
+        const bool empty = !m.NameRead("") && m.NameOwed();
+        const bool second = m.NameRead("Sorak") && !m.NameOwed();
+        const std::string batch = m.TakeBatch();
+        check("progress/owed_after_a_room_change_until_the_name_reads",
+              !owedBefore && owedAtInstall && first && notAgain && owedAfterChange && empty && second
+                  && count(batch, "\"kind\":\"progress\"") == 2 && count(batch, "\"kind\":\"room\"") == 2,
+              batch);
+    }
+
     // ---- the journal: envelope, sequence, escaping -------------------------------
     {
         TrackerMod m;
@@ -574,7 +752,8 @@ int main(int argc, char** argv)
                   == "tracker: off install=not-armed gold=not-installed xp=not-installed kills=not-installed drops=not-installed "
                      "gold-calls=0 xp-calls=0 kill-calls=0 gold-sum=0 xp-sum=0 kills-sum=0 drops-written=0 held-bag-drop=0 "
                      "drops-untracked=0 drops-duplicate=0 drops-unread=0 drops-seen=0 init-calls=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
-                     "lines=0 write-errors=0 buffer-full=0 file-full=0 file=none",
+                     "lines=0 write-errors=0 buffer-full=0 file-full=0 zone=none zones-written=0 zone-polls=0 "
+                     "zone-unresolved=0 zone-why=none file=none",
               m.StatLine(false, "none"));
         on(m);
         TrackerMod::Routes routes;
