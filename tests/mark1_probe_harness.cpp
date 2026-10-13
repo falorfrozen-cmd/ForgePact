@@ -14,10 +14,14 @@
 // only within their frame budget; `move` scales a call's own displacement by
 // 0.5 and by 3 and leaves a call that did not move the player alone; `stat`
 // changes only a number returned for the matching stat id and the local
-// player; a second lever replaces the first. Walkable (walkable/*): the
-// verdict line for each field's values and `scan`'s point list. Parsers
-// (parse/*): every form, accepted and refused. The lines: the bare status,
-// `hook`, `show`, `args`, `watch`, `count` and `pos`.
+// player, on the dispatcher and on the id's own getter row (64, 66), and
+// scales a number once when the dispatcher hands the id to the detoured
+// getter; a second lever replaces the first. Walkable (walkable/*): the
+// verdict line for each field's values, `unreadable` for every reading not
+// made, and `scan`'s point list. Parsers (parse/*): every form, accepted and
+// refused. The lines: the bare status, `hook`, `show`, `args`, `watch`,
+// `count` and `pos`, including pos's frame samples (a step no row made is an
+// `outside` residual; fewer than two samples measure `none`).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -192,7 +196,8 @@ int main()
         bool counted = true;
         for (Row r : allRows) counted = counted && p.Calls(r).local == 1 && p.Calls(r).all == 2;
         check("baseline/calls_are_counted_local_and_all", counted);
-        check("baseline/nothing_applied", p.Applied().applied == 0 && p.Applied().moved == 0 && p.Applied().changed == 0
+        check("baseline/nothing_applied", p.Applied().applied == 0 && p.Applied().moved == 0
+              && p.Applied().changedDispatch == 0 && p.Applied().changedGetter == 0 && p.Applied().getterDirect == 0
               && p.LeverText() == "off");
     }
     {
@@ -378,7 +383,8 @@ int main()
         FakeAccess a;
         a.statId = 64;
         p.Around(Row::ReturnSpecificStat, 0, true, a, [&] { a.result = 300; });
-        check("lever/stat_scales_the_matching_ids_number", a.result == 150 && p.Applied().changed == 1);
+        check("lever/stat_scales_the_matching_ids_number", a.result == 150 && p.Applied().changedDispatch == 1
+              && p.Applied().changedGetter == 0);
         FakeAccess otherId;
         otherId.statId = 66;
         p.Around(Row::ReturnSpecificStat, 0, true, otherId, [&] { otherId.result = 300; });
@@ -394,9 +400,67 @@ int main()
         noId.hasStatId = false;
         p.Around(Row::ReturnSpecificStat, 0, true, noId, [&] { noId.result = 300; });
         check("lever/stat_leaves_a_call_without_an_id_alone", noId.result == 300 && noId.resultWrites == 0);
+    }
+    {
+        // Compiled GML calls StatMovementSpeed directly as well as through the
+        // dispatcher, so `stat 64` scales the getter row's own number too. The
+        // getter takes no stat-id argument: the row itself is the match.
+        Probe p;
+        p.SetLever(SetLever("stat 64 0.5"), 0);
+        FakeAccess a;
+        p.Around(Row::StatMovementSpeed, 0, true, a, [&] { a.result = 300; });
+        check("lever/stat_scales_the_getter_row_too", a.result == 150 && a.resultWrites == 1 && a.statReads == 0
+              && p.Applied().changedGetter == 1 && p.Applied().getterDirect == 1 && p.Applied().changedDispatch == 0,
+              NumberText(a.result));
+        // Negative controls: another id's getter, and the getter for another self.
+        FakeAccess jump;
+        p.Around(Row::StatJumpPower, 1, true, jump, [&] { jump.result = 300; });
+        FakeAccess otherSelf;
+        p.Around(Row::StatMovementSpeed, 2, false, otherSelf, [&] { otherSelf.result = 300; });
+        check("lever/stat_getter_only_its_own_id_and_the_local_player", jump.result == 300 && jump.Untouched()
+              && otherSelf.result == 300 && otherSelf.Untouched() && p.Applied().changedGetter == 1);
+    }
+    {
+        // The dispatcher handing id 64 to the detoured getter: the getter
+        // scales, and the dispatcher returns that number as it is. Scaled
+        // twice, a 0.5 lever would read as 0.25 (75, not 150).
+        Probe p;
+        p.SetLever(SetLever("stat 64 0.5"), 0);
+        FakeAccess a;
+        a.statId = 64;
+        p.Around(Row::ReturnSpecificStat, 0, true, a, [&] {
+            p.Around(Row::StatMovementSpeed, 0, true, a, [&] { a.result = 300; });
+        });
+        check("lever/stat_scales_once_through_the_dispatcher", a.result == 150 && a.resultWrites == 1
+              && p.Applied().changedGetter == 1 && p.Applied().changedDispatch == 0 && p.Applied().getterDirect == 0,
+              NumberText(a.result));
+        // The next dispatcher call is a new call: it scales once again.
+        p.Around(Row::ReturnSpecificStat, 1, true, a, [&] {
+            p.Around(Row::StatMovementSpeed, 1, true, a, [&] { a.result = 300; });
+        });
+        check("lever/stat_scales_each_dispatcher_call_once", a.result == 150 && a.resultWrites == 2
+              && p.Applied().changedGetter == 2 && p.Applied().changedDispatch == 0);
+        const std::vector<std::string> ended = p.Tick(600);
+        check("lever/stat_end_line_counts_each_route", ended.size() == 1
+              && ended[0] == "mark1probe: lever stat(64*0.5,frames=600) ended changed-dispatch=0 changed-getter=2 getter-direct=0 skip=0",
+              ended.empty() ? "" : ended[0]);
+    }
+    {
+        // An id with no getter row among the rows (72, attack speed): the
+        // dispatcher alone scales it, and a getter row's call is untouched.
+        Probe p;
+        p.SetLever(SetLever("stat 72 0.5"), 0);
+        FakeAccess a;
+        a.statId = 72;
+        p.Around(Row::ReturnSpecificStat, 0, true, a, [&] { a.result = 300; });
+        check("lever/stat_without_a_getter_row_scales_the_dispatcher_alone", a.result == 150
+              && p.Applied().changedDispatch == 1 && p.Applied().changedGetter == 0 && p.Applied().getterDirect == 0,
+              NumberText(a.result));
+        // For such an id, stat acts on ReturnSpecificStat only.
         FakeAccess wrongRow;
-        p.Around(Row::StatMovementSpeed, 0, true, wrongRow, [&] { wrongRow.result = 300; });
-        check("lever/stat_only_on_ReturnSpecificStat", wrongRow.result == 300 && wrongRow.Untouched());
+        p.Around(Row::StatMovementSpeed, 1, true, wrongRow, [&] { wrongRow.result = 300; });
+        check("lever/stat_only_on_ReturnSpecificStat", wrongRow.result == 300 && wrongRow.Untouched()
+              && p.Applied().changedGetter == 0);
     }
 
     // ---- one lever at a time -------------------------------------------------
@@ -448,7 +512,8 @@ int main()
         const std::vector<std::string> show = p.ShowLines();
         bool rowLine = false;
         for (const std::string& l : show) rowLine = rowLine || l == "  PlayerMovement calls=0/0 held";
-        check("show/lines", show.size() == 11 && show[0] == "mark1probe show: lever=off applied=0 missing=0 moved=0 still=0 changed=0 skip=0"
+        check("show/lines", show.size() == 11
+              && show[0] == "mark1probe show: lever=off applied=0 missing=0 moved=0 still=0 changed-dispatch=0 changed-getter=0 getter-direct=0 skip=0"
               && rowLine && show.back() == "casts=3:1,12:2", show.empty() ? "" : show[0]);
         p.ResetCounts();
         check("show/reset_clears_counts_and_casts", p.CastsText() == "casts=none");
@@ -527,10 +592,70 @@ int main()
         });
         const auto lines = p.TakeLines();
         const auto end = p.Tick(20);
+        // No frame sample was taken: in-rows counts the outermost calls only
+        // (5 + 10), and total and outside measured nothing, so they say none.
         check("pos/lines_per_moving_call_and_a_total", lines.size() == 3 && lines[0] == "pos f=1 PlayerMovement dx=3 dy=4"
               && lines[1] == "pos f=3 PlayerMovement dx=6 dy=8" && lines[2] == "pos f=3 TalentUse dx=6 dy=8"
-              && end.size() == 1 && end[0] == "pos total=15 frames=20 movers=TalentUse:1,PlayerMovement:2",
+              && end.size() == 1
+              && end[0] == "pos total=none in-rows=15 outside=none frames=20 samples=0 unread=0 movers=TalentUse:1,PlayerMovement:2",
               end.empty() ? (lines.empty() ? "" : lines[0]) : end[0]);
+    }
+    {
+        // The frame samples: a step the rows account for prints nothing; a
+        // step no row made prints an `outside` line with its residual; a step
+        // a row made only part of prints the rest; an unreadable sample is
+        // counted, never taken as a position.
+        Probe p;
+        p.StartPos(10, 0);
+        FakeAccess a;
+        a.x = 100;
+        a.y = 200;
+        p.ObservePosFrame(0, true, a.x, a.y);
+        p.Around(Row::PlayerMovement, 1, true, a, [&] { a.x += 3; a.y += 4; });
+        p.ObservePosFrame(1, true, a.x, a.y);               // only a row moved: outside 0
+        const auto rowOnly = p.TakeLines();
+        a.x += 6;
+        a.y += 8;
+        p.ObservePosFrame(2, true, a.x, a.y);               // moved with no row call
+        const auto noRow = p.TakeLines();
+        p.ObservePosFrame(3, false, 0, 0);                  // unreadable
+        p.ObservePosFrame(4, true, std::nan(""), a.y);      // not a position either
+        p.Around(Row::PlayerMovement, 5, true, a, [&] { a.x += 3; a.y += 4; });
+        p.ObservePosFrame(5, true, a.x + 3, a.y + 4);       // a row made half the step
+        const auto partly = p.TakeLines();
+        const auto end = p.Tick(10);
+        check("pos/a_step_the_rows_made_prints_no_outside_line", rowOnly.size() == 1
+              && rowOnly[0] == "pos f=1 PlayerMovement dx=3 dy=4", rowOnly.empty() ? "" : rowOnly.back());
+        check("pos/a_step_no_row_made_prints_an_outside_line", noRow.size() == 1 && noRow[0] == "pos f=2 outside dx=6 dy=8",
+              noRow.empty() ? "" : noRow[0]);
+        check("pos/a_step_a_row_made_part_of_prints_the_rest", partly.size() == 2
+              && partly[0] == "pos f=5 PlayerMovement dx=3 dy=4" && partly[1] == "pos f=5 outside dx=3 dy=4",
+              partly.size() < 2 ? "" : partly[1]);
+        check("pos/total_outside_samples_and_unread", end.size() == 1
+              && end[0] == "pos total=25 in-rows=10 outside=15 frames=10 samples=4 unread=2 movers=PlayerMovement:2,outside:2",
+              end.empty() ? "" : end[0]);
+    }
+    {
+        // One readable sample measures no step: total and outside say none,
+        // never a 0 that reads as standing still.
+        Probe p;
+        p.StartPos(5, 0);
+        p.ObservePosFrame(0, true, 10, 10);
+        p.ObservePosFrame(1, false, 0, 0);
+        p.ObservePosFrame(7, true, 50, 50);                 // past the run: ignored
+        const auto end = p.Tick(5);
+        check("pos/fewer_than_two_samples_print_none", end.size() == 1
+              && end[0] == "pos total=none in-rows=0 outside=none frames=5 samples=1 unread=1 movers=none",
+              end.empty() ? "" : end[0]);
+        // A standing player with two samples does measure: total=0, outside=0.
+        Probe q;
+        q.StartPos(5, 0);
+        q.ObservePosFrame(0, true, 10, 10);
+        q.ObservePosFrame(1, true, 10, 10);
+        const auto still = q.Tick(5);
+        check("pos/two_still_samples_measure_zero", still.size() == 1 && q.TakeLines().empty()
+              && still[0] == "pos total=0 in-rows=0 outside=0 frames=5 samples=2 unread=0 movers=none",
+              still.empty() ? "" : still[0]);
     }
 
     // ---- walkable -------------------------------------------------------------
@@ -540,15 +665,16 @@ int main()
         w.y = 96.5;
         w.roomIn = true;
         w.grid = Grid::Free;
-        w.familyBlocked = false;
-        w.wallCrossed = false;
+        w.family = Family::Free;
+        w.wallLine = WallLine::Clear;
+        w.tilesRead = true;
         w.tiles = { { "Tiles_1", 0 }, { "Tiles_2", 17 } };
         check("walkable/line_with_every_field_free", WalkLine(w)
               == "walkable x=320 y=96.5 room=in grid=free family=free wall-line=clear tile=Tiles_1:0,Tiles_2:17", WalkLine(w));
         w.roomIn = false;
         w.grid = Grid::Blocked;
-        w.familyBlocked = true;
-        w.wallCrossed = true;
+        w.family = Family::Blocked;
+        w.wallLine = WallLine::Crossed;
         w.tiles = {};
         check("walkable/line_with_every_field_blocked", WalkLine(w)
               == "walkable x=320 y=96.5 room=out grid=blocked family=blocked wall-line=crossed tile=none", WalkLine(w));
@@ -556,6 +682,23 @@ int main()
         w.tiles = { { "a", 1 }, { "b", 2 }, { "c", 3 }, { "d", 4 }, { "e", 5 } };
         check("walkable/grid_unreadable_and_four_tile_layers_at_most", WalkLine(w)
               == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=a:1,b:2,c:3,d:4", WalkLine(w));
+        // A layer found whose cell could not be read prints unreadable, not a 0.
+        w.tiles = { { "Tiles_1", 3 }, { "Tiles_2", std::nullopt } };
+        check("walkable/a_tile_cell_with_no_value_prints_unreadable", WalkLine(w)
+              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=Tiles_1:3,Tiles_2:unreadable",
+              WalkLine(w));
+    }
+    {
+        // Nothing read yet: every reading says unreadable. A failed
+        // place_meeting or collision_line must never print as open floor.
+        const WalkPoint none{};
+        check("walkable/a_point_with_nothing_read_is_unreadable_throughout", WalkLine(none)
+              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable", WalkLine(none));
+        WalkPoint tilesOnly;
+        tilesOnly.tiles = { { "Tiles_1", 5 } };
+        check("walkable/tiles_not_enumerated_print_unreadable", WalkLine(tilesOnly)
+              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable",
+              WalkLine(tilesOnly));
     }
     {
         const bool room = RoomContains(0, 0, 640, 480) && RoomContains(639.5, 479, 640, 480) && !RoomContains(640, 10, 640, 480)
