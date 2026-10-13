@@ -155,7 +155,11 @@ class TrackerModBehaviorTests(unittest.TestCase):
         self.assertScenarios("control/guard_is_on_in_the_shipped_build", "drops/a_bag_drop_is_held_first",
                              "drops/created_the_frame_before_counts_two_frames_back_does_not",
                              "drops/off_clears_the_creation_window", "drops/the_key_kind_is_part_of_the_key",
-                             "drops/the_creation_window_is_capped")
+                             "drops/the_creation_window_is_capped",
+                             "drops/a_creation_before_the_install_is_held_at_the_first_decision")
+
+    def test_the_drop_route_counts_its_calls_only_once_installed(self):
+        self.assertScenarios("drops/init_calls_are_taken_and_counted_only_on_and_installed")
 
     def test_negative_control_without_the_guard_the_bag_drop_is_recorded(self):
         self.assertIn("RESULT OK", self.control_output, self.control_output)

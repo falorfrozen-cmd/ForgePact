@@ -209,10 +209,14 @@ public:
         bool operator<(const ItemKey& o) const { return kind != o.kind ? kind < o.kind : value < o.value; }
     };
 
-    // A CreateItemNew return (or its argument 0), noted while on.
-    void NoteCreated(const ItemKey& key)
+    // A CreateItemNew return (or its argument 0), noted while on and installed.
+    // Armed at character select but not installed, the load builds items and
+    // no tick ages the window, so a creation noted then would still look
+    // "recent" at the first decision after the install and let a restored
+    // ground item past the guard: nothing is noted until the install.
+    void NoteCreated(const ItemKey& key, bool installed)
     {
-        if (!m_Enabled || m_CreatedNow.count(key)) return;
+        if (!m_Enabled || !installed || m_CreatedNow.count(key)) return;
         if (m_CreatedNow.size() >= kCreationCap) {
             ++m_Stats.createOverflow;
             return;
@@ -223,6 +227,15 @@ public:
     bool RecentlyCreated(const ItemKey& key) const
     {
         return m_CreatedNow.count(key) != 0 || m_CreatedBefore.count(key) != 0;
+    }
+    // A LootGroundInit call from the shared detour: taken (to be queued for
+    // the tick) and counted only while on and installed, for the same reason.
+    // Counted before any queue cap, so `init-calls=` says the route ran at all.
+    bool AcceptInit(bool installed)
+    {
+        if (!m_Enabled || !installed) return false;
+        ++m_Stats.initCalls;
+        return true;
     }
     // Once per tick, after its decisions.
     void AgeCreationWindow()
@@ -524,6 +537,7 @@ public:
         long long goldSum = 0, xpSum = 0, killsSum = 0;        // the accepted totals
         long long xpRejected = 0;      // an explicit false answered
         long long seen = 0;            // ground items decided while on
+        long long initCalls = 0;       // LootGroundInit calls taken while on and installed
         long long dropsWritten = 0;    // ground_drop records buffered
         long long heldBagDrop = 0;     // not built this frame or the last
         long long dropsUntracked = 0;  // a rarity outside the five, or unread
@@ -550,7 +564,7 @@ public:
         s += " gold-sum=" + n(m_Stats.goldSum) + " xp-sum=" + n(m_Stats.xpSum) + " kills-sum=" + n(m_Stats.killsSum);
         s += " drops-written=" + n(m_Stats.dropsWritten) + " held-bag-drop=" + n(m_Stats.heldBagDrop);
         s += " drops-untracked=" + n(m_Stats.dropsUntracked) + " drops-duplicate=" + n(m_Stats.dropsDuplicate);
-        s += " drops-unread=" + n(m_Stats.dropsUnread) + " drops-seen=" + n(m_Stats.seen);
+        s += " drops-unread=" + n(m_Stats.dropsUnread) + " drops-seen=" + n(m_Stats.seen) + " init-calls=" + n(m_Stats.initCalls);
         s += " xp-rejected=" + n(m_Stats.xpRejected);
         s += " created=" + n(m_Stats.created) + " create-overflow=" + n(m_Stats.createOverflow);
         s += " heartbeats=" + n(m_Stats.heartbeats);

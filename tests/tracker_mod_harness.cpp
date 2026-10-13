@@ -104,7 +104,7 @@ static TrackerMod::ItemKey key(std::uint64_t v) { return { TrackerMod::kKeyStruc
 // frame (noted) unless `built` is false, then decided.
 static Verdict see(TrackerMod& m, const TrackerMod::Drop& d, std::uint64_t k, bool built, const std::string& identity)
 {
-    if (built) m.NoteCreated(key(k));
+    if (built) m.NoteCreated(key(k), true);
     const Verdict v = m.DecideDrop(d, m.RecentlyCreated(key(k)), identity);
     m.AgeCreationWindow();
     return v;
@@ -303,28 +303,56 @@ int main(int argc, char** argv)
         check("drops/a_bag_drop_is_held_first",
               bag == Verdict::HeldBagDrop && bagMythic == Verdict::HeldBagDrop && m.Stats().heldBagDrop == 2
                   && m.Stats().dropsWritten == 0 && m.Stats().dropsUntracked == 0 && m.TakeBatch().empty());
-        m.NoteCreated(key(80));
+        m.NoteCreated(key(80), true);
         m.AgeCreationWindow();
         const bool previous = m.DecideDrop(drop(7), m.RecentlyCreated(key(80)), "item:3:prev") == Verdict::Recorded;
-        m.NoteCreated(key(81));
+        m.NoteCreated(key(81), true);
         m.AgeCreationWindow();
         m.AgeCreationWindow();
         const bool stale = m.DecideDrop(drop(7), m.RecentlyCreated(key(81)), "item:3:old") == Verdict::HeldBagDrop;
         check("drops/created_the_frame_before_counts_two_frames_back_does_not", previous && stale);
-        m.NoteCreated(key(90));
+        m.NoteCreated(key(90), true);
         m.SetEnabled(false);
         m.SetEnabled(true);
         check("drops/off_clears_the_creation_window", !m.RecentlyCreated(key(90)));
         TrackerMod::ItemKey refKey{ TrackerMod::kKeyReference, 80 };
-        m.NoteCreated(key(80));
+        m.NoteCreated(key(80), true);
         check("drops/the_key_kind_is_part_of_the_key", !m.RecentlyCreated(refKey) && m.RecentlyCreated(key(80)));
     }
     {
         TrackerMod m;
         on(m);
-        for (std::uint64_t i = 0; i < TrackerMod::kCreationCap + 5; ++i) m.NoteCreated(key(1000 + i));
+        for (std::uint64_t i = 0; i < TrackerMod::kCreationCap + 5; ++i) m.NoteCreated(key(1000 + i), true);
         check("drops/the_creation_window_is_capped",
               m.Stats().created == (long long)TrackerMod::kCreationCap && m.Stats().createOverflow == 5);
+    }
+    {
+        // Armed at character select, not yet installed: the load builds items,
+        // but only an installed tick ages the window, so a creation noted then
+        // would still look "recent" at the first decision after the install
+        // and let a restored ground item past the guard. Nothing is noted.
+        TrackerMod m;
+        on(m);
+        for (std::uint64_t i = 0; i < 8; ++i) m.NoteCreated(key(500 + i), false);
+        const bool noted = m.RecentlyCreated(key(500)) || m.Stats().created != 0 || m.Stats().createOverflow != 0;
+        const Verdict first = m.DecideDrop(drop(9), m.RecentlyCreated(key(500)), "item:3:loaded");
+        m.AgeCreationWindow();
+        const Verdict fresh = see(m, drop(9), 600, true, "item:3:fresh");
+        check("drops/a_creation_before_the_install_is_held_at_the_first_decision",
+              !noted && first == Verdict::HeldBagDrop && fresh == Verdict::Recorded && m.Stats().created == 1,
+              std::string(TrackerMod::VerdictName(first)) + " " + TrackerMod::VerdictName(fresh));
+    }
+    {
+        // LootGroundInit calls are counted, and queued, only on and installed:
+        // `init-calls=` tells a drop route that never ran from one that ran.
+        TrackerMod m;
+        const bool offRefused = !m.AcceptInit(true);
+        on(m);
+        const bool armedRefused = !m.AcceptInit(false);
+        const bool installedTaken = m.AcceptInit(true) && m.AcceptInit(true);
+        check("drops/init_calls_are_taken_and_counted_only_on_and_installed",
+              offRefused && armedRefused && installedTaken && m.Stats().initCalls == 2,
+              std::to_string(m.Stats().initCalls));
     }
     {
         TrackerMod m;
@@ -392,7 +420,7 @@ int main(int argc, char** argv)
         m.NoteRoom("Act_09_03");
         m.RecordProgress("Sorak");
         m.RecordSatanicZone("Satanic_9_3", { 1 }, {}, false);
-        m.NoteCreated(key(1));
+        m.NoteCreated(key(1), true);
         m.DecideDrop(drop(9), true, "item:3:z");
         m.CountGold(10);
         // on() ran frame 1; frames 2 to 30, 20 s later, end on a flush frame:
@@ -545,7 +573,7 @@ int main(int argc, char** argv)
               m.StatLine(false, "none")
                   == "tracker: off install=not-armed gold=not-installed xp=not-installed kills=not-installed drops=not-installed "
                      "gold-calls=0 xp-calls=0 kill-calls=0 gold-sum=0 xp-sum=0 kills-sum=0 drops-written=0 held-bag-drop=0 "
-                     "drops-untracked=0 drops-duplicate=0 drops-unread=0 drops-seen=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
+                     "drops-untracked=0 drops-duplicate=0 drops-unread=0 drops-seen=0 init-calls=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
                      "lines=0 write-errors=0 buffer-full=0 file-full=0 file=none",
               m.StatLine(false, "none"));
         on(m);
@@ -561,6 +589,7 @@ int main(int argc, char** argv)
         see(m, drop(9), 3, true, "item:3:s");
         see(m, drop(9), 4, false, "item:3:t");
         see(m, drop(5), 5, true, "item:3:u");
+        m.AcceptInit(true);
         m.TakeBatch();
         m.NoteAppend(true);
         const std::string s = m.StatLine(true, "session-4242-1700000000000.ndjson");
@@ -568,7 +597,7 @@ int main(int argc, char** argv)
               s.rfind("tracker: on install=installed gold=both xp=table-only kills=none drops=table-only ", 0) == 0
                   && s.find(" gold-calls=1 xp-calls=1 kill-calls=1 gold-sum=5 xp-sum=9 kills-sum=1 drops-written=1 held-bag-drop=1 drops-untracked=1 ")
                          != std::string::npos
-                  && s.find(" drops-seen=3 ") != std::string::npos
+                  && s.find(" drops-seen=3 init-calls=1 ") != std::string::npos
                   && s.find(" lines=1 write-errors=0 ") != std::string::npos
                   && s.size() > 39 && s.substr(s.size() - 39) == " file=session-4242-1700000000000.ndjson",
               s);
@@ -600,7 +629,7 @@ int main(int argc, char** argv)
         m.NoteRoom("Act_09_03");
         m.RecordProgress("Ann \"the\" \\Brave\\ \xC3\x9Cnholy \xFF");
         m.RecordSatanicZone("Satanic_9_3", { 6, 14 }, { 3 }, true);
-        m.NoteCreated(key(1));
+        m.NoteCreated(key(1), true);
         m.DecideDrop(drop(10, 3, 412, 7, "Doom \"Blade\" \xE2\x98\x83"), true, "item:3:w");
         m.CountGold(10);
         m.CountXp(20, false);

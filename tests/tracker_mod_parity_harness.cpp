@@ -161,7 +161,7 @@ std::string Play(Player& p, const std::string& line)
         const int argc = counterArgs(1);
         p.core.CountKill(TrackerMod::CaptureKill(argc, args.data()));
     } else if (op == "create") {
-        p.core.NoteCreated({ TrackerMod::kKeyStruct, std::stoull(w.at(1)) });
+        p.core.NoteCreated({ TrackerMod::kKeyStruct, std::stoull(w.at(1)) }, true);   // the script plays an installed session
     } else if (op == "drop") {
         const TrackerMod::ItemKey key{ TrackerMod::kKeyStruct, std::stoull(w.at(1)) };
         TrackerMod::Drop d;
