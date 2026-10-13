@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -215,8 +216,21 @@ inline constexpr size_t kMaxOutbox = 2000;        // `pos` lines waiting for the
 // move: after each local-player call of `row` that moved the player, set x
 //       and y to before + mult x (after - before).
 // stat: a ReturnSpecificStat call for the local player whose stat-id argument
-//       is `statId` returns the original's number x `mult`.
+//       is `statId` returns the original's number x `mult`; for an id with
+//       its own getter row (StatGetterRow), a local-player call of that
+//       getter does too. Compiled GML reaches a getter like StatMovementSpeed
+//       by a direct call as well as through the dispatcher, so scaling the
+//       dispatcher alone would be blind to those callers.
 enum class LeverKind : int { Off, Set, Scale, Move, Stat };
+
+// The getter row the stat dispatcher sends an id to, for the ids that have
+// one among the rows (static reading: 64 movement speed, 66 jump power).
+inline bool StatGetterRow(long long statId, Row& out)
+{
+    if (statId == 64) { out = Row::StatMovementSpeed; return true; }
+    if (statId == 66) { out = Row::StatJumpPower; return true; }
+    return false;
+}
 
 struct Lever {
     LeverKind kind = LeverKind::Off;
@@ -260,10 +274,15 @@ inline std::string LeverReply(const Lever& l, const std::string& resolved, const
         out = "mark1probe move: " + std::string(RowName(l.row)) + " displacement x" + NumberText(l.mult) + " for "
             + std::to_string(l.frames) + " frames";
         break;
-    case LeverKind::Stat:
-        out = "mark1probe stat: id " + std::to_string(l.statId) + " x" + NumberText(l.mult) + " for "
+    case LeverKind::Stat: {
+        Row getter = Row::ReturnSpecificStat;
+        const std::string routes = StatGetterRow(l.statId, getter)
+            ? " on ReturnSpecificStat and " + std::string(RowName(getter))
+            : std::string(" on ReturnSpecificStat (no getter row)");
+        out = "mark1probe stat: id " + std::to_string(l.statId) + " x" + NumberText(l.mult) + routes + " for "
             + std::to_string(l.frames) + " frames";
         break;
+    }
     }
     if (!replaced.empty()) out += " (replaces " + replaced + ")";
     return out;
@@ -514,9 +533,9 @@ inline std::vector<std::string> Usage()
         "  mark1probe set <scope>.<name>[<i>] <v> during <row> [frames]   write before each call, restore after",
         "  mark1probe scale <scope>.<name>[<i>] <m> during <row> [frames] multiply before each call, restore after",
         "  mark1probe move <row> <mult> [frames]                scale each call's own displacement",
-        "  mark1probe stat <id> <mult> [frames]                 scale ReturnSpecificStat's number for one stat id",
+        "  mark1probe stat <id> <mult> [frames]                 scale one stat id's number (dispatcher, and 64/66's getter)",
         "  mark1probe count <object name> <frames>              instance_number per frame, one line per change",
-        "  mark1probe pos <frames>                              the cursor, then each moving call's dx dy and a total",
+        "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, totals",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -546,34 +565,48 @@ inline std::string PosStartLine(bool cursorRead, double x, double y)
 inline constexpr int kGridCell = 16;       // global.pathGrid's cell, in pixels
 inline constexpr size_t kMaxTileLayers = 4;
 
+// Every reading below starts as unreadable, and only a read that succeeded
+// overwrites it: a failed place_meeting or collision_line (unresolved object,
+// no player, a builtin error) must never print as the open-floor answer.
 enum class Grid : int { Free, Blocked, Unreadable };
+enum class Family : int { Free, Blocked, Unreadable };
+enum class WallLine : int { Clear, Crossed, Unreadable };
 
+// One tile layer's cell; no value means the layer was found but its cell
+// could not be read.
 struct TileCell {
-    std::string layer;
-    long long   value = 0;
+    std::string              layer;
+    std::optional<long long> value;
 };
 
 // One point's readings: inside the room, the path grid's cell, the player's
 // place_meeting against Collision_Parent_obj there, a collision_line from the
 // player to it against Wall_Parent_obj, and up to four tile layers' cells.
+// `tilesRead` says the tile layers were enumerated: read with no layers
+// prints `none`, not read prints `unreadable`.
 struct WalkPoint {
     double                x = 0, y = 0;
     bool                  roomIn = false;
     Grid                  grid = Grid::Unreadable;
-    bool                  familyBlocked = false;
-    bool                  wallCrossed = false;
+    Family                family = Family::Unreadable;
+    WallLine              wallLine = WallLine::Unreadable;
+    bool                  tilesRead = false;
     std::vector<TileCell> tiles;
 };
 
 inline std::string WalkLine(const WalkPoint& w)
 {
     const char* grid = w.grid == Grid::Free ? "free" : w.grid == Grid::Blocked ? "blocked" : "unreadable";
+    const char* family = w.family == Family::Free ? "free" : w.family == Family::Blocked ? "blocked" : "unreadable";
+    const char* wall = w.wallLine == WallLine::Clear ? "clear" : w.wallLine == WallLine::Crossed ? "crossed" : "unreadable";
     std::string tiles;
     for (size_t i = 0; i < w.tiles.size() && i < kMaxTileLayers; ++i)
-        tiles += (i ? "," : "") + w.tiles[i].layer + ":" + std::to_string(w.tiles[i].value);
+        tiles += (i ? "," : "") + w.tiles[i].layer + ":"
+            + (w.tiles[i].value ? std::to_string(*w.tiles[i].value) : std::string("unreadable"));
+    if (!w.tilesRead) tiles = "unreadable";
+    else if (tiles.empty()) tiles = "none";
     return "walkable x=" + NumberText(w.x) + " y=" + NumberText(w.y) + " room=" + (w.roomIn ? "in" : "out")
-        + " grid=" + grid + " family=" + (w.familyBlocked ? "blocked" : "free")
-        + " wall-line=" + (w.wallCrossed ? "crossed" : "clear") + " tile=" + (tiles.empty() ? std::string("none") : tiles);
+        + " grid=" + grid + " family=" + family + " wall-line=" + wall + " tile=" + tiles;
 }
 
 inline bool RoomContains(double x, double y, double roomWidth, double roomHeight)
@@ -616,8 +649,10 @@ struct LeverCounts {
     uint64_t missing = 0;   // set/scale: the member was unreadable, or a bool under scale, or the write failed
     uint64_t moved = 0;     // move: a call that moved the player, its displacement scaled
     uint64_t still = 0;     // move: a call that did not move the player, left alone
-    uint64_t changed = 0;   // stat: a matching call's number scaled
-    uint64_t skip = 0;      // stat: a matching call whose result was not a number
+    uint64_t changedDispatch = 0;  // stat: a ReturnSpecificStat call's number scaled there
+    uint64_t changedGetter = 0;    // stat: the id's own getter row's number scaled
+    uint64_t getterDirect = 0;     // stat: of those, getter calls with no ReturnSpecificStat around them
+    uint64_t skip = 0;             // stat: a matching call whose result was not a number
 };
 
 class Probe {
@@ -711,8 +746,12 @@ public:
     //   void SetResult(double n)
     // A call whose self is not the local player runs the original and nothing
     // else. set, scale and move act on the outermost call of their row only,
-    // so a row the game calls inside itself is written once; stat acts on
-    // every matching call, since an inner call may ask for a different id.
+    // so a row the game calls inside itself is written once. stat acts on
+    // every matching ReturnSpecificStat call (an inner call may ask for a
+    // different id) and on the outermost call of the id's getter row, and
+    // scales a number once: a call whose original already ran a scaling
+    // (the dispatcher handing id 64 to a detoured StatMovementSpeed) returns
+    // that number as it is.
     template <class Access, class Original>
     void Around(Row row, int64_t frame, bool local, Access& access, Original&& original)
     {
@@ -731,7 +770,11 @@ public:
         const bool live = LeverLive(frame) && lever_.row == row;
         const bool writes = live && outer && (lever_.kind == LeverKind::Set || lever_.kind == LeverKind::Scale);
         const bool moves = live && outer && lever_.kind == LeverKind::Move;
-        const bool stat = live && lever_.kind == LeverKind::Stat && row == Row::ReturnSpecificStat;
+        const bool statOn = LeverLive(frame) && lever_.kind == LeverKind::Stat;
+        Row getter = Row::ReturnSpecificStat;
+        const bool statDispatch = statOn && row == Row::ReturnSpecificStat;
+        const bool statGetter = statOn && outer && StatGetterRow(lever_.statId, getter) && getter == row;
+        const uint64_t scaledBefore = statScaled_;
         const bool tracing = PosRunning(frame);
         const bool outermostOfAll = depthAll_ == 0;
 
@@ -784,17 +827,32 @@ public:
                     Emit("pos f=" + std::to_string(frame) + " " + std::string(RowName(row)) + " dx=" + NumberText(dx)
                          + " dy=" + NumberText(dy));
                     ++posMovers_[i];
-                    if (outermostOfAll) posTotal_ += std::hypot(dx, dy);
+                    if (outermostOfAll) {
+                        posInRows_ += std::hypot(dx, dy);
+                        posRowDx_ += dx;
+                        posRowDy_ += dy;
+                    }
                 }
             }
         }
 
-        if (stat) {
+        if (statDispatch || statGetter) {
             double id = 0;
-            if (access.StatId(id) && id == static_cast<double>(lever_.statId)) {
+            const bool matches = statGetter || (access.StatId(id) && id == static_cast<double>(lever_.statId));
+            if (matches && statScaled_ == scaledBefore) {
                 double n = 0;
-                if (access.Result(n)) { access.SetResult(n * lever_.mult); ++counts_.changed; }
-                else ++counts_.skip;
+                if (access.Result(n)) {
+                    access.SetResult(n * lever_.mult);
+                    ++statScaled_;
+                    if (statGetter) {
+                        ++counts_.changedGetter;
+                        if (depth_[static_cast<int>(Row::ReturnSpecificStat)] == 0) ++counts_.getterDirect;
+                    } else {
+                        ++counts_.changedDispatch;
+                    }
+                } else {
+                    ++counts_.skip;
+                }
             }
         }
     }
@@ -834,8 +892,7 @@ public:
         std::vector<std::string> out;
         out.push_back("mark1probe show: lever=" + LeverText() + " applied=" + std::to_string(counts_.applied)
                       + " missing=" + std::to_string(counts_.missing) + " moved=" + std::to_string(counts_.moved)
-                      + " still=" + std::to_string(counts_.still) + " changed=" + std::to_string(counts_.changed)
-                      + " skip=" + std::to_string(counts_.skip));
+                      + " still=" + std::to_string(counts_.still) + " " + StatCountsText());
         for (int i = 0; i < kRowCount; ++i) {
             const char* state = hook_[i] == HookState::Detoured ? "" : hook_[i] == HookState::Held ? " held"
                 : hook_[i] == HookState::Failed ? " failed" : " not hooked";
@@ -949,17 +1006,59 @@ public:
     }
 
     // ---- `pos` ----------------------------------------------------------------
+    // Two sources. Around adds up the displacement made inside the outermost
+    // call of a row (`in-rows`), and the adapter samples the local player's x
+    // and y once a frame through ObservePosFrame (`total`, the frame-to-frame
+    // path). A frame whose step the rows' displacement since the last sample
+    // does not account for is a move outside the nine rows: its residual
+    // (the frame's step minus the rows' summed dx and dy) is printed and
+    // added to `outside`. Without the sample, a player moved by code that is
+    // not a row would read the same as a player standing still.
     void StartPos(int64_t frames, int64_t frame)
     {
         posOn_ = true;
         posFrames_ = frames;
         posStart_ = frame;
-        posTotal_ = 0;
+        posInRows_ = 0;
+        posRowDx_ = 0;
+        posRowDy_ = 0;
+        posPath_ = 0;
+        posOutside_ = 0;
+        posOutsideFrames_ = 0;
+        posSamples_ = 0;
+        posUnread_ = 0;
+        posHaveSample_ = false;
         for (uint64_t& m : posMovers_) m = 0;
     }
     bool PosRunning(int64_t frame) const
     {
         return posOn_ && frame >= posStart_ && frame - posStart_ < posFrames_;
+    }
+
+    // Once a frame while `pos` runs: the local player's x and y, or `read`
+    // false when they could not be read (counted, never taken as a position).
+    void ObservePosFrame(int64_t frame, bool read, double x, double y)
+    {
+        if (!PosRunning(frame)) return;
+        if (!read || !std::isfinite(x) || !std::isfinite(y)) { ++posUnread_; return; }
+        ++posSamples_;
+        if (posHaveSample_) {
+            const double fx = x - posLastX_, fy = y - posLastY_;
+            posPath_ += std::hypot(fx, fy);
+            const double ox = fx - posRowDx_, oy = fy - posRowDy_;
+            const double outside = std::hypot(ox, oy);
+            if (outside > kPosEpsilon) {
+                posOutside_ += outside;
+                ++posOutsideFrames_;
+                Emit("pos f=" + std::to_string(frame) + " outside dx=" + NumberText(Round3(ox)) + " dy="
+                     + NumberText(Round3(oy)));
+            }
+        }
+        posHaveSample_ = true;
+        posLastX_ = x;
+        posLastY_ = y;
+        posRowDx_ = 0;
+        posRowDy_ = 0;
     }
 
     // Lines written inside a hooked call (`pos`), for the adapter to print.
@@ -981,7 +1080,7 @@ public:
             case LeverKind::Set:
             case LeverKind::Scale: counts = "applied=" + std::to_string(counts_.applied); break;
             case LeverKind::Move:  counts = "moved=" + std::to_string(counts_.moved) + " still=" + std::to_string(counts_.still); break;
-            case LeverKind::Stat:  counts = "changed=" + std::to_string(counts_.changed) + " skip=" + std::to_string(counts_.skip); break;
+            case LeverKind::Stat:  counts = StatCountsText(); break;
             case LeverKind::Off:   break;
             }
             out.push_back("mark1probe: lever " + LeverText() + " ended " + counts);
@@ -1002,8 +1101,16 @@ public:
                 if (!posMovers_[i]) continue;
                 movers += (movers.empty() ? "" : ",") + std::string(kRowNames[i]) + ":" + std::to_string(posMovers_[i]);
             }
-            out.push_back("pos total=" + NumberText(std::round(posTotal_ * 10.0) / 10.0) + " frames="
-                          + std::to_string(frame - posStart_) + " movers=" + (movers.empty() ? std::string("none") : movers));
+            if (posOutsideFrames_) movers += (movers.empty() ? "" : ",") + std::string("outside:") + std::to_string(posOutsideFrames_);
+            // Fewer than two readable samples measure no step at all: `none`,
+            // never a 0 that reads as standing still.
+            const bool measured = posSamples_ >= 2;
+            const auto px = [](double v) { return NumberText(std::round(v * 10.0) / 10.0); };
+            out.push_back("pos total=" + (measured ? px(posPath_) : std::string("none")) + " in-rows=" + px(posInRows_)
+                          + " outside=" + (measured ? px(posOutside_) : std::string("none")) + " frames="
+                          + std::to_string(frame - posStart_) + " samples=" + std::to_string(posSamples_)
+                          + " unread=" + std::to_string(posUnread_)
+                          + " movers=" + (movers.empty() ? std::string("none") : movers));
             posOn_ = false;
         }
         return out;
@@ -1015,6 +1122,17 @@ private:
         int n = 0;
         for (HookState h : hook_) n += h == s ? 1 : 0;
         return n;
+    }
+
+    // stat's two routes apart, so a session can tell "never engaged where the
+    // game reads the stat" (both zero, or only the dispatcher) from "engaged
+    // and changed nothing". getter-direct is the getter calls no dispatcher
+    // call was around: callers that bypass ReturnSpecificStat.
+    std::string StatCountsText() const
+    {
+        return "changed-dispatch=" + std::to_string(counts_.changedDispatch) + " changed-getter="
+            + std::to_string(counts_.changedGetter) + " getter-direct=" + std::to_string(counts_.getterDirect)
+            + " skip=" + std::to_string(counts_.skip);
     }
 
     std::string WatchEndLine(int64_t frame) const
@@ -1061,10 +1179,27 @@ private:
     long long countLast_ = 0;
     uint64_t countChanges_ = 0;
 
+    static double Round3(double v) { return std::round(v * 1000.0) / 1000.0; }
+
+    // A frame's residual below this is floating-point noise, not a move.
+    static constexpr double kPosEpsilon = 0.01;
+
+    uint64_t statScaled_ = 0;   // stat scalings so far, so a nested call scales once
+
     bool posOn_ = false;
     int64_t posFrames_ = 0;
     int64_t posStart_ = 0;
-    double posTotal_ = 0;
+    double posInRows_ = 0;      // in-row displacement, outermost row calls only
+    double posRowDx_ = 0;       // in-row dx and dy since the last frame sample
+    double posRowDy_ = 0;
+    double posPath_ = 0;        // frame-to-frame path length
+    double posOutside_ = 0;     // summed per-frame residuals no row accounts for
+    uint64_t posOutsideFrames_ = 0;
+    uint64_t posSamples_ = 0;
+    uint64_t posUnread_ = 0;
+    bool posHaveSample_ = false;
+    double posLastX_ = 0;
+    double posLastY_ = 0;
     uint64_t posMovers_[kRowCount]{};
 
     std::vector<std::string> outbox_;
