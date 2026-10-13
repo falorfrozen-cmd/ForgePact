@@ -22,10 +22,13 @@ each is the "hs.1" build of a documented patch series the hub keeps under
 BUILD-INFO records installed beside them). They stay pinned binaries for the
 same reason YYToolkit always has: ship the exact binary that was launched
 against the game, not a fresh CI build. The optional
-`HSOfflineTrackerProducer.dll` is unchanged -- still extracted as a zip
-member from the published `ForgePact-1.3.16.zip` (see
+`HSOfflineTrackerProducer.dll` is extracted as a zip member
+(`producer/HSOfflineTrackerProducer.dll`) from the published
+HS-Offline-Tracker v0.1.4 release's portable zip, the build carrying that
+project's exit-teardown fix; the earlier build it replaces aborted every
+graceful close of the game (#201). See
 `docs/submodules/ForgePact/instructions.md`'s "The build half" for why an
-already-launched binary is extracted rather than rebuilt in CI).
+already-released binary is extracted rather than rebuilt in CI.
 
 **All-or-nothing.** Every hash is verified -- for a zip-member entry, the
 archive's own hash first, before any member is read out of it -- and only if
@@ -38,7 +41,14 @@ re-downloaded (printed `ok (already present)`). A `dest` that exists with a
 *different* hash is refused during the verify phase -- exit 1, nothing
 written -- unless `--force`, which exists for a developer's own hand-placed
 file (the local CRLF `Aurie/shared.hpp` most maintainers already have from an
-Aurie checkout, per `README.md`'s old "copy it in" instructions).
+Aurie checkout, per `README.md`'s old "copy it in" instructions). The one
+exception is a hash the entry lists in `superseded_sha256`: the file an
+earlier pin of that same entry wrote. That file is stale, not hand-placed, so
+it is replaced without `--force` (printed `ok (replaced superseded ...)`),
+under the same all-or-nothing rule. Without it, re-pinning an entry made
+`Prepare-Plugin.bat` fail on every checkout that had run it before, and a
+source install kept the old file (#185: the tracker producer's earlier pin
+aborts every graceful close of the game).
 
 `--verify-only` hashes whatever is under `--root` against the manifest,
 downloads nothing, and exits 1 on the first missing or mismatched file (an
@@ -93,6 +103,17 @@ def _dest_is_safe(dest: str) -> bool:
     if "" in parts or ".." in parts or "." in parts:
         return False
     return True
+
+
+def _superseded_is_valid(entry: dict) -> bool:
+    """`superseded_sha256`, when present, is a list of SHA-256 hex digests. A
+    bare string would make `in` a substring test (a re-pin written without
+    the brackets), so anything else is refused before any file is read."""
+    value = entry.get("superseded_sha256", [])
+    return isinstance(value, list) and all(
+        isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha)
+        for sha in value
+    )
 
 
 def urllib_fetcher(url: str) -> bytes:
@@ -153,6 +174,11 @@ def _verify_only(manifest: dict, root: Path) -> int:
             ok = False
             continue
         actual = sha256_hex(dest.read_bytes())
+        if actual in entry.get("superseded_sha256", ()):
+            print(f"{entry['dest']}  {actual}  MISMATCH (an earlier, superseded pin's file; "
+                  f"expected {entry['sha256']} -- run without --verify-only to replace it)")
+            ok = False
+            continue
         if actual != entry["sha256"]:
             print(f"{entry['dest']}  {actual}  MISMATCH (expected {entry['sha256']})")
             ok = False
@@ -175,6 +201,10 @@ def run(
         if not _dest_is_safe(entry["dest"]):
             print(f"{entry['dest']}  -  REFUSED (unsafe destination)")
             return 1
+        if not _superseded_is_valid(entry):
+            print(f"{entry['dest']}  -  REFUSED (superseded_sha256 must be a list of lowercase "
+                  "SHA-256 hex digests)")
+            return 1
 
     if verify_only:
         return _verify_only(manifest, root)
@@ -186,13 +216,18 @@ def run(
 
     for entry in entries:
         dest = root / entry["dest"]
+        replacing_superseded = False
 
         if dest.is_file():
             existing_hash = sha256_hex(dest.read_bytes())
             if existing_hash == entry["sha256"]:
                 statuses.append(f"{entry['dest']}  {existing_hash}  ok (already present)")
                 continue
-            if not force:
+            if existing_hash in entry.get("superseded_sha256", ()):
+                # An earlier pin of this entry wrote it: stale, so re-fetch
+                # below and overwrite it on write, without --force.
+                replacing_superseded = True
+            elif not force:
                 print(
                     f"{entry['dest']}  {existing_hash}  REFUSED (pin wants "
                     f"{entry['sha256']}; pass --force to replace a hand-placed file)"
@@ -209,7 +244,8 @@ def run(
             continue
 
         to_write.append((dest, data))
-        statuses.append(f"{entry['dest']}  {sha256_hex(data)}  ok")
+        note = "  ok (replaced superseded earlier pin)" if replacing_superseded else "  ok"
+        statuses.append(f"{entry['dest']}  {sha256_hex(data)}{note}")
 
     if failed:
         print("nothing written -- fix the mismatches above and re-run")
@@ -243,7 +279,8 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace a dest that exists with a different hash",
+        help="replace a dest that exists with a different hash (a hash the entry "
+        "lists in superseded_sha256 is replaced without it)",
     )
     args = parser.parse_args(argv)
 
