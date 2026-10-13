@@ -1176,9 +1176,30 @@ check starts a new visit. A census that yields no layer writes nothing and
 counts `no-front=`. Each effect read is counted as a struct, another answer
 or a failure (`flightprobe depth`'s `fx=`, the trace line's `fx-struct=`,
 `fx-other=` and `fx-failed=`), because a read that never answers a struct
-would silently turn the filter rule off. What the effect read answers on this
-runner is Mod live procedure 2's `flight-depth` question, with town's
-`Effect_1` as the positive control.
+would silently turn the filter rule off. `flightprobe depth` also gives the
+kind of the visit's first answer that was not a struct (`fx-kind=`, an
+`RValueType` number), and accounts for every layer whose effect the census
+did not read (`unread=`, one count per reason: behind the game layers, no
+readable depth, an unreadable name, visibility or element count, the flight
+layer itself, hidden, or holding elements). Every layer `layer_get_all`
+listed lands in exactly one of those nine counts, and `layers=` is their sum.
+That separates a census that never read an effect (`fx=0/0/0`, with
+`unread=` saying why) from a read that did not answer a struct, so the first
+is never mistaken for a fact about `layer_get_fx`.
+
+What the effect read answers on this runner is **not established**. It is
+**established only by** a reading that names the layer the census classed as
+the filter: `flightprobe depth`'s `filter=` naming `Effect_1` with an `fx=`
+struct count of 1 or more, in `Town_01_rm` (Mod live procedure 2's
+`flight-depth`, town's `Effect_1` being the positive control) and in the
+Outskirts of Inoya once its canopies hold (`flight-depth-zone`). A matching
+flight depth is not evidence, either way. In both rooms `Effect_1` lies in
+front of every drawn layer (−10300 in town, −10100 in the zone, with the
+frontmost drawn layer at −10000 in each), so "behind the rearmost filter"
+and "in front of every drawn layer" give the same −10001. A census that read
+no effect at all, or read one and classed nothing, would still land there.
+The depth tells the filter rule apart from replan 2's only in the 8
+colour-filter rooms, none of which Mod live 2 visits.
 
 ### The size guard
 
@@ -1446,7 +1467,8 @@ The session that re-runs what Mod live 1 failed or did not observe, each with
 the control it needs, and adds the owner's drop-rate check. What Mod live 1
 passed is not run again. It runs on the research build (`build.bat dev`) at
 the commit where the flight layer, the stat-less tooltip anchor, the `flp2`
-probe and these docs are done; the driver records the DLL's SHA-256 and asks
+probe and these docs are done, and where `flightprobe depth` already carries
+the census outcomes (its `unread=` and `fx-kind=` fields); the driver records the DLL's SHA-256 and asks
 the owner before installing it. As in procedure 1, the debugger's addresses
 stay out of this file: they are kept in the session's local notes.
 
@@ -1479,7 +1501,8 @@ roll once, at the player build's single copy. Not tried, and so "not observed
 live": Pocket Elf in a zone, the 8 colour-filter rooms where "Never past a
 filter" changes the answer (both rooms tried have their filter in front of
 every drawn layer, so the harness's `front_layer_filter` scenarios carry the
-rule there, while the effect read itself is measured in both rooms), gates and
+rule there, while the effect read itself is measured in both rooms by
+`filter=` and the `fx=` / `unread=` tally, not by the depth), gates and
 locks outside town, co-op, and the Angelic roll's natural chance.
 
 **Steps, in order:**
@@ -1518,28 +1541,47 @@ locks outside town, co-op, and the Angelic roll's natural chance.
 - T5 `depth-control`: with no flight charm worn, `flightcharm stat` reads
   `state=off`. Sorak warps under the red canopy Mod live 1 measured, and a
   screenshot shows him hidden under it. `flightprobe depth` reads
-  `state=off`, `flight-layer=none`, `filter=none` and `fx=0/0/0`: no census
-  has run yet.
+  `state=off`, `flight-layer=none`, `filter=none`,
+  `fx=0/0/0 unread=behind:0,no-depth:0,no-detail:0,own:0,hidden:0,holds:0`,
+  `fx-kind=none` and `layers=0`: no census has run yet. A reply with no
+  `unread=` field means the build lacks the census outcomes, which fails
+  `depth-control`: the session would then measure nothing about the filter.
 - T6 `layers-town`: `zonecensus`, then its JSON file. Its layer list has
   `Tree_Leaves` at −9700, and every counted `Fall_Dead_Tree_Leaves_01_obj`
   sits on `Tree_Leaves`. The count, the frontmost visible layer holding
   instances and the filter layer (`Effect_1`, visible, −10300) are recorded,
-  and `Wind_Leaves` too if it reads visible (the data file says hidden). It
-  passes when every counted canopy sits on `Tree_Leaves`.
+  and `Wind_Leaves` too if it reads visible (the data file says hidden). So
+  is every layer the list puts in front of −5500, with its visibility: the
+  data file has `Effect_1` visible, and `Wind_Leaves` and
+  `Xmas_Event_Assets_1` hidden. It passes when every counted canopy sits on
+  `Tree_Leaves`.
 - T7 `flight-depth`: Pocket Elf goes into the charm grid, and
   `flightcharm stat` reads `state=on equipped=elf`. `flightprobe depth` then
   names a flight layer whose depth equals the player's depth and lies below
   −9700: the expected reply is `flight-depth=-10001` with
   `front=Invisible_walls@-10000`, in front of the canopies and the walls'
   layer and behind the filter at −10300. A flight depth below the filter's is
-  a fail ("Never past a filter"). The same reply reads
-  `filter=Effect_1@-10300` with an `fx=` struct count of 1 or more, and the
-  trace line's `fx-struct=` is 1 or more: the positive control on the effect
-  read, recorded whatever it reads, for RDM § 19.7 as measured. `filter=none`
-  fails even with the depth right, and `fx=` names the cause: failures above 0
-  mean the read failed, a struct count of 0 with no failures means the effect
-  read does not answer a struct on this runner, and a struct count above 0
-  means the census read an effect but classed no filter. Screenshots at the
+  a fail ("Never past a filter"). The filter part, the positive control on
+  the effect read, passes when the same reply reads `filter=Effect_1@-10300`
+  (or `filter=Wind_Leaves@-10200` when T6 recorded `Wind_Leaves` visible)
+  with an `fx=` struct count of 1 or more. `fx=`, `unread=`, `fx-kind=`,
+  `layers=` and the trace line's three `fx-` totals are recorded; the data
+  file predicts `fx=1/0/0` and `hidden:2,holds:4`, with `behind:` holding the
+  game layers and the rear room layers, which is a note, not a pass
+  condition. `layers=` unequal to the sum of the nine counts is a fail: the
+  instrument is wrong. `filter=none` fails even with the depth right, and the
+  counts name the cause. A struct count of 1 or more means the census read an
+  effect but classed no filter, a classification defect to compare with T6. A
+  failed count of 1 or more with no struct means the read throws or is
+  refused on this runner. No struct and no failure, with `other` 1 or more
+  and `fx-kind=` 5 (undefined) or 0 (a real), means `layer_get_fx` does not
+  answer a struct on this runner. `other` with any other `fx-kind=` (15, a
+  ref; 2, an array; ...) means the census's struct test is too narrow for
+  what this runner answers, a defect in our kind test rather than a runner
+  fact. `fx=0/0/0` means the census never read an effect, and `unread=`
+  names why (`hidden`, `no-detail`, `no-depth`, or `behind` holding
+  `Effect_1`): a census finding, never a fact about `layer_get_fx`.
+  Screenshots at the
   canopy spot and a second spot under the same canopy show Sorak over it.
   `front=`, `layers=`, `census-ms=` and whether his colours match the scene
   are recorded, the last as a note for the owner. A fail names its cause: no
@@ -1590,7 +1632,9 @@ locks outside town, co-op, and the Angelic roll's natural chance.
   off, Sorak walks in short holds until a screenshot shows a canopy hiding
   him (at most 10 walks), then `zonecensus` lists `Tree_Leaves` (−10000 in
   the data file) holding at least one instance and the filter `Effect_1`
-  (visible, −10100 in the data file); not observed when no canopy hid him.
+  (visible, −10100 in the data file), and every layer in front of −5500 is
+  recorded with its visibility (the data file has `Effect_1` and
+  `Tree_Leaves`); not observed when no canopy hid him.
   `flight-depth-zone`: the Broomstick back in the grid, and
   `flightprobe depth` reads a flight depth below `Tree_Leaves`' and above the
   filter's; the expected reply is `flight-depth=-10001` with
@@ -1599,10 +1643,14 @@ locks outside town, co-op, and the Angelic roll's natural chance.
   is read again after two seconds, by which time the re-choice should have
   moved the layer. The same reply reads `filter=Effect_1@-10100` once the
   canopies hold, or `filter=Tree_Leaves@-10000` while the depth still reads
-  −5501, with an `fx=` struct count of 1 or more, all recorded for RDM
-  § 19.7; `filter=none` fails, its cause named from `fx=` as in T7. A
-  screenshot shows Sorak over the canopy: a fail when he is hidden, not
-  observed with `layers-zone`. `pool`, second reading, here before the kills.
+  −5501, with an `fx=` struct count of 1 or more. `filter=`, `fx=`,
+  `unread=`, `fx-kind=`, `layers=` and the trace line's `fx-` totals are
+  recorded; the data file predicts `fx=2/0/0` when `Tree_Leaves` was empty
+  at the census and `fx=1/0/0` when it already held canopies, a note, not a
+  pass condition. `layers=` unequal to the nine counts' sum, and
+  `filter=none`, each fail, with the cause named from the counts as in T7;
+  the check stays a Research one. A screenshot shows Sorak over the canopy:
+  a fail when he is hidden, not observed with `layers-zone`. `pool`, second reading, here before the kills.
   `pool` passes when both readings show an Angelic `droppable=` above 0 and
   five unique sub-list sizes.
 - T15 `rate-angelic`: `raredrop angelic 2`, `angelicprobe hit chance` raised
@@ -1652,8 +1700,15 @@ whether a tooltip is needed at all), and is not observed when
 hidden in Mod live 1, and the wall columns south of the stopped walk, from the
 data file (RDM § 19.7 and § 19.8); `UpdateDepth` and the game layers (§ 19.7,
 static, and Mod live 1, measured); the canopies' own layer and the filter
-layers (§ 19.7, static and data file; what the effect read answers is
-measured here); the tooltip pass (RDM § 16.6, measured, with the cache an
+layers (§ 19.7, static and data file). What `layer_get_fx` answers is
+**established only by** `filter=` naming `Effect_1` with an `fx=` struct
+count of 1 or more in `Town_01_rm` (and in the Outskirts of Inoya once its
+canopies hold), never by `flight-depth=` (§ "Drawing in front"); on that
+condition § 19.7's `layer_get_fx` reading is relabelled measured. A read
+that throws or is refused, and one that does not answer a struct
+(`fx-kind=` 5 or 0), are measured runner facts and go to § 19.7 as such;
+`fx=0/0/0` and a too-narrow kind test are findings for this document
+only. The rest it relies on: the tooltip pass (RDM § 16.6, measured, with the cache an
 inference); the one-flight rule (§ 22.1, owner-stated and static) and the
 charm read (§ 22.1, measured); the guard's load (§ 22.6, static, measured in
 Mod live 1); `DropUniqueItems` and its by-name call shape (§ 22.4 and § 22.8,
