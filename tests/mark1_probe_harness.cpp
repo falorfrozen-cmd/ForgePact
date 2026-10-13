@@ -1,0 +1,711 @@
+// Behavioral regression harness for mark1probe's core
+// (Mark1Probe.hpp, ForgePact #166 phase 1, research build only).
+//
+// The Python runner injects the REAL ForgePact::Mark1Probe header below. No
+// game is touched: a hooked call is a lambda standing in for the trampoline,
+// and the adapter's reads and writes go through FakeAccess, a table of member
+// values, a position and a result that records every read and write.
+//
+// Baseline (labels baseline/*): with no lever on, every row's call, for the
+// local player and for any other self, runs the original once, leaves its
+// result unchanged and reads or writes nothing. Targets (labels lever/*):
+// `set` and `scale` write before the original and restore after it, also when
+// the original throws, only for the local player, once per nested call, and
+// only within their frame budget; `move` scales a call's own displacement by
+// 0.5 and by 3 and leaves a call that did not move the player alone; `stat`
+// changes only a number returned for the matching stat id and the local
+// player; a second lever replaces the first. Walkable (walkable/*): the
+// verdict line for each field's values and `scan`'s point list. Parsers
+// (parse/*): every form, accepted and refused. The lines: the bare status,
+// `hook`, `show`, `args`, `watch`, `count` and `pos`.
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+// PRODUCTION_MARK1PROBE
+
+using namespace ForgePact::Mark1Probe;
+
+static int failures = 0;
+static void check(const std::string& label, bool ok, const std::string& detail = "")
+{
+    std::cout << (ok ? "PASS " : "FAIL ") << label << (detail.empty() ? "" : " " + detail) << std::endl;
+    if (!ok) ++failures;
+}
+
+static std::vector<std::string> words(const std::string& s)
+{
+    std::vector<std::string> out;
+    std::string w;
+    for (char c : s) {
+        if (c == ' ') { if (!w.empty()) out.push_back(w); w.clear(); }
+        else w += c;
+    }
+    if (!w.empty()) out.push_back(w);
+    return out;
+}
+
+static std::string why(const std::string& args)
+{
+    Command c;
+    std::string reason;
+    return Parse(words(args), c, reason) ? std::string("ACCEPTED") : reason;
+}
+
+static Command parsed(const std::string& args)
+{
+    Command c;
+    std::string reason;
+    if (!Parse(words(args), c, reason)) c.form = Form::Status, c.frames = -1;
+    return c;
+}
+
+// What the adapter hands the core around one call: the scope members the
+// lever's target names, the local player's x and y, the call's stat-id
+// argument and the call's result. Every read and write is logged, so a
+// baseline can assert that nothing was touched.
+struct FakeAccess {
+    std::map<std::string, Value> members;
+    double x = 100, y = 200;
+    bool hasStatId = true;
+    double statId = 64;
+    bool resultIsNumber = true;
+    double result = 0;
+    int reads = 0;
+    int writes = 0;
+    int positionReads = 0;
+    int positionWrites = 0;
+    int statReads = 0;
+    int resultWrites = 0;
+    std::vector<std::string> log;
+
+    bool Read(const Target& t, Value& out)
+    {
+        ++reads;
+        const auto it = members.find(TargetText(t));
+        if (it == members.end()) return false;
+        out = it->second;
+        return true;
+    }
+    bool Write(const Target& t, const Value& v)
+    {
+        ++writes;
+        log.push_back("write " + TargetText(t) + "=" + ValueText(v));
+        members[TargetText(t)] = v;
+        return true;
+    }
+    bool Position(double& px, double& py)
+    {
+        ++positionReads;
+        px = x;
+        py = y;
+        return true;
+    }
+    bool SetPosition(double px, double py)
+    {
+        ++positionWrites;
+        x = px;
+        y = py;
+        return true;
+    }
+    bool StatId(double& id)
+    {
+        ++statReads;
+        id = statId;
+        return hasStatId;
+    }
+    bool Result(double& n)
+    {
+        n = result;
+        return resultIsNumber;
+    }
+    void SetResult(double n)
+    {
+        ++resultWrites;
+        result = n;
+    }
+    bool Untouched() const
+    {
+        return reads == 0 && writes == 0 && positionReads == 0 && positionWrites == 0 && statReads == 0 && resultWrites == 0;
+    }
+};
+
+static Value Num(double v) { return Value{ false, v }; }
+
+// An original that throws. The flag is volatile so the compiler cannot prove
+// the code after the call unreachable (MSVC's C4702 under /W4 /WX).
+static volatile bool g_throws = true;
+static void GameThrows()
+{
+    if (g_throws) throw std::runtime_error("game threw");
+}
+
+static Lever SetLever(const std::string& args)
+{
+    return parsed(args).lever;
+}
+
+int main()
+{
+    const Row allRows[kRowCount] = { Row::CheckTalentUse, Row::TalentUse, Row::TalentUseSetSpeed, Row::PlayerMovement,
+                                     Row::ReturnSpecificStat, Row::StatMovementSpeed, Row::SkillsLeap,
+                                     Row::PlayerJumpGravity, Row::StatJumpPower };
+
+    // ---- the rows ------------------------------------------------------------
+    {
+        bool names = RowName(Row::CheckTalentUse) == "CheckTalentUse" && RowName(Row::SkillsLeap) == "skillsLeap"
+            && RowName(Row::PlayerJumpGravity) == "playerJumpGravity" && RowName(Row::StatJumpPower) == "StatJumpPower";
+        bool round = true;
+        for (Row r : allRows) {
+            Row back = Row::StatJumpPower;
+            round = round && ParseRow(RowName(r), back) && back == r;
+        }
+        Row ci = Row::CheckTalentUse;
+        const bool caseless = ParseRow("playermovement", ci) && ci == Row::PlayerMovement;
+        check("rows/nine_names_round_trip", kRowCount == 9 && names && round && caseless);
+    }
+
+    // ---- baseline: no lever --------------------------------------------------
+    {
+        Probe p;
+        bool ok = true;
+        std::string bad;
+        for (Row r : allRows) {
+            for (bool local : { true, false }) {
+                FakeAccess a;
+                a.members["player.moveSpeed"] = Num(4);
+                a.result = 7;
+                int called = 0;
+                p.Around(r, 10, local, a, [&] { ++called; a.result = 42; });
+                if (called != 1 || a.result != 42 || !a.Untouched() || a.members["player.moveSpeed"].number != 4) {
+                    ok = false;
+                    bad += std::string(RowName(r)) + (local ? "/local " : "/other ");
+                }
+            }
+        }
+        check("baseline/every_row_calls_the_original_once_and_writes_nothing", ok, bad);
+        bool counted = true;
+        for (Row r : allRows) counted = counted && p.Calls(r).local == 1 && p.Calls(r).all == 2;
+        check("baseline/calls_are_counted_local_and_all", counted);
+        check("baseline/nothing_applied", p.Applied().applied == 0 && p.Applied().moved == 0 && p.Applied().changed == 0
+              && p.LeverText() == "off");
+    }
+    {
+        // A thrown original still propagates, with nothing written.
+        Probe p;
+        FakeAccess a;
+        bool thrown = false;
+        try { p.Around(Row::PlayerMovement, 1, true, a, [] { GameThrows(); }); }
+        catch (const std::runtime_error&) { thrown = true; }
+        check("baseline/a_throwing_original_propagates_untouched", thrown && a.Untouched());
+        // Calls after the throw are not nested: depth went back to zero.
+        Lever l = SetLever("set player.moveSpeed 9 during PlayerMovement");
+        p.SetLever(l, 1);
+        a.members["player.moveSpeed"] = Num(4);
+        double seen = 0;
+        p.Around(Row::PlayerMovement, 2, true, a, [&] { seen = a.members["player.moveSpeed"].number; });
+        check("baseline/depth_recovers_after_a_throw", seen == 9);
+    }
+    {
+        // A lever on a different row leaves every other row's call alone.
+        Probe p;
+        p.SetLever(SetLever("set player.moveSpeed 9 during CheckTalentUse"), 0);
+        bool ok = true;
+        for (Row r : allRows) {
+            if (r == Row::CheckTalentUse) continue;
+            FakeAccess a;
+            a.members["player.moveSpeed"] = Num(4);
+            int called = 0;
+            p.Around(r, 1, true, a, [&] { ++called; });
+            ok = ok && called == 1 && a.writes == 0 && a.reads == 0;
+        }
+        check("baseline/a_lever_leaves_other_rows_alone", ok);
+    }
+
+    // ---- set -----------------------------------------------------------------
+    {
+        Probe p;
+        const std::string replaced = p.SetLever(SetLever("set profile.inputState[30] 1 during CheckTalentUse 30"), 100);
+        FakeAccess a;
+        a.members["profile.inputState[30]"] = Num(0);
+        double during = -1;
+        p.Around(Row::CheckTalentUse, 100, true, a, [&] { during = a.members["profile.inputState[30]"].number; });
+        const bool ok = replaced.empty() && during == 1 && a.members["profile.inputState[30]"].number == 0
+            && a.log.size() == 2 && a.log[0] == "write profile.inputState[30]=1" && a.log[1] == "write profile.inputState[30]=0"
+            && p.Applied().applied == 1;
+        check("lever/set_writes_before_the_original_and_restores_after", ok, a.log.empty() ? "" : a.log[0]);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("set player.autoAim true during CheckTalentUse"), 0);
+        FakeAccess a;
+        a.members["player.autoAim"] = Value{ true, 0 };
+        bool during = false;
+        p.Around(Row::CheckTalentUse, 0, true, a, [&] { during = a.members["player.autoAim"].isBool && a.members["player.autoAim"].number == 1; });
+        const Value after = a.members["player.autoAim"];
+        check("lever/set_a_bool_and_restore_it", during && after.isBool && after.number == 0);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("set profile.inputState[30] 1 during CheckTalentUse"), 0);
+        FakeAccess a;
+        a.members["profile.inputState[30]"] = Num(0);
+        bool thrown = false;
+        double during = -1;
+        try {
+            p.Around(Row::CheckTalentUse, 5, true, a, [&] {
+                during = a.members["profile.inputState[30]"].number;
+                GameThrows();
+            });
+        } catch (const std::runtime_error&) { thrown = true; }
+        check("lever/set_restores_when_the_original_throws", thrown && during == 1
+              && a.members["profile.inputState[30]"].number == 0 && a.writes == 2);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("set profile.inputState[30] 1 during CheckTalentUse"), 0);
+        FakeAccess a;
+        a.members["profile.inputState[30]"] = Num(0);
+        double during = -1;
+        p.Around(Row::CheckTalentUse, 5, false, a, [&] { during = a.members["profile.inputState[30]"].number; });
+        check("lever/set_only_for_the_local_player", during == 0 && a.Untouched() && p.Applied().applied == 0);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("set player.moveSpeed 9 during PlayerMovement 10"), 100);
+        FakeAccess a;
+        a.members["player.moveSpeed"] = Num(4);
+        double last = 0, past = 0, before = 0;
+        p.Around(Row::PlayerMovement, 99, true, a, [&] { before = a.members["player.moveSpeed"].number; });
+        p.Around(Row::PlayerMovement, 109, true, a, [&] { last = a.members["player.moveSpeed"].number; });
+        p.Around(Row::PlayerMovement, 110, true, a, [&] { past = a.members["player.moveSpeed"].number; });
+        const bool budget = before == 4 && last == 9 && past == 4 && p.Applied().applied == 1;
+        check("lever/set_only_within_its_frame_budget", budget);
+        const std::vector<std::string> early = p.Tick(109);
+        const std::vector<std::string> ended = p.Tick(110);
+        check("lever/the_budget_ends_with_a_line", early.empty() && ended.size() == 1
+              && ended[0] == "mark1probe: lever set(player.moveSpeed=9,during=PlayerMovement,frames=10) ended applied=1"
+              && p.LeverText() == "off", ended.empty() ? "" : ended[0]);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("set player.missing 1 during PlayerMovement"), 0);
+        FakeAccess a;
+        int called = 0;
+        p.Around(Row::PlayerMovement, 0, true, a, [&] { ++called; });
+        check("lever/set_an_unreadable_member_writes_nothing", called == 1 && a.writes == 0 && p.Applied().missing == 1
+              && p.Applied().applied == 0);
+    }
+    {
+        // A row the game calls inside itself is written once, by the outer call.
+        Probe p;
+        p.SetLever(SetLever("scale player.moveSpeed 2 during PlayerMovement"), 0);
+        FakeAccess a;
+        a.members["player.moveSpeed"] = Num(4);
+        double inner = 0;
+        p.Around(Row::PlayerMovement, 0, true, a, [&] {
+            p.Around(Row::PlayerMovement, 0, true, a, [&] { inner = a.members["player.moveSpeed"].number; });
+        });
+        check("lever/a_nested_call_of_the_row_applies_once", inner == 8 && a.members["player.moveSpeed"].number == 4
+              && a.writes == 2 && p.Applied().applied == 1);
+    }
+
+    // ---- scale ---------------------------------------------------------------
+    {
+        Probe p;
+        p.SetLever(SetLever("scale player.moveSpeed 0.5 during PlayerMovement"), 0);
+        FakeAccess a;
+        a.members["player.moveSpeed"] = Num(6);
+        double during = 0;
+        p.Around(Row::PlayerMovement, 0, true, a, [&] { during = a.members["player.moveSpeed"].number; });
+        check("lever/scale_multiplies_before_and_restores_after", during == 3 && a.members["player.moveSpeed"].number == 6
+              && p.Applied().applied == 1);
+        bool thrown = false;
+        try { p.Around(Row::PlayerMovement, 1, true, a, [] { GameThrows(); }); } catch (const std::runtime_error&) { thrown = true; }
+        check("lever/scale_restores_when_the_original_throws", thrown && a.members["player.moveSpeed"].number == 6);
+        FakeAccess other;
+        other.members["player.moveSpeed"] = Num(6);
+        p.Around(Row::PlayerMovement, 2, false, other, [] {});
+        check("lever/scale_only_for_the_local_player", other.Untouched());
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("scale player.autoAim 2 during CheckTalentUse"), 0);
+        FakeAccess a;
+        a.members["player.autoAim"] = Value{ true, 1 };
+        p.Around(Row::CheckTalentUse, 0, true, a, [] {});
+        check("lever/scale_leaves_a_bool_alone", a.writes == 0 && p.Applied().missing == 1);
+    }
+
+    // ---- move ----------------------------------------------------------------
+    {
+        Probe p;
+        p.SetLever(SetLever("move PlayerMovement 0.5"), 0);
+        FakeAccess a;
+        a.x = 100;
+        a.y = 200;
+        p.Around(Row::PlayerMovement, 0, true, a, [&] { a.x += 8; a.y -= 4; });
+        check("lever/move_halves_the_calls_displacement", a.x == 104 && a.y == 198 && p.Applied().moved == 1);
+        p.Around(Row::PlayerMovement, 1, true, a, [] {});
+        check("lever/move_leaves_a_call_that_did_not_move_alone", a.x == 104 && a.y == 198 && a.positionWrites == 1
+              && p.Applied().still == 1);
+        FakeAccess other;
+        p.Around(Row::PlayerMovement, 2, false, other, [&] { other.x += 8; });
+        check("lever/move_only_for_the_local_player", other.x == 108 && other.positionWrites == 0 && other.positionReads == 0);
+        FakeAccess wrongRow;
+        p.Around(Row::TalentUse, 3, true, wrongRow, [&] { wrongRow.x += 8; });
+        check("lever/move_only_on_its_row", wrongRow.x == 108 && wrongRow.positionWrites == 0);
+    }
+    {
+        Probe p;
+        p.SetLever(SetLever("move skillsLeap 3"), 0);
+        FakeAccess a;
+        a.x = 10;
+        a.y = 10;
+        p.Around(Row::SkillsLeap, 0, true, a, [&] { a.x += 20; });
+        check("lever/move_triples_the_calls_displacement", a.x == 70 && a.y == 10 && p.Applied().moved == 1);
+    }
+
+    // ---- stat ----------------------------------------------------------------
+    {
+        Probe p;
+        p.SetLever(SetLever("stat 64 0.5"), 0);
+        FakeAccess a;
+        a.statId = 64;
+        p.Around(Row::ReturnSpecificStat, 0, true, a, [&] { a.result = 300; });
+        check("lever/stat_scales_the_matching_ids_number", a.result == 150 && p.Applied().changed == 1);
+        FakeAccess otherId;
+        otherId.statId = 66;
+        p.Around(Row::ReturnSpecificStat, 0, true, otherId, [&] { otherId.result = 300; });
+        check("lever/stat_leaves_another_id_alone", otherId.result == 300 && otherId.resultWrites == 0);
+        FakeAccess otherSelf;
+        p.Around(Row::ReturnSpecificStat, 0, false, otherSelf, [&] { otherSelf.result = 300; });
+        check("lever/stat_only_for_the_local_player", otherSelf.result == 300 && otherSelf.Untouched());
+        FakeAccess text;
+        text.resultIsNumber = false;
+        p.Around(Row::ReturnSpecificStat, 0, true, text, [] {});
+        check("lever/stat_counts_a_non_number_as_skip", text.resultWrites == 0 && p.Applied().skip == 1);
+        FakeAccess noId;
+        noId.hasStatId = false;
+        p.Around(Row::ReturnSpecificStat, 0, true, noId, [&] { noId.result = 300; });
+        check("lever/stat_leaves_a_call_without_an_id_alone", noId.result == 300 && noId.resultWrites == 0);
+        FakeAccess wrongRow;
+        p.Around(Row::StatMovementSpeed, 0, true, wrongRow, [&] { wrongRow.result = 300; });
+        check("lever/stat_only_on_ReturnSpecificStat", wrongRow.result == 300 && wrongRow.Untouched());
+    }
+
+    // ---- one lever at a time -------------------------------------------------
+    {
+        Probe p;
+        const std::string first = p.SetLever(SetLever("set player.moveSpeed 9 during PlayerMovement"), 0);
+        const std::string second = p.SetLever(SetLever("stat 64 2"), 0);
+        FakeAccess a;
+        a.members["player.moveSpeed"] = Num(4);
+        double during = 0;
+        p.Around(Row::PlayerMovement, 1, true, a, [&] { during = a.members["player.moveSpeed"].number; });
+        check("lever/a_second_lever_replaces_the_first", first.empty()
+              && second == "set(player.moveSpeed=9,during=PlayerMovement,frames=600)" && during == 4 && a.writes == 0
+              && p.LeverText() == "stat(64*2,frames=600)", second);
+        p.Off();
+        FakeAccess b;
+        p.Around(Row::ReturnSpecificStat, 2, true, b, [&] { b.result = 5; });
+        check("lever/off_turns_every_lever_off", p.LeverText() == "off" && b.result == 5 && b.Untouched());
+    }
+    {
+        const bool texts = LeverText(SetLever("scale pst.spd 1.5 during TalentUse 90")) == "scale(pst.spd*1.5,during=TalentUse,frames=90)"
+            && LeverText(SetLever("move PlayerMovement 3 1200")) == "move(PlayerMovement*3,frames=1200)"
+            && LeverText(SetLever("set input[12] 1 during CheckTalentUse")) == "set(input[12]=1,during=CheckTalentUse,frames=600)";
+        check("lever/text_has_no_spaces", texts);
+        const Lever l = SetLever("set profile.inputState[30] 1 during CheckTalentUse");
+        const std::string a = LeverReply(l, "playerProfileSlot", "0", "");
+        const std::string b = LeverReply(SetLever("move PlayerMovement 0.5"), "", "", "stat(64*2,frames=600)");
+        check("lever/reply_names_scope_value_and_restored_value",
+              a == "mark1probe set: profile.inputState[30] := 1 during CheckTalentUse for 600 frames scope=playerProfileSlot restores=0"
+              && b == "mark1probe move: PlayerMovement displacement x0.5 for 600 frames (replaces stat(64*2,frames=600))", a + " | " + b);
+    }
+
+    // ---- show, casts, hook, status --------------------------------------------
+    {
+        Probe p;
+        p.NoteHook(Row::CheckTalentUse, HookState::Detoured);
+        p.NoteHook(Row::TalentUse, HookState::Detoured);
+        p.NoteHook(Row::PlayerMovement, HookState::Held, "co-op movement hook");
+        p.NoteHook(Row::SkillsLeap, HookState::Failed);
+        check("hook/line_and_held_rows", p.HookLine() == "mark1probe hook: 2 detoured, 1 failed, 1 held"
+              && p.HeldLines().size() == 1 && p.HeldLines()[0] == "  PlayerMovement held by co-op movement hook", p.HookLine());
+        const std::vector<std::string> status = p.StatusLines();
+        check("status/first_lines", status.size() > 3 && status[0] == "mark1probe: research build"
+              && status[1] == "mark1probe: rows=9 hooked=2 held=1 lever=off watch=off", status.size() > 1 ? status[1] : "");
+        p.NoteCast(12);
+        p.NoteCast(12);
+        p.NoteCast(3);
+        check("show/casts_per_talent_id", p.CastsText() == "casts=3:1,12:2", p.CastsText());
+        const std::vector<std::string> show = p.ShowLines();
+        bool rowLine = false;
+        for (const std::string& l : show) rowLine = rowLine || l == "  PlayerMovement calls=0/0 held";
+        check("show/lines", show.size() == 11 && show[0] == "mark1probe show: lever=off applied=0 missing=0 moved=0 still=0 changed=0 skip=0"
+              && rowLine && show.back() == "casts=3:1,12:2", show.empty() ? "" : show[0]);
+        p.ResetCounts();
+        check("show/reset_clears_counts_and_casts", p.CastsText() == "casts=none");
+    }
+    {
+        check("args/line", ArgsLine(1, 120, 3, { "0", "2", "-4" }) == "ctu #1 f=120 argc=3 a0=0 a1=2 a2=-4"
+              && ArgsLine(2, 121, 1, { "5" }) == "ctu #2 f=121 argc=1 a0=5 a1=none a2=none");
+        Probe p;
+        p.StartArgs(2);
+        const int a = p.TakeArg(), b = p.TakeArg(), c = p.TakeArg();
+        check("args/takes_n_then_stops", a == 1 && b == 2 && c == 0);
+    }
+
+    // ---- watch, count, pos ----------------------------------------------------
+    {
+        Probe p;
+        p.StartWatch(Scope::Pst, 5, 10, false, Row::CheckTalentUse);
+        const auto first = p.ObserveWatch(10, { { "jumping", "0" }, { "z", "0" } });
+        const auto second = p.ObserveWatch(11, { { "jumping", "1" }, { "z", "0" }, { "new", "3" } });
+        const auto ended = p.Tick(15);
+        check("watch/changes_only_from_the_second_snapshot", first.empty() && second.size() == 2
+              && second[0] == "watch f=11 pst.jumping=0->1" && second[1] == "watch f=11 pst.new=none->3"
+              && ended.size() == 1 && ended[0] == "watch end scope=pst frames=5 lines=2 dropped=0" && !p.WatchOn(),
+              second.empty() ? "" : second[0]);
+    }
+    {
+        Probe p;
+        p.StartWatch(Scope::Input, 100, 0, true, Row::TalentUse);
+        FakeAccess a;
+        const bool pending = p.WatchOn() && !p.WatchRunning(3);
+        p.Around(Row::TalentUse, 4, false, a, [] {});
+        const bool stillPending = !p.WatchRunning(4);
+        p.Around(Row::TalentUse, 5, true, a, [] {});
+        p.ObserveWatch(5, { { "30", "0" } });
+        const auto lines = p.ObserveWatch(6, { { "30", "1" } });
+        check("watch/after_a_row_starts_at_its_next_local_call", pending && stillPending && p.WatchRunning(5)
+              && lines.size() == 1 && lines[0] == "watch f=6 input[30]=0->1", lines.empty() ? "" : lines[0]);
+    }
+    {
+        // The cap is reached over several snapshots; the one that crosses it
+        // prints what still fits, then the end line with the rest dropped.
+        Probe p;
+        p.StartWatch(Scope::Player, 3600, 0, false, Row::CheckTalentUse);
+        std::map<std::string, std::string> snap;
+        for (int k = 0; k < kWatchMaxLines; ++k) snap["m" + std::to_string(k)] = "0";
+        p.ObserveWatch(0, snap);
+        size_t lines = 0;
+        for (int k = 0; k < kWatchMaxLines - 5; ++k) snap["m" + std::to_string(k)] = "1";
+        lines += p.ObserveWatch(1, snap).size();
+        for (int k = 0; k < 15; ++k) snap["m" + std::to_string(k)] = "2";
+        const auto last = p.ObserveWatch(2, snap);
+        const bool ended = !p.WatchOn() && p.ObserveWatch(3, snap).empty() && p.Tick(4).empty();
+        check("watch/a_line_cap_ends_it_with_a_dropped_count", lines == static_cast<size_t>(kWatchMaxLines - 5)
+              && last.size() == 6 && last[5] == "watch end scope=player frames=2 lines=" + std::to_string(kWatchMaxLines)
+                 + " dropped=10 (line cap)" && ended, last.empty() ? "" : last.back());
+    }
+    {
+        Probe p;
+        p.StartCount("Wall_Parent_obj", 10, 0);
+        const std::string a = p.ObserveCount(0, 3), b = p.ObserveCount(1, 3), c = p.ObserveCount(2, 5);
+        const auto end = p.Tick(10);
+        check("count/one_line_per_change", a == "count f=0 Wall_Parent_obj=none->3" && b.empty()
+              && c == "count f=2 Wall_Parent_obj=3->5" && end.size() == 1
+              && end[0] == "count end Wall_Parent_obj frames=10 changes=2", c);
+    }
+    {
+        Probe p;
+        check("pos/start_line", PosStartLine(true, 512, 300.5) == "pos cursor x=512 y=300.5"
+              && PosStartLine(false, 0, 0) == "pos cursor=unreadable");
+        p.StartPos(20, 0);
+        FakeAccess a;
+        p.Around(Row::PlayerMovement, 1, true, a, [&] { a.x += 3; a.y += 4; });
+        p.Around(Row::PlayerMovement, 2, true, a, [] {});
+        p.Around(Row::TalentUse, 3, true, a, [&] {
+            p.Around(Row::PlayerMovement, 3, true, a, [&] { a.x += 6; a.y += 8; });
+        });
+        const auto lines = p.TakeLines();
+        const auto end = p.Tick(20);
+        check("pos/lines_per_moving_call_and_a_total", lines.size() == 3 && lines[0] == "pos f=1 PlayerMovement dx=3 dy=4"
+              && lines[1] == "pos f=3 PlayerMovement dx=6 dy=8" && lines[2] == "pos f=3 TalentUse dx=6 dy=8"
+              && end.size() == 1 && end[0] == "pos total=15 frames=20 movers=TalentUse:1,PlayerMovement:2",
+              end.empty() ? (lines.empty() ? "" : lines[0]) : end[0]);
+    }
+
+    // ---- walkable -------------------------------------------------------------
+    {
+        WalkPoint w;
+        w.x = 320;
+        w.y = 96.5;
+        w.roomIn = true;
+        w.grid = Grid::Free;
+        w.familyBlocked = false;
+        w.wallCrossed = false;
+        w.tiles = { { "Tiles_1", 0 }, { "Tiles_2", 17 } };
+        check("walkable/line_with_every_field_free", WalkLine(w)
+              == "walkable x=320 y=96.5 room=in grid=free family=free wall-line=clear tile=Tiles_1:0,Tiles_2:17", WalkLine(w));
+        w.roomIn = false;
+        w.grid = Grid::Blocked;
+        w.familyBlocked = true;
+        w.wallCrossed = true;
+        w.tiles = {};
+        check("walkable/line_with_every_field_blocked", WalkLine(w)
+              == "walkable x=320 y=96.5 room=out grid=blocked family=blocked wall-line=crossed tile=none", WalkLine(w));
+        w.grid = Grid::Unreadable;
+        w.tiles = { { "a", 1 }, { "b", 2 }, { "c", 3 }, { "d", 4 }, { "e", 5 } };
+        check("walkable/grid_unreadable_and_four_tile_layers_at_most", WalkLine(w)
+              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=a:1,b:2,c:3,d:4", WalkLine(w));
+    }
+    {
+        const bool room = RoomContains(0, 0, 640, 480) && RoomContains(639.5, 479, 640, 480) && !RoomContains(640, 10, 640, 480)
+            && !RoomContains(-1, 10, 640, 480) && !RoomContains(10, 480, 640, 480);
+        const bool cells = GridCellOf(0) == 0 && GridCellOf(15.9) == 0 && GridCellOf(16) == 1 && GridCellOf(-1) == -1;
+        check("walkable/room_and_grid_cell", room && cells);
+    }
+    {
+        // GameMaker angles: 0 is right, 90 is up (y falls).
+        const auto right = ScanPoints(100, 100, 0, 32, 3);
+        const auto up = ScanPoints(100, 100, 90, 16, 2);
+        const auto diag = ScanPoints(0, 0, 225, 10, 1);
+        const bool r = right.size() == 3 && right[0] == std::make_pair(132.0, 100.0) && right[2] == std::make_pair(196.0, 100.0);
+        const bool u = up.size() == 2 && up[0] == std::make_pair(100.0, 84.0) && up[1] == std::make_pair(100.0, 68.0);
+        const bool d = diag.size() == 1 && diag[0] == std::make_pair(-7.071, 7.071);
+        check("walkable/scan_point_list", r && u && d);
+    }
+
+    // ---- parsers --------------------------------------------------------------
+    {
+        const bool bare = parsed("").form == Form::Status;
+        const bool simple = parsed("hook").form == Form::Hook && parsed("off").form == Form::Off && parsed("show").form == Form::Show
+            && parsed("show reset").form == Form::ShowReset && parsed("HOOK").form == Form::Hook;
+        const Command args = parsed("args 20");
+        check("parse/bare_hook_off_show_args", bare && simple && args.form == Form::Args && args.count == 20);
+    }
+    {
+        const Command w1 = parsed("watch pst 120");
+        const Command w2 = parsed("watch queue 60 after TalentUse");
+        const bool all = parsed("watch player 1").scope == Scope::Player && parsed("watch profile 3600").scope == Scope::Profile
+            && parsed("watch input 10").scope == Scope::Input;
+        check("parse/watch_forms", w1.form == Form::Watch && w1.scope == Scope::Pst && w1.frames == 120 && !w1.after
+              && w2.scope == Scope::Queue && w2.after && w2.afterRow == Row::TalentUse && all);
+    }
+    {
+        const Command s = parsed("set profile.inputState[30] 1 during CheckTalentUse");
+        const Command t = parsed("set input[7] -2.5 during TalentUse 90");
+        const Command b = parsed("set player.autoAim false during CheckTalentUse");
+        const bool set = s.form == Form::Set && s.lever.kind == LeverKind::Set && s.lever.target.scope == Scope::Profile
+            && s.lever.target.name == "inputState" && s.lever.target.indexed && s.lever.target.index == 30
+            && s.lever.value.number == 1 && !s.lever.value.isBool && s.lever.row == Row::CheckTalentUse && s.lever.frames == 600;
+        const bool input = t.lever.target.scope == Scope::Input && t.lever.target.indexed && t.lever.target.index == 7
+            && t.lever.value.number == -2.5 && t.lever.frames == 90 && TargetText(t.lever.target) == "input[7]";
+        const bool boolean = b.lever.value.isBool && b.lever.value.number == 0 && !b.lever.target.indexed;
+        const Command sc = parsed("scale pst.spd 0.5 during PlayerMovement 3600");
+        const bool scale = sc.form == Form::Scale && sc.lever.kind == LeverKind::Scale && sc.lever.mult == 0.5
+            && sc.lever.frames == 3600 && sc.lever.target.scope == Scope::Pst;
+        check("parse/set_and_scale_forms", set && input && boolean && scale);
+    }
+    {
+        const Command m = parsed("move PlayerMovement 0.5");
+        const Command m3 = parsed("move skillsLeap 3 120");
+        const Command st = parsed("stat 66 3");
+        const bool ok = m.form == Form::Move && m.lever.row == Row::PlayerMovement && m.lever.mult == 0.5 && m.lever.frames == 600
+            && m3.lever.row == Row::SkillsLeap && m3.lever.mult == 3 && m3.lever.frames == 120
+            && st.form == Form::Stat && st.lever.statId == 66 && st.lever.mult == 3;
+        check("parse/move_and_stat_forms", ok);
+    }
+    {
+        const Command c = parsed("count Wall_Parent_obj 300");
+        const Command p = parsed("pos 600");
+        const Command h = parsed("walkable here 48 -16");
+        const Command a = parsed("walkable at 1024.5 768");
+        const Command s = parsed("walkable scan 45 32 8");
+        const bool ok = c.form == Form::Count && c.object == "Wall_Parent_obj" && c.frames == 300
+            && p.form == Form::Pos && p.frames == 600
+            && h.form == Form::WalkHere && h.a == 48 && h.b == -16
+            && a.form == Form::WalkAt && a.a == 1024.5 && a.b == 768
+            && s.form == Form::WalkScan && s.a == 45 && s.b == 32 && s.count == 8;
+        check("parse/count_pos_and_walkable_forms", ok);
+    }
+    {
+        const std::vector<std::pair<std::string, std::string>> refused = {
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, move, stat, count, pos or walkable)" },
+            { "hook now", "usage: mark1probe hook" },
+            { "off 1", "usage: mark1probe off" },
+            { "show all", "usage: mark1probe show [reset]" },
+            { "args", "args needs a whole number 1..100" },
+            { "args 0", "args needs a whole number 1..100, not 0" },
+            { "args 101", "args needs a whole number 1..100, not 101" },
+            { "watch pst", "usage: watch <scope> <frames> [after <row>]" },
+            { "watch body 10", "unknown scope body (player, pst, profile, input or queue)" },
+            { "watch pst 0", "frames must be a whole number 1..3600, not 0" },
+            { "watch pst 3601", "frames must be a whole number 1..3600, not 3601" },
+            { "watch pst x", "frames must be a whole number 1..3600, not x" },
+            { "watch pst 10 after Bogus", "unknown row Bogus (CheckTalentUse, TalentUse, TalentUseSetSpeed, PlayerMovement, ReturnSpecificStat, StatMovementSpeed, skillsLeap, playerJumpGravity or StatJumpPower)" },
+            { "watch pst 10 before TalentUse", "usage: watch <scope> <frames> [after <row>]" },
+            { "set player.x 1", "usage: set <scope>.<name>[<i>] <value> during <row> [frames]" },
+            { "set body.x 1 during TalentUse", "unknown scope body (player, pst, profile, input or queue)" },
+            { "set player 1 during TalentUse", "a target is <scope>.<name>[<i>] or input[<i>], not player" },
+            { "set player.a-b 1 during TalentUse", "a member name is 1..64 letters, digits or _, not a-b" },
+            { "set player.x[ 1 during TalentUse", "an index is a whole number 0..9999, not x[" },
+            { "set player.x[-1] 1 during TalentUse", "an index is a whole number 0..9999, not x[-1]" },
+            { "set input.inputState[3] 1 during TalentUse", "a target is <scope>.<name>[<i>] or input[<i>], not input.inputState[3]" },
+            { "set input 1 during TalentUse", "a target is <scope>.<name>[<i>] or input[<i>], not input" },
+            { "set player.x abc during TalentUse", "a value is a number, true or false, not abc" },
+            { "set player.x inf during TalentUse", "a value is a number, true or false, not inf" },
+            { "set player.x 1e9 during TalentUse", "a value is a number, true or false, not 1e9" },
+            { "set player.x 1 during Nope", "unknown row Nope (CheckTalentUse, TalentUse, TalentUseSetSpeed, PlayerMovement, ReturnSpecificStat, StatMovementSpeed, skillsLeap, playerJumpGravity or StatJumpPower)" },
+            { "set player.x 1 while TalentUse", "usage: set <scope>.<name>[<i>] <value> during <row> [frames]" },
+            { "set player.x 1 during TalentUse 4000", "frames must be a whole number 1..3600, not 4000" },
+            { "set player.x 1 during TalentUse 10 20", "usage: set <scope>.<name>[<i>] <value> during <row> [frames]" },
+            { "scale player.x true during TalentUse", "mult must be a number -100..100, not true" },
+            { "scale player.x 101 during TalentUse", "mult must be a number -100..100, not 101" },
+            { "move PlayerMovement", "usage: move <row> <mult> [frames]" },
+            { "move Nope 2", "unknown row Nope (CheckTalentUse, TalentUse, TalentUseSetSpeed, PlayerMovement, ReturnSpecificStat, StatMovementSpeed, skillsLeap, playerJumpGravity or StatJumpPower)" },
+            { "move PlayerMovement x", "mult must be a number -100..100, not x" },
+            { "move PlayerMovement 2 0", "frames must be a whole number 1..3600, not 0" },
+            { "stat 64", "usage: stat <id> <mult> [frames]" },
+            { "stat 1000 2", "stat id must be a whole number 0..999, not 1000" },
+            { "stat 6.4 2", "stat id must be a whole number 0..999, not 6.4" },
+            { "stat 64 nan", "mult must be a number -100..100, not nan" },
+            { "stat 64 2 3601", "frames must be a whole number 1..3600, not 3601" },
+            { "count Wall_Parent_obj", "usage: count <object name> <frames>" },
+            { "count Wall-obj 10", "an object name is 1..64 letters, digits or _, not Wall-obj" },
+            { "count Wall_Parent_obj 9999", "frames must be a whole number 1..3600, not 9999" },
+            { "pos", "usage: pos <frames>" },
+            { "pos 0", "frames must be a whole number 1..3600, not 0" },
+            { "walkable", "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>" },
+            { "walkable there 1 2", "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>" },
+            { "walkable here 1", "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>" },
+            { "walkable here x 2", "walkable needs numbers, not x" },
+            { "walkable at 1 2 3", "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>" },
+            { "walkable scan 0 0 4", "scan step must be a number 1..1024, not 0" },
+            { "walkable scan 0 16 0", "scan count must be a whole number 1..32, not 0" },
+            { "walkable scan 0 16 33", "scan count must be a whole number 1..32, not 33" },
+        };
+        bool ok = true;
+        std::string bad;
+        for (const auto& [args, reason] : refused) {
+            const std::string got = why(args);
+            if (got != reason) { ok = false; bad += "[" + args + "] -> " + got + "; "; }
+        }
+        check("parse/refused_forms_name_their_reason", ok, bad);
+    }
+    {
+        // The command word itself is the adapter's; every form's usage is listed.
+        const std::vector<std::string> usage = Usage();
+        bool every = true;
+        for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "move", "stat", "count", "pos", "walkable" }) {
+            bool found = false;
+            for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
+            every = every && found;
+        }
+        check("parse/usage_lists_every_form", every);
+        const bool numbers = NumberText(3) == "3" && NumberText(-0.5) == "-0.5" && NumberText(std::nan("")) == "?"
+            && ValueText(Value{ true, 1 }) == "true" && ValueText(Value{ true, 0 }) == "false" && ValueText(Num(2.25)) == "2.25";
+        check("parse/number_and_value_text", numbers);
+    }
+
+    std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
+    return failures ? 1 : 0;
+}
