@@ -39,8 +39,9 @@
 // the stash, Extra packs as you approach, Pet collects relics (#124), Sleep
 // loot your filter hides - whose show-key select is derived after them, so it
 // stays last - the Satanic Zone control switch (#157, on the World
-// tab), Jump through scenery, Loot announcements (#17) and Always show Chaos
-// Pillar mods (#7)): the same on, off, on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
+// tab), Boss soul pieces (#197, on the Loot tab), Jump through scenery,
+// Loot announcements (#17) and Always show Chaos Pillar mods (#7)): the same
+// on, off, on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
 // but nothing recorded
 // stands for them, so their contract is written out here as literals - on
 // posts the mod's key with true and sends its plugin verb with 1, off posts
@@ -48,7 +49,8 @@
 // off button repeats the off - entered on the tab and Mods sub-tab they sit
 // on. They come last, so no earlier step's index moves, and each is in
 // `controls`, so the replay's coverage check counts it. The zone-control switch
-// sits before Jump through scenery rather than after it because the show
+// and Boss soul pieces sit before Jump through scenery rather than after it
+// because the show
 // key's select follows this loop without a navigation step of its own: the
 // loop must end on Mods > Quality of Life.
 //
@@ -147,8 +149,8 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // `restate` is a line the backend sends before the verb's `1` when the switch
 // turns on (Sleep loot your filter hides restates its show key, at its
 // default in a fresh sandbox, as map reveal restates its child). The
-// Satanic Zone control switch sits before Jump through scenery rather than
-// last: the show key's select follows this loop without a navigation step of
+// Satanic Zone control switch and Boss soul pieces (on the Loot tab) sit
+// before Jump through scenery rather than last: the show key's select follows this loop without a navigation step of
 // its own, so the loop must end on Mods > Quality of Life.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
@@ -158,6 +160,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_pet_relic_pickup', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petrelic' },
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
   { key: 'satanic_everywhere', tab: 'tab:world', verb: 'satzone everywhere' },
+  { key: 'mod_boss_soul_pieces', tab: 'tab:loot', verb: 'soulpiece' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
   { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
   { key: 'mod_pillar_tips', tab: 'tab:mods', sub: 'subtab:qol', verb: 'pillartips' },

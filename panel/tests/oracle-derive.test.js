@@ -41,8 +41,8 @@ const SLIDERS = LEGACY.controls.filter((c) => switchIdOf(c));
 const KEY_SLIDERS = KEY_SUPPLEMENT.controls.filter((c) => switchIdOf(c));
 // The native booleans' steps close the file: one tab step each time the tab
 // changes (the first opens Mods) and one sub-tab step each time the sub-tab
-// changes on it (Quality of Life opens with Mods; the World-tab switch makes
-// Jump through scenery re-enter both), then on, off, on and Turn off for each.
+// changes on it (Quality of Life opens with Mods; the World-tab and Loot-tab
+// switches make Jump through scenery re-enter both), then on, off, on and Turn off for each.
 const NATIVE_NAV = (() => {
   let count = 0;
   let tab = null;
@@ -182,11 +182,11 @@ test('the counts: 141 switch clicks, 76 Turn off buttons, one theme step per the
   // prefix: each adds a Turn off button and no `#sw_` click. Jump through
   // scenery's native boolean adds one more Turn off button, the
   // Satanic Zone control switch one more, Loot announcements' native
-  // boolean (#17) one more, and Always show Chaos Pillar mods' (#7) one
-  // more. The three skill sliders (#160) add three switch clicks and one
-  // Turn off button each.
+  // boolean (#17) one more, Boss soul pieces' (#197) one more, and Always
+  // show Chaos Pillar mods' (#7) one more. The three skill sliders (#160)
+  // add three switch clicks and one Turn off button each.
   assert.equal(switches.length, 141);
-  assert.equal(quick.length, 76);
+  assert.equal(quick.length, 77);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -275,7 +275,7 @@ test('every control is covered: the switches in legacy order, the theme, the key
 test('a native boolean\'s contract is literal: on sends its verb with 1, off with 0, its Turn off repeats the off', () => {
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
     ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
-      'satanic_everywhere', 'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips']);
+      'satanic_everywhere', 'mod_boss_soul_pieces', 'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
