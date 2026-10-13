@@ -289,27 +289,52 @@ own `v0.1.4` release: member `producer/HSOfflineTrackerProducer.dll` of
 `hs-offline-tracker-0.1.4-portable.zip` (archive sha256 `37b03813…9709`, the
 value the release's `SHA256SUMS-0.1.4.txt` states), member sha256
 `5f83e542f41490ec57106198cf8546ec178421961e388699ff1da5de45956f94`. It replaces
-the 1.3.16 package's `36608aa0…b14e`, a 2026-09-05 build (its PE link time),
-byte for byte the producer of HS-Offline-Tracker v0.1.2's portable zip. The
-0.1.4 build carries Tracker PR #8's exit teardown. Nothing joins the publisher
-at `ExitProcess`, because Aurie runs no unload routine when the process ends;
-instead the thread object is held on the heap by a trivially destructible
-owner (`ExitSafeThread`, in the Tracker's
-`aurie-producer/include/hsot_aurie/exit_safe_thread.h`), so no exit-time
-destructor ever meets a `std::thread` that is still joinable. A real unload
-through Aurie's `ModuleUnload` still joins it, within two seconds.
-`tests/test_tracker_producer_pin.py` classifies the pin against the panel's own
-sets of known builds and keeps the old entry, and HS-Offline-Tracker v0.1.3's
-(`9e0c63c8…a58d`, built before that fix), as negative controls. The pin lists
-`36608aa0…` under `superseded_sha256`, so `tools/fetch_toolchain.py` (run by
-`Prepare-Plugin.bat`) replaces that file on a checkout that already holds it,
-where it used to refuse it as hand-placed. The fix ships in ForgePact 2.3.0.
-Install Mod Plugin copies the fixed sensor, and a launch from a release build
-of the panel also replaces a game's sensor whose hash is a known-aborting one
-(`refresh_stale_tracker_sensor`), under the plugin refresh's gates (the game's
-`YYToolkit.dll` and `AurieCore.dll` must be the bundled ones); otherwise the
-launch message asks for Install. A sensor it does not recognise, such as a
-newer Tracker's, is never replaced.
+the 1.3.16 package's `36608aa0…b14e`, a 2026-09-05 build (its PE link time).
+The 0.1.4 build carries Tracker PR #8's exit teardown; how that avoids the
+abort is written once, in the hub's `docs/RUNTIME_DATA_MODELS.md` (§15, the
+row on a plugin DLL whose global `std::thread` is still joinable at exit).
+
+Every Tracker producer released before 0.1.4, hashed from the release assets
+on 2026-10-13 (each built from source that still keeps the publisher in a
+global `std::thread`; only `36608aa0…` was measured aborting):
+
+| Tracker | Producer sha256 | Read from |
+|---|---|---|
+| 0.1.1 | `8594d096…676d` | the NSIS installer (the release has no zip); the same extraction of 0.1.2's installer gives 0.1.2's zip member, the control for the method |
+| 0.1.2 | `36608aa0…b14e` | the portable zip; byte for byte ForgePact's pin through 2.2.x |
+| 0.1.3 | `9e0c63c8…a58d` | the portable zip |
+| 0.1.4 | `5f83e542…6f94` | the portable zip; the new pin |
+
+The 0.1.4 zip's `aurie-loader/AurieCore.dll`, `YYToolkit.dll` and
+`AuriePatcher.exe` hash to ForgePact's own pins for those files (`3cf98af9…`,
+`51a393d7…`, `4d3aec43…`), so ForgePact and Tracker 0.1.4 install identical
+sensor and loader files.
+
+What changed in ForgePact around the pin:
+
+- `src/forgepact.py` names the builds: `TRACKER_SENSOR_ABORTING` (0.1.1 to
+  0.1.3) and `TRACKER_SENSOR_CLEAN` (0.1.4, measured below).
+  `tests/test_tracker_producer_pin.py` checks the pins file against them, with
+  the old entry and the 0.1.1 and 0.1.3 builds as negative controls, and
+  checks the loader hashes above.
+- The pin lists `36608aa0…` under `superseded_sha256`, so
+  `tools/fetch_toolchain.py` (run by `Prepare-Plugin.bat`) replaces that file
+  on a checkout that already holds it, where it used to refuse it as
+  hand-placed.
+- A launch from a release build of the panel replaces a game sensor whose hash
+  is in the aborting set (`refresh_stale_tracker_sensor`), under the plugin
+  refresh's gates (the game's `YYToolkit.dll` and `AurieCore.dll` must be the
+  bundled ones); otherwise the launch message asks for Install.
+- Install Mod Plugin installs the bundled sensor when the game has none, or
+  has one the panel knows (aborting or clean); it leaves an unrecognised one,
+  such as a newer Tracker's, as it is, and never installs a bundled build that
+  is itself in the aborting set.
+- A player who keeps Tracker 0.1.1 to 0.1.3 and presses its "Update live
+  sensor" puts that Tracker's build back, and the next launch from the panel
+  swaps the fixed one in again. The two keep swapping the file until the
+  Tracker is updated; the release notes say so.
+
+The fix ships in ForgePact 2.3.0.
 
 The live gate ran on 2026-10-13, in capture
 `forgepact-185-tracker-mod-live-1`, kept with the hub's workorder. It used the
@@ -336,4 +361,5 @@ detour and the producer's own detour on that script were both live at
 teardown, a pair #201 never ran together.
 
 Not covered: a main-menu close with the fixed build (Tracker PR #8 measured
-three), a vanilla or ForgePact-free game, other mods, and other close paths.
+three clean ones on its test build `061fe033…`, built from the same fix
+commit, with ForgePact 1.4.7 loaded; not the released `5f83e542…`), a vanilla or ForgePact-free game, other mods, and other close paths.

@@ -23,17 +23,36 @@ against it:
   - controls feed it shapes, including the old 1.3.16-zip entry copied
     verbatim and HS-Offline-Tracker v0.1.3's real entry as negative controls,
     and an unknown Tracker build, which must not pass as "fixed";
-  - the real pins file must carry exactly the v0.1.4 entry, classified
-    "fixed", listing the build it replaced as superseded, so that
-    `fetch_toolchain.py` replaces that file on an existing checkout.
+  - the real pins file must carry exactly `FIXED_ENTRY`, classified
+    "fixed", listing every build it replaced as superseded, so that
+    `fetch_toolchain.py` replaces that file on an existing checkout;
+  - the pins file's loader files must be the ones in the same Tracker
+    release (`FIXED_LOADER`), which is what lets the release notes say that
+    ForgePact and that Tracker install the same sensor and loader files.
 
-When the producer is re-pinned again, update `FIXED_ENTRY` here, the pins
-entry (moving the replaced hash into its `superseded_sha256`), the product's
-two sets in `src/forgepact.py`, and the pin table in
-`docs/submodules/ForgePact/instructions.md` (hub) together.
+A re-pin is data edits only, in this order (the hub guide's Maintenance
+Trigger "A new HS-Offline-Tracker producer" says the same):
+  1. `tools/toolchain-pins.json`: the new url, `archive_sha256`, member and
+     `sha256`; append the replaced `sha256` to `superseded_sha256` (keep the
+     older ones, since a checkout may still hold any of them);
+  2. here: `FIXED_ENTRY` to the new values, and `FIXED_LOADER` to the new
+     release's loader-file hashes (or `{}` when they differ from ForgePact's
+     pins, and then drop the release notes' "same files" claim);
+  3. the live gate; until it passes, `test_the_pin_classifies_as_fixed`,
+     `test_the_pinned_build_is_measured_clean` and the fetched-producer
+     control fail, on purpose: an unmeasured build must not ship;
+  4. `src/forgepact.py`: add the new build to `TRACKER_SENSOR_CLEAN` with
+     what the gate measured; the replaced build stays in the set it is in.
+`OLD_ENTRY` and the v0.1.1/v0.1.3 controls never change.
+
+`test_positive_control_on_the_fetched_producer` runs only where
+`Prepare-Plugin.bat` (`tools/fetch_toolchain.py`) has fetched the producer:
+a developer's checkout. CI's contract tests run before any fetch, so there
+it always skips.
 """
 import hashlib
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -75,6 +94,14 @@ V0_1_3_ENTRY = {
     "sha256": "9e0c63c8b84f03e517a35ba9b5e7a7017516e713dcde964fe105f0c0992ea58d",
 }
 
+#: HS-Offline-Tracker v0.1.1 (published 2026-09-04) shipped no portable zip:
+#: its producer (147,968 bytes, PE link time 2026-09-04) was extracted from the
+#: release's NSIS installer `HS.Offline.Tracker_0.1.1_x64-setup.exe` (asset
+#: hash as SHA256SUMS.txt states it, 04109842...) on 2026-10-13. The same
+#: extraction of v0.1.2's installer gave 36608aa0..., the hash of v0.1.2's zip
+#: member, so the method reads the file the installer carries.
+V0_1_1_SHA = "8594d096b157eb955c72a4645f118a65916782b36e7ea5343634644a8260676d"
+
 #: HS-Offline-Tracker v0.1.4 (published 2026-10-06): the portable zip's hash
 #: as SHA256SUMS-0.1.4.txt states it, and its producer member's hash
 #: (155,648 bytes).
@@ -83,6 +110,14 @@ FIXED_ENTRY = {
     "archive_sha256": "37b03813359d6235a13fe3bb74dd1c2ee5733452a904c01cf41299e02e139709",
     "member": TRACKER_MEMBER,
     "sha256": "5f83e542f41490ec57106198cf8546ec178421961e388699ff1da5de45956f94",
+}
+
+#: The loader files in the same release's portable zip (`aurie-loader/...`),
+#: hashed from the release asset on 2026-10-13, keyed by ForgePact's pin dest.
+FIXED_LOADER = {
+    "modfiles_shipped/AurieCore.dll": "3cf98af99a0ef38dea1a2d4627e6466631f6e7dd2b254b1a80e5438ac06800cb",
+    "modfiles_shipped/YYToolkit.dll": "51a393d7e5291ad76bdb85b9f44faf5178b6b20e0ce8432fa26bdaf9e21eadf8",
+    "modfiles_shipped/AuriePatcher.exe": "4d3aec439dbba5209ad48fb0a40d6324406247fe678541df9031f5b89363d536",
 }
 
 
@@ -163,9 +198,13 @@ class ClassifierControls(unittest.TestCase):
 class TheProductKnowsTheBuilds(unittest.TestCase):
     """src/forgepact.py's sets, which decide a launch-time replacement."""
 
-    def test_the_measured_builds_are_where_they_belong(self):
-        self.assertIn(OLD_ENTRY["sha256"], forgepact.TRACKER_SENSOR_ABORTING)
-        self.assertIn(V0_1_3_ENTRY["sha256"], forgepact.TRACKER_SENSOR_ABORTING)
+    def test_every_tracker_release_before_the_fix_is_aborting(self):
+        # 0.1.1, 0.1.2 (= ForgePact's old pin) and 0.1.3.
+        for sha in (V0_1_1_SHA, OLD_ENTRY["sha256"], V0_1_3_ENTRY["sha256"]):
+            with self.subTest(sha=sha):
+                self.assertIn(sha, forgepact.TRACKER_SENSOR_ABORTING)
+
+    def test_the_pinned_build_is_measured_clean(self):
         self.assertIn(FIXED_ENTRY["sha256"], forgepact.TRACKER_SENSOR_CLEAN)
 
     def test_no_build_is_in_both_sets(self):
@@ -197,7 +236,7 @@ class ForgePactPinsTheFixedProducer(unittest.TestCase):
         self.assertEqual(len(self.entries), 1,
                          f"expected one {PIN_DEST} entry in tools/toolchain-pins.json")
 
-    def test_the_pin_is_tracker_v0_1_4(self):
+    def test_the_pin_is_fixed_entry(self):
         entry = self.entries[0]
         for key, value in FIXED_ENTRY.items():
             self.assertEqual(entry.get(key), value, key)
@@ -206,16 +245,26 @@ class ForgePactPinsTheFixedProducer(unittest.TestCase):
         state, reason = classify_producer_pin(self.entries[0])
         self.assertEqual(state, "fixed", f"ForgePact's {PIN_DEST} pin: {reason}")
 
-    def test_the_replaced_build_is_superseded_so_existing_checkouts_update(self):
-        superseded = self.entries[0].get("superseded_sha256")
-        self.assertEqual(superseded, [OLD_ENTRY["sha256"]])
+    def test_replaced_builds_are_superseded_so_existing_checkouts_update(self):
+        superseded = self.entries[0].get("superseded_sha256") or []
+        self.assertIn(OLD_ENTRY["sha256"], superseded)
+        self.assertNotIn(FIXED_ENTRY["sha256"], superseded)
+        known = set(forgepact.TRACKER_SENSOR_ABORTING) | set(forgepact.TRACKER_SENSOR_CLEAN)
         for sha in superseded:
-            self.assertIn(sha, forgepact.TRACKER_SENSOR_ABORTING)
+            with self.subTest(sha=sha):
+                self.assertIn(sha, known, "a superseded pin is a build the product knows")
 
     def test_the_provenance_names_the_release(self):
+        version = re.search(r"/releases/download/(v[0-9.]+)/", FIXED_ENTRY["url"]).group(1)
         provenance = str(self.entries[0].get("provenance", ""))
         self.assertIn("HS-Offline-Tracker", provenance)
-        self.assertIn("v0.1.4", provenance)
+        self.assertIn(version, provenance)
+
+    def test_the_loader_files_are_the_same_releases(self):
+        pinned = {f.get("dest"): f.get("sha256") for f in self.files}
+        for dest, sha in FIXED_LOADER.items():
+            with self.subTest(dest=dest):
+                self.assertEqual(pinned.get(dest), sha)
 
 
 if __name__ == "__main__":

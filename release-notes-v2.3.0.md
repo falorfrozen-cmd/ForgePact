@@ -64,21 +64,31 @@ fresh fight.
 
 ## Fixed
 
-- **Closing the game no longer leaves a crash report.** With ForgePact
-  installed, Windows reported Hero Siege as crashed (`ucrtbase.dll`,
-  `0xc0000409`) on nearly every close, even ordinary ones from the main menu or
-  after Save & Exit. The report came after the game had finished its own
-  shutdown. The cause was the HS Offline Tracker sensor that ForgePact
-  installs beside its plugin, an older build that aborted while it unloaded.
-  ForgePact now installs HS Offline Tracker 0.1.4's sensor, which carries the
-  Tracker's own fix. Tested on 2026-10-13: with the old sensor a close from
-  the main menu still crashed, and with the new one a close from the world, a
-  close after Save & Exit, and a close from the world with Loot announcements
-  on all exited cleanly with no crash report. ForgePact and HS Offline Tracker
-  0.1.4 now install the same sensor and loader files. If you also use HS
-  Offline Tracker, update it to 0.1.4 or later: versions 0.1.1 to 0.1.3 offer
-  to update the live sensor when they see ForgePact's, and pressing that puts
-  their old sensor back, and the crash at close with it.
+- **Closing the game while playing, or after Save & Exit, no longer leaves a
+  crash report.** With ForgePact installed, Windows reported Hero Siege as
+  crashed (`ucrtbase.dll`, `0xc0000409`) on nearly every close, even ordinary
+  ones from the main menu or after Save & Exit. The report came after the game
+  had finished its own shutdown. The cause was the HS Offline Tracker sensor
+  that ForgePact installs beside its plugin, an older build that aborted while
+  it unloaded. ForgePact now installs HS Offline Tracker 0.1.4's sensor, which
+  carries the Tracker's own fix. Tested on 2026-10-13: with the old sensor a
+  close from the main menu still crashed, and with the new one a close from
+  the world, a close after Save & Exit, and a close from the world with Loot
+  announcements on all exited cleanly with no crash report. We did not repeat
+  a close from the main menu with the new sensor; HS Offline Tracker's own
+  checks of the same fix, on a test build with ForgePact loaded, closed
+  cleanly from the main menu three times out of three. ForgePact and HS
+  Offline Tracker 0.1.4 now install the same sensor and loader files (checked
+  file by file against the Tracker's 0.1.4 download).
+- **HS Offline Tracker 0.1.1 to 0.1.3 can put the old sensor back.** If you
+  also use HS Offline Tracker, update it to 0.1.4 or later. Versions 0.1.1 to
+  0.1.3 offer to update the live sensor when they see ForgePact's, and
+  pressing that puts their own old sensor back, and the crash at close with
+  it. ForgePact replaces it again the next time you start the game from
+  ForgePact, so the two keep swapping the file until the Tracker is updated.
+- **Install Mod Plugin no longer overwrites a sensor it does not recognise.**
+  If your game has a sensor from a newer HS Offline Tracker, Install leaves
+  it as it is and says so, instead of replacing it with ForgePact's copy.
 
 ## How to update
 
@@ -86,11 +96,11 @@ Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
 and Boss soul pieces switches) and the panel (their switches on the Mods and
 Loot tabs), so updating only one of them leaves the other behind. Pressing **Install Mod
-Plugin** also replaces the HS Offline Tracker sensor with the fixed one. If
-you start the game from ForgePact without pressing Install, ForgePact replaces
-the old sensor itself when it can, as it does the plugin, and when it cannot,
-its launch message asks you to close the game and press Install Mod Plugin;
-until you do, the crash at close stays. Your existing settings are retained. Start the
+Plugin** also replaces an old HS Offline Tracker sensor with the fixed one.
+If you start the game from ForgePact without pressing Install, ForgePact
+replaces an old sensor itself when it can, as it does the plugin, and when it
+cannot, its launch message asks you to close the game and press Install Mod
+Plugin; until you do, the crash at close stays. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 
