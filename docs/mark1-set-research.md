@@ -524,14 +524,17 @@ Nine rows, one per script the five questions lean on: `CheckTalentUse`,
   resolves them:
   - `player`: the local player instance's own variables.
   - `pst`: the struct the player holds in `pSt`.
-  - `profile`: the player's `playerProfileSlot` when the player has one that
-    is a struct or an instance; otherwise `Profile_Manager_obj` instance 0.
-    Every reply names which of the two it read.
+  - `profile`: the entry of `Input_Device_Manager_obj` instance 0's
+    `playerProfileSlot` at `CheckTalentUse`'s third argument (the local
+    player's latest call, 1 until one is seen; the reply says `:a2` or
+    `:default` and names the entry's object). An unresolved route is refused
+    with its reason; nothing stands in for it.
   - `input`: the same scope's `inputState` array, each element printed as
     `input[<i>]`.
   - `queue`: `abilityQueue`, `mobileTalentPressed` and `stackSkillList`, each
-    as its kind, its length and its first four entries, read as variables of
-    the player instance.
+    as its kind, its length and its first four entries; `abilityQueue` and
+    `mobileTalentPressed` read as globals, `stackSkillList` on the player;
+    the reply names where each was read.
 
   Positive control: a `watch player` while the player walks shows `x` or `y`
   changing; a watch that prints nothing then is the instrument, not the game.
@@ -614,14 +617,15 @@ player on open floor reading `room=in grid=free family=free wall-line=clear`.
 The static reading (§ Static reading, "The cast gate") places
 `playerProfileSlot` on `Input_Device_Manager_obj`, indexed by the gate's third
 argument, and `abilityQueue` and `mobileTalentPressed` as global arrays. The
-instrument as built reads all of them on the player (falling back to
-`Profile_Manager_obj` instance 0 for `profile` and `input`). Until the scopes
-follow the reading, a `queue` watch or a `set queue.<name>[<i>]` lever reads
-or writes the player's own variables of those names, if it has any, and not
-the arrays the gate reads; a `queue-observed` with no change, or a
-`set queue...` lever that counts only `missing=`, then says nothing about the
-queue route. The `profile` reply names the instance it read, so Live 1
-records whether that was the profile slot the gate's third argument names.
+scopes now follow that reading, as § Instrument lists them: `profile` and
+`input` read the entry of `Input_Device_Manager_obj` instance 0's
+`playerProfileSlot` at the gate's third argument, with no fallback (an
+unresolved route is refused with its reason), and `queue` reads
+`abilityQueue` and `mobileTalentPressed` as globals and `stackSkillList` on
+the player, each reply naming where it read. A `set` on a global is applied
+only to an element of its array, never to the global as a whole, and
+`applied=` counts only writes that read back as written, so a write that did
+not land is never reported applied.
 
 ### The debugger logpoints
 
@@ -706,7 +710,7 @@ finding, as long as its control passed in the same session.
 | S8 | `queue-observed` | `mark1probe watch queue 120`, then press the ordinary key twice, 10 frames apart | what `abilityQueue`, `mobileTalentPressed` and `stackSkillList` hold during a cast, or no change (read with § Instrument, "Where the `profile` and `queue` scopes read") |
 | S9 | `cast-input` | once the ordinary skill's `effect=` reads 0: `mark1probe set profile.inputState[<its i>] <S7's pressed value> during CheckTalentUse 600`, no key pressed; `skillstate` after two seconds | `effect=` rises; `show` counts `applied=` above 0 and a cast of that talent |
 | S10 | `cast-gate` | during S9's window: `show` every two seconds, and `mark1probe watch player 120` | that talent is cast no more often than its cooldown allows, and a mana member falls with each cast |
-| S11 | `cast-other` | only if S9 did not cast: a `set` of each `profile` or `player` member S8 showed moving, one at a time | which member, if any, casts |
+| S11 | `cast-other` | only if S9 did not cast: `mark1probe set queue.abilityQueue[<S6/S7's slot index>] 1 during CheckTalentUse 600`, no key pressed; then the same for `queue.mobileTalentPressed[<i>]`; then a `set` of each `profile` or `player` member S8 showed moving, one at a time | which member, if any, casts (`show` counts `applied=` above 0 for each) |
 | S12 | `toggle-flips` | toggle outlier: `mark1probe count White_Mage_Soul_Spurn_AOE_obj 600`, with S9's lever on Soul Spurn's slot index for 600 frames | the on and off flips, counted from the aura's instance count |
 | S13 | `empty-slot` | empty-slot outlier: S9's lever on that slot's index for 120 frames | no `TalentUse` call |
 | S14 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds; once more | the two totals within 10% of each other |
