@@ -56,7 +56,8 @@ anything that suspends the game's own loop.
   rebuilt research DLL (§ Results, "Live 3 results"), folded the same way.
 - **Decision:** recorded (§ Decision). A bar slot casts through the game's
   own gate when its `inputState` entry is set to the press value during the
-  gate's call, and the cooldown held; the jump is moved by `skillsLeap` alone
+  gate's call, and in more than 480 forced frames Mana Orb was cast once
+  (what refused the repeats was not read); the jump is moved by `skillsLeap` alone
   and scaling that displacement tripled it; halving movement speed at the
   stat dispatcher slowed the walk to 0.785 of its step, not 0.5; and in town
   a walkable landing point is one inside the room where the player would meet
@@ -855,9 +856,9 @@ the player was moved back and walked again.
 | `key-cast-control` | pass | hs-drive's Q press on slot 0,3 cast Mana Orb (`effect=` went from 0 to 1). |
 | `ctu-args` | not-observed | Over 100 local `CheckTalentUse` calls idle, and 100 more twice with Q held down, every call carried the same three arguments: the player (as a `VALUE_REF`), 1 and 1, one call per frame. No argument names a slot, as the static reading said. Holding Q down cast nothing in either window, so the value for a pressed slot was not seen. |
 | `slot-keys` | pass | Each key moved one entry of the profile slot's `inputState`: Q entry 3, E entry 4, R entry 5 and Y entry 6 (entries 26 and 25 moved together with Q and E). Each entry rests at 1, reads 4 on the press frame, 3 while held, 2 on the release frame and then 1 again. The entries are the bar columns the four slots sit on. The profile slot read was entry 1 of `Input_Device_Manager_obj` instance 0's `playerProfileSlot`, the index `CheckTalentUse`'s third argument names. |
-| `queue-observed` | pass | Over two Q presses ten frames apart (one cast counted), no entry of `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList` changed from one frame to the next. |
+| `queue-observed` | pass | Over two Q presses ten frames apart (one cast counted), none of the first four entries (0-3) of `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList` changed between end-of-frame samples; later slots, and an entry set and cleared within one gate call, were not visible, so whether a key cast uses the queue is not established. |
 | `cast-input` | pass | With no key pressed, `mark1probe set profile.inputState[3] 4 during CheckTalentUse 600` cast Mana Orb: `effect=` went from 0 to 1, the lever had applied 210 times by the first `show`, and one Mana Orb cast was counted. Writing the press value into a slot's entry just before the gate reads it, and restoring it after, casts that slot. |
-| `cast-gate` | not-observed | The cooldown half held: across more than 480 applied frames of that lever, with the press value in place on every gate call, Mana Orb was cast once. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (`manaArrayPos` moved, upwards). Where the player's mana is kept was not read. |
+| `cast-gate` | not-observed | Across more than 480 applied frames of that lever, with the press value in place on every gate call, Mana Orb was cast once. What refused the repeats (cooldown, mana, the orb still alive) and Mana Orb's cooldown were not read, so whether the cooldown applies to a forced press is not established. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (`manaArrayPos` moved, upwards). Where the player's mana is kept was not read. |
 | `cast-other` | not-run | Not needed: `cast-input` cast. |
 | `toggle-flips` | pass | The same lever on Soul Spurn's entry 5 for 600 frames: the count of `White_Mage_Soul_Spurn_AOE_obj` went from 0 to 1 and back 13 times, ending at 0 (off), and 22 Soul Spurn casts were counted. A toggle held "pressed" this way switches on and off again every 10 to 30 frames; it does not stay on. |
 | `empty-slot` | pass | The lever on the empty slot's entry 6 for 120 frames: no `TalentUse` call at all. |
@@ -974,7 +975,9 @@ What the session settles about the four fields, in town:
   and the wall line, at the invisible wall the other two then saw too.
 - **`family` says nothing past the room.** Beyond the room's bottom it read
   free; only `room` (and the grid) still said no.
-- **No tile layer marks the edge.** The layers' values vary across open
+- **None of the four tile layers read (`Darkness`, `Hay_Ground`,
+  `Leaves_Ground`, `Water`) marks the edge; the room's later tile layers were
+  not read.** The layers' values vary across open
   floor, the `Water` layer is non-zero only on the water, and every layer
   reads -1 outside the room.
 
@@ -990,7 +993,7 @@ cast-route: input
 Decided by `cast-input` (Live 1, pass): writing the press value 4 into the slot's `inputState` entry during the gate's own call cast Mana Orb with no key pressed, and the same lever cast Soul Spurn (`toggle-flips`). `queue-observed` saw the queue arrays unchanged by a key cast; the `queue` and `mobile` levers were not tried (`cast-other` not-run, as the input route had cast).
 
 cast-gate: not-observed
-Decided by `cast-gate` (Live 1, not-observed; its control `key-cast-control` passed): the cooldown held under the lever (one Mana Orb cast in more than 480 forced frames) and an empty slot cast nothing (`empty-slot`), but no mana member was seen to fall, so whether the gate still charges mana is open.
+Decided by `cast-gate` (Live 1, not-observed; its control `key-cast-control` passed): one Mana Orb was cast in more than 480 forced frames, with what refused the repeats not read, and an empty slot cast nothing (`empty-slot`), but no mana member was seen to fall, so whether the gate still charges mana is open.
 
 slot-keys: measured
 Decided by `slot-keys` (Live 1, pass): Q, E, R and Y are the profile slot's `inputState` entries 3, 4, 5 and 6, resting at 1, 4 on the press frame, 3 while held and 2 on the release frame.
@@ -1017,7 +1020,7 @@ jump-lever: move
 Decided by `jump-move` (Live 2, pass): x3 on `skillsLeap`'s displacement tripled the jump (3.00 times near, 2.95 times far); `jump-stat` showed the stat route never engages, since a jump does not read Jump Power (`dbg-stat-jump` not-observed with the control logging).
 
 walkable-test: combined
-Decided by `walkable-prop` and `walkable-edge` (Live 3, both recorded; their control `walkable-control` passed): a point is a walkable landing when it lies inside the room and the player placed there meets nothing of `Collision_Parent_obj` (`room=in` and `family=free`). `family` alone saw the prop, which the path grid and the wall line missed, and turned blocked at the town's edge 16 px before them, but read free again past the room's bottom, where only `room` and the grid still said no; no tile layer marks the edge. Measured in a town only (§ Not established). Live 2's `walkable-control` had failed on the old read of `place_meeting` (§ Live 3 results).
+Decided by `walkable-prop` and `walkable-edge` (Live 3, both recorded; their control `walkable-control` passed): a point is a walkable landing when it lies inside the room and the player placed there meets nothing of `Collision_Parent_obj` (`room=in` and `family=free`). `family` alone saw the prop, which the path grid and the wall line missed, and turned blocked at the town's edge 16 px before them, but read free again past the room's bottom, where only `room` and the grid still said no; none of the four tile layers read marks the edge (the later layers were not read). Measured in a town only (§ Not established). Live 2's `walkable-control` had failed on the old read of `place_meeting` (§ Live 3 results).
 
 The values each key may take (Live 1 decides the first six, Live 2 the next four, Live 3 the last):
 
@@ -1051,7 +1054,7 @@ Settled by the sessions, and so off this list: which `inputState` value
 means pressed (4, on the press frame); which entries Q, E, R and Y use (3 to
 6); what `CheckTalentUse`'s arguments are on this machine (the player, 1 and
 1, once a frame); that a write into the slot's entry inside the gate's call
-casts the slot and the cooldown still holds; which script moves the
+casts the slot; which script moves the
 player during a jump (`skillsLeap`); why Live 2's walkable control failed
 (the probe read `place_meeting`'s `real` 0 as a meeting); and, in town, how a
 walkable landing point is told from one past the edge (inside the room, and
@@ -1060,6 +1063,10 @@ walkable landing point is told from one past the edge (inside the room, and
 - **Whether the gate still charges mana** for a cast made through the input
   lever (`cast-gate`, not-observed: no mana member was found to watch), and
   whether it checks the other requirements `TalentRequirement` covers.
+- **Whether the cooldown applies to a forced press, and Mana Orb's
+  cooldown.** Over more than 480 forced frames Mana Orb was cast once
+  (`cast-gate`), but what refused the repeats (cooldown, mana, the orb still
+  alive) was not read.
 - **The other bar columns.** Only the entries of Q, E, R and Y (3 to 6) were
   measured; how the gate derives the entry for the other columns, and why
   entries 26 and 25 move with Q and E, were not read. Whether a slot's
