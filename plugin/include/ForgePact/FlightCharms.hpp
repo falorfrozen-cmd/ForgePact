@@ -315,7 +315,9 @@ inline constexpr std::string_view StateName(State s)
 // The census's layer_get_fx reads, over the session: each in exactly one of
 // fxStruct (an effect), fxOther (an answer that is not a struct) and fxFailed
 // (the read threw or was refused). The last two both class the layer as no
-// effect; they are counted so a runner whose read never works shows it.
+// effect; they are counted so a runner whose read never works shows it. A
+// layer whose effect was never read counts in none of them; each visit's
+// CensusTally (`flightprobe depth`'s `unread=`) says why.
 //
 // The adapter hands every hooked call to the core (OnQuery, NoteCall,
 // OnUpdateDepth, NoteDepthOther) except at three returns, which count nothing:
@@ -476,6 +478,43 @@ inline FlightDepthChoice ChooseFlightDepth(double gameFront, const std::vector<R
     return c;
 }
 
+// What one census did with each layer the layer list handed it: every entry in
+// exactly one outcome, tested in this order, the first match winning.
+//   noDepth   its depth is not finite (the adapter hands an entry whose id or
+//             depth did not read over with a non-finite depth);
+//   behind    at or behind the game layers' front end: the player's ordinary
+//             draw is already in front of it;
+//   noDetail  its name, visibility or element count did not read;
+//   own       the flight layer itself;
+//   hidden    it reads hidden;
+//   holds     visible and holding an element (a count other than 0): drawn;
+// and otherwise its layer_get_fx is read: fxStruct (an effect), fxOther (read,
+// and not a struct) or fxFailed (the read threw or was refused). So
+//   listed = fxStruct + fxOther + fxFailed + noDepth + behind + noDetail + own + hidden + holds
+// and a `filter=none` names its cause: an answer of another kind, a failed
+// read, or a layer whose effect was never read, and why.
+struct CensusTally {
+    uint64_t fxStruct = 0;
+    uint64_t fxOther = 0;
+    uint64_t fxFailed = 0;
+    uint64_t behind = 0;
+    uint64_t noDepth = 0;
+    uint64_t noDetail = 0;
+    uint64_t own = 0;
+    uint64_t hidden = 0;
+    uint64_t holds = 0;
+};
+
+// The tally as `flightprobe depth` prints it, the one rendering there is:
+// `fx=<struct>/<other>/<failed> unread=behind:<n>,no-depth:<n>,no-detail:<n>,own:<n>,hidden:<n>,holds:<n>`.
+inline std::string CensusTallyText(const CensusTally& t)
+{
+    return "fx=" + std::to_string(t.fxStruct) + "/" + std::to_string(t.fxOther) + "/" + std::to_string(t.fxFailed)
+        + " unread=behind:" + std::to_string(t.behind) + ",no-depth:" + std::to_string(t.noDepth)
+        + ",no-detail:" + std::to_string(t.noDetail) + ",own:" + std::to_string(t.own)
+        + ",hidden:" + std::to_string(t.hidden) + ",holds:" + std::to_string(t.holds);
+}
+
 // This room visit's flight layer, for `flightprobe depth`. A visit starts at
 // the census and ends when the flight layer no longer exists (layers die with
 // their room) or the room changes.
@@ -488,7 +527,8 @@ struct FlightLayerVisit {
     double                 gameFront = 0.0;
     int                    by = -1;                // ChooseFlightDepth's `by`, into `layers`
     std::vector<RoomLayer> layers;                 // remembered: in front of the game layers' front end
-    size_t                 listed = 0;             // every layer layer_get_all listed
+    size_t                 listed = 0;             // every entry the layer list handed the census, unreadable ones included
+    CensusTally            tally;                  // what the census did with each of them; the re-choice leaves it
     double                 censusMs = 0.0;
     uint64_t               moves = 0;              // re-choices that moved the layer this visit
 };
@@ -969,7 +1009,8 @@ private:
     // Once per room visit: the game layers' front end, every layer's depth,
     // and, for the layers in front of that end, their name, visibility and
     // element count, plus layer_get_fx for a visible empty one. Remembers those
-    // layers, chooses, and places the flight layer by name.
+    // layers, chooses, and places the flight layer by name. Every entry listed
+    // lands in exactly one of the visit's CensusTally outcomes.
     void Census(int64_t room, double now)
     {
         haveCensus_ = true;
@@ -981,23 +1022,28 @@ private:
         std::vector<LayerEnd> all;
         if (visit_.gameFrontRead && Call(ops_.all, all)) {
             visit_.listed = all.size();
+            CensusTally& t = visit_.tally;
             for (const LayerEnd& e : all) {
-                if (!std::isfinite(e.depth) || e.depth >= visit_.gameFront) continue;
+                if (!std::isfinite(e.depth)) { ++t.noDepth; continue; }
+                if (e.depth >= visit_.gameFront) { ++t.behind; continue; }
                 RoomLayer l;
-                if (!Call(ops_.detail, e.layer, l)) continue;
-                if (l.name == kFlightLayerName) continue;   // the flight layer itself never counts
+                if (!Call(ops_.detail, e.layer, l)) { ++t.noDetail; continue; }
+                if (l.name == kFlightLayerName) { ++t.own; continue; }   // the flight layer itself never counts
                 l.id = e.layer;
                 l.depth = e.depth;
                 l.effect = false;
+                if (!l.visible) ++t.hidden;
+                else if (l.elements != 0) ++t.holds;
                 if (l.visible && l.elements == 0) {
-                    // Each read in one of three counts; `other` and `failed`
-                    // both leave the layer with no effect.
+                    // Each read in one of three counts, for the visit and the
+                    // session alike; `other` and `failed` both leave the layer
+                    // with no effect.
                     bool effect = false;
                     const bool read = Call(ops_.effect, e.layer, effect);
                     l.effect = read && effect;
-                    if (!read) ++counters_.fxFailed;
-                    else if (l.effect) ++counters_.fxStruct;
-                    else ++counters_.fxOther;
+                    if (!read) { ++t.fxFailed; ++counters_.fxFailed; }
+                    else if (l.effect) { ++t.fxStruct; ++counters_.fxStruct; }
+                    else { ++t.fxOther; ++counters_.fxOther; }
                 }
                 visit_.layers.push_back(std::move(l));
             }
@@ -1084,9 +1130,12 @@ inline std::string RefusedLine(std::string_view why) { return "flightcharm: refu
 // player (`depth-other=` only), flight not on (`depth-idle=`), or no front
 // layer could be chosen (`no-front=`), against the stat line's `depth=`.
 // Last, the censuses' layer_get_fx reads over the session (`fx-struct=`,
-// `fx-other=`, `fx-failed=`): a session with filters in its rooms but no
-// `fx-struct=` says the effect read does not work on this runner, so "Never
-// past a filter" did nothing.
+// `fx-other=`, `fx-failed=`). The census reads the effect only of a visible,
+// empty layer in front of the game layers, so `fx-struct=0` with `fx-other=0
+// fx-failed=0` means no effect read was made, not that the read does not
+// work: `flightprobe depth`'s `unread=` says why each layer went unread. Only
+// `fx-other=` or `fx-failed=` rising with no `fx-struct=` says the read does
+// not answer a struct on this runner, so "Never past a filter" did nothing.
 inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 {
     return "flightcharm trace: player=" + std::string(player)

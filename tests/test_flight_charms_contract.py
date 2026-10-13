@@ -1291,9 +1291,10 @@ class FlightCharmsProbeContract(unittest.TestCase):
     def test_depth_replies_with_what_the_adapters_census_chose(self):
         depth = self.body("depth")
         # Replan 2's reply, every field in order.
+        # fx= and unread= are the core's rendering of the visit's tally (FcNs::CensusTallyText).
         fields = ('"flightprobe depth: "', '"layer="', '" depth="', '" flight-layer="', '" flight-depth="', '" front="',
-                  '" game-front="', '" filter="', '" fx="', '" layers="', '" census-ms="', '" moves="', '" y="',
-                  '" state="', '" room="')
+                  '" game-front="', '" filter="', "FcNs::CensusTallyText(", '" fx-kind="', '" layers="',
+                  '" census-ms="', '" moves="', '" y="', '" state="', '" room="')
         at = -1
         for field in fields:
             with self.subTest(field=field):
@@ -1314,20 +1315,58 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn('"layer_exists"', depth)
         self.assertIn("std::string(FcNs::kFlightLayerName)", depth)
         self.assertLess(depth.index('"layer_exists"'), depth.index('"layer_get_name"'))
-        # fx= is the census's own sort of its layer_get_fx reads, kept by the adapter.
-        self.assertIn("g_FlightFxVisit.effect", depth)
-        self.assertIn("g_FlightFxVisit.other", depth)
-        self.assertIn("g_FlightFxVisit.failed", depth)
-        # The adapter sorts every effect read three ways where it makes it, and a census starts the
-        # visit's counts afresh where it lists the layers.
-        effect = strip_comments(function_body(self.plugin, "static bool FlightLayerEffect(int64_t id, bool& effect)"))
-        self.assertIn("++g_FlightFxVisit.effect", effect)
-        self.assertIn("++g_FlightFxVisit.other", effect)
-        self.assertIn("++g_FlightFxVisit.failed", effect)
-        self.assertLess(effect.index("catch (...)"), effect.index("++g_FlightFxVisit.failed"))
+        # fx= and unread= are the census's own sort of every layer it was handed: the visit's tally,
+        # kept by the core (test_depth_every_listed_layer_reaches_the_census_tally pins the rest).
+        self.assertIn("FcNs::CensusTallyText(counted ? v.tally : FcNs::CensusTally{})", depth)
+
+    def test_depth_every_listed_layer_reaches_the_census_tally(self):
         listing = strip_comments(function_body(self.plugin, "static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)"))
-        self.assertIn("g_FlightFxVisit = FlightFxReads{};", listing)
-        self.assertLess(listing.index("g_FlightFxVisit = FlightFxReads{};"), listing.index("try {"))
+        effect = strip_comments(function_body(self.plugin, "static bool FlightLayerEffect(int64_t id, bool& effect)"))
+        depth = self.body("depth")
+        # FlightLayerAll hands the core every element of layer_get_all's array: one whose id or depth
+        # does not read is appended with a non-finite depth, never dropped by a `continue`.
+        append = "all.push_back(FcNs::LayerEnd{ id, depth });"
+        self.assertEqual(listing.count(append), 1)
+        self.assertNotIn("continue", listing)
+        self.assertIn("double depth = std::numeric_limits<double>::quiet_NaN();", listing)
+        for read in ("ArrayAt(g_Yytk, layers, i, v)", "FlightLayerId(v, id)", '"layer_get_depth"', "depth = d.ToDouble();"):
+            with self.subTest(read=read):
+                self.assertLess(listing.index("double depth = std::numeric_limits<double>::quiet_NaN();"), listing.index(read))
+                self.assertLess(listing.index(read), listing.index(append))
+        # The append is outside the readable branch: it closes the loop body, after that branch's brace.
+        self.assertRegex(listing, r"\}\s*\n\s*" + re.escape(append) + r"\s*\n\s*\}")
+        # Only a readable layer keeps its argument for the later builtin calls.
+        self.assertLess(listing.index("depth = d.ToDouble();"), listing.index("g_FlightLayerArgs[id] = v;"))
+        # The first non-struct kind is reset where a census lists the layers, before the read.
+        self.assertIn("g_FlightFxKind = -1;", listing)
+        self.assertLess(listing.index("g_FlightFxKind = -1;"), listing.index("try {"))
+        # FlightLayerEffect keeps its contract (a struct is the effect, nothing else is) and keeps the
+        # first non-struct answer's kind; false only after the throw.
+        self.assertIn("effect = fx.m_Kind == VALUE_OBJECT;", effect)
+        self.assertNotIn("VALUE_REF", effect)
+        self.assertIn("if (!effect && g_FlightFxKind < 0) g_FlightFxKind = (int)fx.m_Kind;", effect)
+        self.assertEqual(effect.count("return false;"), 1)
+        self.assertLess(effect.index("catch (...)"), effect.index("return false;"))
+        self.assertLess(effect.index("g_FlightFxKind = (int)fx.m_Kind;"), effect.index("return true;"))
+        # FlpDepth prints filter=, the core's rendering of the visit's tally, fx-kind= and layers=, in
+        # that order, from g_Flight.Visit(); the adapter's own per-visit counts are retired.
+        at = -1
+        for field in ('" filter="', "FcNs::CensusTallyText(", '" fx-kind="', '" layers="'):
+            with self.subTest(field=field):
+                self.assertGreater(depth.index(field), at, "out of order")
+                at = depth.index(field)
+        self.assertIn("const FcNs::FlightLayerVisit& v = g_Flight.Visit();", depth)
+        self.assertIn("counted ? v.tally : FcNs::CensusTally{}", depth)
+        self.assertIn("counted && g_FlightFxKind >= 0 ? std::to_string(g_FlightFxKind)", depth)
+        self.assertIn('std::string("none")', depth)
+        self.assertIn("std::to_string(counted ? v.listed : 0)", depth)
+        self.assertNotIn("g_FlightFxVisit", self.plugin)
+        self.assertNotIn("FlightFxReads", self.plugin)
+        # The core keeps the tally in the visit record and renders it once.
+        core = strip_comments((ROOT / "plugin" / "include" / "ForgePact" / "FlightCharms.hpp").read_text(encoding="utf-8"))
+        self.assertIn("CensusTally            tally;", core)
+        self.assertIn("inline std::string CensusTallyText(const CensusTally& t)", core)
+        self.assertIn('" unread=behind:"', core)
 
     def test_pool_reads_both_rolls_lists_and_writes_nothing(self):
         pool = self.body("pool")

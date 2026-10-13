@@ -27,7 +27,9 @@
 // front end and every drawn room layer, a census once per room visit and a
 // re-choice at most once a second, validated where it is written, no write for
 // off, residual or another self; front_layer_filter: never past a filter, the
-// rearmost filter deciding (the room stacks are the data file's). tooltip_rows:
+// rearmost filter deciding (the room stacks are the data file's), and
+// census_outcomes: every listed layer in exactly one of the census's outcomes,
+// rendered by the core's own text. tooltip_rows:
 // a forged item's gold rows anchor at its first present format-2/3 stat call
 // (baseline), or at its first format-2/3 call when it has no stats at all
 // (target, Pocket Elf), at most once a pass and never with no rows
@@ -114,6 +116,7 @@ struct FlightWorld {
     std::map<int64_t, std::vector<WorldLayer>> rooms;   // room -> its layers
     bool listReadable = true;                           // layer_get_all
     std::set<int64_t> effectFails;                      // layers whose layer_get_fx read fails
+    std::set<int64_t> detailFails;                      // layers whose name, visibility or elements read fails
     double nowMs = 0.0;
     int64_t nextId = 900;
     long listReads = 0, detailReads = 0, effectReads = 0, countReads = 0;
@@ -180,7 +183,7 @@ static Flight makeFlight(FlightWorld& w)
     ops.detail = [&w](int64_t id, RoomLayer& l) {
         ++w.detailReads;
         const WorldLayer* p = worldLayer(w, id);
-        if (!p) return false;
+        if (!p || w.detailFails.count(id)) return false;
         l.name = p->name;
         l.visible = p->visible;
         l.elements = p->elements;
@@ -326,6 +329,31 @@ static Flight flightIn(FlightWorld& w, std::vector<WorldLayer> stack)
 static bool sumsHold(const FlightCounters& c)
 {
     return c.depthCalls == c.depthOther + c.depthSeen && c.depthSeen == c.depthIdle + c.noFront + c.depth;
+}
+
+// The census's nine outcomes summed, written out here rather than asked of the
+// core: every listed layer lands in exactly one, so this equals `listed`.
+static uint64_t tallySum(const CensusTally& t)
+{
+    return t.fxStruct + t.fxOther + t.fxFailed + t.behind + t.noDepth + t.noDetail + t.own + t.hidden + t.holds;
+}
+
+// The visit's rearmost filter as `name@depth`, or `none`, and its tally's text.
+static std::string censusText(const Flight& f, FlightWorld& w)
+{
+    const FlightLayerVisit& v = f.Visit();
+    const int at = RearmostFilter(v.gameFront, v.layers);
+    const std::string filter = at >= 0 ? v.layers[(size_t)at].name + "@" + std::to_string((long long)v.layers[(size_t)at].depth)
+                                       : std::string("none");
+    return "filter=" + filter + " " + CensusTallyText(v.tally) + " listed=" + std::to_string(v.listed)
+        + " sum=" + std::to_string(tallySum(v.tally)) + " | " + visitText(f, w, w.room);
+}
+
+static bool filterIs(const Flight& f, std::string_view name, double depth)
+{
+    const FlightLayerVisit& v = f.Visit();
+    const int at = RearmostFilter(v.gameFront, v.layers);
+    return at >= 0 && v.layers[(size_t)at].name == name && v.layers[(size_t)at].depth == depth;
 }
 
 // One hooked call after its original ran. `wallBlocks` is what re-running the
@@ -1160,6 +1188,141 @@ int main()
             first && after >= 0 && v.layers[(size_t)after].name == "Effect_1" && v.layers[(size_t)after].depth == -10100.0
                 && w.effectReads == 2 && f.Stats().fxStruct == 2,
             visitText(f, w, 7) + " before=" + std::to_string(before) + " after=" + std::to_string(after));
+    }
+    // ---- census outcomes: every listed layer in exactly one -------------------
+    // `flightprobe depth` prints the core's rendering of the visit's tally, so a
+    // `filter=none` names its cause: an effect read that answered something other
+    // than a struct, or failed, or a layer whose effect was never read, and why.
+    const std::string kEmptyTally = "fx=0/0/0 unread=behind:0,no-depth:0,no-detail:0,own:0,hidden:0,holds:0";
+    {
+        // Town_01_rm: Effect_1 (-10300) is the one layer read, and it answers a
+        // struct. Wind_Leaves and Xmas_Event_Assets_1 are hidden, four hold
+        // elements, and three lie behind the game layers' front end.
+        FlightWorld w;
+        Flight f = flightIn(w, town01());
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_town_effect_1_is_read_as_a_struct",
+            d.write && filterIs(f, "Effect_1", -10300.0)
+                && CensusTallyText(v.tally) == "fx=1/0/0 unread=behind:3,no-depth:0,no-detail:0,own:0,hidden:2,holds:4"
+                && v.listed == 10 && tallySum(v.tally) == v.listed && w.effectReads == 1,
+            censusText(f, w));
+    }
+    {
+        // One layer of each of the nine outcomes, tested in the core's order.
+        FlightWorld w;
+        Flight f = flightIn(w, {
+            { 1001, std::numeric_limits<double>::quiet_NaN(), "Odd", true, 0, true },   // no-depth
+            { 1002, 600.0, "Effect_Behind", true, 0, true },                           // behind
+            { 1003, -10400.0, "Unreadable", true, 0, true },                           // no-detail
+            { 1004, -12000.0, std::string(kFlightLayerName), true, 1, false },          // own
+            { 1005, -10300.0, "Hidden_Filter", false, 0, true },                       // hidden
+            { 1006, -10000.0, "Invisible_walls", true, 40, false },                    // holds
+            { 1007, -10200.0, "Effect_1", true, 0, true },                             // struct
+            { 1008, -10100.0, "Empty_Instances", true, 0, false },                     // other
+            { 1009, -9900.0, "Effect_2", true, 0, true },                              // failed
+        });
+        w.detailFails.insert(1003);
+        w.effectFails.insert(1009);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_every_listed_layer_lands_in_one",
+            d.write && CensusTallyText(v.tally) == "fx=1/1/1 unread=behind:1,no-depth:1,no-detail:1,own:1,hidden:1,holds:1"
+                && v.listed == 9 && tallySum(v.tally) == v.listed && w.effectReads == 3 && filterIs(f, "Effect_1", -10200.0)
+                && v.depth == -10001.0 && w.creates == 0,
+            censusText(f, w));
+    }
+    {
+        // A hidden filter is never read: `filter=none` with fx=0/0/0, which is
+        // not an answer of another kind (`other`), and not a failed read.
+        FlightWorld w;
+        std::vector<WorldLayer> stack = town01();
+        stack[0].visible = false;
+        Flight f = flightIn(w, stack);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        const FlightCounters& c = f.Stats();
+        check("front_layer_filter/census_outcomes_a_hidden_filter_is_never_read",
+            d.write && RearmostFilter(v.gameFront, v.layers) == -1
+                && CensusTallyText(v.tally) == "fx=0/0/0 unread=behind:3,no-depth:0,no-detail:0,own:0,hidden:3,holds:4"
+                && v.listed == 10 && tallySum(v.tally) == v.listed && w.effectReads == 0
+                && c.fxStruct + c.fxOther + c.fxFailed == 0,
+            censusText(f, w));
+    }
+    {
+        // A filter whose name, visibility or elements do not read is never read
+        // either, and is counted as no-detail.
+        FlightWorld w;
+        Flight f = flightIn(w, town01());
+        w.detailFails.insert(301);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_a_filter_whose_detail_fails_is_never_read",
+            d.write && RearmostFilter(v.gameFront, v.layers) == -1
+                && CensusTallyText(v.tally) == "fx=0/0/0 unread=behind:3,no-depth:0,no-detail:1,own:0,hidden:2,holds:4"
+                && v.listed == 10 && tallySum(v.tally) == v.listed && w.effectReads == 0,
+            censusText(f, w));
+    }
+    {
+        // Effect_1 with a depth that does not read (the adapter hands such an
+        // entry over with a non-finite depth): counted, not dropped.
+        FlightWorld w;
+        std::vector<WorldLayer> stack = town01();
+        stack[0].depth = std::numeric_limits<double>::quiet_NaN();
+        Flight f = flightIn(w, stack);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_an_unreadable_depth_is_counted_not_dropped",
+            d.write && RearmostFilter(v.gameFront, v.layers) == -1
+                && CensusTallyText(v.tally) == "fx=0/0/0 unread=behind:3,no-depth:1,no-detail:0,own:0,hidden:2,holds:4"
+                && v.listed == 10 && tallySum(v.tally) == v.listed && w.effectReads == 0 && w.detailReads == 6,
+            censusText(f, w));
+    }
+    {
+        // A new visit starts its tally afresh; the session's totals sum both.
+        FlightWorld w;
+        w.layers[7] = kGameEnds;
+        w.layers[8] = kGameEnds;
+        w.rooms[7] = town01();
+        w.rooms[8] = act0905();
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        depthAt(f, w, 1, 7, 0.0);
+        const std::string town = CensusTallyText(f.Visit().tally);
+        depthAt(f, w, 2, 8, 100.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_a_new_visit_starts_afresh",
+            town == "fx=1/0/0 unread=behind:3,no-depth:0,no-detail:0,own:0,hidden:2,holds:4" && v.room == 8
+                && CensusTallyText(v.tally) == "fx=3/0/0 unread=behind:1,no-depth:0,no-detail:0,own:0,hidden:0,holds:1"
+                && v.listed == 5 && tallySum(v.tally) == v.listed && f.Stats().fxStruct == 4,
+            "town " + town + " | " + censusText(f, w));
+    }
+    {
+        // Act_01_01: the re-choice moves `filter=` to Effect_1@-10100 once
+        // Tree_Leaves fills, and the tally stays the census's: nothing is read
+        // again.
+        FlightWorld w;
+        Flight f = flightIn(w, act0101());
+        depthAt(f, w, 1, 7, 0.0);
+        const std::string atCensus = CensusTallyText(f.Visit().tally);
+        const bool treeFirst = filterIs(f, "Tree_Leaves", -10000.0);
+        worldLayer(w, 602)->elements = 40;
+        depthAt(f, w, 2, 7, 1000.0);
+        const FlightLayerVisit& v = f.Visit();
+        check("front_layer_filter/census_outcomes_a_rechoice_keeps_the_census_tally",
+            treeFirst && filterIs(f, "Effect_1", -10100.0) && v.moves == 1
+                && atCensus == "fx=2/0/0 unread=behind:1,no-depth:0,no-detail:0,own:0,hidden:0,holds:0"
+                && CensusTallyText(v.tally) == atCensus && v.listed == 3 && w.effectReads == 2,
+            "census " + atCensus + " | " + censusText(f, w));
+    }
+    {
+        // Before a census the visit's tally is empty.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        check("front_layer_filter/census_outcomes_zero_before_a_census",
+            CensusTallyText(f.Visit().tally) == kEmptyTally && CensusTallyText(CensusTally{}) == kEmptyTally
+                && f.Visit().listed == 0 && tallySum(f.Visit().tally) == 0,
+            CensusTallyText(f.Visit().tally));
     }
     {
         // The session's totals end the trace line, after no-front=, and sum

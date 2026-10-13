@@ -21,7 +21,11 @@ line's counters add up as FlightCounters says), `front_layer` (the flight
 layer's depth, its census once per room visit and its re-choice at most once
 a second, validated where it is written; no write while off, residual or for
 another self, the baseline), `front_layer_filter` (never past a filter: the
-rearmost filter decides, on the data file's room stacks), `tooltip_rows`
+rearmost filter decides, on the data file's room stacks), `census_outcomes`
+(every layer the census was handed lands in exactly one outcome: an effect
+read that answered a struct, something else, or failed, or a layer never
+read, with the reason; the core's own text, which `flightprobe depth`
+prints), `tooltip_rows`
 (a forged item's gold rows anchor at its first present format-2/3 stat call,
 the baseline, or at the first format-2/3 call on an item with no stats,
 Pocket Elf, the target; ForgedTooltipRows.hpp, which the harness includes),
@@ -247,6 +251,24 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_front_layer_filter_the_rearmost_filter_is_reported(self):
         self.assertScenarios("front_layer_filter/the_rearmost_filter_is_reported")
+
+    # ---- census outcomes: every listed layer in exactly one (`flightprobe depth`) --
+
+    def test_census_outcomes_town_effect_1_is_read_as_a_struct(self):
+        self.assertScenarios("front_layer_filter/census_outcomes_town_effect_1_is_read_as_a_struct")
+
+    def test_census_outcomes_every_listed_layer_lands_in_one(self):
+        self.assertScenarios("front_layer_filter/census_outcomes_every_listed_layer_lands_in_one")
+
+    def test_census_outcomes_a_layer_never_read_is_not_an_answer(self):
+        self.assertScenarios("front_layer_filter/census_outcomes_a_hidden_filter_is_never_read",
+                             "front_layer_filter/census_outcomes_a_filter_whose_detail_fails_is_never_read",
+                             "front_layer_filter/census_outcomes_an_unreadable_depth_is_counted_not_dropped")
+
+    def test_census_outcomes_per_visit(self):
+        self.assertScenarios("front_layer_filter/census_outcomes_a_new_visit_starts_afresh",
+                             "front_layer_filter/census_outcomes_a_rechoice_keeps_the_census_tally",
+                             "front_layer_filter/census_outcomes_zero_before_a_census")
 
     # ---- the gold row on an item with no stats (ForgedTooltipRows.hpp) --------
 

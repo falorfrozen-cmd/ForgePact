@@ -54289,24 +54289,22 @@ static RValue FlightLayerArg(int64_t id)
     return it != g_FlightLayerArgs.end() ? it->second : RValue((double)id);
 }
 
-// How the census found layer_get_fx answering, one count per effect read
-// (FlightLayerEffect): a struct (an effect), any other answer (-1, undefined, a
-// number), or a read that threw. The last two both class the layer as no
-// effect, so these counts are what tell "no filter here" from "the read does
-// not work on this runner". Per room visit, for `flightprobe depth`'s `fx=`:
-// a census starts them afresh where it lists the layers.
-struct FlightFxReads {
-    uint64_t effect = 0;
-    uint64_t other = 0;
-    uint64_t failed = 0;
-};
-static FlightFxReads g_FlightFxVisit;
+// The kind (the RValue's m_Kind, an RValueType number) of the census's first
+// layer_get_fx answer that was not a struct, or -1 when every answer was one
+// (or none was read). The census counts such an answer as `other`, no effect;
+// this says what it was (undefined, a real, a ref...), for `flightprobe
+// depth`'s `fx-kind=`. A census starts it afresh where it lists the layers.
+// How each read landed is the core's, per visit (FlightLayerVisit::tally).
+static int g_FlightFxKind = -1;
 
-// layer_get_all, each with its layer_get_depth. The census's first read.
+// layer_get_all, each with its layer_get_depth. The census's first read. Every
+// element of the list reaches the core: one whose id or depth does not read is
+// handed over with a non-finite depth, which the core counts as no-depth and
+// never asks about again, so only the readable ones keep their argument.
 static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)
 {
     g_FlightLayerArgs.clear();
-    g_FlightFxVisit = FlightFxReads{};
+    g_FlightFxKind = -1;
     try {
         const RValue layers = g_Yytk->CallBuiltin("layer_get_all", {});
         if (layers.m_Kind != VALUE_ARRAY) return false;
@@ -54314,11 +54312,17 @@ static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)
         for (int i = 0; i < count; ++i) {
             RValue v;
             int64_t id = -1;
-            if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, i, v) || !FlightLayerId(v, id)) continue;
-            const RValue depth = g_Yytk->CallBuiltin("layer_get_depth", { v });
-            if (!JsNumber(depth)) continue;
-            g_FlightLayerArgs[id] = v;
-            all.push_back(FcNs::LayerEnd{ id, depth.ToDouble() });
+            double depth = std::numeric_limits<double>::quiet_NaN();   // unread
+            if (HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, i, v) && FlightLayerId(v, id)) {
+                try {
+                    const RValue d = g_Yytk->CallBuiltin("layer_get_depth", { v });
+                    if (JsNumber(d)) {
+                        depth = d.ToDouble();
+                        g_FlightLayerArgs[id] = v;
+                    }
+                } catch (...) {}
+            }
+            all.push_back(FcNs::LayerEnd{ id, depth });
         }
         return true;
     } catch (...) {}
@@ -54344,18 +54348,17 @@ static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)
 }
 
 // Whether the layer carries a layer effect: layer_get_fx answers a struct.
-// Anything else is none; a read that throws fails, which the core also counts
-// as none. Each read lands in exactly one of g_FlightFxVisit's three counts.
+// Anything else is none, and the first such answer's kind is kept
+// (g_FlightFxKind); a read that throws fails, which the core also counts as
+// none. The core sorts each read into the visit's tally.
 static bool FlightLayerEffect(int64_t id, bool& effect)
 {
     try {
         const RValue fx = g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) });
         effect = fx.m_Kind == VALUE_OBJECT;
-        if (effect) ++g_FlightFxVisit.effect;
-        else ++g_FlightFxVisit.other;
+        if (!effect && g_FlightFxKind < 0) g_FlightFxKind = (int)fx.m_Kind;
         return true;
     } catch (...) {}
-    ++g_FlightFxVisit.failed;
     return false;
 }
 
@@ -55021,8 +55024,9 @@ static void FlpFree(const std::vector<std::string>& tail)
 }
 
 // The player's layer and its depth beside what this room visit's census chose,
-// read from the flight adapter's own record (g_Flight.Visit(), and the
-// adapter's effect-read counts) with the core's own filter rule. The game
+// read from the flight adapter's own record (g_Flight.Visit(), its census
+// tally, and the adapter's first non-struct effect kind) with the core's own
+// filter rule. The game
 // layers' front end is read as the census reads it (FlightLayerEnds,
 // GameFrontDepth). A visit counts only while it is this room's and its layer
 // still exists under our name, as the check before each write asks; before a
@@ -55056,7 +55060,7 @@ static void FlpDepth()
 
     const FcNs::FlightLayerVisit& v = g_Flight.Visit();
     // This room's visit: the census ran here (it reached the layer list only when
-    // it read the game layers' front end, and the fx counts with it).
+    // it read the game layers' front end, and the tally with it).
     const bool visitHere = haveRoom && v.room >= 0 && v.room == room;
     // Its layer still exists under our name: the question the core's check
     // before each write asks (FlightLayerValid, which only the core calls),
@@ -55087,15 +55091,17 @@ static void FlpDepth()
         if (rearmost >= 0)
             filterText = v.layers[(size_t)rearmost].name + "@" + FcpNs::NumberText(v.layers[(size_t)rearmost].depth);
     }
+    // The census's own sort of every layer it was handed (fx= and unread=, the
+    // core's rendering), the kind of its first non-struct effect answer, and
+    // how many it was handed; before a census here, the empty tally.
     const bool counted = visitHere && v.gameFrontRead;
-    const std::string fx = counted ? std::to_string(g_FlightFxVisit.effect) + "/" + std::to_string(g_FlightFxVisit.other) + "/"
-                                         + std::to_string(g_FlightFxVisit.failed)
-                                   : std::string("0/0/0");
+    const std::string fxKind = counted && g_FlightFxKind >= 0 ? std::to_string(g_FlightFxKind) : std::string("none");
     char ms[32];
     std::snprintf(ms, sizeof ms, "%.2f", visitHere && std::isfinite(v.censusMs) ? v.censusMs : 0.0);
     Out(tag + "layer=" + layerText + " depth=" + depthText + " flight-layer=" + flightLayer + " flight-depth=" + flightDepth
-        + " front=" + frontText + " game-front=" + gameFrontText + " filter=" + filterText + " fx=" + fx
-        + " layers=" + std::to_string(visitHere ? v.listed : 0) + " census-ms=" + ms
+        + " front=" + frontText + " game-front=" + gameFrontText + " filter=" + filterText
+        + " " + FcNs::CensusTallyText(counted ? v.tally : FcNs::CensusTally{}) + " fx-kind=" + fxKind
+        + " layers=" + std::to_string(counted ? v.listed : 0) + " census-ms=" + ms
         + " moves=" + std::to_string(visitHere ? v.moves : 0) + " y=" + FcpNs::NumberText(y)
         + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState()))
         + " room=" + (haveRoom ? std::to_string(room) : std::string("unreadable")));
