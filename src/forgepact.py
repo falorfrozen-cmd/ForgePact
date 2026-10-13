@@ -1348,12 +1348,13 @@ TRACKER_SENSOR_DLL = "HSOfflineTrackerProducer.dll"
 # developer's own), and only with a build from TRACKER_SENSOR_CLEAN; Install
 # Mod Plugin leaves an unrecognised one alone too (_tracker_sensor_install).
 # tests/test_tracker_producer_pin.py checks tools/toolchain-pins.json against
-# both sets. Every HS Offline Tracker release before 0.1.4 is listed (0.1.1,
-# 0.1.2 = ForgePact's, 0.1.3).
+# both sets. Every HS Offline Tracker release before 0.1.4 is listed: 0.1.1
+# (ForgePact 1.3.8-1.3.9 shipped it), 0.1.2 (ForgePact 1.3.10-2.2.x) and 0.1.3.
 TRACKER_SENSOR_ABORTING = {
     "8594d096b157eb955c72a4645f118a65916782b36e7ea5343634644a8260676d":
-        "HS Offline Tracker 0.1.1's (2026-09-04), read from that release's installer; built before "
-        "the Tracker's exit fix, with the publisher in a global std::thread; not measured live",
+        "HS Offline Tracker 0.1.1's (2026-09-04), read from that release's installer, and the build "
+        "ForgePact 1.3.8 and 1.3.9 shipped (hashed from their release zips); built before the "
+        "Tracker's exit fix, with the publisher in a global std::thread; not measured live",
     "36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e":
         "the 2026-09-05 build ForgePact shipped from 1.3.10 through 2.2.x, the same bytes as "
         "HS Offline Tracker 0.1.2's; measured to abort (#201, and #185's control close)",
@@ -1783,14 +1784,20 @@ def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
     bundled_sha = _sha256_file(bundled)
     if bundled_sha in TRACKER_SENSOR_ABORTING:
         remedy = "" if getattr(sys, "frozen", False) else " (source checkout: run Prepare-Plugin.bat first)"
+        left = ""
+        if target.exists():
+            left = ("; the game's own sensor, also an old build, was left in place"
+                    if _sha256_file(target) in TRACKER_SENSOR_ABORTING
+                    else "; the game's own sensor was left in place")
         return False, ("HS Offline Tracker sensor not installed: this ForgePact's copy is an old build "
-                       "that crashes the game when it closes" + remedy)
+                       "that crashes the game when it closes" + left + remedy)
     if target.exists():
         installed_sha = _sha256_file(target)
         if (installed_sha != bundled_sha and installed_sha not in TRACKER_SENSOR_ABORTING
                 and installed_sha not in TRACKER_SENSOR_CLEAN):
             return False, ("HS Offline Tracker sensor left as it was: the game has a build this ForgePact "
-                           "does not know, such as a newer HS Offline Tracker's")
+                           "does not know, such as a newer HS Offline Tracker's (if it is a damaged copy, "
+                           "click Remove Plugin, then Install again)")
     return True, "HS Offline Tracker sensor installed"
 
 
@@ -2887,10 +2894,12 @@ def launch_modded_game(cfg: dict) -> dict:
             note = refresh(cfg, loader_ok=loader_ok)
             if note:
                 notes.append(note)
-        # Say "click Install Mod Plugin" once, after every note that asks it.
-        if any(INSTALL_ADVICE in note for note in notes):
+        # Say "click Install Mod Plugin" once, right after the last note that
+        # asks it: never after a note saying Install cannot help, or a success.
+        asking = [i for i, note in enumerate(notes) if INSTALL_ADVICE in note]
+        if asking:
             notes[:] = [note.replace(INSTALL_ADVICE, "") for note in notes]
-            notes[-1] += INSTALL_ADVICE
+            notes[asking[-1]] += INSTALL_ADVICE
 
     result = offline_launcher.launch_game(exe_path(cfg), validate_extra=validate_plugin,
                                           prepare=refresh_plugin)

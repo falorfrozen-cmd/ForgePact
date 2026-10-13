@@ -33,8 +33,9 @@ HS-Offline-Tracker v0.1.4's fixed build; that is a separate change.
 
 - **The tracker producer aborts at exit** (hub guide, Known Limitations
   item 25). The HS-Offline-Tracker producer shipped in every ForgePact release
-  since 1.3.10 (`modfiles_shipped/HSOfflineTrackerProducer.dll`, sha256
-  `36608aa0…b14e`, a 2026-09-05 build) keeps its publisher in a global
+  from 1.3.10 (`modfiles_shipped/HSOfflineTrackerProducer.dll`, sha256
+  `36608aa0…b14e`, a 2026-09-05 build; 1.3.8 and 1.3.9 shipped Tracker 0.1.1's
+  `8594d096…`, see the #185 section) keeps its publisher in a global
   `std::thread`. When the game leaves through `ExitProcess`, that thread is
   still joinable when the DLL's globals are destroyed, so its destructor calls
   `std::terminate`: fast fail 7, which reads as `0xC0000409`. Nine of the ten
@@ -300,8 +301,8 @@ global `std::thread`; only `36608aa0…` was measured aborting):
 
 | Tracker | Producer sha256 | Read from |
 |---|---|---|
-| 0.1.1 | `8594d096…676d` | the NSIS installer (the release has no zip); the same extraction of 0.1.2's installer gives 0.1.2's zip member, the control for the method |
-| 0.1.2 | `36608aa0…b14e` | the portable zip; byte for byte ForgePact's pin through 2.2.x |
+| 0.1.1 | `8594d096…676d` | the NSIS installer (the release has no zip); the same extraction of 0.1.2's installer gives 0.1.2's zip member, the control for the method. ForgePact 1.3.8 and 1.3.9 shipped these bytes (their release zips' `ForgePact/modfiles/` member); 1.3.7 shipped no sensor |
+| 0.1.2 | `36608aa0…b14e` | the portable zip; byte for byte the sensor ForgePact shipped from 1.3.10 through 2.2.x (1.3.10's release zip checked) |
 | 0.1.3 | `9e0c63c8…a58d` | the portable zip |
 | 0.1.4 | `5f83e542…6f94` | the portable zip; the new pin |
 

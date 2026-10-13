@@ -514,6 +514,21 @@ class LaunchSensorRefreshTests(LaunchFixture):
         self.assertIn("HS Offline Tracker sensor in the game is an old build", message)
         self.assertTrue(message.endswith(forgepact.INSTALL_ADVICE), message)
 
+    def test_the_install_sentence_follows_the_note_that_needs_it(self):
+        # A release build whose plugin note asks for Install and whose own
+        # package has no clean sensor: the sensor note says Install cannot
+        # help, so the Install sentence must not come after it.
+        self.release_build()
+        write_plugin(self.bundled, "2.1.0")
+        write_plugin(self.installed, "2.1.0", padding=b"another build")
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        self.bundled_sensor.unlink()
+        message = forgepact.launch_modded_game(self.cfg)["ok"]
+        self.assertEqual(message.count("click Install Mod Plugin"), 1, message)
+        self.assertLess(message.index(forgepact.INSTALL_ADVICE.strip()),
+                        message.index("does not carry the fixed one"), message)
+        self.assertTrue(message.endswith("press its Update live sensor."), message)
+
     def test_the_loader_is_hashed_once_per_launch(self):
         self.release_build()
         write_plugin(self.bundled, "2.1.0")
@@ -599,6 +614,7 @@ class InstallSensorTests(InstallFixture):
         self.put(SENSOR_UNKNOWN)
         result = self.install()
         self.assertIn("HS Offline Tracker sensor left as it was", result["ok"])
+        self.assertIn("Remove Plugin, then Install again", result["ok"])
         self.assertEqual(self.target.read_bytes(), SENSOR_UNKNOWN)
 
     def test_an_unreadable_sensor_stops_install_before_anything_is_written(self):
@@ -615,7 +631,8 @@ class InstallSensorTests(InstallFixture):
     def test_an_aborting_bundle_is_never_installed(self):
         # A source checkout that has not re-run Prepare-Plugin.bat.
         self.bundled_sensor.write_bytes(SENSOR_ABORTING)
-        for present in (None, SENSOR_FIXED):
+        for present, says in ((None, None), (SENSOR_FIXED, "the game's own sensor was left in place"),
+                              (SENSOR_ABORTING, "the game's own sensor, also an old build, was left in place")):
             with self.subTest(present=present):
                 if present is None:
                     self.target.unlink(missing_ok=True)
@@ -623,6 +640,10 @@ class InstallSensorTests(InstallFixture):
                     self.put(present)
                 result = self.install()
                 self.assertIn("HS Offline Tracker sensor not installed", result["ok"])
+                if says is None:
+                    self.assertNotIn("left in place", result["ok"])
+                else:
+                    self.assertIn(says, result["ok"])
                 self.assertEqual(self.target.read_bytes() if self.target.exists() else None, present)
 
 
