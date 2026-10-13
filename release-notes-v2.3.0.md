@@ -46,7 +46,7 @@ join the game's own drops behind its own switch, off by default.
   Each charm's drop has its own switch in Mods → Items, all off by default. A
   switch only lets that charm drop, about as rarely as one particular unique
   of the game's own does; it changes no drop chance. Gabriel Wings and Witch's
-  Broomstick each come as roughly 1 in 49 of the Angelic roll's drops, the
+  Broomstick each come as about 1 in 50 of the Angelic roll's drops, the
   same share as Headhunter and Tyrant's Crown, and Pocket Elf on about 1 in
   51 to 1 in 222 of the ordinary unique roll's draws. A charm you already own
   works whether its switch is on or off.
@@ -55,7 +55,14 @@ join the game's own drops behind its own switch, off by default.
   next time it fits. It also loads at one cell when its full size would cover
   the place of another flight charm in the same bag, instead of pushing that
   charm out.
-  Offline play only. Not yet checked in a game session.
+  Offline play only. Checked in two game sessions on a test build: you walk
+  through scenery and stop at walls, you are drawn over tree canopies in town
+  and in the Outskirts of Inoya, all three charms show their icons and the
+  **Flight** line, the sizes survive a reload, and with each switch on Pocket
+  Elf came once in 100 unique drops and Witch's Broomstick twice and Gabriel
+  Wings never in 102 Angelic drops, as the shares above predict (the test
+  raised the Angelic roll's chance to get that many drops, so how often that
+  roll happens in normal play was not measured).
 
 ## How to update
 

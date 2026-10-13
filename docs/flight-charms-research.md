@@ -55,7 +55,10 @@ that suspends the game's own loop.
   `item-missing`, the value added for the outcome S17 measured: the dressed
   charm missing after the reload, with no crash and no overlap.
 - **Later phases:** phase 2, the mod, is planned from this phase's Decision
-  and built (§ Phase 2: the mod); its Mod live procedure 1 has not run yet.
+  and built (§ Phase 2: the mod). Its Mod live 1 ran on 2026-10-12 (21 pass,
+  5 fail, 1 not-observed) and Mod live 2, on the fixed build, on 2026-10-13
+  (24 of 24 pass): § Phase 2: the mod, "Mod live 1 results", "Mod live 2
+  results" and "Status and what is not established".
 
 ## Static search
 
@@ -1736,3 +1739,276 @@ its typing (RDM § 13.4, measured); the shares (hub
 `binomial_band` and `observation_within`). `zonecensus` is the guide's far
 scenery sleep command; `tiptrace` is `ModuleMain.cpp`'s research command,
 whose stat count is the stats hook's own.
+
+### Mod live 1 results
+
+Run on 2026-10-12 by the live operator, on the research DLL built from
+ForgePact `26eecd2` with `build.bat dev` (sha256
+`c15f85e1a79ccd7acfd3ad8d271605a4061182f6364a1d23c5c6096c1b2cd442`), save
+slot 14 "Sorak", in `Town_01_rm` and, for the Angelic drops, the Outskirts of
+Inoya (`Act_01_01`, room 1, Hell, zone level 243), on the game build whose
+executable hashes to
+`498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0`. The
+record is the session capture `forgepact-158-flight-charms-mod-live-1.md`,
+kept with the hub's workorder files on the researcher's machine and not
+tracked. The toolkit's `tools/live_checks.py` reads 27 checks from it: 21
+pass, 5 fail, 1 not-observed, none not-run. Of the nine validity checks,
+eight passed; the ninth, `guard-control`, failed on its charm-list half only
+(below). The owner drove one step by hand (spreading the items on the ground
+in S4); the operator drove every other person-step through hs-drive. The
+saves were restored at teardown and read back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `marker` | pass | Bare `flightprobe` answered `marker=flp1`. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `fresh-off` | pass | The first `flightcharm stat` of the session was the fresh-session line, character for character. |
+| `ground-control` | pass | A normal Small Charm spawned through `charmprobe spawn 0` landed on the ground with the game's own ground sprite, `Pickup_Charms_Normal_Small_Charm_01_spr`. |
+| `ground-icon` | pass | Pocket Elf, Gabriel Wings and Witch's Broomstick each read their own name and `ours` on the ground, and a screenshot showed our three ground icons with no error placeholder. The waypoint's sprite hid them in the first screenshots. |
+| `bag-icon` | fail | The bag drew our icons, the Wings on 2x2 cells and the Broomstick on 1x5, with each name in its rarity's colour (Satanic red, Angelic pale gold, Unholy pink), and the Wings' and the Broomstick's tooltips showed the gold `Flight` row. Pocket Elf's tooltip had no `Flight` row. |
+| `walk-baseline` | pass | With the charms in the bag, not worn, flight read `install=installed state=off`, and a 3 s walk down at the ravine edge left the position unchanged. |
+| `dbg-control` | pass | The `CheckTalentUse` logpoint logged throughout, and the debugger's control hold proved the attach by the game's frame counter (73033 and 73142 before the arm, no answer at the hold, 73374 after the resume). |
+| `depth-control` | pass | At (1180, 1650), under a large red-leaved tree, Sorak was hidden, and with flight off `flightprobe depth` read his layer at depth −830 against the game layers' front at −5500. |
+| `equip-detect` | pass | Pocket Elf right-clicked into the charm grid gave `state=on equipped=elf`. |
+| `flight-depth` | fail | The write landed: his layer read −5500, the front end of the game layers (`front-end=last`), with `depth-calls` and `depth-seen` rising, `depth-idle` flat once flight was on and `no-front=` 0. Two screenshots still showed him under the canopy. |
+| `dbg-step-depth` | pass | Over S7 to S9 the control rose by 3707 while the logpoints on the player Step's two `UpdateDepth` call sites rose by 3704 and 3703. |
+| `flight-prop` | pass | With Pocket Elf worn, a 3 s walk down from the ravine edge crossed it, 440 px south of the start, and `answered=` rose from 45 to 235. |
+| `flight-excluded` | not-observed | Neither probed spot had a wall answer: at the ravine edge and at the church wall the family read `blocked=yes` and `Wall_Parent_obj` read `blocked=no`, so there was no excluded spot. The S11 walk did stop at (929.9, 2031.1) with `excluded=` rising by 1951, which is where Mod live 2 probed. |
+| `flight-ends-inside` | pass | Left inside the ravine's blocker (`Block_Dynamic_Sprite_obj`), Pocket Elf taken off gave `state=residual`; the first 1 s walk moved him out (y 1638.5 to 1837.8) and flight read `off`; a walk back north stopped at the ravine's south side. |
+| `charm-grid-size` | fail | With Gabriel Wings and Witch's Broomstick both worn, `charmprobe charms` listed the Wings at 2x2, rarity 7, but not the Broomstick, though the grid drew it at 1x5 and showed its tooltip; the stat line read `equipped=wings`. |
+| `rolls` | fail | The Wings read exactly `159=12;160=1`; the Broomstick, unlisted, could not be read (its spawn had read `25=100`). |
+| `stash-size` | pass | Dragged into an empty area of the stash's Personal tab, the Broomstick took 1x5 cells. |
+| `guard-kept` | pass | A Gabriel Wings saved 1x1 at a bag cell whose right and lower neighbours were taken loaded at that cell at 1x1, with both neighbours intact and its own rolls (3% and 4%), and the guard read `route=on`, `kept=1`, `yielded=0`, `failed=0`. |
+| `guard-control` | fail | The guard's half passed: `route=on`, with `deferred=` up by 5 and `full=` up by 4 over the reload. The listing half failed as `charm-grid-size` did: the worn Broomstick was not listed. |
+| `reload-identity` | pass | After the reload the charm list was the same, entry for entry, as before it (the Wings 2x2, rarity 7, `159=12;160=1`; the Broomstick absent from both). |
+| `dbg-parse-place` | pass | The logpoint on `ParseItemToGrid`'s call to `InventoryGridAddItemPos` logged nothing before the reload and 1114 times during it, while the control rose from 20583 to 21553. |
+| `unique-control` | pass | With every switch off, ten by-name calls of the ordinary unique roll (`flightprobe unique 10`, the player as `self`) placed ten Satanic uniques and no Pocket Elf. |
+| `drop-elf` | pass | Pocket Elf's switch named Aimbot.exe as its stand-in. At the research lever's 200 copies, 20 unique-roll calls placed 19 items, 11 of them Pocket Elf; the stat line read `elf=11/11`, `refused=0`, `anomalies=0`, and a ground drop read `Pocket Elf ... ours`. |
+| `drop-angelic` | pass | In the Outskirts of Inoya, at 200 copies with the Angelic roll's chance raised, both charms dropped: 13 each of the first 26 Angelic drops, and 21 Wings and 22 Broomsticks of 44, ours equal to built each time, `refused=0`, `anomalies=0`; a hovered ground drop read Witch's Broomstick, Unholy Charm (1x5). The kills ran to 44, four over the procedure's 40. |
+| `drop-off` | pass | With all three switches off, ten unique-roll calls and 47 kills (43 Angelic drops) added no charm: `elf=11/11`, `wings=21/21`, `broom=22/22` and `injected=37600` stayed as they were. The kill batch ran to 47, not 10. |
+
+**The debugger's counts**, by logpoint name (no address is recorded here):
+the control `ctu`, on `CheckTalentUse`; `sda` and `sdb`, the player Step's two
+calls to `UpdateDepth`; and `ppl`, `ParseItemToGrid`'s call to
+`InventoryGridAddItemPos`.
+
+- While the logpoints were armed, in town with flight off: `ctu` 2433 lines,
+  `sda` 1197, `sdb` 691, `ppl` none.
+- From then to the end of S9 (S7 to S9: the tree, the equip, the flight
+  write): `ctu` +3707, `sda` +3704, `sdb` +3703, `ppl` none.
+- Before the reload: `ctu` at 20583, no `ppl` line. During S17's reload: `ppl`
+  from 1 to 1114, `ctu` from 20583 to 21553.
+- While armed, the game's frame time rose from about 13 ms to about 33 ms.
+
+**What its five fails and its not-observed mean.**
+
+- **`flight-depth`: the model was wrong, not the write.** The player's layer
+  read −5500, the front end of the room's game layers, and S16 showed him
+  visible on open ground at that depth. A canopy still covered him at both
+  spots, because canopies are not on a game layer: they move themselves onto
+  a room layer of their own, `Tree_Leaves`, at −9700 in town, in front of
+  every game layer (§ "Why the canopy covered the flying player", RDM
+  § 19.7). The fix is the flight layer (§ "Drawing in front"); Mod live 2's
+  `flight-depth` measures it.
+- **`bag-icon`: the gold rows had no stat to anchor at.** They draw at the
+  tooltip's first stat row the item has, and Pocket Elf has none. The fix is
+  the stat-less anchor; Mod live 2's `bag-icon-elf` measures it, with the
+  Wings as the control.
+- **`charm-grid-size`, `rolls` and `guard-control`: the game counts one
+  flight charm.** The Broomstick was worn beside the Wings, and the game
+  lists one charm per definition `b` above a rarity line; all three charms
+  carry `b` 0 (RDM § 22.1). The owner said this is how the game works, so
+  nothing is fixed, and Mod live 2 wears each charm alone (`broom-alone`,
+  `reload-broom`). The guard's own counters passed.
+- **`flight-excluded`: not observed, with its control.** The family read
+  `blocked=yes` at both spots in the same session, so the instrument could
+  answer; neither spot was a wall. The data file puts
+  `Invisible_Wall_Not_Minimap_obj` columns, children of `Wall_Parent_obj`,
+  just south of where S11's walk stopped (RDM § 19.8), and Mod live 2 probed
+  there.
+
+Notes, not checks: the game exited with code C0000409 on a graceful close,
+as phase 1's Live 1 did; a left click in the bag also sends Sorak walking,
+and a `W` tap clears the walk it leaves.
+
+### Mod live 2 results
+
+Run on 2026-10-13 by the live operator, on the research DLL built from
+ForgePact `7dfea36` with `build.bat dev` (sha256
+`dd87086cab7ba1b27d4742a68b063a85c593a7d97597412fd7f1714d08f2dc11`): Mod
+live 1's fixes and the split workorder's `flightprobe depth` fields
+`filter=`, `fx=`, `unread=` and `fx-kind=`. Save slot 14 "Sorak", in
+`Town_01_rm` and the Outskirts of Inoya (`Act_01_01`, room 1, Hell, zone
+level 243), on the same game build as Mod live 1. The record is the session
+capture `forgepact-158-flight-charms-mod-live-2.md`, kept with the hub's
+workorder files and not tracked. `tools/live_checks.py` reads 24 checks from
+it: 24 pass, none fail, none not-observed, none not-run. All seven validity
+checks passed. The operator drove every person-step through hs-drive; none
+went to the owner. The saves were restored at teardown and read back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `marker` | pass | Bare `flightprobe` answered `marker=flp2`; `sigdrop status` read `gate=tyrant:off,headhunter:off`. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `dbg-control` | pass | The `CheckTalentUse` logpoint logged throughout, and the control hold proved the attach by the frame counter (19848 and 19955 before the arm, no answer at the hold, 20114 after the resume). |
+| `bag-icon-control` | pass | Gabriel Wings' tooltip showed one gold `Flight` row, directly above `Physical Damage Taken Reduced by 12%`. |
+| `tip-calls` | pass | The first tooltip pass after each hover made stat calls, for the Wings and for Pocket Elf alike: `statLines=333 forgedRows=1` both times, on the first try. Every later pass of the same hover read `statLines=0`. |
+| `dbg-stat-wings` | pass | During the Wings' hover one of the three stat-call sites logged (the middle one, 0 to 1) while the control rose. |
+| `bag-icon-elf` | pass | Pocket Elf's tooltip showed one gold `Flight` row between `Satanic Charm (1x1) (Unique Equipped)` and its lore line, and the trace printed `tiptrace forged rows at y=98.000000 (1 rows)`. |
+| `dbg-stat-elf` | pass | The same site rose again during Pocket Elf's hover (1 to 2) while the control rose, and stayed flat with the pointer on an empty cell. |
+| `depth-control` | pass | With no flight charm worn, `state=off`; at (1180, 1650) Sorak was hidden under the red canopy, as in Mod live 1; `flightprobe depth` read his layer at −830, `flight-layer=none`, `filter=none`, every census count 0 and `layers=0`. |
+| `layers-town` | pass | `zonecensus` counted 42 `Fall_Dead_Tree_Leaves_01_obj`, all 42 on `Tree_Leaves` at −9700, although the data file places 8 of them on `Objects`. |
+| `flight-depth` | pass | With Pocket Elf worn: `state=on equipped=elf`; the flight layer at −10001, in front of `Invisible_walls` (−10000) and behind the filter `Effect_1` (−10300); `filter=Effect_1@-10300` with a struct count of 2; `layers=5598`, the sum of the nine counts. Screenshots at (1180, 1650) and (1158, 1720) showed him over the canopy that hid him without flight. |
+| `flight-excluded` | pass | At (929.9, 2031.1) the `Wall_Parent_obj` read one step south was `blocked=yes`; a 1 s walk south moved him 0 px while `excluded=` rose from 0 to 1317. |
+| `broom-alone` | pass | Worn alone, Witch's Broomstick was listed at 1x5, rarity 10, exactly `25=100`, and the stat line read `state=on equipped=broom`. |
+| `one-flight` | pass | With Gabriel Wings added beside the worn Broomstick, the list held the Wings only and the stat line read `equipped=wings`; the grid still drew the Broomstick. |
+| `unique-b0` | pass | The game's unique repository answered `{10, 0, 0}`: `charms_raiders_torch`, rarity 6, 1x2, no hidden flag. |
+| `guard-control` | pass | Over the reload, with two full-size Wings in the bag and the Broomstick worn: `route=on`, `deferred=` and `full=` each up by 3, `kept=0`, `yielded=0`, `failed=0`. |
+| `reload-broom` | pass | After the reload the Broomstick was listed at 1x5, rarity 10, `25=100`, flight read `equipped=broom`, and the bag showed both Wings at 2x2 where they were. |
+| `unique-control` | pass | With every switch off, ten by-name unique-roll calls placed ten Satanic uniques and no Pocket Elf. |
+| `pool` | pass | Both readings, in town and in the zone before the kills, were the same: the Angelic list `lootListUnique[5]` of 380 entries with 48 droppable, Water Melon and Soul Collector once each; the ordinary lists at 50, 61, 79, 152 and 221 entries, with Aimbot.exe on none of them. |
+| `rate-elf` | pass | At one copy, 100 unique-roll calls placed 97 items, one of them Pocket Elf; the stat line read `elf=1/1`, `injected=500`, `refused=0`, `anomalies=0`. |
+| `layers-zone` | pass | With flight off, a canopy hid Sorak on the third short walk; `zonecensus` counted 187 canopies, all on `Tree_Leaves` at −10000, and the filter `Effect_1` visible at −10100. |
+| `flight-depth-zone` | pass | With the Broomstick worn: the flight layer at −10001 on the first read, in front of `Tree_Leaves` (−10000) and behind `Effect_1` (−10100); `filter=Effect_1@-10100` with a struct count of 2; `layers=5620`, the nine counts' sum. A screenshot showed him over the canopy. |
+| `rate-angelic` | pass | At one copy each, with the Angelic roll's chance raised: 102 Angelic drops (114 rolls), 2 Witch's Broomsticks and no Gabriel Wings, ours equal to built, `refused=0`, `anomalies=0`. |
+
+**The debugger's counts**, by name: the control `ctu`, on `CheckTalentUse`,
+and `ds1`, `ds2` and `ds3`, the first, a middle and the last of the tooltip
+pass's 344 direct calls to `DrawInventoryStatsNew`. Window A is the Wings'
+hover, B Pocket Elf's, C the pointer on an empty bag cell.
+
+| Name | A start | A end | B start | B end | C start | C end |
+|---|---|---|---|---|---|---|
+| `ctu` | 4275 | 5627 | 8953 | 9944 | 10351 | 10970 |
+| `ds1` | 0 | 0 | 0 | 0 | 0 | 0 |
+| `ds2` | 0 | 1 | 1 | 2 | 2 | 2 |
+| `ds3` | 0 | 0 | 0 | 0 | 0 | 0 |
+
+One logged pass per hover, for an item with stats and for one without, and
+none with no tooltip: with `tip-calls`' zero on every later pass, this
+supports the reading that the tooltip is drawn from a cached surface after its
+first frame (RDM § 16.6).
+
+**`pool`'s numbers.** The Angelic roll's list held 380 entries, 48 of them
+droppable (T = 48), with Water Melon and Soul Collector, the Wings' and the
+Broomstick's stand-ins, once each (n = 1). The ordinary roll's five lists held
+50, 61, 79, 152 and 221 entries, the lengths #74 measured on 2026-10-02, and
+Pocket Elf's stand-in, Aimbot.exe, on none of them (n = 0, so a pick of its
+pushed entry is always Pocket Elf). The town and zone readings were the same.
+
+**The rates against their bands.** Each charm's intended share is one entry's
+share of its roll (hub `docs/models/unique-pick-spec.md`):
+
+- Pocket Elf, at one copy: 1 call in L + 1 of the ordinary roll, between 1 in
+  222 and 1 in 51 by the list the roll chooses. Over 100 calls that is 0.45 to
+  1.96 Elves expected; 1 was seen, and `drop_roll_model`'s
+  `observation_within`, for 1 in 100 against that range, answered `True`.
+- Gabriel Wings and Witch's Broomstick, at one copy each: 1 in T + 2 = 1 in
+  50 of the Angelic roll's drops. Over 102 drops that is 2.04 of each
+  expected, and `binomial_band` for 102 drops at 1 in 50 gives −2.2 to 6.3,
+  read as 0 to 6. The Broomstick's 2 and the Wings' 0 both lie inside.
+- These counts say the share is not far off one entry's; they are too small
+  to tell one entry's share from, say, two. Every drop used a research lever
+  (the Angelic roll's chance raised, the ordinary roll called by name), so the
+  natural chance per kill is not measured.
+
+**Which layer the flight layer went in front of.** In town it went to −10001,
+in front of `Invisible_walls` (−10000, 77 invisible walls, the room's
+frontmost layer that holds instances), the windmill sails (−9900) and
+`Tree_Leaves` (−9700), and behind `Effect_1` (−10300). In the Outskirts of
+Inoya it went to −10001 on the first read, in front of `Tree_Leaves`
+(−10000), the frontmost layer there that holds instances, and behind
+`Effect_1` (−10100). No re-choice was needed: the zone's canopies already
+existed. The operator's note for the owner: his colours looked like the scene
+around him, the same warm tint, at the transport's 1280x720.
+
+**The census.** It took 9.34 ms in town and 8.60 ms in the zone, once per
+room visit. It saw 5598 layers in town and 5620 in the zone, each landing in
+exactly one of the nine counts:
+
+- Town: `fx=2/50/0` (two effect reads answered a struct, 50 answered
+  something else, none failed), and of the layers it did not read, 5522
+  behind the game layers, 2 hidden and 22 holding elements.
+- Zone: `fx=2/55/0`, with 5549 behind, none hidden and 14 holding elements.
+- The 50 and 55 answers that were not a struct were all of kind 0, a real
+  (`fx-kind=0`). The census hands `layer_get_fx` the layer id `layer_get_all`
+  answered, never the name, so this is recorded here only, with that
+  argument, and is not a runner fact (§ "Drawing in front"). Which second
+  layer answered a struct in each room was not named by the probe.
+- The data file had predicted `fx=1/0/0` and two hidden and four holding
+  layers in town, and `fx=1/0/0` in the zone once its canopies held. The
+  runtime adds layers the data file does not list: about 5500 behind the game
+  layers, the runner's own `Layer_*` layers in front (the UI, the camera,
+  particles, from −11001 to −14003), and two room layers in front of −5500
+  that the data file's list for town lacks, `FilterLayer1` (visible, −10501)
+  and `Raven` (visible, −10300). The same two are in the zone.
+- The flight layer `fp_flight` was still in the zone's layer list at −10001
+  after the Broomstick was taken off: ForgePact leaves its layer in the room.
+
+**What `layer_get_fx` answers.** Given a layer id as `layer_get_all` lists
+it, it answered a struct for `Effect_1` in both rooms: `filter=` named
+`Effect_1` with a struct count of 2, in town (the positive control) and in
+the zone. That is the condition RDM § 19.7 set, and the bullet there now reads
+measured.
+
+Notes, not checks: the game exited with code C0000409 on a graceful close,
+as in both earlier sessions. The first `F` press in town picked up a unique
+that T13 had dropped on the waypoint, so the operator stepped off it first.
+The worn Broomstick that the game did not list was still drawn in the grid,
+as in Mod live 1. The owner's 2026-10-13 decision that flight should also
+ignore monsters came while this session ran; nothing here tested monsters.
+
+### Status and what is not established
+
+Both sessions are recorded. Every acceptance check of Mod live 2 passed, and
+it re-ran every check Mod live 1 failed or did not observe. Measured:
+
+- the flight lever crosses scenery and stops at walls (`flight-prop` in Mod
+  live 1; `flight-excluded` in Mod live 2) and ends cleanly when the charm
+  comes off inside a prop (`flight-ends-inside`);
+- the flight layer draws the player over tree canopies, in town and in a
+  generated zone, without passing the room's colour filter (`flight-depth`,
+  `flight-depth-zone`);
+- the gold `Flight` row on all three charms, Pocket Elf included
+  (`bag-icon-control`, `bag-icon-elf`), and our icons in the bag and on the
+  ground (`ground-icon`, Mod live 1's `bag-icon` for the icons);
+- the size guard over a reload (`guard-kept`, `guard-control`,
+  `reload-broom`), the true sizes in the bag, the charm grid and the stash;
+- the drops at one entry's share, at the player build's single copy
+  (`rate-elf`, `rate-angelic`), and none with the switches off (`drop-off`);
+- the game counts one flight charm at a time (`one-flight`).
+
+**Not established**, each written as not observed live rather than as a
+negative:
+
+- **The natural drop rate.** Every drop used a research lever. The Angelic
+  roll's own chance per kill is not measured, and how often a player meets a
+  charm depends on it.
+- **The rates' precision.** One Elf in 100 calls and two Broomsticks in 102
+  drops fit one entry's share; counts this small cannot tell it from a share
+  a few times larger or smaller. T = 48 was read in two rooms of one session;
+  whether it differs by difficulty, season or a game patch is not measured.
+- **Which flight charm the game lists** when two are worn. The game's walk
+  order decides; with the Broomstick worn first and the Wings added, it
+  listed the Wings, as Mod live 1 did.
+- **Raider's Torch.** The game's unique repository holds a Satanic unique
+  charm at `{10, 0, 0}`, `charms_raiders_torch`, so by RDM § 22.1's reading
+  the game would count only one of it and a worn flight charm. That is an
+  inference; wearing the two together was not tried. Whether that is
+  acceptable is the owner's question, not decided here.
+- **Monsters.** The owner decided on 2026-10-13 that flight should ignore
+  monsters too; that change and its check are not part of these sessions.
+- **Not tried:** Pocket Elf in a zone, the 8 colour-filter rooms where "Never
+  past a filter" changes the answer (the harness's `front_layer_filter`
+  scenarios prove the rule), gates and locks and map edges outside town, the
+  church's wall walked with flight on (at the church wall spot the blocker is
+  in the family but is not a `Wall_Parent_obj`, so flight would cross it),
+  grids other than the bag, the charm grid and the stash, co-op.
+- **The census's other answers.** What the 50 and 55 non-struct effect reads
+  were, and whether passing a layer's name instead of its id changes them.
+- **How the flying player looks.** The operator saw the scene's own tint on
+  him; the owner judges the screenshots.
+- **The exit code** C0000409 on a graceful close, seen in every session of
+  this feature, phase 1's included; not investigated.
