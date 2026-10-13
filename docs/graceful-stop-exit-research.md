@@ -44,9 +44,9 @@ HS-Offline-Tracker v0.1.4's fixed build; that is a separate change.
   ForgePact still pins the old build.
 - **ForgePact's own coop thread did the same until PR #90** (guide item 26).
   On 2026-09-26, with the producer moved out of `mods\aurie`, research build
-  `9915ca5` exited `0` on a main-menu `CloseMainWindow`. Nothing has measured
-  an in-world close without the producer, and hs-drive has never reported
-  `0x00000000` for the game.
+  `9915ca5` exited `0` on a main-menu `CloseMainWindow`. Before the sessions
+  below, nothing had measured an in-world close without the producer, and
+  hs-drive had never reported `0x00000000` for the game.
 - **hs-drive's exit codes** (`docs/tools/hs-drive-mcp.md` in the hub, § "Exit
   codes", Verification X5): #173's two graceful closes read `0xC0000409` after
   `==== clean shutdown ====`. `dropmult-gold-crash-research.md` § Live 2
@@ -89,7 +89,8 @@ proving it.
 
 **The installed chain.** `mods\aurie\HSOfflineTrackerProducer.dll` is sha256
 `36608aa0…b14e` (the pinned old build), beside `BloodPactPlugin.dll`
-(`dd87086c…`, 2026-10-13 09:43), `YYToolkit.dll` (`51a393d7…`) and
+(`dd87086c…`, as installed at 2026-10-13 09:43, when this reading was made),
+`YYToolkit.dll` (`51a393d7…`) and
 `AurieCore.dll` (`3cf98af9…`, the hub's `aurie-v2.0.2-hs.1`). In the WER
 report the producer loads after `BloodPactPlugin.dll`, and teardown runs in
 reverse load order, so while the producer is present ForgePact's own
@@ -155,8 +156,10 @@ this build and would be the first `0x00000000` hs-drive has read; D, an
 in-world close with every mod off; G, Save & Exit then close; F, an in-world
 close with three mods on: `lootann 1` and `stashmoveall 1`, which hook at
 character load and add a UI node, and `frameprof start 600`, the outlier, a
-ForgePact worker thread still running at teardown (the shape guide item 26
-aborted on). Each is expected to read `0x00000000` and leave no dump. A
+ForgePact worker thread running at teardown, held in `ExitSafeThread`
+(`plugin/include/ForgePact/FrameProfiler.hpp`, `m_Thread`), the guide item 26
+fix, not the plain `std::thread` shape that aborted. Each is expected to read
+`0x00000000` and leave no dump. A
 fifth cell, H, closes the session with the driver putting the producer back
 and a main-menu close: it aborts (HS-Offline-Tracker PR #8 saw it on a plain
 main-menu close) and so is the dump reader's positive control in the same
@@ -199,7 +202,9 @@ did not complete.
 
 Both sessions ran on 2026-10-13, back to back, on the ForgePact DLL already
 installed (`BloodPactPlugin.dll` v2.2.1, sha256 `8a16a38e…4bc92`, the same at
-both leases), slot 14 "Sorak", with `ping` -> `pong (YYTK 4.0.1)` and
+both leases; another workorder, forgepact-158, had installed it after the
+static reading's `dd87086c…` chain was read, and this workorder installed
+nothing), slot 14 "Sorak", with `ping` -> `pong (YYTK 4.0.1)` and
 `hs_selfcheck`'s `exit_code_readback` reading `0x00000000` and `0xC0000409`
 back exactly before each. No debugger, no build, no install. The captures are
 `forgepact-201-exit-c0000409-live-1` and `forgepact-201-exit-c0000409-live-2`,
@@ -221,10 +226,11 @@ found one new button, a `UI_Button_obj` reading "Save & Exit" with
 reached `Chose_rm` with no confirmation in between. The close from
 `Chose_rm` still read `0xC0000409`, after the clean-shutdown line, with the
 same twelve-frame dump naming the producer. The one check that failed is a
-research one: the in-world stop did not rewrite the bag file
-`inventory_order_13.hss` (it rewrote `herosiege13.hss`), as hub #506
-predicted. The Exit rewrote both files within the same second, and the close
-from `Chose_rm` after it rewrote neither.
+research one, and it failed on the outcome hub #506 predicted rather than
+against it: the check passed on a rewrite, and the in-world stop left the bag
+file `inventory_order_13.hss` unchanged (it rewrote `herosiege13.hss`), which
+is what #506 predicted. The Exit rewrote both files within the same second,
+and the close from `Chose_rm` after it rewrote neither.
 
 **Live procedure 2, the producer held aside** (capture
 `forgepact-201-exit-c0000409-live-2`, 25 checks, 24 pass). The driver moved
@@ -239,32 +245,36 @@ F, the in-world close with `lootann 1`, `stashmoveall 1` and `frameprof start
 600` switched on after the character loaded (each replied `on`, `frameprof`
 naming its 250-per-second sampler for 600 s), read `0x00000000` with the
 clean-shutdown line and no dump, so ForgePact's own exit-time code, the
-`frameprof` worker thread still running at teardown included, exits cleanly
-on these paths. Cell H, after the driver put the producer back (its sha256
-`36608aa0…b14e` confirmed in full), was a main-menu close that read
-`0xC0000409` with a dump naming `HSOfflineTrackerProducer`, so dumps were
-being written in that session and the four "no dump" readings before it are
-evidence. The failed check is again the bag: the in-world stop left
-`inventory_order_13.hss` as it was with the producer absent too, while the
-Exit rewrote it, so #506 is not the producer's doing.
+`frameprof` worker thread included, exits cleanly on these paths. That the
+worker was still running at teardown is inferred, not measured: the 600 s had
+not elapsed and no capture summary line appeared before shutdown. Cell H,
+after the driver put the producer back (its sha256 `36608aa0…b14e` confirmed
+in full), was a main-menu close that read `0xC0000409` with a dump naming
+`HSOfflineTrackerProducer`, so dumps were being written in that session and
+the four "no dump" readings before it are evidence. The failed check is again
+the bag, and again on #506's predicted outcome (the check passed on a
+rewrite): the in-world stop left `inventory_order_13.hss` unchanged with the
+producer absent too, while the Exit rewrote it, so #506 is not the producer's
+doing.
 
 So the only module that turned a graceful close into `0xC0000409` on this
 machine is the tracker producer, whether the close came from the world, from
-the main menu or after the game's own Save & Exit, and whatever ForgePact mods
-were on. The owner's hypothesis is refuted: Save & Exit first does not change
-the code while the producer is loaded, and all four closes made without it
-read clean. Not covered: a vanilla game and a game without ForgePact (see "Why
-the matrix is smaller than the owner's"), and close paths other than these
-four.
+the main menu or after the game's own Save & Exit, with every mod off, and
+(producer held aside) with `lootann`, `stashmoveall` and `frameprof` on. The
+owner's hypothesis is refuted: Save & Exit first does not change the code
+while the producer is loaded, and all four closes made without it read
+clean. Not covered: a vanilla game and a game without ForgePact (see "Why
+the matrix is smaller than the owner's"), other mods, and close paths other
+than these four.
 
 exit-attribution: producer-only
 saveexit-hypothesis: refuted
 
-The follow-on is a ForgePact fix workorder: re-pin
+The follow-on, which continues in ForgePact #185, is a fix workorder: re-pin
 `modfiles_shipped/HSOfflineTrackerProducer.dll` in `tools/toolchain-pins.json`
-to HS-Offline-Tracker v0.1.4's fixed build, with provenance, release notes for
-the milestone #201 is given, and a live gate in which an in-world
-`hs_stop_game` reads `0x00000000` with the re-pinned producer. Whether
+to HS-Offline-Tracker v0.1.4's fixed build, with provenance, release notes
+(the follow-on asks the owner for a milestone before writing them), and a live
+gate in which an in-world `hs_stop_game` reads `0x00000000` with the re-pinned producer. Whether
 `hs_stop_game` should take Save & Exit first is not decided by the exit code
 (it changes nothing there); it rests on #506's bag observations, which these
 sessions add to: an in-world stop rewrites the character file and not the bag
