@@ -2165,7 +2165,10 @@ the control for the monster walk, failed: with flight off, Sorak's walk
 crossed the training dummy. So a training dummy does not stop a vanilla
 player walk, and `flight-monster`'s pass shows nothing about what flight
 changes. That a flying player walks through monsters is **not observed
-live**; the owner checks it in play, in a zone, and that report relabels it.
+live** by this session. The owner's play check after it (2026-10-13, on the
+same research build, with a Pocket Elf spawned for him) relabels it:
+**owner-confirmed in play, 2026-10-13**, an owner report rather than an
+instrumented measurement (§ "Status and what is not established").
 
 | Check | Verdict | What it showed |
 |---|---|---|
@@ -2213,7 +2216,18 @@ Elf.
 All three sessions are recorded. Every acceptance check of Mod live 2 passed,
 and it re-ran every check Mod live 1 failed or did not observe. Mod live 3
 tried the monster rule against a town training dummy; its control failed, so
-it verified the walls and the residual state but not the monster path.
+it verified the walls and the residual state but not the monster path. The
+owner then played with a Pocket Elf on the same research build and reported
+the mod working as intended, monsters included.
+
+**Owner-confirmed in play, 2026-10-13** (the owner's report, not an
+instrumented measurement: no trace, counter or debugger read backs it):
+
+- a flying player walks through monsters ("flight should ignore enemy
+  collisions"; "record mod as working as intended");
+- monsters still hit a flying player and he still hits them ("hits damaged
+  me while in flight. everything worked correctly").
+
 Measured:
 
 - the flight lever crosses scenery and stops at walls (`flight-prop` in Mod
@@ -2257,19 +2271,22 @@ negative:
   the game would count only one of it and a worn flight charm. That is an
   inference; wearing the two together was not tried. Whether that is
   acceptable is the owner's question, not decided here.
-- **Monsters.** The owner decided on 2026-10-13 that flight should ignore
-  monsters too. Mod live 3 walked into a training dummy, but with flight off
-  the walk crossed it as well, so `flight-monster`'s pass shows nothing: that
-  a flying player walks through monsters is not observed live, pending the
-  owner's play check in a zone. Whether a live monster holds a vanilla walk
-  at all, through `place_meeting` or another row, is not observed either.
-  Monsters' damage and the player's attacks with flight on are not observed
+- **Monsters, by instrument.** The owner decided on 2026-10-13 that flight
+  should ignore monsters too. Mod live 3 walked into a training dummy, but
+  with flight off the walk crossed it as well, so `flight-monster`'s pass
+  shows nothing; the pass-through and the hits both ways rest on the owner's
+  play check above, not on a measurement. Which per-step consumer's
+  `place_meeting` query at a monster holds a vanilla walk is unidentified:
+  whether a live monster holds a vanilla walk at all, through `place_meeting`
+  or another row, is not observed by any instrument. Monsters' damage and the
+  player's attacks with flight on are not observed by an instrument either
   (`attack-control` and `flight-attack`: no damage number in any
   screenshot).
 - **What `StatPhasing`'s answer is used for.** It runs on every step
   (`dbg-phasing`); whether the movement reads it to let a player through
-  monsters, and so whether the game's own stat is a better lever than the
-  `place_meeting` answer, is the owner's question.
+  monsters is not established. The owner's report that the mod works as
+  intended settled the design question on the default: the shipped
+  `place_meeting` answer stays.
 - **Not tried:** Pocket Elf in a zone, the 8 colour-filter rooms where "Never
   past a filter" changes the answer (the harness's `front_layer_filter`
   scenarios prove the rule), gates and locks and map edges outside town, the

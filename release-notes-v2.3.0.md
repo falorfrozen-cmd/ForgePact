@@ -30,7 +30,8 @@ and each can join the game's own drops behind its own switch, off by default.
   scenery, and your character is drawn in front of it instead of hidden
   behind it, tree canopies included. A room's colour filter still tints you
   as it does on the ground. You also walk through monsters instead of being
-  held up by them, but they still hit you and you still hit them. Walls, zone
+  held up by them, but they still hit you and you still hit them
+  (owner-confirmed in play, 2026-10-13). Walls, zone
   gates, locked doors and the edge of the map still stop you. Take the charm
   off while you stand inside a prop or a monster and you can still walk out;
   nothing moves you on its own. The game
@@ -57,7 +58,8 @@ and each can join the game's own drops behind its own switch, off by default.
   next time it fits. It also loads at one cell when its full size would cover
   the place of another flight charm in the same bag, instead of pushing that
   charm out.
-  Offline play only. Checked in two game sessions on a test build: you walk
+  Offline play only. Checked in three game sessions on a test build, plus the
+  owner's own play check: you walk
   through scenery and stop at walls, you are drawn over tree canopies in town
   and in the Outskirts of Inoya, all three charms show their icons and the
   **Flight** line, the sizes survive a reload, and with each switch on Pocket
@@ -65,7 +67,10 @@ and each can join the game's own drops behind its own switch, off by default.
   Wings never in 102 Angelic drops, as the shares above predict (the test
   raised the Angelic roll's chance to get that many drops, so how often that
   roll happens in normal play was not measured). Walking through monsters
-  was added after those sessions and is not checked in a game session yet.
+  came last: the third session showed walls still stop a flying walk, and
+  that monsters let you through while they still hit you and you still hit
+  them is owner-confirmed in play, 2026-10-13 (the owner's report from
+  playing with the charm, not a measured test).
 
 ## How to update
 
