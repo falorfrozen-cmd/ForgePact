@@ -36,6 +36,11 @@ bool loggedRollPaid=false, loggedRollUnpaid=false, loggedHpReset=false;
 uint64_t extraRuns=0, extraRunsUnpaid=0, silencedCalls=0;
 struct SilencedScript { const char* name; const char* hookId; PFUNC_YYGMLScript original; bool native; uint64_t passed, silenced; };
 std::array<SilencedScript,4> silencedScripts{};
+struct ExperienceCapture { bool counted; bool hasAmount; int64_t amount; };
+ExperienceCapture (*experienceCapture)(int,RValue**)=nullptr; void (*experienceCount)(const ExperienceCapture&,const RValue&)=nullptr;
+bool experienceInstallTried=false, experienceInstalled=false;
+bool InstallExperience(){return false;}
+const char* ExperienceRoute(){return "not-installed";}
 uint64_t SilencedCalls(){return 0;}
 bool Install(){return false;}
 void Command(const std::string&){}
@@ -74,6 +79,10 @@ RValue& HookLoot(CInstance* s,CInstance* o,RValue& r,int n,RValue** a){return or
         (out/('baseline.log' if os.environ.get('MINING_ORE_BASELINE') else 'run.log')).write_text(run.stdout+run.stderr, encoding='utf8')
         self.assertEqual(0, run.returncode, run.stdout+run.stderr)
         self.assertIn('RESULT OK', run.stdout)
+        # ForgePact #185: ExperienceUpdate's one detour is shared with the
+        # tracker's XP count, and the extra rolls stay available when the
+        # tracker installed it first.
+        self.assertIn('PASS target/tracker_first_then_rolls_share_one_native_xp_detour', run.stdout)
 
 
 if __name__ == '__main__':

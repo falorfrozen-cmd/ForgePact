@@ -134,6 +134,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # Boss soul pieces, the Loot tab's switch (ForgePact #197;
     # test_soul_piece_contract.py).
     "soulpiece",
+    # HS Offline Tracker's sensor, `tracker 1|0|stat` (ForgePact #185;
+    # test_tracker_mod_contract.py).
+    "tracker",
 }
 
 
