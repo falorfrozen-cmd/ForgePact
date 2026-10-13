@@ -57,8 +57,15 @@ Trigger "A new HS-Offline-Tracker producer" says the same):
      what the gate measured; the replaced build stays in the set it is in.
      Every test passes again. The failures between steps 1 and 5 are on
      purpose: an unmeasured build must not ship. (Walked on a scratch copy
-     with a made-up v0.1.5 on 2026-10-13: 4 failures after step 1, 3 after
-     step 2, 4 after step 3, none after step 5.)
+     with a made-up v0.1.5 on 2026-10-13, on a checkout whose fetched
+     producer is the clean build being replaced: 4 failures after step 1, 3
+     after step 2, 4 after step 3, none after step 5. Where nothing was
+     fetched, as in CI, the fetched-producer control skips: 4, 3, 3, 0.
+     Where the fetched file is still an aborting build, the control fails
+     before step 1 already: 1, then 5, 4, 4, 0.)
+     The next re-pin is the first to leave two builds in
+     `TRACKER_SENSOR_CLEAN`; Install would then put either over the other, so
+     that re-pin has to order them first (ForgePact #217).
 `OLD_ENTRY` and the v0.1.1/v0.1.3 controls never change.
 
 `test_positive_control_on_the_fetched_producer` runs only where

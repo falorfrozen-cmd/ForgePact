@@ -1774,9 +1774,18 @@ def mod_chain(cfg=None) -> dict:
 
 # A source checkout whose modfiles_shipped holds an aborting producer: one the
 # pin superseded is replaced by Prepare-Plugin.bat (fetch_toolchain.py); any
-# other (a hand-placed Tracker 0.1.1 or 0.1.3 copy) needs --force.
+# other (a hand-placed Tracker 0.1.1 or 0.1.3 copy) needs --force, which also
+# overwrites every other pinned file that differs (a hand-placed YYToolkit.dll,
+# AurieCore.dll or header included).
 _SOURCE_SENSOR_REMEDY = ("run Prepare-Plugin.bat first; if it refuses the file as hand-placed, "
-                         "run py tools/fetch_toolchain.py --force")
+                         "run py tools/fetch_toolchain.py --force, which also replaces any other "
+                         "pinned file you placed by hand, such as YYToolkit.dll, AurieCore.dll or a header")
+
+
+# A release package whose own sensor is missing or an old build: Install
+# cannot fix that, so both Install and the launch note say what can.
+_PACKAGE_SENSOR_REMEDY = ("extract the complete ForgePact release again, or update HS Offline Tracker "
+                          "to 0.1.4 or later and press its Update live sensor")
 
 
 def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
@@ -1790,7 +1799,8 @@ def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
     read, for op_install_mod's message."""
     bundled_sha = _sha256_file(bundled)
     if bundled_sha in TRACKER_SENSOR_ABORTING:
-        remedy = "" if getattr(sys, "frozen", False) else " (source checkout: %s)" % _SOURCE_SENSOR_REMEDY
+        remedy = ((": " + _PACKAGE_SENSOR_REMEDY) if getattr(sys, "frozen", False)
+                  else " (source checkout: %s)" % _SOURCE_SENSOR_REMEDY)
         left = ""
         if target.exists():
             left = ("; the game's own sensor, also an old build, was left in place"
@@ -2828,8 +2838,8 @@ def _loader_matches_bundle(game: Path) -> bool:
     return True
 
 
-TRACKER_SENSOR_STALE_LEAD = ("The HS Offline Tracker sensor in the game is an old build that makes Windows "
-                             "report a crash every time the game closes.")
+TRACKER_SENSOR_STALE_LEAD = ("The HS Offline Tracker sensor in the game is an old build that can make Windows "
+                             "report a crash when the game closes (on nearly every close, for the build measured).")
 TRACKER_SENSOR_STALE_ADVICE = TRACKER_SENSOR_STALE_LEAD + INSTALL_ADVICE
 
 
@@ -2868,8 +2878,7 @@ def refresh_stale_tracker_sensor(cfg, loader_ok=None) -> str:
             # Install could not fix it either: it copies only the bundle.
             if getattr(sys, "frozen", False):
                 return (TRACKER_SENSOR_STALE_LEAD + " This ForgePact package does not carry the fixed one: "
-                        "extract the complete ForgePact release again, or update HS Offline Tracker to "
-                        "0.1.4 or later and press its Update live sensor.")
+                        + _PACKAGE_SENSOR_REMEDY + ".")
             return (TRACKER_SENSOR_STALE_LEAD + " From a source checkout, " + _SOURCE_SENSOR_REMEDY
                     + ", so that Install has the fixed sensor to copy." + INSTALL_ADVICE)
         if not getattr(sys, "frozen", False) or not (loader_ok() if loader_ok else _loader_matches_bundle(game)):

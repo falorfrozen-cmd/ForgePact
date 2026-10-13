@@ -634,6 +634,16 @@ class InstallSensorTests(InstallFixture):
             result = self.install()
         self.assertIn(f"Could not read {self.bundled_sensor}", result.get("err", ""), result)
 
+    def test_a_release_package_with_an_old_sensor_says_what_can_fix_it(self):
+        # A release build cannot run Prepare-Plugin.bat: the same remedy as
+        # the launch note.
+        self.enterContext(patch.object(forgepact.sys, "frozen", True, create=True))
+        self.bundled_sensor.write_bytes(SENSOR_ABORTING)
+        result = self.install()
+        self.assertIn("HS Offline Tracker sensor not installed", result["ok"])
+        self.assertIn("extract the complete ForgePact release again", result["ok"])
+        self.assertNotIn("Prepare-Plugin.bat", result["ok"])
+
     def test_an_aborting_bundle_is_never_installed(self):
         # A source checkout that has not re-run Prepare-Plugin.bat.
         self.bundled_sensor.write_bytes(SENSOR_ABORTING)
