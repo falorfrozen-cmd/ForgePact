@@ -47,8 +47,18 @@ anything that suspends the game's own loop.
   its edge", labelled as static readings.
 - **Instrument:** `mark1probe`, research build only (§ Instrument).
 - **Live procedure 1** (the cast) and **Live procedure 2** (speed, the jump
-  and walkability): written, not run yet.
-- **Decision:** every key reads `pending` (§ Decision).
+  and walkability): both run on 2026-10-13 on one research DLL (§ Results,
+  "Live 1 results" and "Live 2 results"). The measured facts are folded into
+  the same four sections of `docs/RUNTIME_DATA_MODELS.md`, relabelled
+  measured, and into the hub's `hs-game-sdk/curated/mark1_set_measurements.json`.
+- **Decision:** recorded (§ Decision). A bar slot casts through the game's
+  own gate when its `inputState` entry is set to the press value during the
+  gate's call, and the cooldown held; the jump is moved by `skillsLeap` alone
+  and scaling that displacement tripled it; halving movement speed at the
+  stat dispatcher slowed the walk to 0.785 of its step, not 0.5. The cast's
+  movement penalty was measured but no member holding it was found, and the
+  walkable test's control failed, so the edge question is still open
+  (§ Not established).
 
 ## Static search
 
@@ -779,26 +789,165 @@ from T13 and T14.
 
 ## Results
 
-No live session has run yet.
+Both sessions ran on 2026-10-13, one after the other, on one research DLL
+(sha256 `0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f`,
+plugin v2.2.1 banner, YYTK 4.0.1), built with `plugin_build\build.bat dev`
+from ForgePact `2feb9b4`, whose `plugin/` tree is unchanged at the head of
+the `166-mark1-set` branch. Save slot 14 "Sorak" (White Mage), in
+`Town_01_rm`, on the game build whose executable hashes to
+`498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0` (the copy
+the Ghidra project imported, so the debugger logpoints belong to this build).
+No flight charm was worn and no config file existed, so every shipped mod was
+off. The records are the session captures
+`forgepact-166-mark1-set-live-1.md` and `forgepact-166-mark1-set-live-2.md`,
+kept with the hub's workorder files on the researcher's machine and not
+tracked. Every verdict below is what the toolkit's `tools/live_checks.py`
+reads from them. Each session restored its own save backup at teardown and
+read it back clean.
+
+### Live 1 results
+
+The cast, the slot keys, the toggle and the cast's movement penalty (Live
+procedure 1, 18:46 to 18:56 UTC). `tools/live_checks.py` reads 20 checks from
+`forgepact-166-mark1-set-live-1.md`: 15 pass, none fail, 3 not-observed, 2
+not-run. The five validity checks passed, and so did each part's own control
+(`bar-read` and `key-cast-control` for the cast, `walk-control` for the
+penalty), so each not-observed below is a negative of its part within what
+the instrument reads, not a broken instrument.
+
+Three things were done differently from the procedure, each recorded in the
+capture: `args` takes at most 100 calls, so S6 ran `args 100` (not 120); S7
+used one 90-frame `watch input` per key, since one window cannot span four
+presses a second apart; and one of S14's walks was stopped by a building, so
+the player was moved back and walked again.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `hook-native` | pass | `mark1probe hook` detoured all nine rows; none failed and none was held. |
+| `dbg-control` | pass | The x64dbg logpoint on `CheckTalentUse`'s entry kept logging while idle and up to teardown, and the debugger's control hold proved the attach: the game's frame counter stopped answering during the hold and moved on after it. |
+| `bar-read` | pass | `skillstate` listed the bar: Chain of Holy Light on 0,2, Mana Orb (talent 253) on 0,3, Healing Zone (252) on 0,4, Soul Spurn (240) on 0,5, and nothing on 0,6. The cases: Mana Orb ordinary, Soul Spurn the toggle, 0,6 the empty slot. |
+| `key-cast-control` | pass | hs-drive's Q press on slot 0,3 cast Mana Orb (`effect=` went from 0 to 1). |
+| `ctu-args` | not-observed | Over 100 local `CheckTalentUse` calls idle, and 100 more twice with Q held down, every call carried the same three arguments: the player (as a `VALUE_REF`), 1 and 1, one call per frame. No argument names a slot, as the static reading said. Holding Q down cast nothing in either window, so the value for a pressed slot was not seen. |
+| `slot-keys` | pass | Each key moved one entry of the profile slot's `inputState`: Q entry 3, E entry 4, R entry 5 and Y entry 6 (entries 26 and 25 moved together with Q and E). Each entry rests at 1, reads 4 on the press frame, 3 while held, 2 on the release frame and then 1 again. The entries are the bar columns the four slots sit on. The profile slot read was entry 1 of `Input_Device_Manager_obj` instance 0's `playerProfileSlot`, the index `CheckTalentUse`'s third argument names. |
+| `queue-observed` | pass | Over two Q presses ten frames apart (one cast counted), no entry of `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList` changed from one frame to the next. |
+| `cast-input` | pass | With no key pressed, `mark1probe set profile.inputState[3] 4 during CheckTalentUse 600` cast Mana Orb: `effect=` went from 0 to 1, the lever had applied 210 times by the first `show`, and one Mana Orb cast was counted. Writing the press value into a slot's entry just before the gate reads it, and restoring it after, casts that slot. |
+| `cast-gate` | not-observed | The cooldown half held: across more than 480 applied frames of that lever, with the press value in place on every gate call, Mana Orb was cast once. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (`manaArrayPos` moved, upwards). Where the player's mana is kept was not read. |
+| `cast-other` | not-run | Not needed: `cast-input` cast. |
+| `toggle-flips` | pass | The same lever on Soul Spurn's entry 5 for 600 frames: the count of `White_Mage_Soul_Spurn_AOE_obj` went from 0 to 1 and back 13 times, ending at 0 (off), and 22 Soul Spurn casts were counted. A toggle held "pressed" this way switches on and off again every 10 to 30 frames; it does not stay on. |
+| `empty-slot` | pass | The lever on the empty slot's entry 6 for 120 frames: no `TalentUse` call at all. |
+| `walk-control` | pass | Two three-second walks to the right (D) from the same spot covered 1049.3 and 980.5 px in the 240-frame window, 6.6% apart. Every walk's movement came from outside the nine rows (`in-rows=0`). |
+| `penalty-baseline` | pass | The same walk with E (Healing Zone) pressed after one second covered 949 px, 6.5% below the two controls' mean. From the cast the step per frame fell from about 6.0 px to about 3.9 px for about 21 frames, then climbed back to 6.0 px. |
+| `dbg-cast-speed` | pass | The logpoint on `TalentUseSetSpeed`'s entry (its first byte the same as the control's, so the same instrument) logged 17 hits by teardown, each returning to one location, which lies in `TalentUse` (below). The probe's row counted one local call during the walk's cast. |
+| `penalty-vars` | not-observed | A 90-frame watch of the player from the cast on saw `playerSequenceTopPrev`, `playerSequenceBottomPrev`, `playerSequenceDirection` and `manaArrayPos` change, and none settled back. The `pst` watch read nothing: `pSt` is an array of 54 entries, neither a struct nor an instance, and the probe's `pst` scope reads named members only. |
+| `penalty-lever` | not-run | No member to hold back: `penalty-vars` listed none that settles back. |
+
+**The caller behind `dbg-cast-speed`.** Every logged return location of the
+`TalentUseSetSpeed` logpoint was the same one. Looked up in the Ghidra project
+through the ghidra MCP, it lies past `TalentUse`'s entry and before the next
+function entry the project knows, named or unnamed, and the five bytes before
+it in the game file are a direct call to `TalentUseSetSpeed`. That is the one
+direct call site the static reading found in `TalentUse` (§ Static reading,
+"What a cast does to movement"). One caller, `TalentUse`, 17 hits;
+`CA_playerTalentActive`, the other direct caller the reading found, was not
+observed in this session.
+
+### Live 2 results
+
+Walking speed, the jump and walkability (Live procedure 2, 18:58 to 19:11
+UTC). `tools/live_checks.py` reads 19 checks from
+`forgepact-166-mark1-set-live-2.md`: 13 pass, 1 fails, 1 not-observed, 4
+not-run. The five validity checks passed, and so did `walk-control` and
+`jump-control`. `walkable-control` failed, so the two walkability checks it
+gates did not run.
+
+Recorded deviations: T4's `pos` window and its D press had to go out in one
+batch (two windows sent first expired before the press and read 0, not
+counted); T5's second per-frame logpoint slowed the frame, so that logpoint
+was cleared before T7; T8's window was lengthened to `pos 300` after two
+`pos 150` windows ended mid-jump (not counted), and T10's and T11's levers ran
+for 300 frames instead of 150 for the same reason; T12 read two extra points
+and one more spot beside the control point.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The same research DLL as Live 1. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `hook-native` | pass | All nine rows detoured, none failed or held. |
+| `dbg-control` | pass | As in Live 1: the `CheckTalentUse` logpoint logged while idle and to teardown, and the control hold proved the attach. |
+| `walk-control` | pass | Two three-second walks to the right from the same spot: 932.7 and 855 px, 8.3% apart, both windows ending with D still held. All movement came from outside the nine rows. |
+| `walk-mover` | pass | During a walk, `PlayerMovement` ran 810 times (once a frame) and no call of any of the nine rows moved the player: `pos` counted every moving frame as `outside`. The walk's displacement is applied somewhere none of the nine rows covers. |
+| `dbg-stat-movement` | pass | The logpoint on `StatMovementSpeed`'s entry (first byte as the control's) logged one hit for each `CheckTalentUse` hit, so once a frame, standing or walking: 2008 hits, each returning to one location, which lies in `ReturnSpecificStat` (below). The probe's row agrees: 810 local calls in the 810 frames of the walk's window, none called directly. The second per-frame logpoint slowed the frame from about 13.4 ms to 23.2 ms and the step per frame grew with it (about 9 and 12 px against 6), so this walk's total is not compared with T4's. |
+| `speed-move` | not-run | Instrument: no row moved the walk, so there was no row for `move` to scale. |
+| `speed-stat` | pass | `mark1probe stat 64 0.5 240` halved id 64's result on all 240 dispatcher calls (`changed-dispatch=240`; `changed-getter=0`, since nothing called `StatMovementSpeed` directly). The walk covered 696.9 px, 22% below T4's mean of 893.9 and below the 878.9 px of a walk without the lever straight after. The step per frame fell from 5.979 px to 4.693 px: 0.785 of the unscaled step, not 0.5. The walk does read movement speed through the dispatcher every frame, but halving that stat does not halve the walk. |
+| `jump-control` | pass | Two jumps on open ground with the cursor about 100 px away (100.95 and 100.31 px as printed) both covered 96.9 px. |
+| `jump-mover` | pass | The jump was moved by `skillsLeap` alone: 102 calls in a jump, every one a moving call, and nothing outside the rows. `playerJumpGravity` ran 101 times in a jump and never moved the player. |
+| `dbg-stat-jump` | not-observed | The logpoint on `StatJumpPower`'s entry (first byte as the control's) logged nothing over two jumps, nor over the four jumps of T10 and T11, while the control kept logging; the probe's row counted 0 calls too. A jump does not call `StatJumpPower`, as the toolkit's § 19.1 measured with another instrument. |
+| `jump-vars` | not-run | Instrument: `pSt` is an array of 54 entries and the `pst` scope reads no members of it. |
+| `jump-move` | pass | `mark1probe move skillsLeap 3 300` tripled the displacement of all 102 `skillsLeap` calls of a jump. With the cursor about 100 px away the jump covered 290.7 px against 96.9 px (3.00 times); with it about 300 px away, 738.8 px against an unscaled 250.3 px (2.95 times), so the scaled jump goes well past the jump's usual reach. |
+| `jump-stat` | pass (the lever never engaged) | `mark1probe stat 66 3 300` found no call to scale (`changed-dispatch=0`, `changed-getter=0`). The jumps covered 96.9 px with the cursor about 100 px away and 246.3 px with it about 300 px away (250.3 without the lever). Jump Power is not read during a jump. |
+| `walkable-control` | fail | On open floor the player stood on and walked across, `mark1probe walkable here 32 0` read `room=in grid=free family=blocked wall-line=clear`. `family` read `blocked` at the player's own position too, 32 px to either side, and at a second open spot. So the `family` field, the player's `place_meeting` against `Collision_Parent_obj` as the probe asks it, does not tell open floor from anything else; why it reads blocked there is not established. |
+| `walkable-prop` | not-run | Instrument: `walkable-control` failed. |
+| `walkable-edge` | not-run | Instrument: `walkable-control` failed. |
+
+**The caller behind `dbg-stat-movement`.** Every one of the 2008 logged return
+locations was the same. Looked up the same way as Live 1's, it lies past
+`ReturnSpecificStat`'s entry and before the next function entry the Ghidra
+project knows, and the five bytes before it in the game file are a direct
+call to `StatMovementSpeed`: the dispatcher's case for id 64, the only direct
+caller the static reading found. One caller, `ReturnSpecificStat`, 2008 hits.
+`dbg-stat-jump` logged no hit, so it has no caller to name.
+
+Locating a return by the nearest function entry before it can be wrong when
+an object event the symbol dump does not name sits in between (the flight
+charms research found that once, `flight-charms-research.md`, Live 1
+results). Here each location sits right after a direct call to the logged
+script, and that call is the one the static reading found in the named
+script, so the two agree.
 
 ## Decision
 
-Every key reads `pending` until the session that decides it. Each then
-takes exactly one of its listed values, on a line of its own. A
-`not-observed` closes nothing unless its positive control passed in the same
-session.
+Recorded on 2026-10-13 from the two sessions (§ Results). Each key takes
+exactly one of its listed values, on a line of its own, and the check that
+decides it is on the line below. A `not-observed` closes nothing unless its
+positive control passed in the same session; each one below says whether it
+did.
 
-cast-route: pending
-cast-gate: pending
-slot-keys: pending
-toggle-under-automation: pending
-cast-penalty: pending
-penalty-lever: pending
-walk-mover: pending
-speed-lever: pending
-jump-mover: pending
-jump-lever: pending
-walkable-test: pending
+cast-route: input
+Decided by `cast-input` (Live 1, pass): writing the press value 4 into the slot's `inputState` entry during the gate's own call cast Mana Orb with no key pressed, and the same lever cast Soul Spurn (`toggle-flips`). `queue-observed` saw the queue arrays unchanged by a key cast; the `queue` and `mobile` levers were not tried (`cast-other` not-run, as the input route had cast).
+
+cast-gate: not-observed
+Decided by `cast-gate` (Live 1, not-observed; its control `key-cast-control` passed): the cooldown held under the lever (one Mana Orb cast in more than 480 forced frames) and an empty slot cast nothing (`empty-slot`), but no mana member was seen to fall, so whether the gate still charges mana is open.
+
+slot-keys: measured
+Decided by `slot-keys` (Live 1, pass): Q, E, R and Y are the profile slot's `inputState` entries 3, 4, 5 and 6, resting at 1, 4 on the press frame, 3 while held and 2 on the release frame.
+
+toggle-under-automation: flips
+Decided by `toggle-flips` (Live 1, pass): Soul Spurn held "pressed" through the lever switched on and off 13 times in 600 frames, ending off.
+
+cast-penalty: not-observed
+Decided by `penalty-vars` (Live 1, not-observed; its control `walk-control` passed): the penalty itself was measured (`penalty-baseline`: the step fell to about 0.65 of itself for about 21 frames after the cast), but no player member that changes at the cast and settles back was found, and `pSt` could not be read by the watch.
+
+penalty-lever: not-run
+Decided by `penalty-lever` (Live 1, not-run): there was no member to hold back.
+
+walk-mover: outside-rows
+Decided by `walk-mover` (Live 2, pass): `PlayerMovement` runs once a frame during a walk, but no call of any of the nine rows moved the player.
+
+speed-lever: stat
+Decided by `speed-stat` (Live 2, pass): x0.5 on id 64's result at the dispatcher slowed the walk, to 0.785 of its step rather than 0.5, so the stat route reaches the walk but does not halve it; `speed-move` did not run (instrument: no row moves the walk).
+
+jump-mover: skillsLeap
+Decided by `jump-mover` (Live 2, pass): all 102 moving calls of a jump were `skillsLeap`'s; `playerJumpGravity` ran alongside and never moved the player.
+
+jump-lever: move
+Decided by `jump-move` (Live 2, pass): x3 on `skillsLeap`'s displacement tripled the jump (3.00 times near, 2.95 times far); `jump-stat` showed the stat route never engages, since a jump does not read Jump Power (`dbg-stat-jump` not-observed with the control logging).
+
+walkable-test: not-observed
+Decided by `walkable-control` (Live 2, fail): `family` read blocked on open floor and at the player's own position, so `walkable-prop` and `walkable-edge` did not run. This `not-observed` closes nothing: its control failed, and the allowed values have no `not-run` for this key (§ Not established).
 
 The values each key may take (Live 1 decides the first six, Live 2 the rest):
 
@@ -828,21 +977,49 @@ The values each key may take (Live 1 decides the first six, Live 2 the rest):
 
 ## Not established
 
-- Which value of `inputState` means "pressed", and how the gate derives the
-  index it reads from the slot counter.
-- What the third argument of `CheckTalentUse` is on this machine, and why the
-  gate is entered about 85 times a second.
-- Whether setting a slot's `abilityQueue` or `inputState` entry, or calling
-  `InputSimulate`, makes the gate cast that slot, and whether the gate then
-  keeps its cooldown and mana checks.
-- What each of the `playerEffect` entries `TalentUseSetSpeed` writes means,
-  and which member holds the caster still.
-- Whether `StatMovementSpeed` caps its result, and which value the walk's
-  final step is computed from.
-- Which script moves the player during a jump, and where its length is
-  decided.
-- Whether `playerSkipCollisions` lets the player pass collision props, and who
-  sets it.
-- Whether `objZoneGenV2` exists in a town, and so whether `IsObtainablePlace`
-  says anything there; what marks the walkable map's edge in a room the zone
-  generator did not build.
+Settled by the sessions, and so off this list: which `inputState` value
+means pressed (4, on the press frame); which entries Q, E, R and Y use (3 to
+6); what `CheckTalentUse`'s arguments are on this machine (the player, 1 and
+1, once a frame); that a write into the slot's entry inside the gate's call
+casts the slot and the cooldown still holds; and which script moves the
+player during a jump (`skillsLeap`). Still open:
+
+- **Whether the gate still charges mana** for a cast made through the input
+  lever (`cast-gate`, not-observed: no mana member was found to watch), and
+  whether it checks the other requirements `TalentRequirement` covers.
+- **The other bar columns.** Only the entries of Q, E, R and Y (3 to 6) were
+  measured; how the gate derives the entry for the other columns, and why
+  entries 26 and 25 move with Q and E, were not read. Whether a slot's
+  `abilityQueue` or `mobileTalentPressed` entry, or `InputSimulate`, would
+  also cast it was not tried.
+- **What holds the caster back during a cast.** The penalty was measured
+  (`penalty-baseline`), but no player member holding it was found
+  (`penalty-vars`), `pSt` is an array the probe's watch cannot read, and what
+  each `playerEffect` entry `TalentUseSetSpeed` writes means was not read. So
+  where a lever could take the penalty away is open (`penalty-lever`
+  not-run).
+- **Where the walk's displacement is applied, and why x0.5 on movement speed
+  gives 0.785.** No row moves the walk (`walk-mover`), and halving id 64 at
+  the dispatcher slowed the step to 0.785 of itself (`speed-stat`), so the
+  step is not proportional to that stat: there may be a base the stat adds
+  to, a cap or a floor. Whether `StatMovementSpeed` caps its result, and
+  which value the final step is computed from, were not read; the factor
+  that gives an exact 0.5 is not known.
+- **Where the jump's length is decided.** Scaling `skillsLeap`'s own
+  displacement tripled the jump (`jump-move`), and a jump does not read Jump
+  Power (`jump-stat`, `dbg-stat-jump`), but how `skillsLeap` turns the
+  cursor distance into a step, and the jump's state members (`jump-vars`
+  not-run: `pSt` unreadable), were not read. A tripled jump's landing check
+  was not measured.
+- **Whether `playerSkipCollisions` lets the player pass collision props**,
+  and who sets it.
+- **How to tell a walkable landing point from one past the map's edge**
+  (`walkable-test`: not-observed, its control `walkable-control` failed).
+  The probe's `family` read, the player's `place_meeting` against
+  `Collision_Parent_obj`, said `blocked` on open floor and at the player's
+  own position, for a reason not established, so a point inside a prop and
+  the town's edge were never read. The path grid read `free` and the wall line
+  `clear` at those open points, but with the control failed that is no
+  verdict on either. Whether `objZoneGenV2` exists in a town, and so whether
+  `IsObtainablePlace` says anything there, and what marks the walkable map's
+  edge in a room the zone generator did not build, are open as before.
