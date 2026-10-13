@@ -717,7 +717,7 @@ private:
 // read and delete so the panel can read it and remove a finished session
 // while the game still runs. It has no destructor and nothing closes it at
 // process exit (the producer's writer thread is what aborted every exit,
-// HS-Offline-Tracker #201); Windows closes the handle with the process.
+// ForgePact #201); Windows closes the handle with the process.
 // tests/tracker_mod_exit_probe.cpp holds one open with lines pending across
 // ExitProcess.
 struct TrackerJournalFile {

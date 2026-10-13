@@ -1,0 +1,12 @@
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"bridge_status","sequence":1,"emitted_at_unix_ms":1700000000000,"process_id":777,"build_id":"forgepact-fixture","state":"transport_ready","detail":"gold=both xp=both kills=both drops=both"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"room","sequence":2,"emitted_at_unix_ms":1700000000000,"process_id":777,"build_id":"forgepact-fixture","room":"Town_01"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"progress","sequence":3,"emitted_at_unix_ms":1700000000000,"process_id":777,"build_id":"forgepact-fixture","name":"Sorak"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"room","sequence":4,"emitted_at_unix_ms":1700000005000,"process_id":777,"build_id":"forgepact-fixture","room":"Act_01_02"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"satanic_zone","sequence":5,"emitted_at_unix_ms":1700000005000,"process_id":777,"build_id":"forgepact-fixture","zone":"Satanic_1_3","buffs":[6,14],"debuffs":[3]}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"vitals","sequence":6,"emitted_at_unix_ms":1700000005000,"process_id":777,"build_id":"forgepact-fixture","satanic_here":false}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"progress","sequence":7,"emitted_at_unix_ms":1700000005000,"process_id":777,"build_id":"forgepact-fixture","name":"Sorak"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"session_delta","sequence":8,"emitted_at_unix_ms":1700000010000,"process_id":777,"build_id":"forgepact-fixture","gold":150,"xp":300,"kills":4,"source":"forgepact_tracker"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"ground_drop","sequence":9,"emitted_at_unix_ms":1700000020000,"process_id":777,"build_id":"forgepact-fixture","event_id":"fp-777-9","source":"game_ground_item_create","room":"Act_01_02","item":{"name":"Fixture Heroic Axe","rarity":"Heroic","item_type":0,"item_id":104,"weapon_type":5,"amount":1}}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"heartbeat","sequence":10,"emitted_at_unix_ms":1700000030000,"process_id":777,"build_id":"forgepact-fixture"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"session_delta","sequence":11,"emitted_at_unix_ms":1700000070000,"process_id":777,"build_id":"forgepact-fixture","gold":50,"xp":100,"kills":2,"source":"forgepact_tracker"}
+{"protocol":"hs-offline-tracker/1","v":1,"kind":"heartbeat","sequence":12,"emitted_at_unix_ms":1700000090000,"process_id":777,"build_id":"forgepact-fixture"}

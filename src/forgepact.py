@@ -329,6 +329,12 @@ DEFAULTS = {
     # does. Items the player drops are not. Off by default; offline only,
     # like every mod here.
     "mod_loot_announce": False,
+    # HS Offline Tracker in ForgePact (#185): the plugin's `tracker` sensor
+    # journals gold, XP, kills, tracked drops and rooms under
+    # bp_ipc\tracker\, and the panel's tracker service turns those files into
+    # the Tracker's totals and runs. Off by default; no panel row until the
+    # Tracker tab ships.
+    "mod_tracker": False,
     # Always show Chaos Pillar mods (#7): every Chaos Pillar on screen shows
     # its box of mods without being hovered; a pillar the player has
     # activated shows it on hover again, as before. Off by default; offline
@@ -1261,6 +1267,10 @@ def build_cmds(cfg: dict) -> list:
         # Safe to send at launch: `lootann 1` only turns the switch on; the
         # plugin announces nothing until the game drops an item.
         out.append("lootann 1")
+    if cfg.get("mod_tracker", False):
+        # Safe to send at launch: `tracker 1` at character select only arms
+        # the sensor; the plugin hooks its counters once a character exists.
+        out.append("tracker 1")
     if cfg.get("mod_pillar_tips", False):
         # Safe to send at launch: `pillartips 1` only turns the switch on;
         # the plugin shows nothing until a Chaos Pillar is on screen.
@@ -2641,6 +2651,117 @@ def open_reports_folder(cfg=None) -> dict:
     return {"ok": "opened the reports folder"}
 
 
+# ---- HS Offline Tracker in ForgePact (#185): the panel side -----------------
+# The plugin's `tracker` mod appends protocol-v1 records to one file per game
+# process under bp_ipc\tracker\; forgepact_tracker's service reads them
+# read-only and keeps the Tracker's totals, journal, runs and settings under
+# ROOT\tracker. tracker_saves reads the character save for the character and
+# the boss and chest tallies. Neither adds a thread: the watcher below ticks
+# the service, and request threads call it, both through its one lock.
+# Imported on first use, so a panel that never shows the tracker never loads
+# the item tables.
+TRACKER_DIR = "tracker"
+TRACKER_SOURCE = Path.home() / "AppData" / "Local" / "HS Offline Tracker"
+TRACKER_DROPS_SERVED = 400
+_TRACKER_LOCK = threading.Lock()
+_TRACKER = {"service": None, "key": None, "saves": None}
+
+
+def tracker_sessions_dir():
+    r"""<game>\bin\bp_ipc\tracker, or None while no game is configured."""
+    cfg = load_cfg()
+    if not cfg.get("game_exe") and not DEFAULT_EXE:
+        return None
+    return ipc_dir(cfg) / TRACKER_DIR
+
+
+def tracker_pid_is_live(pid) -> bool:
+    """Whether `pid` is a running copy of the configured game, from the same
+    process listing game_running() uses. A listing that fails answers yes:
+    a session is finalized late rather than while its game still writes."""
+    try:
+        rows = snapshot_processes()
+    except OSError:
+        return True
+    try:
+        wanted = exe_path().name.lower()
+    except Exception:
+        wanted = "hero_siege.exe"
+    return any(p == pid and str(image).lower() == wanted for p, image in rows)
+
+
+def tracker_service():
+    """The tracker service, built on first use with its store under ROOT. A
+    changed ROOT or Tracker folder (a test's sandbox) builds a fresh one."""
+    from forgepact_tracker.service import TrackerService
+    key = (str(ROOT / TRACKER_DIR), str(TRACKER_SOURCE))
+    with _TRACKER_LOCK:
+        if _TRACKER["service"] is None or _TRACKER["key"] != key:
+            _TRACKER["service"] = TrackerService(ROOT / TRACKER_DIR, tracker_sessions_dir,
+                                                 is_live=lambda pid: tracker_pid_is_live(pid),
+                                                 tracker_source=TRACKER_SOURCE)
+            _TRACKER["key"] = key
+            _TRACKER["saves"] = None
+        return _TRACKER["service"]
+
+
+def tracker_state(cfg) -> dict:
+    """/api/tracker: the switch, the Tracker's snapshot and the session."""
+    service = tracker_service()
+    service.tick()
+    snap = service.snapshot()
+    catching_up = snap.pop("catching_up", False)
+    session = snap.pop("session", None)
+    return {"on": bool(cfg.get("mod_tracker", False)), "snapshot": snap,
+            "revision": snap.get("revision", 0), "extra_revision": snap.get("extra_revision", 0),
+            "catching_up": catching_up, "session": session}
+
+
+def tracker_extra() -> dict:
+    """/api/tracker/extra: the character, the series and the journal, newest
+    first and at most TRACKER_DROPS_SERVED entries."""
+    extra = tracker_service().extra()
+    extra["drops"] = list(extra.get("drops") or [])[:TRACKER_DROPS_SERVED]
+    return extra
+
+
+def tracker_reply(result: dict):
+    """A service result as (body, HTTP code): the panel's {"err": ...} on a refusal."""
+    if result.get("ok") is False:
+        return {"err": result.get("error") or "the tracker refused the change"}, 400
+    return result, 200
+
+
+def tracker_watch(cfg, running: bool) -> None:
+    """The watcher's tracker step: ingest the session files, finalize ended
+    sessions and, while the game runs, poll the character saves. Runs only
+    once the tracker has something to do: the switch is on, or a session
+    folder exists from an earlier session."""
+    sessions = tracker_sessions_dir()
+    if not cfg.get("mod_tracker", False) and not (sessions is not None and sessions.is_dir()):
+        return
+    service = tracker_service()
+    service.tick()
+    import tracker_saves
+    with _TRACKER_LOCK:
+        saves = _TRACKER["saves"]
+        if saves is None:
+            saves = _TRACKER["saves"] = tracker_saves.SaveWatcher(ROOT)
+    if not running:
+        if saves.running:
+            saves.game_stopped()
+        return
+    if not saves.running:
+        saves.game_started()
+        return
+    try:
+        records = saves.poll()
+    except tracker_saves.SaveError:
+        return
+    for record in records:
+        service.accept_progress(record)
+
+
 def watcher():
     """Re-apply the settings automatically every time the game LAUNCHES."""
     # False is intentional: if the panel itself starts after the game, the
@@ -2669,6 +2790,12 @@ def watcher():
         try:
             write_panel_json(cfg)
             watch_game_exit(cfg, now, exit_hold)
+        except Exception:
+            pass
+        # The tracker (#185), in its own try for the same reason: a tracker
+        # that raises must never stop a launch from being noticed.
+        try:
+            tracker_watch(cfg, now)
         except Exception:
             pass
 
@@ -3069,6 +3196,18 @@ class H(BaseHTTPRequestHandler):
                         "lastApplied": LAST["applied"], "queued": LAST["queued"],
                         "launch": offline_launcher.launch_status(),
                         "incidents": incidents_state(cfg)})
+        elif u.path in ("/api/tracker", "/api/tracker/extra", "/api/tracker/runs", "/api/tracker/settings"):
+            try:
+                if u.path == "/api/tracker":
+                    self._json(tracker_state(load_cfg()))
+                elif u.path == "/api/tracker/extra":
+                    self._json(tracker_extra())
+                elif u.path == "/api/tracker/runs":
+                    self._json({"runs": tracker_service().runs()})
+                else:
+                    self._json({"settings": tracker_service().get_settings()})
+            except Exception as e:
+                self._json({"err": f"error: {e}"}, 500)
         elif u.path != "/api" and not u.path.startswith("/api/") and (f := panel_file(u.path)):
             self._file(f)
         else:
@@ -3172,7 +3311,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_pillar_tips", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_tracker", "mod_pillar_tips", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3332,6 +3471,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"jumpscenery {1 if cfg['mod_jump_scenery'] else 0}"], cfg)
                     elif key == "mod_loot_announce":
                         send_cmds([f"lootann {1 if cfg['mod_loot_announce'] else 0}"], cfg)
+                    elif key == "mod_tracker":
+                        send_cmds([f"tracker {1 if cfg['mod_tracker'] else 0}"], cfg)
                     elif key == "mod_pillar_tips":
                         send_cmds([f"pillartips {1 if cfg['mod_pillar_tips'] else 0}"], cfg)
                     elif key in FLIGHT_CHARM_WORDS:
@@ -3433,6 +3574,17 @@ class H(BaseHTTPRequestHandler):
                 self._json(launch_modded_game(cfg))
             elif u.path == "/api/openreports":
                 self._json(open_reports_folder(cfg))
+            elif u.path == "/api/tracker/reset":
+                self._json(*tracker_reply(tracker_service().reset()))
+            elif u.path == "/api/tracker/pause":
+                if not isinstance(body.get("on"), bool):
+                    self._json({"err": "on must be true or false"}, 400); return
+                self._json(*tracker_reply(tracker_service().pause(body["on"])))
+            elif u.path == "/api/tracker/settings":
+                # The whole Settings document, as HS Offline Tracker keeps it.
+                self._json(*tracker_reply(tracker_service().set_settings(body)))
+            elif u.path == "/api/tracker/import":
+                self._json(*tracker_reply(tracker_service().run_import()))
             else:
                 self._json({"err": "not found"}, 404)
         except Exception as e:

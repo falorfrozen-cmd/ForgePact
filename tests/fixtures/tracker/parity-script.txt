@@ -1,0 +1,99 @@
+# The shared fixture of tests/test_tracker_parity.py (ForgePact #185).
+#
+# tests/tracker_mod_parity_harness.cpp plays this script through the real
+# TrackerMod core and its Win32 writer into a session file; the test then
+# reads that file through the panel's tracker service and compares what the
+# ledger reports with the harness's own counters. One operation per line:
+#
+#   identity <pid> <build id>         SetIdentity, and the session file's name
+#   on                                SetEnabled(true)
+#   frame <unix ms>                   BeginFrame (opens the file on the first)
+#   end                               EndFrame, an append when it has lines,
+#                                     then AgeCreationWindow
+#   frames <n> <first ms> <step ms>   n times: frame, end
+#   status                            RecordBridgeStatus(ready, the route summary)
+#   room <name>                       NoteRoom
+#   progress <name...>                RecordProgress
+#   zone <act room> <buffs> <debuffs> <here 0|1>
+#                                     RecordSatanicZone(SatanicZoneCode(room)),
+#                                     ids comma-separated, `-` for none
+#   gold|xp|kill <argc> <value...>    CountGold/CountXp/CountKill of what
+#                                     CaptureGold/CaptureXp/CaptureKill decode;
+#                                     a value is r<real>, i<int32>, l<int64> or x
+#                                     (unsupported)
+#   xpfalse <argc> <value...>         CountXp answered by an explicit false
+#   create <key>                      NoteCreated(struct key)
+#   drop <key> <rarity> <type> <id> <weapon type> <stamp> <name...>
+#                                     DecideDrop: the guard asks RecentlyCreated
+#                                     of <key>, the identity is item:<type>:<stamp>
+#   drain                             Drain, appended (`tracker 0`)
+#
+# Lines starting with # and blank lines are ignored.
+
+identity 4242 forgepact-parity
+on
+frame 1700000000000
+status
+room Town_01
+progress Sorak
+end
+frames 29 1700000000016 16
+
+# Into an act zone: a room change, its Satanic zone, then the fight.
+frame 1700000001000
+room Act_01_02
+zone Act_01_03 6,14 3 0
+kill 1 r12
+kill 1 r12
+kill 1 i7
+kill 2 r1 r2
+kill 1 r-1
+gold 2 r0 r150
+gold 1 l75
+gold 4 r1 r2 r3 x
+gold 1 r0.5
+xp 2 r300 r1
+xp 2 i45 r0
+xpfalse 2 r50 r1
+xp 1 r999
+end
+
+# One frame of drops: a create in this frame, one in the frame before.
+frame 1700000001016
+create 11
+create 12
+create 13
+create 14
+create 15
+create 16
+end
+frame 1700000001032
+create 17
+create 18
+drop 11 4 2 101 0 s11 Parity Set Ring
+drop 12 6 0 102 3 s12 Parity Satanic Blade
+drop 13 7 1 103 0 s13 Parity Angelic Helm
+drop 14 9 0 104 5 s14 Parity Heroic Axe
+drop 15 10 3 105 0 s15 Parity Unholy Chest
+drop 16 5 0 106 0 s16 Parity Mythic Sword
+drop 17 1 0 107 0 s17 Parity Common Dagger
+drop 18 9 0 104 5 s14 Parity Heroic Axe
+drop 99 9 0 108 0 s99 Parity Bag Drop
+end
+frames 27 1700000001048 16
+
+# A second zone, more of the same, and a heartbeat's worth of frames.
+frame 1700000012000
+room Act_01_03
+zone Act_01_03 6,14 3 1
+kill 1 r12
+gold 2 r0 r40
+xp 2 r60 r1
+end
+frames 29 1700000012016 16
+# A minute on, back in town: long enough for the run to be filed.
+frame 1700000075000
+room Town_01
+kill 1 r12
+end
+drain
