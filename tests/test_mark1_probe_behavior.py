@@ -16,7 +16,10 @@ per nested call and only within their frame budget; `move` halves and triples
 a call's own displacement and leaves a call that did not move alone; `stat`
 changes only a number returned for the matching id and the local player; a
 second lever replaces the first. `walkable`: the verdict line for each
-field's values and `scan`'s point list. `parse`: every form, accepted and
+field's values, each field's raw builtin answer printed beside it (and what a
+blocked family met), place_meeting's answer read as a meeting (false or 0
+free, true or 1 blocked) apart from collision_line's instance-or-`noone`, an
+unrecognised kind left unreadable, and `scan`'s point list. `parse`: every form, accepted and
 refused. The status, `hook`, `show`, `args`, `watch`, `count` and `pos` lines.
 """
 import os
@@ -152,6 +155,16 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
 
     def test_walkable_scan_point_list(self):
         self.assertScenario("walkable/scan_point_list")
+
+    def test_walkable_reads_a_meeting_as_a_boolean_and_a_line_as_an_instance(self):
+        self.assertScenarios("walkable/meeting_false_or_zero_is_free_true_or_one_blocked",
+                             "walkable/meeting_of_an_unrecognised_kind_is_unreadable",
+                             "walkable/wall_line_instance_crossed_noone_clear", "walkable/grid_cell_minus_one_blocked")
+
+    def test_walkable_prints_each_fields_raw_result(self):
+        self.assertScenarios("walkable/a_point_with_nothing_read_is_unreadable_throughout",
+                             "walkable/tiles_not_enumerated_print_unreadable", "walkable/raw_fields_follow_the_line",
+                             "walkable/raw_error_and_what_a_blocked_family_met", "walkable/met_names_object_and_id")
 
     # ---- the parsers -----------------------------------------------------------
 

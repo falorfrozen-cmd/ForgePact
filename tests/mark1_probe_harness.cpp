@@ -18,7 +18,9 @@
 // scales a number once when the dispatcher hands the id to the detoured
 // getter; a second lever replaces the first. Walkable (walkable/*): the
 // verdict line for each field's values, `unreadable` for every reading not
-// made, and `scan`'s point list. Parsers (parse/*): every form, accepted and
+// made, each field's raw builtin answer, place_meeting read as a meeting
+// (false or 0 free) and collision_line as an instance or noone, and `scan`'s
+// point list. Parsers (parse/*): every form, accepted and
 // refused. The lines: the bare status, `hook`, `show`, `args`, `watch`,
 // `count` and `pos`, including pos's frame samples (a step no row made is an
 // `outside` residual; fewer than two samples measure `none`).
@@ -670,22 +672,26 @@ int main()
         w.tilesRead = true;
         w.tiles = { { "Tiles_1", 0 }, { "Tiles_2", 17 } };
         check("walkable/line_with_every_field_free", WalkLine(w)
-              == "walkable x=320 y=96.5 room=in grid=free family=free wall-line=clear tile=Tiles_1:0,Tiles_2:17", WalkLine(w));
+              == "walkable x=320 y=96.5 room=in grid=free family=free wall-line=clear tile=Tiles_1:0,Tiles_2:17"
+                 " grid-raw=none family-raw=none wall-line-raw=none", WalkLine(w));
         w.roomIn = false;
         w.grid = Grid::Blocked;
         w.family = Family::Blocked;
         w.wallLine = WallLine::Crossed;
         w.tiles = {};
         check("walkable/line_with_every_field_blocked", WalkLine(w)
-              == "walkable x=320 y=96.5 room=out grid=blocked family=blocked wall-line=crossed tile=none", WalkLine(w));
+              == "walkable x=320 y=96.5 room=out grid=blocked family=blocked wall-line=crossed tile=none"
+                 " grid-raw=none family-raw=none wall-line-raw=none met=unreadable", WalkLine(w));
         w.grid = Grid::Unreadable;
         w.tiles = { { "a", 1 }, { "b", 2 }, { "c", 3 }, { "d", 4 }, { "e", 5 } };
         check("walkable/grid_unreadable_and_four_tile_layers_at_most", WalkLine(w)
-              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=a:1,b:2,c:3,d:4", WalkLine(w));
+              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=a:1,b:2,c:3,d:4"
+                 " grid-raw=none family-raw=none wall-line-raw=none met=unreadable", WalkLine(w));
         // A layer found whose cell could not be read prints unreadable, not a 0.
         w.tiles = { { "Tiles_1", 3 }, { "Tiles_2", std::nullopt } };
         check("walkable/a_tile_cell_with_no_value_prints_unreadable", WalkLine(w)
-              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=Tiles_1:3,Tiles_2:unreadable",
+              == "walkable x=320 y=96.5 room=out grid=unreadable family=blocked wall-line=crossed tile=Tiles_1:3,Tiles_2:unreadable"
+                 " grid-raw=none family-raw=none wall-line-raw=none met=unreadable",
               WalkLine(w));
     }
     {
@@ -693,12 +699,84 @@ int main()
         // place_meeting or collision_line must never print as open floor.
         const WalkPoint none{};
         check("walkable/a_point_with_nothing_read_is_unreadable_throughout", WalkLine(none)
-              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable", WalkLine(none));
+              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable"
+                 " grid-raw=none family-raw=none wall-line-raw=none", WalkLine(none));
         WalkPoint tilesOnly;
         tilesOnly.tiles = { { "Tiles_1", 5 } };
         check("walkable/tiles_not_enumerated_print_unreadable", WalkLine(tilesOnly)
-              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable",
+              == "walkable x=0 y=0 room=out grid=unreadable family=unreadable wall-line=unreadable tile=unreadable"
+                 " grid-raw=none family-raw=none wall-line-raw=none",
               WalkLine(tilesOnly));
+    }
+    {
+        // place_meeting answers whether the mask meets the family: a bool, or
+        // a number where 0 means no meeting. Live 2 read family=blocked at the
+        // player's own position; a numeric 0 read as "id >= 0" is one cause.
+        const auto raw = [](const char* kind, double v) {
+            RawResult r;
+            r.state = RawResult::State::Read;
+            r.kind = kind;
+            r.number = v;
+            return r;
+        };
+        const bool isFree = FamilyFrom(raw("bool", 0)) == Family::Free && FamilyFrom(raw("real", 0)) == Family::Free
+            && FamilyFrom(raw("int32", 0)) == Family::Free && FamilyFrom(raw("int64", 0)) == Family::Free;
+        const bool isBlocked = FamilyFrom(raw("bool", 1)) == Family::Blocked && FamilyFrom(raw("real", 1)) == Family::Blocked
+            && FamilyFrom(raw("int64", 1)) == Family::Blocked;
+        check("walkable/meeting_false_or_zero_is_free_true_or_one_blocked", isFree && isBlocked);
+        // Negative control: anything else is no answer at all.
+        RawResult kindless = raw("undefined", 0);
+        kindless.number.reset();
+        RawResult failed;
+        failed.state = RawResult::State::Failed;
+        const bool unread = FamilyFrom(raw("string", 0)) == Family::Unreadable && FamilyFrom(raw("ref", 0)) == Family::Unreadable
+            && FamilyFrom(kindless) == Family::Unreadable && FamilyFrom(failed) == Family::Unreadable
+            && FamilyFrom(RawResult{}) == Family::Unreadable;
+        check("walkable/meeting_of_an_unrecognised_kind_is_unreadable", unread);
+
+        // collision_line answers an instance or noone (-4): never "0 = clear".
+        const bool crossed = WallLineFrom(raw("ref", 100234)) == WallLine::Crossed
+            && WallLineFrom(raw("real", 100234)) == WallLine::Crossed && WallLineFrom(raw("int32", 0)) == WallLine::Crossed
+            && WallLineFrom(raw("bool", 1)) == WallLine::Crossed;
+        const bool clear = WallLineFrom(raw("real", -4)) == WallLine::Clear && WallLineFrom(raw("ref", -4)) == WallLine::Clear
+            && WallLineFrom(raw("bool", 0)) == WallLine::Clear;
+        const bool lineUnread = WallLineFrom(raw("string", 5)) == WallLine::Unreadable && WallLineFrom(kindless) == WallLine::Unreadable
+            && WallLineFrom(failed) == WallLine::Unreadable;
+        check("walkable/wall_line_instance_crossed_noone_clear", crossed && clear && lineUnread);
+
+        // mp_grid_get_cell: -1 blocked, 0 free, anything not a number unreadable.
+        const bool grid = GridFrom(raw("real", -1)) == Grid::Blocked && GridFrom(raw("real", 0)) == Grid::Free
+            && GridFrom(raw("int32", 0)) == Grid::Free && GridFrom(raw("bool", 0)) == Grid::Unreadable
+            && GridFrom(failed) == Grid::Unreadable;
+        check("walkable/grid_cell_minus_one_blocked", grid);
+
+        // Each builtin-read field prints the raw answer it came from.
+        WalkPoint p;
+        p.x = 100;
+        p.y = 200;
+        p.roomIn = true;
+        p.gridRaw = raw("real", 0);
+        p.familyRaw = raw("bool", 0);
+        p.wallLineRaw = raw("real", -4);
+        p.grid = GridFrom(p.gridRaw);
+        p.family = FamilyFrom(p.familyRaw);
+        p.wallLine = WallLineFrom(p.wallLineRaw);
+        p.tilesRead = true;
+        check("walkable/raw_fields_follow_the_line", WalkLine(p)
+              == "walkable x=100 y=200 room=in grid=free family=free wall-line=clear tile=none"
+                 " grid-raw=real:0 family-raw=bool:false wall-line-raw=real:-4", WalkLine(p));
+        p.familyRaw = raw("real", 1);
+        p.family = FamilyFrom(p.familyRaw);
+        p.wallLineRaw = failed;
+        p.wallLine = WallLineFrom(p.wallLineRaw);
+        p.met = MetText(raw("ref", 100234), "Fence_obj");
+        check("walkable/raw_error_and_what_a_blocked_family_met", WalkLine(p)
+              == "walkable x=100 y=200 room=in grid=free family=blocked wall-line=unreadable tile=none"
+                 " grid-raw=real:0 family-raw=real:1 wall-line-raw=error met=Fence_obj:100234", WalkLine(p));
+        const bool met = MetText(raw("real", -4), "") == "noone" && MetText(failed, "x") == "error"
+            && MetText(RawResult{}, "x") == "none" && MetText(raw("ref", 7), "") == "?:7"
+            && MetText(raw("real", 7), "Bad name,x:y") == "Bad_name_x_y:7" && MetText(kindless, "x") == "undefined:?";
+        check("walkable/met_names_object_and_id", met);
     }
     {
         const bool room = RoomContains(0, 0, 640, 480) && RoomContains(639.5, 479, 640, 480) && !RoomContains(640, 10, 640, 480)

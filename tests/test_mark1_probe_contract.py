@@ -232,6 +232,31 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertEqual(self.code.count("GetModuleHandle"), 1)
         self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", self.code)
 
+    def test_research_only_walkable_reads_a_meeting_and_a_line_through_their_own_verdicts(self):
+        # Live 2 read family=blocked at the player's own position: one shared
+        # hit test read place_meeting's answer as an instance id, where a
+        # numeric 0 is "no meeting". Each builtin now has its own verdict in
+        # the core (test_mark1_probe_behavior.py runs them), and its raw answer
+        # is kept beside it for the line.
+        self.assertNotIn("M1pHit", self.code)
+        point = self.body("static M1pNs::WalkPoint M1pWalkPoint(double px, double py, double x, double y)")
+        meeting = point.index('M1pCallRaw(player, "place_meeting"')
+        self.assertLess(meeting, point.index("w.family = M1pNs::FamilyFrom(w.familyRaw);"))
+        line = point.index('M1pCallRaw(player, "collision_line"')
+        self.assertLess(line, point.index("w.wallLine = M1pNs::WallLineFrom(w.wallLineRaw);"))
+        self.assertIn("w.grid = M1pNs::GridFrom(w.gridRaw);", point)
+        self.assertNotIn("FamilyFrom(w.wallLineRaw)", point)
+        self.assertNotIn("WallLineFrom(w.familyRaw)", point)
+        # What a blocked family met is looked up only then, on the same family.
+        self.assertIn("if (w.family == M1pNs::Family::Blocked) w.met = M1pMet(player, x, y, family);", point)
+        met = self.body("static std::string M1pMet(CInstance* player, double x, double y, int family)")
+        self.assertIn('"instance_place"', met)
+        self.assertIn("M1pNs::MetText(inst, name)", met)
+        # The verdicts themselves live in the core, game-independent.
+        for verdict in ("inline Family FamilyFrom(const RawResult& r)", "inline WallLine WallLineFrom(const RawResult& r)",
+                        "inline Grid GridFrom(const RawResult& r)", "inline std::string RawText(const RawResult& r)"):
+            self.assertIn(verdict, self.header)
+
     # ---- writes ---------------------------------------------------------------------
 
     def test_research_only_game_state_is_written_only_inside_the_levers(self):

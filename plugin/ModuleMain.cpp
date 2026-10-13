@@ -62835,35 +62835,90 @@ static void M1pPos(int64_t frames)
 
 // ---- walkable ----------------------------------------------------------------------
 
-// global.pathGrid's cell at the point: mp_grid_get_cell answers -1 for a
-// blocked cell (RDM § 22.7: 16 px cells built from the room's blockers).
-static M1pNs::Grid M1pGridAt(double x, double y)
+// A builtin's answer as the core reads it: the kind's name, and its value
+// where it has one (a bool as 0 or 1). The verdict is the core's (GridFrom,
+// FamilyFrom, WallLineFrom), so a meeting and an instance answer are never
+// read the same way.
+static M1pNs::RawResult M1pRaw(const RValue& r)
 {
+    M1pNs::RawResult out;
+    out.state = M1pNs::RawResult::State::Read;
+    const auto kind = static_cast<uint32_t>(r.m_Kind) & 0x0FFFFFFFU;
+    switch (kind) {
+    case VALUE_REAL:      out.kind = "real"; break;
+    case VALUE_INT32:     out.kind = "int32"; break;
+    case VALUE_INT64:     out.kind = "int64"; break;
+    case VALUE_BOOL:      out.kind = "bool"; break;
+    case VALUE_STRING:    out.kind = "string"; break;
+    case VALUE_OBJECT:    out.kind = "struct"; break;
+    case VALUE_ARRAY:     out.kind = "array"; break;
+    case VALUE_PTR:       out.kind = "ptr"; break;
+    case VALUE_UNDEFINED: out.kind = "undefined"; break;
+    case VALUE_NULL:      out.kind = "null"; break;
+    case VALUE_REF:       out.kind = "ref"; break;
+    default:              out.kind = "kind" + std::to_string(kind); break;
+    }
     try {
-        const RValue grid = g_Yytk->CallBuiltin("variable_global_get", { RValue("pathGrid") });
-        if (!N1Numeric(grid) && grid.m_Kind != VALUE_REF) return M1pNs::Grid::Unreadable;
-        const RValue cell = g_Yytk->CallBuiltin("mp_grid_get_cell", { grid, RValue((double)M1pNs::GridCellOf(x)),
-                                                                      RValue((double)M1pNs::GridCellOf(y)) });
-        if (!N1Numeric(cell)) return M1pNs::Grid::Unreadable;
-        return cell.ToDouble() < 0 ? M1pNs::Grid::Blocked : M1pNs::Grid::Free;
-    } catch (...) {}
-    return M1pNs::Grid::Unreadable;
+        if (kind == VALUE_BOOL) out.number = r.ToBoolean() ? 1.0 : 0.0;
+        else if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_REF) out.number = r.ToDouble();
+    } catch (...) { out.number.reset(); }
+    return out;
 }
 
-// An instance or meeting answer: a bool as it is, a ref or id >= 0 a hit (the
-// game's `noone` is -4). False for any other kind: the reading stays
-// unreadable rather than turning into either answer.
-static bool M1pHit(const RValue& r, bool& hit)
+// One builtin called with the player as self: its raw answer, `Failed` when
+// the call did not succeed or threw.
+static M1pNs::RawResult M1pCallRaw(CInstance* player, const char* name, const std::vector<RValue>& args)
 {
+    M1pNs::RawResult out;
+    out.state = M1pNs::RawResult::State::Failed;
     try {
-        if (r.m_Kind == VALUE_BOOL) { hit = r.ToBoolean(); return true; }
-        if (N1Numeric(r) || r.m_Kind == VALUE_REF) { hit = r.ToDouble() >= 0; return true; }
+        RValue r;
+        if (AurieSuccess(g_Yytk->CallBuiltinEx(r, name, player, player, args))) out = M1pRaw(r);
     } catch (...) {}
-    return false;
+    return out;
+}
+
+// global.pathGrid's cell at the point, as mp_grid_get_cell answered it (-1
+// for a blocked cell, RDM § 22.7: 16 px cells built from the room's
+// blockers). Not called when pathGrid is not a grid handle.
+static M1pNs::RawResult M1pGridAt(double x, double y)
+{
+    M1pNs::RawResult out;
+    try {
+        const RValue grid = g_Yytk->CallBuiltin("variable_global_get", { RValue("pathGrid") });
+        if (!N1Numeric(grid) && grid.m_Kind != VALUE_REF) return out;
+        out = M1pRaw(g_Yytk->CallBuiltin("mp_grid_get_cell", { grid, RValue((double)M1pNs::GridCellOf(x)),
+                                                              RValue((double)M1pNs::GridCellOf(y)) }));
+    } catch (...) { out = {}; out.state = M1pNs::RawResult::State::Failed; }
+    return out;
+}
+
+// What a blocked family met: instance_place on the same family at the same
+// point, and that instance's object name.
+static std::string M1pMet(CInstance* player, double x, double y, int family)
+{
+    M1pNs::RawResult inst;
+    inst.state = M1pNs::RawResult::State::Failed;
+    std::string name;
+    try {
+        RValue r;
+        if (AurieSuccess(g_Yytk->CallBuiltinEx(r, "instance_place", player, player, { RValue(x), RValue(y), RValue((double)family) }))) {
+            inst = M1pRaw(r);
+            if (inst.number && *inst.number >= 0) {
+                try {
+                    const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { r, RValue("object_index") });
+                    int objIdx = -1;
+                    if (N1ObjectIndex(oi, objIdx)) name = g_Yytk->CallBuiltin("object_get_name", { RValue((double)objIdx) }).ToString();
+                } catch (...) { name.clear(); }
+            }
+        }
+    } catch (...) {}
+    return M1pNs::MetText(inst, name);
 }
 
 // One point's readings. Each starts unreadable (the core's WalkPoint
-// defaults) and only a read that succeeded overwrites it.
+// defaults) and only a read that succeeded overwrites it; each builtin's raw
+// answer is kept beside its verdict.
 static M1pNs::WalkPoint M1pWalkPoint(double px, double py, double x, double y)
 {
     M1pNs::WalkPoint w;
@@ -62871,27 +62926,21 @@ static M1pNs::WalkPoint M1pWalkPoint(double px, double py, double x, double y)
     w.y = y;
     double rw = 0, rh = 0;
     w.roomIn = JsRoomSize(rw, rh) && M1pNs::RoomContains(x, y, rw, rh);
-    w.grid = M1pGridAt(x, y);
+    w.gridRaw = M1pGridAt(x, y);
+    w.grid = M1pNs::GridFrom(w.gridRaw);
     CInstance* player = g_M1pPlayer;
     const int family = M1pObjectIndex(HeroSiege::Objects::GameObject::Collision_Parent_obj);
     const int wall = M1pObjectIndex(HeroSiege::Objects::GameObject::Wall_Parent_obj);
-    try {
-        RValue r;
-        bool hit = false;
-        if (player && family >= 0
-            && AurieSuccess(g_Yytk->CallBuiltinEx(r, "place_meeting", player, player, { RValue(x), RValue(y), RValue((double)family) }))
-            && M1pHit(r, hit))
-            w.family = hit ? M1pNs::Family::Blocked : M1pNs::Family::Free;
-    } catch (...) {}
-    try {
-        RValue r;
-        bool hit = false;
-        if (player && wall >= 0
-            && AurieSuccess(g_Yytk->CallBuiltinEx(r, "collision_line", player, player,
-                                                  { RValue(px), RValue(py), RValue(x), RValue(y), RValue((double)wall), RValue(false), RValue(true) }))
-            && M1pHit(r, hit))
-            w.wallLine = hit ? M1pNs::WallLine::Crossed : M1pNs::WallLine::Clear;
-    } catch (...) {}
+    if (player && family >= 0) {
+        w.familyRaw = M1pCallRaw(player, "place_meeting", { RValue(x), RValue(y), RValue((double)family) });
+        w.family = M1pNs::FamilyFrom(w.familyRaw);
+        if (w.family == M1pNs::Family::Blocked) w.met = M1pMet(player, x, y, family);
+    }
+    if (player && wall >= 0) {
+        w.wallLineRaw = M1pCallRaw(player, "collision_line",
+                                   { RValue(px), RValue(py), RValue(x), RValue(y), RValue((double)wall), RValue(false), RValue(true) });
+        w.wallLine = M1pNs::WallLineFrom(w.wallLineRaw);
+    }
     try {
         const RValue layers = g_Yytk->CallBuiltin("layer_get_all", {});
         if (layers.m_Kind == VALUE_ARRAY) {

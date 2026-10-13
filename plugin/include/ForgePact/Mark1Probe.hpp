@@ -572,6 +572,72 @@ enum class Grid : int { Free, Blocked, Unreadable };
 enum class Family : int { Free, Blocked, Unreadable };
 enum class WallLine : int { Clear, Crossed, Unreadable };
 
+// A builtin's answer as the adapter received it, so the line can show what
+// each verdict came from. `NotCalled`: the call was not made (no player, an
+// object that did not resolve, no path grid); `Failed`: the call itself
+// failed or threw; `Read`: `kind` is the RValue kind in lower case without its
+// prefix (`bool`, `real`, `int32`, `int64`, `ref`, `undefined`, ...) and
+// `number` its value where it has one (a bool as 0 or 1).
+struct RawResult {
+    enum class State : int { NotCalled, Failed, Read };
+    State                 state = State::NotCalled;
+    std::string           kind;
+    std::optional<double> number;
+};
+
+inline bool RawNumeric(const RawResult& r)
+{
+    return r.kind == "real" || r.kind == "int32" || r.kind == "int64";
+}
+
+// `<kind>:<value>`, `error` for a failed call, `none` for one not made.
+inline std::string RawText(const RawResult& r)
+{
+    if (r.state == RawResult::State::NotCalled) return "none";
+    if (r.state == RawResult::State::Failed) return "error";
+    if (!r.number) return r.kind + ":?";
+    if (r.kind == "bool") return r.kind + (*r.number != 0 ? ":true" : ":false");
+    return r.kind + ":" + NumberText(*r.number);
+}
+
+// place_meeting answers whether the mask meets the family: true or any
+// non-zero number is a meeting, false or 0 is none. Not an instance answer:
+// a numeric 0 is "no meeting", never instance 0. Any other kind (a ref
+// included) is no answer, so the field stays unreadable.
+inline Family FamilyFrom(const RawResult& r)
+{
+    if (r.state != RawResult::State::Read || !r.number || !(r.kind == "bool" || RawNumeric(r))) return Family::Unreadable;
+    return *r.number != 0 ? Family::Blocked : Family::Free;
+}
+
+// collision_line answers an instance (an id or ref >= 0) or `noone` (-4); a
+// bool is taken as it is.
+inline WallLine WallLineFrom(const RawResult& r)
+{
+    if (r.state != RawResult::State::Read || !r.number) return WallLine::Unreadable;
+    if (r.kind == "bool") return *r.number != 0 ? WallLine::Crossed : WallLine::Clear;
+    if (!RawNumeric(r) && r.kind != "ref") return WallLine::Unreadable;
+    return *r.number >= 0 ? WallLine::Crossed : WallLine::Clear;
+}
+
+// mp_grid_get_cell answers -1 for a blocked cell (RDM § 22.7).
+inline Grid GridFrom(const RawResult& r)
+{
+    if (r.state != RawResult::State::Read || !r.number || !RawNumeric(r)) return Grid::Unreadable;
+    return *r.number < 0 ? Grid::Blocked : Grid::Free;
+}
+
+// What a blocked family met: instance_place's answer on the same family at
+// the same point, as `<object name>:<id>`, `noone`, or its raw text when it
+// is not an instance answer.
+inline std::string MetText(const RawResult& inst, std::string objectName)
+{
+    if (inst.state != RawResult::State::Read || !inst.number || !(RawNumeric(inst) || inst.kind == "ref")) return RawText(inst);
+    if (*inst.number < 0) return "noone";
+    for (char& ch : objectName) if (ch == ' ' || ch == ',' || ch == ':') ch = '_';
+    return (objectName.empty() ? std::string("?") : objectName) + ":" + NumberText(*inst.number);
+}
+
 // One tile layer's cell; no value means the layer was found but its cell
 // could not be read.
 struct TileCell {
@@ -583,7 +649,9 @@ struct TileCell {
 // place_meeting against Collision_Parent_obj there, a collision_line from the
 // player to it against Wall_Parent_obj, and up to four tile layers' cells.
 // `tilesRead` says the tile layers were enumerated: read with no layers
-// prints `none`, not read prints `unreadable`.
+// prints `none`, not read prints `unreadable`. The three `*Raw` answers are
+// what grid, family and wall-line were read from (GridFrom, FamilyFrom,
+// WallLineFrom); `met` is MetText, printed only when family reads blocked.
 struct WalkPoint {
     double                x = 0, y = 0;
     bool                  roomIn = false;
@@ -592,6 +660,8 @@ struct WalkPoint {
     WallLine              wallLine = WallLine::Unreadable;
     bool                  tilesRead = false;
     std::vector<TileCell> tiles;
+    RawResult             gridRaw, familyRaw, wallLineRaw;
+    std::string           met;
 };
 
 inline std::string WalkLine(const WalkPoint& w)
@@ -606,7 +676,9 @@ inline std::string WalkLine(const WalkPoint& w)
     if (!w.tilesRead) tiles = "unreadable";
     else if (tiles.empty()) tiles = "none";
     return "walkable x=" + NumberText(w.x) + " y=" + NumberText(w.y) + " room=" + (w.roomIn ? "in" : "out")
-        + " grid=" + grid + " family=" + family + " wall-line=" + wall + " tile=" + tiles;
+        + " grid=" + grid + " family=" + family + " wall-line=" + wall + " tile=" + tiles
+        + " grid-raw=" + RawText(w.gridRaw) + " family-raw=" + RawText(w.familyRaw) + " wall-line-raw=" + RawText(w.wallLineRaw)
+        + (w.family == Family::Blocked ? " met=" + (w.met.empty() ? std::string("unreadable") : w.met) : std::string());
 }
 
 inline bool RoomContains(double x, double y, double roomWidth, double roomHeight)
