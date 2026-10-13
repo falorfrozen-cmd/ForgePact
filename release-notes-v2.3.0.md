@@ -75,7 +75,10 @@ fresh fight.
   the main menu still crashed, and with the new one a close from the world, a
   close after Save & Exit, and a close from the world with Loot announcements
   on all exited cleanly with no crash report. ForgePact and HS Offline Tracker
-  0.1.4 now install the same sensor and loader files.
+  0.1.4 now install the same sensor and loader files. If you also use HS
+  Offline Tracker, update it to 0.1.4 or later: versions 0.1.1 to 0.1.3 offer
+  to update the live sensor when they see ForgePact's, and pressing that puts
+  their old sensor back, and the crash at close with it.
 
 ## How to update
 
@@ -83,9 +86,11 @@ Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
 and Boss soul pieces switches) and the panel (their switches on the Mods and
 Loot tabs), so updating only one of them leaves the other behind. Pressing **Install Mod
-Plugin** also replaces the HS Offline Tracker sensor with the fixed one;
-starting the game alone updates only the plugin, so the crash at close stays
-until you press Install. Your existing settings are retained. Start the
+Plugin** also replaces the HS Offline Tracker sensor with the fixed one. If
+you start the game from ForgePact without pressing Install, ForgePact replaces
+the old sensor itself when it can, as it does the plugin, and when it cannot,
+its launch message asks you to close the game and press Install Mod Plugin;
+until you do, the crash at close stays. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 

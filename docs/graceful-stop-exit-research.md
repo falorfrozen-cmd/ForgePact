@@ -289,12 +289,27 @@ own `v0.1.4` release: member `producer/HSOfflineTrackerProducer.dll` of
 `hs-offline-tracker-0.1.4-portable.zip` (archive sha256 `37b03813…9709`, the
 value the release's `SHA256SUMS-0.1.4.txt` states), member sha256
 `5f83e542f41490ec57106198cf8546ec178421961e388699ff1da5de45956f94`. It replaces
-the 1.3.16 package's `36608aa0…b14e`. The 0.1.4 build carries Tracker PR #8's
-exit teardown, in which the publisher is joined at unload instead of being left
-to a global destructor. `tests/test_tracker_producer_pin.py` classifies the pin
-and keeps the old entry as its negative control. The fix ships in ForgePact
-2.3.0, and a player gets it by pressing Install Mod Plugin, since the
-launch-time refresh replaces only `BloodPactPlugin.dll`.
+the 1.3.16 package's `36608aa0…b14e`, a 2026-09-05 build (its PE link time),
+byte for byte the producer of HS-Offline-Tracker v0.1.2's portable zip. The
+0.1.4 build carries Tracker PR #8's exit teardown. Nothing joins the publisher
+at `ExitProcess`, because Aurie runs no unload routine when the process ends;
+instead the thread object is held on the heap by a trivially destructible
+owner (`ExitSafeThread`, in the Tracker's
+`aurie-producer/include/hsot_aurie/exit_safe_thread.h`), so no exit-time
+destructor ever meets a `std::thread` that is still joinable. A real unload
+through Aurie's `ModuleUnload` still joins it, within two seconds.
+`tests/test_tracker_producer_pin.py` classifies the pin against the panel's own
+sets of known builds and keeps the old entry, and HS-Offline-Tracker v0.1.3's
+(`9e0c63c8…a58d`, built before that fix), as negative controls. The pin lists
+`36608aa0…` under `superseded_sha256`, so `tools/fetch_toolchain.py` (run by
+`Prepare-Plugin.bat`) replaces that file on a checkout that already holds it,
+where it used to refuse it as hand-placed. The fix ships in ForgePact 2.3.0.
+Install Mod Plugin copies the fixed sensor, and a launch from a release build
+of the panel also replaces a game's sensor whose hash is a known-aborting one
+(`refresh_stale_tracker_sensor`), under the plugin refresh's gates (the game's
+`YYToolkit.dll` and `AurieCore.dll` must be the bundled ones); otherwise the
+launch message asks for Install. A sensor it does not recognise, such as a
+newer Tracker's, is never replaced.
 
 The live gate ran on 2026-10-13, in capture
 `forgepact-185-tracker-mod-live-1`, kept with the hub's workorder. It used the

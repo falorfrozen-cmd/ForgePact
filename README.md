@@ -1369,8 +1369,9 @@ What counts as an incident:
   closes, and what Windows recorded about the crash in its Application log
   (the faulting module and offset), and that goes into the same report. If
   another mod file aborts while the game is closing, after ForgePact's clean
-  shutdown line (the tracker producer can, see the module guide's Known
-  Limitations), that is noted in `out.txt` and on the panel's card as an exit
+  shutdown line (the tracker producer ForgePact shipped through 2.2.x does,
+  see the module guide's Known Limitations; 2.3.0 ships a fixed one), that is
+  noted in `out.txt` and on the panel's card as an exit
   after a clean shutdown, not reported as a crash.
 
 Each report is a folder, `bp_ipc\reports\<date>-<time>_<perf|freeze|crash>\`:

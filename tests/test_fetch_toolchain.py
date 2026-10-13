@@ -3,6 +3,7 @@ for urllib the way tools/build_catalog.py's GitHubFetcher is substituted in
 the hub's own tests.
 """
 
+import contextlib
 import hashlib
 import io
 import json
@@ -123,6 +124,75 @@ class ExistingDifferingDestIsRefusedWithoutForce(unittest.TestCase):
             code = ft.run(manifest, root=root, fetcher=fetcher, force=True)
             self.assertEqual(code, 0)
             self.assertEqual(dest.read_bytes(), b"pinned")
+
+
+class AnEarlierPinsFileIsReplacedWithoutForce(unittest.TestCase):
+    """#185: re-pinning the tracker producer left every checkout that had run
+    Prepare-Plugin.bat holding the old pin's file, which the refusal above
+    took for a hand-placed one, so Prepare-Plugin.bat failed and a source
+    install kept the old build. A hash the entry lists in `superseded_sha256`
+    is an earlier pin's file: stale, replaced without --force."""
+
+    EARLIER = b"the file an earlier pin of this entry wrote"
+
+    def manifest(self):
+        manifest, blobs = simple_manifest([("a/one.txt", b"pinned")])
+        manifest["files"][0]["superseded_sha256"] = [sha256_hex(self.EARLIER)]
+        return manifest, blobs
+
+    def run_quietly(self, *args, **kwargs):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ft.run(*args, **kwargs)
+        return code, out.getvalue()
+
+    def test_target_an_earlier_pins_file_is_replaced_and_says_so(self):
+        with ft.temp_root() as root:
+            manifest, blobs = self.manifest()
+            dest = root / "a" / "one.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(self.EARLIER)
+            code, out = self.run_quietly(manifest, root=root, fetcher=FakeFetcher(blobs))
+            self.assertEqual(code, 0, out)
+            self.assertEqual(dest.read_bytes(), b"pinned")
+            self.assertIn("superseded", out)
+            self.assertNotIn("REFUSED", out)
+
+    def test_control_an_unknown_file_is_still_refused(self):
+        with ft.temp_root() as root:
+            manifest, blobs = self.manifest()
+            dest = root / "a" / "one.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(b"developer's own local copy")
+            code, out = self.run_quietly(manifest, root=root, fetcher=FakeFetcher(blobs))
+            self.assertNotEqual(code, 0)
+            self.assertIn("REFUSED", out)
+            self.assertEqual(dest.read_bytes(), b"developer's own local copy")
+
+    def test_a_bad_new_pin_leaves_the_earlier_file_in_place(self):
+        # All-or-nothing still holds: the stale file is replaced only by bytes
+        # that match the new pin.
+        with ft.temp_root() as root:
+            manifest, blobs = self.manifest()
+            blobs = {url: b"tampered" for url in blobs}
+            dest = root / "a" / "one.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(self.EARLIER)
+            code, out = self.run_quietly(manifest, root=root, fetcher=FakeFetcher(blobs))
+            self.assertNotEqual(code, 0)
+            self.assertIn("MISMATCH", out)
+            self.assertEqual(dest.read_bytes(), self.EARLIER)
+
+    def test_verify_only_fails_on_it_and_names_the_way_out(self):
+        with ft.temp_root() as root:
+            manifest, blobs = self.manifest()
+            dest = root / "a" / "one.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(self.EARLIER)
+            code, out = self.run_quietly(manifest, root=root, fetcher=FakeFetcher(blobs), verify_only=True)
+            self.assertNotEqual(code, 0)
+            self.assertIn("superseded", out)
+            self.assertEqual(dest.read_bytes(), self.EARLIER)
 
 
 class ExistingMatchingDestIsSkipped(unittest.TestCase):

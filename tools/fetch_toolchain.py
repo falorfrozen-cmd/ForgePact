@@ -41,7 +41,14 @@ re-downloaded (printed `ok (already present)`). A `dest` that exists with a
 *different* hash is refused during the verify phase -- exit 1, nothing
 written -- unless `--force`, which exists for a developer's own hand-placed
 file (the local CRLF `Aurie/shared.hpp` most maintainers already have from an
-Aurie checkout, per `README.md`'s old "copy it in" instructions).
+Aurie checkout, per `README.md`'s old "copy it in" instructions). The one
+exception is a hash the entry lists in `superseded_sha256`: the file an
+earlier pin of that same entry wrote. That file is stale, not hand-placed, so
+it is replaced without `--force` (printed `ok (replaced superseded ...)`),
+under the same all-or-nothing rule. Without it, re-pinning an entry made
+`Prepare-Plugin.bat` fail on every checkout that had run it before, and a
+source install kept the old file (#185: the tracker producer's earlier pin
+aborts every graceful close of the game).
 
 `--verify-only` hashes whatever is under `--root` against the manifest,
 downloads nothing, and exits 1 on the first missing or mismatched file (an
@@ -156,6 +163,11 @@ def _verify_only(manifest: dict, root: Path) -> int:
             ok = False
             continue
         actual = sha256_hex(dest.read_bytes())
+        if actual in entry.get("superseded_sha256", ()):
+            print(f"{entry['dest']}  {actual}  MISMATCH (an earlier, superseded pin's file; "
+                  f"expected {entry['sha256']} -- run without --verify-only to replace it)")
+            ok = False
+            continue
         if actual != entry["sha256"]:
             print(f"{entry['dest']}  {actual}  MISMATCH (expected {entry['sha256']})")
             ok = False
@@ -185,6 +197,7 @@ def run(
     archive_cache: Dict[str, bytes] = {}
     to_write: List[Tuple[Path, bytes]] = []
     statuses: List[str] = []
+    superseded: set = set()
     failed = False
 
     for entry in entries:
@@ -195,7 +208,11 @@ def run(
             if existing_hash == entry["sha256"]:
                 statuses.append(f"{entry['dest']}  {existing_hash}  ok (already present)")
                 continue
-            if not force:
+            if existing_hash in entry.get("superseded_sha256", ()):
+                # An earlier pin of this entry wrote it: stale, so re-fetch
+                # below and overwrite it on write, without --force.
+                superseded.add(entry["dest"])
+            elif not force:
                 print(
                     f"{entry['dest']}  {existing_hash}  REFUSED (pin wants "
                     f"{entry['sha256']}; pass --force to replace a hand-placed file)"
@@ -212,7 +229,8 @@ def run(
             continue
 
         to_write.append((dest, data))
-        statuses.append(f"{entry['dest']}  {sha256_hex(data)}  ok")
+        note = "  ok (replaced superseded earlier pin)" if entry["dest"] in superseded else "  ok"
+        statuses.append(f"{entry['dest']}  {sha256_hex(data)}{note}")
 
     if failed:
         print("nothing written -- fix the mismatches above and re-run")
@@ -246,7 +264,8 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace a dest that exists with a different hash",
+        help="replace a dest that exists with a different hash (a hash the entry "
+        "lists in superseded_sha256 is replaced without it)",
     )
     args = parser.parse_args(argv)
 

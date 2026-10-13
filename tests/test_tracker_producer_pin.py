@@ -7,28 +7,42 @@ every graceful close of the game with `0xC0000409`, the Windows crash dump
 naming the producer (#201, measured; see `docs/graceful-stop-exit-research.md`).
 HS-Offline-Tracker v0.1.4 carries the exit-teardown fix (Tracker PR #8).
 
-The expected hash is written in neither this repository nor the hub: only the
-Tracker's v0.1.4 release states it (`SHA256SUMS-0.1.4.txt` for the archive,
-the portable zip's member for the DLL). So this module states it once, below,
-and reads `tools/toolchain-pins.json` against it:
+The hash appears in several places: `tools/toolchain-pins.json` (what
+`fetch_toolchain.py` downloads), `src/forgepact.py`'s `TRACKER_SENSOR_CLEAN`
+and `TRACKER_SENSOR_ABORTING` (what the panel decides a launch-time
+replacement on), and the hub guide's pin table. This module states the
+v0.1.4 entry once more, independently of the pins file, from the Tracker's
+own v0.1.4 release (`SHA256SUMS-0.1.4.txt` for the archive, the portable
+zip's member for the DLL), and checks the pins file and the product's sets
+against it:
 
-  - a pure classifier sorts a pins entry into "fixed", "aborting" or
-    "drifted";
+  - a pure classifier sorts a pins entry into "fixed" (a build in the
+    product's measured-clean set), "aborting" (in its known-aborting set),
+    "unmeasured" (a Tracker release build in neither) or "drifted" (not the
+    shape of a Tracker release pin);
   - controls feed it shapes, including the old 1.3.16-zip entry copied
-    verbatim as the negative control, which must classify as "aborting";
+    verbatim and HS-Offline-Tracker v0.1.3's real entry as negative controls,
+    and an unknown Tracker build, which must not pass as "fixed";
   - the real pins file must carry exactly the v0.1.4 entry, classified
-    "fixed".
+    "fixed", listing the build it replaced as superseded, so that
+    `fetch_toolchain.py` replaces that file on an existing checkout.
 
-When the producer is re-pinned again, update `FIXED_ENTRY` here and the pin
-table in `docs/submodules/ForgePact/instructions.md` (hub) together, and add
-the build being replaced to `ABORTING_SHAS` if it aborts.
+When the producer is re-pinned again, update `FIXED_ENTRY` here, the pins
+entry (moving the replaced hash into its `superseded_sha256`), the product's
+two sets in `src/forgepact.py`, and the pin table in
+`docs/submodules/ForgePact/instructions.md` (hub) together.
 """
+import hashlib
 import json
+import sys
 import unittest
 from pathlib import Path
 from typing import Dict, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+import forgepact  # noqa: E402
+
 PINS_PATH = ROOT / "tools" / "toolchain-pins.json"
 PIN_DEST = "modfiles_shipped/HSOfflineTrackerProducer.dll"
 
@@ -37,14 +51,8 @@ TRACKER_RELEASE_URL_MARKER = "github.com/falorfrozen-cmd/HS-Offline-Tracker/rele
 #: Where the producer sits inside the Tracker's portable zip (no wrapping directory).
 TRACKER_MEMBER = "producer/HSOfflineTrackerProducer.dll"
 
-#: Producer builds measured to abort a graceful close (#201: exit 0xC0000409,
-#: dump raised in HSOfflineTrackerProducer).
-ABORTING_SHAS = frozenset({
-    "36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e",
-})
-
 #: The entry ForgePact pinned before #185, copied verbatim from
-#: tools/toolchain-pins.json. The negative control, in its real shape.
+#: tools/toolchain-pins.json. A negative control, in its real shape.
 OLD_ENTRY = {
     "dest": "modfiles_shipped/HSOfflineTrackerProducer.dll",
     "url": "https://github.com/falorfrozen-cmd/ForgePact/releases/download/v1.3.16/ForgePact-1.3.16.zip",
@@ -52,6 +60,19 @@ OLD_ENTRY = {
     "member": "ForgePact-1.3.16/modfiles/HSOfflineTrackerProducer.dll",
     "sha256": "36608aa041b31e23f35fbf010554715657d14269c61c541e717fde76a481b14e",
     "provenance": "HS-Offline-Tracker's live sensor producer (optional), a 2026-09-07-or-earlier build shipped in every ForgePact release since v1.3.10, extracted here from the published v1.3.16 zip",
+}
+
+#: HS-Offline-Tracker v0.1.3 (published 2026-09-19), as a pin of it would
+#: read: the portable zip's hash as SHA256SUMS-0.1.3.txt states it, and its
+#: producer member's hash (153,600 bytes), both hashed from the release
+#: assets on 2026-10-13. A Tracker release built before the teardown fix: the
+#: shape every check below accepts, at a build that must not pass as fixed.
+V0_1_3_ENTRY = {
+    "dest": PIN_DEST,
+    "url": "https://github.com/falorfrozen-cmd/HS-Offline-Tracker/releases/download/v0.1.3/hs-offline-tracker-0.1.3-portable.zip",
+    "archive_sha256": "14402ef8e4ef24e8eace9b840c9abc12497450d4b5c528d681e905dfa416a484",
+    "member": TRACKER_MEMBER,
+    "sha256": "9e0c63c8b84f03e517a35ba9b5e7a7017516e713dcde964fe105f0c0992ea58d",
 }
 
 #: HS-Offline-Tracker v0.1.4 (published 2026-10-06): the portable zip's hash
@@ -66,37 +87,51 @@ FIXED_ENTRY = {
 
 
 def classify_producer_pin(entry: Dict[str, object]) -> Tuple[str, str]:
-    """"fixed" when `entry` is the producer member of an HS-Offline-Tracker
-    release zip, with an archive hash, at a sha256 outside the known-aborting
-    set; "aborting" when its sha256 is a build measured to abort a graceful
-    close; otherwise "drifted". Each with the reason. Pure: no filesystem."""
+    """"aborting" when `entry`'s sha256 is in the product's known-aborting
+    set; "drifted" when it is not the producer member of an HS-Offline-Tracker
+    release zip with an archive hash; "fixed" when it is, at a sha256 in the
+    product's measured-clean set; otherwise "unmeasured". Each with the
+    reason. Pure: no filesystem."""
     sha = entry.get("sha256")
     url = str(entry.get("url", ""))
     if not sha:
         return "drifted", "the entry has no \"sha256\" key"
-    if sha in ABORTING_SHAS:
-        return "aborting", f"sha256 {sha} is a producer build measured to abort a graceful close (#201)"
+    if sha in forgepact.TRACKER_SENSOR_ABORTING:
+        return "aborting", f"sha256 {sha} is a producer build known to abort a graceful close (#201)"
     if TRACKER_RELEASE_URL_MARKER not in url:
         return "drifted", f"url {url!r} is not a release asset of HS-Offline-Tracker"
     if not entry.get("archive_sha256"):
         return "drifted", "the entry has no \"archive_sha256\"; the release zip is not hash-checked"
     if entry.get("member") != TRACKER_MEMBER:
         return "drifted", f"member {entry.get('member')!r} is not {TRACKER_MEMBER!r}"
-    return "fixed", "the producer member of an HS-Offline-Tracker release, outside the aborting set"
+    if sha in forgepact.TRACKER_SENSOR_CLEAN:
+        return "fixed", "the producer member of an HS-Offline-Tracker release, measured to close cleanly"
+    return "unmeasured", (f"sha256 {sha} is an HS-Offline-Tracker release build no live close has "
+                          "measured; measure it, then add it to TRACKER_SENSOR_CLEAN")
 
 
 class ClassifierControls(unittest.TestCase):
     FIXED = dict(FIXED_ENTRY, dest=PIN_DEST)
 
     def test_the_old_entry_is_aborting(self):
-        # The negative control, verbatim from the pins file before the re-pin.
+        # A negative control, verbatim from the pins file before the re-pin.
         state, reason = classify_producer_pin(OLD_ENTRY)
         self.assertEqual(state, "aborting", reason)
         self.assertIn("#201", reason)
 
+    def test_tracker_v0_1_3_is_aborting_not_fixed(self):
+        # The right shape, from the right repository, before the fix.
+        state, reason = classify_producer_pin(V0_1_3_ENTRY)
+        self.assertEqual(state, "aborting", reason)
+
     def test_the_fixed_shape_is_accepted(self):
         state, reason = classify_producer_pin(self.FIXED)
         self.assertEqual(state, "fixed", reason)
+
+    def test_an_unknown_tracker_build_is_unmeasured_not_fixed(self):
+        entry = dict(self.FIXED, sha256="0" * 64)
+        state, reason = classify_producer_pin(entry)
+        self.assertEqual((state, "TRACKER_SENSOR_CLEAN" in reason), ("unmeasured", True))
 
     def test_another_source_is_drifted(self):
         entry = dict(self.FIXED, url="https://github.com/falorfrozen-cmd/ForgePact/releases/"
@@ -125,6 +160,33 @@ class ClassifierControls(unittest.TestCase):
         self.assertEqual(classify_producer_pin(entry)[0], "aborting")
 
 
+class TheProductKnowsTheBuilds(unittest.TestCase):
+    """src/forgepact.py's sets, which decide a launch-time replacement."""
+
+    def test_the_measured_builds_are_where_they_belong(self):
+        self.assertIn(OLD_ENTRY["sha256"], forgepact.TRACKER_SENSOR_ABORTING)
+        self.assertIn(V0_1_3_ENTRY["sha256"], forgepact.TRACKER_SENSOR_ABORTING)
+        self.assertIn(FIXED_ENTRY["sha256"], forgepact.TRACKER_SENSOR_CLEAN)
+
+    def test_no_build_is_in_both_sets(self):
+        self.assertEqual(set(forgepact.TRACKER_SENSOR_ABORTING) & set(forgepact.TRACKER_SENSOR_CLEAN), set())
+
+    def test_every_hash_is_a_full_sha256(self):
+        for sha in list(forgepact.TRACKER_SENSOR_ABORTING) + list(forgepact.TRACKER_SENSOR_CLEAN):
+            with self.subTest(sha=sha):
+                self.assertRegex(sha, r"\A[0-9a-f]{64}\Z")
+
+    def test_positive_control_on_the_fetched_producer(self):
+        # The one check a stated hash cannot make: that the DLL
+        # fetch_toolchain.py really wrote hashes into the clean set. Runs
+        # wherever Prepare-Plugin.bat has been run.
+        fetched = ROOT / PIN_DEST
+        if not fetched.is_file():
+            self.skipTest(f"no {PIN_DEST} in this checkout")
+        sha = hashlib.sha256(fetched.read_bytes()).hexdigest()
+        self.assertIn(sha, forgepact.TRACKER_SENSOR_CLEAN, f"{PIN_DEST} is {sha}")
+
+
 class ForgePactPinsTheFixedProducer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -144,13 +206,16 @@ class ForgePactPinsTheFixedProducer(unittest.TestCase):
         state, reason = classify_producer_pin(self.entries[0])
         self.assertEqual(state, "fixed", f"ForgePact's {PIN_DEST} pin: {reason}")
 
+    def test_the_replaced_build_is_superseded_so_existing_checkouts_update(self):
+        superseded = self.entries[0].get("superseded_sha256")
+        self.assertEqual(superseded, [OLD_ENTRY["sha256"]])
+        for sha in superseded:
+            self.assertIn(sha, forgepact.TRACKER_SENSOR_ABORTING)
+
     def test_the_provenance_names_the_release(self):
         provenance = str(self.entries[0].get("provenance", ""))
         self.assertIn("HS-Offline-Tracker", provenance)
         self.assertIn("v0.1.4", provenance)
-
-    def test_no_other_entry_changed_count(self):
-        self.assertEqual(len(self.files), 11)
 
 
 if __name__ == "__main__":

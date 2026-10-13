@@ -12,6 +12,12 @@ Baseline tests pin what must not change: an up-to-date plugin launches with
 the same message and writes nothing, a source run never writes, and nothing
 is written while a game is running. Target tests pin the new states, the
 update itself, and Install's plain-language refusals.
+
+The same launch step replaces HS Offline Tracker's sensor when the game's is
+a build known to abort every close (refresh_stale_tracker_sensor, #185): the
+plugin refresh had cleared the only Install prompt, so a player who only
+pressed Launch kept the sensor ForgePact shipped through 2.2.x. A sensor
+outside the known-aborting set is the negative control: never replaced.
 """
 import json
 import os
@@ -266,9 +272,123 @@ class RefreshStalePluginTests(PluginFixture):
         self.assertEqual(self.installed.read_bytes(), data)
 
 
-class LaunchRefreshTests(PluginFixture):
+def sha256_of(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+# Stand-ins for HS Offline Tracker sensor builds (#185). The product's real
+# sets hold the real hashes, which tests/test_tracker_producer_pin.py pins
+# against tools/toolchain-pins.json; here each set is swapped for these
+# stand-ins' hashes, so the decision runs on files a temp directory can hold.
+SENSOR_ABORTING = b"MZ sensor stand-in: a build that aborts every graceful close"
+SENSOR_FIXED = b"MZ sensor stand-in: the build measured to close cleanly"
+SENSOR_UNKNOWN = b"MZ sensor stand-in: a newer HS Offline Tracker build"
+SENSOR_REPLACED = "HS Offline Tracker sensor replaced with the fixed build before launch."
+
+
+class SensorFixture(PluginFixture):
+    """PluginFixture plus HS Offline Tracker's sensor: the fixed build bundled,
+    nothing in the game until a test puts one there."""
+
+    def setUp(self):
+        super().setUp()
+        self.sensor = self.aurie / forgepact.TRACKER_SENSOR_DLL
+        self.bundled_sensor = self.modfiles / forgepact.TRACKER_SENSOR_DLL
+        self.bundled_sensor.write_bytes(SENSOR_FIXED)
+        self.enterContext(patch.object(forgepact, "TRACKER_SENSOR_ABORTING",
+                                       {sha256_of(SENSOR_ABORTING): "stand-in for an aborting build"}))
+        self.enterContext(patch.object(forgepact, "TRACKER_SENSOR_CLEAN",
+                                       {sha256_of(SENSOR_FIXED): "stand-in for the measured-clean build"}))
+
+
+class RefreshTrackerSensorTests(SensorFixture):
+    """refresh_stale_tracker_sensor(): an auto plugin refresh used to clear the
+    only Install prompt, so a player who only pressed Launch kept the sensor
+    that aborts every close (#185, #201)."""
+
+    def test_baseline_no_sensor_in_the_game_writes_nothing_and_says_nothing(self):
+        self.release_build()
+        self.assertEqual(forgepact.refresh_stale_tracker_sensor(self.cfg), "")
+        self.assertFalse(self.sensor.exists())
+
+    def test_baseline_the_fixed_sensor_is_left_alone(self):
+        self.release_build()
+        self.sensor.write_bytes(SENSOR_FIXED)
+        stamp = self.sensor.stat().st_mtime_ns
+        self.assertEqual(forgepact.refresh_stale_tracker_sensor(self.cfg), "")
+        self.assertEqual(self.sensor.stat().st_mtime_ns, stamp)
+
+    def test_control_a_sensor_outside_the_aborting_set_is_never_replaced(self):
+        # A newer HS Offline Tracker build, or a developer's own: not ours to
+        # judge, so nothing is written and nothing is said.
+        self.release_build()
+        for data in (SENSOR_UNKNOWN, b""):
+            with self.subTest(data=data):
+                self.sensor.write_bytes(data)
+                self.assertEqual(forgepact.refresh_stale_tracker_sensor(self.cfg), "")
+                self.assertEqual(self.sensor.read_bytes(), data)
+
+    def test_target_a_release_build_replaces_an_aborting_sensor(self):
+        self.release_build()
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        self.assertEqual(forgepact.refresh_stale_tracker_sensor(self.cfg), SENSOR_REPLACED)
+        self.assertEqual(self.sensor.read_bytes(), SENSOR_FIXED)
+        # Nothing but the sensor was written, and nothing was left beside it.
+        self.assertEqual(sorted(p.name for p in self.aurie.iterdir()),
+                         [forgepact.TRACKER_SENSOR_DLL, "YYToolkit.dll"])
+        self.assertEqual((self.aurie / "YYToolkit.dll").read_bytes(), b"chain YYToolkit.dll")
+
+    def test_a_source_run_only_advises(self):
+        self.source_run()
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        note = forgepact.refresh_stale_tracker_sensor(self.cfg)
+        self.assertIn("HS Offline Tracker sensor", note)
+        self.assertIn("Install Mod Plugin", note)
+        self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
+
+    def test_a_different_yytoolkit_or_auriecore_leaves_the_sensor_to_install(self):
+        # The same gate as the plugin's: the sensor is built against the
+        # loader's headers, and the loader files are the player's to replace.
+        self.release_build()
+        for chain_file in (self.aurie / "YYToolkit.dll", self.bin / "AurieCore.dll"):
+            with self.subTest(chain_file=chain_file.name):
+                self.sensor.write_bytes(SENSOR_ABORTING)
+                original = chain_file.read_bytes()
+                chain_file.write_bytes(b"another tool's copy")
+                try:
+                    note = forgepact.refresh_stale_tracker_sensor(self.cfg)
+                finally:
+                    chain_file.write_bytes(original)
+                self.assertIn("Install Mod Plugin", note)
+                self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
+
+    def test_only_the_measured_clean_build_is_put_in_its_place(self):
+        self.release_build()
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        for bundled in (SENSOR_UNKNOWN, SENSOR_ABORTING, None):
+            with self.subTest(bundled=bundled):
+                if bundled is None:
+                    self.bundled_sensor.unlink()
+                else:
+                    self.bundled_sensor.write_bytes(bundled)
+                self.assertIn("Install Mod Plugin", forgepact.refresh_stale_tracker_sensor(self.cfg))
+                self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
+
+    def test_a_failed_copy_keeps_the_old_sensor_and_says_why(self):
+        self.release_build()
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        with patch.object(forgepact, "_atomic_verified_copy", side_effect=PermissionError(13, "Access is denied")):
+            note = forgepact.refresh_stale_tracker_sensor(self.cfg)
+        self.assertIn("could not be updated", note)
+        self.assertIn("Access is denied", note)
+        self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
+
+
+class LaunchFixture(SensorFixture):
     """launch_modded_game() with every process spawn and native scan mocked,
-    as tests/test_offline_launcher.py does."""
+    as tests/test_offline_launcher.py does. The fixed sensor is bundled and
+    the game has none, unless a test puts one there."""
 
     def setUp(self):
         super().setUp()
@@ -282,6 +402,8 @@ class LaunchRefreshTests(PluginFixture):
         self.enterContext(patch.object(launcher, "_STATE", {"phase": "idle", "message": "Ready", "pid": 0, "attempt": 0}))
         self.enterContext(patch.object(launcher, "EXE_FACTS_CACHE", {}))
 
+
+class LaunchRefreshTests(LaunchFixture):
     def test_baseline_an_up_to_date_plugin_launches_with_the_same_message(self):
         self.release_build()
         write_plugin(self.bundled, "2.1.0")
@@ -327,6 +449,51 @@ class LaunchRefreshTests(PluginFixture):
         self.assertIn("this ForgePact ships v2.1.0", result["ok"])
         self.assertEqual(self.installed.read_bytes(), data)
         self.spawn.assert_called_once()
+
+
+class LaunchSensorRefreshTests(LaunchFixture):
+    def test_baseline_the_fixed_sensor_launches_with_the_same_message(self):
+        self.release_build()
+        write_plugin(self.bundled, "2.1.0")
+        write_plugin(self.installed, "2.1.0")
+        self.sensor.write_bytes(SENSOR_FIXED)
+        result = forgepact.launch_modded_game(self.cfg)
+        self.assertEqual(result["ok"], "Modded Hero Siege launch requested through the built-in HS Offline Launcher.")
+
+    def test_target_an_aborting_sensor_is_replaced_before_the_game_starts(self):
+        # The plugin is current, so nothing else would have asked for Install.
+        self.release_build()
+        write_plugin(self.bundled, "2.1.0")
+        write_plugin(self.installed, "2.1.0")
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        seen_at_spawn = []
+        self.spawn.side_effect = lambda *a, **k: (seen_at_spawn.append(self.sensor.read_bytes()),
+                                                  SimpleNamespace(pid=1234))[1]
+        result = forgepact.launch_modded_game(self.cfg)
+        self.assertTrue(result["ok"].endswith(SENSOR_REPLACED), result)
+        self.assertEqual(seen_at_spawn, [SENSOR_FIXED], "the game must start on the fixed sensor")
+
+    def test_an_older_plugin_and_an_aborting_sensor_are_both_updated(self):
+        # The case a 2.2.x player who only presses Launch is in.
+        self.release_build()
+        shipped = write_plugin(self.bundled, "2.1.0")
+        write_plugin(self.installed, "2.0.1")
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        result = forgepact.launch_modded_game(self.cfg)
+        self.assertTrue(result["ok"].endswith(
+            "Mod plugin updated from v2.0.1 to v2.1.0 before launch. " + SENSOR_REPLACED), result)
+        self.assertEqual(self.installed.read_bytes(), shipped)
+        self.assertEqual(self.sensor.read_bytes(), SENSOR_FIXED)
+
+    def test_nothing_is_written_while_a_game_is_running(self):
+        self.release_build()
+        write_plugin(self.bundled, "2.1.0")
+        write_plugin(self.installed, "2.1.0")
+        self.sensor.write_bytes(SENSOR_ABORTING)
+        self.processes.return_value = [(55, "Hero_Siege.exe")]
+        self.assertIn("err", forgepact.launch_modded_game(self.cfg))
+        self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
+        self.spawn.assert_not_called()
 
 
 class InstallTests(unittest.TestCase):
