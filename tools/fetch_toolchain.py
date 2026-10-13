@@ -22,10 +22,13 @@ each is the "hs.1" build of a documented patch series the hub keeps under
 BUILD-INFO records installed beside them). They stay pinned binaries for the
 same reason YYToolkit always has: ship the exact binary that was launched
 against the game, not a fresh CI build. The optional
-`HSOfflineTrackerProducer.dll` is unchanged -- still extracted as a zip
-member from the published `ForgePact-1.3.16.zip` (see
+`HSOfflineTrackerProducer.dll` is extracted as a zip member
+(`producer/HSOfflineTrackerProducer.dll`) from the published
+HS-Offline-Tracker v0.1.4 release's portable zip, the build carrying that
+project's exit-teardown fix; the earlier build it replaces aborted every
+graceful close of the game (#201). See
 `docs/submodules/ForgePact/instructions.md`'s "The build half" for why an
-already-launched binary is extracted rather than rebuilt in CI).
+already-released binary is extracted rather than rebuilt in CI.
 
 **All-or-nothing.** Every hash is verified -- for a zip-member entry, the
 archive's own hash first, before any member is read out of it -- and only if
