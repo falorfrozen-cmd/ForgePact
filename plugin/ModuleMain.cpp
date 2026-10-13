@@ -62283,6 +62283,11 @@ static CInstance*   g_M1pPlayer = nullptr;   // the local player, refreshed each
 static bool         g_M1pBusy = false;       // game thread only: the adapter's own reads inside a detour
 static bool         g_M1pTicking = false;    // on from the first form that needs the frame tick
 static int          g_M1pCountIndex = -1;    // `count`'s object, resolved by name
+// CheckTalentUse's third argument on the local player's latest call: the
+// static reading's index into Input_Device_Manager_obj's playerProfileSlot,
+// 1 by default until a call has been seen.
+static double       g_M1pSlotArg = 1.0;
+static bool         g_M1pSlotArgSeen = false;
 
 // The adapter's own builtin calls inside a detour pass every row through.
 struct M1pBusyScope {
@@ -62320,6 +62325,7 @@ struct M1pScopeRef {
     RValue      value;
     bool        isStruct = false;
     std::string name;
+    bool        isGlobal = false;   // the game's globals: `value` is unused
 };
 
 // A number or a bool, the two kinds the levers read and write.
@@ -62363,7 +62369,10 @@ static std::string M1pValueToken(const RValue& r)
 static bool M1pGet(const M1pScopeRef& s, const std::string& name, RValue& out)
 {
     try {
-        if (s.isStruct) {
+        if (s.isGlobal) {
+            if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_global_get", { RValue(name) });
+        } else if (s.isStruct) {
             if (!g_Yytk->CallBuiltin("variable_struct_exists", { s.value, RValue(name) }).ToBoolean()) return false;
             out = g_Yytk->CallBuiltin("variable_struct_get", { s.value, RValue(name) });
         } else {
@@ -62393,10 +62402,17 @@ static bool M1pAsScope(const RValue& v, const std::string& label, M1pScopeRef& o
     return false;
 }
 
-// player and queue: the player instance (the queue's three members are read
-// on the player until the static reading places one elsewhere). pst: its pSt.
-// profile and input: its playerProfileSlot, or Profile_Manager_obj instance 0
-// when the player has none, saying which.
+// Where each scope reads, after the static reading of CheckTalentUse
+// (docs/mark1-set-research.md § Static reading). player: the player
+// instance. pst: its pSt. profile and input: the entry of
+// Input_Device_Manager_obj's playerProfileSlot array at the gate's third
+// argument (the local player's latest CheckTalentUse call, 1 until one is
+// seen), which is where the gate reads inputState; the label names the
+// index, where it came from and what the entry is. No other route stands in
+// for it: a write anywhere else would count as applied while the gate never
+// reads it, so an unresolved route is refused with its reason. queue: the
+// player, for stackSkillList; abilityQueue and mobileTalentPressed are
+// globals, resolved per member by M1pResolveMember.
 static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)
 {
     if (!player) { why = "no-local-player"; return false; }
@@ -62414,26 +62430,75 @@ static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& 
     }
     case M1pNs::Scope::Profile:
     case M1pNs::Scope::Input: {
-        RValue v;
-        std::string slotWhy = "player-has-no-playerProfileSlot";
-        if (M1pGet(self, "playerProfileSlot", v)) {
-            if (M1pAsScope(v, "player.playerProfileSlot", out, slotWhy)) return true;
-        }
-        const int manager = M1pObjectIndex(HeroSiege::Objects::GameObject::Profile_Manager_obj);
+        const std::string device = std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Input_Device_Manager_obj));
+        const int deviceIndex = M1pObjectIndex(HeroSiege::Objects::GameObject::Input_Device_Manager_obj);
+        if (deviceIndex < 0) { why = device + "-unresolved"; return false; }
+        RValue inst;
+        int instances = 0;
         try {
-            const RValue inst = manager >= 0 ? g_Yytk->CallBuiltin("instance_find", { RValue((double)manager), RValue(0.0) }) : RValue();
-            if (manager >= 0 && (HeroSiege::Player::IsInstanceHandle(inst) || N1Numeric(inst))
-                && g_Yytk->CallBuiltin("instance_exists", { inst }).ToBoolean()) {
-                out = M1pScopeRef{ inst, false, "Profile_Manager_obj#0(" + slotWhy + ")" };
-                return true;
+            instances = (int)g_Yytk->CallBuiltin("instance_number", { RValue((double)deviceIndex) }).ToDouble();
+            if (instances > 0) inst = g_Yytk->CallBuiltin("instance_find", { RValue((double)deviceIndex), RValue(0.0) });
+        } catch (...) { instances = 0; }
+        if (instances <= 0 || !(HeroSiege::Player::IsInstanceHandle(inst) || N1Numeric(inst))) {
+            why = "no-" + device + "-instance";
+            return false;
+        }
+        const M1pScopeRef manager{ inst, false, device + "#0" };
+        RValue slots;
+        if (!M1pGet(manager, "playerProfileSlot", slots)) { why = manager.name + "-has-no-playerProfileSlot"; return false; }
+        if (slots.m_Kind != VALUE_ARRAY) {
+            why = manager.name + ".playerProfileSlot=" + M1pValueToken(slots) + "(not-an-array)";
+            return false;
+        }
+        const double slot = g_M1pSlotArg;
+        const std::string slotText = M1pNs::NumberText(slot) + (g_M1pSlotArgSeen ? ":a2" : ":default");
+        RValue entry;
+        try {
+            const double length = g_Yytk->CallBuiltin("array_length", { slots }).ToDouble();
+            if (!(slot >= 0 && slot < length && slot == std::floor(slot))) {
+                why = manager.name + ".playerProfileSlot[" + slotText + "](out-of-range,length=" + M1pNs::NumberText(length) + ")";
+                return false;
             }
-        } catch (...) {}
-        why = slotWhy + ",no-Profile_Manager_obj-instance-0";
-        return false;
+            entry = g_Yytk->CallBuiltin("array_get", { slots, RValue(slot) });
+        } catch (...) { why = manager.name + ".playerProfileSlot(unreadable)"; return false; }
+        if (!M1pAsScope(entry, manager.name + ".playerProfileSlot[" + slotText + "]", out, why)) return false;
+        // What the entry is, by its object (the reading says plausibly a
+        // Profile_Manager_obj instance; the gate reads it whatever it is).
+        if (!out.isStruct) {
+            std::string what = "unnamed";
+            try {
+                const RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { out.value, RValue("object_index") });
+                if (N1Numeric(oi)) {
+                    const int profile = M1pObjectIndex(HeroSiege::Objects::GameObject::Profile_Manager_obj);
+                    what = (profile >= 0 && (int)oi.ToDouble() == profile)
+                        ? std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Profile_Manager_obj))
+                        : g_Yytk->CallBuiltin("object_get_name", { oi }).ToString();
+                }
+            } catch (...) { what = "unnamed"; }
+            out.name += "=" + what;
+        }
+        if (instances > 1) out.name += "(" + device + "-instances=" + std::to_string(instances) + ")";
+        return true;
     }
     }
     why = "unknown-scope";
     return false;
+}
+
+// The scope one member of a target lives in. Only `queue` splits by member:
+// abilityQueue and mobileTalentPressed are global arrays indexed by the
+// gate's slot counter, stackSkillList is the gate's self's (the player), and
+// any other name is refused rather than read off the player under the
+// queue's name.
+static bool M1pResolveMember(CInstance* player, M1pNs::Scope scope, const std::string& name, M1pScopeRef& out, std::string& why)
+{
+    if (scope != M1pNs::Scope::Queue) return M1pResolveScope(player, scope, out, why);
+    if (name == "abilityQueue" || name == "mobileTalentPressed") {
+        out = M1pScopeRef{ RValue(), false, "global", true };
+        return true;
+    }
+    if (name != "stackSkillList") { why = "queue-holds-abilityQueue,mobileTalentPressed,stackSkillList-only"; return false; }
+    return M1pResolveScope(player, scope, out, why);
 }
 
 // A target's value now: the member (or its element), a number or a bool.
@@ -62441,7 +62506,7 @@ static bool M1pReadTarget(CInstance* player, const M1pNs::Target& t, M1pNs::Valu
 {
     M1pScopeRef s;
     std::string why;
-    if (!M1pResolveScope(player, t.scope, s, why)) return false;
+    if (!M1pResolveMember(player, t.scope, t.name, s, why)) return false;
     M1pBusyScope busy;
     RValue m;
     if (!M1pGet(s, t.name, m)) return false;
@@ -62458,12 +62523,14 @@ static bool M1pReadTarget(CInstance* player, const M1pNs::Target& t, M1pNs::Valu
 // The only game-state write of the adapter, and the core reaches it only
 // through a lever: set and scale (and their restore), and move's x and y.
 // An existing member, or an element inside an existing array; nothing is
-// created.
+// created. A global is written only as an element of its array. A write
+// counts (the core's `applied=`) only when reading the target back gives the
+// value written, so a write that did not land is never reported applied.
 static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pNs::Value& v)
 {
     M1pScopeRef s;
     std::string why;
-    if (!M1pResolveScope(player, t.scope, s, why)) return false;
+    if (!M1pResolveMember(player, t.scope, t.name, s, why)) return false;
     M1pBusyScope busy;
     RValue m;
     if (!M1pGet(s, t.name, m)) return false;
@@ -62473,12 +62540,16 @@ static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pN
             if (m.m_Kind != VALUE_ARRAY) return false;
             if ((double)t.index >= g_Yytk->CallBuiltin("array_length", { m }).ToDouble()) return false;
             g_Yytk->CallBuiltin("array_set", { m, RValue((double)t.index), value });
-            return true;
+        } else if (s.isGlobal) {
+            return false;
+        } else if (s.isStruct) {
+            g_Yytk->CallBuiltin("variable_struct_set", { s.value, RValue(t.name), value });
+        } else {
+            g_Yytk->CallBuiltin("variable_instance_set", { s.value, RValue(t.name), value });
         }
-        if (s.isStruct) g_Yytk->CallBuiltin("variable_struct_set", { s.value, RValue(t.name), value });
-        else g_Yytk->CallBuiltin("variable_instance_set", { s.value, RValue(t.name), value });
-        return true;
     } catch (...) { return false; }
+    M1pNs::Value back;
+    return M1pReadTarget(player, t, back) && back.number == v.number;
 }
 
 // What the core's Around asks of one hooked call (its contract is written
@@ -62531,6 +62602,11 @@ static void M1pNoteLocalCall(int row, int64_t frame, int argc, RValue** A)
         double id = std::numeric_limits<double>::quiet_NaN();
         if (argc >= 2 && A && A[1] && N1Numeric(*A[1])) id = A[1]->ToDouble();
         g_M1pProbe.NoteCast(id);
+    }
+    // a2 indexes playerProfileSlot (the profile and input scopes), noted
+    // before the core's lever writes for this very call.
+    if (row == static_cast<int>(M1pNs::Row::CheckTalentUse) && argc >= 3 && A && A[2] && N1Numeric(*A[2])) {
+        try { g_M1pSlotArg = A[2]->ToDouble(); g_M1pSlotArgSeen = true; } catch (...) {}
     }
     if (row == static_cast<int>(M1pNs::Row::CheckTalentUse) && g_M1pProbe.ArgsOn()) {
         const int k = g_M1pProbe.TakeArg();
@@ -62640,6 +62716,33 @@ static constexpr int kM1pWatchMaxMembers = 1024;
 static constexpr int kM1pQueueEntries = 4;
 static bool M1pSnapshot(M1pNs::Scope scope, std::map<std::string, std::string>& snap, std::string& said)
 {
+    if (scope == M1pNs::Scope::Queue) {
+        // Each member where it lives, named in `scope=`; an absent member
+        // reads `absent` rather than vanishing from the watch.
+        M1pBusyScope busy;
+        said.clear();
+        bool any = false;
+        for (const char* name : { "abilityQueue", "mobileTalentPressed", "stackSkillList" }) {
+            M1pScopeRef q;
+            std::string why;
+            const bool resolved = M1pResolveMember(g_M1pPlayer, scope, name, q, why);
+            said += (said.empty() ? "" : ",") + std::string(name) + "@" + (resolved ? q.name : "unresolved:" + why);
+            if (!resolved) continue;
+            any = true;
+            try {
+                RValue m;
+                if (!M1pGet(q, name, m)) { snap[std::string(name) + ".kind"] = "absent"; continue; }
+                snap[std::string(name) + ".kind"] = m.m_Kind == VALUE_ARRAY ? "array" : M1pValueToken(m);
+                if (m.m_Kind != VALUE_ARRAY) continue;
+                const int n = (int)g_Yytk->CallBuiltin("array_length", { m }).ToDouble();
+                snap[std::string(name) + ".length"] = std::to_string(n);
+                for (int i = 0; i < n && i < kM1pQueueEntries; ++i)
+                    snap[std::string(name) + "[" + std::to_string(i) + "]"]
+                        = M1pValueToken(g_Yytk->CallBuiltin("array_get", { m, RValue((double)i) }));
+            } catch (...) { snap[std::string(name) + ".kind"] = "read-failed"; }
+        }
+        return any;
+    }
     M1pScopeRef s;
     std::string why;
     if (!M1pResolveScope(g_M1pPlayer, scope, s, why)) { said = why; return false; }
@@ -62653,20 +62756,6 @@ static bool M1pSnapshot(M1pNs::Scope scope, std::map<std::string, std::string>& 
             for (int i = 0; i < n && i < kM1pWatchMaxMembers; ++i) {
                 M1pNs::Value v;
                 if (M1pToValue(g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }), v)) snap[std::to_string(i)] = M1pNs::ValueText(v);
-            }
-            return true;
-        }
-        if (scope == M1pNs::Scope::Queue) {
-            for (const char* name : { "abilityQueue", "mobileTalentPressed", "stackSkillList" }) {
-                RValue m;
-                if (!M1pGet(s, name, m)) continue;
-                snap[std::string(name) + ".kind"] = m.m_Kind == VALUE_ARRAY ? "array" : M1pValueToken(m);
-                if (m.m_Kind != VALUE_ARRAY) continue;
-                const int n = (int)g_Yytk->CallBuiltin("array_length", { m }).ToDouble();
-                snap[std::string(name) + ".length"] = std::to_string(n);
-                for (int i = 0; i < n && i < kM1pQueueEntries; ++i)
-                    snap[std::string(name) + "[" + std::to_string(i) + "]"]
-                        = M1pValueToken(g_Yytk->CallBuiltin("array_get", { m, RValue((double)i) }));
             }
             return true;
         }
@@ -62859,7 +62948,7 @@ static void M1pLever(const M1pNs::Command& c)
         M1pRefreshPlayer();
         M1pScopeRef s;
         std::string why;
-        if (M1pResolveScope(g_M1pPlayer, l.target.scope, s, why)) {
+        if (M1pResolveMember(g_M1pPlayer, l.target.scope, l.target.name, s, why)) {
             resolved = s.name;
             M1pNs::Value v;
             current = M1pReadTarget(g_M1pPlayer, l.target, v) ? M1pNs::ValueText(v) : std::string("unreadable");
