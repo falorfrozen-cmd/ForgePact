@@ -51,14 +51,17 @@ anything that suspends the game's own loop.
   "Live 1 results" and "Live 2 results"). The measured facts are folded into
   the same four sections of `docs/RUNTIME_DATA_MODELS.md`, relabelled
   measured, and into the hub's `hs-game-sdk/curated/mark1_set_measurements.json`.
+- **Live procedure 3** (walkability only, after Live 2's walkable control
+  failed and the probe's walkable read was corrected): run on 2026-10-13 on a
+  rebuilt research DLL (§ Results, "Live 3 results"), folded the same way.
 - **Decision:** recorded (§ Decision). A bar slot casts through the game's
   own gate when its `inputState` entry is set to the press value during the
   gate's call, and the cooldown held; the jump is moved by `skillsLeap` alone
   and scaling that displacement tripled it; halving movement speed at the
-  stat dispatcher slowed the walk to 0.785 of its step, not 0.5. The cast's
-  movement penalty was measured but no member holding it was found, and the
-  walkable test's control failed, so the edge question is still open
-  (§ Not established).
+  stat dispatcher slowed the walk to 0.785 of its step, not 0.5; and in town
+  a walkable landing point is one inside the room where the player would meet
+  nothing of `Collision_Parent_obj`. The cast's movement penalty was measured
+  but no member holding it was found (§ Not established).
 
 ## Static search
 
@@ -610,22 +613,41 @@ that only the table's calls reach it.
 `walkable at <x> <y>` one point in room coordinates, and
 `walkable scan <deg> <step> <count>` a line of points from the player in that
 direction. Each point prints
-`walkable x= y= room=<in|out> grid=<free|blocked|unreadable> family=<free|blocked> wall-line=<clear|crossed> tile=<layer>:<value>,...`:
+`walkable x= y= room=<in|out> grid=<free|blocked|unreadable> family=<free|blocked|unreadable> wall-line=<clear|crossed|unreadable> tile=<layer>:<value>,... grid-raw=<raw> family-raw=<raw> wall-line-raw=<raw>`,
+followed by ` met=<object name>:<instance id>` when `family` reads blocked:
 
 - `room`: whether the point lies inside the room.
-- `grid`: the point's 16 px cell in `global.pathGrid`.
+- `grid`: the point's 16 px cell in `global.pathGrid` (`mp_grid_get_cell`,
+  -1 for a blocked cell).
 - `family`: whether the player, placed at the point, would meet the
-  `Collision_Parent_obj` family.
+  `Collision_Parent_obj` family (`place_meeting`).
 - `wall-line`: whether a line from the player to the point crosses the
-  `Wall_Parent_obj` family.
+  `Wall_Parent_obj` family (`collision_line`).
 - `tile`: up to four tile layers' cell values at the point, by layer name.
+- `grid-raw`, `family-raw`, `wall-line-raw`: the builtin's answer as the
+  probe received it, `<kind>:<value>`, the kind in lower case without its
+  prefix (`bool`, `real`, `int32`, `int64`, `ref`, `undefined`, ...);
+  `error` when the call itself failed, `none` when it was not made.
+- `met`: what a blocked `family` met, `instance_place` on the same family
+  at the same point, by object name and instance id.
+
+Each field reads its builtin's answer by that builtin's meaning. `family` is
+a meeting answer: true or a non-zero number is blocked, false or 0 is free.
+`wall-line` is an instance answer: an instance (an id or ref of 0 or more)
+is crossed, `noone` (-4) is clear. Live 2's build read both as an instance
+answer, so `place_meeting`'s numeric 0 counted as a meeting and `family`
+printed blocked everywhere (Live 2 results, `walkable-control`). Live 3
+measured that `place_meeting`, called this way, answers a `real` 0 or 1, not
+a `bool`, and `collision_line` a `ref` (-4 for `noone`); ForgePact `61243b2`
+made the correction and added the raw fields and `met`.
 
 Every field starts unreadable and only a read that succeeded replaces it, so
 a failed read never turns into either answer. The game's own test,
 `IsObtainablePlace` over the zone generator's heat grid, is not one of the
 fields (§ Static reading, "What the reading means for the instrument").
 Positive control: the sessions' `walkable-control`, a point 32 px from the
-player on open floor reading `room=in grid=free family=free wall-line=clear`.
+player on open floor reading `room=in grid=free family=free wall-line=clear`
+(Live 3 reads the player's own position and 32 px to either side).
 
 ### Where the `profile` and `queue` scopes read
 
@@ -789,7 +811,7 @@ from T13 and T14.
 
 ## Results
 
-Both sessions ran on 2026-10-13, one after the other, on one research DLL
+Live 1 and Live 2 ran on 2026-10-13, one after the other, on one research DLL
 (sha256 `0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f`,
 plugin v2.2.1 banner, YYTK 4.0.1), built with `plugin_build\build.bat dev`
 from ForgePact `2feb9b4`, whose `plugin/` tree is unchanged at the head of
@@ -803,7 +825,8 @@ off. The records are the session captures
 kept with the hub's workorder files on the researcher's machine and not
 tracked. Every verdict below is what the toolkit's `tools/live_checks.py`
 reads from them. Each session restored its own save backup at teardown and
-read it back clean.
+read it back clean. Live 3, walkability only, ran later the same day on a
+rebuilt research DLL (§ Live 3 results).
 
 ### Live 1 results
 
@@ -908,9 +931,56 @@ results). Here each location sits right after a direct call to the logged
 script, and that call is the one the static reading found in the named
 script, so the two agree.
 
+### Live 3 results
+
+Walkability only (Live procedure 3, 20:59 to 21:03 UTC). It ran because
+Live 2's `walkable-control` failed, after ForgePact `61243b2` corrected how
+the probe reads `place_meeting`'s answer and made the walkable line print
+each builtin's raw answer and what a blocked `family` met (§ Instrument,
+"The walkable verdict"). Research DLL sha256
+`8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e`, built
+with `plugin_build\build.bat dev` from `61243b2`, plugin v2.2.1 banner, YYTK
+4.0.1, on the same game build. Same character, room and starting save as
+Live 1 and Live 2, no flight charm worn, `jumpscenery` off; no debugger and
+no `mark1probe hook`, since the walkable read hooks nothing.
+
+The procedure, in the order of Live procedure 2's T12 to T14: `walkable
+here 32 0`, `here 0 0` and `here -32 0` on open floor by the town's
+waypoint (`walkable-control`, which gates the other two); points inside a
+prop (`walkable-prop`); and, after `playerwarp` to walkable floor near the
+town's south edge, `walkable scan 270 16 24` toward that edge, with a
+screenshot (`walkable-edge`). The record is the capture
+`forgepact-166-mark1-set-live-3.md`, kept beside the other two and not
+tracked. `tools/live_checks.py` reads 6 checks from it: all pass, the two
+research checks as recorded. The session restored its own save backup and
+read it back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL hashed to the built research DLL above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `walkable-control` | pass | At the player's own position on open floor and 32 px to either side, every point read `room=in grid=free family=free wall-line=clear`, each with `grid-raw=real:0 family-raw=real:0 wall-line-raw=ref:-4`. `place_meeting`'s "no meeting" reached the probe as a `real` 0, not a `bool` false, so Live 2's `family=blocked` everywhere was the old read counting that 0 as a hit, not anything at the points. |
+| `walkable-prop` | pass (research: recorded) | Inside the Bounty Board (`Bounty_Board_obj`), on a scan west of the player and at two points read with `walkable at`, only `family` read blocked (`family-raw=real:1`, `met=Bounty_Board_obj`); the path grid's cell stayed free (`grid-raw=real:0`) and the wall line clear. The board blocks about 64 px of that line, five points 16 px apart, at its base; three points picked on its drawn sprite above the base read free on every field. Further along the same line, `family` met an `Invisible_Wall_Not_Minimap_obj` one point before the grid cell turned blocked and the wall line crossed. |
+| `walkable-edge` | pass (research: recorded) | From walkable floor south of the town, scanning south in 16 px steps: `family` turned blocked first, meeting an `Invisible_Wall_Not_Minimap_obj`; one point (16 px) later the grid cell read blocked (`real:-1`) and the wall line crossed (its answer a `ref` to that same instance); all three stayed blocked to the end of the scan, still inside the room. The edge is that invisible wall, and nothing on screen draws it. A coarse scan from the waypoint at 96 px steps, past the room's bottom, showed the rest of the way: water (`Block_Dynamic_Sprite_obj`) and fallen rocks and trees (`Fall_Rock_01_obj`, `Fall_Dead_Tree_02_obj`) read blocked on both `grid` and `family` with the wall line clear; open pockets between them read free on every field; and past the room's bottom (`room=out`) the grid stayed blocked and the wall line crossed, but `family` read free again once the points were past the invisible walls. |
+
+What the session settles about the four fields, in town:
+
+- **`family` is the one field that sees a prop.** The Bounty Board blocked
+  `family` alone. Why its cells read free in the path grid, when the static
+  reading has the grid built from every `Collision_Parent_obj` instance, is
+  not established.
+- **At the edge `family` leads.** It turned blocked 16 px before the grid
+  and the wall line, at the invisible wall the other two then saw too.
+- **`family` says nothing past the room.** Beyond the room's bottom it read
+  free; only `room` (and the grid) still said no.
+- **No tile layer marks the edge.** The layers' values vary across open
+  floor, the `Water` layer is non-zero only on the water, and every layer
+  reads -1 outside the room.
+
 ## Decision
 
-Recorded on 2026-10-13 from the two sessions (§ Results). Each key takes
+Recorded on 2026-10-13 from the three sessions (§ Results). Each key takes
 exactly one of its listed values, on a line of its own, and the check that
 decides it is on the line below. A `not-observed` closes nothing unless its
 positive control passed in the same session; each one below says whether it
@@ -946,10 +1016,10 @@ Decided by `jump-mover` (Live 2, pass): all 102 moving calls of a jump were `ski
 jump-lever: move
 Decided by `jump-move` (Live 2, pass): x3 on `skillsLeap`'s displacement tripled the jump (3.00 times near, 2.95 times far); `jump-stat` showed the stat route never engages, since a jump does not read Jump Power (`dbg-stat-jump` not-observed with the control logging).
 
-walkable-test: not-observed
-Decided by `walkable-control` (Live 2, fail): `family` read blocked on open floor and at the player's own position, so `walkable-prop` and `walkable-edge` did not run. This `not-observed` closes nothing: its control failed, and the allowed values have no `not-run` for this key (§ Not established).
+walkable-test: combined
+Decided by `walkable-prop` and `walkable-edge` (Live 3, both recorded; their control `walkable-control` passed): a point is a walkable landing when it lies inside the room and the player placed there meets nothing of `Collision_Parent_obj` (`room=in` and `family=free`). `family` alone saw the prop, which the path grid and the wall line missed, and turned blocked at the town's edge 16 px before them, but read free again past the room's bottom, where only `room` and the grid still said no; no tile layer marks the edge. Measured in a town only (§ Not established). Live 2's `walkable-control` had failed on the old read of `place_meeting` (§ Live 3 results).
 
-The values each key may take (Live 1 decides the first six, Live 2 the rest):
+The values each key may take (Live 1 decides the first six, Live 2 the next four, Live 3 the last):
 
 - `cast-route`, how a bar slot can be cast through the game's own gate:
   `input`, `queue`, `mobile`, `not-observed` or `lever-not-engaged`.
@@ -981,8 +1051,11 @@ Settled by the sessions, and so off this list: which `inputState` value
 means pressed (4, on the press frame); which entries Q, E, R and Y use (3 to
 6); what `CheckTalentUse`'s arguments are on this machine (the player, 1 and
 1, once a frame); that a write into the slot's entry inside the gate's call
-casts the slot and the cooldown still holds; and which script moves the
-player during a jump (`skillsLeap`). Still open:
+casts the slot and the cooldown still holds; which script moves the
+player during a jump (`skillsLeap`); why Live 2's walkable control failed
+(the probe read `place_meeting`'s `real` 0 as a meeting); and, in town, how a
+walkable landing point is told from one past the edge (inside the room, and
+`family` free). Still open:
 
 - **Whether the gate still charges mana** for a cast made through the input
   lever (`cast-gate`, not-observed: no mana member was found to watch), and
@@ -1014,16 +1087,22 @@ player during a jump (`skillsLeap`). Still open:
   Power (`jump-stat`, `dbg-stat-jump`), but how `skillsLeap` turns the
   cursor distance into a step, and the jump's state members (`jump-vars`
   not-run: `pSt` unreadable), were not read. A tripled jump's landing check
-  was not measured.
+  was not measured: the walkable test was read by command at chosen points,
+  never at a jump's landing.
 - **Whether `playerSkipCollisions` lets the player pass collision props**,
   and who sets it.
-- **How to tell a walkable landing point from one past the map's edge**
-  (`walkable-test`: not-observed, its control `walkable-control` failed).
-  The probe's `family` read, the player's `place_meeting` against
-  `Collision_Parent_obj`, said `blocked` on open floor and at the player's
-  own position, for a reason not established, so a point inside a prop and
-  the town's edge were never read. The path grid read `free` and the wall line
-  `clear` at those open points, but with the control failed that is no
-  verdict on either. Whether `objZoneGenV2` exists in a town, and so whether
-  `IsObtainablePlace` says anything there, and what marks the walkable map's
-  edge in a room the zone generator did not build, are open as before.
+- **The walkable test outside a town.** `walkable-test: combined` (inside
+  the room, and `family` free) was measured in `Town_01_rm` only, at one
+  prop and one stretch of its south edge, an invisible wall. Whether a
+  generated zone marks its edge the same way, with a `Collision_Parent_obj`
+  instance, or only in the path grid through the zone generator's outside
+  rectangles, was not read live; nor whether `objZoneGenV2` exists in a town,
+  and so whether `IsObtainablePlace` says anything there.
+- **Why the path grid missed the Bounty Board.** The board blocked `family`
+  but its cells read free in `global.pathGrid` (`walkable-prop`), against the
+  static reading that the grid is built from every `Collision_Parent_obj`
+  instance. Whether the board came after the grid was built, or its mask
+  covers no cell centre, was not read.
+- **Pockets the floor does not reach.** Points between the water and the
+  fallen rocks south of the waypoint read free on every field; whether the
+  player could walk to them was not checked, and the test does not say.
