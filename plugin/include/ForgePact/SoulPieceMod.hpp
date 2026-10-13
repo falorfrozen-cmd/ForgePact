@@ -558,8 +558,8 @@ inline void RecordZoneCallFailed(State& s) { ++s.counters.zoneCallFailed; }
 // ---- the status line ------------------------------------------------------------------------------
 // What the adapter knows and the core does not: the room, the gem rate it
 // read (or why it could not), each route, the merges the
-// `InventoryGridAddToStack` detour made and the ones it gave up on because a
-// read of the stack or the hash refresh failed, and the room the player was in
+// `InventoryGridAddToStack` detour made and the ones it gave up on after
+// trying (by kind: read-failed, hash-failed, not-struct), and the room the player was in
 // before this one with what ZoneStateExists answered for it (`-` for both
 // before a room change was seen; `leftSaved` is ZoneAnswerText's word).
 struct StatusInputs {
@@ -575,6 +575,7 @@ struct StatusInputs {
     long merged = 0;
     long mergeReadFailed = 0;
     long mergeHashFailed = 0;
+    long mergeNotStruct = 0;
     std::string_view left = "-";
     std::string_view leftSaved = "-";
 };
@@ -590,14 +591,16 @@ inline std::string NumberText(double v)
 // `soulpiece: <on|off> force=<on|off> room=<name> act=<n|none>
 // eligible=<yes|no(<word>)> gemrate=<G|unavailable(<why>)> chance=1/<D|->
 // gemrolls=<n> drops=<n> misses=<n> merged=<n>
-// mergefail=<read-failed=<n>,hash-failed=<n>|-> uses=<n> transfers=<n> fresh=<n>
-// cleared=<n> last=<boss room|-> left=<room|-> leftsaved=<yes|no|unread(<why>)|->
+// mergefail=<read-failed=<n>,hash-failed=<n>,not-struct=<n>|-> uses=<n>
+// transfers=<n> fresh=<n> cleared=<n> last=<boss room|-> left=<room|-> leftsaved=<yes|no|unread(<why>)|->
 // refused=<word>=<n>,... hooks=gem:<route> use:PotionUse:<route|none>
 // merge:InventoryGridAddToStack:<route|none>`.
 // `merged` counts the pickups the merge joined to a stack in the bag;
-// `mergefail` the pickups it meant to merge but passed to the game because a
-// read of the stack failed or its hash could not be refreshed (`-` when both
-// are 0);
+// `mergefail` the pickups the merge gave up on after trying: `read-failed` (a
+// failed read or result write, an internal guard, or an exception),
+// `hash-failed` (the stack's hash could not be refreshed), `not-struct` (the
+// game's result was not a plain struct); the count and `success` are
+// restored, so the game places the piece itself (`-` when all three are 0);
 // `uses` counts every piece use decided, refused or not; `transfers` the moves
 // carried out; `fresh` the transfers whose boss room answered a saved state
 // before the reset, and `cleared` those of them whose state was gone after
@@ -639,9 +642,10 @@ inline std::string StatusLine(const State& s, const StatusInputs& in)
         + " drops=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Hit)])
         + " misses=" + std::to_string(c.drop[static_cast<int>(DropVerdict::Miss)])
         + " merged=" + std::to_string(in.merged)
-        + " mergefail=" + (in.mergeReadFailed || in.mergeHashFailed
+        + " mergefail=" + (in.mergeReadFailed || in.mergeHashFailed || in.mergeNotStruct
                                ? "read-failed=" + std::to_string(in.mergeReadFailed)
                                      + ",hash-failed=" + std::to_string(in.mergeHashFailed)
+                                     + ",not-struct=" + std::to_string(in.mergeNotStruct)
                                : std::string("-"))
         + " uses=" + std::to_string(uses)
         + " transfers=" + std::to_string(transfers)

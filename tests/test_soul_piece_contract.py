@@ -524,12 +524,14 @@ class SoulPieceContractTests(unittest.TestCase):
         self.assertIn("in.mergeScript = kSoulPieceMergeName;", status)
         self.assertIn("in.mergeRoute = g_SoulPieceMerge.route;", status)
         self.assertIn("in.merged = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::Merged)];", status)
-        # ... and the merges it gave up on, so a failing read or hash refresh is not silent.
+        # ... and the merges it gave up on, so a failing read, hash refresh or result shape is not silent.
         self.assertIn("in.mergeReadFailed = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::ReadFailed)];", status)
         self.assertIn("in.mergeHashFailed = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::HashFailed)];", status)
+        self.assertIn("in.mergeNotStruct = g_SoulPieceMerge.outcomes[static_cast<int>(SoulPieceMergePass::NotStruct)];", status)
         line = self.body("inline std::string StatusLine(", self.core)
         self.assertIn('" merged=" + std::to_string(in.merged)', line)
         self.assertIn('" mergefail="', line)
+        self.assertIn('",not-struct=" + std::to_string(in.mergeNotStruct)', line)
         self.assertIn('" merge:" + std::string(in.mergeScript) + ":" + std::string(in.mergeRoute)', line)
         # Negative control for the order scan: a write ahead of the decision is caught.
         self.assertFalse(gate_precedes('"variable_struct_set";\nSoulCore::DecideMerge(', "SoulCore::DecideMerge(",

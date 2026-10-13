@@ -749,11 +749,11 @@ int main() {
         in.room = "Act_01_01"; in.act = 1; in.gemRate = kMeasuredRate;
         in.gemRoute = "both"; in.useRoute = "both";
         in.merged = 2; in.mergeRoute = "both";
-        in.mergeReadFailed = 1; in.mergeHashFailed = 3;
+        in.mergeReadFailed = 1; in.mergeHashFailed = 3; in.mergeNotStruct = 2;
         in.left = "Town_01_rm"; in.leftSaved = leftSaved;
         const std::string line = SP::StatusLine(s, in);
         const std::string want = "soulpiece: on force=off room=Act_01_01 act=1 eligible=yes gemrate=9000 chance=1/7200"
-            " gemrolls=4 drops=1 misses=2 merged=2 mergefail=read-failed=1,hash-failed=3 uses=3 transfers=1 fresh=1 cleared=1 last=Act_02_Boss left=Town_01_rm leftsaved=yes"
+            " gemrolls=4 drops=1 misses=2 merged=2 mergefail=read-failed=1,hash-failed=3,not-struct=2 uses=3 transfers=1 fresh=1 cleared=1 last=Act_02_Boss left=Town_01_rm leftsaved=yes"
             " refused=town=1,drop-failed=1,use-boss-room=1,transfer-failed=1,zone-call-failed=1"
             " hooks=gem:both use:PotionUse:both merge:InventoryGridAddToStack:both";
         ok = ok && line == want && s.counters.dropsByAct[1] == 1 && s.counters.transfersByAct[2] == 1
@@ -771,10 +771,13 @@ int main() {
         SP::StatusInputs left = town;
         left.left = "Act_01_Boss"; left.leftSaved = unread;
         ok = ok && SP::StatusLine(off, left).find(" left=Act_01_Boss leftsaved=unread(call failed) ") != std::string::npos;
-        // One failure kind alone still names both counts; none at all prints `-`.
+        // One failure kind alone still names all three counts; none at all prints `-`.
         SP::StatusInputs hashOnly = town;
         hashOnly.mergeHashFailed = 1;
-        ok = ok && SP::StatusLine(off, hashOnly).find(" merged=0 mergefail=read-failed=0,hash-failed=1 uses=0 ") != std::string::npos
+        SP::StatusInputs notStructOnly = town;
+        notStructOnly.mergeNotStruct = 1;
+        ok = ok && SP::StatusLine(off, hashOnly).find(" merged=0 mergefail=read-failed=0,hash-failed=1,not-struct=0 uses=0 ") != std::string::npos
+                && SP::StatusLine(off, notStructOnly).find(" merged=0 mergefail=read-failed=0,hash-failed=0,not-struct=1 uses=0 ") != std::string::npos
                 && SP::StatusLine(off, town).find(" mergefail=- ") != std::string::npos;
         check("command/status-line", ok, "[" + line + "] [" + offLine + "]");
     }
