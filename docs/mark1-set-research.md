@@ -693,8 +693,11 @@ establish that the session is valid, and must pass. Each part's own control
 gates its research checks: `bar-read` and `key-cast-control` gate S6 to S13,
 and `walk-control` gates S15 to S17. When a part's control fails, its
 research checks are `not-run (instrument: <control>)`, never `fail` or
-`not-observed`. For the rest, a `fail` or a `not-observed` is itself the
-finding, as long as its control passed in the same session.
+`not-observed`. `cast-input` or `cast-other` must have cast for S10, S12 and
+S13 to run; when neither cast they are `not-run (instrument: cast-route)`,
+because with no lever that casts, their counts measure the lever, not the
+game. For the rest, a `fail` or a `not-observed` is itself the finding, as
+long as its control passed in the same session.
 
 | Step | Check | What is done | Expected |
 | --- | --- | --- | --- |
@@ -708,10 +711,10 @@ finding, as long as its control passed in the same session.
 | S7 | `slot-keys` | `mark1probe watch input 90`, then press Q, E, R and Y one second apart | one `input[<i>]` change per key, with its pressed and resting values |
 | S8 | `queue-observed` | `mark1probe watch queue 120`, then press the ordinary key twice, 10 frames apart | what `abilityQueue`, `mobileTalentPressed` and `stackSkillList` hold during a cast, or no change (read with § Instrument, "Where the `profile` and `queue` scopes read") |
 | S9 | `cast-input` | once the ordinary skill's `effect=` reads 0: `mark1probe set profile.inputState[<its i>] <S7's pressed value> during CheckTalentUse 600`, no key pressed; `skillstate` after two seconds | `effect=` rises; `show` counts `applied=` above 0 and a cast of that talent |
-| S10 | `cast-gate` | during S9's window: `show` every two seconds, and `mark1probe watch player 120` | that talent is cast no more often than its cooldown allows, and a mana member falls with each cast |
+| S10 | `cast-gate` | with the lever that cast: S9's (`profile.inputState[<S7's i>]`), or else S11's (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]` at the i S11 mapped to that slot), run again for 600 frames on the ordinary slot, no key pressed; during that window, `show` every two seconds, and `mark1probe watch player 120` | that talent is cast no more often than its cooldown allows, and a mana member falls with each cast |
 | S11 | `cast-other` | only if S9 did not cast: for each i in 0..11, one at a time with no key pressed, `mark1probe show reset`, `mark1probe set queue.abilityQueue[i] 1 during CheckTalentUse 60`, then `mark1probe show`, recording `applied=` and the `casts=` talent id for each i; then the same sweep for `queue.mobileTalentPressed[i]`; then a `set` of each `profile` or `player` member S8 showed moving, one at a time | which i casts which bar slot (the slot-counter mapping); the queue route reads as a negative only if no i cast while its `applied=` was above 0 |
-| S12 | `toggle-flips` | toggle outlier: `mark1probe count White_Mage_Soul_Spurn_AOE_obj 600`, with S9's lever on Soul Spurn's slot index for 600 frames | the on and off flips, counted from the aura's instance count |
-| S13 | `empty-slot` | empty-slot outlier: S9's lever on that slot's index for 120 frames | no `TalentUse` call |
+| S12 | `toggle-flips` | toggle outlier: `mark1probe count White_Mage_Soul_Spurn_AOE_obj 600`, with the lever that cast: S9's (`profile.inputState[<S7's i>]`), or else S11's (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]` at the i S11 mapped to that slot), on Soul Spurn's slot for 600 frames | the on and off flips, counted from the aura's instance count |
+| S13 | `empty-slot` | empty-slot outlier: the lever that cast: S9's (`profile.inputState[<S7's i>]`) on the empty slot's index for 120 frames, or else S11's (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]`), read from S11's sweep row for the empty slot's i | `applied=` above 0 and no `TalentUse` call |
 | S14 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds; once more | the two totals within 10% of each other |
 | S15 | `penalty-baseline`, `dbg-cast-speed` | arm `dbg-cast-speed`; `pos 240` while D is held for three seconds and E is pressed at one second | the total against S14's; `dbg-cast-speed`'s hits and return locations |
 | S16 | `penalty-vars` | `mark1probe watch player 90 after TalentUse`, then `watch pst 90 after TalentUse`, each during an E press in the middle of a walk | the members that change after the cast and settle back |
