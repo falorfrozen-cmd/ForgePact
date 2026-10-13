@@ -882,7 +882,7 @@ and one more spot beside the control point.
 | `walk-mover` | pass | During a walk, `PlayerMovement` ran 810 times (once a frame) and no call of any of the nine rows moved the player: `pos` counted every moving frame as `outside`. The walk's displacement is applied somewhere none of the nine rows covers. |
 | `dbg-stat-movement` | pass | The logpoint on `StatMovementSpeed`'s entry (first byte as the control's) logged one hit for each `CheckTalentUse` hit, so once a frame, standing or walking: 2008 hits, each returning to one location, which lies in `ReturnSpecificStat` (below). The probe's row agrees: 810 local calls in the 810 frames of the walk's window, none called directly. The second per-frame logpoint slowed the frame from about 13.4 ms to 23.2 ms and the step per frame grew with it (about 9 and 12 px against 6), so this walk's total is not compared with T4's. |
 | `speed-move` | not-run | Instrument: no row moved the walk, so there was no row for `move` to scale. |
-| `speed-stat` | pass | `mark1probe stat 64 0.5 240` halved id 64's result on all 240 dispatcher calls (`changed-dispatch=240`; `changed-getter=0`, since nothing called `StatMovementSpeed` directly). The walk covered 696.9 px, 22% below T4's mean of 893.9 and below the 878.9 px of a walk without the lever straight after. The step per frame fell from 5.979 px to 4.693 px: 0.785 of the unscaled step, not 0.5. The walk does read movement speed through the dispatcher every frame, but halving that stat does not halve the walk. |
+| `speed-stat` | pass | `mark1probe stat 64 0.5 240` halved id 64's result on all 240 dispatcher calls (`changed-dispatch=240`; `changed-getter=0`, `skip=240`: every `StatMovementSpeed` call inside the dispatcher returned a non-number to the probe, so the getter route never scaled, against the core's tested model). The walk covered 696.9 px, 22% below T4's mean of 893.9 and below the 878.9 px of a walk without the lever straight after. The step per frame fell from 5.979 px to 4.693 px: 0.785 of the unscaled step, not 0.5. The walk does read movement speed through the dispatcher every frame, but halving the dispatcher's id-64 answer gave 0.785 of the step. |
 | `jump-control` | pass | Two jumps on open ground with the cursor about 100 px away (100.95 and 100.31 px as printed) both covered 96.9 px. |
 | `jump-mover` | pass | The jump was moved by `skillsLeap` alone: 102 calls in a jump, every one a moving call, and nothing outside the rows. `playerJumpGravity` ran 101 times in a jump and never moved the player. |
 | `dbg-stat-jump` | not-observed | The logpoint on `StatJumpPower`'s entry (first byte as the control's) logged nothing over two jumps, nor over the four jumps of T10 and T11, while the control kept logging; the probe's row counted 0 calls too. A jump does not call `StatJumpPower`, as the toolkit's § 19.1 measured with another instrument. |
@@ -938,7 +938,7 @@ walk-mover: outside-rows
 Decided by `walk-mover` (Live 2, pass): `PlayerMovement` runs once a frame during a walk, but no call of any of the nine rows moved the player.
 
 speed-lever: stat
-Decided by `speed-stat` (Live 2, pass): x0.5 on id 64's result at the dispatcher slowed the walk, to 0.785 of its step rather than 0.5, so the stat route reaches the walk but does not halve it; `speed-move` did not run (instrument: no row moves the walk).
+Decided by `speed-stat` (Live 2, pass): x0.5 on id 64's result at the dispatcher slowed the walk, to 0.785 of its step rather than 0.5, so the stat route reaches the walk but does not halve it; `speed-move` did not run (instrument: no row moves the walk). Only the dispatcher's answer was scaled: the getter route is an open instrument question for the choice of lever, since every `StatMovementSpeed` call inside the dispatcher returned a non-number to the probe (`skip=240`, `changed-getter=0`), so a lever at the getter is untested, not ruled in or out.
 
 jump-mover: skillsLeap
 Decided by `jump-mover` (Live 2, pass): all 102 moving calls of a jump were `skillsLeap`'s; `playerJumpGravity` ran alongside and never moved the player.
@@ -1000,11 +1000,15 @@ player during a jump (`skillsLeap`). Still open:
   not-run).
 - **Where the walk's displacement is applied, and why x0.5 on movement speed
   gives 0.785.** No row moves the walk (`walk-mover`), and halving id 64 at
-  the dispatcher slowed the step to 0.785 of itself (`speed-stat`), so the
-  step is not proportional to that stat: there may be a base the stat adds
-  to, a cap or a floor. Whether `StatMovementSpeed` caps its result, and
-  which value the final step is computed from, were not read; the factor
-  that gives an exact 0.5 is not known.
+  the dispatcher slowed the step to 0.785 of itself (`speed-stat`). Three
+  questions are open: whether the step is not proportional to the
+  dispatcher's id-64 answer (a base the stat adds to, a cap or a floor);
+  whether the walk also reads movement speed by a route the dispatcher lever
+  does not reach, such as the cached `pSt` values `PlayerMovement` reads; and
+  why `StatMovementSpeed`'s own result was not a number to the probe
+  (`skip=240`), which is an open instrument question for the choice of speed
+  lever. Which value the final step is computed from was not read; the
+  factor that gives an exact 0.5 is not known.
 - **Where the jump's length is decided.** Scaling `skillsLeap`'s own
   displacement tripled the jump (`jump-move`), and a jump does not read Jump
   Power (`jump-stat`, `dbg-stat-jump`), but how `skillsLeap` turns the
