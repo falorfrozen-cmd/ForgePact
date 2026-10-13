@@ -195,6 +195,9 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
     def test_trace_sums_as_flight_counters_documents(self):
         self.assertScenarios("trace/the_counters_sum_as_documented")
 
+    def test_trace_sums_the_effect_totals_end_the_trace_line(self):
+        self.assertScenarios("trace/the_effect_totals_end_the_trace_line")
+
     # ---- drawing in front ---------------------------------------------------
 
     def test_front_layer_no_write_for_off_residual_or_another_self(self):
@@ -237,6 +240,13 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_front_layer_filter_a_failed_effect_read_is_no_filter(self):
         self.assertScenarios("front_layer_filter/a_failed_effect_read_is_no_filter")
+
+    def test_front_layer_filter_each_effect_read_is_counted(self):
+        self.assertScenarios("front_layer_filter/each_effect_read_counted_struct_other_or_failed",
+                             "front_layer_filter/every_read_failing_reports_no_filter_and_counts_failed")
+
+    def test_front_layer_filter_the_rearmost_filter_is_reported(self):
+        self.assertScenarios("front_layer_filter/the_rearmost_filter_is_reported")
 
     # ---- the gold row on an item with no stats (ForgedTooltipRows.hpp) --------
 

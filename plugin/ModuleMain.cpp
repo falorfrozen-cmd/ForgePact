@@ -55083,10 +55083,9 @@ static void FlpDepth()
     if (visitHere && v.gameFrontRead) {
         // The rearmost filter in force: the one with the highest depth, as the
         // choice takes it, on the elements the last re-choice counted.
-        const FcNs::RoomLayer* rearmost = nullptr;
-        for (const FcNs::RoomLayer& l : v.layers)
-            if (FcNs::IsFilterLayer(l, v.gameFront) && (!rearmost || l.depth > rearmost->depth)) rearmost = &l;
-        if (rearmost) filterText = rearmost->name + "@" + FcpNs::NumberText(rearmost->depth);
+        const int rearmost = FcNs::RearmostFilter(v.gameFront, v.layers);
+        if (rearmost >= 0)
+            filterText = v.layers[(size_t)rearmost].name + "@" + FcpNs::NumberText(v.layers[(size_t)rearmost].depth);
     }
     const bool counted = visitHere && v.gameFrontRead;
     const std::string fx = counted ? std::to_string(g_FlightFxVisit.effect) + "/" + std::to_string(g_FlightFxVisit.other) + "/"

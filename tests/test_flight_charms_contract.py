@@ -702,8 +702,19 @@ class FlightCharmsLeverContract(unittest.TestCase):
         # A struct answer is an effect, anything else none; a throw fails the read.
         self.assertIn("effect = fx.m_Kind == VALUE_OBJECT;", effect)
         # The core reads it for a visible, empty layer only, inside the census.
-        census = function_body(self.core(), "void Census(int64_t room, double now)")
-        self.assertIn("if (l.visible && l.elements == 0 && Call(ops_.effect, e.layer, effect)) l.effect = effect;", census)
+        census = strip_comments(function_body(self.core(), "void Census(int64_t room, double now)"))
+        self.assertIn("if (l.visible && l.elements == 0) {", census)
+        self.assertIn("const bool read = Call(ops_.effect, e.layer, effect);", census)
+        self.assertLess(census.index("if (l.visible && l.elements == 0) {"), census.index("Call(ops_.effect"))
+        self.assertIn("l.effect = read && effect;", census)
+        # Every read lands in one of the session's three counts, which end the trace line.
+        for count in ("++counters_.fxFailed;", "++counters_.fxStruct;", "++counters_.fxOther;"):
+            self.assertIn(count, census)
+        self.assertEqual(self.core().count("Call(ops_.effect"), 1, "the effect is read in the census only")
+        trace = function_body(self.core(), "inline std::string TraceLine(std::string_view player, const FlightCounters& c)")
+        self.assertLess(trace.index('" no-front="'), trace.index('" fx-struct="'))
+        self.assertLess(trace.index('" fx-struct="'), trace.index('" fx-other="'))
+        self.assertLess(trace.index('" fx-other="'), trace.index('" fx-failed="'))
 
     # ---- residual, and no warp -----------------------------------------------------------
 
@@ -1295,7 +1306,7 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn("v.moves", depth)
         self.assertIn("v.censusMs", depth)
         self.assertIn("v.listed", depth)
-        self.assertIn("FcNs::IsFilterLayer(l, v.gameFront)", depth)
+        self.assertIn("FcNs::RearmostFilter(v.gameFront, v.layers)", depth)
         self.assertIn('"game@"', depth)
         # The visit's flight layer counts only while it is this room's and still ours.
         self.assertIn("v.room == room", depth)

@@ -1113,6 +1113,81 @@ int main()
             visitText(f, w, 7) + " || control " + visitText(g, r, 7));
     }
     {
+        // Each effect read lands in exactly one of three counts: a struct (an
+        // effect), another answer (no effect), a read that failed (no effect).
+        // Only a visible empty layer is read.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 951, -10300.0, "Effect_1", true, 0, true }, { 952, -10200.0, "Empty_Instances", true, 0, false },
+                                 { 953, -10100.0, "Effect_2", true, 0, true }, { 954, -10000.0, "Invisible_walls", true, 40, false } });
+        w.effectFails.insert(953);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightCounters& c = f.Stats();
+        check("front_layer_filter/each_effect_read_counted_struct_other_or_failed",
+            d.write && w.effectReads == 3 && c.fxStruct == 1 && c.fxOther == 1 && c.fxFailed == 1
+                && c.fxStruct + c.fxOther + c.fxFailed == (uint64_t)w.effectReads && f.Visit().depth == -10001.0,
+            visitText(f, w, 7) + " fx=" + std::to_string(c.fxStruct) + "/" + std::to_string(c.fxOther) + "/" + std::to_string(c.fxFailed));
+    }
+    {
+        // Every read failing in a room that has filters (Act_09_05): the census
+        // reports no filter, so Smoke counts (-11201), and `failed` equals the
+        // reads, never a silent zero. Read, the same room gives -5501.
+        FlightWorld w;
+        Flight f = flightIn(w, act0905());
+        for (int64_t id : { 501, 503, 504 }) w.effectFails.insert(id);
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        const FlightCounters& c = f.Stats();
+        check("front_layer_filter/every_read_failing_reports_no_filter_and_counts_failed",
+            d.write && RearmostFilter(v.gameFront, v.layers) == -1 && v.depth == -11201.0 && w.effectReads == 3
+                && c.fxFailed == 3 && c.fxStruct == 0 && c.fxOther == 0,
+            visitText(f, w, 7) + " fx=" + std::to_string(c.fxStruct) + "/" + std::to_string(c.fxOther) + "/" + std::to_string(c.fxFailed));
+    }
+    {
+        // The rearmost filter in force is reported, after any re-choice:
+        // Act_01_01 names Tree_Leaves@-10000 at the census, then Effect_1@-10100
+        // once Tree_Leaves holds canopies. The effect is not read again.
+        FlightWorld w;
+        Flight f = flightIn(w, act0101());
+        depthAt(f, w, 1, 7, 0.0);
+        const int before = RearmostFilter(f.Visit().gameFront, f.Visit().layers);
+        const bool first = before >= 0 && f.Visit().layers[(size_t)before].name == "Tree_Leaves"
+            && f.Visit().layers[(size_t)before].depth == -10000.0;
+        worldLayer(w, 602)->elements = 40;
+        depthAt(f, w, 2, 7, 1000.0);
+        const FlightLayerVisit& v = f.Visit();
+        const int after = RearmostFilter(v.gameFront, v.layers);
+        check("front_layer_filter/the_rearmost_filter_is_reported",
+            first && after >= 0 && v.layers[(size_t)after].name == "Effect_1" && v.layers[(size_t)after].depth == -10100.0
+                && w.effectReads == 2 && f.Stats().fxStruct == 2,
+            visitText(f, w, 7) + " before=" + std::to_string(before) + " after=" + std::to_string(after));
+    }
+    {
+        // The session's totals end the trace line, after no-front=, and sum
+        // across visits: town (one read, a struct) and then Act_09_05 with one
+        // read failing (two structs, one failed).
+        FlightWorld w;
+        w.layers[7] = kGameEnds;
+        w.layers[8] = kGameEnds;
+        w.rooms[7] = town01();
+        w.rooms[8] = act0905();
+        w.effectFails.insert(503);
+        Flight f = makeFlight(w);
+        const std::string fresh = TraceLine("match", f.Stats());
+        w.equipped = CharmBit(Charm::Wings);
+        depthAt(f, w, 1, 7, 0.0);
+        depthAt(f, w, 2, 8, 100.0);
+        const FlightCounters& c = f.Stats();
+        const std::string line = TraceLine("match", c);
+        const auto endsWith = [](const std::string& s, std::string_view tail) {
+            return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+        };
+        check("trace/the_effect_totals_end_the_trace_line",
+            endsWith(fresh, " no-front=0 fx-struct=0 fx-other=0 fx-failed=0")
+                && endsWith(line, " no-front=0 fx-struct=3 fx-other=0 fx-failed=1")
+                && c.fxStruct + c.fxOther + c.fxFailed == (uint64_t)w.effectReads && c.depth == 2 && sumsHold(c),
+            fresh + " | " + line);
+    }
+    {
         FlightWorld w;
         w.layers[7] = { LayerEnd{ 101, 100.0 }, LayerEnd{ 109, -100.0 } };
         Flight f = makeFlight(w);

@@ -312,6 +312,11 @@ inline constexpr std::string_view StateName(State s)
 //   depthCalls = depthOther + depthSeen
 //   depthSeen  = depthIdle + noFront + depth
 //
+// The census's layer_get_fx reads, over the session: each in exactly one of
+// fxStruct (an effect), fxOther (an answer that is not a struct) and fxFailed
+// (the read threw or was refused). The last two both class the layer as no
+// effect; they are counted so a runner whose read never works shows it.
+//
 // The adapter hands every hooked call to the core (OnQuery, NoteCall,
 // OnUpdateDepth, NoteDepthOther) except at three returns, which count nothing:
 //   - no self: there is nothing to compare;
@@ -337,6 +342,9 @@ struct FlightCounters {
     uint64_t depthSeen = 0;     // of depthCalls, the local player's
     uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
     uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none)
+    uint64_t fxStruct = 0;      // census effect reads that answered a struct: an effect
+    uint64_t fxOther = 0;       // census effect reads that answered anything else: no effect
+    uint64_t fxFailed = 0;      // census effect reads that failed: no effect
 };
 
 // One hooked call, after its original ran.
@@ -432,17 +440,27 @@ struct FlightDepthChoice {
     int    by = -1;
 };
 
+// The rearmost filter layer in `layers`, the one with the highest depth: its
+// index, or -1 when there is none. On the element counts the layers carry, so
+// after a re-choice it names the filter in force (`flightprobe depth`'s
+// `filter=`).
+inline int RearmostFilter(double gameFront, const std::vector<RoomLayer>& layers)
+{
+    int at = -1;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (!IsFilterLayer(layers[i], gameFront)) continue;
+        if (at < 0 || layers[i].depth > layers[(size_t)at].depth) at = static_cast<int>(i);
+    }
+    return at;
+}
+
 inline FlightDepthChoice ChooseFlightDepth(double gameFront, const std::vector<RoomLayer>& layers)
 {
     FlightDepthChoice c;
     if (!std::isfinite(gameFront)) return c;
-    bool haveFilter = false;
-    double rearmost = 0.0;
-    for (const RoomLayer& l : layers) {
-        if (!IsFilterLayer(l, gameFront)) continue;
-        if (!haveFilter || l.depth > rearmost) rearmost = l.depth;
-        haveFilter = true;
-    }
+    const int filter = RearmostFilter(gameFront, layers);
+    const bool haveFilter = filter >= 0;
+    const double rearmost = haveFilter ? layers[(size_t)filter].depth : 0.0;
     double lowest = gameFront;
     for (size_t i = 0; i < layers.size(); ++i) {
         const RoomLayer& l = layers[i];
@@ -971,8 +989,16 @@ private:
                 l.id = e.layer;
                 l.depth = e.depth;
                 l.effect = false;
-                bool effect = false;
-                if (l.visible && l.elements == 0 && Call(ops_.effect, e.layer, effect)) l.effect = effect;
+                if (l.visible && l.elements == 0) {
+                    // Each read in one of three counts; `other` and `failed`
+                    // both leave the layer with no effect.
+                    bool effect = false;
+                    const bool read = Call(ops_.effect, e.layer, effect);
+                    l.effect = read && effect;
+                    if (!read) ++counters_.fxFailed;
+                    else if (l.effect) ++counters_.fxStruct;
+                    else ++counters_.fxOther;
+                }
                 visit_.layers.push_back(std::move(l));
             }
             const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
@@ -1057,6 +1083,10 @@ inline std::string RefusedLine(std::string_view why) { return "flightcharm: refu
 // For drawing in front, the same: no call (`depth-calls=0`), none from the
 // player (`depth-other=` only), flight not on (`depth-idle=`), or no front
 // layer could be chosen (`no-front=`), against the stat line's `depth=`.
+// Last, the censuses' layer_get_fx reads over the session (`fx-struct=`,
+// `fx-other=`, `fx-failed=`): a session with filters in its rooms but no
+// `fx-struct=` says the effect read does not work on this runner, so "Never
+// past a filter" did nothing.
 inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 {
     return "flightcharm trace: player=" + std::string(player)
@@ -1066,7 +1096,9 @@ inline std::string TraceLine(std::string_view player, const FlightCounters& c)
         + " unreadable=" + std::to_string(c.unreadable) + " other=" + std::to_string(c.other)
         + " depth-calls=" + std::to_string(c.depthCalls) + " depth-other=" + std::to_string(c.depthOther)
         + " depth-seen=" + std::to_string(c.depthSeen) + " depth-idle=" + std::to_string(c.depthIdle)
-        + " no-front=" + std::to_string(c.noFront);
+        + " no-front=" + std::to_string(c.noFront)
+        + " fx-struct=" + std::to_string(c.fxStruct) + " fx-other=" + std::to_string(c.fxOther)
+        + " fx-failed=" + std::to_string(c.fxFailed);
 }
 
 // ---- the size guard --------------------------------------------------------------
