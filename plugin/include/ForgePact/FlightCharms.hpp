@@ -19,8 +19,10 @@ namespace ForgePact::FlightCharms {
 // ordinary unique roll; Gabriel Wings (Angelic, 2x2) and Witch's Broomstick
 // (Unholy, 1x5) drop from the Angelic roll. Each drop sits behind its own
 // panel switch, off by default. While one is worn the local player walks
-// through scenery (the Collision_Parent_obj family) but not through walls,
-// gates, locks, monsters or the room's edge, and is drawn in front of scenery.
+// through scenery (the Collision_Parent_obj family) and through monsters
+// (Enemy_Parent_obj and its descendants, body collision only: the owner,
+// 2026-10-13), but not through walls, gates, locks or the room's edge, and is
+// drawn in front of scenery.
 //
 // This header decides; it never touches the game. It holds:
 //   - the item table and the seed codec. A charm is saved as a plain Small
@@ -283,8 +285,9 @@ inline constexpr HookedRow kHooked[kHookedCount] = {
 };
 
 // off: no charm worn. on: one is worn. residual: none is worn, but the player
-// still stood inside the family at the last read, so flight keeps answering
-// until a read comes back free and the player can walk out.
+// still stood inside the family or a monster at the last read, so flight keeps
+// answering (monsters included) until a read comes back free and the player
+// can walk out.
 enum class State : int { Off, On, Residual };
 
 inline constexpr std::string_view StateName(State s)
@@ -307,6 +310,10 @@ inline constexpr std::string_view StateName(State s)
 //   calls = notPlayer + unblocked + seen
 // and every blocked query of the local player (`seen`) in exactly one of
 //   seen = idle + unconfigured + unreadable + other + excluded + outsideRoom + answered
+// The two monster counts are parts of that sum, not buckets of their own:
+// `monster` is inside `answered` (a monster answered on place_meeting) and
+// `monsterKept` inside `other` (a monster named on any other row, or an
+// InstancePlaceTallest monster answer, kept).
 //
 // UpdateDepth: every call handed to the core counts once in `depthCalls`, then
 //   depthCalls = depthOther + depthSeen
@@ -347,6 +354,8 @@ struct FlightCounters {
     uint64_t fxStruct = 0;      // census effect reads that answered a struct: an effect
     uint64_t fxOther = 0;       // census effect reads that answered anything else: no effect
     uint64_t fxFailed = 0;      // census effect reads that failed: no effect
+    uint64_t monster = 0;       // of answered, a monster named on place_meeting
+    uint64_t monsterKept = 0;   // of other, a monster named on another row, or an InstancePlaceTallest monster, kept
 };
 
 // One hooked call, after its original ran.
@@ -627,8 +636,10 @@ public:
     // CharmBit()s; false when the array cannot be read (counts as none).
     using EquippedFn = std::function<bool(unsigned& mask)>;
     // The saved original place_meeting at the player's own x and y against
-    // Collision_Parent_obj, with the player as self; false when unreadable
-    // (counts as free, so flight goes off: the game's own answers again).
+    // Collision_Parent_obj and then Enemy_Parent_obj, with the player as self;
+    // overlapping when either meets, so a charm taken off inside a monster
+    // stays residual until both reads are free. False when unreadable (counts
+    // as free, so flight goes off: the game's own answers again).
     using OverlapFn = std::function<bool(bool& overlapping)>;
     // room_width / room_height; false when they cannot be read.
     using RoomSizeFn = std::function<bool(double& width, double& height)>;
@@ -678,6 +689,16 @@ public:
     {
         family_ = family;
         excluded_ = std::move(excluded);
+        familyTable_.clear();
+    }
+
+    // The monster object (Enemy_Parent_obj), as an index the adapter resolved
+    // by name. A -1 answers for nothing: no object is then a monster, and a
+    // monster query keeps its answer as any other object's does. The family's
+    // own rule does not depend on it.
+    void SetMonster(int monster)
+    {
+        monster_ = monster;
         familyTable_.clear();
     }
 
@@ -732,7 +753,7 @@ public:
     // ---- the state, refreshed at the point of use ----------------------------
     // At most once a frame: the first player-self call of a frame reads the
     // worn charms, and, only when none is worn after flight was on or
-    // residual, whether the player still overlaps the family. `flightcharm
+    // residual, whether the player still overlaps the family or a monster. `flightcharm
     // stat` refreshes too (RefreshForStat), so what it prints never depends on
     // a hooked call having run since the last equip.
     void Refresh(int64_t frame)
@@ -773,9 +794,10 @@ public:
     // One hooked call, after its original ran. `excludedBlocks()` re-runs the
     // same original, same arguments and self, against Wall_Parent_obj and
     // then Lock_obj, and says whether either is there. It is asked only for a
-    // blocked, family-named query of the local player while flight is on or
-    // residual, with every point inside the room, and never for
-    // InstancePlaceTallest. Any other self returns at once, reading nothing.
+    // blocked, family-named query (or a monster-named place_meeting) of the
+    // local player while flight is on or residual, with every point inside the
+    // room, and never for InstancePlaceTallest. Any other self returns at
+    // once, reading nothing.
     //
     // Every return is counted (FlightCounters): another self in `notPlayer`, a
     // free answer in `unblocked`, and each kept or answered blocked query in one
@@ -810,6 +832,34 @@ public:
             return Answer::Real;
         }
         const Class c = Classify(q.object);
+        if (!c.family && c.monster) {
+            // A monster (the owner, 2026-10-13: body collision only). Only
+            // place_meeting, the mask's own test, is answered; a point or line
+            // query at a monster may be how a target is picked, so every other
+            // row, and an InstancePlaceTallest monster answer, keeps it.
+            if (q.row != Hooked::PlaceMeeting) {
+                ++counters_.other;
+                ++counters_.monsterKept;
+                return Answer::Real;
+            }
+            if (c.excluded) {
+                ++counters_.excluded;
+                return Answer::Real;
+            }
+            if (!InsideRoom(q, kHooked[i].points)) {
+                ++counters_.outsideRoom;
+                return Answer::Real;
+            }
+            bool wall = true;
+            try { wall = static_cast<bool>(excludedBlocks()); } catch (...) { wall = true; }
+            if (wall) {
+                ++counters_.excluded;
+                return Answer::Real;
+            }
+            ++counters_.answered;
+            ++counters_.monster;
+            return kHooked[i].answer;
+        }
         if (!c.family) {
             ++counters_.other;
             return Answer::Real;
@@ -922,7 +972,7 @@ public:
     }
 
 private:
-    struct Class { bool family = false; bool excluded = false; };
+    struct Class { bool family = false; bool excluded = false; bool monster = false; };
 
     // The object's own index or one of its descendants. A failed ancestry
     // question is "no" for the family and "yes" for the exclusion: either way
@@ -938,7 +988,8 @@ private:
     {
         if (object < 0) return Class{};
         const auto it = familyTable_.find(object);
-        if (it != familyTable_.end()) return Class{ (it->second & 1) != 0, (it->second & 2) != 0 };
+        if (it != familyTable_.end())
+            return Class{ (it->second & 1) != 0, (it->second & 2) != 0, (it->second & 4) != 0 };
         Class c;
         c.family = IsOrDescends(object, family_, false);
         for (int e : excluded_) {
@@ -947,8 +998,11 @@ private:
                 break;
             }
         }
+        // A failed ancestry question is "not a monster": the query keeps the
+        // game's answer. An unresolved monster (-1) names nothing.
+        c.monster = monster_ >= 0 && IsOrDescends(object, monster_, false);
         if (familyTable_.size() >= kFamilyTableMax) familyTable_.clear();
-        familyTable_.emplace(object, static_cast<uint8_t>((c.family ? 1 : 0) | (c.excluded ? 2 : 0)));
+        familyTable_.emplace(object, static_cast<uint8_t>((c.family ? 1 : 0) | (c.excluded ? 2 : 0) | (c.monster ? 4 : 0)));
         return c;
     }
 
@@ -1093,6 +1147,7 @@ private:
     RoomSizeFn roomSize_;
     LayerEndsFn layerEnds_;
     int family_ = -1;
+    int monster_ = -1;
     std::vector<int> excluded_;
     std::unordered_map<int, uint8_t> familyTable_;
     bool armed_ = false;
@@ -1136,6 +1191,11 @@ inline std::string RefusedLine(std::string_view why) { return "flightcharm: refu
 // work: `flightprobe depth`'s `unread=` says why each layer went unread. Only
 // `fx-other=` or `fx-failed=` rising with no `fx-struct=` says the read does
 // not answer a struct on this runner, so "Never past a filter" did nothing.
+// At the end, the monsters (the owner's scope, 2026-10-13): `monster=`, the
+// monster-named place_meeting queries answered (a part of `answered=`), and
+// `monster-kept=`, the monster-named blocked queries kept on another row and
+// the InstancePlaceTallest monster answers kept (a part of `other=`). A walk
+// still held at a monster while `monster-kept=` rises says another row holds it.
 inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 {
     return "flightcharm trace: player=" + std::string(player)
@@ -1147,7 +1207,8 @@ inline std::string TraceLine(std::string_view player, const FlightCounters& c)
         + " depth-seen=" + std::to_string(c.depthSeen) + " depth-idle=" + std::to_string(c.depthIdle)
         + " no-front=" + std::to_string(c.noFront)
         + " fx-struct=" + std::to_string(c.fxStruct) + " fx-other=" + std::to_string(c.fxOther)
-        + " fx-failed=" + std::to_string(c.fxFailed);
+        + " fx-failed=" + std::to_string(c.fxFailed)
+        + " monster=" + std::to_string(c.monster) + " monster-kept=" + std::to_string(c.monsterKept);
 }
 
 // ---- the size guard --------------------------------------------------------------

@@ -2,8 +2,10 @@
 
 ForgePact #158 phase 2 adds three built-in charms: Pocket Elf, Gabriel Wings
 and Witch's Broomstick. While one is worn the local player walks through
-scenery (the Collision_Parent_obj family) but not through walls, gates,
-locks, monsters or the room's edge, and is drawn in front of scenery. These
+scenery (the Collision_Parent_obj family) and, by the owner's scope of
+2026-10-13, through monsters (Enemy_Parent_obj and its descendants, on
+place_meeting only), but not through walls, gates, locks or the room's edge,
+and is drawn in front of scenery. These
 scenarios pin the decisions ModuleMain.cpp's adapter takes from
 plugin/include/ForgePact/FlightCharms.hpp, compiled whole, together with
 FlightCharmProbe.hpp, which shares its namespace.
@@ -11,8 +13,13 @@ FlightCharmProbe.hpp, which shares its namespace.
 Test names carry the substrings the workorder's criteria select with `-k`:
 `seed_codec` (the table and the seeds, a save format), `exclusion` (no charm
 worn: every query real, the baseline; worn: a blocked family query answered,
-walls, locks, monsters, the room's edge and other selves kept, the target),
-`residual`, `size_guard` (outside a load scope nothing changes, the baseline;
+walls, locks, monsters on every row but place_meeting, the room's edge and
+other selves kept, the target), `residual`, `monster` (no charm worn: a
+monster on place_meeting keeps its answer, the baseline; worn: it is answered
+false and counts in monster=, unless a wall or lock re-run or the room's edge
+holds it; every other row and InstancePlaceTallest keep a monster's answer
+and count in monster-kept=; Enemy_Only_Passage_obj, Player_obj and another
+self keep theirs; residual holds while only a monster overlaps), `size_guard` (outside a load scope nothing changes, the baseline;
 inside it a dressed charm waits for the vanilla items, the target;
 `size_guard_two_charms`: two charms in one load both stay on the grid, in
 either save order, read either way round and with a cell unknown;
@@ -157,6 +164,38 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
         self.assertScenarios("residual/taken_off_outside_a_prop_goes_straight_to_off",
                              "residual/baseline_no_charm_is_never_residual",
                              "residual/an_unreadable_read_fails_closed")
+
+    # ---- monsters: flight walks through them (the owner, 2026-10-13) --------
+
+    def test_monster_baseline_flight_off_keeps_the_answer(self):
+        self.assertScenarios("monster/baseline_flight_off_a_monster_on_place_meeting_keeps_its_answer")
+
+    def test_monster_target_place_meeting_is_answered(self):
+        self.assertScenarios("monster/target_flight_on_a_monster_on_place_meeting_is_answered_false",
+                             "monster/target_residual_answers_a_monster_too")
+
+    def test_monster_target_walls_locks_and_the_room_edge_still_hold(self):
+        self.assertScenarios("monster/target_a_monster_query_whose_rerun_meets_a_wall_or_lock_keeps_its_answer",
+                             "monster/target_a_monster_query_outside_the_room_keeps_its_answer")
+
+    def test_monster_target_other_rows_keep_and_count_monster_kept(self):
+        self.assertScenarios("monster/target_a_monster_on_another_row_keeps_its_answer_and_counts_monster_kept",
+                             "exclusion/target_a_monster_named_query_keeps_its_answer")
+
+    def test_monster_target_not_monsters_and_another_self_keep_theirs(self):
+        self.assertScenarios("monster/target_enemy_only_passage_the_player_and_another_self_keep_theirs",
+                             "monster/an_unresolved_monster_answers_for_nothing")
+
+    def test_monster_residual_until_both_reads_are_free(self):
+        self.assertScenarios("monster/residual_holds_while_only_a_monster_overlaps_and_ends_when_both_reads_are_free")
+
+    def test_monster_trace_line_and_the_family_unchanged(self):
+        # The family's own scenarios still pass with the monster configured.
+        self.assertScenarios("monster/the_trace_line_ends_with_monster_and_monster_kept",
+                             "trace/the_counters_sum_as_documented",
+                             "exclusion/target_a_blocked_family_query_is_answered",
+                             "residual/taken_off_inside_a_prop_until_the_first_free_read",
+                             "stat_line/the_fresh_session_line_byte_for_byte")
 
     # ---- the size guard -----------------------------------------------------
 

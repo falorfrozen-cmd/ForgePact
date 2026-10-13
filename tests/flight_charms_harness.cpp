@@ -5,7 +5,7 @@
 // game is touched. The controlled world is an object table with parents
 // (object_is_ancestor answers from it the way the runtime does - an object is
 // not its own ancestor), the charms the local player wears, whether the
-// player overlaps the Collision_Parent_obj family, a room size, each room's
+// player overlaps the Collision_Parent_obj family or a monster, a room size, each room's
 // two game-layer ends and its own layers (with the flight layer once placed),
 // a millisecond clock, and a small inventory grid for the size guard. Frames
 // are plain numbers.
@@ -14,11 +14,16 @@
 // and one past it, and t, b, c or j off by one (not a flight charm).
 // exclusion: with no charm worn every query keeps its real answer (baseline);
 // with one worn a blocked family query is answered, while a wall, a lock, a
-// re-run that a wall blocks, a monster and a point outside the room keep the
-// real answer, a free answer stands and another self is never touched
-// (target); InstancePlaceTallest's family result becomes noone, a wall result
-// stays. residual: a charm taken off inside a prop keeps flight on until the
-// first free read; outside a prop it goes straight to off. size_guard: outside
+// re-run that a wall blocks, a monster on any row but place_meeting and a
+// point outside the room keep the real answer, a free answer stands and
+// another self is never touched (target); InstancePlaceTallest's family result
+// becomes noone, a wall result stays. residual: a charm taken off inside a
+// prop keeps flight on until the first free read; outside a prop it goes
+// straight to off. monster (the owner's scope, 2026-10-13): with no charm worn
+// a monster on place_meeting keeps its answer (baseline); worn, it is answered
+// false unless a wall or lock re-run or the room's edge holds it, every other
+// row keeps it (monster-kept=), Enemy_Only_Passage_obj and Player_obj are not
+// monsters, and residual holds while only a monster overlaps. size_guard: outside
 // a load scope or for another item nothing changes (baseline); a dressed 2x2
 // or 1x5 charm waits for the end of its grid's load, a vanilla item takes its
 // cells first, a refused full footprint becomes 1x1 at its own cell (kept) and
@@ -63,19 +68,26 @@ using namespace ForgePact::FlightCharms;
 // Parents as the data file gives them (RDM § 19.8): Wall_Parent_obj and
 // Lock_obj are children of Collision_Parent_obj, Gate_Parent_obj a child of
 // Wall_Parent_obj, Block_Dynamic_Sprite_obj (the ravine's blocker) a child of
-// Block_obj, which is not a wall.
+// Block_obj, which is not a wall. The monsters (RDM § 19.9): Enemy_Parent_obj
+// is a child of Avoidable_Parent_obj, the training dummy descends from it
+// through Enemy_Child_Basic_obj and a boss part through
+// Enemy_Child_Destructible_obj. Player_obj is a child of Enemy_Aggroable_obj,
+// which has no parent, and so has Enemy_Only_Passage_obj: neither is a monster.
+// Skeleton, Fence, Cart and the two *Child entries stand for any descendant.
 enum Obj : int {
-    AvoidableParent = 1, CollisionParent = 957, CollisionProp = 959, Fence = 5001, Cart = 5002,
+    AvoidableParent = 433, CollisionParent = 957, CollisionProp = 959, Fence = 5001, Cart = 5002,
     WallParent = 5701, InvisibleWall = 2269, GateParent = 1881, GateChild = 5003, LockObj = 2509,
-    LockChild = 5004, BlockObj = 609, BlockDynamic = 608, EnemyAggroable = 300, EnemyParent = 301,
-    Skeleton = 5005,
+    LockChild = 5004, BlockObj = 609, BlockDynamic = 608, EnemyAggroable = 1401, EnemyParent = 1429,
+    EnemyChildBasic = 1406, EnemyChildDestructible = 1408, AttackDummy = 364, OdinPillar = 3288,
+    EnemyOnlyPassage = 1428, PlayerObj = 3553, Skeleton = 5005,
 };
 static const std::map<int, int> kParent = {
     { CollisionParent, AvoidableParent }, { CollisionProp, CollisionParent }, { Fence, CollisionProp },
     { Cart, CollisionProp }, { WallParent, CollisionParent }, { InvisibleWall, WallParent },
     { GateParent, WallParent }, { GateChild, GateParent }, { LockObj, CollisionParent }, { LockChild, LockObj },
-    { BlockObj, CollisionParent }, { BlockDynamic, BlockObj }, { EnemyParent, EnemyAggroable },
-    { Skeleton, EnemyParent },
+    { BlockObj, CollisionParent }, { BlockDynamic, BlockObj }, { EnemyParent, AvoidableParent },
+    { EnemyChildBasic, EnemyParent }, { AttackDummy, EnemyChildBasic }, { Skeleton, EnemyChildBasic },
+    { EnemyChildDestructible, EnemyParent }, { OdinPillar, EnemyChildDestructible }, { PlayerObj, EnemyAggroable },
 };
 static long g_AncestorCalls = 0;
 static bool objectIsAncestor(int object, int ancestor)
@@ -105,6 +117,7 @@ struct FlightWorld {
     unsigned equipped = 0;          // CharmBit()s of the charms the player wears
     bool equippedReadable = true;
     bool overlapping = false;       // the player stands inside the family
+    bool overlappingMonster = false;  // the player stands inside a monster (Enemy_Parent_obj's family)
     bool overlapReadable = true;
     double roomW = 2000.0, roomH = 1500.0;
     bool roomReadable = true;
@@ -146,16 +159,18 @@ static Flight makeFlight(FlightWorld& w)
     Flight f;
     f.SetIsAncestor(objectIsAncestor);
     f.SetFamily(CollisionParent, { WallParent, LockObj });
+    f.SetMonster(EnemyParent);
     f.SetEquipped([&w](unsigned& mask) {
         ++w.equippedReads;
         if (!w.equippedReadable) return false;
         mask = w.equipped;
         return true;
     });
+    // The adapter's one overlap read: the family, then Enemy_Parent_obj.
     f.SetOverlap([&w](bool& inside) {
         ++w.overlapReads;
         if (!w.overlapReadable) return false;
-        inside = w.overlapping;
+        inside = w.overlapping || w.overlappingMonster;
         return true;
     });
     f.SetRoomSize([&w](double& rw, double& rh) {
@@ -726,9 +741,14 @@ int main()
         w.equipped = CharmBit(Charm::Wings);
         g_WallAsks = 0;
         bool ok = true;
+        // The owner's scope (2026-10-13) answers a monster on place_meeting
+        // (the monster/ scenarios); every other row keeps a monster's answer,
+        // and an object that is not a monster keeps it on every row.
         for (int i = 0; i < kHookedCount; ++i) {
-            for (int o : { Skeleton, EnemyParent, EnemyAggroable, AvoidableParent })
-                ok = ok && ask(f, static_cast<Hooked>(i), 10, true, o, true) == Answer::Real;
+            const Hooked row = static_cast<Hooked>(i);
+            if (row != Hooked::PlaceMeeting)
+                for (int o : { Skeleton, EnemyParent }) ok = ok && ask(f, row, 10, true, o, true) == Answer::Real;
+            for (int o : { EnemyAggroable, AvoidableParent }) ok = ok && ask(f, row, 10, true, o, true) == Answer::Real;
         }
         check("exclusion/target_a_monster_named_query_keeps_its_answer",
             ok && g_WallAsks == 0 && w.roomReads == 0 && same(f.Stats(), 0, 0, 0, 0), counts(f.Stats()));
@@ -924,6 +944,191 @@ int main()
         for (int frame = 1; frame <= 5; ++frame) ok = ok && ask(f, Hooked::PlaceMeeting, frame, true, Fence, true) == Answer::Real;
         check("residual/baseline_no_charm_is_never_residual",
             ok && f.CurrentState() == State::Off && w.overlapReads == 0 && w.equippedReads == 5);
+    }
+
+    // ======================= monster (the owner's scope, 2026-10-13) =======
+    // A flying player walks through monsters: a blocked place_meeting of the
+    // local player naming Enemy_Parent_obj or a descendant is answered "nothing
+    // met", walls, locks and the room's edge still decide, and every other row
+    // keeps a monster's answer.
+    {
+        // Baseline: no charm worn, a monster on place_meeting keeps its answer.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        g_WallAsks = 0;
+        bool ok = true;
+        for (int frame = 1; frame <= 3; ++frame)
+            for (int o : { EnemyParent, Skeleton, AttackDummy, OdinPillar })
+                ok = ok && ask(f, Hooked::PlaceMeeting, frame, true, o, true) == Answer::Real;
+        const FlightCounters& c = f.Stats();
+        check("monster/baseline_flight_off_a_monster_on_place_meeting_keeps_its_answer",
+            ok && f.CurrentState() == State::Off && g_WallAsks == 0 && w.roomReads == 0 && c.idle == 12
+                && c.monster == 0 && c.monsterKept == 0 && same(c, 0, 0, 0, 0),
+            TraceLine("match", c));
+    }
+    {
+        // Target: worn, Enemy_Parent_obj and its descendants (a basic monster,
+        // the training dummy, a boss part) are answered false on place_meeting,
+        // each after the wall and lock re-run, and count in monster=.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        g_WallAsks = 0;
+        bool ok = true;
+        for (int o : { EnemyParent, Skeleton, AttackDummy, OdinPillar })
+            ok = ok && ask(f, Hooked::PlaceMeeting, 10, true, o, true) == Answer::False;
+        const FlightCounters& c = f.Stats();
+        check("monster/target_flight_on_a_monster_on_place_meeting_is_answered_false",
+            ok && g_WallAsks == 4 && c.monster == 4 && c.monsterKept == 0 && c.other == 0 && same(c, 4, 0, 0, 0),
+            TraceLine("match", c));
+    }
+    {
+        // Residual answers monsters too, as it answers the family.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Broom);
+        ask(f, Hooked::PlaceMeeting, 1, true, Fence, true);
+        w.equipped = 0;
+        w.overlapping = true;
+        const bool ok = ask(f, Hooked::PlaceMeeting, 2, true, AttackDummy, true) == Answer::False
+            && f.CurrentState() == State::Residual && f.Stats().monster == 1;
+        check("monster/target_residual_answers_a_monster_too", ok, TraceLine("match", f.Stats()));
+    }
+    {
+        // A monster query whose re-run meets a wall or a lock keeps its answer.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Elf);
+        g_WallAsks = 0;
+        const bool ok = ask(f, Hooked::PlaceMeeting, 10, true, Skeleton, true, true) == Answer::Real
+            && ask(f, Hooked::PlaceMeeting, 10, true, AttackDummy, true, true) == Answer::Real;
+        const FlightCounters& c = f.Stats();
+        check("monster/target_a_monster_query_whose_rerun_meets_a_wall_or_lock_keeps_its_answer",
+            ok && g_WallAsks == 2 && c.monster == 0 && c.monsterKept == 0 && same(c, 0, 2, 0, 0), TraceLine("match", c));
+    }
+    {
+        // A monster query whose point is outside the room, or in a room that
+        // cannot be read, keeps its answer, and asks no re-run.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        g_WallAsks = 0;
+        bool ok = ask(f, Hooked::PlaceMeeting, 10, true, Skeleton, true, false, -1.0, 100.0) == Answer::Real
+            && ask(f, Hooked::PlaceMeeting, 10, true, Skeleton, true, false, 100.0, 1500.0) == Answer::Real
+            && ask(f, Hooked::PlaceMeeting, 10, true, EnemyParent, true, false, std::numeric_limits<double>::quiet_NaN(), 100.0) == Answer::Real;
+        w.roomReadable = false;
+        ok = ok && ask(f, Hooked::PlaceMeeting, 10, true, AttackDummy, true) == Answer::Real;
+        const FlightCounters& c = f.Stats();
+        check("monster/target_a_monster_query_outside_the_room_keeps_its_answer",
+            ok && g_WallAsks == 0 && c.monster == 0 && c.monsterKept == 0 && same(c, 0, 0, 4, 0), TraceLine("match", c));
+    }
+    {
+        // Every other row keeps a monster's answer: position_meeting,
+        // instance_position, collision_line, collision_circle, and an
+        // InstancePlaceTallest answer whose instance is a monster. Each is a
+        // monster kept (monster-kept=, inside other=), with nothing re-run or read.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        g_WallAsks = 0;
+        bool ok = true;
+        for (Hooked row : { Hooked::PositionMeeting, Hooked::InstancePosition, Hooked::CollisionLine,
+                            Hooked::CollisionCircle, Hooked::InstancePlaceTallest })
+            ok = ok && ask(f, row, 10, true, AttackDummy, true) == Answer::Real;
+        const FlightCounters& c = f.Stats();
+        check("monster/target_a_monster_on_another_row_keeps_its_answer_and_counts_monster_kept",
+            ok && g_WallAsks == 0 && w.roomReads == 0 && c.monsterKept == 5 && c.other == 5 && c.monster == 0
+                && same(c, 0, 0, 0, 0),
+            TraceLine("match", c));
+    }
+    {
+        // Not monsters: Enemy_Only_Passage_obj (no parent) and Player_obj (under
+        // Enemy_Aggroable_obj) keep their answer and count as other, not as a
+        // monster kept. Another self is never touched, monster or not.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        g_WallAsks = 0;
+        bool ok = true;
+        for (int o : { EnemyOnlyPassage, PlayerObj, EnemyAggroable })
+            ok = ok && ask(f, Hooked::PlaceMeeting, 10, true, o, true) == Answer::Real;
+        const FlightCounters mid = f.Stats();
+        for (int o : { EnemyParent, Skeleton, AttackDummy })
+            ok = ok && ask(f, Hooked::PlaceMeeting, 11, false, o, true) == Answer::Real;
+        const FlightCounters& c = f.Stats();
+        check("monster/target_enemy_only_passage_the_player_and_another_self_keep_theirs",
+            ok && g_WallAsks == 0 && mid.other == 3 && mid.monsterKept == 0 && c.notPlayer == 3 && c.monster == 0
+                && c.monsterKept == 0 && same(c, 0, 0, 0, 0),
+            TraceLine("match", c));
+    }
+    {
+        // A monster index that did not resolve (-1) answers for nothing: the
+        // monster is then just another object, while the family still answers.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        f.SetMonster(-1);
+        w.equipped = CharmBit(Charm::Wings);
+        const bool off = ask(f, Hooked::PlaceMeeting, 1, true, Skeleton, true) == Answer::Real
+            && ask(f, Hooked::PlaceMeeting, 1, true, Fence, true) == Answer::False;
+        f.SetMonster(EnemyParent);
+        const bool back = ask(f, Hooked::PlaceMeeting, 2, true, Skeleton, true) == Answer::False;
+        const FlightCounters& c = f.Stats();
+        check("monster/an_unresolved_monster_answers_for_nothing",
+            off && back && c.other == 1 && c.monster == 1 && c.monsterKept == 0 && c.answered == 2, TraceLine("match", c));
+    }
+    {
+        // Residual: the charm taken off while the player stands only inside a
+        // monster (a training dummy never moves away) keeps flight answering
+        // until both overlap reads, the family's and the monster's, are free.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        ask(f, Hooked::PlaceMeeting, 1, true, AttackDummy, true);
+        w.equipped = 0;
+        w.overlapping = false;
+        w.overlappingMonster = true;
+        const bool held = ask(f, Hooked::PlaceMeeting, 2, true, AttackDummy, true) == Answer::False
+            && f.CurrentState() == State::Residual;
+        const bool stillHeld = ask(f, Hooked::PlaceMeeting, 3, true, Fence, true) == Answer::False
+            && f.CurrentState() == State::Residual;
+        w.overlapping = true;
+        w.overlappingMonster = false;
+        const bool familyOnly = ask(f, Hooked::PlaceMeeting, 4, true, AttackDummy, true) == Answer::False
+            && f.CurrentState() == State::Residual;
+        w.overlapping = false;
+        const bool freed = ask(f, Hooked::PlaceMeeting, 5, true, AttackDummy, true) == Answer::Real
+            && f.CurrentState() == State::Off;
+        // The control: taken off outside every monster and prop goes straight to off.
+        FlightWorld v;
+        Flight g = makeFlight(v);
+        v.equipped = CharmBit(Charm::Wings);
+        ask(g, Hooked::PlaceMeeting, 1, true, AttackDummy, true);
+        v.equipped = 0;
+        const bool control = ask(g, Hooked::PlaceMeeting, 2, true, AttackDummy, true) == Answer::Real
+            && g.CurrentState() == State::Off;
+        check("monster/residual_holds_while_only_a_monster_overlaps_and_ends_when_both_reads_are_free",
+            held && stillHeld && familyOnly && freed && control && w.overlapReads == 4 && f.Stats().monster == 3,
+            "state=" + std::string(StateName(f.CurrentState())) + " overlap-reads=" + std::to_string(w.overlapReads)
+                + " " + TraceLine("match", f.Stats()));
+    }
+    {
+        // The trace line ends with monster= and monster-kept=; the stat line's
+        // answered= carries the monster answers, its fresh text unchanged.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Wings);
+        ask(f, Hooked::PlaceMeeting, 1, true, Skeleton, true);
+        ask(f, Hooked::PlaceMeeting, 1, true, Fence, true);
+        ask(f, Hooked::CollisionLine, 1, true, Skeleton, true);
+        const FlightCounters& c = f.Stats();
+        const std::string line = TraceLine("match", c);
+        const std::string tail = " fx-failed=0 monster=1 monster-kept=1";
+        const bool ends = line.size() >= tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0;
+        StatFields s;
+        f.FillStat(s);
+        check("monster/the_trace_line_ends_with_monster_and_monster_kept",
+            ends && has(StatLine(s), " answered=2 excluded=0 outside-room=0 depth=0 ") && c.other == 1,
+            line + " | " + StatLine(s));
     }
 
     // ======================= front_layer ===================================
@@ -1325,9 +1530,11 @@ int main()
             CensusTallyText(f.Visit().tally));
     }
     {
-        // The session's totals end the trace line, after no-front=, and sum
-        // across visits: town (one read, a struct) and then Act_09_05 with one
-        // read failing (two structs, one failed).
+        // The session's totals follow no-front= and end the trace line's
+        // effect part, before the two monster counts the owner's scope
+        // (2026-10-13) added at its end, and sum across visits: town (one
+        // read, a struct) and then Act_09_05 with one read failing (two
+        // structs, one failed).
         FlightWorld w;
         w.layers[7] = kGameEnds;
         w.layers[8] = kGameEnds;
@@ -1345,8 +1552,8 @@ int main()
             return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
         };
         check("trace/the_effect_totals_end_the_trace_line",
-            endsWith(fresh, " no-front=0 fx-struct=0 fx-other=0 fx-failed=0")
-                && endsWith(line, " no-front=0 fx-struct=3 fx-other=0 fx-failed=1")
+            endsWith(fresh, " no-front=0 fx-struct=0 fx-other=0 fx-failed=0 monster=0 monster-kept=0")
+                && endsWith(line, " no-front=0 fx-struct=3 fx-other=0 fx-failed=1 monster=0 monster-kept=0")
                 && c.fxStruct + c.fxOther + c.fxFailed == (uint64_t)w.effectReads && c.depth == 2 && sumsHold(c),
             fresh + " | " + line);
     }
@@ -1446,7 +1653,9 @@ int main()
         ask(f, Hooked::PlaceMeeting, 2, true, Fence, true);                              // answered
         ask(f, Hooked::PlaceMeeting, 2, true, WallParent, true);                         // excluded
         ask(f, Hooked::PlaceMeeting, 2, true, Fence, true, true);                        // excluded by the re-run
-        ask(f, Hooked::PlaceMeeting, 2, true, Skeleton, true);                           // other
+        ask(f, Hooked::PlaceMeeting, 2, true, EnemyOnlyPassage, true);                   // other
+        ask(f, Hooked::PlaceMeeting, 2, true, Skeleton, true);                           // answered: a monster
+        ask(f, Hooked::PositionMeeting, 2, true, Skeleton, true);                        // other: a monster kept
         ask(f, Hooked::PlaceMeeting, 2, true, -1, true);                                 // unreadable
         ask(f, Hooked::PlaceMeeting, 2, true, Fence, true, false, -1.0, 0.0);            // outside the room
         f.SetFamily(-1, { WallParent, LockObj });
@@ -1455,13 +1664,16 @@ int main()
         f.OnUpdateDepth(2, true, 7);                                                     // depth
         f.OnUpdateDepth(2, true, -1);                                                    // no front: room unreadable
         const FlightCounters& c = f.Stats();
-        const bool every = c.notPlayer == 3 && c.unblocked == 2 && c.seen == 8 && c.idle == 1 && c.unconfigured == 1
-            && c.unreadable == 1 && c.other == 1 && c.excluded == 2 && c.outsideRoom == 1 && c.answered == 1
+        const bool every = c.notPlayer == 3 && c.unblocked == 2 && c.seen == 10 && c.idle == 1 && c.unconfigured == 1
+            && c.unreadable == 1 && c.other == 2 && c.excluded == 2 && c.outsideRoom == 1 && c.answered == 2
+            && c.monster == 1 && c.monsterKept == 1
             && c.depthOther == 2 && c.depthIdle == 1 && c.noFront == 1 && c.depth == 1;
+        // monster= is a part of answered=, monster-kept= a part of other=.
         const bool sums = c.calls == c.notPlayer + c.unblocked + c.seen
             && c.seen == c.idle + c.unconfigured + c.unreadable + c.other + c.excluded + c.outsideRoom + c.answered
+            && c.monster <= c.answered && c.monsterKept <= c.other
             && c.depthCalls == c.depthOther + c.depthSeen && c.depthSeen == c.depthIdle + c.noFront + c.depth;
-        check("trace/the_counters_sum_as_documented", every && sums && c.calls == 13 && c.depthCalls == 5,
+        check("trace/the_counters_sum_as_documented", every && sums && c.calls == 15 && c.depthCalls == 5,
             TraceLine("match", c) + " | " + counts(c));
     }
 
