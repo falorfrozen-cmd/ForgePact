@@ -54044,9 +54044,11 @@ static void JumpSceneryCommand(const std::string& rest)
 
 // ---- Flight charms (FlightCharms.hpp): the flight adapter -------------------
 // ForgePact #158. While a flight charm is worn, the local player walks through
-// scenery (the Collision_Parent_obj family) but not through walls (zone gates
-// among them, RDM § 19.8), locks, monsters or the room's edge, and is drawn in
-// front of scenery. FlightCharms.hpp's Flight decides every call; this adapter
+// scenery (the Collision_Parent_obj family) and through monsters
+// (Enemy_Parent_obj and its descendants, on place_meeting only: the owner,
+// 2026-10-13, body collision), but not through walls (zone gates among them,
+// RDM § 19.8), locks or the room's edge, and is drawn in front of scenery.
+// FlightCharms.hpp's Flight decides every call; this adapter
 // supplies the game reads and writes, all by name.
 //
 // What it answers (docs/flight-charms-research.md, Live 1's S7): the three
@@ -54067,9 +54069,9 @@ static void JumpSceneryCommand(const std::string& rest)
 // point of use: the first blocked query of the local player in that frame, or
 // UpdateDepth. The worn charms are read off the offline charm array
 // (inventoryData[mplr - 1].localCharmItemArray, phase 1's route; online it
-// reads nothing, so flight stays off). Taking a charm off inside scenery
-// leaves flight `residual` until the saved original place_meeting at the
-// player's own position reads free; the player is never moved.
+// reads nothing, so flight stays off). Taking a charm off inside scenery or a
+// monster leaves flight `residual` until the saved original place_meeting at
+// the player's own position reads free of both; the player is never moved.
 //
 // Drawing in front: UpdateDepth is hooked by its SDK name. After the game's
 // own call, for the local player while flight is on, `layer` is set to the
@@ -54087,10 +54089,15 @@ static void JumpSceneryCommand(const std::string& rest)
 // No address, no struct read.
 
 static constexpr HeroSiege::Objects::GameObject kFlightFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
+// Monsters (Enemy_Parent_obj and its descendants): the owner, 2026-10-13,
+// "flight should ignore enemy collisions", read as body collision only. They
+// are not in the family; the core passes them on place_meeting alone, with
+// the same wall re-run, and every other row keeps the game's answer. An
+// unresolved name refuses flight with the family's one line.
+static constexpr HeroSiege::Objects::GameObject kFlightMonster = HeroSiege::Objects::GameObject::Enemy_Parent_obj;
 // The objects flight never passes, with their descendants: walls (gates are
-// walls) and locks. Monsters are never in the family, so they keep blocking
-// without a row here. The owner may ask for walls to open after testing
-// (2026-10-12), so this list is the one edit.
+// walls) and locks, for the family and the monsters alike. The owner may ask
+// for walls to open after testing (2026-10-12), so this list is the one edit.
 static constexpr HeroSiege::Objects::GameObject kFlightExcluded[] = {
     HeroSiege::Objects::GameObject::Wall_Parent_obj,
     HeroSiege::Objects::GameObject::Lock_obj,
@@ -54114,6 +54121,7 @@ static bool g_FlightDepthNative = false;
 static bool g_FlightConfigured = false;    // the objects resolved and the core's callbacks set
 static CInstance* g_FlightPlayer = nullptr;   // the local player, refreshed each frame once installed
 static int g_FlightFamilyIdx = -1;
+static int g_FlightMonsterIdx = -1;        // Enemy_Parent_obj's index, once resolved
 static std::vector<int> g_FlightExcludedIdx;
 static int g_FlightControllerIdx = -1;     // Controller_obj's index, once resolved
 // The layers the last census listed, and the flight layer, each as the
@@ -54199,12 +54207,14 @@ static bool FlightEquipped(unsigned& mask)
 }
 
 // The core's OverlapFn: the saved original place_meeting at the player's own
-// x and y against Collision_Parent_obj, with the player as self. Unreadable
-// counts as free (false), so flight goes off and the game's answers stand.
+// x and y, with the player as self, against Collision_Parent_obj and then
+// Enemy_Parent_obj; overlapping when either meets, so a charm taken off inside
+// a monster lets the player walk out as from a prop. Unreadable counts as
+// free (false), so flight goes off and the game's answers stand.
 static bool FlightOverlap(bool& overlapping)
 {
     const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
-    if (!orig || !g_FlightPlayer || g_FlightFamilyIdx < 0) return false;
+    if (!orig || !g_FlightPlayer || g_FlightFamilyIdx < 0 || g_FlightMonsterIdx < 0) return false;
     try {
         const RValue p = g_FlightPlayer->ToRValue();
         const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") });
@@ -54212,11 +54222,20 @@ static bool FlightOverlap(bool& overlapping)
         if (!JsNumber(vx) || !JsNumber(vy)) return false;
         const double x = vx.ToDouble(), y = vy.ToDouble();
         if (!std::isfinite(x) || !std::isfinite(y)) return false;
-        RValue args[3] = { RValue(x), RValue(y), RValue((double)g_FlightFamilyIdx) };
-        RValue r;
-        orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);
-        if (r.m_Kind != VALUE_BOOL && !JsNumber(r)) return false;
-        overlapping = r.ToBoolean();
+        // One read of the saved original against one object: false when unreadable.
+        const auto meets = [&](const RValue& object, bool& met) -> bool {
+            RValue args[3] = { RValue(x), RValue(y), object };
+            RValue r;
+            orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);
+            if (r.m_Kind != VALUE_BOOL && !JsNumber(r)) return false;
+            met = r.ToBoolean();
+            return true;
+        };
+        bool family = false, monster = false;
+        if (!meets(RValue((double)g_FlightFamilyIdx), family)) return false;
+        // The family meets: the monster read would change nothing.
+        if (!family && !meets(RValue((double)g_FlightMonsterIdx), monster)) return false;
+        overlapping = family || monster;
         return true;
     } catch (...) {}
     return false;
@@ -54584,11 +54603,14 @@ static std::string FlightInstall()
 #endif
     if (!g_FlightConfigured) {
         int family = -1;
+        int monster = -1;
         std::vector<int> excluded;
         std::string missing;
         try {
             family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightFamily))) }).ToDouble();
             if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kFlightFamily));
+            monster = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightMonster))) }).ToDouble();
+            if (monster < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(kFlightMonster));
             for (const HeroSiege::Objects::GameObject obj : kFlightExcluded) {
                 const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
                 if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
@@ -54597,11 +54619,13 @@ static std::string FlightInstall()
         } catch (...) { missing = "the objects"; }
         if (!missing.empty()) return missing + " did not resolve by name; flight stays off";
         g_FlightFamilyIdx = family;
+        g_FlightMonsterIdx = monster;
         g_FlightExcludedIdx = excluded;
         g_Flight.SetIsAncestor([](int object, int ancestor) {
             return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
         });
         g_Flight.SetFamily(family, excluded);
+        g_Flight.SetMonster(monster);
         g_Flight.SetEquipped(&FlightEquipped);
         g_Flight.SetOverlap(&FlightOverlap);
         g_Flight.SetRoomSize(&JsRoomSize);
@@ -54756,9 +54780,10 @@ static void FlightCharmTick()
 // Every game name is an hs-game-sdk constant or read back by name; nothing
 // here computes an address or installs a hook of its own.
 
-// Replan 2 moved it from flp1, so Live 2's `marker` check proves this probe is
-// the one installed.
-static constexpr const char* kFlpMarker = "flp2";
+// Replan 2 moved it from flp1, and the monster scope (2026-10-13) from flp2,
+// so Live 3's `marker` check proves the installed build carries the monster
+// rule.
+static constexpr const char* kFlpMarker = "flp3";
 // The game's fallback ground sprite when an icon has no Pickup_ companion
 // (RDM § 22.7, static reading), compared by the name sprite_get_name reads.
 static constexpr const char* kFlpErrorSprite = "Error_spr";

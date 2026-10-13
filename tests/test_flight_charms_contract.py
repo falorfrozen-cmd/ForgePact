@@ -725,6 +725,55 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);", overlap)
         self.assertIn("g_Flight.SetOverlap(&FlightOverlap);", self.body("install"))
 
+    # ---- monsters (the owner's scope, 2026-10-13: body collision only) ----------------------
+
+    def test_the_monster_resolves_by_its_sdk_name_beside_the_family(self):
+        self.assertIn("static constexpr HeroSiege::Objects::GameObject kFlightMonster ="
+                      " HeroSiege::Objects::GameObject::Enemy_Parent_obj;", self.code)
+        install = self.body("install")
+        self.assertIn("HeroSiege::Objects::GetObjectName(kFlightMonster)", install)
+        # Resolved beside the family, before the core is configured, and handed to it.
+        self.assertLess(install.index("GetObjectName(kFlightFamily)"), install.index("GetObjectName(kFlightMonster)"))
+        self.assertIn("g_FlightMonsterIdx = monster;", install)
+        self.assertIn("g_Flight.SetMonster(monster);", install)
+        self.assertLess(install.index("g_Flight.SetFamily("), install.index("g_Flight.SetMonster(monster);"))
+        self.assertIsNone(re.search(r"\b" + sdk_object_index("Enemy_Parent_obj") + r"\b", self.code),
+                          "Enemy_Parent_obj's index is written as a number")
+        # The monster object is not one of the objects flight never passes.
+        excluded = re.search(r"kFlightExcluded\[\] = \{(.*?)\};", self.code, re.S).group(1)
+        self.assertNotIn("Enemy_Parent_obj", excluded)
+
+    def test_an_unresolved_monster_refuses_flight_with_the_one_line(self):
+        install = self.body("install")
+        # The monster's name joins `missing`, so the existing one-line refusal names it,
+        # and the refusal returns before anything is configured.
+        self.assertRegex(install, r"if \(monster < 0\) missing \+= \(missing\.empty\(\) \? \"\" : \", \"\) \+ "
+                                  r"std::string\(HeroSiege::Objects::GetObjectName\(kFlightMonster\)\);")
+        self.assertEqual(install.count('" did not resolve by name; flight stays off"'), 1)
+        refusal = install.index('" did not resolve by name; flight stays off"')
+        self.assertLess(install.index("if (monster < 0)"), refusal)
+        self.assertLess(refusal, install.index("g_FlightMonsterIdx = monster;"))
+        self.assertLess(refusal, install.index("g_Flight.SetMonster(monster);"))
+
+    def test_the_overlap_read_asks_the_monster_after_the_family_through_the_same_original(self):
+        overlap = self.body("overlap")
+        self.assertEqual(overlap.count("g_JsOrig[(int)JsNs::Builtin::PlaceMeeting]"), 1)
+        self.assertIn("g_FlightMonsterIdx < 0", overlap)
+        family = overlap.index("g_FlightFamilyIdx")
+        monster = overlap.index("RValue((double)g_FlightMonsterIdx)")
+        self.assertLess(overlap.index("RValue((double)g_FlightFamilyIdx)"), monster)
+        self.assertLess(family, monster)
+        # Both reads are the saved original on the player, as self and other, at its own x and y.
+        self.assertEqual(overlap.count("orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);"), 1)
+        self.assertNotIn('"place_meeting"', overlap)
+        self.assertNotIn("Enemy_Parent_obj", overlap)
+
+    def test_the_monster_comment_no_longer_says_monsters_block(self):
+        head = self.block[:self.block.index("kFlightExcluded[] = {")]
+        head = head[head.rindex("kFlightFamily ="):]
+        self.assertNotIn("keep blocking", head)
+        self.assertIn("Enemy_Parent_obj", head)
+
     def test_the_player_is_never_moved(self):
         for name in ('"x"', '"y"'):
             self.assertIsNone(re.search(r'variable_instance_set"\s*,\s*\{[^}]*RValue\(' + name, self.code))
@@ -1213,9 +1262,7 @@ class FlightCharmsProbeContract(unittest.TestCase):
                               ("unique", "FlpUnique(tail);"), ("pool", "FlpPool();"), ("stat", "FlpStat();")):
             with self.subTest(form=form):
                 self.assertIn('if (sub == "%s") { %s return; }' % (form, handler), command)
-        # Replan 2 moved the marker, so Live 2's `marker` check proves the new probe is installed.
-        self.assertIn('static constexpr const char* kFlpMarker = "flp2";', self.code)
-        self.assertNotIn('"flp1"', self.code)
+        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
         usage = self.body("usage")
         self.assertIn('Out(std::string("flightprobe: marker=") + kFlpMarker);', usage)
         self.assertLess(usage.index("marker="), usage.index("spawn elf|wings|broom"))
@@ -1225,6 +1272,14 @@ class FlightCharmsProbeContract(unittest.TestCase):
                 self.assertIn(form, usage)
 
     # ---- spawn and ground ----------------------------------------------------------------------
+
+    def test_the_marker_is_flp3_for_the_monster_rule(self):
+        # The monster scope moved the marker again, so Live 3's `marker` check proves the
+        # installed build carries the monster rule.
+        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
+        for old in ('"flp1"', '"flp2"'):
+            with self.subTest(old=old):
+                self.assertNotIn(old, self.code)
 
     def test_spawn_uses_charmprobes_loader_route_with_the_charms_own_seed(self):
         spawn = self.body("spawn")
