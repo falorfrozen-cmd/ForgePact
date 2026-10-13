@@ -56182,6 +56182,7 @@ static const char* g_TrCreateRoute = "not-installed";   // CreateItemNew's route
 static long long g_TrUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
 static long long g_TrNoItem = 0;         // a ground item with no item struct to read
 static long long g_TrNoIdentity = 0;     // an identity that could not be read: counted, not decided
+static long long g_TrInitCalls = 0;      // LootGroundInit calls the tracker saw while installed and on
 static long long g_TrQueueFull = 0;      // calls not noted because a frame's queue was full
 static long long g_TrZoneUnresolved = 0; // room changes whose Satanic zone the game's readers did not answer
 static constexpr size_t kTrPendingCap = 512;   // per frame
@@ -56275,9 +56276,12 @@ static void TrXpCount(const ForgePact::MiningOre::ExperienceCapture& c, const RV
 
 // From the shared LootGroundInit detour, after the game's own call returned:
 // only the call's handles, made durable, as LootAnnounceOnInit keeps them.
+// Armed but not installed (`tracker 1` at character select), nothing is queued:
+// the tick neither drains nor ages anything until the install.
 static void TrackerOnInit(CInstance* S, int argc, RValue** A)
 {
-    if (!g_Tracker.Enabled()) return;
+    if (!g_Tracker.Enabled() || !g_TrInstallTried) return;
+    ++g_TrInitCalls;
     auto& pending = g_TrState.pending;
     if (pending.size() >= kTrPendingCap) { ++g_TrQueueFull; return; }
     LaPending p;
@@ -56288,9 +56292,13 @@ static void TrackerOnInit(CInstance* S, int argc, RValue** A)
 
 // From the shared Hook_CreateItemNew, after the game's original returned,
 // while the switch is on: the tracker's creation window, keyed as Loot
-// announcements keys its own.
+// announcements keys its own. Only once installed: the window is aged by the
+// installed tick alone, so creations noted during character load would stay
+// "recent" until the first tick after the install and let a restored ground
+// item past the guard.
 static void TrackerNoteCreated(int argc, RValue** A, const RValue& result)
 {
+    if (!g_TrInstallTried) return;
     ForgePact::LootAnnounceMod::ItemKey key{};
     if (argc > 0 && A && A[0] && LaItemKey(*A[0], key)) g_Tracker.NoteCreated({ key.kind, key.value });
     if (LaItemKey(result, key)) g_Tracker.NoteCreated({ key.kind, key.value });
@@ -56517,6 +56525,7 @@ static std::string TrackerStatLine()
         + " unidentified=" + std::to_string(g_TrUnidentified)
         + " no-item=" + std::to_string(g_TrNoItem)
         + " no-identity=" + std::to_string(g_TrNoIdentity)
+        + " init-calls=" + std::to_string(g_TrInitCalls)
         + " queue-full=" + std::to_string(g_TrQueueFull)
         + " zone-unresolved=" + std::to_string(g_TrZoneUnresolved);
 }

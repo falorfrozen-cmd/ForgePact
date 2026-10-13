@@ -545,7 +545,7 @@ int main(int argc, char** argv)
               m.StatLine(false, "none")
                   == "tracker: off install=not-armed gold=not-installed xp=not-installed kills=not-installed drops=not-installed "
                      "gold-calls=0 xp-calls=0 kill-calls=0 gold-sum=0 xp-sum=0 kills-sum=0 drops-written=0 held-bag-drop=0 "
-                     "drops-untracked=0 drops-duplicate=0 drops-unread=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
+                     "drops-untracked=0 drops-duplicate=0 drops-unread=0 drops-seen=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
                      "lines=0 write-errors=0 buffer-full=0 file-full=0 file=none",
               m.StatLine(false, "none"));
         on(m);
@@ -568,6 +568,7 @@ int main(int argc, char** argv)
               s.rfind("tracker: on install=installed gold=both xp=table-only kills=none drops=table-only ", 0) == 0
                   && s.find(" gold-calls=1 xp-calls=1 kill-calls=1 gold-sum=5 xp-sum=9 kills-sum=1 drops-written=1 held-bag-drop=1 drops-untracked=1 ")
                          != std::string::npos
+                  && s.find(" drops-seen=3 ") != std::string::npos
                   && s.find(" lines=1 write-errors=0 ") != std::string::npos
                   && s.size() > 39 && s.substr(s.size() - 39) == " file=session-4242-1700000000000.ndjson",
               s);

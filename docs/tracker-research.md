@@ -24,10 +24,14 @@ Labels: **measured** (a live run recorded it; who ran it is named),
 ## Routes
 
 - **Gold: `GoldLogAdd`, by SDK name, `HookOneScript` with both routes (hook id
-  `fp_tracker_gold`).** The game calls it once per gold credit to write the UI
-  log; the balance itself changes in `PickUpGoldCheck` (RDM § 13.10, static
-  reading). Two arguments, the earned amount at index 1 on the 2026-08-29
-  build: **measured by the Tracker** (its README, "Current counter contract").
+  `fp_tracker_gold`).** The game calls it to write a gold pickup's UI log; the
+  balance itself changes in `PickUpGoldCheck` (RDM § 13.10, static reading).
+  Whether every gold credit (vendor sales, quest rewards, a mod's
+  `PickUpGoldCheck` credit) passes through it is **not established**, so the
+  gold total is what this script saw, not known to be all income. Two
+  arguments, the earned amount at index 1 on the 2026-08-29 build: **the
+  Tracker's reviewed code profile (static reading)** (its README, "Current
+  counter contract", which cites no live run for gold).
   The decompiler copy of the current build reads as the same two-argument
   UI-log writer (**static reading**, 2026-10-13). The sensor takes the
   producer's adaptive rule rather than its exact one: 1 to 4 arguments, the
@@ -36,7 +40,9 @@ Labels: **measured** (a live run recorded it; who ran it is named),
 - **Experience: `ExperienceUpdate`, through its one shared detour
   (`fp_mining_rolls_xp`, `MiningOre::InstallExperience`).** Two arguments,
   the amount at index 0, and a call that answers an explicit boolean `false`
-  is a refusal, not a gain: **measured by the Tracker**. Extra rolls
+  is a refusal, not a gain: **the Tracker's reviewed code profile (static
+  reading)**. Whether every experience credit passes through it is **not
+  established**. Extra rolls
   (`miningrolls`) already holds a native pass-through detour on this script,
   and a second `HookOneScript` on the same script installs table-only, which
   a direct `call` never passes through (AGENTS.md, "Prove the Instrument").

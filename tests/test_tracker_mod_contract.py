@@ -35,7 +35,7 @@ ADAPTER_END = "// ---- end of the tracker adapter"
 #: The keys Live procedure 1 reads off `tracker stat`.
 STAT_KEYS = ("install=", "gold=", "xp=", "kills=", "drops=", "gold-calls=", "xp-calls=", "kill-calls=",
              "gold-sum=", "xp-sum=", "kills-sum=", "drops-written=", "held-bag-drop=", "drops-untracked=",
-             "lines=", "write-errors=", "file=")
+             "drops-seen=", "lines=", "write-errors=", "file=")
 
 #: A file-scope `static` object declaration in the adapter (not a function, not
 #: a constexpr): its type and name.
@@ -187,7 +187,12 @@ class TrackerModContractTests(unittest.TestCase):
         self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", self.body("static void TrackerInstall()"))
         # Inside the call: the handles made durable, nothing of the item.
         on_init = self.body("static void TrackerOnInit(CInstance* S, int argc, RValue** A)")
-        self.assertIn("if (!g_Tracker.Enabled()) return;", on_init)
+        # Armed but not installed (`tracker 1` at character select), nothing is
+        # queued: the tick neither drains nor ages anything until the install.
+        self.assertIn("if (!g_Tracker.Enabled() || !g_TrInstallTried) return;", on_init)
+        # Counted before the queue cap, so `init-calls=` says the route ran at all.
+        self.assertBefore("++g_TrInitCalls;", "kTrPendingCap", on_init, "TrackerOnInit")
+        self.assertIn('" init-calls=" + std::to_string(g_TrInitCalls)', self.body("static std::string TrackerStatLine()"))
         self.assertIn("LaDurable(", on_init)
         for forbidden in ("DecideDrop", "itemInfoStruct", "LaRarity", "LaField", "CallBuiltin"):
             self.assertNotIn(forbidden, on_init, forbidden)
@@ -200,6 +205,11 @@ class TrackerModContractTests(unittest.TestCase):
         self.assertBefore("_resp = &g_Orig_##NAME(S, O, R, argc, A);", note, macro, "ITEM_CREATE_HOOK")
         self.assertBefore(note, "if (g_GemTableBuilding) return _res;", macro, "ITEM_CREATE_HOOK")
         self.assertLess(self.plugin.index("static void TrackerNoteCreated(int argc, RValue** A, const RValue& result);"), start)
+        # The creation window is aged only by an installed tick, so it notes
+        # nothing before then: a window filled during character load and never
+        # aged would let a restored ground item past the guard.
+        self.assertIn("if (!g_TrInstallTried) return;",
+                      self.body("static void TrackerNoteCreated(int argc, RValue** A, const RValue& result)"))
         create = self.body("static void TrInstallCreateHook()")
         self.assertBefore("if (g_Orig_CreateItemNew) {", "HookOneScript(", create, "TrInstallCreateHook")
         self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_tracker_new",', create)

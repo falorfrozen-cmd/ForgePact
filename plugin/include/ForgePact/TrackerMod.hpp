@@ -550,7 +550,8 @@ public:
         s += " gold-sum=" + n(m_Stats.goldSum) + " xp-sum=" + n(m_Stats.xpSum) + " kills-sum=" + n(m_Stats.killsSum);
         s += " drops-written=" + n(m_Stats.dropsWritten) + " held-bag-drop=" + n(m_Stats.heldBagDrop);
         s += " drops-untracked=" + n(m_Stats.dropsUntracked) + " drops-duplicate=" + n(m_Stats.dropsDuplicate);
-        s += " drops-unread=" + n(m_Stats.dropsUnread) + " xp-rejected=" + n(m_Stats.xpRejected);
+        s += " drops-unread=" + n(m_Stats.dropsUnread) + " drops-seen=" + n(m_Stats.seen);
+        s += " xp-rejected=" + n(m_Stats.xpRejected);
         s += " created=" + n(m_Stats.created) + " create-overflow=" + n(m_Stats.createOverflow);
         s += " heartbeats=" + n(m_Stats.heartbeats);
         s += " lines=" + n(m_Stats.lines) + " write-errors=" + n(m_Stats.writeErrors);
