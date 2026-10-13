@@ -53254,9 +53254,10 @@ static SoulPieceMergePass SoulPieceMergeInto(RValue& res, int argc, RValue** A, 
         // places the piece apart rather than counting it twice.
         SoulPieceRestoreCount(target.def, hadCount, oldCount);
         RefreshItemHash(target.item);
-        if (hasSuccess) {
-            try { g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), success }); } catch (...) {}
-        }
+        try {
+            if (hasSuccess) g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), success });
+            else g_Yytk->CallBuiltin("variable_struct_remove", { res, RValue("success") });
+        } catch (...) {}
         rep.why = "result-write";
         return SoulPieceMergePass::ReadFailed;
     }

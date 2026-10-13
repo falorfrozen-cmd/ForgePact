@@ -517,6 +517,12 @@ class SoulPieceContractTests(unittest.TestCase):
         failed = into[hashed:success]
         self.assertIn("return SoulPieceMergePass::HashFailed;", failed)
         self.assertIn("SoulPieceRestoreCount(target.def, hadCount, oldCount);", failed)
+        # A failed result write puts the count back and takes back the success it set:
+        # the game's own value when it had one, the field removed when it had none.
+        written = into[into.index("} catch (...) {", success):into.index('rep.why = "result-write";')]
+        self.assertIn("SoulPieceRestoreCount(target.def, hadCount, oldCount);", written)
+        self.assertIn('if (hasSuccess) g_Yytk->CallBuiltin("variable_struct_set", { res, RValue("success"), success });', written)
+        self.assertIn('else g_Yytk->CallBuiltin("variable_struct_remove", { res, RValue("success") });', written)
         self.assertEqual({"o", "success", "tabNumber", "x", "y"},
                          set(re.findall(r'"variable_struct_set", \{ \w+(?:\.\w+)?, RValue\("(\w+)"\)', into)))
         # The status line names the merge's route and counts the merges.
