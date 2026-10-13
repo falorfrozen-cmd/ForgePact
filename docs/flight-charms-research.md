@@ -46,11 +46,11 @@ that suspends the game's own loop.
 - **Static reading:** done on 2026-10-11 through the ghidra MCP and a local
   scan for the names a function's code references (§ Static reading). The
   readings about the game are also in the toolkit's
-  `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 22, labelled as static readings.
+  `docs/RUNTIME_DATA_MODELS.md`, § 19.6 and § 23, labelled as static readings.
 - **Live procedure 1:** run on 2026-10-12 (§ Results, "Live 1 results"):
   the five validity checks passed; 21 of 26 checks pass, 3 fail and 2 are
   not-observed. The measured facts about the game are also in
-  `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 22, relabelled as measured.
+  `docs/RUNTIME_DATA_MODELS.md` § 19.6 and § 23, relabelled as measured.
 - **Decision:** recorded from Live 1 (§ Decision). `dress-added` reads
   `item-missing`, the value added for the outcome S17 measured: the dressed
   charm missing after the reload, with no crash and no overlap.
@@ -150,7 +150,7 @@ local scan for the names a function's code references. A name scan lists
 candidate direct call sites. It is blind to calls through the script table or
 a method value, so a call it did not find is not observed, not absent. The
 same readings are in the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.6 and
-§ 22.
+§ 23.
 
 **Walking.**
 
@@ -666,13 +666,13 @@ player-self calls on a walk (RDM § 19.2, a measured count, and § 19.6, a
 static reading); `CheckTalentUse` once per frame (RDM § 7.2); `jumpprobe`
 refusing while `jumpscenery` holds the builtins (the module guide's "Jump
 through scenery" cost); `inventoryData` and its key rule (RDM § 2, measured
-for the relic grid); `localCharmItemArray` (RDM § 22.1, a static reading,
+for the relic grid); `localCharmItemArray` (RDM § 23.1, a static reading,
 never read live before this session); `GetItemFromFingerprint` and
 `GetOnlinePlayerItemOwner` (RDM § 2, measured); `GetItemSize` and
-`GetItemInfo` (RDM § 22.2, a static reading); the json, `InitItemFromJson`,
+`GetItemInfo` (RDM § 23.2, a static reading); the json, `InitItemFromJson`,
 `LootGroundCreateFromItem` spawn (RDM § 16.2, measured, and `sigdrop`);
 `GetUniqueRepoStruct`, field 27 and flag 40 (RDM § 13.4); `DropItemHeroic`
-(RDM § 22.4, a static reading); the Custom Forge's final pass (RDM § 16.1 and
+(RDM § 23.4, a static reading); the Custom Forge's final pass (RDM § 16.1 and
 § 16.9, measured); stat 25 (the Item Editor's stat catalog; its effect on the
 character is not in the shared references); `sprite_add` from `bp_ipc\` with a
 relative then an absolute path, a `VALUE_REF` index and `sprite_set_offset`
@@ -1033,13 +1033,13 @@ observed".
   but is not a wall. The family holds 1824 objects. This corrects the
   `walk-objects` row of § Live 1 results, which had counted `Wall_Parent_obj`
   outside the family; the tally itself had labelled it `family`.
-- **Placing a rebuilt item** (RDM § 22.6). `ParseItemToGrid` rebuilds each
+- **Placing a rebuilt item** (RDM § 23.6). `ParseItemToGrid` rebuilds each
   saved item and places it at its saved cell through
   `InventoryGridAddItemPos`, which answers false and writes nothing when any
   cell of the footprint is taken or off the grid. `ParseItemToGrid` ignores
   that answer, which is the reading behind S17's `dress-added:
   item-missing`: the dressed charm did not fit and was left off the grid.
-- **The ground sprite** (RDM § 22.7). `LootGroundInit` gives a new ground
+- **The ground sprite** (RDM § 23.7). `LootGroundInit` gives a new ground
   item the sprite named `Pickup_` plus the name of the item's display sprite
   (key `"11"`), and `Error_spr` when no such sprite exists. The game ships a
   `Pickup_` ground sprite beside each charm icon (13x13, 17x11 and 34x17 for
@@ -1047,7 +1047,7 @@ observed".
   such companion, which is the reading behind `sprite-draw: partial`. The
   player build already detours `LootGroundInit` once, shared by hidden loot
   and the loot announcement, and a second detour on it is refused.
-- **The ordinary unique roll** (RDM § 22.8). `DropUniqueItems` reads one
+- **The ordinary unique roll** (RDM § 23.8). `DropUniqueItems` reads one
   random entry of its sub-list and drops nothing when that entry fails its
   tests: no second draw, no die per entry. One added entry is therefore
   picked on 1 call in the sub-list's length plus one, between 1 in 51 and 1
@@ -1106,7 +1106,7 @@ short.
   tooltip's surface fields, which suggests a per-item tooltip cache
   (inference, not measured). Whether the run is made for an item with no
   stats at all is not established; Mod live 2 measures it.
-- **One flight charm at a time** (RDM § 22.1). The game lists one charm per
+- **One flight charm at a time** (RDM § 23.1). The game lists one charm per
   definition `b` above a rarity line, and all three flight charms carry `b`
   0, so with the Wings and the Broomstick both worn only the Wings were
   listed (measured, S14 and S17). The owner confirmed that this is the
@@ -1262,7 +1262,7 @@ colour-filter rooms, none of which Mod live 2 visits.
 installed with the Custom Forge's own hooks, because the dressing they protect
 runs on every load. Each load opens a scope. Inside it, a placement of a
 flight charm larger than 1x1 is held back and answered true (the load ignores
-the answer, RDM § 22.6). When the load returns, every vanilla item of that grid
+the answer, RDM § 23.6). When the load returns, every vanilla item of that grid
 is in place; each held charm is then placed at its full footprint, or, when
 that is refused, written 1x1 under `"2"` and `"3"`, its hash refreshed, tagged
 `fp_flight_guarded`, and placed at its own saved cell (`kept=`, or `failed=`
@@ -1274,7 +1274,7 @@ every full placement leaves every other held charm's cell free, and no save
 order of two charms leaves one off the grid. The footprint is tested in both
 orientations, `"2"` columns by `"3"` rows and the transpose, because which of
 `InventoryGridAddItemPos`'s arguments is the column and which the row is a
-static reading only (RDM § 22.6 does not record it). When one of the held
+static reading only (RDM § 23.6 does not record it). When one of the held
 charms' cells is unknown, every held charm in that load yields, since the
 guard cannot tell what covers what; a charm alone in its load is never shrunk
 for that. The price is a charm loading 1x1 for a session when only its
@@ -1305,7 +1305,7 @@ and loaded with `sprite_add`, once a session. A failed load writes nothing
 and the charm keeps the Small Charm's icon.
 
 The ground draws `Error_spr` for a runtime sprite because the game looks for a
-`Pickup_` companion by name (RDM § 22.7). So flight rides hidden loot's one
+`Pickup_` companion by name (RDM § 23.7). So flight rides hidden loot's one
 shared `LootGroundInit` detour as its third consumer, after hidden loot and
 loot announcements: after the game's call, when the new ground item holds a
 flight charm wearing our bag icon, its `sprite_index` becomes our ground copy
@@ -1326,7 +1326,7 @@ typing, hit and rewrite hooks of the Angelic roll, RDM § 13.4):
   by its SDK name, only from `flightcharm elf 1`, and for the length of each
   call one stand-in entry goes onto each of `lootListUnique[0..4]` and comes
   off again. Because that roll draws once and cannot say which sub-list it
-  drew from (RDM § 22.8), the coin is exact only when the stand-in occurs
+  drew from (RDM § 23.8), the coin is exact only when the stand-in occurs
   equally often in all five. The stand-in is therefore the first of Aimbot.exe,
   Witches Claw, Traveler's Map Journal, Crow's Feather and Hello its me,
   Steve! with the same count in every sub-list that also passes the roll's own
@@ -1509,12 +1509,12 @@ phase 1's Live 1 (S5 and the wall repeats); the blockers,
 `Block_Dynamic_Sprite_obj` and `Wall_Parent_obj`'s family (RDM § 19.6,
 measured, and § 19.8, from the data file); `InstancePlaceTallest` (§ 19.6,
 measured); `UpdateDepth` (§ 19.7, static); `ParseItemToGrid` and
-`InventoryGridAddItemPos` (§ 22.6, static); `LootGroundInit` (§ 22.7,
-static); `DropUniqueItems` (§ 22.4 and § 22.8, static: its by-name call shape
+`InventoryGridAddItemPos` (§ 23.6, static); `LootGroundInit` (§ 23.7,
+static); `DropUniqueItems` (§ 23.4 and § 23.8, static: its by-name call shape
 is not proven, which is why `unique-control` is its control); the Angelic
 roll and its hooks (RDM § 13.4 and `angelic-roll-hook-research.md` § Session
-3 to 5, measured); the charm read and the size and sprite keys (RDM § 22.1,
-§ 22.2 and § 22.5, measured).
+3 to 5, measured); the charm read and the size and sprite keys (RDM § 23.1,
+§ 23.2 and § 23.5, measured).
 
 ### Mod live procedure 2
 
@@ -1770,9 +1770,9 @@ the census's call shape cannot tell either from a builtin that wants the
 layer's name, so neither reaches § 19.7 as a runner fact until a read that
 passes the name answers the same. `fx=0/0/0` and a too-narrow kind test are
 findings for this document only too. The rest it relies on: the tooltip pass (RDM § 16.6, measured, with the cache an
-inference); the one-flight rule (§ 22.1, owner-stated and static) and the
-charm read (§ 22.1, measured); the guard's load (§ 22.6, static, measured in
-Mod live 1); `DropUniqueItems` and its by-name call shape (§ 22.4 and § 22.8,
+inference); the one-flight rule (§ 23.1, owner-stated and static) and the
+charm read (§ 23.1, measured); the guard's load (§ 23.6, static, measured in
+Mod live 1); `DropUniqueItems` and its by-name call shape (§ 23.4 and § 23.8,
 static, with `unique-control` its control); the Angelic roll, its list and
 its typing (RDM § 13.4, measured); the shares (hub
 `docs/models/unique-pick-spec.md`); and the bands (`drop_roll_model`'s
@@ -2003,7 +2003,7 @@ calls to `UpdateDepth`; and `ppl`, `ParseItemToGrid`'s call to
 - **`charm-grid-size`, `rolls` and `guard-control`: the game counts one
   flight charm.** The Broomstick was worn beside the Wings, and the game
   lists one charm per definition `b` above a rarity line; all three charms
-  carry `b` 0 (RDM § 22.1). The owner said this is how the game works, so
+  carry `b` 0 (RDM § 23.1). The owner said this is how the game works, so
   nothing is fixed, and Mod live 2 wears each charm alone (`broom-alone`,
   `reload-broom`). The guard's own counters passed.
 - **`flight-excluded`: not observed, with its control.** The family read
@@ -2267,7 +2267,7 @@ negative:
   order decides; with the Broomstick worn first and the Wings added, it
   listed the Wings, as Mod live 1 did.
 - **Raider's Torch.** The game's unique repository holds a Satanic unique
-  charm at `{10, 0, 0}`, `charms_raiders_torch`, so by RDM § 22.1's reading
+  charm at `{10, 0, 0}`, `charms_raiders_torch`, so by RDM § 23.1's reading
   the game would count only one of it and a worn flight charm. That is an
   inference; wearing the two together was not tried. Whether that is
   acceptable is the owner's question, not decided here.

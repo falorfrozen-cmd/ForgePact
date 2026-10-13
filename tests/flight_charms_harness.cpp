@@ -440,7 +440,7 @@ static Answer expected(Hooked row)
 struct Pending { int id = 0; int x = 0; int y = 0; };
 struct Saved { int id; int x; int y; int w; int h; bool charm; };
 
-// A grid as InventoryGridAddItemPos fills it (RDM § 22.6, static reading): the
+// A grid as InventoryGridAddItemPos fills it (RDM § 23.6, static reading): the
 // anchor and every covered cell must be inside the grid and free, or nothing
 // is written.
 struct Grid {
@@ -469,7 +469,7 @@ struct Grid {
     }
 };
 
-// One load of a saved grid, as § 22.6 reads ParseItemToGrid: each entry is
+// One load of a saved grid, as § 23.6 reads ParseItemToGrid: each entry is
 // placed at its saved cell and a refusal is ignored. Guarded, the adapter's
 // two hooks run around it: the scope opens, a charm's placement asks the
 // guard first, and the scope closes once the last entry is placed.
@@ -1683,7 +1683,7 @@ int main()
     // Gabriel Wings (2x2).
     {
         // Baseline: unguarded, the entry order decides (Live 1's
-        // `dress-added: item-missing`, read through § 22.6). The guard does
+        // `dress-added: item-missing`, read through § 23.6). The guard does
         // nothing outside a scope or for another item.
         Load first;
         first.run({ Saved{ 2, 0, 0, 2, 2, true }, Saved{ 1, 1, 1, 1, 1, false } }, false);

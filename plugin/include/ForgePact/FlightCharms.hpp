@@ -47,7 +47,7 @@ namespace ForgePact::FlightCharms {
 // adapter in ModuleMain.cpp resolves every object, script and builtin by name
 // and supplies each game read through the callbacks below, as JumpScenery.hpp's
 // does. The research is docs/flight-charms-research.md; the game facts are in
-// the hub's docs/RUNTIME_DATA_MODELS.md (§ 19.6-19.8, § 22).
+// the hub's docs/RUNTIME_DATA_MODELS.md (§ 19.6-19.8, § 23).
 //
 // The namespace is shared with FlightCharmProbe.hpp (the research build's
 // charmprobe). No name here repeats one of that header's, and the harness
@@ -1216,7 +1216,7 @@ inline std::string TraceLine(std::string_view player, const FlightCounters& c)
 // A save keeps only the compact definition, so a reload rebuilds each charm
 // and dressing writes its true footprint again. The game's grid load places
 // each rebuilt item at its saved cell and ignores a refused placement (RDM
-// § 22.6), so a charm whose footprint no longer fits would vanish, and a charm
+// § 23.6), so a charm whose footprint no longer fits would vanish, and a charm
 // placed early could take a cell a vanilla item needs. The adapter hooks the
 // load (ParseItemToGrid: Open before the original, Close after it, even when it
 // throws) and the placement (InventoryGridAddItemPos: Defer first, and when it
@@ -1429,7 +1429,7 @@ inline std::string GuardStatLine(std::string_view route, const GuardCounters& c)
 // that charm keeps its rate. Gabriel Wings and Witch's Broomstick use the
 // Angelic roll's lootListUnique[5] and a fixed stand-in of the same shape and
 // rarity. Pocket Elf uses the ordinary unique roll, which draws once from one
-// of lootListUnique[0..4] and cannot say which (RDM § 22.8); its coin is exact
+// of lootListUnique[0..4] and cannot say which (RDM § 23.8); its coin is exact
 // only when the stand-in occurs equally often in all five, so its stand-in is
 // the first candidate, in table order, with the same count in each of them
 // that also passes the roll's own filter.

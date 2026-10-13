@@ -59,3 +59,14 @@
   </div>
   <div id="gemfilter_panel" style="display:none"></div>
 </div>
+
+<!-- Boss soul pieces (#197): one switch, in the Gems rows' feature-row shape. -->
+<div class="card tab-card" data-tab="loot" id="soulPiecesCard">
+  <h2>Boss soul pieces</h2>
+  <div class="row feature-row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Boss soul pieces</span>
+    <label class="switch"><input type="checkbox" id="mod_boss_soul_pieces"><span class="sl"></span></label>
+    <span class="val" id="mbspval">off</span>
+    <span class="feature-description">Monsters in act zones sometimes drop a piece of that act's boss's soul, a little more often than a Gem of Incarnation. Right-click a piece in your bag to go straight to that boss's lair for a fresh fight, even if you beat it before. Off by default.</span>
+  </div>
+</div>

@@ -285,7 +285,7 @@ static std::vector<Triple> plus(std::vector<Triple> v, std::initializer_list<Tri
 static std::map<Triple, double> repoBase;
 // The definition's itemBaseInfoStruct per (type, sub, b), for the triples a flight scenario names:
 // its rarity ("27") and whether it is flagged hidden ("40"). The unique roll keeps an entry only
-// when the rarity is below 7 and it is not hidden (RDM § 22.4, § 22.8); so does the elf's filter.
+// when the rarity is below 7 and it is not hidden (RDM § 23.4, § 23.8); so does the elf's filter.
 struct RepoInfo { double rarity; bool hidden; };
 static std::map<Triple, RepoInfo> repoInfo;
 static RValue repoInfoStruct(const RepoInfo& i) {
@@ -727,7 +727,7 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
     return originalReturn;
 }
 
-// DropUniqueItems(x, y), the ordinary unique roll (RDM § 22.8, static reading): element `uniqueK`
+// DropUniqueItems(x, y), the ordinary unique roll (RDM § 23.8, static reading): element `uniqueK`
 // (0..4, the zone value) of the same Controller_obj variable, one index drawn (the picker above),
 // and only when that entry is an array its definition read through GetUniqueRepoStruct by direct
 // call; kept when the rarity is below 7 and it is not hidden, then CreateDefaultParams(sub, b, 1)
