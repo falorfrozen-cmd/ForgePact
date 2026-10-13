@@ -1148,12 +1148,37 @@ unchanged. Online, flight reads nothing and stays off.
 
 `UpdateDepth` is hooked by its SDK name. After the game's own call, when
 `self` is the local player and flight is on, the player's `layer` is set to
-the room's front game layer: the end of the room's `global.gameLayer` list
-whose layer depth is lower, read by name once per room. `yDepthSet` is left as
-the game set it. Which end is in front is chosen at runtime because the static
-reading did not settle it; Mod live procedure 1's `flight-depth` records it.
-For any other `self` the detour costs one compare and one count (the trace
-line's `depth-other=`), and it is installed only once flight is armed.
+the **flight layer**, a room layer of our own named `fp_flight`. `yDepthSet` is
+left as the game set it. For any other `self` the detour costs one compare and
+one count (the trace line's `depth-other=`), and it is installed only once
+flight is armed.
+
+The first design wrote the front end of the room's `global.gameLayer` list.
+Mod live 1 measured that write landing at −5500 with a canopy still over the
+player, because canopies sit on `Tree_Leaves`, in front of every game layer
+(§ "Why the canopy covered the flying player"). So the flight layer's depth is
+one below the lowest of the game layers' front end and every drawn layer
+(visible, holding an element) behind the room's rearmost filter layer. A
+filter layer is visible, holds no element, carries a layer effect (the
+effect read answers a struct) and lies in front of the game layers' front
+end; the rearmost is the one with the highest depth. Drawn layers in front of
+it stay in front of the player, so he keeps every tint he has on the ground
+(the owner, 2026-10-13, "Never past a filter"). From the data file that gives
+−10001 in town and in the Outskirts of Inoya once its canopies exist, and
+changes the answer against "in front of every drawn layer" in 8 rooms only.
+
+A census runs once per room visit, at the first write while flight is on, and
+remembers the layers in front of the game layers; a re-choice recounts their
+elements at most once a second, so a zone's `Tree_Leaves` that fills after
+the census (an empty one reads as a filter) moves the layer within a second.
+Before each write the cached layer must exist and carry our name; a failed
+check starts a new visit. A census that yields no layer writes nothing and
+counts `no-front=`. Each effect read is counted as a struct, another answer
+or a failure (`flightprobe depth`'s `fx=`, the trace line's `fx-struct=`,
+`fx-other=` and `fx-failed=`), because a read that never answers a struct
+would silently turn the filter rule off. What the effect read answers on this
+runner is Mod live procedure 2's `flight-depth` question, with town's
+`Effect_1` as the positive control.
 
 ### The size guard
 
@@ -1414,3 +1439,227 @@ is not proven, which is why `unique-control` is its control); the Angelic
 roll and its hooks (RDM § 13.4 and `angelic-roll-hook-research.md` § Session
 3 to 5, measured); the charm read and the size and sprite keys (RDM § 22.1,
 § 22.2 and § 22.5, measured).
+
+### Mod live procedure 2
+
+The session that re-runs what Mod live 1 failed or did not observe, each with
+the control it needs, and adds the owner's drop-rate check. What Mod live 1
+passed is not run again. It runs on the research build (`build.bat dev`) at
+the commit where the flight layer, the stat-less tooltip anchor, the `flp2`
+probe and these docs are done; the driver records the DLL's SHA-256 and asks
+the owner before installing it. As in procedure 1, the debugger's addresses
+stay out of this file: they are kept in the session's local notes.
+
+**Setup.** Save slot 14, "Sorak", in `Town_01_rm`. The saves are backed up
+before the launch and restored at teardown whatever happened, and the
+operator confirms that the installed game is the build the debugger addresses
+were read from, or aborts. At character select, `jumpscenery 0`. The session
+starts from the restored saves, so no flight charm is owned and Sorak's own
+charms fill the charm grid. The operator drives every person-step itself
+through hs-drive (keys, holds, clicks, `playerwarp`, the waypoint) and lists
+each in the capture; it spawns ground items away from the waypoint, whose
+sprite hid them in Mod live 1, and prefers right-click and keys in the bag,
+because a left click also sends Sorak walking. None of `jumpprobe hook`,
+`citrace 1`, `angelicprobe on`, `gambaprobe`, `prospectprobe` or
+`craftprobe` is used; `raredrop angelic`, `angelicprobe hit chance`,
+`flightprobe copies`, `zonecensus`, `tiptrace` and `charmprobe` are allowed.
+Headhunter's and Tyrant's Crown's switches stay off. Teardown: the debugger
+detached first, then the game stopped (its exit code is recorded as a note:
+both earlier sessions ended with a stack-buffer exit on a graceful close),
+the saves inspected and restored, and the lease released.
+
+**Cases.** Draw order: the town canopy Mod live 1 measured, on `Tree_Leaves`
+at −9700 behind the town filter `Effect_1` at −10300, with a generated zone
+(the Outskirts of Inoya, whose `Tree_Leaves` at −10000 fills at runtime,
+behind a filter at −10100) as the outlier. Tooltip: Pocket Elf, the stat-less
+case that failed, with Gabriel Wings as the control for the shared change.
+One flight charm: the Broomstick alone, then beside the Wings. The guard: two
+full Wings in the bag and the worn Broomstick across one reload. Drops: each
+roll once, at the player build's single copy. Not tried, and so "not observed
+live": Pocket Elf in a zone, the 8 colour-filter rooms where "Never past a
+filter" changes the answer (both rooms tried have their filter in front of
+every drawn layer, so the harness's `front_layer_filter` scenarios carry the
+rule there, while the effect read itself is measured in both rooms), gates and
+locks outside town, co-op, and the Angelic roll's natural chance.
+
+**Steps, in order:**
+
+- T0 `dll-hash`: the installed DLL's SHA-256 equals the build's.
+- T1 `marker`: a bare `flightprobe` begins `flightprobe: marker=flp2`, which
+  proves the new probe is the one installed; `control`: `ping` answers
+  `pong (YYTK 4.0.1)`. `flightcharm stat` and `sigdrop status` are recorded.
+- T2, the charms (setup): Sorak warps to the stash spot Mod live 1 used, away
+  from the waypoint, and the three charms are spawned with a short walk
+  between them so their labels do not stack: `flightprobe spawn elf`, the
+  Wings at rolls 12 and 1, and the Broomstick at 100, each followed by
+  `flightprobe ground`, which reads its own name and `ours`. The operator
+  picks all three up and opens the bag for a screenshot.
+- The debugger is attached and its logpoints armed (below). Because the
+  tooltip is probably drawn from a cached surface after its first frame, the
+  tooltip steps count only the first `tiptrace` stat line after each hover
+  begins: the pointer leaves every item for a second, `tiptrace 40` is sent,
+  the charm is hovered for two seconds with a screenshot, and the log is read.
+  The first try whose first line reads a stat count above 0 ends the step; at
+  most three tries.
+- T3, Gabriel Wings' tooltip (debugger window A). `bag-icon-control`: exactly
+  one gold `Flight` row, directly above the physical damage reduction line.
+  `tip-calls`, first half: a try reads a stat count above 0 for the Wings.
+  `dbg-stat-wings`: read from the logpoints.
+- T4, Pocket Elf's tooltip (window B). `bag-icon-elf`: one gold `Flight` row
+  between the charm's rarity line and its lore line, and a `tiptrace` line
+  saying the forged rows were drawn. `tip-calls`, second half: a try reads a
+  stat count above 0 for Pocket Elf. It passes when both halves read above 0;
+  it fails when the Wings' does and all three of Pocket Elf's tries read 0
+  (the stat block does not run for a stat-less item); it is not observed when
+  all three Wings tries read 0 (the instrument is blind). Window C follows:
+  the pointer on an empty bag cell for two seconds, with no tooltip.
+  `dbg-stat-elf`: read from the logpoints. The debugger is detached here,
+  before the depth steps.
+- T5 `depth-control`: with no flight charm worn, `flightcharm stat` reads
+  `state=off`. Sorak warps under the red canopy Mod live 1 measured, and a
+  screenshot shows him hidden under it. `flightprobe depth` reads
+  `state=off`, `flight-layer=none`, `filter=none` and `fx=0/0/0`: no census
+  has run yet.
+- T6 `layers-town`: `zonecensus`, then its JSON file. Its layer list has
+  `Tree_Leaves` at −9700, and every counted `Fall_Dead_Tree_Leaves_01_obj`
+  sits on `Tree_Leaves`. The count, the frontmost visible layer holding
+  instances and the filter layer (`Effect_1`, visible, −10300) are recorded,
+  and `Wind_Leaves` too if it reads visible (the data file says hidden). It
+  passes when every counted canopy sits on `Tree_Leaves`.
+- T7 `flight-depth`: Pocket Elf goes into the charm grid, and
+  `flightcharm stat` reads `state=on equipped=elf`. `flightprobe depth` then
+  names a flight layer whose depth equals the player's depth and lies below
+  −9700: the expected reply is `flight-depth=-10001` with
+  `front=Invisible_walls@-10000`, in front of the canopies and the walls'
+  layer and behind the filter at −10300. A flight depth below the filter's is
+  a fail ("Never past a filter"). The same reply reads
+  `filter=Effect_1@-10300` with an `fx=` struct count of 1 or more, and the
+  trace line's `fx-struct=` is 1 or more: the positive control on the effect
+  read, recorded whatever it reads, for RDM § 19.7 as measured. `filter=none`
+  fails even with the depth right, and `fx=` names the cause: failures above 0
+  mean the read failed, a struct count of 0 with no failures means the effect
+  read does not answer a struct on this runner, and a struct count above 0
+  means the census read an effect but classed no filter. Screenshots at the
+  canopy spot and a second spot under the same canopy show Sorak over it.
+  `front=`, `layers=`, `census-ms=` and whether his colours match the scene
+  are recorded, the last as a note for the owner. A fail names its cause: no
+  layer chosen (`flight-layer=none` with `no-front=` risen), the write not
+  landing (the player's depth unlike the flight depth), or the choice itself.
+- T8 `flight-excluded`, Pocket Elf still worn: Sorak warps to where Mod live
+  1's flying walk stopped, just north of an invisible wall column, and
+  `flightprobe free` is asked 24 px south against `Wall_Parent_obj` (40 px if
+  that reads free). With `excluded=` noted, S is held for a second and
+  `flightprobe free` reads his position again. It passes when he moved under
+  20 px with `excluded=` risen, fails at 100 px or more, and is not observed
+  when neither read was blocked.
+- T9 `broom-alone`: Pocket Elf back into the bag, Sorak's own 1x5 totem out of
+  the charm grid to make room, and the Broomstick in. `charmprobe charms`
+  lists `Witch's Broomstick size=1x5 rarity=10` with its item stats exactly
+  `25=100`, and `flightcharm stat` reads `state=on equipped=broom`.
+- T10: Sorak's own 2x2 book out of the charm grid and Gabriel Wings in.
+  `one-flight`: `charmprobe charms` lists exactly one of the Broomstick and
+  the Wings, and the stat line's `equipped=` names exactly one key, recorded;
+  both listed is a fail, and means the owner-stated rule does not hold as
+  stated. `unique-b0`: `charmprobe repo 10 0 0`, whose rarity, name and
+  hidden flag (or `missing`) are recorded; it passes when it answers either
+  way. The Wings go back into the bag, leaving the Broomstick the only flight
+  charm worn.
+- T11, the guard setup: at the stash spot a second Gabriel Wings is spawned
+  (`flightprobe ground` reads `ours`) and picked up, both Wings are moved, at
+  2x2, to free bag cells away from every other charm, and the bag is
+  screenshotted. The `flightcharm guard:` line is recorded as the before
+  value.
+- T12, the reload: Save & Exit, Back, and slot 14 again, as Mod live 1's
+  reload did. `guard-control`: the guard line reads `route=on` with
+  `deferred=` and `full=` each risen by at least 2 since T11.
+  `reload-broom`: `charmprobe charms` lists the Broomstick at 1x5 with exactly
+  `25=100`, `flightcharm stat` reads `equipped=broom`, and a bag screenshot
+  shows both Wings at 2x2.
+- T13, drops in town. `unique-control`: with every switch off,
+  `flightprobe unique 10` places one item or more and no Pocket Elf. `pool`,
+  first reading: `flightprobe pool`, recorded whole. `rate-elf`:
+  `flightprobe copies 1`, then `flightcharm elf 1` (the gate on and its
+  stand-in named), then `flightprobe unique 20` five times, summing the five
+  summaries' Elves and placed items. It passes when `drop_roll_model`'s
+  `observation_within` accepts the Elf sum out of 100 calls between the shares
+  1 in 222 and 1 in 51, run from the checkout root; at least 50 items were
+  placed; the stat's Elf count reads ours equal to built; and `refused=0` and
+  `anomalies=0`. The sum is recorded and the switch turned off.
+- T14, the zone: from the waypoint, the Outskirts of Inoya, as Mod live 1's
+  drops step went. `layers-zone`: with the Broomstick in the bag, so flight is
+  off, Sorak walks in short holds until a screenshot shows a canopy hiding
+  him (at most 10 walks), then `zonecensus` lists `Tree_Leaves` (−10000 in
+  the data file) holding at least one instance and the filter `Effect_1`
+  (visible, −10100 in the data file); not observed when no canopy hid him.
+  `flight-depth-zone`: the Broomstick back in the grid, and
+  `flightprobe depth` reads a flight depth below `Tree_Leaves`' and above the
+  filter's; the expected reply is `flight-depth=-10001` with
+  `front=Tree_Leaves@-10000`. A reading of −5501 against the game layers
+  while the zone's `Tree_Leaves` is still empty (it then counts as a filter)
+  is read again after two seconds, by which time the re-choice should have
+  moved the layer. The same reply reads `filter=Effect_1@-10100` once the
+  canopies hold, or `filter=Tree_Leaves@-10000` while the depth still reads
+  −5501, with an `fx=` struct count of 1 or more, all recorded for RDM
+  § 19.7; `filter=none` fails, its cause named from `fx=` as in T7. A
+  screenshot shows Sorak over the canopy: a fail when he is hidden, not
+  observed with `layers-zone`. `pool`, second reading, here before the kills.
+  `pool` passes when both readings show an Angelic `droppable=` above 0 and
+  five unique sub-list sizes.
+- T15 `rate-angelic`: `raredrop angelic 2`, `angelicprobe hit chance` raised
+  to its maximum, `flightprobe copies 1`, and `flightcharm wings 1` and
+  `flightcharm broom 1`, with Pocket Elf left off. `angelicprobe hit`'s
+  `gameHits=` and `flightcharm stat` are recorded, monsters are killed until
+  `gameHits=` has risen by 100 or more, and both are read again. With N the
+  rise and T the zone's `droppable=`, it passes when the Wings' and the
+  Broomstick's rises each lie inside the band `drop_roll_model`'s
+  `binomial_band` gives for N trials at a share of 1 in T + 2 (a low end below
+  0 read as 0), ours equals built for both, and `refused=0` and
+  `anomalies=0`. N, T and both counts are recorded. Both switches are turned
+  off before teardown.
+
+**The debugger.** It is attached after T2 and detached after T4, so its
+logpoints never slow the depth steps or the kills, and in any case before the
+game is stopped. Its positive control is a logpoint on `CheckTalentUse`,
+which logged about 85 hits a second in town in Mod live 1 (`dbg-control`).
+The candidates are three of the tooltip pass's direct calls to
+`DrawInventoryStatsNew` (the first, a middle and the last of its 344, in
+address order). Each name's count is recorded at the start and end of each
+window. If the tooltip is cached, a site logs once per uncached pass, so a
+rise of 1 counts. `dbg-stat-wings` passes when at least one candidate rose in
+window A while the control rose, and is not observed otherwise.
+`dbg-stat-elf` passes when a candidate that rose in window A also rises in
+window B while the control rose, fails when it stays flat in B (window C shows
+whether a tooltip is needed at all), and is not observed when
+`dbg-stat-wings` did not pass.
+
+**Checks**, the capture's names, in order: `dll-hash`, `marker`, `control`,
+`dbg-control`, `bag-icon-control`, `tip-calls`, `dbg-stat-wings`,
+`bag-icon-elf`, `dbg-stat-elf`, `depth-control`, `layers-town`,
+`flight-depth`, `flight-excluded`, `broom-alone`, `one-flight`, `unique-b0`,
+`guard-control`, `reload-broom`, `unique-control`, `pool`, `rate-elf`,
+`layers-zone`, `flight-depth-zone` and `rate-angelic`.
+
+- **Validity**, which must pass: `dll-hash`, `marker`, `control`,
+  `dbg-control`, `depth-control`, `guard-control` and `unique-control`.
+- **Acceptance**: `bag-icon-control`, `bag-icon-elf`, `flight-depth`,
+  `broom-alone`, `reload-broom`, `rate-elf` and `rate-angelic`.
+- **Research**, where a fail or a not-observed is itself the finding:
+  `tip-calls`, `dbg-stat-wings`, `dbg-stat-elf`, `layers-town`,
+  `flight-excluded`, `one-flight`, `unique-b0`, `pool`, `layers-zone` and
+  `flight-depth-zone`.
+
+**What it relies on.** The canopy spots, from the data file and measured
+hidden in Mod live 1, and the wall columns south of the stopped walk, from the
+data file (RDM § 19.7 and § 19.8); `UpdateDepth` and the game layers (§ 19.7,
+static, and Mod live 1, measured); the canopies' own layer and the filter
+layers (§ 19.7, static and data file; what the effect read answers is
+measured here); the tooltip pass (RDM § 16.6, measured, with the cache an
+inference); the one-flight rule (§ 22.1, owner-stated and static) and the
+charm read (§ 22.1, measured); the guard's load (§ 22.6, static, measured in
+Mod live 1); `DropUniqueItems` and its by-name call shape (§ 22.4 and § 22.8,
+static, with `unique-control` its control); the Angelic roll, its list and
+its typing (RDM § 13.4, measured); the shares (hub
+`docs/models/unique-pick-spec.md`); and the bands (`drop_roll_model`'s
+`binomial_band` and `observation_within`). `zonecensus` is the guide's far
+scenery sleep command; `tiptrace` is `ModuleMain.cpp`'s research command,
+whose stat count is the stats hook's own.

@@ -28,11 +28,15 @@ join the game's own drops behind its own switch, off by default.
   the ground and a gold **Flight** line in its tooltip. While you wear one in
   your charm slots, you walk through rocks, fences, carts, trees and other
   scenery, and your character is drawn in front of it instead of hidden
-  behind it. Walls, zone gates, locked doors, monsters and the edge of the map
-  still stop you. Take the charm off while you stand inside a prop and you can
-  still walk out; nothing moves you on its own.
+  behind it, tree canopies included. A room's colour filter still tints you
+  as it does on the ground. Walls, zone gates, locked doors, monsters and the
+  edge of the map still stop you. Take the charm off while you stand inside a
+  prop and you can still walk out; nothing moves you on its own. The game
+  itself counts only one flight charm at a time: wear two and only one of
+  them works.
   - **Pocket Elf** (Satanic, one cell) can drop among the game's own unique
-    items.
+    items. It has no other stats, and its tooltip still shows the gold
+    **Flight** line.
   - **Gabriel Wings** (Angelic, 2x2 cells) also lowers the physical and the
     magic damage you take, each by 1 to 12%. It can drop from the game's own
     Angelic roll.
@@ -41,7 +45,10 @@ join the game's own drops behind its own switch, off by default.
 
   Each charm's drop has its own switch in Mods → Items, all off by default. A
   switch only lets that charm drop, about as rarely as one particular unique
-  of the game's own does; it changes no drop chance. A charm you already own
+  of the game's own does; it changes no drop chance. Gabriel Wings and Witch's
+  Broomstick each come as roughly 1 in 49 of the Angelic roll's drops, the
+  same share as Headhunter and Tyrant's Crown, and Pocket Elf on about 1 in
+  51 to 1 in 222 of the ordinary unique roll's draws. A charm you already own
   works whether its switch is on or off.
   If a charm's full size no longer fits where it was saved, it loads at one
   cell in its own place instead of disappearing, and is full size again the
