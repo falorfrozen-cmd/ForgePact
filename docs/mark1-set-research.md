@@ -525,16 +525,20 @@ Nine rows, one per script the five questions lean on: `CheckTalentUse`,
   - `player`: the local player instance's own variables.
   - `pst`: the struct the player holds in `pSt`.
   - `profile`: the entry of `Input_Device_Manager_obj` instance 0's
-    `playerProfileSlot` at `CheckTalentUse`'s third argument (the local
-    player's latest call, 1 until one is seen; the reply says `:a2` or
-    `:default` and names the entry's object). An unresolved route is refused
-    with its reason; nothing stands in for it.
+    `playerProfileSlot` array at the gate's third argument (the local
+    player's latest `CheckTalentUse` call; 1 until one has been seen). The
+    reply names the index and where it came from (`:a2` or `:default`) and
+    what the entry is (`=Profile_Manager_obj` or the object's name). An
+    unresolved route is refused with its reason; nothing stands in for it.
   - `input`: the same scope's `inputState` array, each element printed as
     `input[<i>]`.
   - `queue`: `abilityQueue`, `mobileTalentPressed` and `stackSkillList`, each
-    as its kind, its length and its first four entries; `abilityQueue` and
-    `mobileTalentPressed` read as globals, `stackSkillList` on the player;
-    the reply names where each was read.
+    as its kind, its length and its first four entries. `abilityQueue` and
+    `mobileTalentPressed` read as globals and `stackSkillList` on the player;
+    the watch's `scope=` names where each was read, and a member that is not
+    there reads `absent`. Any other `queue.<name>` is refused, and a global
+    is written only as an element (`queue.abilityQueue[<i>]`), never as a
+    whole.
 
   Positive control: a `watch player` while the player walks shows `x` or `y`
   changing; a watch that prints nothing then is the instrument, not the game.
@@ -568,7 +572,8 @@ that only the table's calls reach it.
   Only a member or element that already exists is written; nothing is
   created, and a write that finds nothing counts `missing=`. The reply names
   the scope it resolved, the value supplied and the value it will restore;
-  `show` counts `applied=`. This is the route that tests whether the gate
+  `show` counts `applied=` only for a write that reads back as the value
+  written. This is the route that tests whether the gate
   casts a slot from its input entry or its queue entry, written inside the
   gate's own call, just before the gate reads it.
 - **`scale <scope>.<name>[<i>] <mult> during <row> [frames]`**: the same,
@@ -612,20 +617,14 @@ fields (§ Static reading, "What the reading means for the instrument").
 Positive control: the sessions' `walkable-control`, a point 32 px from the
 player on open floor reading `room=in grid=free family=free wall-line=clear`.
 
-### Where the `profile` and `queue` scopes read, against the static reading
+### Where the `profile` and `queue` scopes read
 
-The static reading (§ Static reading, "The cast gate") places
-`playerProfileSlot` on `Input_Device_Manager_obj`, indexed by the gate's third
-argument, and `abilityQueue` and `mobileTalentPressed` as global arrays. The
-scopes now follow that reading, as § Instrument lists them: `profile` and
-`input` read the entry of `Input_Device_Manager_obj` instance 0's
-`playerProfileSlot` at the gate's third argument, with no fallback (an
-unresolved route is refused with its reason), and `queue` reads
-`abilityQueue` and `mobileTalentPressed` as globals and `stackSkillList` on
-the player, each reply naming where it read. A `set` on a global is applied
-only to an element of its array, never to the global as a whole, and
-`applied=` counts only writes that read back as written, so a write that did
-not land is never reported applied.
+The instrument follows the reading (§ Static reading, "The cast gate"):
+`profile` and `input` resolve `Input_Device_Manager_obj.playerProfileSlot[<third
+argument>]`, and `queue` reads `abilityQueue` and `mobileTalentPressed` as
+globals and `stackSkillList` on the player. The `profile` reply names the
+index and the entry's object, so Live 1 records whether the entry is a
+`Profile_Manager_obj` instance.
 
 ### The debugger logpoints
 
