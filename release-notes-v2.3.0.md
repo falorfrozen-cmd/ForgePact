@@ -100,7 +100,8 @@ Plugin** also replaces an old HS Offline Tracker sensor with the fixed one.
 If you start the game from ForgePact without pressing Install, ForgePact
 replaces an old sensor itself when it can, as it does the plugin, and when it
 cannot, its launch message asks you to close the game and press Install Mod
-Plugin; until you do, the crash at close stays. Your existing settings are retained. Start the
+Plugin (or, if your ForgePact download is missing the fixed sensor, to extract
+the complete release again); until you do, the crash at close stays. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 

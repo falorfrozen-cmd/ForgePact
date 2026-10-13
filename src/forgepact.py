@@ -1772,6 +1772,13 @@ def mod_chain(cfg=None) -> dict:
     }
 
 
+# A source checkout whose modfiles_shipped holds an aborting producer: one the
+# pin superseded is replaced by Prepare-Plugin.bat (fetch_toolchain.py); any
+# other (a hand-placed Tracker 0.1.1 or 0.1.3 copy) needs --force.
+_SOURCE_SENSOR_REMEDY = ("run Prepare-Plugin.bat first; if it refuses the file as hand-placed, "
+                         "run py tools/fetch_toolchain.py --force")
+
+
 def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
     """(copy, step) for Install Mod Plugin's copy of HS Offline Tracker's
     sensor, decided by hash (#185). A bundled build known to abort every close
@@ -1783,7 +1790,7 @@ def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
     read, for op_install_mod's message."""
     bundled_sha = _sha256_file(bundled)
     if bundled_sha in TRACKER_SENSOR_ABORTING:
-        remedy = "" if getattr(sys, "frozen", False) else " (source checkout: run Prepare-Plugin.bat first)"
+        remedy = "" if getattr(sys, "frozen", False) else " (source checkout: %s)" % _SOURCE_SENSOR_REMEDY
         left = ""
         if target.exists():
             left = ("; the game's own sensor, also an old build, was left in place"
@@ -1791,6 +1798,10 @@ def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
                     else "; the game's own sensor was left in place")
         return False, ("HS Offline Tracker sensor not installed: this ForgePact's copy is an old build "
                        "that crashes the game when it closes" + left + remedy)
+    # A sensor in TRACKER_SENSOR_CLEAN is replaced too: with one clean build
+    # today, that is only ever the bundle itself. When a re-pin adds a second,
+    # a source checkout that has not re-run Prepare-Plugin.bat could replace a
+    # newer clean sensor with its older bundle; order the clean builds then.
     if target.exists():
         installed_sha = _sha256_file(target)
         if (installed_sha != bundled_sha and installed_sha not in TRACKER_SENSOR_ABORTING
@@ -1868,8 +1879,9 @@ def op_install_mod(cfg) -> dict:
         try:
             copy_sensor, sensor_step = _tracker_sensor_install(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
         except OSError as e:
-            return {"err": f"Could not read {TRACKER_SENSOR_DLL} ({e.strerror or e}). It is in use or locked: "
-                           "close the game and any other tool using the mod files, then click Install again."}
+            return {"err": f"Could not read {e.filename or TRACKER_SENSOR_DLL} ({e.strerror or e}). It is in "
+                           "use, locked, or held by antivirus: close the game and any other tool using the "
+                           "mod files, check your antivirus, then click Install again."}
     copying = "AurieCore.dll"
     try:
         _sh.copy2(core, b / "AurieCore.dll")
@@ -2858,12 +2870,13 @@ def refresh_stale_tracker_sensor(cfg, loader_ok=None) -> str:
                 return (TRACKER_SENSOR_STALE_LEAD + " This ForgePact package does not carry the fixed one: "
                         "extract the complete ForgePact release again, or update HS Offline Tracker to "
                         "0.1.4 or later and press its Update live sensor.")
-            return (TRACKER_SENSOR_STALE_LEAD + " From a source checkout, run Prepare-Plugin.bat first, "
-                    "so that Install has the fixed sensor to copy." + INSTALL_ADVICE)
+            return (TRACKER_SENSOR_STALE_LEAD + " From a source checkout, " + _SOURCE_SENSOR_REMEDY
+                    + ", so that Install has the fixed sensor to copy." + INSTALL_ADVICE)
         if not getattr(sys, "frozen", False) or not (loader_ok() if loader_ok else _loader_matches_bundle(game)):
             return TRACKER_SENSOR_STALE_ADVICE
-        # The copy verifies the replaced file against the staged copy's hash,
-        # and the bundle was checked against the clean set just above.
+        # The bundle was checked against the clean set just above, and the copy
+        # verifies the replaced file against what it staged from the bundle; a
+        # bundle swapped between those two reads is not re-checked.
         _atomic_verified_copy(bundled, installed)
     except Exception as exc:
         return f"The HS Offline Tracker sensor could not be updated ({exc})." + INSTALL_ADVICE

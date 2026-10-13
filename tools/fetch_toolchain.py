@@ -212,11 +212,11 @@ def run(
     archive_cache: Dict[str, bytes] = {}
     to_write: List[Tuple[Path, bytes]] = []
     statuses: List[str] = []
-    superseded: set = set()
     failed = False
 
     for entry in entries:
         dest = root / entry["dest"]
+        replacing_superseded = False
 
         if dest.is_file():
             existing_hash = sha256_hex(dest.read_bytes())
@@ -226,7 +226,7 @@ def run(
             if existing_hash in entry.get("superseded_sha256", ()):
                 # An earlier pin of this entry wrote it: stale, so re-fetch
                 # below and overwrite it on write, without --force.
-                superseded.add(entry["dest"])
+                replacing_superseded = True
             elif not force:
                 print(
                     f"{entry['dest']}  {existing_hash}  REFUSED (pin wants "
@@ -244,7 +244,7 @@ def run(
             continue
 
         to_write.append((dest, data))
-        note = "  ok (replaced superseded earlier pin)" if entry["dest"] in superseded else "  ok"
+        note = "  ok (replaced superseded earlier pin)" if replacing_superseded else "  ok"
         statuses.append(f"{entry['dest']}  {sha256_hex(data)}{note}")
 
     if failed:

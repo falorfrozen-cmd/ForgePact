@@ -32,16 +32,22 @@ against it:
 
 A re-pin is data edits only, in this order (the hub guide's Maintenance
 Trigger "A new HS-Offline-Tracker producer" says the same):
-  1. `tools/toolchain-pins.json`: the new url, `archive_sha256`, member and
-     `sha256`; append the replaced `sha256` to `superseded_sha256` (keep the
-     older ones, since a checkout may still hold any of them). From here
-     `test_the_pin_is_fixed_entry` and `test_the_pin_classifies_as_fixed`
-     fail;
+  1. `tools/toolchain-pins.json`: the new url, `archive_sha256`, member,
+     `sha256` and a `provenance` that names the new release (`v<x.y.z>`);
+     append the replaced `sha256` to `superseded_sha256` (keep the older
+     ones, since a checkout may still hold any of them). From here four
+     tests fail: `test_the_pin_is_fixed_entry`,
+     `test_the_pin_classifies_as_fixed`, `test_the_provenance_names_the_release`
+     and `test_replaced_builds_are_superseded_so_existing_checkouts_update`
+     (the replaced hash is still `FIXED_ENTRY`'s);
   2. here: `FIXED_ENTRY` to the new values, and `FIXED_LOADER` to the new
      release's loader-file hashes (or `{}` when they differ from ForgePact's
      pins, and then drop the release notes' "same files" claim).
-     `test_the_pin_is_fixed_entry` passes again; from here
-     `test_the_pinned_build_is_measured_clean` fails too;
+     `test_the_pin_is_fixed_entry`, `test_the_provenance_names_the_release`
+     and `test_replaced_builds_are_superseded_so_existing_checkouts_update`
+     pass again; `test_the_pin_classifies_as_fixed` still fails, and
+     `test_the_pinned_build_is_measured_clean` and
+     `test_the_fixed_shape_is_accepted` fail from here;
   3. re-run `Prepare-Plugin.bat` (`tools/fetch_toolchain.py`), which replaces
      the old file through `superseded_sha256`, and check `--verify-only`
      exits 0. Until then the fetched-producer control still passes on the
@@ -50,7 +56,9 @@ Trigger "A new HS-Offline-Tracker producer" says the same):
   5. `src/forgepact.py`: add the new build to `TRACKER_SENSOR_CLEAN` with
      what the gate measured; the replaced build stays in the set it is in.
      Every test passes again. The failures between steps 1 and 5 are on
-     purpose: an unmeasured build must not ship.
+     purpose: an unmeasured build must not ship. (Walked on a scratch copy
+     with a made-up v0.1.5 on 2026-10-13: 4 failures after step 1, 3 after
+     step 2, 4 after step 3, none after step 5.)
 `OLD_ENTRY` and the v0.1.1/v0.1.3 controls never change.
 
 `test_positive_control_on_the_fetched_producer` runs only where

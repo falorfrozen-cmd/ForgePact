@@ -627,6 +627,12 @@ class InstallSensorTests(InstallFixture):
         self.assertIn("Could not read HSOfflineTrackerProducer.dll", result.get("err", ""), result)
         self.assertFalse((self.bin / "AurieCore.dll").exists())
         self.assertFalse((self.bin / "mods" / "aurie" / "BloodPactPlugin.dll").exists())
+        # The message names the file that failed: the bundle in the ForgePact
+        # folder and the game's copy need different remedies.
+        with patch.object(forgepact, "_tracker_sensor_install",
+                          side_effect=PermissionError(13, "Access is denied", str(self.bundled_sensor))):
+            result = self.install()
+        self.assertIn(f"Could not read {self.bundled_sensor}", result.get("err", ""), result)
 
     def test_an_aborting_bundle_is_never_installed(self):
         # A source checkout that has not re-run Prepare-Plugin.bat.
@@ -640,6 +646,9 @@ class InstallSensorTests(InstallFixture):
                     self.put(present)
                 result = self.install()
                 self.assertIn("HS Offline Tracker sensor not installed", result["ok"])
+                # A source run: Prepare-Plugin.bat, and --force for a copy it
+                # refuses as hand-placed (Tracker 0.1.1 or 0.1.3's).
+                self.assertIn("fetch_toolchain.py --force", result["ok"])
                 if says is None:
                     self.assertNotIn("left in place", result["ok"])
                 else:

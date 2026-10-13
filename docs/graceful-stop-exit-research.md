@@ -325,7 +325,9 @@ What changed in ForgePact around the pin:
 - A launch from a release build of the panel replaces a game sensor whose hash
   is in the aborting set (`refresh_stale_tracker_sensor`), under the plugin
   refresh's gates (the game's `YYToolkit.dll` and `AurieCore.dll` must be the
-  bundled ones); otherwise the launch message asks for Install.
+  bundled ones); otherwise the launch message asks for Install, unless the
+  package lacks the fixed sensor, when it says to extract the complete release
+  or update the Tracker instead.
 - Install Mod Plugin installs the bundled sensor when the game has none, or
   has one the panel knows (aborting or clean); it leaves an unrecognised one,
   such as a newer Tracker's, as it is, and never installs a bundled build that
