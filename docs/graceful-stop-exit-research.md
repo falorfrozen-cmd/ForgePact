@@ -280,3 +280,45 @@ gate in which an in-world `hs_stop_game` reads `0x00000000` with the re-pinned p
 sessions add to: an in-world stop rewrites the character file and not the bag
 file, with the producer present or absent, and the game's Save & Exit
 rewrites both.
+
+## Follow-on: the fixed producer pinned (ForgePact #185)
+
+ForgePact #185 carried out that follow-on. `tools/toolchain-pins.json` now
+takes `modfiles_shipped/HSOfflineTrackerProducer.dll` from HS-Offline-Tracker's
+own `v0.1.4` release: member `producer/HSOfflineTrackerProducer.dll` of
+`hs-offline-tracker-0.1.4-portable.zip` (archive sha256 `37b03813…9709`, the
+value the release's `SHA256SUMS-0.1.4.txt` states), member sha256
+`5f83e542f41490ec57106198cf8546ec178421961e388699ff1da5de45956f94`. It replaces
+the 1.3.16 package's `36608aa0…b14e`. The 0.1.4 build carries Tracker PR #8's
+exit teardown, in which the publisher is joined at unload instead of being left
+to a global destructor. `tests/test_tracker_producer_pin.py` classifies the pin
+and keeps the old entry as its negative control. The fix ships in ForgePact
+2.3.0, and a player gets it by pressing Install Mod Plugin, since the
+launch-time refresh replaces only `BloodPactPlugin.dll`.
+
+The live gate ran on 2026-10-13, in capture
+`forgepact-185-tracker-mod-live-1`, kept with the hub's workorder. It used the
+installed v2.2.1 plugin (`8a16a38e…4bc92`, unchanged at teardown), slot 14,
+`ping` -> `pong (YYTK 4.0.1)` in every cell, and `hs_selfcheck`'s
+`exit_code_readback` passing first. All 11 checks pass, and every reading below
+is **measured**:
+
+| Cell | Producer | Close | Exit code | Dump |
+|---|---|---|---|---|
+| A, the control | old, `36608aa0…` | main menu | `0xC0000409` | yes, `raised-in=HSOfflineTrackerProducer` (reader exit 0) |
+| B | fixed, `5f83e542…` | in the world, every mod off | `0x00000000` | none (reader waited 30 s, exit 3) |
+| C | fixed | after the pause menu's Save & Exit (`hs_exit_to_menu` reached `Chose_rm`) | `0x00000000` | none (exit 3) |
+| D | fixed | in the world, `lootann 1` on (`install=installed`) | `0x00000000` | none (exit 3) |
+
+The driver swapped the file between cells A and B, holding the old build
+aside, and both copies were hash-checked. In each of cells B, C and D the
+producer's own log shows its bridge pipe opened under that game's pid, so the
+fixed sensor armed on this game build, and `out.txt` ended on
+`==== clean shutdown ====`. Cell A's dump has the same stack as the kept dumps
+above, so dumps were written and read in this session and the three "none"
+readings are evidence. Cell D is the outlier: ForgePact's `LootGroundInit`
+detour and the producer's own detour on that script were both live at
+teardown, a pair #201 never ran together.
+
+Not covered: a main-menu close with the fixed build (Tracker PR #8 measured
+three), a vanilla or ForgePact-free game, other mods, and other close paths.

@@ -62,12 +62,30 @@ fresh fight.
   the stash was closed and the game restarted. The lairs of Acts 3 to 9 were
   not visited.
 
+## Fixed
+
+- **Closing the game no longer leaves a crash report.** With ForgePact
+  installed, Windows reported Hero Siege as crashed (`ucrtbase.dll`,
+  `0xc0000409`) on nearly every close, even ordinary ones from the main menu or
+  after Save & Exit. The report came after the game had finished its own
+  shutdown. The cause was the HS Offline Tracker sensor that ForgePact
+  installs beside its plugin, an older build that aborted while it unloaded.
+  ForgePact now installs HS Offline Tracker 0.1.4's sensor, which carries the
+  Tracker's own fix. Tested on 2026-10-13: with the old sensor a close from
+  the main menu still crashed, and with the new one a close from the world, a
+  close after Save & Exit, and a close from the world with Loot announcements
+  on all exited cleanly with no crash report. ForgePact and HS Offline Tracker
+  0.1.4 now install the same sensor and loader files.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
 and Boss soul pieces switches) and the panel (their switches on the Mods and
-Loot tabs), so updating only one of them leaves the other behind. Your existing settings are retained. Start the
+Loot tabs), so updating only one of them leaves the other behind. Pressing **Install Mod
+Plugin** also replaces the HS Offline Tracker sensor with the fixed one;
+starting the game alone updates only the plugin, so the crash at close stays
+until you press Install. Your existing settings are retained. Start the
 game after installing; a game that was already open keeps the old plugin
 until it is restarted.
 
