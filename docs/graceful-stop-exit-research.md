@@ -329,10 +329,9 @@ What changed in ForgePact around the pin:
   has one the panel knows (aborting or clean); it leaves an unrecognised one,
   such as a newer Tracker's, as it is, and never installs a bundled build that
   is itself in the aborting set.
-- A player who keeps Tracker 0.1.1 to 0.1.3 and presses its "Update live
-  sensor" puts that Tracker's build back, and the next launch from the panel
-  swaps the fixed one in again. The two keep swapping the file until the
-  Tracker is updated; the release notes say so.
+- Tracker 0.1.1 to 0.1.3's own "Update live sensor" puts their build back,
+  and the two tools then swap the file; the hub guide's "Launch-Time Plugin
+  Refresh" section describes it once, and the release notes tell players.
 
 The fix ships in ForgePact 2.3.0.
 

@@ -34,15 +34,23 @@ A re-pin is data edits only, in this order (the hub guide's Maintenance
 Trigger "A new HS-Offline-Tracker producer" says the same):
   1. `tools/toolchain-pins.json`: the new url, `archive_sha256`, member and
      `sha256`; append the replaced `sha256` to `superseded_sha256` (keep the
-     older ones, since a checkout may still hold any of them);
+     older ones, since a checkout may still hold any of them). From here
+     `test_the_pin_is_fixed_entry` and `test_the_pin_classifies_as_fixed`
+     fail;
   2. here: `FIXED_ENTRY` to the new values, and `FIXED_LOADER` to the new
      release's loader-file hashes (or `{}` when they differ from ForgePact's
-     pins, and then drop the release notes' "same files" claim);
-  3. the live gate; until it passes, `test_the_pin_classifies_as_fixed`,
-     `test_the_pinned_build_is_measured_clean` and the fetched-producer
-     control fail, on purpose: an unmeasured build must not ship;
-  4. `src/forgepact.py`: add the new build to `TRACKER_SENSOR_CLEAN` with
+     pins, and then drop the release notes' "same files" claim).
+     `test_the_pin_is_fixed_entry` passes again; from here
+     `test_the_pinned_build_is_measured_clean` fails too;
+  3. re-run `Prepare-Plugin.bat` (`tools/fetch_toolchain.py`), which replaces
+     the old file through `superseded_sha256`, and check `--verify-only`
+     exits 0. Until then the fetched-producer control still passes on the
+     old build, which stays in `TRACKER_SENSOR_CLEAN`; from here it fails;
+  4. the live gate, on that fetched file;
+  5. `src/forgepact.py`: add the new build to `TRACKER_SENSOR_CLEAN` with
      what the gate measured; the replaced build stays in the set it is in.
+     Every test passes again. The failures between steps 1 and 5 are on
+     purpose: an unmeasured build must not ship.
 `OLD_ENTRY` and the v0.1.1/v0.1.3 controls never change.
 
 `test_positive_control_on_the_fetched_producer` runs only where
@@ -223,7 +231,10 @@ class TheProductKnowsTheBuilds(unittest.TestCase):
         if not fetched.is_file():
             self.skipTest(f"no {PIN_DEST} in this checkout")
         sha = hashlib.sha256(fetched.read_bytes()).hexdigest()
-        self.assertIn(sha, forgepact.TRACKER_SENSOR_CLEAN, f"{PIN_DEST} is {sha}")
+        self.assertIn(sha, forgepact.TRACKER_SENSOR_CLEAN,
+                      f"{PIN_DEST} is {sha}, not a build measured clean. If this checkout ran "
+                      "Prepare-Plugin.bat before the producer was re-pinned, run it again (or "
+                      "py tools/fetch_toolchain.py): it replaces a superseded pin's file.")
 
 
 class ForgePactPinsTheFixedProducer(unittest.TestCase):

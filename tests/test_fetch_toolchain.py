@@ -183,6 +183,24 @@ class AnEarlierPinsFileIsReplacedWithoutForce(unittest.TestCase):
             self.assertIn("MISMATCH", out)
             self.assertEqual(dest.read_bytes(), self.EARLIER)
 
+    def test_a_bare_string_is_refused_before_anything_is_read(self):
+        # Written without the brackets, `in` would be a substring test: a
+        # file whose hash is any substring of it would be replaced silently.
+        with ft.temp_root() as root:
+            manifest, blobs = self.manifest()
+            manifest["files"][0]["superseded_sha256"] = sha256_hex(self.EARLIER)
+            dest = root / "a" / "one.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(self.EARLIER)
+            for verify_only in (False, True):
+                with self.subTest(verify_only=verify_only):
+                    fetcher = FakeFetcher(blobs)
+                    code, out = self.run_quietly(manifest, root=root, fetcher=fetcher, verify_only=verify_only)
+                    self.assertNotEqual(code, 0)
+                    self.assertIn("superseded_sha256 must be a list", out)
+                    self.assertEqual(fetcher.calls, [])
+                    self.assertEqual(dest.read_bytes(), self.EARLIER)
+
     def test_verify_only_fails_on_it_and_names_the_way_out(self):
         with ft.temp_root() as root:
             manifest, blobs = self.manifest()

@@ -372,7 +372,13 @@ class RefreshTrackerSensorTests(SensorFixture):
                     self.bundled_sensor.unlink()
                 else:
                     self.bundled_sensor.write_bytes(bundled)
-                self.assertIn("Install Mod Plugin", forgepact.refresh_stale_tracker_sensor(self.cfg))
+                note = forgepact.refresh_stale_tracker_sensor(self.cfg)
+                # Install copies only the bundle, so it could not help here:
+                # the advice says what can, instead of sending the player to
+                # an Install that changes nothing on every launch.
+                self.assertNotIn("Install Mod Plugin", note)
+                self.assertIn("does not carry the fixed one", note)
+                self.assertIn("HS Offline Tracker to 0.1.4", note)
                 self.assertEqual(self.sensor.read_bytes(), SENSOR_ABORTING)
 
     def test_a_failed_copy_keeps_the_old_sensor_and_says_why(self):
@@ -506,6 +512,7 @@ class LaunchSensorRefreshTests(LaunchFixture):
         self.assertEqual(message.count("click Install Mod Plugin"), 1, message)
         self.assertIn("this ForgePact ships v2.1.0", message)
         self.assertIn("HS Offline Tracker sensor in the game is an old build", message)
+        self.assertTrue(message.endswith(forgepact.INSTALL_ADVICE), message)
 
     def test_the_loader_is_hashed_once_per_launch(self):
         self.release_build()
@@ -593,6 +600,17 @@ class InstallSensorTests(InstallFixture):
         result = self.install()
         self.assertIn("HS Offline Tracker sensor left as it was", result["ok"])
         self.assertEqual(self.target.read_bytes(), SENSOR_UNKNOWN)
+
+    def test_an_unreadable_sensor_stops_install_before_anything_is_written(self):
+        # The sensor is decided before the first copy: a read failure must not
+        # surface as a write failure after the other DLLs were replaced.
+        self.put(SENSOR_ABORTING)
+        with patch.object(forgepact, "_tracker_sensor_install",
+                          side_effect=PermissionError(13, "Access is denied")):
+            result = self.install()
+        self.assertIn("Could not read HSOfflineTrackerProducer.dll", result.get("err", ""), result)
+        self.assertFalse((self.bin / "AurieCore.dll").exists())
+        self.assertFalse((self.bin / "mods" / "aurie" / "BloodPactPlugin.dll").exists())
 
     def test_an_aborting_bundle_is_never_installed(self):
         # A source checkout that has not re-run Prepare-Plugin.bat.

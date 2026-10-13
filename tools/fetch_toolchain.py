@@ -105,6 +105,17 @@ def _dest_is_safe(dest: str) -> bool:
     return True
 
 
+def _superseded_is_valid(entry: dict) -> bool:
+    """`superseded_sha256`, when present, is a list of SHA-256 hex digests. A
+    bare string would make `in` a substring test (a re-pin written without
+    the brackets), so anything else is refused before any file is read."""
+    value = entry.get("superseded_sha256", [])
+    return isinstance(value, list) and all(
+        isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha)
+        for sha in value
+    )
+
+
 def urllib_fetcher(url: str) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": "ForgePact-fetch-toolchain"}
@@ -189,6 +200,10 @@ def run(
     for entry in entries:
         if not _dest_is_safe(entry["dest"]):
             print(f"{entry['dest']}  -  REFUSED (unsafe destination)")
+            return 1
+        if not _superseded_is_valid(entry):
+            print(f"{entry['dest']}  -  REFUSED (superseded_sha256 must be a list of lowercase "
+                  "SHA-256 hex digests)")
             return 1
 
     if verify_only:
