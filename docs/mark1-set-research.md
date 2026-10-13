@@ -47,7 +47,7 @@ anything that suspends the game's own loop.
   its edge", labelled as static readings.
 - **Instrument:** `mark1probe`, research build only (§ Instrument).
 - **Live procedure 1** (the cast) and **Live procedure 2** (speed, the jump
-  and walkability): not run yet.
+  and walkability): written, not run yet.
 - **Decision:** every key reads `pending` (§ Decision).
 
 ## Static search
@@ -444,17 +444,332 @@ method value, so a caller it did not find is not observed, not absent.
 
 ## Instrument
 
-`mark1probe`, research build only: its forms, what each reads or changes,
-its route and its positive control are written here with the command.
+`mark1probe` exists only in the research build (`build.bat dev`): the player
+build compiles none of it, and it is not a player command. Its decisions (the
+parsing, the lever state, the displacement and scale arithmetic, the walkable
+verdict and every reply line) live in a game-independent core,
+`plugin/include/ForgePact/Mark1Probe.hpp`, which
+`tests/test_mark1_probe_behavior.py` compiles whole and runs against
+controlled calls. The adapter in `ModuleMain.cpp` does the game's side, and
+`tests/test_mark1_probe_contract.py` pins it. Every script is named by its
+`hs-game-sdk` constant, every object by its `hs-game-sdk` name or through
+`asset_get_index`, and nothing calls or reads through an address.
+
+### The rows and `hook`
+
+Nine rows, one per script the five questions lean on: `CheckTalentUse`,
+`TalentUse`, `TalentUseSetSpeed`, `PlayerMovement`, `ReturnSpecificStat`,
+`StatMovementSpeed`, `skillsLeap`, `playerJumpGravity` and `StatJumpPower`.
+
+- **Bare `mark1probe`** reads nothing in the game. It prints
+  `mark1probe: research build`, then
+  `mark1probe: rows=9 hooked=<k> held=<h> lever=<form|off> watch=<on|off>`,
+  then the usage. Before `hook` it reads `rows=9 hooked=0 held=0`, which is
+  the sessions' `marker` check.
+- **`hook`** installs every row by name through `HookOneScript`, both
+  routes: the script-table swap and the inline detour at the script's own
+  code. A row counts as hooked only when its inline detour went in, because
+  compiled GML reaches these scripts by direct calls that a table-only hook
+  never sees; a row whose detour did not go in is reported `failed` and named
+  table-only. The reply is
+  `mark1probe hook: <n> detoured, <f> failed, <h> held`, then the holder of
+  each held row. A second `hook` leaves the rows already installed alone.
+  Positive control: the sessions' `hook-native` check reads
+  `9 detoured, 0 failed, 0 held`, and `show` then counts `CheckTalentUse`
+  calls rising while the player stands still, since the gate runs every
+  frame.
+- **A row another hook holds is left to it.** A second install of a script
+  only gets the table route, which is blind, so the probe reads each row's
+  holder first (from the holders' own records and from the script table),
+  reports the row `held` with the holder's name where it is known, and never
+  installs on top. The holders known when this was written: `CheckTalentUse`
+  (`tgprobe`, `jumpprobe`), `TalentUse` (co-op's own hook, installed only by
+  co-op rendering), `TalentUseSetSpeed` (`tgprobe`, `projprobe`),
+  `ReturnSpecificStat` (`skillslider`, `projprobe`), `skillsLeap`
+  (`jumpscenery`, `jumpprobe`), `playerJumpGravity` and `StatJumpPower`
+  (`jumpprobe`). `toggleguard` holds `TalentUseClass`, which is not a row but
+  runs inside a cast, and a worn flight charm arms flight's collision hooks.
+  So the sessions start with none of `jumpscenery`, a worn flight charm,
+  `skillslider`, `toggleguard`, `tgprobe`, `jumpprobe` or `projprobe` armed.
+- **Only the local player's calls are touched.** Each row compares the
+  call's `self` with the local player, found by the shared resolver that
+  accepts the runner's reference handle as well as an object. Every other
+  call, and every call while no lever is on, runs the original once and
+  returns its result unchanged: that is the baseline, and the behaviour suite
+  pins it for every row.
+
+### The reading forms
+
+- **`off`** turns every lever, watch, `args`, `count` and `pos` off. The rows
+  stay installed and pass every call through.
+- **`show`** prints, per row, `calls=<local>/<all>` (the calls whose `self`
+  was the local player, over all calls), the lever's counts (`applied=`,
+  `missing=`, `moved=`, `still=` and the stat counters below), and `casts=`
+  per talent id of the local player's `TalentUse` calls since `hook` or the
+  last `show reset`. Positive control: a key cast of the ordinary skill adds
+  one cast of its talent id (`key-cast-control`).
+- **`args <n>`** (1 to 100) prints the next n local-player calls of
+  `CheckTalentUse`, one line each:
+  `ctu #<k> f=<frame> argc=<c> a0=<v> a1=<v> a2=<v>`, each argument as a
+  number or bool, or as its kind (`ref:`, `str:`, `undefined` and so on), and
+  `none` past the count. Positive control: the gate runs every frame, so an
+  idle `args` fills within a few frames; one that does not means the row is
+  not detoured.
+- **`watch <scope> <frames> [after <row>]`** takes a snapshot of the scope's
+  number and bool members every frame and prints one line per change,
+  `watch f=<frame> <scope>.<name>=<old>-><new>`, with `none` for a member that
+  appeared or went away. With `after <row>` the window opens at that row's
+  next local-player call instead of now. After 400 lines the watch ends and
+  its end line counts what was dropped. The scopes, as the instrument
+  resolves them:
+  - `player`: the local player instance's own variables.
+  - `pst`: the struct the player holds in `pSt`.
+  - `profile`: the player's `playerProfileSlot` when the player has one that
+    is a struct or an instance; otherwise `Profile_Manager_obj` instance 0.
+    Every reply names which of the two it read.
+  - `input`: the same scope's `inputState` array, each element printed as
+    `input[<i>]`.
+  - `queue`: `abilityQueue`, `mobileTalentPressed` and `stackSkillList`, each
+    as its kind, its length and its first four entries, read as variables of
+    the player instance.
+
+  Positive control: a `watch player` while the player walks shows `x` or `y`
+  changing; a watch that prints nothing then is the instrument, not the game.
+- **`count <object name> <frames>`** resolves the object by name and prints
+  one line per change of its instance count,
+  `count f=<frame> <object>=<old>-><new>`. A name that is not an object is
+  refused. Its reading is checked against the screen: a toggle's aura that
+  appears or goes away while `count` prints nothing means the count, not the
+  game.
+- **`pos <frames>`** prints the cursor in room coordinates at the start (the
+  same cursor routes `jumpscenery` reads), then a line
+  `pos f=<frame> <row> dx=<px> dy=<px>` for each local-player call of a row
+  that moved the player, and at the end
+  `pos total=<px> frames=<n> movers=<row>:<count>,...`. It also samples the
+  player's position once a frame, so a move no row made shows up as an
+  `outside` line and as `outside:` among the movers, rather than reading as a
+  player who stood still. Positive control: the sessions' `walk-control` and
+  `jump-control`, two equal walks or jumps whose totals agree within 10%.
+
+### The levers
+
+One lever is on at a time; a lever form while another is on replaces it and
+says so. Every lever runs for `frames` frames (600 when not given, at most
+3600) and then ends on its own, printing its counts. A lever on a row that is
+not hooked is refused, and a lever on a row that is hooked table-only says
+that only the table's calls reach it.
+
+- **`set <scope>.<name>[<i>] <value> during <row> [frames]`**: before each
+  local-player call of the row, write the value into that member (or array
+  element); after the original returns, or throws, put back what was there.
+  Only a member or element that already exists is written; nothing is
+  created, and a write that finds nothing counts `missing=`. The reply names
+  the scope it resolved, the value supplied and the value it will restore;
+  `show` counts `applied=`. This is the route that tests whether the gate
+  casts a slot from its input entry or its queue entry, written inside the
+  gate's own call, just before the gate reads it.
+- **`scale <scope>.<name>[<i>] <mult> during <row> [frames]`**: the same,
+  multiplying the member's number.
+- **`move <row> <mult> [frames]`**: after each local-player call of the row
+  that changed the player's `x` or `y`, set them to where the call started
+  plus mult times the call's own displacement. A call that did not move the
+  player is left alone. `show` counts `moved=` and `still=`.
+- **`stat <id> <mult> [frames]`**: a `ReturnSpecificStat` call whose `self` is
+  the local player and whose stat id is the one given returns the original's
+  number times mult. For the two ids with a getter row (64 movement speed,
+  `StatMovementSpeed`; 66 jump power, `StatJumpPower`), a local-player call of
+  that getter is scaled too, because compiled GML can call a getter directly
+  as well as through the dispatcher. The counts keep the two routes apart:
+  `changed-dispatch=`, `changed-getter=`, `getter-direct=` (getter calls no
+  dispatcher call was around) and `skip=` (a matching call whose result was
+  not a number). Both changed counts at 0 means the lever never engaged where
+  the game reads the stat, which is not the same as engaged and changed
+  nothing.
+
+### The walkable verdict
+
+`walkable here <dx> <dy>` reads one point relative to the player,
+`walkable at <x> <y>` one point in room coordinates, and
+`walkable scan <deg> <step> <count>` a line of points from the player in that
+direction. Each point prints
+`walkable x= y= room=<in|out> grid=<free|blocked|unreadable> family=<free|blocked> wall-line=<clear|crossed> tile=<layer>:<value>,...`:
+
+- `room`: whether the point lies inside the room.
+- `grid`: the point's 16 px cell in `global.pathGrid`.
+- `family`: whether the player, placed at the point, would meet the
+  `Collision_Parent_obj` family.
+- `wall-line`: whether a line from the player to the point crosses the
+  `Wall_Parent_obj` family.
+- `tile`: up to four tile layers' cell values at the point, by layer name.
+
+Every field starts unreadable and only a read that succeeded replaces it, so
+a failed read never turns into either answer. The game's own test,
+`IsObtainablePlace` over the zone generator's heat grid, is not one of the
+fields (§ Static reading, "What the reading means for the instrument").
+Positive control: the sessions' `walkable-control`, a point 32 px from the
+player on open floor reading `room=in grid=free family=free wall-line=clear`.
+
+### Where the `profile` and `queue` scopes read, against the static reading
+
+The static reading (§ Static reading, "The cast gate") places
+`playerProfileSlot` on `Input_Device_Manager_obj`, indexed by the gate's third
+argument, and `abilityQueue` and `mobileTalentPressed` as global arrays. The
+instrument as built reads all of them on the player (falling back to
+`Profile_Manager_obj` instance 0 for `profile` and `input`). Until the scopes
+follow the reading, a `queue` watch or a `set queue.<name>[<i>]` lever reads
+or writes the player's own variables of those names, if it has any, and not
+the arrays the gate reads; a `queue-observed` with no change, or a
+`set queue...` lever that counts only `missing=`, then says nothing about the
+queue route. The `profile` reply names the instance it read, so Live 1
+records whether that was the profile slot the gate's third argument names.
+
+### The debugger logpoints
+
+Both sessions attach the headless debugger to the running game after
+`mark1probe hook` and the game's own control, and log hits at script entries
+without stopping the game. The precondition is that the toolkit's decompile
+index still names the build the Ghidra project imported; otherwise the
+locations are stale and the session is `LIVE-ABORTED`. The locations come
+from that project and stay in the session's local notes, never in this doc.
+
+- `dbg-control`: `CheckTalentUse`'s entry, counting hits. Its hits rise while
+  the player stands still. It is the control for every other logpoint in the
+  same session.
+- `dbg-cast-speed` (Live 1): `TalentUseSetSpeed`'s entry, counting hits and
+  recording where each call returns to.
+- `dbg-stat-movement` and `dbg-stat-jump` (Live 2): the entries of
+  `StatMovementSpeed` and `StatJumpPower`, the same way.
+
+`mark1probe hook` detours these entries itself, so the logpoints are armed
+without matching the file's bytes, and the first bytes each logpoint reports
+are recorded in the capture. A candidate whose first byte differs from the
+control's is `not-run (instrument: bytes)`. Return locations are written in
+the capture as module offsets only; the record names their callers in words.
+The debugger is detached before the game is stopped.
 
 ## Live procedure 1
 
-The cast: route, gate, slot keys, the toggle outlier and the cast's movement
-penalty. Written here before the session runs.
+The cast: its route, whether the game still gates it, which input belongs to
+each slot key, the toggle outlier and the cast's movement penalty. This is
+the procedure the session runs, written here before it runs. The capture is
+the workorder's live capture 1.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  branch's head once this procedure is written. The owner is asked before it
+  is installed, and its SHA-256 is recorded.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, with no
+  flight charm worn (a worn flight charm arms flight's hooks). The saves are
+  backed up first and restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`; bare `mark1probe` answers
+  `mark1probe: research build`, then `rows=9 hooked=0 held=0`.
+- **Cases:** `skillstate` is read first. The ordinary case is the first of
+  bar slots 0,3 to 0,6 whose skill shows an `effect=` count and is not a
+  toggle (Mana Orb on 0,3 when the character was last read). The toggle
+  outlier is Soul Spurn on any of those slots (0,5 when last read); without
+  it, `toggle-flips` is `not-run`. The empty-slot outlier is any of them with
+  talent id 0; without one, `empty-slot` is `not-run`. No other skills.
+- **Relies on:** `CheckTalentUse` and `TalentUse` (the toolkit's
+  `docs/RUNTIME_DATA_MODELS.md` § 7.2 and § 7.7); `TalentUseSetSpeed`
+  (`skill-sliders-research.md` § Static reading, and § 7.8);
+  `PlayerMovement` (§ 19.6); `inputState` (§ 10.4); `playerProfileSlot`,
+  `abilityQueue`, `mobileTalentPressed` and `stackSkillList` (§ 7.7, a static
+  reading); `UI_Hud_Talent_obj`'s `row0` and `skillstate` (§ 8.3,
+  `skill-actions-research.md` § Decision); `White_Mage_Soul_Spurn_AOE_obj` as
+  Soul Spurn's on-state (§ 7.2, and the toggle research).
+- **Debugger:** attached at S3, after S2's `hook` and the game's own control,
+  then its module list read; `dbg-control` armed first, `dbg-cast-speed`
+  before S15 (§ Instrument, "The debugger logpoints"). Detached in S18,
+  before the game stops.
+- **Keys:** pressed through hs-drive's key input, one second apart where a
+  step presses several.
+
+**Checks.** `dll-hash`, `marker`, `control`, `hook-native` and `dbg-control`
+establish that the session is valid, and must pass. Each part's own control
+gates its research checks: `bar-read` and `key-cast-control` gate S6 to S13,
+and `walk-control` gates S15 to S17. When a part's control fails, its
+research checks are `not-run (instrument: <control>)`, never `fail` or
+`not-observed`. For the rest, a `fail` or a `not-observed` is itself the
+finding, as long as its control passed in the same session.
+
+| Step | Check | What is done | Expected |
+| --- | --- | --- | --- |
+| S0 | `dll-hash` | the installed `BloodPactPlugin.dll`'s SHA-256 | equals the built research DLL's |
+| S1 | `control`, `marker` | `ping`, then bare `mark1probe` | as **Control** above |
+| S2 | `hook-native` | `mark1probe hook` | `9 detoured, 0 failed, 0 held` |
+| S3 | `dbg-control` | attach the debugger; arm `dbg-control` | its hits rise while the player stands still |
+| S4 | `bar-read` | `skillstate`; pick the cases | the bar is listed |
+| S5 | `key-cast-control` | cast the ordinary slot by its key (hs-drive's skill cast with the Q key, 81, when it is the Q slot) | `confirmed: true` |
+| S6 | `ctu-args` | `mark1probe args 120` while idle, then again while S5's key is pressed | which argument changes with the slot, and its value for the pressed slot; the values this machine passes |
+| S7 | `slot-keys` | `mark1probe watch input 90`, then press Q, E, R and Y one second apart | one `input[<i>]` change per key, with its pressed and resting values |
+| S8 | `queue-observed` | `mark1probe watch queue 120`, then press the ordinary key twice, 10 frames apart | what `abilityQueue`, `mobileTalentPressed` and `stackSkillList` hold during a cast, or no change (read with § Instrument, "Where the `profile` and `queue` scopes read") |
+| S9 | `cast-input` | once the ordinary skill's `effect=` reads 0: `mark1probe set profile.inputState[<its i>] <S7's pressed value> during CheckTalentUse 600`, no key pressed; `skillstate` after two seconds | `effect=` rises; `show` counts `applied=` above 0 and a cast of that talent |
+| S10 | `cast-gate` | during S9's window: `show` every two seconds, and `mark1probe watch player 120` | that talent is cast no more often than its cooldown allows, and a mana member falls with each cast |
+| S11 | `cast-other` | only if S9 did not cast: a `set` of each `profile` or `player` member S8 showed moving, one at a time | which member, if any, casts |
+| S12 | `toggle-flips` | toggle outlier: `mark1probe count White_Mage_Soul_Spurn_AOE_obj 600`, with S9's lever on Soul Spurn's slot index for 600 frames | the on and off flips, counted from the aura's instance count |
+| S13 | `empty-slot` | empty-slot outlier: S9's lever on that slot's index for 120 frames | no `TalentUse` call |
+| S14 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds; once more | the two totals within 10% of each other |
+| S15 | `penalty-baseline`, `dbg-cast-speed` | arm `dbg-cast-speed`; `pos 240` while D is held for three seconds and E is pressed at one second | the total against S14's; `dbg-cast-speed`'s hits and return locations |
+| S16 | `penalty-vars` | `mark1probe watch player 90 after TalentUse`, then `watch pst 90 after TalentUse`, each during an E press in the middle of a walk | the members that change after the cast and settle back |
+| S17 | `penalty-lever` | for each S16 member: `set player.<name> <its resting value> during PlayerMovement 240` (or the `pst` member), then S15's walk | the total back near S14's |
+| S18 | none | `mark1probe off`; detach the debugger; stop the game; restore the backup | a clean restore |
+
+A mover that `pos` reports as `outside` means the player moved with no row's
+call moving it: the row that moves the walk is not among the nine.
+
+The checks feed § Decision: `cast-route` from S9 and S11 (with S8),
+`cast-gate` from S10, `slot-keys` from S7, `toggle-under-automation` from S12,
+`cast-penalty` from S16 and `penalty-lever` from S17.
 
 ## Live procedure 2
 
-Speed, the jump and walkability. Written here before the session runs.
+Walking speed, the jump and walkability. The capture is the workorder's live
+capture 2. It runs after Live procedure 1, in the same sitting or later,
+with its own backup: its starting state is the save as it was before Live 1.
+
+**Setup:**
+
+- **Build, character, control and debugger precondition:** as Live
+  procedure 1. The session starts in town with `jumpscenery` off.
+- **Cases:** a walk on open ground; a jump on open ground with the cursor
+  about 100 px away (inside the jump's measured reach of about 246 px, the
+  toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.5) and about 300 px away
+  (beyond it); walkability at a point of open floor, at a point inside a prop,
+  and along a line from the town's walkable floor out past its edge.
+- **Relies on:** `PlayerMovement` (§ 19.6); `ReturnSpecificStat`'s cases 64
+  and 66 and `StatMovementSpeed` (§ 19.10, a static reading); `skillsLeap`,
+  `playerJumpGravity` and `StatJumpPower` (§ 19.1); the jump's cursor read
+  (§ 19.5); `global.pathGrid` (§ 22.7); `Collision_Parent_obj` and
+  `Wall_Parent_obj` (§ 19.2, § 19.8); the edge (§ 19.11); `playerwarp` (the
+  module guide's Command Reference) to stand at a point.
+- **Debugger:** as Live 1, with the same control, `dbg-control`; the
+  candidates are `dbg-stat-movement` and `dbg-stat-jump` (§ Instrument, "The
+  debugger logpoints"), under the same bytes rule.
+
+**Checks.** The same five validity checks must pass. `walk-control` gates T5
+to T7, `jump-control` gates T9 to T11 and `walkable-control` gates T13 and
+T14, the same way as in Live procedure 1.
+
+| Step | Check | What is done | Expected |
+| --- | --- | --- | --- |
+| T0 to T3 | `dll-hash`, `control`, `marker`, `hook-native`, `dbg-control` | as S0 to S3 | as there |
+| T4 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds, the inventory closed; twice | the two totals within 10% |
+| T5 | `walk-mover`, `dbg-stat-movement` | arm `dbg-stat-movement`; one T4 walk; `pos` lists the movers | which row moved the player; the stat's calls and return locations |
+| T6 | `speed-move` | `mark1probe move <T5's mover> 0.5 240`, then T4's walk | a total about half of T4's |
+| T7 | `speed-stat` | `mark1probe stat 64 0.5 240`, then T4's walk | the total against T4's, with the lever's `changed-dispatch=` and `changed-getter=` |
+| T8 | `jump-control` | a jump (Space, key 32) on open ground with the cursor about 100 px away, `pos 150` armed; twice | two lengths within 10%; the cursor printed |
+| T9 | `jump-mover`, `dbg-stat-jump`, `jump-vars` | arm `dbg-stat-jump`; T8's jump; then `watch pst 110 after skillsLeap` over a second jump | the movers; the stat's calls; the members that hold the jump's state |
+| T10 | `jump-move` | `move <T9's mover> 3 150`, T8's jump, then the same with the cursor 300 px away | the lengths against T8's and against the far jump's baseline |
+| T11 | `jump-stat` | `stat 66 3 150`, the same two jumps | the lengths against the baselines |
+| T12 | `walkable-control` | `mark1probe walkable here 32 0` on open floor | `room=in grid=free family=free wall-line=clear` |
+| T13 | `walkable-prop` | `walkable here` at a point inside a prop | which fields read blocked |
+| T14 | `walkable-edge` | `playerwarp` to the town's walkable edge; `walkable scan <degrees toward the edge> 16 24`, with a screenshot | where each field flips, against the edge seen on screen |
+| T15 | none | `mark1probe off`; detach the debugger; stop the game; restore the backup | a clean restore |
+
+The checks feed § Decision: `walk-mover` from T5, `speed-lever` from T6 and
+T7, `jump-mover` from T9, `jump-lever` from T10 and T11, and `walkable-test`
+from T13 and T14.
 
 ## Results
 
